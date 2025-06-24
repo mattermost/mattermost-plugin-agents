@@ -7,7 +7,7 @@ toolchain go1.23.5
 require (
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/andygrunwald/go-jira v1.16.0
-	github.com/anthropics/anthropic-sdk-go v0.2.0-beta.3
+	github.com/anthropics/anthropic-sdk-go v1.4.0
 	github.com/asticode/go-astisub v0.34.0
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/go-github/v41 v41.0.0

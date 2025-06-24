@@ -127,11 +127,7 @@ func conversationToMessages(posts []llm.Post) (string, []anthropicSDK.MessagePar
 
 		if len(post.ToolUse) > 0 {
 			for _, tool := range post.ToolUse {
-				toolBlock := anthropicSDK.ContentBlockParamOfRequestToolUseBlock(
-					tool.ID,
-					tool.Arguments,
-					tool.Name,
-				)
+				toolBlock := anthropicSDK.NewToolUseBlock(tool.ID, tool.Arguments, tool.Name)
 				currentBlocks = append(currentBlocks, toolBlock)
 			}
 
@@ -186,7 +182,7 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 
 	// Set up parameters for the Anthropic API
 	params := anthropicSDK.MessageNewParams{
-		Model:     state.config.Model,
+		Model:     anthropicSDK.Model(state.config.Model),
 		MaxTokens: int64(state.config.MaxGeneratedTokens),
 		Messages:  state.messages,
 		System: []anthropicSDK.TextBlockParam{{
