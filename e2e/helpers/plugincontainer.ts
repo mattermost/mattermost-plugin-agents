@@ -51,6 +51,8 @@ const RunContainer = async (): Promise<MattermostContainer> => {
         .start();
   await mattermost.createUser("regularuser@sample.com", "regularuser", "regularuser");
   await mattermost.addUserToTeam("regularuser", "test");
+  await mattermost.createUser("seconduser@sample.com", "seconduser", "seconduser");
+  await mattermost.addUserToTeam("seconduser", "test");
   const userClient = await mattermost.getClient("regularuser", "regularuser")
   const user = await userClient.getMe()
   await userClient.savePreferences(user.id,[

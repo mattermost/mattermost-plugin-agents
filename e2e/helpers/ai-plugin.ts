@@ -73,4 +73,23 @@ export class AIPlugin {
     await threadItems.nth(index).click();
   }
 
+  async clickNewMessagesButton() {
+    const askAIButton = this.page.getByRole('button', { name: 'Ask AI' })
+    await expect(askAIButton).toBeVisible();
+    await askAIButton.click();
+  }
+
+  async clickSummarizeNewMessages() {
+	const summarizeButton = this.page.getByRole('button', { name: 'Summarize new messages' })
+    await expect(summarizeButton).toBeVisible();
+    await summarizeButton.click();
+  }
+
+  async expectRHSOpenWithPost(expectedText?: string) {
+    await expect(this.page.getByTestId('mattermost-ai-rhs')).toBeVisible();
+    if (expectedText) {
+      await expect(this.page.getByText(expectedText)).toBeVisible();
+    }
+  }
+
 }

@@ -37,6 +37,37 @@ export class MattermostPage {
     async expectNoReply() {
         await expect(this.page.getByText('reply')).not.toBeVisible();
     }
+
+    async sendMessageAsUser(mattermost: any, username: string, password: string, message: string, channelId?: string) {
+        // Get client for the specific user
+        const userClient = await mattermost.getClient(username, password);
+
+        // Get the current channel ID if not provided
+        let targetChannelId = channelId;
+        if (!targetChannelId) {
+            // Get the default channel (town-square or similar)
+            const teams = await userClient.getMyTeams();
+            const team = teams[0];
+            const channels = await userClient.getMyChannels(team.id);
+            const defaultChannel = channels.find(c => c.name === 'town-square') || channels[0];
+            targetChannelId = defaultChannel.id;
+        }
+
+        // Create the post
+        return await userClient.createPost({
+            channel_id: targetChannelId,
+            message: message
+        });
+    }
+
+    async markMessageAsUnread(postid: string) {
+		await this.page.locator("#post_" + postid).hover();
+
+		// Click on dot menu
+		await this.page.getByTestId('PostDotMenu-Button-' + postid).click();
+
+		await this.page.getByText('Mark as Unread').click();
+    }
 }
 
 // Legacy function for backward compatibility
