@@ -147,8 +147,8 @@ func (a *API) handleInterval(c *gin.Context) {
 
 	// Return result
 	result := map[string]string{
-		"postID":    post.Id,
-		"channelId": post.ChannelId,
+		"postid":    post.Id,
+		"channelid": post.ChannelId,
 	}
 
 	c.Render(http.StatusOK, render.JSON{Data: result})
