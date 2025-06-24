@@ -183,7 +183,7 @@ export default class Plugin {
                         '',
                         activeBot?.username,
                     );
-                    doSelectPost(result.postId, result.channelId, store.dispatch);
+                    doSelectPost(result.postid, result.channelid, store.dispatch);
                     if (rhs) {
                         store.dispatch(rhs.showRHSPlugin);
                     }

@@ -34,8 +34,8 @@ type Request struct {
 type Response struct {
 	Answer    string      `json:"answer"`
 	Results   []RAGResult `json:"results"`
-	PostID    string      `json:"postId,omitempty"`
-	ChannelID string      `json:"channelId,omitempty"`
+	PostID    string      `json:"postid,omitempty"`
+	ChannelID string      `json:"channelid,omitempty"`
 }
 
 // RAGResult represents an enriched search result with metadata
@@ -261,8 +261,8 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 	}(query, teamID, channelID, maxResults)
 
 	return map[string]string{
-		"PostID":    questionPost.Id,
-		"ChannelID": questionPost.ChannelId,
+		"postid":    questionPost.Id,
+		"channelid": questionPost.ChannelId,
 	}, nil
 }
 
