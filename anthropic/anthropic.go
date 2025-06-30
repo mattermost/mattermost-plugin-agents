@@ -34,6 +34,48 @@ type messageState struct {
 	context  *llm.Context
 }
 
+// customHeadersTransport wraps an http.RoundTripper to add custom headers to every request
+type customHeadersTransport struct {
+	base    http.RoundTripper
+	headers map[string]string
+}
+
+func (t *customHeadersTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Clone the request to avoid modifying the original
+	newReq := req.Clone(req.Context())
+
+	// Add custom headers
+	for key, value := range t.headers {
+		newReq.Header.Set(key, value)
+	}
+
+	return t.base.RoundTrip(newReq)
+}
+
+// wrapHTTPClientWithCustomHeaders wraps an http.Client to add custom headers to all requests
+func wrapHTTPClientWithCustomHeaders(baseClient *http.Client, customHeaders map[string]string) *http.Client {
+	if len(customHeaders) == 0 {
+		return baseClient
+	}
+
+	transport := baseClient.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+
+	wrappedClient := &http.Client{
+		Transport: &customHeadersTransport{
+			base:    transport,
+			headers: customHeaders,
+		},
+		CheckRedirect: baseClient.CheckRedirect,
+		Jar:           baseClient.Jar,
+		Timeout:       baseClient.Timeout,
+	}
+
+	return wrappedClient
+}
+
 type Anthropic struct {
 	client             anthropicSDK.Client
 	defaultModel       string
@@ -45,9 +87,12 @@ type Anthropic struct {
 }
 
 func New(llmService llm.ServiceConfig, botConfig llm.BotConfig, httpClient *http.Client) *Anthropic {
+	// Wrap the HTTP client with custom headers if any are provided
+	wrappedHTTPClient := wrapHTTPClientWithCustomHeaders(httpClient, llmService.CustomHeaders)
+
 	client := anthropicSDK.NewClient(
 		option.WithAPIKey(llmService.APIKey),
-		option.WithHTTPClient(httpClient),
+		option.WithHTTPClient(wrappedHTTPClient),
 	)
 
 	return &Anthropic{

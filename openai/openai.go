@@ -44,6 +44,8 @@ type Config struct {
 	ReasoningEffort      string        `json:"reasoningEffort"`
 	DisableStreamOptions bool          `json:"disableStreamOptions"` // For OpenAI-compatible APIs that don't support stream_options
 	UseMaxTokens         bool          `json:"useMaxTokens"`         // Use max_tokens instead of max_completion_tokens for compatible APIs
+	// CustomHeaders are additional HTTP headers to include in requests to the LLM service
+	CustomHeaders map[string]string `json:"customHeaders"`
 }
 
 type OpenAI struct {

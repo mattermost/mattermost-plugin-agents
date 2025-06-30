@@ -31,6 +31,7 @@ export type LLMService = {
     region: string
     awsAccessKeyID: string
     awsSecretAccessKey: string
+    customHeaders: {[key: string]: string}
 }
 
 const mapServiceTypeToDisplayName = new Map<string, string>([

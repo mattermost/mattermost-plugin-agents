@@ -191,6 +191,7 @@ func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig ll
 		EnabledNativeTools: botConfig.EnabledNativeTools,
 		ReasoningEnabled:   botConfig.ReasoningEnabled,
 		ReasoningEffort:    botConfig.ReasoningEffort,
+		CustomHeaders:      serviceConfig.CustomHeaders,
 	}
 }
 

@@ -17,6 +17,9 @@ type ServiceConfig struct {
 	AWSAccessKeyID     string `json:"awsAccessKeyID"`
 	AWSSecretAccessKey string `json:"awsSecretAccessKey"`
 
+	// CustomHeaders are additional HTTP headers to include in requests to the LLM service
+	CustomHeaders map[string]string `json:"customHeaders"`
+
 	// Renaming the JSON field to inputTokenLimit would require a migration, leaving as is for now.
 	InputTokenLimit         int  `json:"tokenLimit"`
 	StreamingTimeoutSeconds int  `json:"streamingTimeoutSeconds"`
