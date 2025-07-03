@@ -115,10 +115,7 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		}
 	}
 
-	posts = append(posts, llm.Post{
-		Role:    llm.PostRoleUser,
-		Message: post.Message,
-	})
+	posts = append(posts, c.PostToAIPost(bot, post))
 
 	completionRequest := llm.CompletionRequest{
 		Posts:   posts,
