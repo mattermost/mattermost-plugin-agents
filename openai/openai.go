@@ -316,6 +316,10 @@ func (s *OpenAI) streamResultToChannels(request openaiClient.ChatCompletionReque
 		// Ping the watchdog when we receive a response
 		watchdog <- struct{}{}
 
+		if len(response.Choices) == 0 {
+			continue
+		}
+
 		delta := response.Choices[0].Delta
 		numTools := len(delta.ToolCalls)
 
@@ -336,10 +340,6 @@ func (s *OpenAI) streamResultToChannels(request openaiClient.ChatCompletionReque
 				toolsBuffer[toolIndex].args.WriteString(toolCall.Function.Arguments)
 				toolsBuffer[toolIndex].id.WriteString(toolCall.ID)
 			}
-		}
-
-		if len(response.Choices) == 0 {
-			continue
 		}
 
 		// Check finishing conditions
