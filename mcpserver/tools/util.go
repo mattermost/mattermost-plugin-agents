@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,11 +66,21 @@ func getFileNameFromSpec(filespec string) string {
 
 	// For URLs, extract filename from the path
 	if strings.HasPrefix(filespec, "http://") || strings.HasPrefix(filespec, "https://") {
-		parts := strings.Split(filespec, "/")
-		if len(parts) > 0 {
-			return parts[len(parts)-1]
+		parsedURL, err := url.Parse(filespec)
+		if err != nil {
+			// Fallback to simple string splitting if URL parsing fails
+			parts := strings.Split(filespec, "/")
+			if len(parts) > 0 {
+				return parts[len(parts)-1]
+			}
+			return "unknown"
 		}
-		return "unknown"
+
+		filename := filepath.Base(parsedURL.Path)
+		if filename == "" || filename == "." || filename == "/" {
+			return "unknown"
+		}
+		return filename
 	}
 
 	// For file paths, extract the base name
