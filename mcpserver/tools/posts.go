@@ -21,19 +21,21 @@ type ReadPostArgs struct {
 
 // CreatePostArgs represents arguments for the create_post tool
 type CreatePostArgs struct {
-	ChannelID string `json:"channel_id" jsonschema_description:"The ID of the channel to post in"`
-	Message   string `json:"message" jsonschema_description:"The message content"`
-	RootID    string `json:"root_id" jsonschema_description:"Optional root post ID for replies"`
+	ChannelID   string   `json:"channel_id" jsonschema_description:"The ID of the channel to post in"`
+	Message     string   `json:"message" jsonschema_description:"The message content"`
+	RootID      string   `json:"root_id" jsonschema_description:"Optional root post ID for replies"`
+	Attachments []string `json:"attachments,omitempty" jsonschema_description:"Optional list of file paths or URLs to attach to the post"`
 }
 
 // CreatePostAsUserArgs represents arguments for the create_post_as_user tool (dev mode only)
 type CreatePostAsUserArgs struct {
-	Username  string `json:"username" jsonschema_description:"Username to login as"`
-	Password  string `json:"password" jsonschema_description:"Password to login with"`
-	ChannelID string `json:"channel_id" jsonschema_description:"The ID of the channel to post in"`
-	Message   string `json:"message" jsonschema_description:"The message content"`
-	RootID    string `json:"root_id" jsonschema_description:"Optional root post ID for replies"`
-	Props     string `json:"props" jsonschema_description:"Optional post properties (JSON string)"`
+	Username    string   `json:"username" jsonschema_description:"Username to login as"`
+	Password    string   `json:"password" jsonschema_description:"Password to login with"`
+	ChannelID   string   `json:"channel_id" jsonschema_description:"The ID of the channel to post in"`
+	Message     string   `json:"message" jsonschema_description:"The message content"`
+	RootID      string   `json:"root_id" jsonschema_description:"Optional root post ID for replies"`
+	Props       string   `json:"props" jsonschema_description:"Optional post properties (JSON string)"`
+	Attachments []string `json:"attachments,omitempty" jsonschema_description:"Optional list of file paths or URLs to attach to the post"`
 }
 
 // getPostTools returns all post-related tools
@@ -170,11 +172,25 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 	client := mcpContext.Client
 	ctx := context.Background()
 
+	// Upload files if specified
+	var fileIDs []string
+	var attachmentMessage string
+	if len(args.Attachments) > 0 {
+		uploadedFileIDs, err := uploadFiles(ctx, client, args.ChannelID, args.Attachments)
+		if err != nil {
+			attachmentMessage = fmt.Sprintf(" (file upload failed: %v)", err)
+		} else {
+			fileIDs = uploadedFileIDs
+			attachmentMessage = fmt.Sprintf(" (uploaded %d files)", len(fileIDs))
+		}
+	}
+
 	// Create the post
 	post := &model.Post{
 		ChannelId: args.ChannelID,
 		Message:   args.Message,
 		RootId:    args.RootID,
+		FileIds:   fileIDs,
 	}
 
 	createdPost, _, err := client.CreatePost(ctx, post)
@@ -182,7 +198,7 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		return "failed to create post", fmt.Errorf("error creating post: %w", err)
 	}
 
-	return fmt.Sprintf("Successfully created post with ID: %s", createdPost.Id), nil
+	return fmt.Sprintf("Successfully created post with ID: %s%s", createdPost.Id, attachmentMessage), nil
 }
 
 // toolCreatePostAsUser implements the create_post_as_user tool with custom authentication
@@ -217,11 +233,25 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 		return "failed to login as user", fmt.Errorf("login failed for user %s: %w", args.Username, err)
 	}
 
+	// Upload files if specified
+	var fileIDs []string
+	var attachmentMessage string
+	if len(args.Attachments) > 0 {
+		uploadedFileIDs, err := uploadFiles(ctx, userClient, args.ChannelID, args.Attachments)
+		if err != nil {
+			attachmentMessage = fmt.Sprintf(" (file upload failed: %v)", err)
+		} else {
+			fileIDs = uploadedFileIDs
+			attachmentMessage = fmt.Sprintf(" (uploaded %d files)", len(fileIDs))
+		}
+	}
+
 	// Create the post
 	post := &model.Post{
 		ChannelId: args.ChannelID,
 		Message:   args.Message,
 		RootId:    args.RootID,
+		FileIds:   fileIDs,
 	}
 
 	// Parse props if provided
@@ -236,5 +266,5 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 		return "failed to create post", fmt.Errorf("error creating post as user %s: %w", args.Username, err)
 	}
 
-	return fmt.Sprintf("Successfully created post with ID %s as user %s", createdPost.Id, user.Username), nil
+	return fmt.Sprintf("Successfully created post with ID %s as user %s%s", createdPost.Id, user.Username, attachmentMessage), nil
 }
