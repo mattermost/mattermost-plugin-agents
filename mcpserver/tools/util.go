@@ -76,6 +76,18 @@ func getFileNameFromSpec(filespec string) string {
 	return filepath.Base(filespec)
 }
 
+// isValidImageFile checks if the file extension is a supported image format
+func isValidImageFile(filename string) bool {
+	ext := strings.ToLower(filepath.Ext(filename))
+	validExts := []string{".jpeg", ".jpg", ".png", ".gif"}
+	for _, validExt := range validExts {
+		if ext == validExt {
+			return true
+		}
+	}
+	return false
+}
+
 // uploadFiles uploads multiple files and returns their file IDs
 func uploadFiles(ctx context.Context, client *model.Client4, channelID string, filespecs []string) ([]string, error) {
 	var fileIDs []string

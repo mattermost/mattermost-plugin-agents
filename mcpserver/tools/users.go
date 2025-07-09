@@ -78,15 +78,21 @@ func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, args
 	var profileImageMessage string
 	// Upload profile image if specified
 	if args.ProfileImage != "" {
-		imageData, err := fetchFileData(args.ProfileImage)
-		if err != nil {
-			profileImageMessage = fmt.Sprintf(" (profile image upload failed: %v)", err)
+		// Validate image file type
+		fileName := getFileNameFromSpec(args.ProfileImage)
+		if !isValidImageFile(fileName) {
+			profileImageMessage = " (profile image upload failed: unsupported file type, only .jpeg, .jpg, .png, .gif are supported)"
 		} else {
-			_, err = client.SetProfileImage(ctx, createdUser.Id, imageData)
+			imageData, err := fetchFileData(args.ProfileImage)
 			if err != nil {
 				profileImageMessage = fmt.Sprintf(" (profile image upload failed: %v)", err)
 			} else {
-				profileImageMessage = " (profile image uploaded successfully)"
+				_, err = client.SetProfileImage(ctx, createdUser.Id, imageData)
+				if err != nil {
+					profileImageMessage = fmt.Sprintf(" (profile image upload failed: %v)", err)
+				} else {
+					profileImageMessage = " (profile image uploaded successfully)"
+				}
 			}
 		}
 	}
