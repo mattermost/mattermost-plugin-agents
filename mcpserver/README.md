@@ -46,6 +46,7 @@ Create a new post in Mattermost.
 - `message` (required): The message content
 - `root_id` (optional): Root post ID for replies
 - `props` (optional): Post properties
+- `attachments` (optional): Array of file paths or URLs to attach to the post
 
 ### `create_channel`
 Create a new channel in Mattermost.
@@ -99,7 +100,7 @@ The following tools are only available when the `-dev` flag is enabled:
 
 #### `create_user`
 Create a new user account for testing scenarios.
-- **Parameters:** `username`, `email`, `password`, `first_name` (optional), `last_name` (optional), `nickname` (optional)
+- **Parameters:** `username`, `email`, `password`, `first_name` (optional), `last_name` (optional), `nickname` (optional), `profile_image` (optional): File path or URL to set as profile image (supports .jpeg, .jpg, .png, .gif)
 
 #### `create_team`
 Create a new team.
@@ -120,6 +121,7 @@ Create a post as a specific user using username/password login. Simply provide t
   - `username` (required), `password` (required)
   - `channel_id` (required), `message` (required)
   - `root_id` (optional), `props` (optional)
+  - `attachments` (optional): Array of file paths or URLs to attach to the post
 
 
 ## Transport
