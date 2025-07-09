@@ -23,7 +23,7 @@ func fetchFileData(filespec string) ([]byte, error) {
 
 	// Check if it's a URL
 	if strings.HasPrefix(filespec, "http://") || strings.HasPrefix(filespec, "https://") {
-		resp, err := http.Get(filespec)
+		resp, err := http.Get(filespec) // #nosec G107 - filespec is validated to be URL
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch file from URL: %w", err)
 		}

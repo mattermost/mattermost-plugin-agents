@@ -176,9 +176,9 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 	var fileIDs []string
 	var attachmentMessage string
 	if len(args.Attachments) > 0 {
-		uploadedFileIDs, err := uploadFiles(ctx, client, args.ChannelID, args.Attachments)
-		if err != nil {
-			attachmentMessage = fmt.Sprintf(" (file upload failed: %v)", err)
+		uploadedFileIDs, uploadErr := uploadFiles(ctx, client, args.ChannelID, args.Attachments)
+		if uploadErr != nil {
+			attachmentMessage = fmt.Sprintf(" (file upload failed: %v)", uploadErr)
 		} else {
 			fileIDs = uploadedFileIDs
 			attachmentMessage = fmt.Sprintf(" (uploaded %d files)", len(fileIDs))
@@ -237,9 +237,9 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 	var fileIDs []string
 	var attachmentMessage string
 	if len(args.Attachments) > 0 {
-		uploadedFileIDs, err := uploadFiles(ctx, userClient, args.ChannelID, args.Attachments)
-		if err != nil {
-			attachmentMessage = fmt.Sprintf(" (file upload failed: %v)", err)
+		uploadedFileIDs, uploadErr := uploadFiles(ctx, userClient, args.ChannelID, args.Attachments)
+		if uploadErr != nil {
+			attachmentMessage = fmt.Sprintf(" (file upload failed: %v)", uploadErr)
 		} else {
 			fileIDs = uploadedFileIDs
 			attachmentMessage = fmt.Sprintf(" (uploaded %d files)", len(fileIDs))
