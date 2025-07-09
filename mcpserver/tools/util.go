@@ -130,3 +130,21 @@ func uploadFiles(ctx context.Context, client *model.Client4, channelID string, f
 
 	return fileIDs, nil
 }
+
+// handleFileAttachments handles file attachments upload and returns file IDs and a message
+func handleFileAttachments(ctx context.Context, client *model.Client4, channelID string, attachments []string) ([]string, string) {
+	var fileIDs []string
+	var attachmentMessage string
+
+	if len(attachments) > 0 {
+		uploadedFileIDs, uploadErr := uploadFiles(ctx, client, channelID, attachments)
+		if uploadErr != nil {
+			attachmentMessage = fmt.Sprintf(" (file upload failed: %v)", uploadErr)
+		} else {
+			fileIDs = uploadedFileIDs
+			attachmentMessage = fmt.Sprintf(" (uploaded %d files)", len(fileIDs))
+		}
+	}
+
+	return fileIDs, attachmentMessage
+}
