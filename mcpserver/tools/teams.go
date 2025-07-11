@@ -35,6 +35,7 @@ type CreateTeamArgs struct {
 	DisplayName string `json:"display_name" jsonschema_description:"Display name for the team"`
 	Type        string `json:"type" jsonschema_description:"Team type: 'O' for open, 'I' for invite only"`
 	Description string `json:"description" jsonschema_description:"Team description"`
+	TeamIcon    string `json:"team_icon" jsonschema_description:"File path or URL to set as team icon (supports .jpeg, .jpg, .png, .gif)"`
 }
 
 // AddUserToTeamArgs represents arguments for the add_user_to_team tool (dev mode only)
@@ -281,7 +282,29 @@ func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, args
 		return "failed to create team", fmt.Errorf("error creating team: %w", err)
 	}
 
-	return fmt.Sprintf("Successfully created team '%s' with ID: %s", createdTeam.DisplayName, createdTeam.Id), nil
+	var teamIconMessage string
+	// Upload team icon if specified
+	if args.TeamIcon != "" {
+		// Validate image file type
+		fileName := getFileNameFromSpec(args.TeamIcon)
+		if !isValidImageFile(fileName) {
+			teamIconMessage = " (team icon upload failed: unsupported file type, only .jpeg, .jpg, .png, .gif are supported)"
+		} else {
+			imageData, err := fetchFileData(args.TeamIcon)
+			if err != nil {
+				teamIconMessage = fmt.Sprintf(" (team icon upload failed: %v)", err)
+			} else {
+				_, err = client.SetTeamIcon(ctx, createdTeam.Id, imageData)
+				if err != nil {
+					teamIconMessage = fmt.Sprintf(" (team icon upload failed: %v)", err)
+				} else {
+					teamIconMessage = " (team icon uploaded successfully)"
+				}
+			}
+		}
+	}
+
+	return fmt.Sprintf("Successfully created team '%s' with ID: %s%s", createdTeam.DisplayName, createdTeam.Id, teamIconMessage), nil
 }
 
 // toolAddUserToTeam implements the add_user_to_team tool using the context client

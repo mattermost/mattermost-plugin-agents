@@ -104,7 +104,7 @@ Create a new user account for testing scenarios.
 
 #### `create_team`
 Create a new team.
-- **Parameters:** `name`, `display_name`, `type` (O for open, I for invite only), `description` (optional)
+- **Parameters:** `name`, `display_name`, `type` (O for open, I for invite only), `description` (optional), `team_icon` (optional): File path or URL to set as team icon (supports .jpeg, .jpg, .png, .gif)
 
 #### `add_user_to_team`
 Add a user to a team.
