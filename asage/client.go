@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 
 	"errors"
 )
@@ -114,7 +115,10 @@ func (c *Client) GetDatasets() ([]Dataset, error) {
 }
 
 func (c *Client) doServer(method, path string, body, result interface{}) error {
-	fullURL := c.ServerBaseURL + path
+	fullURL, err := url.JoinPath(c.ServerBaseURL, path)
+	if err != nil {
+		return fmt.Errorf("failed to join URL path: %w", err)
+	}
 	return c.do(method, fullURL, body, result)
 }
 
