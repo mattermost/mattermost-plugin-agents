@@ -206,11 +206,6 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         mcpConfig.servers = {};
     }
 
-    // Ensure idleTimeout has a value
-    if (typeof mcpConfig.idleTimeout !== 'number') {
-        mcpConfig.idleTimeout = 30; // Default to 30 minutes
-    }
-
     // Generate a server name
     const generateServerName = () => {
         const prefix = 'mcp-server-';

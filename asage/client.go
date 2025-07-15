@@ -15,14 +15,14 @@ import (
 
 const (
 	ServerBaseURL = "https://server-nginx.asksage.ai"
-	AuthBaseURL   = "https://user-server-cac-gov.asksage.ai"
 	RoleUser      = "me"
 	RoleGPT       = "gpt"
 )
 
 type Client struct {
-	AuthToken  string
-	HTTPClient *http.Client
+	AuthToken     string
+	HTTPClient    *http.Client
+	ServerBaseURL string
 }
 
 type Message struct {
@@ -50,11 +50,6 @@ type TokenizerParams struct {
 	Model   string `json:"model,omitempty"`
 }
 
-type GetTokenParams struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
 type CompletionResponse struct {
 	Response   string `json:"response"`
 	Message    string `json:"message"`
@@ -69,26 +64,16 @@ type Persona struct {
 
 type Dataset string
 
-func NewClient(authToken string, httpClient *http.Client) *Client {
+func NewClient(authToken string, httpClient *http.Client, serverBaseURL string) *Client {
+	if serverBaseURL == "" {
+		serverBaseURL = ServerBaseURL
+	}
+
 	return &Client{
-		AuthToken:  authToken,
-		HTTPClient: httpClient,
+		AuthToken:     authToken,
+		HTTPClient:    httpClient,
+		ServerBaseURL: serverBaseURL,
 	}
-}
-
-func (c *Client) Login(params GetTokenParams) error {
-	var response struct {
-		Response struct {
-			AccessToken string `json:"access_token"`
-		}
-	}
-	err := c.doAuth(http.MethodPost, "/get-token", &params, &response)
-	if err != nil {
-		return err
-	}
-	c.AuthToken = response.Response.AccessToken
-
-	return nil
 }
 
 func (c *Client) Query(params QueryParams) (*CompletionResponse, error) {
@@ -129,12 +114,7 @@ func (c *Client) GetDatasets() ([]Dataset, error) {
 }
 
 func (c *Client) doServer(method, path string, body, result interface{}) error {
-	fullURL := ServerBaseURL + path
-	return c.do(method, fullURL, body, result)
-}
-
-func (c *Client) doAuth(method, path string, body, result interface{}) error {
-	fullURL := AuthBaseURL + path
+	fullURL := c.ServerBaseURL + path
 	return c.do(method, fullURL, body, result)
 }
 

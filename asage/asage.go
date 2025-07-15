@@ -20,18 +20,7 @@ type Provider struct {
 }
 
 func New(llmService llm.ServiceConfig, httpClient *http.Client) *Provider {
-	client := NewClient("", httpClient)
-	result := strings.SplitN(llmService.APIKey, ":", 2)
-	if len(result) != 2 {
-		return nil
-	}
-
-	if err := client.Login(GetTokenParams{
-		Email:    result[0],
-		Password: result[1],
-	}); err != nil {
-		return nil
-	}
+	client := NewClient(llmService.APIKey, httpClient, llmService.APIURL)
 
 	return &Provider{
 		client:           client,

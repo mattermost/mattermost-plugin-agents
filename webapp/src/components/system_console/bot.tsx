@@ -70,6 +70,7 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['azure', 'Azure'],
     ['anthropic', 'Anthropic'],
     ['cohere', 'Cohere'],
+    ['asage', 'asksage (Experimental)'],
 ]);
 
 function serviceTypeToDisplayName(serviceType: string): string {
@@ -82,7 +83,7 @@ const Bot = (props: Props) => {
     const missingInfo = props.bot.name === '' ||
 		props.bot.displayName === '' ||
 		props.bot.service.type === '' ||
-		(props.bot.service.type !== 'openaicompatible' && props.bot.service.type !== 'azure' && props.bot.service.apiKey === '') ||
+		(props.bot.service.type !== 'openaicompatible' && props.bot.service.type !== 'azure' && props.bot.service.type !== 'asage' && props.bot.service.apiKey === '') ||
 		((props.bot.service.type === 'openaicompatible' || props.bot.service.type === 'azure') && props.bot.service.apiURL === '');
 
     const invalidUsername = props.bot.name !== '' && (!(/^[a-z0-9.\-_]+$/).test(props.bot.name) || !(/[a-z]/).test(props.bot.name.charAt(0)));
@@ -156,6 +157,7 @@ const Bot = (props: Props) => {
                             <SelectionItemOption value='azure'>{'Azure'}</SelectionItemOption>
                             <SelectionItemOption value='anthropic'>{'Anthropic'}</SelectionItemOption>
                             <SelectionItemOption value='cohere'>{'Cohere'}</SelectionItemOption>
+                            <SelectionItemOption value='asage'>{'asage (Experimental)'}</SelectionItemOption>
                         </SelectionItem>
                         <ServiceItem
                             service={props.bot.service}
@@ -243,7 +245,7 @@ const ServiceItem = (props: ServiceItemProps) => {
 
     return (
         <>
-            {(type === 'openaicompatible' || type === 'azure') && (
+            {(type === 'openaicompatible' || type === 'azure' || type === 'asage') && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'API URL'})}
                     value={props.service.apiURL}
