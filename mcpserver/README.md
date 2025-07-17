@@ -47,6 +47,7 @@ Create a new post in Mattermost.
 - `root_id` (optional): Root post ID for replies
 - `props` (optional): Post properties
 - `attachments` (optional): Array of file paths or URLs to attach to the post
+  - **Note**: File paths only work with Claude Code; Claude Desktop cannot access local files
 
 ### `create_channel`
 Create a new channel in Mattermost.
@@ -101,10 +102,12 @@ The following tools are only available when the `-dev` flag is enabled:
 #### `create_user`
 Create a new user account for testing scenarios.
 - **Parameters:** `username`, `email`, `password`, `first_name` (optional), `last_name` (optional), `nickname` (optional), `profile_image` (optional): File path or URL to set as profile image (supports .jpeg, .jpg, .png, .gif)
+  - **Note**: File paths only work with Claude Code; Claude Desktop cannot access local files
 
 #### `create_team`
 Create a new team.
 - **Parameters:** `name`, `display_name`, `type` (O for open, I for invite only), `description` (optional), `team_icon` (optional): File path or URL to set as team icon (supports .jpeg, .jpg, .png, .gif)
+  - **Note**: File paths only work with Claude Code; Claude Desktop cannot access local files
 
 #### `add_user_to_team`
 Add a user to a team.
@@ -122,6 +125,7 @@ Create a post as a specific user using username/password login. Simply provide t
   - `channel_id` (required), `message` (required)
   - `root_id` (optional), `props` (optional)
   - `attachments` (optional): Array of file paths or URLs to attach to the post
+  - **Note**: File paths only work with Claude Code; Claude Desktop cannot access local files
 
 ## Installation and Usage
 
