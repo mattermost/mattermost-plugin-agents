@@ -59,25 +59,25 @@ func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 		{
 			Name:        "read_channel",
 			Description: "Read recent posts from a Mattermost channel",
-			Schema:      llm.NewJSONSchemaFromStruct(ReadChannelArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[ReadChannelArgs](),
 			Resolver:    p.toolReadChannel,
 		},
 		{
 			Name:        "create_channel",
 			Description: "Create a new channel in Mattermost",
-			Schema:      llm.NewJSONSchemaFromStruct(CreateChannelArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[CreateChannelArgs](),
 			Resolver:    p.toolCreateChannel,
 		},
 		{
 			Name:        "get_channel_info",
 			Description: "Get information about a channel. If you have a channel ID, use that for fastest lookup. If the user provides a human-readable name, try channel_display_name first (what users see in the UI), then channel_name (URL name) as fallback.",
-			Schema:      llm.NewJSONSchemaFromStruct(GetChannelInfoArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[GetChannelInfoArgs](),
 			Resolver:    p.toolGetChannelInfo,
 		},
 		{
 			Name:        "get_channel_members",
 			Description: "Get members of a channel with pagination support",
-			Schema:      llm.NewJSONSchemaFromStruct(GetChannelMembersArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[GetChannelMembersArgs](),
 			Resolver:    p.toolGetChannelMembers,
 		},
 	}
@@ -89,7 +89,7 @@ func (p *MattermostToolProvider) getDevChannelTools() []MCPTool {
 		{
 			Name:        "add_user_to_channel",
 			Description: "Add a user to a channel (dev mode only)",
-			Schema:      llm.NewJSONSchemaFromStruct(AddUserToChannelArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[AddUserToChannelArgs](),
 			Resolver:    p.toolAddUserToChannel,
 		},
 	}

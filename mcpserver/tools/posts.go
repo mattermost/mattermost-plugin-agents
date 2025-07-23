@@ -44,13 +44,13 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 		{
 			Name:        "read_post",
 			Description: "Read a specific post and its thread from Mattermost",
-			Schema:      llm.NewJSONSchemaFromStruct(ReadPostArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[ReadPostArgs](),
 			Resolver:    p.toolReadPost,
 		},
 		{
 			Name:        "create_post",
 			Description: "Create a new post in Mattermost",
-			Schema:      llm.NewJSONSchemaFromStruct(CreatePostArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[CreatePostArgs](),
 			Resolver:    p.toolCreatePost,
 		},
 	}
@@ -62,7 +62,7 @@ func (p *MattermostToolProvider) getDevPostTools() []MCPTool {
 		{
 			Name:        "create_post_as_user",
 			Description: "Create a post as a specific user using username/password login. Use this tool in dev mode for creating realistic multi-user scenarios. Simply provide the username and password of created users.",
-			Schema:      llm.NewJSONSchemaFromStruct(CreatePostAsUserArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[CreatePostAsUserArgs](),
 			Resolver:    p.toolCreatePostAsUser,
 		},
 	}

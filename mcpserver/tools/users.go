@@ -28,7 +28,7 @@ func (p *MattermostToolProvider) getDevUserTools() []MCPTool {
 		{
 			Name:        "create_user",
 			Description: "Create a new user account (dev mode only)",
-			Schema:      llm.NewJSONSchemaFromStruct(CreateUserArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[CreateUserArgs](),
 			Resolver:    p.toolCreateUser,
 		},
 	}

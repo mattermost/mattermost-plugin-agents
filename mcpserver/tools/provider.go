@@ -8,13 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
+	"github.com/modelcontextprotocol/go-sdk/jsonschema"
 )
 
 // MCPToolContext provides MCP-specific functionality with the authenticated client

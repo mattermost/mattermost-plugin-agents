@@ -33,13 +33,13 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 		{
 			Name:        "search_posts",
 			Description: "Search for posts in Mattermost",
-			Schema:      llm.NewJSONSchemaFromStruct(SearchPostsArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[SearchPostsArgs](),
 			Resolver:    p.toolSearchPosts,
 		},
 		{
 			Name:        "search_users",
 			Description: "Search for existing users by username, email, or name",
-			Schema:      llm.NewJSONSchemaFromStruct(SearchUsersArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[SearchUsersArgs](),
 			Resolver:    p.toolSearchUsers,
 		},
 	}

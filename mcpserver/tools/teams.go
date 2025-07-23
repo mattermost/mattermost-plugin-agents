@@ -50,13 +50,13 @@ func (p *MattermostToolProvider) getTeamTools() []MCPTool {
 		{
 			Name:        "get_team_info",
 			Description: "Get information about a team. If you have a team ID, use that for fastest lookup. If the user provides a human-readable name, try team_display_name first (what users see in the UI), then team_name (URL name) as fallback.",
-			Schema:      llm.NewJSONSchemaFromStruct(GetTeamInfoArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[GetTeamInfoArgs](),
 			Resolver:    p.toolGetTeamInfo,
 		},
 		{
 			Name:        "get_team_members",
 			Description: "Get members of a team with pagination support",
-			Schema:      llm.NewJSONSchemaFromStruct(GetTeamMembersArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[GetTeamMembersArgs](),
 			Resolver:    p.toolGetTeamMembers,
 		},
 	}
@@ -68,13 +68,13 @@ func (p *MattermostToolProvider) getDevTeamTools() []MCPTool {
 		{
 			Name:        "create_team",
 			Description: "Create a new team (dev mode only)",
-			Schema:      llm.NewJSONSchemaFromStruct(CreateTeamArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[CreateTeamArgs](),
 			Resolver:    p.toolCreateTeam,
 		},
 		{
 			Name:        "add_user_to_team",
 			Description: "Add a user to a team (dev mode only)",
-			Schema:      llm.NewJSONSchemaFromStruct(AddUserToTeamArgs{}),
+			Schema:      llm.NewJSONSchemaFromStruct[AddUserToTeamArgs](),
 			Resolver:    p.toolAddUserToTeam,
 		},
 	}

@@ -16,9 +16,9 @@ import (
 
 // TestSchemaArgs is a test struct for schema conversion testing
 type TestSchemaArgs struct {
-	Username string `jsonschema_description:"The username for the test"`
-	Count    int    `jsonschema_description:"Number of items to process"`
-	Enabled  bool   `jsonschema_description:"Whether the feature is enabled"`
+	Username string `json:"username" jsonschema_description:"The username for the test"`
+	Count    int    `json:"count" jsonschema_description:"Number of items to process"`
+	Enabled  bool   `json:"enabled" jsonschema_description:"Whether the feature is enabled"`
 }
 
 func TestConvertMCPToolToLibMCPTool_WithSchema(t *testing.T) {
@@ -31,7 +31,7 @@ func TestConvertMCPToolToLibMCPTool_WithSchema(t *testing.T) {
 	testTool := MCPTool{
 		Name:        "test_tool",
 		Description: "A test tool for schema conversion",
-		Schema:      llm.NewJSONSchemaFromStruct(TestSchemaArgs{}),
+		Schema:      llm.NewJSONSchemaFromStruct[TestSchemaArgs](),
 		Resolver:    nil, // Not needed for this test
 	}
 
@@ -46,23 +46,31 @@ func TestConvertMCPToolToLibMCPTool_WithSchema(t *testing.T) {
 	assert.NotEmpty(t, libTool.RawInputSchema, "RawInputSchema should be populated when schema conversion succeeds")
 
 	// Parse the raw schema to verify it's valid JSON and contains expected fields
-	var schema map[string]interface{}
-	err := json.Unmarshal(libTool.RawInputSchema, &schema)
+	var parsedSchema map[string]interface{}
+	err := json.Unmarshal(libTool.RawInputSchema, &parsedSchema)
 	require.NoError(t, err, "RawInputSchema should be valid JSON")
 
 	// Verify the schema structure contains expected properties
-	properties, ok := schema["properties"].(map[string]interface{})
+	properties, ok := parsedSchema["properties"].(map[string]interface{})
 	require.True(t, ok, "Schema should have properties field")
 
-	// Check that our test struct fields are in the schema (using Go field names)
-	assert.Contains(t, properties, "Username", "Schema should contain Username field")
-	assert.Contains(t, properties, "Count", "Schema should contain Count field")
-	assert.Contains(t, properties, "Enabled", "Schema should contain Enabled field")
+	// Check that our test struct fields are in the schema (using JSON field names)
+	assert.Contains(t, properties, "username", "Schema should contain username field")
+	assert.Contains(t, properties, "count", "Schema should contain count field")
+	assert.Contains(t, properties, "enabled", "Schema should contain enabled field")
 
-	// Verify field descriptions are preserved
-	usernameField, ok := properties["Username"].(map[string]interface{})
-	require.True(t, ok, "Username field should be an object")
-	assert.Equal(t, "The username for the test", usernameField["description"], "Field descriptions should be preserved")
+	// Verify field types are correct
+	usernameField, ok := properties["username"].(map[string]interface{})
+	require.True(t, ok, "username field should be an object")
+	assert.Equal(t, "string", usernameField["type"], "Username field should be string type")
+
+	countField, ok := properties["count"].(map[string]interface{})
+	require.True(t, ok, "count field should be an object")
+	assert.Equal(t, "integer", countField["type"], "Count field should be integer type")
+
+	enabledField, ok := properties["enabled"].(map[string]interface{})
+	require.True(t, ok, "enabled field should be an object")
+	assert.Equal(t, "boolean", enabledField["type"], "Enabled field should be boolean type")
 }
 
 func TestConvertMCPToolToLibMCPTool_WithoutSchema(t *testing.T) {

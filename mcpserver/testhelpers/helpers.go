@@ -129,7 +129,7 @@ func ExecuteMCPTool(t *testing.T, mcpServer *server.MCPServer, toolName string, 
 	// Create a proper MCP JSON-RPC request
 	jsonrpcRequest := mcp.JSONRPCRequest{
 		JSONRPC: "2.0",
-		ID:      "test-" + toolName,
+		ID:      mcp.NewRequestId("test-" + toolName),
 		Request: mcp.Request{
 			Method: "tools/call",
 		},
