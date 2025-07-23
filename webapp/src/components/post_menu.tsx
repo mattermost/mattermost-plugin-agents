@@ -68,7 +68,7 @@ const PostMenu = (props: Props) => {
             icon={<IconAI/>}
             title={intl.formatMessage({defaultMessage: 'AI Actions'})}
             dropdownMenu={StyledDropdownMenu}
-            testId="ai-actions-menu"
+            testId='ai-actions-menu'
         >
             <DropdownBotSelector
                 bots={bots ?? []}
