@@ -29,6 +29,7 @@ type Client interface {
 	LogWarn(msg string, keyValuePairs ...interface{})
 	KVGet(key string, value interface{}) error
 	KVSet(key string, value interface{}) error
+	KVDelete(key string) error
 	GetUserByUsername(username string) (*model.User, error)
 	GetUserStatus(userID string) (*model.Status, error)
 	HasPermissionTo(userID string, permission *model.Permission) bool
@@ -39,6 +40,7 @@ type Client interface {
 	HasPermissionToChannel(userID, channelID string, permission *model.Permission) bool
 	GetFileInfo(fileID string) (*model.FileInfo, error)
 	GetFile(fileID string) (io.ReadCloser, error)
+	SendEphemeralPost(userID string, post *model.Post)
 }
 
 func NewClient(pluginAPI *pluginapi.Client) Client {
@@ -88,6 +90,10 @@ func (m *client) KVSet(key string, value interface{}) error {
 	return err
 }
 
+func (m *client) KVDelete(key string) error {
+	return m.pluginAPI.KV.Delete(key)
+}
+
 func (m *client) GetUserByUsername(username string) (*model.User, error) {
 	return m.pluginAPI.User.GetByUsername(username)
 }
@@ -122,4 +128,8 @@ func (m *client) GetFile(fileID string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	return io.NopCloser(file), nil
+}
+
+func (m *client) SendEphemeralPost(userID string, post *model.Post) {
+	m.PostService.SendEphemeralPost(userID, post)
 }

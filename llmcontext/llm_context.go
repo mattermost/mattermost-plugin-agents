@@ -8,6 +8,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -19,7 +20,7 @@ type ToolProvider interface {
 
 // MCPToolProvider provides MCP tools for a user
 type MCPToolProvider interface {
-	GetToolsForUser(userID string) ([]llm.Tool, error)
+	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
 }
 
 // ConfigProvider provides configuration access
@@ -106,8 +107,8 @@ func (b *Builder) WithLLMContextRequestingUser(user *model.User) llm.ContextOpti
 	}
 }
 
-// GetToolsStoreForUser returns a tool store for a specific user, including MCP tools
-func (b *Builder) GetToolsStoreForUser(bot *bots.Bot, isDM bool, userID string) *llm.ToolStore {
+// getToolsStoreForUser returns a tool store for a specific user, including MCP tools
+func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, isDM bool, userID string) *llm.ToolStore {
 	// Check for nil bot, which is unexpected
 	if bot == nil {
 		b.pluginAPI.Log.Error("Unexpected nil bot when getting tool store for user", "userID", userID)
@@ -133,11 +134,18 @@ func (b *Builder) GetToolsStoreForUser(bot *bots.Bot, isDM bool, userID string) 
 
 	// Add MCP tools if available, enabled, and in a DM
 	if b.mcpToolProvider != nil && isDM {
-		mcpTools, err := b.mcpToolProvider.GetToolsForUser(userID)
-		if err != nil {
-			b.pluginAPI.Log.Error("Failed to get MCP tools for user", "userID", userID, "error", err)
-		} else if len(mcpTools) > 0 {
+		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(userID)
+
+		// Add tools from successfully connected servers even if some had errors
+		if len(mcpTools) > 0 {
 			store.AddTools(mcpTools)
+		}
+
+		// Handle MCP errors if any occurred
+		if mcpErrors != nil {
+			for _, authError := range mcpErrors.ToolAuthErrors {
+				store.AddAuthError(authError)
+			}
 		}
 	}
 
@@ -152,7 +160,7 @@ func (b *Builder) WithLLMContextDefaultTools(bot *bots.Bot, isDM bool) llm.Conte
 			return
 		}
 
-		c.Tools = b.GetToolsStoreForUser(bot, isDM, c.RequestingUser.Id)
+		c.Tools = b.getToolsStoreForUser(c, bot, isDM, c.RequestingUser.Id)
 	}
 }
 

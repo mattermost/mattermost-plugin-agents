@@ -455,7 +455,7 @@ func (s *OpenAI) completionRequestFromConfig(cfg llm.LanguageModelConfig) openai
 			Type: openaiClient.ChatCompletionResponseFormatTypeJSONSchema,
 			JSONSchema: &openaiClient.ChatCompletionResponseFormatJSONSchema{
 				Name:   "output_format",
-				Schema: llm.NewJSONSchemaFromStruct(cfg.JSONOutputFormat),
+				Schema: cfg.JSONOutputFormat,
 				Strict: true,
 			},
 		}

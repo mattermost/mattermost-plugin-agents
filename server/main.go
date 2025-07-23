@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -130,7 +131,15 @@ func (p *Plugin) OnActivate() error {
 		untrustedHTTPClient,
 	)
 
-	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log)
+	// Build redirect URI
+	siteURL := pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
+	if siteURL == nil || *siteURL == "" {
+		return fmt.Errorf("site URL not configured")
+	}
+	manifestID := manifest.Id
+	oauthCallbackURL := fmt.Sprintf("%s/plugins/%s/oauth/callback", *siteURL, manifestID)
+
+	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL))
 	p.configuration.RegisterUpdateListener(func() {
 		mcpClientManager.ReInit(p.configuration.MCP())
 	})
@@ -186,6 +195,7 @@ func (p *Plugin) OnActivate() error {
 		licenseChecker,
 		streamingService,
 		i18nBundle,
+		mcpClientManager,
 	)
 
 	// Keep only what we need

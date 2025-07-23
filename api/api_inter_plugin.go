@@ -57,12 +57,8 @@ func (a *API) handleInterPluginSimpleCompletion(c *gin.Context) {
 		user,
 		nil, // No channel for inter-plugin requests
 		a.contextBuilder.WithLLMContextParameters(req.Parameters),
+		a.contextBuilder.WithLLMContextDefaultTools(bot, true),
 	)
-
-	// Add tools if not disabled
-	if !bot.GetConfig().DisableTools {
-		context.Tools = a.contextBuilder.GetToolsStoreForUser(bot, true, userID)
-	}
 
 	// Format system prompt using template
 	formattedSystemPrompt, err := a.prompts.FormatString(req.SystemPrompt, context)

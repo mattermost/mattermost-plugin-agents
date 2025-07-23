@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/invopop/jsonschema"
+	"github.com/modelcontextprotocol/go-sdk/jsonschema"
 )
 
 // Tool represents a function that can be called by the language model during a conversation.
@@ -56,40 +56,50 @@ type ToolCall struct {
 
 type ToolArgumentGetter func(args any) error
 
+// ToolAuthError represents an authentication error that occurred during tool creation
+type ToolAuthError struct {
+	ServerName string `json:"server_name"`
+	AuthURL    string `json:"auth_url"`
+	Error      error  `json:"error"`
+}
+
 type ToolStore struct {
-	tools   map[string]Tool
-	log     TraceLog
-	doTrace bool
+	tools      map[string]Tool
+	log        TraceLog
+	doTrace    bool
+	authErrors []ToolAuthError
 }
 
 type TraceLog interface {
 	Info(message string, keyValuePairs ...any)
 }
 
-// NewJSONSchemaFromStruct creates a JSONSchema from a Go struct using reflection
+// NewJSONSchemaFromStruct creates a JSONSchema from a Go struct using generics
 // It's a helper function for tool providers that currently define schemas as structs
-func NewJSONSchemaFromStruct(schemaStruct interface{}) *jsonschema.Schema {
-	reflector := jsonschema.Reflector{
-		Anonymous:      true,
-		ExpandedStruct: true,
+func NewJSONSchemaFromStruct[T any]() *jsonschema.Schema {
+	schema, err := jsonschema.For[T]()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create JSON schema from struct: %v", err))
 	}
 
-	return reflector.Reflect(schemaStruct)
+	return schema
 }
 
 func NewNoTools() *ToolStore {
 	return &ToolStore{
-		tools:   make(map[string]Tool),
-		log:     nil,
-		doTrace: false,
+		tools:      make(map[string]Tool),
+		log:        nil,
+		doTrace:    false,
+		authErrors: []ToolAuthError{},
 	}
 }
 
 func NewToolStore(log TraceLog, doTrace bool) *ToolStore {
 	return &ToolStore{
-		tools:   make(map[string]Tool),
-		log:     log,
-		doTrace: doTrace,
+		tools:      make(map[string]Tool),
+		log:        log,
+		doTrace:    doTrace,
+		authErrors: []ToolAuthError{},
 	}
 }
 
@@ -106,7 +116,7 @@ func (s *ToolStore) ResolveTool(name string, argsGetter ToolArgumentGetter, cont
 		return "", errors.New("unknown tool " + name)
 	}
 	results, err := tool.Resolver(context, argsGetter)
-	s.TraceResolved(name, argsGetter, results)
+	s.TraceResolved(name, argsGetter, results, err)
 	return results, err
 }
 
@@ -131,15 +141,25 @@ func (s *ToolStore) TraceUnknown(name string, argsGetter ToolArgumentGetter) {
 	}
 }
 
-func (s *ToolStore) TraceResolved(name string, argsGetter ToolArgumentGetter, result string) {
+func (s *ToolStore) TraceResolved(name string, argsGetter ToolArgumentGetter, result string, err error) {
 	if s.log != nil && s.doTrace {
 		args := ""
 		var raw json.RawMessage
-		if err := argsGetter(&raw); err != nil {
-			args = fmt.Sprintf("failed to get tool args: %v", err)
+		if getArgsErr := argsGetter(&raw); getArgsErr != nil {
+			args = fmt.Sprintf("failed to get tool args: %v", getArgsErr)
 		} else {
 			args = string(raw)
 		}
-		s.log.Info("tool resolved", "name", name, "args", args, "result", result)
+		s.log.Info("tool resolved", "name", name, "args", args, "result", result, "error", err)
 	}
+}
+
+// AddAuthError adds an authentication error to the tool store
+func (s *ToolStore) AddAuthError(authError ToolAuthError) {
+	s.authErrors = append(s.authErrors, authError)
+}
+
+// GetAuthErrors returns all authentication errors collected during tool creation
+func (s *ToolStore) GetAuthErrors() []ToolAuthError {
+	return s.authErrors
 }

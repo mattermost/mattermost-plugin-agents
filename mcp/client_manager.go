@@ -4,7 +4,7 @@
 package mcp
 
 import (
-	"fmt"
+	"context"
 	"sync"
 	"time"
 
@@ -17,23 +17,19 @@ type ClientManager struct {
 	config        Config
 	log           pluginapi.LogService
 	clientsMu     sync.RWMutex
-	clients       map[string]*UserClient // Map of userID to UserClient
+	clients       map[string]*UserClients // userID to UserClients
+	activity      map[string]time.Time    // userID to last activity time
 	cleanupTicker *time.Ticker
 	closeChan     chan struct{}
 	clientTimeout time.Duration
-}
-
-// Config contains the configuration for the MCP clients
-type Config struct {
-	Enabled            bool                    `json:"enabled"`
-	Servers            map[string]ServerConfig `json:"servers"`
-	IdleTimeoutMinutes int                     `json:"idleTimeoutMinutes"`
+	oauthManager  *OAuthManager
 }
 
 // NewClientManager creates a new MCP client manager
-func NewClientManager(config Config, log pluginapi.LogService) *ClientManager {
+func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *pluginapi.Client, oauthManager *OAuthManager) *ClientManager {
 	manager := &ClientManager{
-		log: log,
+		log:          log,
+		oauthManager: oauthManager,
 	}
 	manager.ReInit(config)
 	return manager
@@ -47,8 +43,8 @@ func (m *ClientManager) cleanupInactiveClients() {
 			m.clientsMu.Lock()
 			now := time.Now()
 			for userID, client := range m.clients {
-				if now.Sub(client.lastActivity) > m.clientTimeout {
-					m.log.Debug("Closing inactive MCP client", "userID", userID, "idleTime", now.Sub(client.lastActivity))
+				if now.Sub(m.activity[userID]) > m.clientTimeout {
+					m.log.Debug("Closing inactive MCP client", "userID", userID)
 					client.Close()
 					delete(m.clients, userID)
 				}
@@ -70,9 +66,10 @@ func (m *ClientManager) ReInit(config Config) {
 	}
 
 	m.config = config
-	m.clients = make(map[string]*UserClient)
+	m.clients = make(map[string]*UserClients)
 	m.clientTimeout = time.Duration(config.IdleTimeoutMinutes) * time.Minute
 	m.closeChan = make(chan struct{})
+	m.activity = make(map[string]time.Time)
 
 	// Start cleanup ticker to remove inactive clients
 	m.cleanupTicker = time.NewTicker(5 * time.Minute)
@@ -100,71 +97,71 @@ func (m *ClientManager) Close() {
 	}
 
 	// Clear the clients map
-	m.clients = make(map[string]*UserClient)
+	m.clients = make(map[string]*UserClients)
 }
 
-// createAndStoreUserClient creates a new UserClient instance and stores it in the manager
-func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClient, error) {
+// createAndStoreUserClient creates a new UserClients instance and stores it in the manager
+func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClients, *Errors) {
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
 
 	// Check again in case another goroutine created the client while we were waiting for the lock
 	client, exists := m.clients[userID]
 	if exists {
-		client.lastActivity = time.Now()
+		m.activity[userID] = time.Now()
 		return client, nil
 	}
 
-	// Create a new user client
-	userClient := &UserClient{
-		log:          m.log,
-		clients:      make(map[string]*ServerConnection),
-		toolDefs:     make(map[string]ToolDefinition),
-		lastActivity: time.Now(),
-		userID:       userID,
-	}
+	userClients := NewUserClients(userID, m.log, m.oauthManager)
 
 	// Let user client connect to all servers
-	if err := userClient.ConnectToAllServers(m.config.Servers); err != nil {
-		return nil, fmt.Errorf("failed to initialize MCP client for user %s: %w", userID, err)
-	}
+	mcpErrors := userClients.ConnectToAllServers(m.config.Servers)
 
-	m.clients[userID] = userClient
+	// Store the client even if some servers failed to connect
+	// This allows partial success - user gets tools from working servers
+	m.clients[userID] = userClients
 
-	return userClient, nil
+	return userClients, mcpErrors
 }
 
 // getClientForUser gets or creates an MCP client for a specific user
-func (m *ClientManager) getClientForUser(userID string) (*UserClient, error) {
+func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) {
 	m.clientsMu.RLock()
 	client, exists := m.clients[userID]
 	m.clientsMu.RUnlock()
 	if exists {
-		client.lastActivity = time.Now()
+		m.activity[userID] = time.Now()
 		return client, nil
 	}
 
-	newUserClient, err := m.createAndStoreUserClient(userID)
+	return m.createAndStoreUserClient(userID)
+}
+
+// GetToolsForUser returns the tools available for a specific user
+func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
+	// Get or create client for this user
+	userClient, mcpErrors := m.getClientForUser(userID)
+
+	// Return tools from successfully connected servers even if some failed
+	return userClient.GetTools(), mcpErrors
+}
+
+// ProcessOAuthCallback processes the OAuth callback for a user
+func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state, code string) (*OAuthSession, error) {
+	session, err := m.oauthManager.ProcessCallback(ctx, userID, state, code)
 	if err != nil {
 		return nil, err
 	}
 
-	return newUserClient, nil
+	// Delete the client to force a re-creation
+	m.clientsMu.Lock()
+	delete(m.clients, userID)
+	m.clientsMu.Unlock()
+
+	return session, nil
 }
 
-// GetToolsForUser returns the tools available for a specific user
-func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, error) {
-	// If not enabled or no servers configured return no tools
-	if !m.config.Enabled || len(m.config.Servers) == 0 {
-		return []llm.Tool{}, nil
-	}
-
-	// Get or create client for this user
-	userClient, err := m.getClientForUser(userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get MCP client for user %s: %w", userID, err)
-	}
-
-	// Return the user's tools
-	return userClient.GetTools(), nil
+// GetOAuthManager returns the OAuth manager instance
+func (m *ClientManager) GetOAuthManager() *OAuthManager {
+	return m.oauthManager
 }

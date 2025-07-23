@@ -8,17 +8,21 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton} from '../assets/buttons';
 
+import MCPToolsViewer from './mcp_tools_viewer';
+
 import {BooleanItem, ItemList, TextItem} from './item';
 
 export type MCPServerConfig = {
+    name: string;
+    enabled: boolean;
     baseURL: string;
     headers: {[key: string]: string};
 };
 
 export type MCPConfig = {
     enabled: boolean;
-    servers: {[key: string]: MCPServerConfig};
-    idleTimeout?: number;
+    servers: MCPServerConfig[];
+    idleTimeoutMinutes?: number;
 };
 
 type Props = {
@@ -28,46 +32,64 @@ type Props = {
 
 // Default configuration for a new MCP server
 const defaultServerConfig: MCPServerConfig = {
+    name: '',
+    enabled: true,
     baseURL: '',
     headers: {},
 };
 
 // Component for a single MCP server configuration
 const MCPServer = ({
-    serverID,
+    serverIndex,
     serverConfig,
     onChange,
     onDelete,
-    onRename,
 }: {
-    serverID: string;
+    serverIndex: number;
     serverConfig: MCPServerConfig;
-    onChange: (serverID: string, config: MCPServerConfig) => void;
+    onChange: (serverIndex: number, config: MCPServerConfig) => void;
     onDelete: () => void;
-    onRename: (oldID: string, newID: string, config: MCPServerConfig) => void;
 }) => {
     const intl = useIntl();
     const [isEditingName, setIsEditingName] = useState(false);
-    const [serverName, setServerName] = useState(serverID);
+    const [serverName, setServerName] = useState(serverConfig.name);
 
     // Ensure server config has all required properties
     const config = {
-        ...defaultServerConfig,
-        ...serverConfig,
+        name: serverConfig.name || '',
+        enabled: serverConfig.enabled ?? false,
+        baseURL: serverConfig.baseURL || '',
+        headers: serverConfig.headers || {},
     };
 
     // Update server URL
     const updateServerURL = (baseURL: string) => {
-        onChange(serverID, {
+        onChange(serverIndex, {
             ...config,
             baseURL,
+        });
+    };
+
+    // Update server enabled state
+    const updateServerEnabled = (enabled: boolean) => {
+        onChange(serverIndex, {
+            ...config,
+            enabled,
+        });
+    };
+
+    // Update server name
+    const updateServerName = (name: string) => {
+        onChange(serverIndex, {
+            ...config,
+            name,
         });
     };
 
     // Add a new header
     const addHeader = () => {
         const headers = config.headers || {};
-        onChange(serverID, {
+        onChange(serverIndex, {
             ...config,
             headers: {
                 ...headers,
@@ -88,7 +110,7 @@ const MCPServer = ({
         // Set the new key-value pair
         headers[newKey] = value;
 
-        onChange(serverID, {
+        onChange(serverIndex, {
             ...config,
             headers,
         });
@@ -99,7 +121,7 @@ const MCPServer = ({
         const headers = {...(config.headers || {})};
         delete headers[key];
 
-        onChange(serverID, {
+        onChange(serverIndex, {
             ...config,
             headers,
         });
@@ -109,8 +131,8 @@ const MCPServer = ({
     const handleRename = () => {
         const newName = serverName.trim();
 
-        if (newName && newName !== serverID) {
-            onRename(serverID, newName, config);
+        if (newName && newName !== config.name) {
+            updateServerName(newName);
         }
 
         setIsEditingName(false);
@@ -121,7 +143,7 @@ const MCPServer = ({
         if (e.key === 'Enter') {
             handleRename();
         } else if (e.key === 'Escape') {
-            setServerName(serverID);
+            setServerName(config.name);
             setIsEditingName(false);
         }
     };
@@ -142,7 +164,7 @@ const MCPServer = ({
                     </ServerNameEditContainer>
                 ) : (
                     <ServerTitle onClick={() => setIsEditingName(true)}>
-                        {serverID}
+                        {config.name || `Server ${serverIndex + 1}`}
                     </ServerTitle>
                 )}
                 <DeleteButton onClick={onDelete}>
@@ -150,6 +172,13 @@ const MCPServer = ({
                     <FormattedMessage defaultMessage='Delete Server'/>
                 </DeleteButton>
             </ServerHeader>
+
+            <BooleanItem
+                label={intl.formatMessage({defaultMessage: 'Enable Server'})}
+                value={config.enabled}
+                onChange={updateServerEnabled}
+                helpText={intl.formatMessage({defaultMessage: 'Enable or disable this MCP server.'})}
+            />
 
             <TextItem
                 label={intl.formatMessage({defaultMessage: 'Server URL'})}
@@ -200,152 +229,157 @@ const MCPServer = ({
 // Main component for MCP servers configuration
 const MCPServers = ({mcpConfig, onChange}: Props) => {
     const intl = useIntl();
+    const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
 
-    // Ensure servers object is initialized
-    if (!mcpConfig.servers) {
-        mcpConfig.servers = {};
-    }
+    // Create a properly initialized config object
+    const config: MCPConfig = {
+        enabled: mcpConfig?.enabled || false,
+        servers: Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [],
+        idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes || 30,
+    };
 
     // Generate a server name
     const generateServerName = () => {
-        const prefix = 'mcp-server-';
-        let counter = Object.keys(mcpConfig.servers).length + 1;
-        let serverID = `${prefix}${counter}`;
+        const prefix = 'MCP Server ';
+        let counter = config.servers.length + 1;
 
-        // Make sure the ID is unique
-        while (mcpConfig.servers[serverID]) {
+        // Make sure the name is unique
+        const isNameTaken = (name: string) => config.servers.some((server) => server.name === name);
+
+        while (isNameTaken(`${prefix}${counter}`)) {
             counter++;
-            serverID = `${prefix}${counter}`;
         }
 
-        return serverID;
+        return `${prefix}${counter}`;
     };
 
     // Add a new server
     const addServer = () => {
         // Use the auto-generated name
-        const serverID = generateServerName();
+        const serverName = generateServerName();
 
         onChange({
-            ...mcpConfig,
-            servers: {
-                ...mcpConfig.servers,
-                [serverID]: {...defaultServerConfig},
-            },
-        });
-    };
-
-    // Update a server's name
-    const renameServer = (oldID: string, originalNewID: string, config: MCPServerConfig) => {
-        // Skip if the ID hasn't changed
-        if (oldID === originalNewID) {
-            return;
-        }
-
-        // Make the ID safe for use (remove spaces, special chars)
-        const newID = originalNewID.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
-
-        // Skip if the new ID is empty or already exists
-        if (!newID || (newID !== oldID && mcpConfig.servers[newID])) {
-            return;
-        }
-
-        // Create a copy of the servers object with the renamed server
-        const updatedServers = {...mcpConfig.servers};
-        delete updatedServers[oldID];
-        updatedServers[newID] = config;
-
-        onChange({
-            ...mcpConfig,
-            servers: updatedServers,
+            ...config,
+            servers: [
+                ...config.servers,
+                {
+                    ...defaultServerConfig,
+                    name: serverName,
+                },
+            ],
         });
     };
 
     // Update a server's configuration
-    const updateServer = (serverID: string, serverConfig: MCPServerConfig) => {
+    const updateServer = (serverIndex: number, serverConfig: MCPServerConfig) => {
+        const updatedServers = [...config.servers];
+        updatedServers[serverIndex] = serverConfig;
+
         onChange({
-            ...mcpConfig,
-            servers: {
-                ...mcpConfig.servers,
-                [serverID]: serverConfig,
-            },
+            ...config,
+            servers: updatedServers,
         });
     };
 
     // Delete a server
-    const deleteServer = (serverID: string) => {
-        const newServers = {...mcpConfig.servers};
-        delete newServers[serverID];
+    const deleteServer = (serverIndex: number) => {
+        const newServers = config.servers.filter((_, index) => index !== serverIndex);
 
         onChange({
-            ...mcpConfig,
+            ...config,
             servers: newServers,
         });
     };
 
-    const serverCount = Object.keys(mcpConfig.servers).length;
-
-    // Let's hide the configuration from the system console until the MCP implmentation is more mature
-    if (!mcpConfig.enabled) {
-        return null;
-    }
-
     return (
         <div>
-            <ItemList title={intl.formatMessage({defaultMessage: 'MCP Configuration'})}>
-                <BooleanItem
-                    label={intl.formatMessage({defaultMessage: 'Enable MCP'})}
-                    value={mcpConfig.enabled}
-                    onChange={(enabled) => onChange({...mcpConfig, enabled})}
-                    helpText={intl.formatMessage({defaultMessage: 'Enable the Model Context Protocol (MCP) integration to access tools from MCP servers.'})}
-                />
-                {mcpConfig.enabled && (
-                    <TextItem
-                        label={intl.formatMessage({defaultMessage: 'Connection Idle Timeout (minutes)'})}
-                        value={mcpConfig.idleTimeout?.toString() || '30'}
-                        type='number'
-                        onChange={(e) => {
-                            const idleTimeout = parseInt(e.target.value, 10);
-                            onChange({
-                                ...mcpConfig,
-                                idleTimeout: isNaN(idleTimeout) ? 30 : Math.max(1, idleTimeout),
-                            });
-                        }}
-                        helptext={intl.formatMessage({defaultMessage: 'How long to keep an inactive user connection open before closing it automatically. Lower values save resources, higher values improve response times.'})}
-                    />
-                )}
-            </ItemList>
-
-            {mcpConfig.enabled && (
+            {config.enabled && (
                 <>
-                    <ServersList>
-                        {serverCount === 0 ? (
-                            <EmptyState>
-                                <FormattedMessage defaultMessage='No MCP servers configured. Add a server to enable MCP tools.'/>
-                            </EmptyState>
-                        ) : (
-                            Object.entries(mcpConfig.servers).map(([serverID, serverConfig]) => (
-                                <MCPServer
-                                    key={serverID}
-                                    serverID={serverID}
-                                    serverConfig={serverConfig}
-                                    onChange={updateServer}
-                                    onDelete={() => deleteServer(serverID)}
-                                    onRename={renameServer}
-                                />
-                            ))
-                        )}
-                    </ServersList>
-
-                    <AddServerContainer>
-                        <TertiaryButton
-                            onClick={addServer}
+                    <TabsContainer>
+                        <TabButton
+                            active={activeTab === 'config'}
+                            onClick={() => setActiveTab('config')}
                         >
-                            <PlusServerIcon/>
-                            <FormattedMessage defaultMessage='Add MCP Server'/>
-                        </TertiaryButton>
-                    </AddServerContainer>
+                            <FormattedMessage defaultMessage='Configuration'/>
+                        </TabButton>
+                        <TabButton
+                            active={activeTab === 'tools'}
+                            onClick={() => setActiveTab('tools')}
+                        >
+                            <FormattedMessage defaultMessage='Tools'/>
+                        </TabButton>
+                    </TabsContainer>
+
+                    <TabContent>
+                        {activeTab === 'config' && (
+                            <>
+                                <ItemList title={intl.formatMessage({defaultMessage: 'MCP Configuration'})}>
+                                    <BooleanItem
+                                        label={intl.formatMessage({defaultMessage: 'Enable MCP'})}
+                                        value={config.enabled}
+                                        onChange={(enabled) => onChange({...config, enabled})}
+                                        helpText={intl.formatMessage({defaultMessage: 'Enable the Model Context Protocol (MCP) integration to access tools from MCP servers.'})}
+                                    />
+                                    <TextItem
+                                        label={intl.formatMessage({defaultMessage: 'Connection Idle Timeout (minutes)'})}
+                                        value={config.idleTimeoutMinutes?.toString() || '30'}
+                                        type='number'
+                                        onChange={(e) => {
+                                            const idleTimeoutMinutes = parseInt(e.target.value, 10);
+                                            onChange({
+                                                ...config,
+                                                idleTimeoutMinutes: isNaN(idleTimeoutMinutes) ? 30 : Math.max(1, idleTimeoutMinutes),
+                                            });
+                                        }}
+                                        helptext={intl.formatMessage({defaultMessage: 'How long to keep an inactive user connection open before closing it automatically. Lower values save resources, higher values improve response times.'})}
+                                    />
+                                </ItemList>
+
+                                <ServersList>
+                                    {!Array.isArray(config.servers) || config.servers.length < 1 ? (
+                                        <EmptyState>
+                                            <FormattedMessage defaultMessage='No MCP servers configured. Add a server to enable MCP tools.'/>
+                                        </EmptyState>
+                                    ) : (
+                                        config.servers.map((serverConfig, index) => (
+                                            <MCPServer
+                                                key={index}
+                                                serverIndex={index}
+                                                serverConfig={serverConfig}
+                                                onChange={updateServer}
+                                                onDelete={() => deleteServer(index)}
+                                            />
+                                        ))
+                                    )}
+                                </ServersList>
+
+                                <AddServerContainer>
+                                    <TertiaryButton
+                                        onClick={addServer}
+                                    >
+                                        <PlusServerIcon/>
+                                        <FormattedMessage defaultMessage='Add MCP Server'/>
+                                    </TertiaryButton>
+                                </AddServerContainer>
+                            </>
+                        )}
+
+                        {activeTab === 'tools' && (
+                            <MCPToolsViewer/>
+                        )}
+                    </TabContent>
                 </>
+            )}
+
+            {!config.enabled && (
+                <ItemList title={intl.formatMessage({defaultMessage: 'MCP Configuration'})}>
+                    <BooleanItem
+                        label={intl.formatMessage({defaultMessage: 'Enable MCP'})}
+                        value={config.enabled}
+                        onChange={(enabled) => onChange({...config, enabled})}
+                        helpText={intl.formatMessage({defaultMessage: 'Enable the Model Context Protocol (MCP) integration to access tools from MCP servers.'})}
+                    />
+                </ItemList>
             )}
         </div>
     );
@@ -538,6 +572,36 @@ const ServerNameEditContainer = styled.div`
     align-items: center;
     width: 100%;
     max-width: 300px;
+`;
+
+const TabsContainer = styled.div`
+    display: flex;
+    border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+    margin-bottom: 24px;
+`;
+
+const TabButton = styled.button<{active: boolean}>`
+    padding: 12px 16px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    color: ${(props) => (props.active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
+    border-bottom: 2px solid ${(props) => (props.active ? 'var(--button-bg)' : 'transparent')};
+    transition: color 0.2s ease, border-color 0.2s ease;
+
+    &:hover {
+        color: ${(props) => (props.active ? 'var(--button-bg)' : 'var(--center-channel-color)')};
+    }
+
+    &:first-child {
+        padding-left: 0;
+    }
+`;
+
+const TabContent = styled.div`
+    /* Tab content styling */
 `;
 
 export default MCPServers;

@@ -3,6 +3,8 @@ dist/
 webapp/src/manifest.ts
 server/manifest.go
 evals.jsonl
+go.work
+go.work.sum
 
 .claude/settings.local.json
 

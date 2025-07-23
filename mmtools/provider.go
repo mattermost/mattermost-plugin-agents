@@ -44,7 +44,7 @@ func (p *MMToolProvider) GetTools(isDM bool, bot *bots.Bot) []llm.Tool {
 			builtInTools = append(builtInTools, llm.Tool{
 				Name:        "SearchServer",
 				Description: "Search the Mattermost chat server the user is on for messages using semantic search. Use this tool whenever the user asks a question and you don't have the context to answer or you think your response would be more accurate with knowledge from the Mattermost server",
-				Schema:      llm.NewJSONSchemaFromStruct(SearchServerArgs{}),
+				Schema:      llm.NewJSONSchemaFromStruct[SearchServerArgs](),
 				Resolver:    p.toolSearchServer,
 			})
 		}
@@ -54,7 +54,7 @@ func (p *MMToolProvider) GetTools(isDM bool, bot *bots.Bot) []llm.Tool {
 			builtInTools = append(builtInTools, llm.Tool{
 				Name:        "LookupMattermostUser",
 				Description: "Lookup a Mattermost user by their username. Available information includes: username, full name, email, nickname, position, locale, timezone, last activity, and status.",
-				Schema:      llm.NewJSONSchemaFromStruct(LookupMattermostUserArgs{}),
+				Schema:      llm.NewJSONSchemaFromStruct[LookupMattermostUserArgs](),
 				Resolver:    p.toolResolveLookupMattermostUser,
 			})
 
@@ -64,7 +64,7 @@ func (p *MMToolProvider) GetTools(isDM bool, bot *bots.Bot) []llm.Tool {
 				builtInTools = append(builtInTools, llm.Tool{
 					Name:        "GetGithubIssue",
 					Description: "Retrieve a single GitHub issue by owner, repo, and issue number.",
-					Schema:      llm.NewJSONSchemaFromStruct(GetGithubIssueArgs{}),
+					Schema:      llm.NewJSONSchemaFromStruct[GetGithubIssueArgs](),
 					Resolver:    p.toolGetGithubIssue,
 				})
 			}
@@ -75,7 +75,7 @@ func (p *MMToolProvider) GetTools(isDM bool, bot *bots.Bot) []llm.Tool {
 			builtInTools = append(builtInTools, llm.Tool{
 				Name:        "GetJiraIssue",
 				Description: "Retrieve a single Jira issue by issue key.",
-				Schema:      llm.NewJSONSchemaFromStruct(GetJiraIssueArgs{}),
+				Schema:      llm.NewJSONSchemaFromStruct[GetJiraIssueArgs](),
 				Resolver:    p.toolGetJiraIssue,
 			})
 		}

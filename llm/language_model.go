@@ -20,6 +20,10 @@
 // provider-specific capabilities like vision, JSON output, and tool calling.
 package llm
 
+import (
+	"github.com/modelcontextprotocol/go-sdk/jsonschema"
+)
+
 type LanguageModel interface {
 	ChatCompletion(conversation CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error)
 	ChatCompletionNoStream(conversation CompletionRequest, opts ...LanguageModelOption) (string, error)
@@ -32,7 +36,7 @@ type LanguageModelConfig struct {
 	Model              string
 	MaxGeneratedTokens int
 	EnableVision       bool
-	JSONOutputFormat   any
+	JSONOutputFormat   *jsonschema.Schema
 }
 
 type LanguageModelOption func(*LanguageModelConfig)
@@ -47,9 +51,9 @@ func WithMaxGeneratedTokens(maxGeneratedTokens int) LanguageModelOption {
 		cfg.MaxGeneratedTokens = maxGeneratedTokens
 	}
 }
-func WithJSONOutput(format any) LanguageModelOption {
+func WithJSONOutput[T any]() LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
-		cfg.JSONOutputFormat = format
+		cfg.JSONOutputFormat = NewJSONSchemaFromStruct[T]()
 	}
 }
 

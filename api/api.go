@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/indexer"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/meetings"
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
@@ -36,6 +38,12 @@ const (
 
 type Config interface {
 	GetDefaultBotName() string
+	MCP() mcp.Config
+}
+
+type MCPClientManager interface {
+	GetOAuthManager() *mcp.OAuthManager
+	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
 }
 
 // API represents the HTTP API functionality for the plugin
@@ -56,6 +64,7 @@ type API struct {
 	licenseChecker       *enterprise.LicenseChecker
 	streamingService     streaming.Service
 	i18nBundle           *i18n.Bundle
+	mcpClientManager     MCPClientManager
 }
 
 // New creates a new API instance
@@ -75,6 +84,7 @@ func New(
 	licenseChecker *enterprise.LicenseChecker,
 	streamingService streaming.Service,
 	i18nBundle *i18n.Bundle,
+	mcpClientManager MCPClientManager,
 ) *API {
 	return &API{
 		bots:                 bots,
@@ -93,6 +103,7 @@ func New(
 		licenseChecker:       licenseChecker,
 		streamingService:     streamingService,
 		i18nBundle:           i18nBundle,
+		mcpClientManager:     mcpClientManager,
 	}
 }
 
@@ -108,6 +119,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 	router.Use(a.MattermostAuthorizationRequired)
 
+	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
 
@@ -134,6 +146,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/reindex", a.handleReindexPosts)
 	adminRouter.GET("/reindex/status", a.handleGetJobStatus)
 	adminRouter.POST("/reindex/cancel", a.handleCancelJob)
+	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 
 	searchRouter := botRequiredRouter.Group("/search")
 	// Only returns search results

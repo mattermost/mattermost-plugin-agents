@@ -238,30 +238,28 @@ const Config = (props: Props) => {
                     props.setSaveNeeded();
                 }}
             />
-            {mcpConfig.enabled &&
-                <Panel
-                    title={
-                        <Horizontal>
-                            <FormattedMessage defaultMessage='Model Context Protocol (MCP)'/>
-                            <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
-                        </Horizontal>
-                    }
-                    subtitle={intl.formatMessage({defaultMessage: 'Configure MCP servers to enable AI tools.'})}
-                >
-                    <MCPServers
-                        mcpConfig={mcpConfig}
-                        onChange={(config) => {
-                            // Ensure we're creating a valid structure for the server configuration
-                            const updatedConfig = {
-                                ...config,
-                                servers: config.servers || {},
-                            };
-                            props.onChange(props.id, {...value, mcp: updatedConfig});
-                            props.setSaveNeeded();
-                        }}
-                    />
-                </Panel>
-            }
+            <Panel
+                title={
+                    <Horizontal>
+                        <FormattedMessage defaultMessage='Model Context Protocol (MCP)'/>
+                        <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
+                    </Horizontal>
+                }
+                subtitle={intl.formatMessage({defaultMessage: 'Configure MCP servers to enable AI tools.'})}
+            >
+                <MCPServers
+                    mcpConfig={mcpConfig}
+                    onChange={(config) => {
+                        // Ensure we're creating a valid structure for the server configuration
+                        const updatedConfig = {
+                            ...config,
+                            servers: config.servers || {},
+                        };
+                        props.onChange(props.id, {...value, mcp: updatedConfig});
+                        props.setSaveNeeded();
+                    }}
+                />
+            </Panel>
         </ConfigContainer>
     );
 };

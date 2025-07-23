@@ -372,6 +372,23 @@ export async function cancelReindex() {
         url,
     });
 }
+
+export async function getMCPTools() {
+    const url = `${baseRoute()}/admin/mcp/tools`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
 export async function getChannelInterval(
     channelID: string,
     startTime: number,

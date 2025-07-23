@@ -1050,6 +1050,51 @@ func (_c *MockClient_HasPermissionToChannel_Call) RunAndReturn(run func(userID s
 	return _c
 }
 
+// KVDelete provides a mock function for the type MockClient
+func (_mock *MockClient) KVDelete(key string) error {
+	ret := _mock.Called(key)
+
+	if len(ret) == 0 {
+		panic("no return value specified for KVDelete")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(string) error); ok {
+		r0 = returnFunc(key)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockClient_KVDelete_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'KVDelete'
+type MockClient_KVDelete_Call struct {
+	*mock.Call
+}
+
+// KVDelete is a helper method to define mock.On call
+//   - key
+func (_e *MockClient_Expecter) KVDelete(key interface{}) *MockClient_KVDelete_Call {
+	return &MockClient_KVDelete_Call{Call: _e.mock.On("KVDelete", key)}
+}
+
+func (_c *MockClient_KVDelete_Call) Run(run func(key string)) *MockClient_KVDelete_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string))
+	})
+	return _c
+}
+
+func (_c *MockClient_KVDelete_Call) Return(err error) *MockClient_KVDelete_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockClient_KVDelete_Call) RunAndReturn(run func(key string) error) *MockClient_KVDelete_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // KVGet provides a mock function for the type MockClient
 func (_mock *MockClient) KVGet(key string, value interface{}) error {
 	ret := _mock.Called(key, value)
@@ -1347,6 +1392,41 @@ func (_c *MockClient_PublishWebSocketEvent_Call) Return() *MockClient_PublishWeb
 }
 
 func (_c *MockClient_PublishWebSocketEvent_Call) RunAndReturn(run func(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast)) *MockClient_PublishWebSocketEvent_Call {
+	_c.Run(run)
+	return _c
+}
+
+// SendEphemeralPost provides a mock function for the type MockClient
+func (_mock *MockClient) SendEphemeralPost(userID string, post *model.Post) {
+	_mock.Called(userID, post)
+	return
+}
+
+// MockClient_SendEphemeralPost_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SendEphemeralPost'
+type MockClient_SendEphemeralPost_Call struct {
+	*mock.Call
+}
+
+// SendEphemeralPost is a helper method to define mock.On call
+//   - userID
+//   - post
+func (_e *MockClient_Expecter) SendEphemeralPost(userID interface{}, post interface{}) *MockClient_SendEphemeralPost_Call {
+	return &MockClient_SendEphemeralPost_Call{Call: _e.mock.On("SendEphemeralPost", userID, post)}
+}
+
+func (_c *MockClient_SendEphemeralPost_Call) Run(run func(userID string, post *model.Post)) *MockClient_SendEphemeralPost_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(*model.Post))
+	})
+	return _c
+}
+
+func (_c *MockClient_SendEphemeralPost_Call) Return() *MockClient_SendEphemeralPost_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockClient_SendEphemeralPost_Call) RunAndReturn(run func(userID string, post *model.Post)) *MockClient_SendEphemeralPost_Call {
 	_c.Run(run)
 	return _c
 }

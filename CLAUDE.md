@@ -6,6 +6,7 @@
 - Run all tests: `make test`
 - Run specific Go test: `go test -v ./server/path/to/package -run TestName`
 - Run e2e tests: `make e2e`
+- Run specific e2e test file: `cd e2e && npx playwright test filename.spec.ts --reporter=list`
 
 ## Code Style Guidelines
 - Go: Follow Go standard formatting conventions according to goimports

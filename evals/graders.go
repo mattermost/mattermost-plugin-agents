@@ -43,7 +43,7 @@ func (e *Eval) LLMRubric(rubric, output string) (*RubricResult, error) {
 		Context: llm.NewContext(),
 	}
 
-	llmResult, gradeErr := e.GraderLLM.ChatCompletionNoStream(req, llm.WithMaxGeneratedTokens(1000), llm.WithJSONOutput(&RubricResult{}))
+	llmResult, gradeErr := e.GraderLLM.ChatCompletionNoStream(req, llm.WithMaxGeneratedTokens(1000), llm.WithJSONOutput[RubricResult]())
 	if gradeErr != nil {
 		return nil, fmt.Errorf("failed to grade with llm: %w", gradeErr)
 	}
