@@ -171,7 +171,7 @@ test.describe('Chat History', () => {
 
     // Click on the first history item
     await aiPlugin.clickChatHistoryItem(0);
-    
+
     // Verify we can see the conversation content we created
     await expect(page.getByText('Test conversation')).toBeVisible();
     await expect(page.getByText(responseTestText)).toBeVisible();
@@ -191,9 +191,64 @@ test.describe('Chat History', () => {
 
     // Should be clickable
     await aiPlugin.chatHistoryButton.click();
-    
+
     // Should show threads list with content
     await expect(aiPlugin.threadsListContainer).toBeVisible();
     await expect(aiPlugin.threadsListContainer.locator('div').first()).toBeVisible();
   });
+});
+
+test.describe('Thread Analysis', () => {
+  test('thread summarization follow-up questions work correctly', async ({ page }) => {
+    const { mmPage, aiPlugin } = await setupTestPage(page);
+
+    // Create a thread by posting a root message and replies
+    const rootPost = await mmPage.sendMessageAsUser(mattermost, username, password, 'First message in the thread discussing the project timeline');
+
+    // Get client to create replies
+    const userClient = await mattermost.getClient(username, password);
+
+    // Create replies to form a thread
+    await userClient.createPost({
+      channel_id: rootPost.channel_id,
+      root_id: rootPost.id,
+      message: 'Second message: We need to complete the design phase by next Friday'
+    });
+
+    await userClient.createPost({
+      channel_id: rootPost.channel_id,
+      root_id: rootPost.id,
+      message: 'Third message: The development phase will take 3 weeks after that'
+    });
+
+    // Navigate to the post
+    await page.goto(mattermost.url() + '/test/channels/town-square');
+
+    // Wait for the post to be visible
+    await page.locator(`#post_${rootPost.id}`).waitFor({ state: 'visible' });
+
+    // Hover over the root post to show the post menu
+    await page.locator(`#post_${rootPost.id}`).hover();
+
+    // Click on the AI actions menu
+    await page.getByTestId(`ai-actions-menu`).click();
+
+    // Click on "Summarize Thread"
+    await openAIMock.addCompletionMock(responseTest);
+    await page.getByRole('button', { name: 'Summarize Thread' }).click();
+
+    // Wait for the AI RHS to open and show the summary
+    await aiPlugin.expectRHSOpenWithPost();
+    await expect(page.getByText(responseTestText)).toBeVisible();
+
+    // Now test the follow-up question functionality
+    await openAIMock.addCompletionMock(responseTest2);
+
+    // Send a follow-up question
+    await aiPlugin.sendMessage('What is the total duration for both phases?');
+
+    // Verify the follow-up response is received successfully
+    await aiPlugin.waitForBotResponse(responseTest2Text);
+  });
+
 });

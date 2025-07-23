@@ -15,7 +15,7 @@ export class AIPlugin {
   constructor(page: Page) {
     this.page = page;
     this.appBarIcon = page.locator('#app-bar-icon-mattermost-ai');
-    this.rhsPostTextarea = page.getByTestId('rhs-new-tab-create-post').locator('textarea');
+    this.rhsPostTextarea = page.locator("#rhsContainer").locator('textarea');
     this.rhsSendButton = page.locator('#rhsContainer').getByTestId('SendMessageButton');
     this.regenerateButton = page.getByRole('button', { name: 'Regenerate' });
     this.chatHistoryButton = page.getByTestId('chat-history');

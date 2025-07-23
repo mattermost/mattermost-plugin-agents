@@ -72,7 +72,16 @@ func (t *Threads) createInitalPosts(postIDToAnalyze string, context *llm.Context
 	formattedThread := format.ThreadData(threadData)
 	context.Parameters = map[string]any{"Thread": formattedThread}
 
-	systemPrompt, err := t.prompts.Format(promptName, context)
+	prompt := prompts.PromptSummarizeThreadSystem
+	switch promptName {
+	case "summarize_thread":
+		prompt = prompts.PromptSummarizeThreadSystem
+	case "action_items":
+		prompt = prompts.PromptFindActionItemsSystem
+	case "open_questions":
+		prompt = prompts.PromptFindOpenQuestionsSystem
+	}
+	systemPrompt, err := t.prompts.Format(prompt, context)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format system prompt: %w", err)
 	}
