@@ -77,6 +77,11 @@ func NewMattermostStdioMCPServer(serverURL, token string, opts ...Option) (*Matt
 		return nil, fmt.Errorf("startup token validation failed: %w", err)
 	}
 
+	// Initialize data directory for file operations
+	if err := tools.EnsureDataDirectory(); err != nil {
+		mattermostServer.logger.Warn("failed to initialize data directory", mlog.Err(err))
+	}
+
 	// Register all Mattermost tools
 	mattermostServer.registerTools()
 

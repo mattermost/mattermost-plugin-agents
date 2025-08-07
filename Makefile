@@ -286,7 +286,8 @@ deploy: dist
 .PHONY: mcp-server
 mcp-server:
 	@echo Building MCP server...
-	$(GO) build $(GO_BUILD_FLAGS) -o bin/mattermost-mcp-server ./mcpserver/cmd/main.go
+	mkdir -p mcpserver/bin
+	$(GO) build $(GO_BUILD_FLAGS) -o mcpserver/bin/mattermost-mcp-server ./mcpserver/cmd/main.go
 
 ## Builds and installs the plugin to a server, updating the webapp automatically when changed.
 .PHONY: watch

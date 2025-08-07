@@ -1,0 +1,87 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+package tools
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestFetchFileData_FilePathValidation(t *testing.T) {
+	// Ensure data directory exists
+	if err := EnsureDataDirectory(); err != nil {
+		t.Fatalf("Failed to create data directory: %v", err)
+	}
+
+	// Get data directory path
+	dataDir, err := getDataDirectory()
+	if err != nil {
+		t.Fatalf("Failed to get data directory: %v", err)
+	}
+
+	// Create a temporary test file in data directory
+	testFile := "test_file.txt"
+	testContent := "test content"
+	testFilePath := filepath.Join(dataDir, testFile)
+	err = os.WriteFile(testFilePath, []byte(testContent), 0600)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	defer os.Remove(testFilePath)
+
+	// Get current working directory for test validation
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+
+	testCases := []struct {
+		name       string
+		filespec   string
+		shouldFail bool
+	}{
+		{
+			name:       "Normal file in current directory",
+			filespec:   testFile,
+			shouldFail: false,
+		},
+		{
+			name:       "Relative path with parent directory",
+			filespec:   "../" + testFile,
+			shouldFail: true,
+		},
+		{
+			name:       "Multiple parent directories",
+			filespec:   "../../etc/passwd",
+			shouldFail: true,
+		},
+		{
+			name:       "System absolute path",
+			filespec:   "/etc/passwd",
+			shouldFail: true,
+		},
+		{
+			name:       "Local absolute path should be rejected",
+			filespec:   cwd + "/" + testFile,
+			shouldFail: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, testErr := fetchFileData(tc.filespec)
+
+			if tc.shouldFail {
+				if testErr == nil {
+					t.Errorf("Expected fetchFileData to fail for %s, but it succeeded", tc.filespec)
+				}
+			} else {
+				if testErr != nil {
+					t.Errorf("Expected fetchFileData to succeed for %s, but it failed: %v", tc.filespec, testErr)
+				}
+			}
+		})
+	}
+}

@@ -16,6 +16,28 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// getDataDirectory returns the path to the MCP server data directory
+func getDataDirectory() (string, error) {
+	// Get the directory where the executable is located
+	execPath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to get executable path: %w", err)
+	}
+	execDir := filepath.Dir(execPath)
+
+	// With the new structure, binary is in mcpserver/bin/, so data is ../data
+	return filepath.Join(execDir, "..", "data"), nil
+}
+
+// EnsureDataDirectory creates the data directory if it doesn't exist
+func EnsureDataDirectory() error {
+	dataDir, err := getDataDirectory()
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(dataDir, 0700)
+}
+
 // fetchFileData fetches file data from a file path or URL and returns it as []byte
 func fetchFileData(filespec string) ([]byte, error) {
 	if filespec == "" {
@@ -44,7 +66,27 @@ func fetchFileData(filespec string) ([]byte, error) {
 
 	// Handle as file path
 	cleanPath := filepath.Clean(filespec)
-	file, err := os.Open(cleanPath)
+
+	// Use data directory as base for file operations
+	dataDir, err := getDataDirectory()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get data directory: %w", err)
+	}
+
+	// Ensure data directory exists
+	if dirErr := EnsureDataDirectory(); dirErr != nil {
+		return nil, fmt.Errorf("failed to create data directory: %w", dirErr)
+	}
+
+	// Validate file path format
+	if filepath.IsAbs(cleanPath) || strings.Contains(cleanPath, "..") {
+		return nil, fmt.Errorf("invalid path: %s", filespec)
+	}
+
+	// Build the full file path within data directory
+	filePath := filepath.Join(dataDir, cleanPath)
+
+	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
