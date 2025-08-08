@@ -10,23 +10,25 @@ import (
 )
 
 func TestFetchFileData_FilePathValidation(t *testing.T) {
-	// Ensure data directory exists
-	if err := EnsureDataDirectory(); err != nil {
-		t.Fatalf("Failed to create data directory: %v", err)
+	// Set up test data directory
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		t.Fatalf("Failed to create test data directory: %v", err)
 	}
-
-	// Get data directory path
-	dataDir, err := getDataDirectory()
-	if err != nil {
-		t.Fatalf("Failed to get data directory: %v", err)
+	
+	// Override GetDataDirectoryInternal for this test
+	originalGetDataDirectory := GetDataDirectoryInternal
+	GetDataDirectoryInternal = func() (string, error) {
+		return dataDir, nil
 	}
+	t.Cleanup(func() { GetDataDirectoryInternal = originalGetDataDirectory })
 
 	// Create a temporary test file in data directory
 	testFile := "test_file.txt"
 	testContent := "test content"
 	testFilePath := filepath.Join(dataDir, testFile)
-	err = os.WriteFile(testFilePath, []byte(testContent), 0600)
-	if err != nil {
+	if err := os.WriteFile(testFilePath, []byte(testContent), 0600); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 	defer os.Remove(testFilePath)
@@ -34,8 +36,7 @@ func TestFetchFileData_FilePathValidation(t *testing.T) {
 	// Create another test file for the complex separator test
 	testFile2 := "file.txt"
 	testFile2Path := filepath.Join(dataDir, testFile2)
-	err = os.WriteFile(testFile2Path, []byte(testContent), 0600)
-	if err != nil {
+	if err := os.WriteFile(testFile2Path, []byte(testContent), 0600); err != nil {
 		t.Fatalf("Failed to create second test file: %v", err)
 	}
 	defer os.Remove(testFile2Path)

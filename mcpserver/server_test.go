@@ -6,6 +6,8 @@ package mcpserver_test
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	mmcontainer "github.com/mattermost/testcontainers-mattermost-go"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
@@ -30,6 +33,18 @@ type TestSuite struct {
 
 // SetupTestSuite initializes a Mattermost container and MCP server for testing
 func SetupTestSuite(t *testing.T) *TestSuite {
+	// Set up test data directory to avoid "executable not in expected 'bin' directory structure" errors
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0700), "Failed to create test data directory")
+	
+	// Override GetDataDirectoryInternal for this test
+	originalGetDataDirectory := tools.GetDataDirectoryInternal
+	tools.GetDataDirectoryInternal = func() (string, error) {
+		return dataDir, nil
+	}
+	t.Cleanup(func() { tools.GetDataDirectoryInternal = originalGetDataDirectory })
+
 	ctx := context.Background()
 
 	// Start Mattermost container with PAT enabled

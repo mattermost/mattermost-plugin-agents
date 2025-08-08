@@ -16,6 +16,9 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// GetDataDirectoryInternal is the internal function that can be overridden in tests
+var GetDataDirectoryInternal = getDataDirectory
+
 // getDataDirectory returns the path to the MCP server data directory
 func getDataDirectory() (string, error) {
 	execPath, err := os.Executable()
@@ -38,7 +41,7 @@ func getDataDirectory() (string, error) {
 
 // EnsureDataDirectory creates the data directory if it doesn't exist
 func EnsureDataDirectory() error {
-	dataDir, err := getDataDirectory()
+	dataDir, err := GetDataDirectoryInternal()
 	if err != nil {
 		return err
 	}
@@ -75,7 +78,7 @@ func fetchFileData(filespec string) ([]byte, error) {
 	cleanPath := filepath.Clean(filespec)
 
 	// Use data directory as base for file operations
-	dataDir, err := getDataDirectory()
+	dataDir, err := GetDataDirectoryInternal()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get data directory: %w", err)
 	}
