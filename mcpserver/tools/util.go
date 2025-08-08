@@ -18,15 +18,22 @@ import (
 
 // getDataDirectory returns the path to the MCP server data directory
 func getDataDirectory() (string, error) {
-	// Get the directory where the executable is located
 	execPath, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("failed to get executable path: %w", err)
 	}
+	
+	// More explicit: expect binary in mcpserver/bin, data in mcpserver/data
 	execDir := filepath.Dir(execPath)
-
-	// With the new structure, binary is in mcpserver/bin/, so data is ../data
-	return filepath.Join(execDir, "..", "data"), nil
+	mcpRoot := filepath.Dir(execDir) // up one level from bin/
+	dataDir := filepath.Join(mcpRoot, "data")
+	
+	// Validate the structure to catch deployment issues early
+	if !strings.HasSuffix(execDir, "bin") {
+		return "", fmt.Errorf("executable not in expected 'bin' directory structure")
+	}
+	
+	return dataDir, nil
 }
 
 // EnsureDataDirectory creates the data directory if it doesn't exist
