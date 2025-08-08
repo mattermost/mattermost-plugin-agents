@@ -29,7 +29,7 @@ func getDataDirectory() (string, error) {
 	dataDir := filepath.Join(mcpRoot, "data")
 
 	// Validate the structure to catch deployment issues early
-	if !strings.HasSuffix(execDir, "bin") {
+	if filepath.Base(execDir) != "bin" {
 		return "", fmt.Errorf("executable not in expected 'bin' directory structure")
 	}
 
