@@ -16,7 +16,7 @@ func TestFetchFileData_FilePathValidation(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		t.Fatalf("Failed to create test data directory: %v", err)
 	}
-	
+
 	// Override GetDataDirectoryInternal for this test
 	originalGetDataDirectory := GetDataDirectoryInternal
 	GetDataDirectoryInternal = func() (string, error) {

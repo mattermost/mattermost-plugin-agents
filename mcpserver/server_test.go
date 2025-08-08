@@ -37,7 +37,7 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	tempDir := t.TempDir()
 	dataDir := filepath.Join(tempDir, "data")
 	require.NoError(t, os.MkdirAll(dataDir, 0700), "Failed to create test data directory")
-	
+
 	// Override GetDataDirectoryInternal for this test
 	originalGetDataDirectory := tools.GetDataDirectoryInternal
 	tools.GetDataDirectoryInternal = func() (string, error) {
