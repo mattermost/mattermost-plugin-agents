@@ -22,17 +22,17 @@ func getDataDirectory() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get executable path: %w", err)
 	}
-	
+
 	// More explicit: expect binary in mcpserver/bin, data in mcpserver/data
 	execDir := filepath.Dir(execPath)
 	mcpRoot := filepath.Dir(execDir) // up one level from bin/
 	dataDir := filepath.Join(mcpRoot, "data")
-	
+
 	// Validate the structure to catch deployment issues early
 	if !strings.HasSuffix(execDir, "bin") {
 		return "", fmt.Errorf("executable not in expected 'bin' directory structure")
 	}
-	
+
 	return dataDir, nil
 }
 
