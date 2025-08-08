@@ -31,6 +31,15 @@ func TestFetchFileData_FilePathValidation(t *testing.T) {
 	}
 	defer os.Remove(testFilePath)
 
+	// Create another test file for the complex separator test
+	testFile2 := "file.txt"
+	testFile2Path := filepath.Join(dataDir, testFile2)
+	err = os.WriteFile(testFile2Path, []byte(testContent), 0600)
+	if err != nil {
+		t.Fatalf("Failed to create second test file: %v", err)
+	}
+	defer os.Remove(testFile2Path)
+
 	// Get current working directory for test validation
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -66,6 +75,16 @@ func TestFetchFileData_FilePathValidation(t *testing.T) {
 			name:       "Local absolute path should be rejected",
 			filespec:   cwd + "/" + testFile,
 			shouldFail: true,
+		},
+		{
+			name:       "Complex path traversal after cleaning",
+			filespec:   "documents/../../../etc/passwd",
+			shouldFail: true,
+		},
+		{
+			name:       "Path with multiple separators",
+			filespec:   "folder///../file.txt",
+			shouldFail: false, // Should resolve to "file.txt" which is valid
 		},
 	}
 
