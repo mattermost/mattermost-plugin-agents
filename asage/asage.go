@@ -9,50 +9,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-ai/httpexternal"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
-
-// customHeadersTransport wraps an http.RoundTripper to add custom headers to every request
-type customHeadersTransport struct {
-	base    http.RoundTripper
-	headers map[string]string
-}
-
-func (t *customHeadersTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Clone the request to avoid modifying the original
-	newReq := req.Clone(req.Context())
-
-	// Add custom headers
-	for key, value := range t.headers {
-		newReq.Header.Set(key, value)
-	}
-
-	return t.base.RoundTrip(newReq)
-}
-
-// wrapHTTPClientWithCustomHeaders wraps an http.Client to add custom headers to all requests
-func wrapHTTPClientWithCustomHeaders(baseClient *http.Client, customHeaders map[string]string) *http.Client {
-	if len(customHeaders) == 0 {
-		return baseClient
-	}
-
-	transport := baseClient.Transport
-	if transport == nil {
-		transport = http.DefaultTransport
-	}
-
-	wrappedClient := &http.Client{
-		Transport: &customHeadersTransport{
-			base:    transport,
-			headers: customHeaders,
-		},
-		CheckRedirect: baseClient.CheckRedirect,
-		Jar:           baseClient.Jar,
-		Timeout:       baseClient.Timeout,
-	}
-
-	return wrappedClient
-}
 
 type Provider struct {
 	client           *Client
@@ -63,7 +22,7 @@ type Provider struct {
 
 func New(llmService llm.ServiceConfig, httpClient *http.Client) *Provider {
 	// Wrap the HTTP client with custom headers if any are provided
-	wrappedHTTPClient := wrapHTTPClientWithCustomHeaders(httpClient, llmService.CustomHeaders)
+	wrappedHTTPClient := httpexternal.WrapHTTPClientWithCustomHeaders(httpClient, llmService.CustomHeaders)
 	client := NewClient(llmService.APIKey, wrappedHTTPClient, llmService.APIURL)
 
 	return &Provider{
