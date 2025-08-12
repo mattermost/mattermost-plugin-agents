@@ -94,6 +94,7 @@ Navigate to **System Console > Plugins > Agents** and select **Add an Agent**.
 | **Enable Vision** | Enable Vision to allow the agent to process images. Requires a compatible model and service. |
 | **Enable Tools** | By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools. |
 | **Access Control** | Set which teams, channels, and users can access this agent |
+| **Custom Headers** | Optional custom HTTP headers for API requests to the LLM provider. Useful for proxy authentication, request tracking, or other custom requirements. |
 
 #### LLM Specific Agent Settings
 
