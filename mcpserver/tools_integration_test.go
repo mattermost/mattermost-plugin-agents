@@ -343,6 +343,66 @@ func TestMCPToolsIntegration(t *testing.T) {
 			assert.False(t, result.IsError, "search_posts with no results should not error")
 		})
 	})
+
+	t.Run("DMSelfTool", func(t *testing.T) {
+		t.Run("HappyPath", func(t *testing.T) {
+			args := map[string]interface{}{
+				"message": "Test DM to myself from integration test!",
+			}
+
+			result := executeToolWithMCP(t, suite, "dm_self", args)
+			assert.False(t, result.IsError, "dm_self should succeed")
+			assert.NotEmpty(t, result.Content, "dm_self should return content")
+
+			// Verify the response mentions success
+			if len(result.Content) > 0 {
+				if textContent, ok := result.Content[0].(mcp.TextContent); ok {
+					assert.Contains(t, textContent.Text, "Successfully sent DM to yourself", "Response should indicate success")
+					assert.Contains(t, textContent.Text, "with ID:", "Response should include post ID")
+				}
+			}
+
+			// Get user to find DM channel
+			user, _, err := client.GetMe(context.Background(), "")
+			require.NoError(t, err)
+
+			// Get DM channel with self (userID__userID format)
+			dmChannel, _, err := client.CreateDirectChannel(context.Background(), user.Id, user.Id)
+			require.NoError(t, err)
+
+			// Verify the post was actually created in the DM channel
+			posts, _, err := client.GetPostsForChannel(context.Background(), dmChannel.Id, 0, 10, "", false, false)
+			require.NoError(t, err)
+			found := false
+			for _, post := range posts.Posts {
+				if post.Message == "Test DM to myself from integration test!" {
+					found = true
+					// Verify props were set
+					assert.Equal(t, "true", post.GetProp("from_webhook"), "Post should have from_webhook prop set")
+					break
+				}
+			}
+			assert.True(t, found, "Test DM post should be found in self DM channel")
+		})
+
+		t.Run("EmptyMessage", func(t *testing.T) {
+			args := map[string]interface{}{
+				"message": "",
+			}
+
+			result := executeToolWithMCP(t, suite, "dm_self", args)
+			assert.True(t, result.IsError, "dm_self with empty message should fail")
+		})
+
+		t.Run("MissingMessage", func(t *testing.T) {
+			args := map[string]interface{}{
+				// missing message field
+			}
+
+			result := executeToolWithMCP(t, suite, "dm_self", args)
+			assert.True(t, result.IsError, "dm_self without message should fail")
+		})
+	})
 }
 
 // executeToolWithMCP calls the MCP tool through the unified helper

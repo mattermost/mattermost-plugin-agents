@@ -38,6 +38,12 @@ type CreatePostAsUserArgs struct {
 	Attachments []string `json:"attachments,omitempty" jsonschema_description:"Optional list of file paths or URLs to attach to the post"`
 }
 
+// DMSelfArgs represents arguments for the dm_self tool
+type DMSelfArgs struct {
+	Message     string   `json:"message" jsonschema_description:"The message content to send to yourself"`
+	Attachments []string `json:"attachments,omitempty" jsonschema_description:"Optional list of file paths or URLs to attach to the message"`
+}
+
 // getPostTools returns all post-related tools
 func (p *MattermostToolProvider) getPostTools() []MCPTool {
 	return []MCPTool{
@@ -52,6 +58,12 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 			Description: "Create a new post in Mattermost",
 			Schema:      llm.NewJSONSchemaFromStruct[CreatePostArgs](),
 			Resolver:    p.toolCreatePost,
+		},
+		{
+			Name:        "dm_self",
+			Description: "Send a direct message to yourself. Use this when the user requests to send something to themselves (e.g., 'send me this', 'DM me that')",
+			Schema:      llm.NewJSONSchemaFromStruct[DMSelfArgs](),
+			Resolver:    p.toolDMSelf,
 		},
 	}
 }
@@ -247,4 +259,59 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 	}
 
 	return fmt.Sprintf("Successfully created post with ID %s as user %s%s", createdPost.Id, user.Username, attachmentMessage), nil
+}
+
+// toolDMSelf implements the dm_self tool
+func (p *MattermostToolProvider) toolDMSelf(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+	var args DMSelfArgs
+	err := argsGetter(&args)
+	if err != nil {
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool dm_self: %w", err)
+	}
+
+	// Validate required fields
+	if args.Message == "" {
+		return "message is required", fmt.Errorf("message cannot be empty")
+	}
+
+	// Get client from context
+	if mcpContext.Client == nil {
+		return "client not available", fmt.Errorf("client not available in context")
+	}
+	client := mcpContext.Client
+	ctx := context.Background()
+
+	// Get current user information
+	user, _, err := client.GetMe(ctx, "")
+	if err != nil {
+		return "failed to get current user", fmt.Errorf("error getting current user: %w", err)
+	}
+
+	// Create or get direct channel with self
+	dmChannel, _, err := client.CreateDirectChannel(ctx, user.Id, user.Id)
+	if err != nil {
+		return "failed to create DM channel", fmt.Errorf("error creating direct channel: %w", err)
+	}
+
+	// Upload files if specified
+	fileIDs, attachmentMessage := handleFileAttachments(ctx, client, dmChannel.Id, args.Attachments)
+
+	// Create the post in the DM channel
+	post := &model.Post{
+		ChannelId: dmChannel.Id,
+		Message:   args.Message,
+		FileIds:   fileIDs,
+	}
+
+	// Set props to trigger notifications
+	post.SetProps(map[string]interface{}{
+		"from_webhook": "true",
+	})
+
+	createdPost, _, err := client.CreatePost(ctx, post)
+	if err != nil {
+		return "failed to create DM post", fmt.Errorf("error creating DM post: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully sent DM to yourself with ID: %s%s", createdPost.Id, attachmentMessage), nil
 }
