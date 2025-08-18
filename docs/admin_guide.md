@@ -219,3 +219,5 @@ The following features require an Enterprise license:
 - Embedding search (Experimental)
 - MCP Support (Experimental)
 - Usage analytics
+- **AI Actions** menu options including unread channel and discussion thread summarization
+- Recorded meeting transcripts and summarization

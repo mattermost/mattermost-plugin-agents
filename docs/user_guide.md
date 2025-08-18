@@ -14,8 +14,8 @@ Access AI features through the right pane in one of the following ways:
 
 - Select the **Agents** icon in the apps sidebar.
 - @mention an AI bot in any channel where you have access (such as `@copilot`).
-- Use the **AI Actions** menu by hovering over the first message in any conversation thread
-- Use the **Ask AI** option in channels with unread messages.
+- Use the **AI Actions** menu by hovering over the first message in any conversation thread (requires a Mattermost Enterprise license)
+- Use the **Ask AI** option in channels with unread messages (requires a Mattermost Enterprise license)
 
 ### Mobile
 
@@ -55,6 +55,8 @@ Available tools in direct messages include:
 
 ### Summarize discussion threads
 
+Summarizing a discussion thread requires a Mattermost Enterprise license.
+
 To summarize a discussion thread:
 
 1. Hover over the first message in any [conversation thread](https://docs.mattermost.com/collaborate/organize-conversations.html).
@@ -66,6 +68,8 @@ The thread summary is generated in the Agents pane, and only you can view the su
 This is particularly useful for catching up on long discussions, creating meeting notes, and sharing outcomes with team members. You can also extract action items or find open questions in the same menu.
 
 ### Summarize unread channels
+
+Summarizing unread Mattermost channels requires a Mattermost Enterprise license.
 
 To summarize unread Mattermost channels:
 
