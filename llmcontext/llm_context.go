@@ -164,6 +164,15 @@ func (b *Builder) WithLLMContextDefaultTools(bot *bots.Bot, isDM bool) llm.Conte
 	}
 }
 
+// WithLLMContextNoTools explicitly disables tools for this context session only,
+// overriding the bot's DisableTools configuration. This allows inter-plugin requests
+// to work with tool-enabled bots by bypassing tools for non-streaming calls.
+func (b *Builder) WithLLMContextNoTools() llm.ContextOption {
+	return func(c *llm.Context) {
+		c.Tools = llm.NewNoTools()
+	}
+}
+
 func (b *Builder) WithLLMContextParameters(params map[string]interface{}) llm.ContextOption {
 	return func(c *llm.Context) {
 		c.Parameters = params
