@@ -245,6 +245,16 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 		}
 	}
 
+	// Extract and send token usage data
+	usage := llm.TokenUsage{
+		InputTokens:  int(message.Usage.InputTokens),
+		OutputTokens: int(message.Usage.OutputTokens),
+	}
+	state.output <- llm.TextStreamEvent{
+		Type:  llm.EventTypeUsage,
+		Value: usage,
+	}
+
 	// Send end event
 	state.output <- llm.TextStreamEvent{
 		Type:  llm.EventTypeEnd,

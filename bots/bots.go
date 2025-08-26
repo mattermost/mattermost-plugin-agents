@@ -159,13 +159,17 @@ func (b *MMBots) UpdateBotsCache(cfgBots []llm.BotConfig) error {
 	}
 
 	for _, bot := range b.bots {
-		bot.llm = b.getLLM(bot.cfg.Service)
+		var err error
+		bot.llm, err = b.getLLM(bot.cfg.Service, bot.cfg.Name)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig) llm.LanguageModel {
+func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botName string) (llm.LanguageModel, error) {
 	// Create the correct model
 	var result llm.LanguageModel
 	switch serviceConfig.Type {
@@ -188,13 +192,18 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig) llm.LanguageModel {
 
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)
+	var err error
+	result, err = llm.NewTokenLoggingWrapper(result, botName)
+	if err != nil {
+		return nil, err
+	}
 
 	// Logging
 	if b.config.EnableLLMLogging() {
 		result = llm.NewLanguageModelLogWrapper(b.pluginAPI.Log, result)
 	}
 
-	return result
+	return result, nil
 }
 
 // TODO: This really doesn't belong here. Figure out where to put this.
