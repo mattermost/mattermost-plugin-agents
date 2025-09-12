@@ -448,7 +448,7 @@ func (s *OpenAI) completionRequestFromConfig(cfg llm.LanguageModelConfig) openai
 	request := openaiClient.ChatCompletionRequest{
 		Model: cfg.Model,
 	}
-	request.MaxTokens = cfg.MaxGeneratedTokens
+	request.MaxCompletionTokens = cfg.MaxGeneratedTokens
 
 	if cfg.JSONOutputFormat != nil {
 		request.ResponseFormat = &openaiClient.ChatCompletionResponseFormat{
