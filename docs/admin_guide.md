@@ -402,6 +402,9 @@ The Model Context Protocol (MCP) integration allows Agents to connect to externa
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation
 
 ### Atlassian MCP server authorization
+> **Note:** The plugin currently doesn't render Markdown links (e.g., JIRA ticket links) in bot responses. URLs are displayed in plain text rather than as clickable Markdown-rendered links. This is not a bug but intended security behavior to prevent potential data exfiltration through links. While this limitation exists, improvements to link handling are being considered for future development. 
+
+## Enterprise features
 
 When users connect to the Atlassian MCP server, they may encounter an authorization error requiring an organization admin to authorize your Mattermost domain. This configuration must be completed in Atlassian's admin console.
 
