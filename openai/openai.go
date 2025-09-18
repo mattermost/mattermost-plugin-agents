@@ -64,7 +64,8 @@ func NewAzure(config Config, httpClient *http.Client) *OpenAI {
 	opts := []option.RequestOption{
 		azure.WithEndpoint(strings.TrimSuffix(config.APIURL, "/"), "2025-04-01-preview"),
 		azure.WithAPIKey(config.APIKey),
-		option.WithHTTPClient(httpClient),
+		
+		option.WithHTTPClient(httpexternal.WrapHTTPClientWithCustomHeaders(httpClient, config.CustomHeaders)),
 	}
 
 	client := openai.NewClient(opts...)
@@ -78,7 +79,7 @@ func NewAzure(config Config, httpClient *http.Client) *OpenAI {
 func NewCompatible(config Config, httpClient *http.Client) *OpenAI {
 	opts := []option.RequestOption{
 		option.WithAPIKey(config.APIKey),
-		option.WithHTTPClient(httpClient),
+		option.WithHTTPClient(httpexternal.WrapHTTPClientWithCustomHeaders(httpClient, config.CustomHeaders)),
 		option.WithBaseURL(strings.TrimSuffix(config.APIURL, "/")),
 	}
 
@@ -93,7 +94,7 @@ func NewCompatible(config Config, httpClient *http.Client) *OpenAI {
 func New(config Config, httpClient *http.Client) *OpenAI {
 	opts := []option.RequestOption{
 		option.WithAPIKey(config.APIKey),
-		option.WithHTTPClient(httpClient),
+		option.WithHTTPClient(httpexternal.WrapHTTPClientWithCustomHeaders(httpClient, config.CustomHeaders)),
 	}
 
 	if config.OrgID != "" {
@@ -117,7 +118,7 @@ func NewEmbeddings(config Config, httpClient *http.Client) *OpenAI {
 
 	opts := []option.RequestOption{
 		option.WithAPIKey(config.APIKey),
-		option.WithHTTPClient(httpClient),
+		option.WithHTTPClient(httpexternal.WrapHTTPClientWithCustomHeaders(httpClient, config.CustomHeaders)),
 	}
 
 	client := openai.NewClient(opts...)
@@ -137,7 +138,7 @@ func NewCompatibleEmbeddings(config Config, httpClient *http.Client) *OpenAI {
 
 	opts := []option.RequestOption{
 		option.WithAPIKey(config.APIKey),
-		option.WithHTTPClient(httpClient),
+		option.WithHTTPClient(httpexternal.WrapHTTPClientWithCustomHeaders(httpClient, config.CustomHeaders)),
 		option.WithBaseURL(strings.TrimSuffix(config.APIURL, "/")),
 	}
 
@@ -364,7 +365,6 @@ func (s *OpenAI) streamCompletionsAPIToChannels(params openai.ChatCompletionNewP
 
 	// Buffering in the case of tool use
 	var toolsBuffer map[int]*ToolBufferElement
-
 	for stream.Next() {
 		chunk := stream.Current()
 
@@ -553,6 +553,7 @@ func (s *OpenAI) streamResponsesAPIToChannels(params openai.ChatCompletionNewPar
 			}
 			return
 		}
+	}
 
 		// Transfer the buffered tools into tool calls
 		pendingToolCalls := make([]llm.ToolCall, 0, len(toolsBuffer))
