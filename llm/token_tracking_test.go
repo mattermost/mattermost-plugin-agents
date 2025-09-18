@@ -40,7 +40,7 @@ func (m *MockLanguageModel) InputTokenLimit() int {
 func TestTokenTrackingWrapper_ChatCompletion(t *testing.T) {
 	t.Run("filters usage events from stream", func(t *testing.T) {
 		mockLLM := &MockLanguageModel{}
-		wrapper, _ := NewTokenLoggingWrapper(mockLLM, "test-bot")
+		wrapper, _ := NewTokenUsageLoggingWrapper(mockLLM, "test-bot")
 
 		// Create a mock stream with usage event
 		mockStream := make(chan TextStreamEvent, 3)
@@ -80,7 +80,7 @@ func TestTokenTrackingWrapper_ChatCompletion(t *testing.T) {
 
 	t.Run("handles nil context gracefully", func(t *testing.T) {
 		mockLLM := &MockLanguageModel{}
-		wrapper, _ := NewTokenLoggingWrapper(mockLLM, "test-bot")
+		wrapper, _ := NewTokenUsageLoggingWrapper(mockLLM, "test-bot")
 
 		mockStream := make(chan TextStreamEvent, 2)
 		mockStream <- TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 10, OutputTokens: 5}}
@@ -108,7 +108,7 @@ func TestTokenTrackingWrapper_ChatCompletion(t *testing.T) {
 
 	t.Run("handles invalid usage event value", func(t *testing.T) {
 		mockLLM := &MockLanguageModel{}
-		wrapper, _ := NewTokenLoggingWrapper(mockLLM, "test-bot")
+		wrapper, _ := NewTokenUsageLoggingWrapper(mockLLM, "test-bot")
 
 		mockStream := make(chan TextStreamEvent, 2)
 		mockStream <- TextStreamEvent{Type: EventTypeUsage, Value: "invalid_value"}
@@ -136,7 +136,7 @@ func TestTokenTrackingWrapper_ChatCompletion(t *testing.T) {
 func TestTokenTrackingWrapper_ChatCompletionNoStream(t *testing.T) {
 	t.Run("delegates to streaming method", func(t *testing.T) {
 		mockLLM := &MockLanguageModel{}
-		wrapper, _ := NewTokenLoggingWrapper(mockLLM, "test-bot")
+		wrapper, _ := NewTokenUsageLoggingWrapper(mockLLM, "test-bot")
 
 		mockStream := make(chan TextStreamEvent, 3)
 		mockStream <- TextStreamEvent{Type: EventTypeText, Value: "Hello world"}
@@ -158,7 +158,7 @@ func TestTokenTrackingWrapper_ChatCompletionNoStream(t *testing.T) {
 
 func TestTokenTrackingWrapper_DelegatedMethods(t *testing.T) {
 	mockLLM := &MockLanguageModel{}
-	wrapper, _ := NewTokenLoggingWrapper(mockLLM, "test-llm")
+	wrapper, _ := NewTokenUsageLoggingWrapper(mockLLM, "test-llm")
 
 	t.Run("CountTokens delegates to wrapped model", func(t *testing.T) {
 		mockLLM.On("CountTokens", "test text").Return(42)

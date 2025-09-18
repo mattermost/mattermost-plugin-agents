@@ -193,7 +193,7 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botName string) (llm.La
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)
 	var err error
-	result, err = llm.NewTokenLoggingWrapper(result, botName)
+	result, err = llm.NewTokenUsageLoggingWrapper(result, botName)
 	if err != nil {
 		return nil, err
 	}

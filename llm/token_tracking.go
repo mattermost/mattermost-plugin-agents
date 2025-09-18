@@ -11,20 +11,20 @@ import (
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
-// TokenTrackingWrapper wraps a LanguageModel to track token usage in the database
-type TokenTrackingWrapper struct {
+// TokenUsageLoggingWrapper wraps a LanguageModel to log token usage
+type TokenUsageLoggingWrapper struct {
 	wrapped     LanguageModel
 	botUsername string
 	tokenLogger *mlog.Logger
 }
 
-// NewTokenLoggingWrapper creates a new wrapper that tracks token usage
-func NewTokenLoggingWrapper(wrapped LanguageModel, botUsername string) (*TokenTrackingWrapper, error) {
+// NewTokenUsageLoggingWrapper creates a new wrapper that logs token usage
+func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string) (*TokenUsageLoggingWrapper, error) {
 	tokenLogger, err := createTokenLogger()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token tracking wrapper: %w", err)
 	}
-	return &TokenTrackingWrapper{
+	return &TokenUsageLoggingWrapper{
 		wrapped:     wrapped,
 		botUsername: botUsername,
 		tokenLogger: tokenLogger,
@@ -62,8 +62,8 @@ func createTokenLogger() (*mlog.Logger, error) {
 	return logger, nil
 }
 
-// ChatCompletion intercepts the streaming response to extract and track token usage
-func (w *TokenTrackingWrapper) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
+// ChatCompletion intercepts the streaming response to extract and log token usage
+func (w *TokenUsageLoggingWrapper) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	result, err := w.wrapped.ChatCompletion(request, opts...)
 	if err != nil {
 		return nil, err
@@ -114,9 +114,9 @@ func (w *TokenTrackingWrapper) ChatCompletion(request CompletionRequest, opts ..
 	return &TextStreamResult{Stream: interceptedStream}, nil
 }
 
-// ChatCompletionNoStream uses the streaming method internally, so token tracking
-// happens automatically when ReadAll() processes the intercepted stream
-func (w *TokenTrackingWrapper) ChatCompletionNoStream(request CompletionRequest, opts ...LanguageModelOption) (string, error) {
+// ChatCompletionNoStream uses the streaming method internally, so token usage
+// logging happens automatically when ReadAll() processes the intercepted stream
+func (w *TokenUsageLoggingWrapper) ChatCompletionNoStream(request CompletionRequest, opts ...LanguageModelOption) (string, error) {
 	result, err := w.ChatCompletion(request, opts...)
 	if err != nil {
 		return "", err
@@ -125,11 +125,11 @@ func (w *TokenTrackingWrapper) ChatCompletionNoStream(request CompletionRequest,
 }
 
 // CountTokens delegates to the wrapped model
-func (w *TokenTrackingWrapper) CountTokens(text string) int {
+func (w *TokenUsageLoggingWrapper) CountTokens(text string) int {
 	return w.wrapped.CountTokens(text)
 }
 
 // InputTokenLimit delegates to the wrapped model
-func (w *TokenTrackingWrapper) InputTokenLimit() int {
+func (w *TokenUsageLoggingWrapper) InputTokenLimit() int {
 	return w.wrapped.InputTokenLimit()
 }
