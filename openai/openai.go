@@ -385,7 +385,7 @@ func (s *OpenAI) streamResultToChannels(params openai.ChatCompletionNewParams, l
 		switch choice.FinishReason {
 		case "stop":
 			// Continue processing to get usage data, but don't send more text
-			// The EventTypeEnd will be sent when we get EOF
+			// The EventTypeEnd will be sent when we run out of chunks
 			continue
 		case "tool_calls":
 			// Verify OpenAI functions are not recursing too deep.
@@ -442,6 +442,11 @@ func (s *OpenAI) streamResultToChannels(params openai.ChatCompletionNewParams, l
 				Value: err,
 			}
 		}
+	}
+
+	output <- llm.TextStreamEvent{
+		Type:  llm.EventTypeEnd,
+		Value: nil,
 	}
 }
 
