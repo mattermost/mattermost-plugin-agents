@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -15,11 +17,13 @@ import (
 	"strings"
 	"time"
 
-	"errors"
-
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
-	openaiClient "github.com/sashabaranov/go-openai"
+	"github.com/modelcontextprotocol/go-sdk/jsonschema"
+	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/azure"
+	"github.com/openai/openai-go/v2/option"
+	"github.com/openai/openai-go/v2/shared"
 )
 
 type Config struct {
@@ -32,11 +36,11 @@ type Config struct {
 	StreamingTimeout    time.Duration `json:"streamingTimeout"`
 	SendUserID          bool          `json:"sendUserID"`
 	EmbeddingModel      string        `json:"embeddingModel"`
-	EmbeddingDimentions int           `json:"embeddingDimensions"`
+	EmbeddingDimensions int           `json:"embeddingDimensions"`
 }
 
 type OpenAI struct {
-	client *openaiClient.Client
+	client openai.Client
 	config Config
 }
 
@@ -48,187 +52,237 @@ const (
 var ErrStreamingTimeout = errors.New("timeout streaming")
 
 func NewAzure(config Config, httpClient *http.Client) *OpenAI {
-	return newOpenAI(config, httpClient,
-		func(apiKey string) openaiClient.ClientConfig {
-			clientConfig := openaiClient.DefaultAzureConfig(apiKey, strings.TrimSuffix(config.APIURL, "/"))
-			clientConfig.APIVersion = "2024-06-01"
-			return clientConfig
-		},
-	)
+	opts := []option.RequestOption{
+		azure.WithEndpoint(strings.TrimSuffix(config.APIURL, "/"), "2024-06-01"),
+		azure.WithAPIKey(config.APIKey),
+		option.WithHTTPClient(httpClient),
+	}
+
+	client := openai.NewClient(opts...)
+
+	return &OpenAI{
+		client: client,
+		config: config,
+	}
 }
 
 func NewCompatible(config Config, httpClient *http.Client) *OpenAI {
-	return newOpenAI(config, httpClient,
-		func(apiKey string) openaiClient.ClientConfig {
-			clientConfig := openaiClient.DefaultConfig(apiKey)
-			clientConfig.BaseURL = strings.TrimSuffix(config.APIURL, "/")
-			return clientConfig
-		},
-	)
+	opts := []option.RequestOption{
+		option.WithAPIKey(config.APIKey),
+		option.WithHTTPClient(httpClient),
+		option.WithBaseURL(strings.TrimSuffix(config.APIURL, "/")),
+	}
+
+	client := openai.NewClient(opts...)
+
+	return &OpenAI{
+		client: client,
+		config: config,
+	}
 }
 
 func New(config Config, httpClient *http.Client) *OpenAI {
-	return newOpenAI(config, httpClient,
-		func(apiKey string) openaiClient.ClientConfig {
-			clientConfig := openaiClient.DefaultConfig(apiKey)
-			clientConfig.OrgID = config.OrgID
-			return clientConfig
-		},
-	)
+	opts := []option.RequestOption{
+		option.WithAPIKey(config.APIKey),
+		option.WithHTTPClient(httpClient),
+	}
+
+	if config.OrgID != "" {
+		opts = append(opts, option.WithOrganization(config.OrgID))
+	}
+
+	client := openai.NewClient(opts...)
+
+	return &OpenAI{
+		client: client,
+		config: config,
+	}
 }
 
 // NewEmbeddings creates a new OpenAI client configured only for embeddings functionality
 func NewEmbeddings(config Config, httpClient *http.Client) *OpenAI {
 	if config.EmbeddingModel == "" {
-		config.EmbeddingModel = string(openaiClient.LargeEmbedding3)
-		config.EmbeddingDimentions = 3072
+		config.EmbeddingModel = openai.EmbeddingModelTextEmbedding3Large
+		config.EmbeddingDimensions = 3072
 	}
-	return newOpenAI(config, httpClient,
-		func(apiKey string) openaiClient.ClientConfig {
-			clientConfig := openaiClient.DefaultConfig(apiKey)
-			return clientConfig
-		},
-	)
+
+	opts := []option.RequestOption{
+		option.WithAPIKey(config.APIKey),
+		option.WithHTTPClient(httpClient),
+	}
+
+	client := openai.NewClient(opts...)
+
+	return &OpenAI{
+		client: client,
+		config: config,
+	}
 }
 
 // NewCompatibleEmbeddings creates a new OpenAI client configured only for embeddings functionality
 func NewCompatibleEmbeddings(config Config, httpClient *http.Client) *OpenAI {
 	if config.EmbeddingModel == "" {
-		config.EmbeddingModel = string(openaiClient.LargeEmbedding3)
-		config.EmbeddingDimentions = 3072
+		config.EmbeddingModel = openai.EmbeddingModelTextEmbedding3Large
+		config.EmbeddingDimensions = 3072
 	}
 
-	return newOpenAI(config, httpClient,
-		func(apiKey string) openaiClient.ClientConfig {
-			clientConfig := openaiClient.DefaultConfig(apiKey)
-			clientConfig.BaseURL = strings.TrimSuffix(config.APIURL, "/")
-			return clientConfig
-		},
-	)
-}
+	opts := []option.RequestOption{
+		option.WithAPIKey(config.APIKey),
+		option.WithHTTPClient(httpClient),
+		option.WithBaseURL(strings.TrimSuffix(config.APIURL, "/")),
+	}
 
-func newOpenAI(
-	config Config,
-	httpClient *http.Client,
-	baseConfigFunc func(apiKey string) openaiClient.ClientConfig,
-) *OpenAI {
-	clientConfig := baseConfigFunc(config.APIKey)
-	clientConfig.HTTPClient = httpClient
+	client := openai.NewClient(opts...)
 
 	return &OpenAI{
-		client: openaiClient.NewClientWithConfig(clientConfig),
+		client: client,
 		config: config,
 	}
 }
 
-func modifyCompletionRequestWithRequest(openAIRequest openaiClient.ChatCompletionRequest, interalRequest llm.CompletionRequest) openaiClient.ChatCompletionRequest {
-	openAIRequest.Messages = postsToChatCompletionMessages(interalRequest.Posts)
-	if interalRequest.Context.Tools != nil {
-		openAIRequest.Tools = toolsToOpenAITools(interalRequest.Context.Tools.GetTools())
+func modifyCompletionRequestWithRequest(params openai.ChatCompletionNewParams, internalRequest llm.CompletionRequest) openai.ChatCompletionNewParams {
+	params.Messages = postsToChatCompletionMessages(internalRequest.Posts)
+	if internalRequest.Context.Tools != nil {
+		params.Tools = toolsToOpenAITools(internalRequest.Context.Tools.GetTools())
 	}
-	return openAIRequest
+	return params
 }
 
-func toolsToOpenAITools(tools []llm.Tool) []openaiClient.Tool {
-	result := make([]openaiClient.Tool, 0, len(tools))
-	for _, tool := range tools {
-		result = append(result, openaiClient.Tool{
-			Type: openaiClient.ToolTypeFunction,
-			Function: &openaiClient.FunctionDefinition{
-				Name:        tool.Name,
-				Description: tool.Description,
-				Parameters:  tool.Schema,
-			},
-		})
+// schemaToFunctionParameters converts a jsonschema.Schema to shared.FunctionParameters
+func schemaToFunctionParameters(schema *jsonschema.Schema) shared.FunctionParameters {
+	// Default schema that satisfies OpenAI's requirements
+	defaultSchema := shared.FunctionParameters{
+		"type":       "object",
+		"properties": map[string]any{},
+	}
+
+	// Convert the schema to a map by marshaling and unmarshaling
+	data, err := json.Marshal(schema)
+	if err != nil {
+		return defaultSchema
+	}
+
+	var result shared.FunctionParameters
+	if err := json.Unmarshal(data, &result); err != nil {
+		return defaultSchema
+	}
+
+	// Ensure the result has the required fields for OpenAI
+	// OpenAI requires "type" and "properties" to be present, even if properties is empty
+	// This is because OpenAI's FunctionDefinitionParam has `omitzero` on the `Parameters` field
+	if result == nil {
+		return defaultSchema
+	}
+	if _, hasType := result["type"]; !hasType {
+		result["type"] = "object"
+	}
+	if _, hasProps := result["properties"]; !hasProps {
+		result["properties"] = map[string]any{}
 	}
 
 	return result
 }
 
-func postsToChatCompletionMessages(posts []llm.Post) []openaiClient.ChatCompletionMessage {
-	result := make([]openaiClient.ChatCompletionMessage, 0, len(posts))
+func toolsToOpenAITools(tools []llm.Tool) []openai.ChatCompletionToolUnionParam {
+	result := make([]openai.ChatCompletionToolUnionParam, 0, len(tools))
+	for _, tool := range tools {
+		result = append(result, openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+			Name:        tool.Name,
+			Description: openai.String(tool.Description),
+			Parameters:  schemaToFunctionParameters(tool.Schema),
+		}))
+	}
+
+	return result
+}
+
+func postsToChatCompletionMessages(posts []llm.Post) []openai.ChatCompletionMessageParamUnion {
+	result := make([]openai.ChatCompletionMessageParamUnion, 0, len(posts))
 
 	for _, post := range posts {
-		role := openaiClient.ChatMessageRoleUser
 		switch post.Role {
-		case llm.PostRoleBot:
-			role = openaiClient.ChatMessageRoleAssistant
 		case llm.PostRoleSystem:
-			role = openaiClient.ChatMessageRoleSystem
-		}
-		completionMessage := openaiClient.ChatCompletionMessage{
-			Role: role,
-		}
+			result = append(result, openai.SystemMessage(post.Message))
+		case llm.PostRoleBot:
+			// Assistant message - if it has tool calls, we need to construct it differently
+			if len(post.ToolUse) > 0 {
+				// For messages with tool calls, we need to build it manually
+				toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(post.ToolUse))
+				for _, tool := range post.ToolUse {
+					// Create function tool call
+					toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
+						OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+							ID: tool.ID,
+							Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+								Name:      tool.Name,
+								Arguments: string(tool.Arguments),
+							},
+						},
+					})
+				}
 
-		if len(post.Files) > 0 {
-			completionMessage.MultiContent = make([]openaiClient.ChatMessagePart, 0, len(post.Files)+1)
-			if post.Message != "" {
-				completionMessage.MultiContent = append(completionMessage.MultiContent, openaiClient.ChatMessagePart{
-					Type: openaiClient.ChatMessagePartTypeText,
-					Text: post.Message,
+				// Create assistant message with tool calls
+				msgParam := openai.ChatCompletionAssistantMessageParam{}
+
+				// Only set content if it's not empty
+				if post.Message != "" {
+					msgParam.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
+						OfString: openai.String(post.Message),
+					}
+				}
+
+				msgParam.ToolCalls = toolCalls
+
+				result = append(result, openai.ChatCompletionMessageParamUnion{
+					OfAssistant: &msgParam,
 				})
+
+				// Add tool results as separate messages
+				for _, tool := range post.ToolUse {
+					result = append(result, openai.ToolMessage(tool.Result, tool.ID))
+				}
+			} else {
+				// Simple assistant message
+				result = append(result, openai.AssistantMessage(post.Message))
 			}
-			for _, file := range post.Files {
-				if file.MimeType != "image/png" &&
-					file.MimeType != "image/jpeg" &&
-					file.MimeType != "image/gif" &&
-					file.MimeType != "image/webp" {
-					completionMessage.MultiContent = append(completionMessage.MultiContent, openaiClient.ChatMessagePart{
-						Type: openaiClient.ChatMessagePartTypeText,
-						Text: "User submitted image was not a supported format. Tell the user this.",
-					})
-					continue
+		case llm.PostRoleUser:
+			// User message
+			if len(post.Files) > 0 {
+				// Create multipart content for images
+				parts := make([]openai.ChatCompletionContentPartUnionParam, 0, len(post.Files)+1)
+
+				if post.Message != "" {
+					parts = append(parts, openai.TextContentPart(post.Message))
 				}
-				if file.Size > OpenAIMaxImageSize {
-					completionMessage.MultiContent = append(completionMessage.MultiContent, openaiClient.ChatMessagePart{
-						Type: openaiClient.ChatMessagePartTypeText,
-						Text: "User submitted a image larger than 20MB. Tell the user this.",
-					})
-					continue
-				}
-				fileBytes, err := io.ReadAll(file.Reader)
-				if err != nil {
-					continue
-				}
-				imageEncoded := base64.StdEncoding.EncodeToString(fileBytes)
-				encodedString := fmt.Sprintf("data:"+file.MimeType+";base64,%s", imageEncoded)
-				completionMessage.MultiContent = append(completionMessage.MultiContent, openaiClient.ChatMessagePart{
-					Type: openaiClient.ChatMessagePartTypeImageURL,
-					ImageURL: &openaiClient.ChatMessageImageURL{
+
+				for _, file := range post.Files {
+					if file.MimeType != "image/png" &&
+						file.MimeType != "image/jpeg" &&
+						file.MimeType != "image/gif" &&
+						file.MimeType != "image/webp" {
+						parts = append(parts, openai.TextContentPart("User submitted image was not a supported format. Tell the user this."))
+						continue
+					}
+					if file.Size > OpenAIMaxImageSize {
+						parts = append(parts, openai.TextContentPart("User submitted an image larger than 20MB. Tell the user this."))
+						continue
+					}
+					fileBytes, err := io.ReadAll(file.Reader)
+					if err != nil {
+						continue
+					}
+					imageEncoded := base64.StdEncoding.EncodeToString(fileBytes)
+					encodedString := fmt.Sprintf("data:"+file.MimeType+";base64,%s", imageEncoded)
+					parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
 						URL:    encodedString,
-						Detail: openaiClient.ImageURLDetailAuto,
-					},
-				})
-			}
-		} else {
-			completionMessage.Content = post.Message
-		}
+						Detail: "auto",
+					}))
+				}
 
-		// Add the original tool calls back to the message
-		if len(post.ToolUse) > 0 {
-			completionMessage.ToolCalls = make([]openaiClient.ToolCall, 0, len(post.ToolUse))
-			for _, tool := range post.ToolUse {
-				completionMessage.ToolCalls = append(completionMessage.ToolCalls, openaiClient.ToolCall{
-					ID:   tool.ID,
-					Type: openaiClient.ToolTypeFunction,
-					Function: openaiClient.FunctionCall{
-						Name:      tool.Name,
-						Arguments: string(tool.Arguments),
-					},
-				})
-			}
-		}
-
-		result = append(result, completionMessage)
-
-		// Add the results of the tool calls in additional messages
-		if len(post.ToolUse) > 0 {
-			for _, tool := range post.ToolUse {
-				result = append(result, openaiClient.ChatCompletionMessage{
-					Role:       openaiClient.ChatMessageRoleTool,
-					ToolCallID: tool.ID,
-					Content:    tool.Result,
-				})
+				// Create a user message with multipart content
+				result = append(result, openai.UserMessage(parts))
+			} else {
+				result = append(result, openai.UserMessage(post.Message))
 			}
 		}
 	}
@@ -242,13 +296,7 @@ type ToolBufferElement struct {
 	args strings.Builder
 }
 
-func (s *OpenAI) streamResultToChannels(request openaiClient.ChatCompletionRequest, llmContext *llm.Context, output chan<- llm.TextStreamEvent) {
-	request.Stream = true
-	// Enable usage tracking in streaming
-	request.StreamOptions = &openaiClient.StreamOptions{
-		IncludeUsage: true,
-	}
-
+func (s *OpenAI) streamResultToChannels(params openai.ChatCompletionNewParams, llmContext *llm.Context, output chan<- llm.TextStreamEvent) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 
@@ -273,58 +321,22 @@ func (s *OpenAI) streamResultToChannels(request openaiClient.ChatCompletionReque
 		}
 	}()
 
-	stream, err := s.client.CreateChatCompletionStream(ctx, request)
-	if err != nil {
-		if ctxErr := context.Cause(ctx); ctxErr != nil {
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeError,
-				Value: ctxErr,
-			}
-		} else {
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeError,
-				Value: err,
-			}
-		}
-		return
-	}
-
+	stream := s.client.Chat.Completions.NewStreaming(ctx, params)
 	defer stream.Close()
 
 	// Buffering in the case of tool use
 	var toolsBuffer map[int]*ToolBufferElement
-	for {
-		response, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeEnd,
-				Value: nil,
-			}
-			return
-		}
-		if err != nil {
-			if ctxErr := context.Cause(ctx); ctxErr != nil {
-				output <- llm.TextStreamEvent{
-					Type:  llm.EventTypeError,
-					Value: ctxErr,
-				}
-			} else {
-				output <- llm.TextStreamEvent{
-					Type:  llm.EventTypeError,
-					Value: err,
-				}
-			}
-			return
-		}
+	for stream.Next() {
+		chunk := stream.Current()
 
 		// Ping the watchdog when we receive a response
 		watchdog <- struct{}{}
 
 		// Check for usage data and emit usage event if available
-		if response.Usage != nil {
+		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
 			usage := llm.TokenUsage{
-				InputTokens:  response.Usage.PromptTokens,
-				OutputTokens: response.Usage.CompletionTokens,
+				InputTokens:  chunk.Usage.PromptTokens,
+				OutputTokens: chunk.Usage.CompletionTokens,
 			}
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeUsage,
@@ -332,45 +344,55 @@ func (s *OpenAI) streamResultToChannels(request openaiClient.ChatCompletionReque
 			}
 		}
 
-		if len(response.Choices) == 0 {
+		if len(chunk.Choices) == 0 {
 			continue
 		}
 
-		delta := response.Choices[0].Delta
-		numTools := len(delta.ToolCalls)
+		choice := chunk.Choices[0]
+		delta := choice.Delta
 
-		if numTools != 0 {
+		// Handle tool calls
+		if len(delta.ToolCalls) > 0 {
 			if toolsBuffer == nil {
 				toolsBuffer = make(map[int]*ToolBufferElement)
 			}
 			for _, toolCall := range delta.ToolCalls {
-				if toolCall.Index == nil {
-					continue
-				}
-				toolIndex := *toolCall.Index
+				toolIndex := int(toolCall.Index)
 				if toolsBuffer[toolIndex] == nil {
 					toolsBuffer[toolIndex] = &ToolBufferElement{}
 				}
 
-				toolsBuffer[toolIndex].name.WriteString(toolCall.Function.Name)
-				toolsBuffer[toolIndex].args.WriteString(toolCall.Function.Arguments)
-				toolsBuffer[toolIndex].id.WriteString(toolCall.ID)
+				if toolCall.ID != "" {
+					toolsBuffer[toolIndex].id.WriteString(toolCall.ID)
+				}
+				if toolCall.Function.Name != "" {
+					toolsBuffer[toolIndex].name.WriteString(toolCall.Function.Name)
+				}
+				if toolCall.Function.Arguments != "" {
+					toolsBuffer[toolIndex].args.WriteString(toolCall.Function.Arguments)
+				}
+			}
+		}
+
+		if delta.Content != "" {
+			output <- llm.TextStreamEvent{
+				Type:  llm.EventTypeText,
+				Value: delta.Content,
 			}
 		}
 
 		// Check finishing conditions
-		switch response.Choices[0].FinishReason {
-		case "":
-			// Not done yet, keep going
-		case openaiClient.FinishReasonStop:
+		switch choice.FinishReason {
+		case "stop":
 			// Continue processing to get usage data, but don't send more text
 			// The EventTypeEnd will be sent when we get EOF
 			continue
-		case openaiClient.FinishReasonToolCalls:
+		case "tool_calls":
 			// Verify OpenAI functions are not recursing too deep.
 			numFunctionCalls := 0
-			for i := len(request.Messages) - 1; i >= 0; i-- {
-				if request.Messages[i].Role == openaiClient.ChatMessageRoleTool {
+			for i := len(params.Messages) - 1; i >= 0; i-- {
+				// Check if it's a tool message
+				if params.Messages[i].OfTool != nil {
 					numFunctionCalls++
 				} else {
 					break
@@ -385,31 +407,13 @@ func (s *OpenAI) streamResultToChannels(request openaiClient.ChatCompletionReque
 			}
 
 			// Transfer the buffered tools into tool calls
-			tools := []openaiClient.ToolCall{}
-			for i, tool := range toolsBuffer {
-				name := tool.name.String()
-				arguments := tool.args.String()
-				toolID := tool.id.String()
-				num := i
-				tools = append(tools, openaiClient.ToolCall{
-					Function: openaiClient.FunctionCall{
-						Name:      name,
-						Arguments: arguments,
-					},
-					ID:    toolID,
-					Index: &num,
-					Type:  openaiClient.ToolTypeFunction,
-				})
-			}
-
-			// Send tool calls event and end the stream
-			pendingToolCalls := make([]llm.ToolCall, 0, len(tools))
-			for _, tool := range tools {
+			pendingToolCalls := make([]llm.ToolCall, 0, len(toolsBuffer))
+			for _, tool := range toolsBuffer {
 				pendingToolCalls = append(pendingToolCalls, llm.ToolCall{
-					ID:          tool.ID,
-					Name:        tool.Function.Name,
+					ID:          tool.id.String(),
+					Name:        tool.name.String(),
 					Description: "", // OpenAI doesn't provide description in the response
-					Arguments:   []byte(tool.Function.Arguments),
+					Arguments:   []byte(tool.args.String()),
 				})
 			}
 
@@ -418,25 +422,34 @@ func (s *OpenAI) streamResultToChannels(request openaiClient.ChatCompletionReque
 				Value: pendingToolCalls,
 			}
 			return
+		case "":
+			// Not done yet, keep going
 		default:
-			fmt.Printf("Unknown finish reason: %s", response.Choices[0].FinishReason)
+			fmt.Printf("Unknown finish reason: %s", choice.FinishReason)
 			return
 		}
+	}
 
-		if response.Choices[0].Delta.Content != "" {
+	if err := stream.Err(); err != nil {
+		if ctxErr := context.Cause(ctx); ctxErr != nil {
 			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeText,
-				Value: response.Choices[0].Delta.Content,
+				Type:  llm.EventTypeError,
+				Value: ctxErr,
+			}
+		} else {
+			output <- llm.TextStreamEvent{
+				Type:  llm.EventTypeError,
+				Value: err,
 			}
 		}
 	}
 }
 
-func (s *OpenAI) streamResult(request openaiClient.ChatCompletionRequest, llmContext *llm.Context) (*llm.TextStreamResult, error) {
+func (s *OpenAI) streamResult(params openai.ChatCompletionNewParams, llmContext *llm.Context) (*llm.TextStreamResult, error) {
 	eventStream := make(chan llm.TextStreamEvent)
 	go func() {
 		defer close(eventStream)
-		s.streamResultToChannels(request, llmContext, eventStream)
+		s.streamResultToChannels(params, llmContext, eventStream)
 	}()
 
 	return &llm.TextStreamResult{Stream: eventStream}, nil
@@ -458,36 +471,65 @@ func (s *OpenAI) createConfig(opts []llm.LanguageModelOption) llm.LanguageModelC
 	return cfg
 }
 
-func (s *OpenAI) completionRequestFromConfig(cfg llm.LanguageModelConfig) openaiClient.ChatCompletionRequest {
-	request := openaiClient.ChatCompletionRequest{
-		Model: cfg.Model,
+func (s *OpenAI) completionRequestFromConfig(cfg llm.LanguageModelConfig) openai.ChatCompletionNewParams {
+	params := openai.ChatCompletionNewParams{
+		Model: getModelConstant(cfg.Model),
 	}
-	request.MaxTokens = cfg.MaxGeneratedTokens
+
+	if cfg.MaxGeneratedTokens > 0 {
+		params.MaxCompletionTokens = openai.Int(int64(cfg.MaxGeneratedTokens))
+	}
 
 	if cfg.JSONOutputFormat != nil {
-		request.ResponseFormat = &openaiClient.ChatCompletionResponseFormat{
-			Type: openaiClient.ChatCompletionResponseFormatTypeJSONSchema,
-			JSONSchema: &openaiClient.ChatCompletionResponseFormatJSONSchema{
-				Name:   "output_format",
-				Schema: cfg.JSONOutputFormat,
-				Strict: true,
+		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{
+				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
+					Name:   "output_format",
+					Schema: cfg.JSONOutputFormat,
+					Strict: openai.Bool(true),
+				},
 			},
 		}
 	}
 
-	return request
+	return params
+}
+
+// getModelConstant converts string model names to the SDK's model constants
+func getModelConstant(model string) shared.ChatModel {
+	// Try to match common model names to constants
+	switch model {
+	case "gpt-4o":
+		return shared.ChatModelGPT4o
+	case "gpt-4o-mini":
+		return shared.ChatModelGPT4oMini
+	case "gpt-4-turbo":
+		return shared.ChatModelGPT4Turbo
+	case "gpt-4":
+		return shared.ChatModelGPT4
+	case "gpt-3.5-turbo":
+		return shared.ChatModelGPT3_5Turbo
+	case "o1-preview":
+		return shared.ChatModelO1Preview
+	case "o1-mini":
+		return shared.ChatModelO1Mini
+	default:
+		// For custom models or newer versions, use the string as-is
+		return model
+	}
 }
 
 func (s *OpenAI) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
-	openAIRequest := s.completionRequestFromConfig(s.createConfig(opts))
-	openAIRequest = modifyCompletionRequestWithRequest(openAIRequest, request)
-	openAIRequest.Stream = true
+	params := s.completionRequestFromConfig(s.createConfig(opts))
+	params = modifyCompletionRequestWithRequest(params, request)
+	params.StreamOptions.IncludeUsage = openai.Bool(true)
+
 	if s.config.SendUserID {
 		if request.Context.RequestingUser != nil {
-			openAIRequest.User = request.Context.RequestingUser.Id
+			params.User = openai.String(request.Context.RequestingUser.Id)
 		}
 	}
-	return s.streamResult(openAIRequest, request.Context)
+	return s.streamResult(params, request.Context)
 }
 
 func (s *OpenAI) ChatCompletionNoStream(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
@@ -500,16 +542,18 @@ func (s *OpenAI) ChatCompletionNoStream(request llm.CompletionRequest, opts ...l
 }
 
 func (s *OpenAI) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
-	resp, err := s.client.CreateTranscription(context.Background(), openaiClient.AudioRequest{
-		Model:    openaiClient.Whisper1,
-		Reader:   file,
-		FilePath: "input.mp3",
-		Format:   openaiClient.AudioResponseFormatVTT,
-	})
+	params := openai.AudioTranscriptionNewParams{
+		Model:          openai.AudioModelWhisper1,
+		File:           file,
+		ResponseFormat: openai.AudioResponseFormatVTT,
+	}
+
+	resp, err := s.client.Audio.Transcriptions.New(context.Background(), params)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create whisper transcription: %w", err)
 	}
 
+	// The response for VTT format is the Text field
 	timedTranscript, err := subtitles.NewSubtitlesFromVTT(strings.NewReader(resp.Text))
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse whisper transcription: %w", err)
@@ -519,21 +563,30 @@ func (s *OpenAI) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
 }
 
 func (s *OpenAI) GenerateImage(prompt string) (image.Image, error) {
-	req := openaiClient.ImageRequest{
+	params := openai.ImageGenerateParams{
 		Prompt:         prompt,
-		Size:           openaiClient.CreateImageSize256x256,
-		ResponseFormat: openaiClient.CreateImageResponseFormatB64JSON,
-		N:              1,
+		Size:           openai.ImageGenerateParamsSize256x256,
+		ResponseFormat: openai.ImageGenerateParamsResponseFormatB64JSON,
+		N:              openai.Int(1),
 	}
 
-	respBase64, err := s.client.CreateImage(context.Background(), req)
+	resp, err := s.client.Images.Generate(context.Background(), params)
 	if err != nil {
 		return nil, err
 	}
 
-	imgBytes, err := base64.StdEncoding.DecodeString(respBase64.Data[0].B64JSON)
-	if err != nil {
-		return nil, err
+	if len(resp.Data) == 0 {
+		return nil, errors.New("no image data returned")
+	}
+
+	var imgBytes []byte
+	if resp.Data[0].B64JSON != "" {
+		imgBytes, err = base64.StdEncoding.DecodeString(resp.Data[0].B64JSON)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		return nil, errors.New("no base64 image data")
 	}
 
 	r := bytes.NewReader(imgBytes)
@@ -569,23 +622,31 @@ func (s *OpenAI) InputTokenLimit() int {
 		return 128000
 	case strings.HasPrefix(s.config.DefaultModel, "gpt-4"):
 		return 8192
+	case s.config.DefaultModel == "gpt-3.5-turbo-instruct":
+		return 4096
 	case strings.HasPrefix(s.config.DefaultModel, "gpt-3.5-turbo"),
 		s.config.DefaultModel == "gpt-3.5-turbo-0125",
 		s.config.DefaultModel == "gpt-3.5-turbo-1106":
 		return 16385
-	case s.config.DefaultModel == "gpt-3.5-turbo-instruct":
-		return 4096
 	}
 
 	return 128000 // Default fallback
 }
 
 func (s *OpenAI) CreateEmbedding(ctx context.Context, text string) ([]float32, error) {
-	resp, err := s.client.CreateEmbeddings(ctx, openaiClient.EmbeddingRequest{
-		Input:      []string{text},
-		Model:      openaiClient.EmbeddingModel(s.config.EmbeddingModel),
-		Dimensions: s.config.EmbeddingDimentions,
-	})
+	params := openai.EmbeddingNewParams{
+		Input: openai.EmbeddingNewParamsInputUnion{
+			OfString: openai.String(text),
+		},
+		Model: getEmbeddingModelConstant(s.config.EmbeddingModel),
+	}
+
+	// Only set dimensions if it's explicitly configured (> 0)
+	if s.config.EmbeddingDimensions > 0 {
+		params.Dimensions = openai.Int(int64(s.config.EmbeddingDimensions))
+	}
+
+	resp, err := s.client.Embeddings.New(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create embedding: %w", err)
 	}
@@ -594,28 +655,61 @@ func (s *OpenAI) CreateEmbedding(ctx context.Context, text string) ([]float32, e
 		return nil, fmt.Errorf("no embedding data returned")
 	}
 
-	return resp.Data[0].Embedding, nil
+	// Convert float64 to float32
+	embedding := make([]float32, len(resp.Data[0].Embedding))
+	for i, v := range resp.Data[0].Embedding {
+		embedding[i] = float32(v)
+	}
+	return embedding, nil
 }
 
 // BatchCreateEmbeddings generates embeddings for multiple texts in a single API call
 func (s *OpenAI) BatchCreateEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
-	resp, err := s.client.CreateEmbeddings(ctx, openaiClient.EmbeddingRequest{
-		Input:      texts,
-		Model:      openaiClient.EmbeddingModel(s.config.EmbeddingModel),
-		Dimensions: s.config.EmbeddingDimentions,
-	})
+	params := openai.EmbeddingNewParams{
+		Input: openai.EmbeddingNewParamsInputUnion{
+			OfArrayOfStrings: texts,
+		},
+		Model: getEmbeddingModelConstant(s.config.EmbeddingModel),
+	}
+
+	// Only set dimensions if it's explicitly configured (> 0)
+	if s.config.EmbeddingDimensions > 0 {
+		params.Dimensions = openai.Int(int64(s.config.EmbeddingDimensions))
+	}
+
+	resp, err := s.client.Embeddings.New(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create embeddings batch: %w", err)
 	}
 
 	embeddings := make([][]float32, len(resp.Data))
 	for i, data := range resp.Data {
-		embeddings[i] = data.Embedding
+		// Convert float64 to float32
+		embedding := make([]float32, len(data.Embedding))
+		for j, v := range data.Embedding {
+			embedding[j] = float32(v)
+		}
+		embeddings[i] = embedding
 	}
 
 	return embeddings, nil
 }
 
+// getEmbeddingModelConstant converts string model names to the SDK's embedding model constants
+func getEmbeddingModelConstant(model string) openai.EmbeddingModel {
+	switch model {
+	case "text-embedding-3-large":
+		return openai.EmbeddingModelTextEmbedding3Large
+	case "text-embedding-3-small":
+		return openai.EmbeddingModelTextEmbedding3Small
+	case "text-embedding-ada-002":
+		return openai.EmbeddingModelTextEmbeddingAda002
+	default:
+		// For custom models, use the string as-is
+		return model
+	}
+}
+
 func (s *OpenAI) Dimensions() int {
-	return s.config.EmbeddingDimentions
+	return s.config.EmbeddingDimensions
 }

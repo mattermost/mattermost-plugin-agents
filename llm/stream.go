@@ -23,8 +23,8 @@ const (
 
 // TokenUsage represents token usage statistics for an LLM request
 type TokenUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
 }
 
 // TextStreamEvent represents an event in the text stream
