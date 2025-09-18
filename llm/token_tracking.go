@@ -19,20 +19,16 @@ type TokenUsageLoggingWrapper struct {
 }
 
 // NewTokenUsageLoggingWrapper creates a new wrapper that logs token usage
-func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string) (*TokenUsageLoggingWrapper, error) {
-	tokenLogger, err := createTokenLogger()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create token tracking wrapper: %w", err)
-	}
+func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, tokenLogger *mlog.Logger) *TokenUsageLoggingWrapper {
 	return &TokenUsageLoggingWrapper{
 		wrapped:     wrapped,
 		botUsername: botUsername,
 		tokenLogger: tokenLogger,
-	}, nil
+	}
 }
 
-// createTokenLogger creates a dedicated logger for token usage metrics
-func createTokenLogger() (*mlog.Logger, error) {
+// CreateTokenLogger creates a dedicated logger for token usage metrics
+func CreateTokenLogger() (*mlog.Logger, error) {
 	logger, err := mlog.NewLogger()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token logger: %w", err)

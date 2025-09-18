@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
+	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
 type Config interface {
@@ -39,18 +40,20 @@ type MMBots struct {
 	licenseChecker         *enterprise.LicenseChecker
 	config                 Config
 	llmUpstreamHTTPClient  *http.Client
+	tokenLogger            *mlog.Logger
 
 	botsLock sync.RWMutex
 	bots     []*Bot
 }
 
-func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client) *MMBots {
+func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client, tokenLogger *mlog.Logger) *MMBots {
 	return &MMBots{
 		ensureBotsClusterMutex: mutexPluginAPI,
 		pluginAPI:              pluginAPI,
 		licenseChecker:         licenseChecker,
 		config:                 config,
 		llmUpstreamHTTPClient:  llmUpstreamHTTPClient,
+		tokenLogger:            tokenLogger,
 	}
 }
 
@@ -192,10 +195,10 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botName string) (llm.La
 
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)
-	var err error
-	result, err = llm.NewTokenUsageLoggingWrapper(result, botName)
-	if err != nil {
-		return nil, err
+
+	// Token Usage Logging
+	if b.tokenLogger != nil {
+		result = llm.NewTokenUsageLoggingWrapper(result, botName, b.tokenLogger)
 	}
 
 	// Logging

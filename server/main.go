@@ -77,7 +77,12 @@ func (p *Plugin) OnActivate() error {
 		p.configuration.Update(&newCfg)
 	}
 
-	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient)
+	tokenLogger, err := llm.CreateTokenLogger()
+	if err != nil {
+		return fmt.Errorf("failed to create token usage logger: %w", err)
+	}
+
+	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient, tokenLogger)
 	p.configuration.RegisterUpdateListener(func() {
 		if ensureErr := bots.EnsureBots(p.configuration.GetBots()); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)

@@ -161,7 +161,7 @@ func TestEnsureBots(t *testing.T) {
 			mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
 
 			licenseChecker := enterprise.NewLicenseChecker(client)
-			mmBots := New(mockAPI, client, licenseChecker, &mockConfig{}, &http.Client{})
+			mmBots := New(mockAPI, client, licenseChecker, &mockConfig{}, &http.Client{}, nil)
 
 			defer mockAPI.AssertExpectations(t)
 
