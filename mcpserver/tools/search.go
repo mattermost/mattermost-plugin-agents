@@ -82,11 +82,11 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 	// Perform the search using basic search
 	searchResults, _, err := client.SearchPosts(ctx, teamID, searchTerm, false)
 	if err != nil {
-		return fmt.Sprintf("Unable to search for posts with query '%s'. Please check your permissions and try again.", args.Query), fmt.Errorf("error searching posts: %w", err)
+		return "search failed", fmt.Errorf("error searching posts: %w", err)
 	}
 
 	if len(searchResults.Posts) == 0 {
-		return fmt.Sprintf("No posts found matching '%s' in the specified scope.", args.Query), nil
+		return "no posts found matching the search criteria", nil
 	}
 
 	// Convert posts map to slice
@@ -166,11 +166,11 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 	// Perform the search
 	users, _, err := client.SearchUsers(ctx, searchOptions)
 	if err != nil {
-		return fmt.Sprintf("Unable to search for users with term '%s'. Please check your permissions and try again.", args.Term), fmt.Errorf("error searching users: %w", err)
+		return "user search failed", fmt.Errorf("error searching users: %w", err)
 	}
 
 	if len(users) == 0 {
-		return "Found 0 users matching the search criteria.", nil
+		return "no users found matching the search criteria", nil
 	}
 
 	// Format the response

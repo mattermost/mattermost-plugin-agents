@@ -103,19 +103,19 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 		// Direct ID lookup - fastest method
 		team, _, err = client.GetTeam(ctx, args.TeamID, "")
 		if err != nil {
-			return fmt.Sprintf("Team with ID '%s' was not found or you don't have permission to access it.", args.TeamID), fmt.Errorf("error fetching team by ID: %w", err)
+			return "team not found by ID", fmt.Errorf("error fetching team by ID: %w", err)
 		}
 	case args.TeamDisplayName != "":
 		// Lookup by display name - get all teams for user and search
 		// Get current user ID for the API call
 		user, _, userErr := client.GetMe(ctx, "")
 		if userErr != nil {
-			return "Unable to get current user information. Please check your authentication.", fmt.Errorf("error getting current user: %w", userErr)
+			return "failed to get current user", fmt.Errorf("error getting current user: %w", userErr)
 		}
 
 		teams, _, teamsErr := client.GetTeamsForUser(ctx, user.Id, "")
 		if teamsErr != nil {
-			return "Unable to retrieve your team list. Please check your permissions.", fmt.Errorf("error fetching user teams: %w", teamsErr)
+			return "failed to fetch user teams", fmt.Errorf("error fetching user teams: %w", teamsErr)
 		}
 
 		for _, t := range teams {
@@ -126,16 +126,16 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 		}
 
 		if team == nil {
-			return fmt.Sprintf("No team found with display name '%s'. You may not be a member of this team or it may not exist.", args.TeamDisplayName), fmt.Errorf("no team found with display name: %s", args.TeamDisplayName)
+			return "team not found by display name", fmt.Errorf("no team found with display name: %s", args.TeamDisplayName)
 		}
 	case args.TeamName != "":
 		// Lookup by name
 		team, _, err = client.GetTeamByName(ctx, args.TeamName, "")
 		if err != nil {
-			return fmt.Sprintf("Team with name '%s' was not found or you don't have permission to access it.", args.TeamName), fmt.Errorf("error fetching team by name: %w", err)
+			return "team not found by name", fmt.Errorf("error fetching team by name: %w", err)
 		}
 	default:
-		return "Please provide one of the following: team_id, team_display_name, or team_name to look up a team.", fmt.Errorf("insufficient parameters for team lookup")
+		return "either team_id, team_display_name, or team_name must be provided", fmt.Errorf("insufficient parameters for team lookup")
 	}
 
 	// Format the response
