@@ -17,24 +17,24 @@ import (
 
 // GetTeamInfoArgs represents arguments for the get_team_info tool
 type GetTeamInfoArgs struct {
-	TeamID          string `json:"team_id" jsonschema:"The exact team ID (fastest, most reliable method)"`
-	TeamDisplayName string `json:"team_display_name" jsonschema:"The human-readable display name users see (e.g. 'Engineering Team')"`
-	TeamName        string `json:"team_name" jsonschema:"The URL-friendly team name (e.g. 'engineering-team')"`
+	TeamID          string `json:"team_id,omitempty" jsonschema:"The exact team ID (fastest, most reliable method)"`
+	TeamDisplayName string `json:"team_display_name,omitempty" jsonschema:"The human-readable display name users see (e.g. 'Engineering Team')"`
+	TeamName        string `json:"team_name,omitempty" jsonschema:"The URL-friendly team name (e.g. 'engineering-team')"`
 }
 
 // GetTeamMembersArgs represents arguments for the get_team_members tool
 type GetTeamMembersArgs struct {
-	TeamID string `json:"team_id" jsonschema:"ID of the team to get members for"`
-	Limit  int    `json:"limit" jsonschema:"Number of members to return (default: 50, max: 200)"`
-	Page   int    `json:"page" jsonschema:"Page number for pagination (default: 0)"`
+	TeamID string `json:"team_id" jsonschema:"ID of the team to get members for,minLength=26,maxLength=26"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Number of members to return (default: 50, max: 200),minimum=1,maximum=200"`
+	Page   int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
 }
 
 // CreateTeamArgs represents arguments for the create_team tool (dev mode only)
 type CreateTeamArgs struct {
-	Name        string `json:"name" jsonschema:"URL name for the team"`
-	DisplayName string `json:"display_name" jsonschema:"Display name for the team"`
-	Type        string `json:"type" jsonschema:"Team type: 'O' for open, 'I' for invite only"`
-	Description string `json:"description" jsonschema:"Team description"`
+	Name        string `json:"name" jsonschema:"URL name for the team,minLength=1,maxLength=64"`
+	DisplayName string `json:"display_name" jsonschema:"Display name for the team,minLength=1,maxLength=64"`
+	Type        string `json:"type" jsonschema:"Team type,enum=O,enum=I"`
+	Description string `json:"description" jsonschema:"Team description,maxLength=255"`
 	TeamIcon    string `json:"team_icon,omitempty" access:"local" jsonschema:"File path or URL to set as team icon (supports .jpeg, .jpg, .png, .gif)"`
 }
 
@@ -49,13 +49,13 @@ func (p *MattermostToolProvider) getTeamTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name:        "get_team_info",
-			Description: "Get information about a team. If you have a team ID, use that for fastest lookup. If the user provides a human-readable name, try team_display_name first (what users see in the UI), then team_name (URL name) as fallback.",
+			Description: "Get information about a team. Provide ONE of the following parameters: team_id (fastest), team_display_name (user-visible name), or team_name (URL name). Returns team metadata including ID, names, type, description, and creation date. Example: {\"team_display_name\": \"Engineering Team\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
 			Schema:      NewJSONSchemaForAccessMode[GetTeamInfoArgs](string(p.accessMode)),
 			Resolver:    p.toolGetTeamInfo,
 		},
 		{
 			Name:        "get_team_members",
-			Description: "Get members of a team with pagination support",
+			Description: "Get members of a team with pagination support. Parameters: team_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and roles. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"limit\": 10, \"page\": 0}",
 			Schema:      NewJSONSchemaForAccessMode[GetTeamMembersArgs](string(p.accessMode)),
 			Resolver:    p.toolGetTeamMembers,
 		},
@@ -103,19 +103,19 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 		// Direct ID lookup - fastest method
 		team, _, err = client.GetTeam(ctx, args.TeamID, "")
 		if err != nil {
-			return "team not found by ID", fmt.Errorf("error fetching team by ID: %w", err)
+			return fmt.Sprintf("Team with ID '%s' was not found or you don't have permission to access it.", args.TeamID), fmt.Errorf("error fetching team by ID: %w", err)
 		}
 	case args.TeamDisplayName != "":
 		// Lookup by display name - get all teams for user and search
 		// Get current user ID for the API call
 		user, _, userErr := client.GetMe(ctx, "")
 		if userErr != nil {
-			return "failed to get current user", fmt.Errorf("error getting current user: %w", userErr)
+			return "Unable to get current user information. Please check your authentication.", fmt.Errorf("error getting current user: %w", userErr)
 		}
 
 		teams, _, teamsErr := client.GetTeamsForUser(ctx, user.Id, "")
 		if teamsErr != nil {
-			return "failed to fetch user teams", fmt.Errorf("error fetching user teams: %w", teamsErr)
+			return "Unable to retrieve your team list. Please check your permissions.", fmt.Errorf("error fetching user teams: %w", teamsErr)
 		}
 
 		for _, t := range teams {
@@ -126,16 +126,16 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 		}
 
 		if team == nil {
-			return "team not found by display name", fmt.Errorf("no team found with display name: %s", args.TeamDisplayName)
+			return fmt.Sprintf("No team found with display name '%s'. You may not be a member of this team or it may not exist.", args.TeamDisplayName), fmt.Errorf("no team found with display name: %s", args.TeamDisplayName)
 		}
 	case args.TeamName != "":
 		// Lookup by name
 		team, _, err = client.GetTeamByName(ctx, args.TeamName, "")
 		if err != nil {
-			return "team not found by name", fmt.Errorf("error fetching team by name: %w", err)
+			return fmt.Sprintf("Team with name '%s' was not found or you don't have permission to access it.", args.TeamName), fmt.Errorf("error fetching team by name: %w", err)
 		}
 	default:
-		return "either team_id, team_display_name, or team_name must be provided", fmt.Errorf("insufficient parameters for team lookup")
+		return "Please provide one of the following: team_id, team_display_name, or team_name to look up a team.", fmt.Errorf("insufficient parameters for team lookup")
 	}
 
 	// Format the response
