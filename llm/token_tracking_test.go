@@ -17,6 +17,17 @@ type MockLanguageModel struct {
 	mock.Mock
 }
 
+// MockLogger is a mock implementation of LoggerInterface
+type MockLogger struct {
+	mock.Mock
+}
+
+func (m *MockLogger) Info(msg string, keyValuePairs ...any) {
+	args := []interface{}{msg}
+	args = append(args, keyValuePairs...)
+	m.Called(args...)
+}
+
 func (m *MockLanguageModel) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	args := m.Called(request, opts)
 	return args.Get(0).(*TextStreamResult), args.Error(1)
@@ -40,8 +51,11 @@ func (m *MockLanguageModel) InputTokenLimit() int {
 func TestTokenTrackingWrapper_ChatCompletion(t *testing.T) {
 	t.Run("filters usage events from stream", func(t *testing.T) {
 		mockLLM := &MockLanguageModel{}
-		logger, _ := CreateTokenLogger()
+		logger := &MockLogger{}
 		wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-bot", logger)
+
+		// Set up logger expectations for the token usage log call
+		logger.On("Info", "Token Usage", "log_type", "token_usage", "user_id", "user123", "team_id", "team456", "bot_username", "test-bot", "input_tokens", int64(10), "output_tokens", int64(5), "total_tokens", int64(15))
 
 		// Create a mock stream with usage event
 		mockStream := make(chan TextStreamEvent, 3)
@@ -77,12 +91,16 @@ func TestTokenTrackingWrapper_ChatCompletion(t *testing.T) {
 		assert.Equal(t, EventTypeEnd, events[1].Type)
 
 		mockLLM.AssertExpectations(t)
+		logger.AssertExpectations(t)
 	})
 
 	t.Run("handles nil context gracefully", func(t *testing.T) {
 		mockLLM := &MockLanguageModel{}
-		logger, _ := CreateTokenLogger()
+		logger := &MockLogger{}
 		wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-bot", logger)
+
+		// Set up logger expectations for the token usage log call with unknown user/team
+		logger.On("Info", "Token Usage", "log_type", "token_usage", "user_id", "unknown", "team_id", "unknown", "bot_username", "test-bot", "input_tokens", int64(10), "output_tokens", int64(5), "total_tokens", int64(15))
 
 		mockStream := make(chan TextStreamEvent, 2)
 		mockStream <- TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 10, OutputTokens: 5}}
@@ -106,11 +124,12 @@ func TestTokenTrackingWrapper_ChatCompletion(t *testing.T) {
 		assert.Equal(t, EventTypeEnd, events[0].Type)
 
 		mockLLM.AssertExpectations(t)
+		logger.AssertExpectations(t)
 	})
 
 	t.Run("handles invalid usage event value", func(t *testing.T) {
 		mockLLM := &MockLanguageModel{}
-		logger, _ := CreateTokenLogger()
+		logger := &MockLogger{}
 		wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-bot", logger)
 
 		mockStream := make(chan TextStreamEvent, 2)
@@ -133,14 +152,18 @@ func TestTokenTrackingWrapper_ChatCompletion(t *testing.T) {
 
 		assert.Len(t, events, 1) // Only end event forwarded
 		mockLLM.AssertExpectations(t)
+		logger.AssertExpectations(t)
 	})
 }
 
 func TestTokenTrackingWrapper_ChatCompletionNoStream(t *testing.T) {
 	t.Run("delegates to streaming method", func(t *testing.T) {
 		mockLLM := &MockLanguageModel{}
-		logger, _ := CreateTokenLogger()
+		logger := &MockLogger{}
 		wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-bot", logger)
+
+		// Set up logger expectations for the token usage log call with unknown user/team
+		logger.On("Info", "Token Usage", "log_type", "token_usage", "user_id", "unknown", "team_id", "unknown", "bot_username", "test-bot", "input_tokens", int64(5), "output_tokens", int64(10), "total_tokens", int64(15))
 
 		mockStream := make(chan TextStreamEvent, 3)
 		mockStream <- TextStreamEvent{Type: EventTypeText, Value: "Hello world"}
@@ -157,12 +180,13 @@ func TestTokenTrackingWrapper_ChatCompletionNoStream(t *testing.T) {
 		assert.Equal(t, "Hello world", result)
 
 		mockLLM.AssertExpectations(t)
+		logger.AssertExpectations(t)
 	})
 }
 
 func TestTokenTrackingWrapper_DelegatedMethods(t *testing.T) {
 	mockLLM := &MockLanguageModel{}
-	logger, _ := CreateTokenLogger()
+	logger := &MockLogger{}
 	wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-llm", logger)
 
 	t.Run("CountTokens delegates to wrapped model", func(t *testing.T) {
