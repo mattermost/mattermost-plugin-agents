@@ -4,7 +4,6 @@
 package tools
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,30 +49,14 @@ func TestRegisterDynamicTool_WithSchema(t *testing.T) {
 		Resolver:    nil, // Not needed for this test
 	}
 
-	// Register the tool
+	// Register the tool - should succeed without errors
 	provider.registerDynamicTool(mockServer, testTool)
 
-	// Verify the tool was registered by checking that the schema is valid JSON
-	// (This demonstrates that the schema assignment worked)
-	if testTool.Schema != nil {
-		schemaBytes, err := json.Marshal(testTool.Schema)
-		require.NoError(t, err, "Schema should be marshallable to JSON")
+	// Verify the schema was properly assigned (type safety guarantees it's valid)
+	require.NotNil(t, testTool.Schema, "Schema should not be nil")
+	assert.Equal(t, "object", testTool.Schema.Type, "Schema should be an object type")
+	assert.NotNil(t, testTool.Schema.Properties, "Schema should have properties")
 
-		// Parse back to verify it's valid JSON schema
-		var parsedSchema map[string]interface{}
-		err = json.Unmarshal(schemaBytes, &parsedSchema)
-		require.NoError(t, err, "Schema should be valid JSON")
-
-		// Verify it contains properties (basic schema validation)
-		assert.Contains(t, parsedSchema, "properties", "Schema should have properties field")
-
-		// Verify the properties contain our test fields
-		properties, ok := parsedSchema["properties"].(map[string]interface{})
-		require.True(t, ok, "Properties should be a map")
-		assert.Contains(t, properties, "username", "Schema should contain username field")
-		assert.Contains(t, properties, "count", "Schema should contain count field")
-		assert.Contains(t, properties, "enabled", "Schema should contain enabled field")
-	}
 	t.Log("Tool with schema registered successfully")
 }
 
@@ -103,34 +86,6 @@ func TestRegisterDynamicTool_WithoutSchema(t *testing.T) {
 
 	// Verify the tool was registered
 	t.Log("Tool without schema registered successfully")
-}
-
-// TestRegisterDynamicTool_WithInvalidSchema tests that tools with invalid schema types fallback gracefully
-func TestRegisterDynamicTool_WithInvalidSchema(t *testing.T) {
-	// Create a mock server
-	mockServer := mcp.NewServer(&mcp.Implementation{
-		Name:    "test-server",
-		Version: "1.0.0",
-	}, nil)
-
-	// Create a provider
-	provider := &MattermostToolProvider{
-		logger: mlog.CreateTestLogger(t),
-	}
-
-	// Create a test tool with invalid schema type (not a *jsonschema.Schema)
-	testTool := MCPTool{
-		Name:        "test_tool_invalid_schema",
-		Description: "A test tool with invalid schema type",
-		Schema:      "invalid_schema_type", // This should trigger the warning and fallback
-		Resolver:    nil,                   // Not needed for this test
-	}
-
-	// Register the tool - this should succeed but log a warning about invalid schema type
-	provider.registerDynamicTool(mockServer, testTool)
-
-	// The tool should still be registered successfully with an empty schema as fallback
-	t.Log("Tool with invalid schema type registered successfully with fallback to empty schema")
 }
 
 func TestValidateAccessRestrictions_ValidFields(t *testing.T) {

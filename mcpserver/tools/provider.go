@@ -32,7 +32,7 @@ type MCPToolResolver func(*MCPToolContext, llm.ToolArgumentGetter) (string, erro
 type MCPTool struct {
 	Name        string
 	Description string
-	Schema      interface{}
+	Schema      *jsonschema.Schema
 	Resolver    MCPToolResolver
 }
 
@@ -99,10 +99,9 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		InputSchema: nil, // Initialize as nil, will be set below if schema is available
 	}
 
-	// Try to set the InputSchema if it's a valid jsonschema.Schema
-	// This restores the schema functionality that was lost during MCP SDK migration
-	if schema, ok := mcpTool.Schema.(*jsonschema.Schema); ok && schema != nil {
-		tool.InputSchema = schema
+	// Set the InputSchema from the MCPTool schema
+	if mcpTool.Schema != nil {
+		tool.InputSchema = mcpTool.Schema
 		p.logger.Debug("Registered tool with schema", mlog.String("tool", mcpTool.Name))
 	} else {
 		// The MCP SDK requires an input schema, so provide a basic empty object schema
@@ -112,15 +111,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 			Properties: make(map[string]*jsonschema.Schema),
 		}
 		tool.InputSchema = emptySchema
-
-		if mcpTool.Schema != nil {
-			// Log if there's a schema but it's not the expected type
-			p.logger.Warn("Tool has schema but not of expected type *jsonschema.Schema, using empty schema",
-				mlog.String("tool", mcpTool.Name),
-				mlog.String("schema_type", fmt.Sprintf("%T", mcpTool.Schema)))
-		} else {
-			p.logger.Debug("Registered tool with empty schema (no schema provided)", mlog.String("tool", mcpTool.Name))
-		}
+		p.logger.Debug("Registered tool with empty schema (no schema provided)", mlog.String("tool", mcpTool.Name))
 	}
 
 	handler := func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {

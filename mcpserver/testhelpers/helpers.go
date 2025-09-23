@@ -6,6 +6,7 @@ package testhelpers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -168,11 +169,16 @@ func ExecuteMCPTool(t *testing.T, mcpServer *mcp.Server, toolName string, args m
 	// Check if the result indicates an error from the tool resolver
 	if result.IsError {
 		// Extract error message from content
-		errorMsg := "tool execution failed"
-		if len(result.Content) > 0 {
-			if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
-				errorMsg = textContent.Text
+		var errorMsgs []string
+		for _, content := range result.Content {
+			if textContent, ok := content.(*mcp.TextContent); ok {
+				errorMsgs = append(errorMsgs, textContent.Text)
 			}
+		}
+
+		errorMsg := "tool execution failed"
+		if len(errorMsgs) > 0 {
+			errorMsg = strings.Join(errorMsgs, "\n")
 		}
 		return result, fmt.Errorf("%s", errorMsg)
 	}

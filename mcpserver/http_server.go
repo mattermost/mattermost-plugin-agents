@@ -70,9 +70,6 @@ func NewHTTPServer(config HTTPConfig, logger *mlog.Logger) (*MattermostHTTPMCPSe
 		logger,
 	)
 
-	// Create MCP server with v0.5.0 API
-	// Note: ServerOptions in the new SDK appear to be primarily for client notifications
-	// and don't have the same logging/recovery options as the old SDK
 	mattermostServer.mcpServer = mcp.NewServer(
 		&mcp.Implementation{
 			Name:    "mattermost-mcp-server",

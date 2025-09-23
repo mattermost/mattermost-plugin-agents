@@ -79,7 +79,6 @@ func (s *MattermostMCPServer) serveStdio() error {
 	// Log startup
 	s.logger.Info("Starting MCP server with STDIO transport")
 
-	// Use the v0.5.0 API for STDIO transport with enhanced error handling
 	transport := &mcp.StdioTransport{}
 
 	err := s.mcpServer.Run(ctx, transport)
