@@ -33,20 +33,22 @@ func newVectorStore(db *sqlx.DB, config embeddings.UpstreamConfig, dimensions in
 }
 
 // newEmbeddingProvider creates a new embedding provider based on the provided configuration
-func newEmbeddingProvider(config embeddings.UpstreamConfig, httpClient *http.Client) (embeddings.EmbeddingProvider, error) {
+func newEmbeddingProvider(config embeddings.UpstreamConfig, dimensions int, httpClient *http.Client) (embeddings.EmbeddingProvider, error) {
 	switch config.Type {
 	case embeddings.ProviderTypeOpenAICompatible:
 		compatibleConfig := openai.Config{}
 		if err := json.Unmarshal(config.Parameters, &compatibleConfig); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal OpenAI-compatible config: %w", err)
 		}
+		compatibleConfig.EmbeddingDimensions = dimensions
 		return openai.NewCompatibleEmbeddings(compatibleConfig, httpClient), nil
 	case embeddings.ProviderTypeOpenAI:
 		var openaiConfig openai.Config
 		if err := json.Unmarshal(config.Parameters, &openaiConfig); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal OpenAI config: %w", err)
 		}
-		return openai.NewCompatibleEmbeddings(openaiConfig, httpClient), nil
+		openaiConfig.EmbeddingDimensions = dimensions
+		return openai.NewEmbeddings(openaiConfig, httpClient), nil
 	}
 
 	return nil, fmt.Errorf("unsupported embedding provider type: %s", config.Type)
@@ -68,7 +70,7 @@ func InitEmbeddingsSearch(db *sqlx.DB, httpClient *http.Client, cfg embeddings.E
 		if err != nil {
 			return nil, err
 		}
-		embeddor, err := newEmbeddingProvider(cfg.EmbeddingProvider, httpClient)
+		embeddor, err := newEmbeddingProvider(cfg.EmbeddingProvider, cfg.Dimensions, httpClient)
 		if err != nil {
 			return nil, err
 		}
