@@ -117,6 +117,19 @@ Metrics for Agents are exposed through the `/plugins/mattermost-ai/metrics` subp
 - `agents_http_errors_total`: The total number of http API errors.
 - `agents_llm_requests_total`: The total number of requests to upstream LLMs.
 
+### Token usage tracking
+
+The Agents plugin automatically tracks token usage for all LLM interactions to support billing and usage analytics. Token usage data is logged to a dedicated `token_usage.log` file in JSON format, capturing detailed information about each request:
+
+- **User ID**: The Mattermost user who initiated the request
+- **Team ID**: The team context for the request
+- **Bot Username**: Which agent was used for the interaction
+- **Input Tokens**: Number of tokens in the request to the LLM
+- **Output Tokens**: Number of tokens in the LLM response
+- **Total Tokens**: Combined input and output token count
+
+This tracking is enabled automatically and requires no additional configuration. The token usage logs provide administrators with visibility into LLM usage patterns and can be used for cost tracking and resource planning. All major LLM providers (OpenAI, Anthropic) report usage data that gets captured by this logging system.
+
 ### Post indexing
 
 Post indexing occurs automatically during initial setup and when changing embedding providers:
