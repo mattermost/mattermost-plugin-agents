@@ -100,6 +100,10 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 	// Try different lookup methods based on provided parameters
 	switch {
 	case args.TeamID != "":
+		// Validate team ID format
+		if !model.IsValidId(args.TeamID) {
+			return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+		}
 		// Direct ID lookup - fastest method
 		team, _, err = client.GetTeam(ctx, args.TeamID, "")
 		if err != nil {
@@ -170,8 +174,8 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 	}
 
 	// Validate required fields
-	if args.TeamID == "" {
-		return "team_id is required", fmt.Errorf("team_id cannot be empty")
+	if !model.IsValidId(args.TeamID) {
+		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
 
 	// Set defaults and validate
@@ -316,11 +320,11 @@ func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, a
 	}
 
 	// Validate required fields
-	if args.UserID == "" {
-		return "user_id is required", fmt.Errorf("user_id cannot be empty")
+	if !model.IsValidId(args.UserID) {
+		return "invalid user_id format", fmt.Errorf("user_id must be a valid ID")
 	}
-	if args.TeamID == "" {
-		return "team_id is required", fmt.Errorf("team_id cannot be empty")
+	if !model.IsValidId(args.TeamID) {
+		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
 
 	// Get client from context
