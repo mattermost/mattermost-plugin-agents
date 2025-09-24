@@ -71,7 +71,8 @@ func testDB(t *testing.T) *sqlx.DB {
 	tables := []string{
 		`CREATE TABLE IF NOT EXISTS Posts (
 			Id TEXT PRIMARY KEY,
-			CreateAt BIGINT NOT NULL
+			CreateAt BIGINT NOT NULL,
+			DeleteAt BIGINT NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS Channels (
 			Id TEXT PRIMARY KEY,
