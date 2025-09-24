@@ -34,10 +34,10 @@ type CreateChannelArgs struct {
 
 // GetChannelInfoArgs represents arguments for the get_channel_info tool
 type GetChannelInfoArgs struct {
-	ChannelID          string `json:"channel_id,omitempty" jsonschema:"The exact channel ID (fastest, most reliable method)"`
-	ChannelDisplayName string `json:"channel_display_name,omitempty" jsonschema:"The human-readable display name users see (e.g. 'General Discussion'). Try this first for user-provided names."`
-	ChannelName        string `json:"channel_name,omitempty" jsonschema:"The URL-friendly channel name (e.g. 'general-discussion'). Use this only if display_name doesn't work."`
-	TeamID             string `json:"team_id,omitempty" jsonschema:"Team ID (optional - if provided, searches within specific team; if omitted, searches across all teams)"`
+	ChannelID          string `json:"channel_id,omitempty" jsonschema:"The exact channel ID (fastest, most reliable method),maxLength=26"`
+	ChannelDisplayName string `json:"channel_display_name,omitempty" jsonschema:"The human-readable display name users see (e.g. 'General Discussion'). Try this first for user-provided names.,maxLength=64"`
+	ChannelName        string `json:"channel_name,omitempty" jsonschema:"The URL-friendly channel name (e.g. 'general-discussion'). Use this only if display_name doesn't work.,maxLength=64"`
+	TeamID             string `json:"team_id,omitempty" jsonschema:"Team ID (optional - if provided, searches within specific team; if omitted, searches across all teams),maxLength=26"`
 }
 
 // GetChannelMembersArgs represents arguments for the get_channel_members tool
