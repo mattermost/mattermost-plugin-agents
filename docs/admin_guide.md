@@ -119,7 +119,7 @@ Metrics for Agents are exposed through the `/plugins/mattermost-ai/metrics` subp
 
 ### Token usage tracking
 
-The Agents plugin automatically tracks token usage for all LLM interactions to support billing and usage analytics. Token usage data is logged through the standard Mattermost logging system with a special `log_type: "token_usage"` field. By default, these logs appear in the standard server logs alongside other log entries. The logs capture detailed information about each request:
+The Agents plugin automatically tracks token usage for all LLM interactions to support billing and usage analytics. Token usage data is logged to a dedicated `token_usage.log` file in JSON format, capturing detailed information about each request:
 
 - **User ID**: The Mattermost user who initiated the request
 - **Team ID**: The team context for the request
@@ -128,34 +128,7 @@ The Agents plugin automatically tracks token usage for all LLM interactions to s
 - **Output Tokens**: Number of tokens in the LLM response
 - **Total Tokens**: Combined input and output token count
 
-#### Separating token usage logs (Optional)
-
-By default, token usage logs appear in your standard Mattermost server logs. To separate them into a dedicated file for easier analysis and processing, you can use Mattermost's [advanced logging configuration](https://docs.mattermost.com/administration-guide/manage/logging.html#advanced-logging). Add the following to your logging configuration:
-
-```json
-{
-  "token_usage_file": {
-    "type": "file",
-    "format": "json",
-    "levels": [
-      {"id": 5, "name": "info"}
-    ],
-    "targets": [
-      {"type": "file", "location": "./logs/token_usage.log"}
-    ],
-    "options": {
-      "filename": "./logs/token_usage.log",
-      "max_size": 100,
-      "max_age": 30
-    },
-    "filter": {
-      "log_type": "token_usage"
-    }
-  }
-}
-```
-
-This configuration creates a separate `token_usage.log` file containing only token usage entries. The logs provide administrators with visibility into LLM usage patterns and can be used for cost tracking and resource planning. All major LLM providers (OpenAI, Anthropic) report usage data that gets captured by this logging system.
+This tracking is enabled automatically and requires no additional configuration. The token usage logs provide administrators with visibility into LLM usage patterns and can be used for cost tracking and resource planning. All major LLM providers (OpenAI, Anthropic) report usage data that gets captured by this logging system.
 
 ### Post indexing
 

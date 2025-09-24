@@ -4,30 +4,59 @@
 package llm
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+
+	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
 // TokenUsageLoggingWrapper wraps a LanguageModel to log token usage
 type TokenUsageLoggingWrapper struct {
 	wrapped     LanguageModel
 	botUsername string
-	logger      LoggerInterface
-}
-
-// LoggerInterface defines the logging contract
-type LoggerInterface interface {
-	Info(string, ...any)
+	tokenLogger *mlog.Logger
 }
 
 // NewTokenUsageLoggingWrapper creates a new wrapper that logs token usage
-func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, logger LoggerInterface) *TokenUsageLoggingWrapper {
+func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, tokenLogger *mlog.Logger) *TokenUsageLoggingWrapper {
 	return &TokenUsageLoggingWrapper{
 		wrapped:     wrapped,
 		botUsername: botUsername,
-		logger:      logger,
+		tokenLogger: tokenLogger,
 	}
 }
 
+// CreateTokenLogger creates a dedicated logger for token usage metrics
+func CreateTokenLogger() (*mlog.Logger, error) {
+	logger, err := mlog.NewLogger()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create token logger: %w", err)
+	}
+
+	jsonTargetCfg := mlog.TargetCfg{
+		Type:   "file",
+		Format: "json",
+		Levels: []mlog.Level{mlog.LvlInfo, mlog.LvlDebug},
+	}
+	jsonFileOptions := map[string]interface{}{
+		"filename": "token_usage.log",
+	}
+	jsonOptions, err := json.Marshal(jsonFileOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal json file options: %w", err)
+	}
+	jsonTargetCfg.Options = json.RawMessage(jsonOptions)
+
+	err = logger.ConfigureTargets(map[string]mlog.TargetCfg{
+		"token_usage": jsonTargetCfg,
+	}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure token logger targets: %w", err)
+	}
+
+	return logger, nil
+}
 
 // ChatCompletion intercepts the streaming response to extract and log token usage
 func (w *TokenUsageLoggingWrapper) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
@@ -36,8 +65,8 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(request CompletionRequest, opt
 		return nil, err
 	}
 
-	if w.logger == nil {
-		return nil, errors.New("logger is nil")
+	if w.tokenLogger == nil {
+		return nil, errors.New("token logger is nil")
 	}
 
 	interceptedStream := make(chan TextStreamEvent)
@@ -67,14 +96,13 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(request CompletionRequest, opt
 				}
 			}
 
-			w.logger.Info("Token Usage",
-				"log_type", "token_usage",
-				"user_id", userID,
-				"team_id", teamID,
-				"bot_username", w.botUsername,
-				"input_tokens", usage.InputTokens,
-				"output_tokens", usage.OutputTokens,
-				"total_tokens", usage.InputTokens+usage.OutputTokens,
+			w.tokenLogger.Info("Token Usage",
+				mlog.String("user_id", userID),
+				mlog.String("team_id", teamID),
+				mlog.String("bot_username", w.botUsername),
+				mlog.Int("input_tokens", usage.InputTokens),
+				mlog.Int("output_tokens", usage.OutputTokens),
+				mlog.Int("total_tokens", usage.InputTokens+usage.OutputTokens),
 			)
 		}
 	}()
