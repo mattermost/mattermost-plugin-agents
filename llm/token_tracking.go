@@ -28,6 +28,7 @@ func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, logg
 	}
 }
 
+
 // ChatCompletion intercepts the streaming response to extract and log token usage
 func (w *TokenUsageLoggingWrapper) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	result, err := w.wrapped.ChatCompletion(request, opts...)
