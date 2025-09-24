@@ -22,7 +22,7 @@ type ReadPostArgs struct {
 // CreatePostArgs represents arguments for the create_post tool
 type CreatePostArgs struct {
 	ChannelID   string   `json:"channel_id" jsonschema:"The ID of the channel to post in,minLength=26,maxLength=26"`
-	Message     string   `json:"message" jsonschema:"The message content,minLength=1,maxLength=16383"`
+	Message     string   `json:"message" jsonschema:"The message content,minLength=1"`
 	RootID      string   `json:"root_id,omitempty" jsonschema:"Optional root post ID for replies,minLength=26,maxLength=26"`
 	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the post"`
 }
@@ -40,7 +40,7 @@ type CreatePostAsUserArgs struct {
 
 // DMSelfArgs represents arguments for the dm_self tool
 type DMSelfArgs struct {
-	Message     string   `json:"message" jsonschema:"The message content to send to yourself,minLength=1,maxLength=16383"`
+	Message     string   `json:"message" jsonschema:"The message content to send to yourself,minLength=1"`
 	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the message"`
 }
 
