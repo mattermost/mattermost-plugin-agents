@@ -26,6 +26,7 @@ import (
 type Config interface {
 	GetDefaultBotName() string
 	EnableLLMLogging() bool
+	EnableTokenUsageLogging() bool
 	GetTranscriptGenerator() string
 }
 
@@ -197,7 +198,7 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botName string) (llm.La
 	result = llm.NewLLMTruncationWrapper(result)
 
 	// Token Usage Logging
-	if b.tokenLogger != nil {
+	if b.tokenLogger != nil && b.config.EnableTokenUsageLogging() {
 		result = llm.NewTokenUsageLoggingWrapper(result, botName, b.tokenLogger)
 	}
 
