@@ -130,6 +130,23 @@ The Agents plugin can track token usage for all LLM interactions to support bill
 
 To enable token usage tracking, navigate to **System Console > Plugins > Agents** and set **Enable Token Usage Logging** to **True**. When enabled, log files automatically rotate when they reach 100MB in size, and rotated log files are compressed to save disk space. The token usage logs provide administrators with visibility into LLM usage patterns and can be used for cost tracking and resource planning. All major LLM providers (OpenAI, Anthropic) report usage data that gets captured by this logging system.
 
+#### Converting token usage logs for analysis
+
+The token usage log file contains one JSON object per line, which is not directly compatible with tools like Microsoft Excel. Use these commands to convert the logs to different formats. Each requires `jq` to be installed for easy JSON parsing:
+
+**Convert to Excel-compatible JSON:**
+
+```bash
+jq -s '.' logs/agents/token_usage.log > token_usage.json
+```
+
+**Convert to CSV format:**
+
+```bash
+echo "timestamp,user_id,team_id,bot_username,input_tokens,output_tokens,total_tokens" > token_usage.csv
+jq -r '[.timestamp, .user_id, .team_id, .bot_username, .input_tokens, .output_tokens, .total_tokens] | @csv' logs/agents/token_usage.log >> token_usage.csv
+```
+
 ### Post indexing
 
 Post indexing occurs automatically during initial setup and when changing embedding providers:
