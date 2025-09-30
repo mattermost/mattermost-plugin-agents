@@ -44,7 +44,8 @@ const TextContainer = styled.div<{showCursor?: boolean}>`
 		>h5:last-child::after,
 		>h6:last-child::after,
 		>blockquote:last-child>p::after,
-		>p:last-child::after {
+		>p:last-child::after,
+		>p:empty::after {
 			content: '';
 			width: 7px;
 			height: 16px;

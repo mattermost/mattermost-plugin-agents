@@ -233,6 +233,9 @@ export const LLMBotPost = (props: Props) => {
     // Generating is true while we are reciving new content from the websocket
     const [generating, setGenerating] = useState(false);
 
+    // Precontent is true when we're waiting for the first content to arrive
+    const [precontent, setPrecontent] = useState(props.post.message === '');
+
     // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation
     // Needs a ref because of the useEffect closure.
     const [stopped, setStopped] = useState(false);
@@ -277,6 +280,14 @@ export const LLMBotPost = (props: Props) => {
                 setIsReasoningCollapsed(true);
                 setIsReasoningLoading(false);
             }
+
+            // Initialize precontent based on whether post is empty
+            if (props.post.message === '') {
+                setPrecontent(true);
+            } else {
+                setPrecontent(false);
+            }
+
             previousPostIdRef.current = props.post.id;
         }
     }, [props.post.id, props.post.props?.reasoning_summary]);
@@ -346,9 +357,11 @@ export const LLMBotPost = (props: Props) => {
                 // Handle regular post updates
                 if (data.next && !stoppedRef.current) {
                     setGenerating(true);
+                    setPrecontent(false);
                     setMessage(data.next);
                 } else if (data.control === 'end') {
                     setGenerating(false);
+                    setPrecontent(false);
                     setStopped(false);
                     setIsReasoningLoading(false);
                 } else if (data.control === 'cancel') {
@@ -357,6 +370,7 @@ export const LLMBotPost = (props: Props) => {
                     setIsReasoningLoading(false);
                 } else if (data.control === 'start') {
                     setGenerating(true);
+                    setPrecontent(true);
                     setStopped(false);
 
                     // Clear reasoning when starting new generation
@@ -382,9 +396,10 @@ export const LLMBotPost = (props: Props) => {
     }, [props.post.id]);
 
     const regnerate = () => {
-        setGenerating(true);
-        setStopped(false);
         setMessage('');
+        setGenerating(false);
+        setPrecontent(true);
+        setStopped(false);
 
         // Clear reasoning summary when regenerating
         setReasoningSummary('');
@@ -486,6 +501,14 @@ export const LLMBotPost = (props: Props) => {
                         </ExpandedReasoningContainer>
                     )}
                 </>
+            )}
+            {precontent && (
+                <MinimalReasoningContainer>
+                    <LoadingSpinner/>
+                    <span>
+                        <FormattedMessage defaultMessage='Starting...'/>
+                    </span>
+                </MinimalReasoningContainer>
             )}
             <PostText
                 message={message}
