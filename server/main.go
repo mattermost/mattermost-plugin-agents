@@ -34,6 +34,11 @@ import (
 	"github.com/mattermost/mattermost/server/public/shared/httpservice"
 )
 
+const (
+	// Block notifications for bot replies that occur within this time window after the parent post
+	botReplyDebounceTimeout = 1000 * time.Millisecond
+)
+
 func main() {
 	plugin.ClientMain(&Plugin{})
 }
@@ -43,11 +48,14 @@ type Plugin struct {
 
 	configuration config.Container
 
-	pluginAPI            *pluginapi.Client
-	apiService           *api.API
-	indexerService       *indexer.Indexer
-	conversationsService *conversations.Conversations
-	mcpClientManager     *mcp.ClientManager
+	pluginAPI              *pluginapi.Client
+	apiService             *api.API
+	indexerService         *indexer.Indexer
+	conversationsService   *conversations.Conversations
+	mcpClientManager       *mcp.ClientManager
+	postCache              *postCache
+	postCacheCleanupTicker *time.Ticker
+	postCacheCleanupDone   chan struct{}
 }
 
 func (p *Plugin) OnActivate() error {
@@ -210,16 +218,27 @@ func (p *Plugin) OnActivate() error {
 	p.conversationsService = conversationsService
 	p.mcpClientManager = mcpClientManager
 
+	// Initialize post cache
+	p.initializePostCache()
+
 	return nil
 }
 
 func (p *Plugin) OnDeactivate() error {
+	// Stop post cache cleanup goroutine
+	p.deinitializePostCache()
+
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()
 	return nil
 }
 
 func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
+	// Add post to cache for notification filtering
+	if p.postCache != nil {
+		p.postCache.addPost(post)
+	}
+
 	// Index the new message in the vector database
 	if p.indexerService != nil {
 		// Get channel to retrieve team ID
@@ -263,4 +282,70 @@ func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Req
 
 func (p *Plugin) ServeMetrics(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
 	p.apiService.ServeMetrics(c, w, r)
+}
+
+// EmailNotificationWillBeSent blocks email notifications for immediate bot replies in threads.
+// This hook is called once per notification recipient, so we use postCache to avoid repeatedly
+// fetching the same post objects for posts that generate many notifications.
+func (p *Plugin) EmailNotificationWillBeSent(emailNotification *model.EmailNotification) (*model.EmailNotificationContent, string) {
+	if p.shouldBlockBotReplyNotification(emailNotification.PostId, emailNotification.RootId, emailNotification.RecipientId) {
+		return nil, "notification blocked: bot reply occurred too quickly after parent post"
+	}
+	return &emailNotification.EmailNotificationContent, ""
+}
+
+// NotificationWillBePushed blocks push notifications for immediate bot replies in threads.
+// IMPORTANT: This hook must execute quickly as it can become blocking and delay post creation.
+// It is called once per notification recipient, so we use postCache to avoid repeatedly
+// fetching the same post objects for posts that generate many notifications.
+func (p *Plugin) NotificationWillBePushed(pushNotification *model.PushNotification, userID string) (*model.PushNotification, string) {
+	if pushNotification.PostId == "" {
+		return pushNotification, ""
+	}
+
+	if p.shouldBlockBotReplyNotification(pushNotification.PostId, pushNotification.RootId, userID) {
+		return nil, "notification blocked: bot reply occurred too quickly after parent post"
+	}
+	return pushNotification, ""
+}
+
+func (p *Plugin) shouldBlockBotReplyNotification(postID, rootID, recipientUserID string) bool {
+	// Only check threaded replies
+	if rootID == "" {
+		return false
+	}
+
+	// Check if cache is initialized
+	if p.postCache == nil {
+		return false
+	}
+
+	// Get the post to check if it's from a bot
+	post, err := p.postCache.getPost(p.API, postID)
+	if err != nil {
+		p.pluginAPI.Log.Debug("Failed to get post for notification filtering", "post_id", postID, "error", err)
+		return false
+	}
+
+	// Only filter bot posts
+	fromBot, ok := post.GetProps()["from_bot"]
+	if !ok || fromBot != "true" {
+		return false
+	}
+
+	// Get the parent post
+	parentPost, err := p.postCache.getPost(p.API, rootID)
+	if err != nil {
+		p.pluginAPI.Log.Debug("Failed to get parent post for notification filtering", "root_id", rootID, "error", err)
+		return false
+	}
+
+	// Only block if the parent post was created by the notification recipient
+	if parentPost.UserId != recipientUserID {
+		return false
+	}
+
+	// Block notifications created within debounce timeout of parent post
+	timeSinceParentPost := time.Since(time.UnixMilli(parentPost.CreateAt))
+	return timeSinceParentPost < botReplyDebounceTimeout
 }
