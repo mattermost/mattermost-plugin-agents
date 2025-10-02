@@ -285,7 +285,6 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 			Type:  llm.EventTypeReasoningEnd,
 			Value: thinkingBuffer.String(),
 		}
-		isThinkingComplete = true
 	}
 
 	// Check for tool usage in the message
