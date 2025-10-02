@@ -90,14 +90,6 @@ func (pc *postCache) getPost(api plugin.API, postID string) (*model.Post, error)
 
 	// Use singleflight to deduplicate concurrent requests for the same post
 	v, err, _ := pc.group.Do(postID, func() (interface{}, error) {
-		// Double-check cache in case another goroutine already fetched it
-		pc.cacheLock.Lock()
-		if cached, ok := pc.cache[postID]; ok {
-			pc.cacheLock.Unlock()
-			return cached.post, nil
-		}
-		pc.cacheLock.Unlock()
-
 		post, appErr := api.GetPost(postID)
 		if appErr != nil {
 			return nil, appErr
