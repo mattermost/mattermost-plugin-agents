@@ -58,7 +58,7 @@ For detailed configuration instructions, see the [Admin Guide](docs/admin_guide.
 
 ### Prerequisites
 
-- Go 1.23+
+- Go 1.24+
 - Node.js 20.11+
 - Access to an LLM provider (OpenAI, Anthropic, etc.)
 
