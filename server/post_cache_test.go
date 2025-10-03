@@ -338,7 +338,7 @@ func TestPlugin_shouldBlockBotReplyNotification(t *testing.T) {
 		assert.False(t, blocked)
 	})
 
-	t.Run("blocks bot reply within debounce window", func(t *testing.T) {
+	t.Run("blocks bot reply in thread", func(t *testing.T) {
 		p := &Plugin{}
 		p.initializePostCache()
 		defer p.deinitializePostCache()
@@ -363,7 +363,7 @@ func TestPlugin_shouldBlockBotReplyNotification(t *testing.T) {
 		assert.True(t, blocked)
 	})
 
-	t.Run("does not block bot reply outside debounce window", func(t *testing.T) {
+	t.Run("blocks bot reply regardless of timing", func(t *testing.T) {
 		p := &Plugin{}
 		p.initializePostCache()
 		defer p.deinitializePostCache()
@@ -385,7 +385,7 @@ func TestPlugin_shouldBlockBotReplyNotification(t *testing.T) {
 
 		blocked := p.shouldBlockBotReplyNotification("post1", "root1", "user1")
 
-		assert.False(t, blocked)
+		assert.True(t, blocked)
 	})
 
 	t.Run("uses cached posts to avoid API calls", func(t *testing.T) {

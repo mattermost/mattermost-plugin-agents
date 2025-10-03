@@ -34,11 +34,6 @@ import (
 	"github.com/mattermost/mattermost/server/public/shared/httpservice"
 )
 
-const (
-	// Block notifications for bot replies that occur within this time window after the parent post
-	botReplyDebounceTimeout = 1000 * time.Millisecond
-)
-
 func main() {
 	plugin.ClientMain(&Plugin{})
 }
@@ -284,17 +279,17 @@ func (p *Plugin) ServeMetrics(c *plugin.Context, w http.ResponseWriter, r *http.
 	p.apiService.ServeMetrics(c, w, r)
 }
 
-// EmailNotificationWillBeSent blocks email notifications for immediate bot replies in threads.
+// EmailNotificationWillBeSent blocks email notifications for bot replies in threads.
 // This hook is called once per notification recipient, so we use postCache to avoid repeatedly
 // fetching the same post objects for posts that generate many notifications.
 func (p *Plugin) EmailNotificationWillBeSent(emailNotification *model.EmailNotification) (*model.EmailNotificationContent, string) {
 	if p.shouldBlockBotReplyNotification(emailNotification.PostId, emailNotification.RootId, emailNotification.RecipientId) {
-		return nil, "notification blocked: bot reply occurred too quickly after parent post"
+		return nil, "notification blocked: bot reply in thread"
 	}
 	return &emailNotification.EmailNotificationContent, ""
 }
 
-// NotificationWillBePushed blocks push notifications for immediate bot replies in threads.
+// NotificationWillBePushed blocks push notifications for bot replies in threads.
 // IMPORTANT: This hook must execute quickly as it can become blocking and delay post creation.
 // It is called once per notification recipient, so we use postCache to avoid repeatedly
 // fetching the same post objects for posts that generate many notifications.
@@ -304,7 +299,7 @@ func (p *Plugin) NotificationWillBePushed(pushNotification *model.PushNotificati
 	}
 
 	if p.shouldBlockBotReplyNotification(pushNotification.PostId, pushNotification.RootId, userID) {
-		return nil, "notification blocked: bot reply occurred too quickly after parent post"
+		return nil, "notification blocked: bot reply in thread"
 	}
 	return pushNotification, ""
 }
@@ -345,7 +340,6 @@ func (p *Plugin) shouldBlockBotReplyNotification(postID, rootID, recipientUserID
 		return false
 	}
 
-	// Block notifications created within debounce timeout of parent post
-	timeSinceParentPost := time.Since(time.UnixMilli(parentPost.CreateAt))
-	return timeSinceParentPost < botReplyDebounceTimeout
+	// Block all bot reply notifications in threads
+	return true
 }
