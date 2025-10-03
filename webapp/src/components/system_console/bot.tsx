@@ -229,30 +229,20 @@ const Horizontal = styled.div`
 type NativeToolsItemProps = {
     enabledTools: string[]
     onChange: (tools: string[]) => void
-<<<<<<< HEAD
     provider?: 'openai' | 'anthropic'
-=======
->>>>>>> master
 }
 
 const NativeToolsItem = (props: NativeToolsItemProps) => {
     const intl = useIntl();
-<<<<<<< HEAD
     const provider = props.provider || 'openai';
-=======
->>>>>>> master
 
     const availableNativeTools = [
         {
             id: 'web_search',
             label: intl.formatMessage({defaultMessage: 'Web Search'}),
-<<<<<<< HEAD
             helpText: provider === 'anthropic' ?
                 intl.formatMessage({defaultMessage: 'Enable Claude\'s built-in web search capability'}) :
                 intl.formatMessage({defaultMessage: 'Enable OpenAI\'s built-in web search capability'}),
-=======
-            helpText: intl.formatMessage({defaultMessage: 'Enable OpenAI\'s built-in web search capability'}),
->>>>>>> master
         },
 
     ];
@@ -266,22 +256,15 @@ const NativeToolsItem = (props: NativeToolsItemProps) => {
         }
     };
 
-<<<<<<< HEAD
     const titleMessage = provider === 'anthropic' ?
         intl.formatMessage({defaultMessage: 'Native Claude Tools'}) :
         intl.formatMessage({defaultMessage: 'Native OpenAI Tools'});
 
-=======
->>>>>>> master
     return (
         <>
             <ItemLabel>
                 <Horizontal>
-<<<<<<< HEAD
                     {titleMessage}
-=======
-                    <FormattedMessage defaultMessage='Native OpenAI Tools'/>
->>>>>>> master
                     <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
                 </Horizontal>
             </ItemLabel>
