@@ -89,7 +89,7 @@ func TestConversationMentionHandling(t *testing.T) {
 			client := pluginapi.NewClient(mockAPI, nil)
 			mmClient := mocks.NewMockClient(t)
 			licenseChecker := enterprise.NewLicenseChecker(client)
-			botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{})
+			botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
 			prompts, err := llm.NewPrompts(prompts.PromptsFolder)
 			require.NoError(t, err, "Failed to load prompts")
 

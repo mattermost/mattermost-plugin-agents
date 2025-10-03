@@ -257,6 +257,12 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 				p.mmClient.LogError("Streaming result to post failed partway", "error", err)
 				post.Message = T("agents.stream_to_post_access_llm_error", "Sorry! An error occurred while accessing the LLM. See server logs for details.")
 
+				// Persist any accumulated reasoning before erroring out
+				if reasoningBuffer.Len() > 0 {
+					post.AddProp(ReasoningSummaryProp, reasoningBuffer.String())
+					p.mmClient.LogDebug("Saved partial reasoning summary on error", "post_id", post.Id, "reasoning_length", reasoningBuffer.Len())
+				}
+
 				if err := p.mmClient.UpdatePost(post); err != nil {
 					p.mmClient.LogError("Error recovering from streaming error", "error", err)
 					return
@@ -317,6 +323,12 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 				return
 			}
 		case <-ctx.Done():
+			// Persist any accumulated reasoning before canceling
+			if reasoningBuffer.Len() > 0 {
+				post.AddProp(ReasoningSummaryProp, reasoningBuffer.String())
+				p.mmClient.LogDebug("Saved partial reasoning summary on cancel", "post_id", post.Id, "reasoning_length", reasoningBuffer.Len())
+			}
+
 			if err := p.mmClient.UpdatePost(post); err != nil {
 				p.mmClient.LogError("Error updating post on stop signaled", "error", err)
 				return

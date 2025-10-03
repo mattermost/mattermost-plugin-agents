@@ -21,6 +21,7 @@ type Config struct {
 	DefaultBotName           string                           `json:"defaultBotName"`
 	TranscriptGenerator      string                           `json:"transcriptBackend"`
 	EnableLLMTrace           bool                             `json:"enableLLMTrace"`
+	EnableTokenUsageLogging  bool                             `json:"enableTokenUsageLogging"`
 	AllowedUpstreamHostnames string                           `json:"allowedUpstreamHostnames"`
 	EmbeddingSearchConfig    embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                      mcp.Config                       `json:"mcp"`
@@ -66,6 +67,10 @@ func (c *Container) GetDefaultBotName() string {
 
 func (c *Container) EnableLLMLogging() bool {
 	return c.cfg.Load().EnableLLMTrace
+}
+
+func (c *Container) EnableTokenUsageLogging() bool {
+	return c.cfg.Load().EnableTokenUsageLogging
 }
 
 func (c *Container) MCP() mcp.Config {
