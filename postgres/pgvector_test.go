@@ -71,7 +71,8 @@ func testDB(t *testing.T) *sqlx.DB {
 	tables := []string{
 		`CREATE TABLE IF NOT EXISTS Posts (
 			Id TEXT PRIMARY KEY,
-			CreateAt BIGINT NOT NULL
+			CreateAt BIGINT NOT NULL,
+			DeleteAt BIGINT NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS Channels (
 			Id TEXT PRIMARY KEY,
@@ -132,9 +133,18 @@ func cleanupDB(t *testing.T, db *sqlx.DB) {
 // addTestPosts adds test posts to the Posts table
 func addTestPosts(t *testing.T, db *sqlx.DB, postIDs []string, createAts []int64) {
 	for i, postID := range postIDs {
-		_, err := db.Exec("INSERT INTO Posts (Id, CreateAt) VALUES ($1, $2) ON CONFLICT (Id) DO NOTHING",
-			postID, createAts[i])
+		_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt) VALUES ($1, $2, $3) ON CONFLICT (Id) DO NOTHING",
+			postID, createAts[i], 0)
 		require.NoError(t, err, "Failed to insert test post")
+	}
+}
+
+// addTestDeletedPosts adds test posts with DeleteAt set to the Posts table
+func addTestDeletedPosts(t *testing.T, db *sqlx.DB, postIDs []string, createAts []int64, deleteAts []int64) {
+	for i, postID := range postIDs {
+		_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt) VALUES ($1, $2, $3) ON CONFLICT (Id) DO NOTHING",
+			postID, createAts[i], deleteAts[i])
+		require.NoError(t, err, "Failed to insert test deleted post")
 	}
 }
 
@@ -890,6 +900,40 @@ func TestSearchWithPermissions(t *testing.T) {
 			assert.NotEqual(t, "post6", result.Document.PostID, "Should not include posts from deleted channels")
 		}
 	})
+
+	t.Run("deleted posts are excluded", func(t *testing.T) {
+		ctx, pgVector, db, searchVector := setupPermissionSearchTest(t)
+		defer cleanupDB(t, db)
+
+		// Mark post1 as deleted
+		now := model.GetMillis()
+		_, err := db.Exec("UPDATE Posts SET DeleteAt = $1 WHERE Id = $2", now, "post1")
+		require.NoError(t, err)
+
+		// Search as user1 (should have access to channel1 and channel2)
+		opts := embeddings.SearchOptions{
+			Limit:  10,
+			UserID: "user1",
+		}
+
+		results, err := pgVector.Search(ctx, searchVector, opts)
+		require.NoError(t, err)
+
+		// Should not include deleted post1
+		for _, result := range results {
+			assert.NotEqual(t, "post1", result.Document.PostID, "Should not include deleted post1")
+		}
+
+		// Should still include post2 (user1 has access to channel2)
+		found := false
+		for _, result := range results {
+			if result.Document.PostID == "post2" {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "Should still include non-deleted post2")
+	})
 }
 
 func TestDeleteWithChunks(t *testing.T) {
@@ -1081,4 +1125,128 @@ func TestClear(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 0, count)
 	})
+}
+
+func TestSearchExcludesDeletedPosts(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	// Set up PGVector
+	config := PGVectorConfig{
+		Dimensions: 3, // Small dimensions for test
+	}
+	pgVector, err := NewPGVector(db, config)
+	require.NoError(t, err)
+
+	// Create test data
+	now := model.GetMillis()
+
+	// Create 3 active posts and 2 deleted posts
+	activePostIDs := []string{"active1", "active2", "active3"}
+	deletedPostIDs := []string{"deleted1", "deleted2"}
+	createAts := []int64{now, now, now, now, now}
+
+	// Add active posts
+	addTestPosts(t, db, activePostIDs, createAts[:3])
+
+	// Add deleted posts
+	addTestDeletedPosts(t, db, deletedPostIDs, createAts[3:], []int64{now, now})
+
+	// Create test channel and user
+	addTestChannels(t, db, []string{"channel1"}, false)
+	addTestChannelMembers(t, db, "channel1", []string{"user1"})
+
+	// Create documents for all posts (including deleted ones)
+	docs := []embeddings.PostDocument{
+		{
+			PostID:    "active1",
+			CreateAt:  now,
+			TeamID:    "team1",
+			ChannelID: "channel1",
+			UserID:    "user1",
+			Content:   "Active post 1",
+		},
+		{
+			PostID:    "active2",
+			CreateAt:  now,
+			TeamID:    "team1",
+			ChannelID: "channel1",
+			UserID:    "user1",
+			Content:   "Active post 2",
+		},
+		{
+			PostID:    "active3",
+			CreateAt:  now,
+			TeamID:    "team1",
+			ChannelID: "channel1",
+			UserID:    "user1",
+			Content:   "Active post 3",
+		},
+		{
+			PostID:    "deleted1",
+			CreateAt:  now,
+			TeamID:    "team1",
+			ChannelID: "channel1",
+			UserID:    "user1",
+			Content:   "Deleted post 1",
+		},
+		{
+			PostID:    "deleted2",
+			CreateAt:  now,
+			TeamID:    "team1",
+			ChannelID: "channel1",
+			UserID:    "user1",
+			Content:   "Deleted post 2",
+		},
+	}
+
+	// Use similar vectors for all posts
+	embedVectors := [][]float32{
+		{0.5, 0.5, 0.5}, // active1
+		{0.5, 0.5, 0.5}, // active2
+		{0.5, 0.5, 0.5}, // active3
+		{0.5, 0.5, 0.5}, // deleted1
+		{0.5, 0.5, 0.5}, // deleted2
+	}
+
+	ctx := context.Background()
+
+	// Store all documents (including those for deleted posts)
+	err = pgVector.Store(ctx, docs, embedVectors)
+	require.NoError(t, err)
+
+	// Verify all 5 documents were stored in the embeddings table
+	var totalCount int
+	err = db.Get(&totalCount, "SELECT COUNT(*) FROM llm_posts_embeddings")
+	require.NoError(t, err)
+	assert.Equal(t, 5, totalCount, "All 5 embeddings should be stored")
+
+	// Perform search - should only return active posts
+	searchVector := []float32{0.5, 0.5, 0.5}
+	opts := embeddings.SearchOptions{
+		UserID: "user1",
+		Limit:  10,
+	}
+
+	results, err := pgVector.Search(ctx, searchVector, opts)
+	require.NoError(t, err)
+
+	// Should only return 3 results (active posts only)
+	assert.Equal(t, 3, len(results), "Should only return active posts, not deleted ones")
+
+	// Verify only active posts are returned
+	returnedPostIDs := make(map[string]bool)
+	for _, result := range results {
+		returnedPostIDs[result.Document.PostID] = true
+	}
+
+	// Check that all active posts are present
+	for _, postID := range activePostIDs {
+		assert.True(t, returnedPostIDs[postID], "Active post %s should be returned", postID)
+	}
+
+	// Check that no deleted posts are present
+	for _, postID := range deletedPostIDs {
+		assert.False(t, returnedPostIDs[postID], "Deleted post %s should NOT be returned", postID)
+	}
 }

@@ -20,11 +20,13 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
+	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
 type Config interface {
 	GetDefaultBotName() string
 	EnableLLMLogging() bool
+	EnableTokenUsageLogging() bool
 	GetTranscriptGenerator() string
 }
 
@@ -39,18 +41,20 @@ type MMBots struct {
 	licenseChecker         *enterprise.LicenseChecker
 	config                 Config
 	llmUpstreamHTTPClient  *http.Client
+	tokenLogger            *mlog.Logger
 
 	botsLock sync.RWMutex
 	bots     []*Bot
 }
 
-func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client) *MMBots {
+func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client, tokenLogger *mlog.Logger) *MMBots {
 	return &MMBots{
 		ensureBotsClusterMutex: mutexPluginAPI,
 		pluginAPI:              pluginAPI,
 		licenseChecker:         licenseChecker,
 		config:                 config,
 		llmUpstreamHTTPClient:  llmUpstreamHTTPClient,
+		tokenLogger:            tokenLogger,
 	}
 }
 
@@ -159,13 +163,17 @@ func (b *MMBots) UpdateBotsCache(cfgBots []llm.BotConfig) error {
 	}
 
 	for _, bot := range b.bots {
-		bot.llm = b.getLLM(bot.cfg.Service)
+		var err error
+		bot.llm, err = b.getLLM(bot.cfg.Service, bot.cfg.Name)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig) llm.LanguageModel {
+func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botName string) (llm.LanguageModel, error) {
 	// Create the correct model
 	var result llm.LanguageModel
 	switch serviceConfig.Type {
@@ -189,12 +197,17 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig) llm.LanguageModel {
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)
 
+	// Token Usage Logging
+	if b.tokenLogger != nil && b.config.EnableTokenUsageLogging() {
+		result = llm.NewTokenUsageLoggingWrapper(result, botName, b.tokenLogger)
+	}
+
 	// Logging
 	if b.config.EnableLLMLogging() {
 		result = llm.NewLanguageModelLogWrapper(b.pluginAPI.Log, result)
 	}
 
-	return result
+	return result, nil
 }
 
 // TODO: This really doesn't belong here. Figure out where to put this.

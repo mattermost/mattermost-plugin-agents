@@ -346,6 +346,18 @@ func (s *OpenAI) streamCompletionsAPIToChannels(params openai.ChatCompletionNewP
 		// Ping the watchdog when we receive a response
 		watchdog <- struct{}{}
 
+		// Check for usage data and emit usage event if available
+		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+			usage := llm.TokenUsage{
+				InputTokens:  chunk.Usage.PromptTokens,
+				OutputTokens: chunk.Usage.CompletionTokens,
+			}
+			output <- llm.TextStreamEvent{
+				Type:  llm.EventTypeUsage,
+				Value: usage,
+			}
+		}
+
 		if len(chunk.Choices) == 0 {
 			continue
 		}
@@ -386,11 +398,9 @@ func (s *OpenAI) streamCompletionsAPIToChannels(params openai.ChatCompletionNewP
 		// Check finishing conditions
 		switch choice.FinishReason {
 		case "stop":
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeEnd,
-				Value: nil,
-			}
-			return
+			// Continue processing to get usage data, but don't send more text
+			// The EventTypeEnd will be sent when we run out of chunks
+			continue
 		case "tool_calls":
 			// Verify OpenAI functions are not recursing too deep.
 			numFunctionCalls := 0
@@ -446,6 +456,11 @@ func (s *OpenAI) streamCompletionsAPIToChannels(params openai.ChatCompletionNewP
 				Value: err,
 			}
 		}
+	}
+
+	output <- llm.TextStreamEvent{
+		Type:  llm.EventTypeEnd,
+		Value: nil,
 	}
 }
 
@@ -993,6 +1008,7 @@ func getModelConstant(model string) shared.ChatModel {
 func (s *OpenAI) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	params := s.completionRequestFromConfig(s.createConfig(opts))
 	params = modifyCompletionRequestWithRequest(params, request)
+	params.StreamOptions.IncludeUsage = openai.Bool(true)
 
 	if s.config.SendUserID {
 		if request.Context.RequestingUser != nil {

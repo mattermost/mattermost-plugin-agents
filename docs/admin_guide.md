@@ -40,7 +40,7 @@ Agents is enabled automatically when using the pre-installed version. If you've 
 
 If you have an Enterprise license, upload it to unlock additional features. 
 
-For general settings, you can toggle to enable or disable the plugin system-wide, enable debug logging for troubleshooting (use only when needed), and configure the hostname allowlist for API calls.
+For general settings, you can toggle to enable or disable the plugin system-wide, enable debug logging for troubleshooting (use only when needed), enable token usage logging for tracking LLM interactions, and configure the hostname allowlist for API calls.
 
 ### Agent configuration
 
@@ -116,6 +116,36 @@ Metrics for Agents are exposed through the `/plugins/mattermost-ai/metrics` subp
 - `agents_http_requests_total`: The total number of API requests.
 - `agents_http_errors_total`: The total number of http API errors.
 - `agents_llm_requests_total`: The total number of requests to upstream LLMs.
+
+### Token usage tracking
+
+The Agents plugin can track token usage for all LLM interactions to support billing and usage analytics. When enabled, token usage data is logged to a dedicated file at `logs/agents/token_usage.log` in JSON format, capturing detailed information about each request:
+
+- **User ID**: The Mattermost user who initiated the request
+- **Team ID**: The team context for the request
+- **Bot Username**: Which agent was used for the interaction
+- **Input Tokens**: Number of tokens in the request to the LLM
+- **Output Tokens**: Number of tokens in the LLM response
+- **Total Tokens**: Combined input and output token count
+
+To enable token usage tracking, navigate to **System Console > Plugins > Agents** and set **Enable Token Usage Logging** to **True**. When enabled, log files automatically rotate when they reach 100MB in size, and rotated log files are compressed to save disk space. The token usage logs provide administrators with visibility into LLM usage patterns and can be used for cost tracking and resource planning. All major LLM providers (OpenAI, Anthropic) report usage data that gets captured by this logging system.
+
+#### Converting token usage logs for analysis
+
+The token usage log file contains one JSON object per line, which is not directly compatible with tools like Microsoft Excel. Use these commands to convert the logs to different formats. Each requires `jq` to be installed for easy JSON parsing:
+
+**Convert to Excel-compatible JSON:**
+
+```bash
+jq -s '.' logs/agents/token_usage.log > token_usage.json
+```
+
+**Convert to CSV format:**
+
+```bash
+echo "timestamp,user_id,team_id,bot_username,input_tokens,output_tokens,total_tokens" > token_usage.csv
+jq -r '[.timestamp, .user_id, .team_id, .bot_username, .input_tokens, .output_tokens, .total_tokens] | @csv' logs/agents/token_usage.log >> token_usage.csv
+```
 
 ### Post indexing
 

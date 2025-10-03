@@ -24,6 +24,7 @@ type Config = {
     defaultBotName: string,
     transcriptBackend: string,
     enableLLMTrace: boolean,
+    enableTokenUsageLogging: boolean,
     enableCallSummary: boolean,
     allowedUpstreamHostnames: string,
     embeddingSearchConfig: EmbeddingSearchConfig,
@@ -75,6 +76,7 @@ const defaultConfig = {
     llmBackend: '',
     transcriptBackend: '',
     enableLLMTrace: false,
+    enableTokenUsageLogging: false,
     embeddingSearchConfig: {
         type: 'disabled',
         vectorStore: {
@@ -228,6 +230,12 @@ const Config = (props: Props) => {
                         value={value.enableLLMTrace}
                         onChange={(to) => props.onChange(props.id, {...value, enableLLMTrace: to})}
                         helpText={intl.formatMessage({defaultMessage: 'Enable tracing of LLM requests. Outputs full conversation data to the logs.'})}
+                    />
+                    <BooleanItem
+                        label={intl.formatMessage({defaultMessage: 'Enable Token Usage Logging'})}
+                        value={value.enableTokenUsageLogging}
+                        onChange={(to) => props.onChange(props.id, {...value, enableTokenUsageLogging: to})}
+                        helpText={intl.formatMessage({defaultMessage: 'Enable logging of token usage for all LLM interactions.'})}
                     />
                 </ItemList>
             </Panel>

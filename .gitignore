@@ -5,6 +5,7 @@ server/manifest.go
 evals.jsonl
 go.work
 go.work.sum
+*.log
 
 .claude/settings.local.json
 
@@ -23,3 +24,6 @@ go.work.sum
 
 # notice
 .notice-work
+
+# Emacs/Vi
+*~
