@@ -25,7 +25,6 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tmc/langchaingo v0.1.13
 	golang.org/x/oauth2 v0.30.0
-	golang.org/x/sync v0.17.0
 	golang.org/x/text v0.28.0
 )
 
@@ -159,6 +158,7 @@ require (
 	golang.org/x/crypto v0.40.0 // indirect
 	golang.org/x/mod v0.26.0 // indirect
 	golang.org/x/net v0.42.0 // indirect
+	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.34.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250512202823-5a2f75b736a9 // indirect
 	google.golang.org/grpc v1.72.0 // indirect
