@@ -493,7 +493,6 @@ func (s *OpenAI) streamResponsesAPIToChannels(params openai.ChatCompletionNewPar
 	// Convert ChatCompletionNewParams to ResponseNewParams
 	responseParams := s.convertToResponseParams(params, llmContext)
 
-	// Debug: Log if reasoning is configured
 
 	// Create a streaming request
 	stream := s.client.Responses.NewStreaming(ctx, responseParams)
@@ -561,7 +560,6 @@ func (s *OpenAI) streamResponsesAPIToChannels(params openai.ChatCompletionNewPar
 		// Ping the watchdog when we receive a response
 		watchdog <- struct{}{}
 
-		// Debug: Log all event types to see what's coming from the API
 
 		// Process event types
 
