@@ -57,7 +57,7 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 	if args.Query == "" {
 		return "query is required", fmt.Errorf("query cannot be empty")
 	}
-	
+
 	// Validate optional ID fields
 	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
 		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
