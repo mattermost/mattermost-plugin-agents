@@ -38,7 +38,7 @@ Agents is enabled automatically when using the pre-installed version. If you've 
 
 ### Basic configuration
 
-If you have an Entry, Enterprise, or Enterprise Advanced license, upload it to unlock additional features.
+If you have an Enterprise, or Enterprise Advanced license, upload it to unlock additional features. If you don't have a license but are running Mattermost Enterprise Edition, an Entry license will be automatically applied for you.
 
 For general settings, you can toggle to enable or disable the plugin system-wide, enable debug logging for troubleshooting (use only when needed), enable token usage logging for tracking LLM interactions, and configure the hostname allowlist for API calls.
 
