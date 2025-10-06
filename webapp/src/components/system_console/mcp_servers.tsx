@@ -103,7 +103,7 @@ const MCPServer = ({
         const headers = {...(config.headers || {})};
 
         // If the key has changed, remove the old one
-        if (oldKey !== newKey && oldKey !== '') {
+        if (oldKey !== newKey) {
             delete headers[oldKey];
         }
 
@@ -194,8 +194,8 @@ const MCPServer = ({
                 </HeadersSectionTitle>
 
                 <HeadersList>
-                    {Object.entries(config.headers || {}).map(([key, value]) => (
-                        <HeaderRow key={key}>
+                    {Object.entries(config.headers || {}).map(([key, value], index) => (
+                        <HeaderRow key={index}>
                             <HeaderInput
                                 placeholder={intl.formatMessage({defaultMessage: 'Header name'})}
                                 value={key}
