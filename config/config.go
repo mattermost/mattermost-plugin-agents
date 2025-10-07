@@ -21,6 +21,7 @@ type Config struct {
 	DefaultBotName           string                           `json:"defaultBotName"`
 	TranscriptGenerator      string                           `json:"transcriptBackend"`
 	EnableLLMTrace           bool                             `json:"enableLLMTrace"`
+	EnableTokenUsageLogging  bool                             `json:"enableTokenUsageLogging"`
 	AllowedUpstreamHostnames string                           `json:"allowedUpstreamHostnames"`
 	EmbeddingSearchConfig    embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                      mcp.Config                       `json:"mcp"`
@@ -66,6 +67,10 @@ func (c *Container) GetDefaultBotName() string {
 
 func (c *Container) EnableLLMLogging() bool {
 	return c.cfg.Load().EnableLLMTrace
+}
+
+func (c *Container) EnableTokenUsageLogging() bool {
+	return c.cfg.Load().EnableTokenUsageLogging
 }
 
 func (c *Container) MCP() mcp.Config {
@@ -121,13 +126,15 @@ func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig) openai.Confi
 	}
 
 	return openai.Config{
-		APIKey:           serviceConfig.APIKey,
-		APIURL:           serviceConfig.APIURL,
-		OrgID:            serviceConfig.OrgID,
-		DefaultModel:     serviceConfig.DefaultModel,
-		InputTokenLimit:  serviceConfig.InputTokenLimit,
-		OutputTokenLimit: serviceConfig.OutputTokenLimit,
-		StreamingTimeout: streamingTimeout,
-		SendUserID:       serviceConfig.SendUserID,
+		APIKey:             serviceConfig.APIKey,
+		APIURL:             serviceConfig.APIURL,
+		OrgID:              serviceConfig.OrgID,
+		DefaultModel:       serviceConfig.DefaultModel,
+		InputTokenLimit:    serviceConfig.InputTokenLimit,
+		OutputTokenLimit:   serviceConfig.OutputTokenLimit,
+		StreamingTimeout:   streamingTimeout,
+		SendUserID:         serviceConfig.SendUserID,
+		UseResponsesAPI:    serviceConfig.UseResponsesAPI,
+		EnabledNativeTools: serviceConfig.EnabledNativeTools,
 	}
 }

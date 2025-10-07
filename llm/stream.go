@@ -17,7 +17,19 @@ const (
 	EventTypeError
 	// EventTypeToolCalls represents a tool call event
 	EventTypeToolCalls
+	// EventTypeReasoning represents a reasoning summary chunk event
+	EventTypeReasoning
+	// EventTypeReasoningEnd represents the end of reasoning summary
+	EventTypeReasoningEnd
+	// EventTypeUsage represents token usage data
+	EventTypeUsage
 )
+
+// TokenUsage represents token usage statistics for an LLM request
+type TokenUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+}
 
 // TextStreamEvent represents an event in the text stream
 type TextStreamEvent struct {

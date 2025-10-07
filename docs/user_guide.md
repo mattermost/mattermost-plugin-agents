@@ -14,8 +14,8 @@ Access AI features through the right pane in one of the following ways:
 
 - Select the **Agents** icon in the apps sidebar.
 - @mention an AI bot in any channel where you have access (such as `@copilot`).
-- Use the **AI Actions** menu by hovering over the first message in any conversation thread (requires a Mattermost Enterprise license)
-- Use the **Ask AI** option in channels with unread messages (requires a Mattermost Enterprise license)
+- Use the **AI Actions** menu by hovering over the first message in any conversation thread (see [license requirements](admin_guide.md#license-requirements))
+- Use the **Ask AI** option in channels with unread messages (see [license requirements](admin_guide.md#license-requirements))
 
 ### Mobile
 
@@ -55,7 +55,7 @@ Available tools in direct messages include:
 
 ### Summarize discussion threads
 
-Summarizing a discussion thread requires a Mattermost Enterprise license.
+Summarizing a discussion thread requires a license. See [license requirements](admin_guide.md#license-requirements) for details.
 
 To summarize a discussion thread:
 
@@ -69,7 +69,7 @@ This is particularly useful for catching up on long discussions, creating meetin
 
 ### Summarize unread channels
 
-Summarizing unread Mattermost channels requires a Mattermost Enterprise license.
+Summarizing unread Mattermost channels requires a license. See [license requirements](admin_guide.md#license-requirements) for details.
 
 To summarize unread Mattermost channels:
 
@@ -81,7 +81,7 @@ The channel summary is generated in the Agents pane, and only you can view the s
 
 ## Search with AI
 
-Enterprise customers can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. Semantic AI search requires a Mattermost Enterprise license, and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
+You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. Semantic AI search requires a license (see [license requirements](admin_guide.md#license-requirements)), and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
 
 Open the Agents pane from the right sidebar and use natural language to search for content (such as "find discussions about the new product launch"). The AI will find semantically relevant results, even if they don't contain the exact keywords, and results respect your permissions so you'll only see content you have access to.
 
@@ -97,13 +97,13 @@ Image analysis is a [Beta](https://docs.mattermost.com/manage/feature-labels.htm
 
 ## Record calls to summarize meetings
 
-Mattermost Enterprise customers can leverage Mattermost Calls to turn meeting recordings into actionable summaries with a single action. Ensure key points of your calls and meetings are captured and shared easily, and share meeting insights with your team and the broader organization.
+You can leverage Mattermost Calls to turn meeting recordings into actionable summaries with a single action. Ensure key points of your calls and meetings are captured and shared easily, and share meeting insights with your team and the broader organization.
 
 To summarize a Mattermost call recording:
 
-1. [Start a call](https://docs.mattermost.com/collaborate/make-calls.html#start-a-call) in Mattermost and [record the call](https://docs.mattermost.com/collaborate/make-calls.html#record-a-call) during the meeting. 
-2. Once the call ends and the call recording and transcription is ready, select the **Create meeting summary** option located directly above the call recording. 
+1. [Start a call](https://docs.mattermost.com/collaborate/make-calls.html#start-a-call) in Mattermost and [record the call](https://docs.mattermost.com/collaborate/make-calls.html#record-a-call) during the meeting.
+2. Once the call ends and the call recording and transcription is ready, select the **Create meeting summary** option located directly above the call recording.
 
 The meeting summary is generated and shared as a direct message with the person who requested the meeting summary.
 
-Both call recordings and recorded meeting summarization requires a Mattermost Enterprise license. Contact your system admin if these features aren't available for your Mattermost instance.
+Both call recordings and recorded meeting summarization require a license. See [license requirements](admin_guide.md#license-requirements) for details. Contact your system admin if these features aren't available for your Mattermost instance.

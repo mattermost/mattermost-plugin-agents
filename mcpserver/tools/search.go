@@ -14,16 +14,16 @@ import (
 
 // SearchPostsArgs represents arguments for the search_posts tool
 type SearchPostsArgs struct {
-	Query     string `json:"query" jsonschema:"The search query"`
-	TeamID    string `json:"team_id" jsonschema:"Optional team ID to limit search scope"`
-	ChannelID string `json:"channel_id" jsonschema:"Optional channel ID to limit search to a specific channel"`
-	Limit     int    `json:"limit" jsonschema:"Number of results to return (default: 20, max: 100)"`
+	Query     string `json:"query" jsonschema:"The search query,minLength=1,maxLength=4000"`
+	TeamID    string `json:"team_id,omitempty" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
+	ChannelID string `json:"channel_id,omitempty" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"Number of results to return (default: 20, max: 100),minimum=1,maximum=100"`
 }
 
 // SearchUsersArgs represents arguments for the search_users tool
 type SearchUsersArgs struct {
-	Term  string `json:"term" jsonschema:"Search term (username, email, first name, or last name)"`
-	Limit int    `json:"limit" jsonschema:"Maximum number of results to return (default: 20, max: 100)"`
+	Term  string `json:"term" jsonschema:"Search term (username, email, first name, or last name),minLength=1,maxLength=64"`
+	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of results to return (default: 20, max: 100),minimum=1,maximum=100"`
 }
 
 // getSearchTools returns all search-related tools
@@ -31,13 +31,13 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name:        "search_posts",
-			Description: "Search for posts in Mattermost",
+			Description: "Search for posts in Mattermost. Parameters: query (required search terms), team_id (optional scope), channel_id (optional scope), limit (1-100, default 20). Returns matching posts with content, author, channel, and timestamp. Example: {\"query\": \"bug fix\", \"limit\": 10}",
 			Schema:      llm.NewJSONSchemaFromStruct[SearchPostsArgs](),
 			Resolver:    p.toolSearchPosts,
 		},
 		{
 			Name:        "search_users",
-			Description: "Search for existing users by username, email, or name",
+			Description: "Search for existing users by username, email, or name. Parameters: term (required search text), limit (1-100, default 20). Returns user details including username, email, display name, and position for matching users. Example: {\"term\": \"john\", \"limit\": 5}",
 			Schema:      llm.NewJSONSchemaFromStruct[SearchUsersArgs](),
 			Resolver:    p.toolSearchUsers,
 		},
@@ -55,6 +55,14 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 	// Validate required fields
 	if args.Query == "" {
 		return "query is required", fmt.Errorf("query cannot be empty")
+	}
+
+	// Validate optional ID fields
+	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
+		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+	}
+	if args.ChannelID != "" && !model.IsValidId(args.ChannelID) {
+		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 	}
 
 	// Set defaults

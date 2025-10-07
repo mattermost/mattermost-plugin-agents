@@ -14,15 +14,15 @@ import (
 
 // ReadPostArgs represents arguments for the read_post tool
 type ReadPostArgs struct {
-	PostID        string `json:"post_id" jsonschema:"The ID of the post to read"`
-	IncludeThread bool   `json:"include_thread" jsonschema:"Whether to include the entire thread (default: true)"`
+	PostID        string `json:"post_id" jsonschema:"The ID of the post to read,minLength=26,maxLength=26"`
+	IncludeThread bool   `json:"include_thread,omitempty" jsonschema:"Whether to include the entire thread (default: true)"`
 }
 
 // CreatePostArgs represents arguments for the create_post tool
 type CreatePostArgs struct {
-	ChannelID   string   `json:"channel_id" jsonschema:"The ID of the channel to post in"`
-	Message     string   `json:"message" jsonschema:"The message content"`
-	RootID      string   `json:"root_id" jsonschema:"Optional root post ID for replies"`
+	ChannelID   string   `json:"channel_id" jsonschema:"The ID of the channel to post in,minLength=26,maxLength=26"`
+	Message     string   `json:"message" jsonschema:"The message content,minLength=1"`
+	RootID      string   `json:"root_id,omitempty" jsonschema:"Optional root post ID for replies,minLength=26,maxLength=26"`
 	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the post"`
 }
 
@@ -39,7 +39,7 @@ type CreatePostAsUserArgs struct {
 
 // DMSelfArgs represents arguments for the dm_self tool
 type DMSelfArgs struct {
-	Message     string   `json:"message" jsonschema:"The message content to send to yourself"`
+	Message     string   `json:"message" jsonschema:"The message content to send to yourself,minLength=1"`
 	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the message"`
 }
 
@@ -48,19 +48,19 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name:        "read_post",
-			Description: "Read a specific post and its thread from Mattermost",
+			Description: "Read a specific post and its thread from Mattermost. Parameters: post_id (required), include_thread (boolean, default true). Returns post content, author info, and optionally all replies in the thread. Example: {\"post_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"include_thread\": true}",
 			Schema:      NewJSONSchemaForAccessMode[ReadPostArgs](string(p.accessMode)),
 			Resolver:    p.toolReadPost,
 		},
 		{
 			Name:        "create_post",
-			Description: "Create a new post in Mattermost",
+			Description: "Create a new post in Mattermost. Parameters: channel_id (required), message (required), root_id (optional - for replies), attachments (optional file paths/URLs). Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}",
 			Schema:      NewJSONSchemaForAccessMode[CreatePostArgs](string(p.accessMode)),
 			Resolver:    p.toolCreatePost,
 		},
 		{
 			Name:        "dm_self",
-			Description: "Send a direct message to yourself. Use this when the user requests to send something to themselves (e.g., 'send me this', 'DM me that')",
+			Description: "Send a direct message to yourself. Use when user requests to send something to themselves (e.g., 'send me this', 'DM me that'). Parameters: message (required), attachments (optional file paths/URLs). Returns confirmation with message ID. Example: {\"message\": \"Reminder: Follow up on project\"}",
 			Schema:      NewJSONSchemaForAccessMode[DMSelfArgs](string(p.accessMode)),
 			Resolver:    p.toolDMSelf,
 		},
@@ -85,6 +85,11 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 	err := argsGetter(&args)
 	if err != nil {
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool read_post: %w", err)
+	}
+
+	// Validate post ID
+	if !model.IsValidId(args.PostID) {
+		return "invalid post_id format", fmt.Errorf("post_id must be a valid ID")
 	}
 
 	// Set default for include_thread
@@ -169,11 +174,15 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 	}
 
 	// Validate required fields
-	if args.ChannelID == "" {
-		return "channel_id is required", fmt.Errorf("channel_id cannot be empty")
+	if !model.IsValidId(args.ChannelID) {
+		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 	}
 	if args.Message == "" {
 		return "message is required", fmt.Errorf("message cannot be empty")
+	}
+	// Validate root ID if provided (for replies)
+	if args.RootID != "" && !model.IsValidId(args.RootID) {
+		return "invalid root_id format", fmt.Errorf("root_id must be a valid ID")
 	}
 
 	// Get client from context
@@ -217,11 +226,15 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 	if args.Password == "" {
 		return "password is required", fmt.Errorf("password cannot be empty")
 	}
-	if args.ChannelID == "" {
-		return "channel_id is required", fmt.Errorf("channel_id cannot be empty")
+	if !model.IsValidId(args.ChannelID) {
+		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 	}
 	if args.Message == "" {
 		return "message is required", fmt.Errorf("message cannot be empty")
+	}
+	// Validate root ID if provided (for replies)
+	if args.RootID != "" && !model.IsValidId(args.RootID) {
+		return "invalid root_id format", fmt.Errorf("root_id must be a valid ID")
 	}
 
 	// Create a new client and login as the specified user

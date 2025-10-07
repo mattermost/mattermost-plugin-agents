@@ -26,6 +26,10 @@ func (m *mockConfig) EnableLLMLogging() bool {
 	return false
 }
 
+func (m *mockConfig) EnableTokenUsageLogging() bool {
+	return false
+}
+
 func (m *mockConfig) GetTranscriptGenerator() string {
 	return "testbot"
 }
@@ -161,7 +165,7 @@ func TestEnsureBots(t *testing.T) {
 			mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
 
 			licenseChecker := enterprise.NewLicenseChecker(client)
-			mmBots := New(mockAPI, client, licenseChecker, &mockConfig{}, &http.Client{})
+			mmBots := New(mockAPI, client, licenseChecker, &mockConfig{}, &http.Client{}, nil)
 
 			defer mockAPI.AssertExpectations(t)
 

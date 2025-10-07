@@ -38,13 +38,13 @@ Agents is enabled automatically when using the pre-installed version. If you've 
 
 ### Basic configuration
 
-If you have an Enterprise license, upload it to unlock additional features. 
+If you have an Enterprise, or Enterprise Advanced license, upload it to unlock additional features. If you don't have a license but are running Mattermost Enterprise Edition, an Entry license will be automatically applied for you.
 
-For general settings, you can toggle to enable or disable the plugin system-wide, enable debug logging for troubleshooting (use only when needed), and configure the hostname allowlist for API calls.
+For general settings, you can toggle to enable or disable the plugin system-wide, enable debug logging for troubleshooting (use only when needed), enable token usage logging for tracking LLM interactions, and configure the hostname allowlist for API calls.
 
 ### Agent configuration
 
-Configure an LLM for your Agents integration by going to **System Console > Plugins > Agents** and selecting **Add an Agent**. The plugin supports creating multiple Agents with different configurations. The ability to define multiple LLMs for your Agents integration requires a Mattermost Enterprise license.
+Configure an LLM for your Agents integration by going to **System Console > Plugins > Agents** and selecting **Add an Agent**. The plugin supports creating multiple Agents with different configurations. See [license requirements](#license-requirements) for details on features that require a license.
 
 Select **Add an Agent** to create a new Agent, then configure the agent settings:
 
@@ -87,7 +87,7 @@ For example, you could list your organization's specific acronyms so the agent k
 
 ### Embed search configuration
 
-To enable semantic search capabilities, you'll need to enable the `pgvector` extension in your PostgreSQL database, then configure embeddings provider settings including the provider (OpenAI, etc.), model for embeddings, and dimensions that match your chosen embedding model. Embedding search requires an Enterprise license and is available as an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature. Performance may vary with large datasets.
+To enable semantic search capabilities, you'll need to enable the `pgvector` extension in your PostgreSQL database, then configure embeddings provider settings including the provider (OpenAI, etc.), model for embeddings, and dimensions that match your chosen embedding model. Embedding search requires a license (see [license requirements](#license-requirements)) and is available as an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature. Performance may vary with large datasets.
 
 Configure chunking options based on your needs:
 
@@ -116,6 +116,36 @@ Metrics for Agents are exposed through the `/plugins/mattermost-ai/metrics` subp
 - `agents_http_requests_total`: The total number of API requests.
 - `agents_http_errors_total`: The total number of http API errors.
 - `agents_llm_requests_total`: The total number of requests to upstream LLMs.
+
+### Token usage tracking
+
+The Agents plugin can track token usage for all LLM interactions to support billing and usage analytics. When enabled, token usage data is logged to a dedicated file at `logs/agents/token_usage.log` in JSON format, capturing detailed information about each request:
+
+- **User ID**: The Mattermost user who initiated the request
+- **Team ID**: The team context for the request
+- **Bot Username**: Which agent was used for the interaction
+- **Input Tokens**: Number of tokens in the request to the LLM
+- **Output Tokens**: Number of tokens in the LLM response
+- **Total Tokens**: Combined input and output token count
+
+To enable token usage tracking, navigate to **System Console > Plugins > Agents** and set **Enable Token Usage Logging** to **True**. When enabled, log files automatically rotate when they reach 100MB in size, and rotated log files are compressed to save disk space. The token usage logs provide administrators with visibility into LLM usage patterns and can be used for cost tracking and resource planning. All major LLM providers (OpenAI, Anthropic) report usage data that gets captured by this logging system.
+
+#### Converting token usage logs for analysis
+
+The token usage log file contains one JSON object per line, which is not directly compatible with tools like Microsoft Excel. Use these commands to convert the logs to different formats. Each requires `jq` to be installed for easy JSON parsing:
+
+**Convert to Excel-compatible JSON:**
+
+```bash
+jq -s '.' logs/agents/token_usage.log > token_usage.json
+```
+
+**Convert to CSV format:**
+
+```bash
+echo "timestamp,user_id,team_id,bot_username,input_tokens,output_tokens,total_tokens" > token_usage.csv
+jq -r '[.timestamp, .user_id, .team_id, .bot_username, .input_tokens, .output_tokens, .total_tokens] | @csv' logs/agents/token_usage.log >> token_usage.csv
+```
 
 ### Post indexing
 
@@ -212,14 +242,22 @@ The Model Context Protocol (MCP) integration allows Agents to connect to externa
 
 > **Note:** The plugin currently doesn't render Markdown links (e.g., JIRA ticket links) in bot responses. URLs are displayed in plain text rather than as clickable Markdown-rendered links. This is not a bug but intended security behavior to prevent potential data exfiltration through links. While this limitation exists, improvements to link handling are being considered for future development. 
 
-## Enterprise features
+### License requirements
 
-The following features require an Enterprise license:
+The following table outlines which features require a license:
 
-- Multiple agent configurations
-- Fine-grained access controls
-- Embedding search (Experimental)
-- MCP Support (Experimental)
-- Usage analytics
-- **AI Actions** menu options including unread channel and discussion thread summarization
-- Recorded meeting transcripts and summarization
+| Feature | License Required |
+|---------|------------------|
+| Basic agent configuration (single agent) | No license required |
+| Chat with agents in DMs and channels | No license required |
+| Image analysis (vision capabilities) | No license required |
+| Basic tool integrations | No license required |
+| Multiple agent configurations | Entry, Enterprise, and Enterprise Advanced |
+| Fine-grained access controls | Entry, Enterprise, and Enterprise Advanced |
+| Embedding search (semantic AI search) | Entry, Enterprise, and Enterprise Advanced |
+| MCP Support | Entry, Enterprise, and Enterprise Advanced |
+| Usage analytics and token tracking | Entry, Enterprise, and Enterprise Advanced |
+| AI Actions menu (thread summarization) | Entry, Enterprise, and Enterprise Advanced |
+| Channel summarization (unread messages) | Entry, Enterprise, and Enterprise Advanced |
+| Recorded meeting transcripts and summarization | Entry, Enterprise, and Enterprise Advanced |
+

@@ -78,7 +78,12 @@ func (p *Plugin) OnActivate() error {
 		p.configuration.Update(&newCfg)
 	}
 
-	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient)
+	tokenLogger, err := llm.CreateTokenLogger()
+	if err != nil {
+		return fmt.Errorf("failed to create token usage logger: %w", err)
+	}
+
+	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient, tokenLogger)
 	p.configuration.RegisterUpdateListener(func() {
 		if ensureErr := bots.EnsureBots(p.configuration.GetBots()); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
@@ -262,6 +267,14 @@ func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *mode
 			if err := p.indexerService.IndexPost(context.Background(), newPost, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index updated post in vector database", "error", err)
 			}
+		}
+	}
+}
+
+func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
+	if p.indexerService != nil {
+		if err := p.indexerService.DeletePost(context.Background(), post.Id); err != nil {
+			p.pluginAPI.Log.Error("Failed to delete post from vector database", "error", err)
 		}
 	}
 }
