@@ -19,6 +19,6 @@
     "@testcontainers/postgresql": "10.16.0",
     "@types/node": "22.10.5",
     "pg": "8.13.1",
-    "testcontainers": "10.16.0"
+    "testcontainers": "10.28.0"
   }
 }
