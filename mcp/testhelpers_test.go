@@ -40,10 +40,6 @@ func SetupEmbeddedTestSuite(t *testing.T) *EmbeddedTestSuite {
 	)
 	require.NoError(t, err, "Failed to start Mattermost container")
 
-	// Enable personal access tokens for authentication testing
-	// err = container.SetConfig(ctx, "ServiceSettings.EnableUserAccessTokens", "true")
-	// require.NoError(t, err, "Failed to enable personal access tokens")
-
 	// Enable open server to allow test user signups
 	err = container.SetConfig(ctx, "TeamSettings.EnableOpenServer", "true")
 	require.NoError(t, err, "Failed to enable open server")
@@ -133,7 +129,8 @@ func (s *EmbeddedTestSuite) CreateUserAndSession(t *testing.T) (*model.User, *mo
 			DisplayName: "Test Team",
 			Type:        model.TeamOpen,
 		}
-		createdTeam, _, err := s.adminClient.CreateTeam(ctx, team)
+		var createdTeam *model.Team
+		createdTeam, _, err = s.adminClient.CreateTeam(ctx, team)
 		require.NoError(t, err, "Failed to create team")
 		teamID = createdTeam.Id
 	}
@@ -160,7 +157,7 @@ func (s *EmbeddedTestSuite) CreateUserAndSession(t *testing.T) (*model.User, *mo
 	// The most recently created session should be the one we just created from login
 	// Sessions are typically returned with most recent first, or we find by creation time
 	var activeSession *model.Session
-	var mostRecentTime int64 = 0
+	var mostRecentTime int64
 	for i := range sessions {
 		if sessions[i].CreateAt > mostRecentTime {
 			mostRecentTime = sessions[i].CreateAt
