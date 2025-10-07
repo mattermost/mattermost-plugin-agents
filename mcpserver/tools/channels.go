@@ -103,6 +103,11 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool read_channel: %w", err)
 	}
 
+	// Validate channel ID
+	if !model.IsValidId(args.ChannelID) {
+		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
+	}
+
 	// Set defaults and validate
 	if args.Limit == 0 {
 		args.Limit = 20
@@ -185,8 +190,8 @@ func (p *MattermostToolProvider) toolCreateChannel(mcpContext *MCPToolContext, a
 	if args.Type == "" {
 		return "type is required", fmt.Errorf("type cannot be empty")
 	}
-	if args.TeamID == "" {
-		return "team_id is required", fmt.Errorf("team_id cannot be empty")
+	if !model.IsValidId(args.TeamID) {
+		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
 
 	// Validate channel type
@@ -234,6 +239,11 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	client := mcpContext.Client
 	ctx := context.Background()
 
+	// Validate team ID if provided
+	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
+		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+	}
+
 	var channel *model.Channel
 
 	var lastError error
@@ -241,6 +251,10 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	// Try different lookup methods based on provided parameters
 	switch {
 	case args.ChannelID != "":
+		// Validate channel ID format
+		if !model.IsValidId(args.ChannelID) {
+			return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
+		}
 		// Direct ID lookup - fastest method
 		channel, _, err = client.GetChannel(ctx, args.ChannelID, "")
 		if err != nil {
@@ -314,8 +328,8 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	}
 
 	// Validate required fields
-	if args.ChannelID == "" {
-		return "channel_id is required", fmt.Errorf("channel_id cannot be empty")
+	if !model.IsValidId(args.ChannelID) {
+		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 	}
 
 	// Set defaults and validate
@@ -391,11 +405,11 @@ func (p *MattermostToolProvider) toolAddUserToChannel(mcpContext *MCPToolContext
 	}
 
 	// Validate required fields
-	if args.UserID == "" {
-		return "user_id is required", fmt.Errorf("user_id cannot be empty")
+	if !model.IsValidId(args.UserID) {
+		return "invalid user_id format", fmt.Errorf("user_id must be a valid ID")
 	}
-	if args.ChannelID == "" {
-		return "channel_id is required", fmt.Errorf("channel_id cannot be empty")
+	if !model.IsValidId(args.ChannelID) {
+		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 	}
 
 	// Get client from context

@@ -25,7 +25,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	client := pluginapi.NewClient(mockAPI, nil)
 
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	mmBots := New(mockAPI, client, licenseChecker, nil, &http.Client{})
+	mmBots := New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
 
 	e := &TestEnvironment{
 		bots:    mmBots,

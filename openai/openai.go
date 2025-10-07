@@ -23,6 +23,8 @@ import (
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/azure"
 	"github.com/openai/openai-go/v2/option"
+	"github.com/openai/openai-go/v2/packages/param"
+	"github.com/openai/openai-go/v2/responses"
 	"github.com/openai/openai-go/v2/shared"
 )
 
@@ -37,6 +39,8 @@ type Config struct {
 	SendUserID          bool          `json:"sendUserID"`
 	EmbeddingModel      string        `json:"embeddingModel"`
 	EmbeddingDimensions int           `json:"embeddingDimensions"`
+	UseResponsesAPI     bool          `json:"useResponsesAPI"`
+	EnabledNativeTools  []string      `json:"enabledNativeTools"`
 }
 
 type OpenAI struct {
@@ -53,7 +57,7 @@ var ErrStreamingTimeout = errors.New("timeout streaming")
 
 func NewAzure(config Config, httpClient *http.Client) *OpenAI {
 	opts := []option.RequestOption{
-		azure.WithEndpoint(strings.TrimSuffix(config.APIURL, "/"), "2024-06-01"),
+		azure.WithEndpoint(strings.TrimSuffix(config.APIURL, "/"), "2025-04-01-preview"),
 		azure.WithAPIKey(config.APIKey),
 		option.WithHTTPClient(httpClient),
 	}
@@ -297,6 +301,16 @@ type ToolBufferElement struct {
 }
 
 func (s *OpenAI) streamResultToChannels(params openai.ChatCompletionNewParams, llmContext *llm.Context, output chan<- llm.TextStreamEvent) {
+	// Route to Responses API or Completions API based on configuration
+	if s.config.UseResponsesAPI {
+		s.streamResponsesAPIToChannels(params, llmContext, output)
+	} else {
+		s.streamCompletionsAPIToChannels(params, llmContext, output)
+	}
+}
+
+// streamCompletionsAPIToChannels uses the original Completions API for streaming
+func (s *OpenAI) streamCompletionsAPIToChannels(params openai.ChatCompletionNewParams, llmContext *llm.Context, output chan<- llm.TextStreamEvent) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 
@@ -331,6 +345,18 @@ func (s *OpenAI) streamResultToChannels(params openai.ChatCompletionNewParams, l
 
 		// Ping the watchdog when we receive a response
 		watchdog <- struct{}{}
+
+		// Check for usage data and emit usage event if available
+		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+			usage := llm.TokenUsage{
+				InputTokens:  chunk.Usage.PromptTokens,
+				OutputTokens: chunk.Usage.CompletionTokens,
+			}
+			output <- llm.TextStreamEvent{
+				Type:  llm.EventTypeUsage,
+				Value: usage,
+			}
+		}
 
 		if len(chunk.Choices) == 0 {
 			continue
@@ -372,11 +398,9 @@ func (s *OpenAI) streamResultToChannels(params openai.ChatCompletionNewParams, l
 		// Check finishing conditions
 		switch choice.FinishReason {
 		case "stop":
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeEnd,
-				Value: nil,
-			}
-			return
+			// Continue processing to get usage data, but don't send more text
+			// The EventTypeEnd will be sent when we run out of chunks
+			continue
 		case "tool_calls":
 			// Verify OpenAI functions are not recursing too deep.
 			numFunctionCalls := 0
@@ -413,9 +437,9 @@ func (s *OpenAI) streamResultToChannels(params openai.ChatCompletionNewParams, l
 			}
 			return
 		case "":
-			// Not done yet, keep going
+		// Not done yet, keep going
 		default:
-			fmt.Printf("Unknown finish reason: %s", choice.FinishReason)
+			// Unknown finish reason, end the stream
 			return
 		}
 	}
@@ -433,6 +457,474 @@ func (s *OpenAI) streamResultToChannels(params openai.ChatCompletionNewParams, l
 			}
 		}
 	}
+
+	output <- llm.TextStreamEvent{
+		Type:  llm.EventTypeEnd,
+		Value: nil,
+	}
+}
+
+// streamResponsesAPIToChannels uses the new Responses API for streaming
+func (s *OpenAI) streamResponsesAPIToChannels(params openai.ChatCompletionNewParams, llmContext *llm.Context, output chan<- llm.TextStreamEvent) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+
+	// watchdog to cancel if the streaming stalls
+	watchdog := make(chan struct{})
+	go func() {
+		timer := time.NewTimer(s.config.StreamingTimeout)
+		defer timer.Stop()
+		for {
+			select {
+			case <-timer.C:
+				cancel(ErrStreamingTimeout)
+				return
+			case <-ctx.Done():
+				return
+			case <-watchdog:
+				if !timer.Stop() {
+					<-timer.C
+				}
+				timer.Reset(s.config.StreamingTimeout)
+			}
+		}
+	}()
+
+	// Convert ChatCompletionNewParams to ResponseNewParams
+	responseParams := s.convertToResponseParams(params, llmContext)
+
+	// Create a streaming request
+	stream := s.client.Responses.NewStreaming(ctx, responseParams)
+	defer stream.Close()
+
+	// Buffering in the case of tool use
+	var toolsBuffer map[int]*ToolBufferElement
+	var currentToolIndex int
+	var reasoningSummaryBuffer strings.Builder
+	var reasoningComplete bool // Track if we've sent the complete reasoning
+
+	// Define handleToolCalls as a closure to access local variables
+	handleToolCalls := func() {
+		// Verify OpenAI functions are not recursing too deep.
+		numFunctionCalls := 0
+		for i := len(params.Messages) - 1; i >= 0; i-- {
+			// Check if it's a tool message
+			if params.Messages[i].OfTool != nil {
+				numFunctionCalls++
+			} else {
+				break
+			}
+		}
+		if numFunctionCalls > MaxFunctionCalls {
+			output <- llm.TextStreamEvent{
+				Type:  llm.EventTypeError,
+				Value: errors.New("too many function calls"),
+			}
+			return
+		}
+
+		// Transfer the buffered tools into tool calls
+		pendingToolCalls := make([]llm.ToolCall, 0, len(toolsBuffer))
+		for _, tool := range toolsBuffer {
+			if tool == nil {
+				continue
+			}
+
+			id := tool.id.String()
+			name := tool.name.String()
+			args := tool.args.String()
+
+			// Skip if we don't have required information
+			if name == "" {
+				continue
+			}
+
+			pendingToolCalls = append(pendingToolCalls, llm.ToolCall{
+				ID:          id,
+				Name:        name,
+				Description: "", // OpenAI doesn't provide description in the response
+				Arguments:   []byte(args),
+			})
+		}
+
+		output <- llm.TextStreamEvent{
+			Type:  llm.EventTypeToolCalls,
+			Value: pendingToolCalls,
+		}
+	}
+
+	for stream.Next() {
+		event := stream.Current()
+
+		// Ping the watchdog when we receive a response
+		watchdog <- struct{}{}
+
+		// Process event types
+
+		// Handle different event types based on the Type field
+		switch event.Type {
+		case "response.created", "response.in_progress":
+			// Initial response events - these don't contain content yet
+			// Just continue processing
+			continue
+
+		case "response.output_text.delta":
+			// Text content delta - the text is in the Delta field
+			if event.Delta != "" {
+				// If we haven't sent the complete reasoning yet, send it now
+				if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeReasoningEnd,
+						Value: reasoningSummaryBuffer.String(),
+					}
+					reasoningComplete = true
+				}
+				output <- llm.TextStreamEvent{
+					Type:  llm.EventTypeText,
+					Value: event.Delta,
+				}
+			}
+
+		case "response.content_part.added", "response.content_part.done":
+			// Content parts might contain text
+			// The Part field is a union, so we need to check its type
+			// For now, we'll skip this as it's not critical for basic text streaming
+
+		case "response.function_call_arguments.delta":
+			// Function call arguments delta - arguments are in the Delta field
+			// We need to determine the index from the event
+			idx := currentToolIndex
+			if event.OutputIndex > 0 {
+				idx = int(event.OutputIndex)
+			}
+			if toolsBuffer == nil {
+				toolsBuffer = make(map[int]*ToolBufferElement)
+			}
+			if toolsBuffer[idx] == nil {
+				toolsBuffer[idx] = &ToolBufferElement{}
+			}
+			if event.Delta != "" {
+				toolsBuffer[idx].args.WriteString(event.Delta)
+			}
+			// Update current index for future events
+			currentToolIndex = idx
+
+		case "response.output_item.added":
+			// A new output item was added (could be text, function call, etc.)
+			// The Item field contains the output item
+			if event.Item.Type == "function_call" {
+				if toolsBuffer == nil {
+					toolsBuffer = make(map[int]*ToolBufferElement)
+				}
+				currentToolIndex = int(event.OutputIndex)
+				if toolsBuffer[currentToolIndex] == nil {
+					toolsBuffer[currentToolIndex] = &ToolBufferElement{}
+				}
+				// The ID might be in CallID field for function calls
+				if event.Item.CallID != "" {
+					toolsBuffer[currentToolIndex].id.WriteString(event.Item.CallID)
+				} else if event.Item.ID != "" {
+					toolsBuffer[currentToolIndex].id.WriteString(event.Item.ID)
+				}
+				// Capture function name from the Item
+				if event.Item.Name != "" {
+					toolsBuffer[currentToolIndex].name.WriteString(event.Item.Name)
+				}
+			}
+
+		case "response.function_call_arguments.done":
+			// Function call arguments completed
+			// Arguments have been accumulated in the buffer
+			// Check if we have the complete arguments in the event
+			if event.Arguments != "" {
+				// Sometimes the complete arguments come in this event
+				if toolsBuffer[currentToolIndex] != nil && toolsBuffer[currentToolIndex].args.Len() == 0 {
+					toolsBuffer[currentToolIndex].args.WriteString(event.Arguments)
+				}
+			}
+
+		case "response.output_item.done":
+			// Output item completed - check if it's a function call
+			if event.Item.Type == "function_call" {
+				// If we haven't sent the complete reasoning yet and this is a tool call, send reasoning first
+				if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeReasoningEnd,
+						Value: reasoningSummaryBuffer.String(),
+					}
+					reasoningComplete = true
+				}
+				// Make sure we have the function details
+				if event.Item.Name != "" && toolsBuffer[currentToolIndex] != nil {
+					// Update the name if it wasn't set before
+					if toolsBuffer[currentToolIndex].name.Len() == 0 {
+						toolsBuffer[currentToolIndex].name.WriteString(event.Item.Name)
+					}
+				}
+				if event.Item.CallID != "" && toolsBuffer[currentToolIndex] != nil {
+					// Update the ID if it wasn't set before
+					if toolsBuffer[currentToolIndex].id.Len() == 0 {
+						toolsBuffer[currentToolIndex].id.WriteString(event.Item.CallID)
+					}
+				}
+			}
+
+		case "response.reasoning_summary_text.delta":
+			// Reasoning summary text delta
+			if event.Delta != "" {
+				reasoningSummaryBuffer.WriteString(event.Delta)
+				// Send reasoning summary chunks as they arrive
+				output <- llm.TextStreamEvent{
+					Type:  llm.EventTypeReasoning,
+					Value: event.Delta,
+				}
+			}
+
+		case "response.reasoning_summary_part.added":
+			// A new reasoning part is starting
+
+		case "response.reasoning_summary_text.done":
+			// A reasoning part's text is complete, but there may be more parts
+			// Don't send EventTypeReasoningEnd yet - there may be more parts
+
+		case "response.reasoning_summary_part.done":
+			// A reasoning part is done, but there may be more parts
+			// Continue accumulating, don't send end event yet
+
+		case "response.output_text.done":
+			// Text output completed
+
+		case "response.web_search_call.searching", "response.web_search_call.in_progress", "response.web_search_call.completed":
+			// Handle web search events
+			// Web search results are typically handled as part of the response text
+			// The model will incorporate the search results into its response
+			continue
+
+		case "response.completed":
+			// Response fully completed
+
+			// If we still have unsent reasoning (edge case: no output text), send it now
+			if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
+				output <- llm.TextStreamEvent{
+					Type:  llm.EventTypeReasoningEnd,
+					Value: reasoningSummaryBuffer.String(),
+				}
+			}
+
+			// Check if we have tool calls to emit
+			if len(toolsBuffer) > 0 {
+				handleToolCalls()
+				return
+			}
+
+			// Otherwise, emit end event
+			output <- llm.TextStreamEvent{
+				Type:  llm.EventTypeEnd,
+				Value: nil,
+			}
+			return
+
+		case "error":
+			// Error event
+			var errorMsg string
+			if event.Message != "" {
+				errorMsg = event.Message
+			} else {
+				errorMsg = "Unknown error from Responses API"
+			}
+			output <- llm.TextStreamEvent{
+				Type:  llm.EventTypeError,
+				Value: errors.New(errorMsg),
+			}
+			return
+
+		default:
+			// Unhandled event types are ignored
+		}
+	}
+
+	if err := stream.Err(); err != nil {
+		if ctxErr := context.Cause(ctx); ctxErr != nil {
+			output <- llm.TextStreamEvent{
+				Type:  llm.EventTypeError,
+				Value: ctxErr,
+			}
+		} else {
+			output <- llm.TextStreamEvent{
+				Type:  llm.EventTypeError,
+				Value: err,
+			}
+		}
+	}
+}
+
+// convertToResponseParams converts ChatCompletionNewParams to ResponseNewParams
+// This is a simplified conversion that handles the basic use cases
+func (s *OpenAI) convertToResponseParams(params openai.ChatCompletionNewParams, llmContext *llm.Context) responses.ResponseNewParams {
+	result := responses.ResponseNewParams{}
+
+	// Convert model - directly assign as it's the same type
+	result.Model = params.Model
+
+	// Convert max tokens if set
+	if params.MaxCompletionTokens.Valid() {
+		result.MaxOutputTokens = param.NewOpt(params.MaxCompletionTokens.Value)
+	}
+
+	// Convert temperature if set
+	if params.Temperature.Valid() {
+		result.Temperature = param.NewOpt(params.Temperature.Value)
+	}
+
+	// Convert top_p if set
+	if params.TopP.Valid() {
+		result.TopP = param.NewOpt(params.TopP.Value)
+	}
+
+	// Convert user to safety identifier if enabled
+	if params.User.Valid() && s.config.SendUserID {
+		result.SafetyIdentifier = param.NewOpt(params.User.Value)
+	}
+
+	// Add reasoning parameters for models that support it
+	// TODO: Check if the model is reasoning-capable (o1, o1-mini, o3-mini, etc.)
+
+	result.Reasoning = shared.ReasoningParam{
+		// Set effort level for reasoning
+		// Can be "minimal", "low", "medium", or "high"
+		Effort: shared.ReasoningEffortMedium,
+		// Request a detailed summary of the reasoning
+		// Can be "auto", "concise", or "detailed"
+		Summary: shared.ReasoningSummaryAuto,
+	}
+
+	// Convert messages to a simple string input
+	// The Responses API uses a different format for input, so we simplify here
+	var inputBuilder strings.Builder
+	var systemInstructions string
+
+	// Process messages and convert to input format
+	for _, msg := range params.Messages {
+		switch {
+		case msg.OfSystem != nil:
+			// Extract system message for instructions
+			// System content is a union - check if it has a string value
+			if msg.OfSystem.Content.OfString.Valid() {
+				systemInstructions = msg.OfSystem.Content.OfString.Value
+			}
+		case msg.OfUser != nil:
+			// Add user messages to input
+			if inputBuilder.Len() > 0 {
+				inputBuilder.WriteString("\n\nUser: ")
+			} else {
+				inputBuilder.WriteString("User: ")
+			}
+			// Handle string content from union
+			if msg.OfUser.Content.OfString.Valid() {
+				inputBuilder.WriteString(msg.OfUser.Content.OfString.Value)
+			}
+			// Note: Array content handling would require more complex conversion
+		case msg.OfAssistant != nil:
+			// Add assistant messages to input
+			if inputBuilder.Len() > 0 {
+				inputBuilder.WriteString("\n\nAssistant: ")
+			} else {
+				inputBuilder.WriteString("Assistant: ")
+			}
+			// Handle string content from union
+			if msg.OfAssistant.Content.OfString.Valid() {
+				inputBuilder.WriteString(msg.OfAssistant.Content.OfString.Value)
+			}
+		case msg.OfTool != nil:
+			// Add tool results to input
+			if inputBuilder.Len() > 0 {
+				inputBuilder.WriteString("\n\nTool Result: ")
+			} else {
+				inputBuilder.WriteString("Tool Result: ")
+			}
+			// Handle string content from union
+			if msg.OfTool.Content.OfString.Valid() {
+				inputBuilder.WriteString(msg.OfTool.Content.OfString.Value)
+			}
+		}
+	}
+
+	// Set instructions from system message
+	if systemInstructions != "" {
+		result.Instructions = param.NewOpt(systemInstructions)
+	}
+
+	// Set input as a simple string
+	if inputBuilder.Len() > 0 {
+		result.Input = responses.ResponseNewParamsInputUnion{
+			OfString: param.NewOpt(inputBuilder.String()),
+		}
+	}
+
+	// Convert tools
+	tools := []responses.ToolUnionParam{}
+
+	// Add function tools if present
+	if len(params.Tools) > 0 {
+		for _, tool := range params.Tools {
+			// Check if this is a function tool
+			if tool.OfFunction != nil {
+				// tool.OfFunction is the function definition itself
+				functionTool := responses.FunctionToolParam{
+					Name: tool.OfFunction.Function.Name,
+				}
+
+				if tool.OfFunction.Function.Description.Valid() {
+					functionTool.Description = param.NewOpt(tool.OfFunction.Function.Description.Value)
+				}
+
+				if tool.OfFunction.Function.Parameters != nil {
+					functionTool.Parameters = tool.OfFunction.Function.Parameters
+				}
+
+				tools = append(tools, responses.ToolUnionParam{
+					OfFunction: &functionTool,
+				})
+			}
+		}
+	}
+
+	// Add native tools if enabled
+	if len(s.config.EnabledNativeTools) > 0 {
+		for _, nativeTool := range s.config.EnabledNativeTools {
+			if nativeTool == "web_search" {
+				// Add web search as a built-in tool
+				webSearchTool := responses.WebSearchToolParam{
+					Type: responses.WebSearchToolTypeWebSearchPreview,
+				}
+				tools = append(tools, responses.ToolUnionParam{
+					OfWebSearchPreview: &webSearchTool,
+				})
+			}
+			// Future native tools can be added here
+			// else if nativeTool == "file_search" {
+			//     fileSearchTool := responses.FileSearchToolParam{...}
+			//     tools = append(tools, responses.ToolUnionParam{
+			//         OfFileSearch: &fileSearchTool,
+			//     })
+			// } else if nativeTool == "code_interpreter" {
+			//     codeInterpreterTool := responses.ToolCodeInterpreterParam{...}
+			//     tools = append(tools, responses.ToolUnionParam{
+			//         OfCodeInterpreter: &codeInterpreterTool,
+			//     })
+			// }
+		}
+	}
+
+	if len(tools) > 0 {
+		result.Tools = tools
+	}
+
+	// Note: Tool choice and response format conversions are omitted for simplicity
+	// These would require more complex mapping between the two API formats
+	// For now, tool choice is defaulted to "auto" (as it was with completions) and response format is not enforcing a json mode, which was also the case with completions.
+
+	return result
 }
 
 func (s *OpenAI) streamResult(params openai.ChatCompletionNewParams, llmContext *llm.Context) (*llm.TextStreamResult, error) {
@@ -512,6 +1004,7 @@ func getModelConstant(model string) shared.ChatModel {
 func (s *OpenAI) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	params := s.completionRequestFromConfig(s.createConfig(opts))
 	params = modifyCompletionRequestWithRequest(params, request)
+	params.StreamOptions.IncludeUsage = openai.Bool(true)
 
 	if s.config.SendUserID {
 		if request.Context.RequestingUser != nil {
