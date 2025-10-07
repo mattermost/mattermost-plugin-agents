@@ -95,7 +95,7 @@ jobs:
       - uses: mattermost/actions/plugin-ci/setup@main
         with:
           golang-ci-lint-version: "v1.54.2"
-          go-version-file: 'go.mod'
+          golang-version: "1.24"
       - uses: mattermost/actions/plugin-ci/build@main
 
   deploy:
