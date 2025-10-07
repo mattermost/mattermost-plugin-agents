@@ -123,7 +123,7 @@ jobs:
 
       - name: Upload dist to S3
         run: |
-          aws s3 cp dist/mattermost-ai-*.tar.gz s3://${{ secrets.AWS_S3_BUCKET }}/mattermost-plugin-agents/mattermost-ai-${{ steps.short-sha.outputs.sha }}.tar.gz
+          aws s3 cp dist/mattermost-ai-*.tar.gz s3://${{ secrets.AWS_S3_BUCKET }}/mattermost-plugin-agents/mattermost-plugin-agents-${{ steps.short-sha.outputs.sha }}.tar.gz
 
   deploy:
     needs: [lint, build, plugin-tests, e2e]
