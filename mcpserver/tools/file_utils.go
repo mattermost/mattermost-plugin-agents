@@ -13,17 +13,23 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// fetchFileData fetches file data from a file path or URL and returns it as []byte
-func fetchFileData(filespec string) ([]byte, error) {
+// fetchFileDataForLocal fetches file data from a file path or URL (local access only)
+func fetchFileDataForLocal(filespec string, accessMode types.AccessMode) ([]byte, error) {
 	if filespec == "" {
 		return nil, fmt.Errorf("empty filespec provided")
 	}
 
+	// URLs are only allowed for local access mode
+	if accessMode != types.AccessModeLocal {
+		return nil, fmt.Errorf("URL access not supported in remote access mode, only local access allows URL access")
+	}
+
 	// Check if it's a URL
-	if strings.HasPrefix(filespec, "http://") || strings.HasPrefix(filespec, "https://") {
+	if isURL(filespec) {
 		resp, err := http.Get(filespec) // #nosec G107 - filespec is validated to be URL
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch file from URL: %w", err)
@@ -42,7 +48,6 @@ func fetchFileData(filespec string) ([]byte, error) {
 		return data, nil
 	}
 
-	// Handle as file path
 	cleanPath := filepath.Clean(filespec)
 	file, err := os.Open(cleanPath)
 	if err != nil {
@@ -58,14 +63,23 @@ func fetchFileData(filespec string) ([]byte, error) {
 	return data, nil
 }
 
-// getFileNameFromSpec extracts the filename from a filespec (URL or file path)
-func getFileNameFromSpec(filespec string) string {
+// isURL checks if a string is a URL
+func isURL(filespec string) bool {
+	return strings.HasPrefix(filespec, "http://") || strings.HasPrefix(filespec, "https://")
+}
+
+// extractFileNameForLocal extracts the filename from a filespec (URL or file path, local access only)
+func extractFileNameForLocal(filespec string, accessMode types.AccessMode) string {
 	if filespec == "" {
 		return ""
 	}
 
-	// For URLs, extract filename from the path
-	if strings.HasPrefix(filespec, "http://") || strings.HasPrefix(filespec, "https://") {
+	if accessMode != types.AccessModeLocal {
+		return "url-access-denied"
+	}
+
+	// Handle URLs - only allowed for local access
+	if isURL(filespec) {
 		parsedURL, err := url.Parse(filespec)
 		if err != nil {
 			// Fallback to simple string splitting if URL parsing fails
@@ -83,7 +97,7 @@ func getFileNameFromSpec(filespec string) string {
 		return filename
 	}
 
-	// For file paths, extract the base name
+	// For local file paths, extract the base name
 	return filepath.Base(filespec)
 }
 
@@ -99,22 +113,27 @@ func isValidImageFile(filename string) bool {
 	return false
 }
 
-// uploadFiles uploads multiple files and returns their file IDs
-func uploadFiles(ctx context.Context, client *model.Client4, channelID string, filespecs []string) ([]string, error) {
+// uploadFilesForLocal uploads multiple files from URLs or file paths (local access only) and returns their file IDs
+func uploadFilesForLocal(ctx context.Context, client *model.Client4, channelID string, filespecs []string, accessMode types.AccessMode) ([]string, error) {
 	var fileIDs []string
+
+	// Early validation - only local access can upload files
+	if accessMode != types.AccessModeLocal {
+		return nil, fmt.Errorf("file uploads not supported in remote access mode, only local access allows file operations")
+	}
 
 	for _, filespec := range filespecs {
 		if filespec == "" {
 			continue
 		}
 
-		fileData, err := fetchFileData(filespec)
+		fileData, err := fetchFileDataForLocal(filespec, accessMode)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch file %s: %w", filespec, err)
 		}
 
-		fileName := getFileNameFromSpec(filespec)
-		if fileName == "" {
+		fileName := extractFileNameForLocal(filespec, accessMode)
+		if fileName == "" || fileName == "url-access-denied" || fileName == "file-access-denied" {
 			fileName = "attachment"
 		}
 
@@ -131,13 +150,18 @@ func uploadFiles(ctx context.Context, client *model.Client4, channelID string, f
 	return fileIDs, nil
 }
 
-// handleFileAttachments handles file attachments upload and returns file IDs and a message
-func handleFileAttachments(ctx context.Context, client *model.Client4, channelID string, attachments []string) ([]string, string) {
+// uploadFilesAndUrlsForLocal uploads files from URLs or file paths (local access only) and returns file IDs and status message
+func uploadFilesAndUrlsForLocal(ctx context.Context, client *model.Client4, channelID string, attachments []string, accessMode types.AccessMode) ([]string, string) {
 	var fileIDs []string
 	var attachmentMessage string
 
 	if len(attachments) > 0 {
-		uploadedFileIDs, uploadErr := uploadFiles(ctx, client, channelID, attachments)
+		if accessMode != types.AccessModeLocal {
+			attachmentMessage = " (file attachments not supported in remote access mode)"
+			return nil, attachmentMessage
+		}
+
+		uploadedFileIDs, uploadErr := uploadFilesForLocal(ctx, client, channelID, attachments, accessMode)
 		if uploadErr != nil {
 			attachmentMessage = fmt.Sprintf(" (file upload failed: %v)", uploadErr)
 		} else {

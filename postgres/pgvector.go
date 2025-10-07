@@ -138,8 +138,10 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 		From("llm_posts_embeddings e").
 		Join("Channels c ON e.channel_id = c.Id").
 		Join("ChannelMembers cm ON e.channel_id = cm.ChannelId").
+		Join("Posts p ON e.post_id = p.Id").
 		Where("cm.UserId = ?", opts.UserID).
 		Where("c.DeleteAt = 0").
+		Where("p.DeleteAt = 0").
 		PlaceholderFormat(sq.Dollar)
 
 	if opts.TeamID != "" {

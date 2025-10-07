@@ -12,7 +12,7 @@ import {DangerPill, Pill} from '../pill';
 
 import {ButtonIcon} from '../assets/buttons';
 
-import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from './item';
+import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 
@@ -26,6 +26,8 @@ export type LLMService = {
     streamingTimeoutSeconds: number
     sendUserId: boolean
     outputTokenLimit: number
+    useResponsesAPI: boolean
+    enabledNativeTools?: string[]
 }
 
 export enum ChannelAccessLevel {
@@ -223,6 +225,68 @@ const Horizontal = styled.div`
 	gap: 8px;
 `;
 
+// Component for configuring native OpenAI tools
+type NativeToolsItemProps = {
+    enabledTools: string[]
+    onChange: (tools: string[]) => void
+    provider?: 'openai' | 'anthropic'
+}
+
+const NativeToolsItem = (props: NativeToolsItemProps) => {
+    const intl = useIntl();
+    const provider = props.provider || 'openai';
+
+    const availableNativeTools = [
+        {
+            id: 'web_search',
+            label: intl.formatMessage({defaultMessage: 'Web Search'}),
+            helpText: provider === 'anthropic' ?
+                intl.formatMessage({defaultMessage: 'Enable Claude\'s built-in web search capability'}) :
+                intl.formatMessage({defaultMessage: 'Enable OpenAI\'s built-in web search capability'}),
+        },
+
+    ];
+
+    const toggleTool = (toolId: string) => {
+        const currentTools = props.enabledTools || [];
+        if (currentTools.includes(toolId)) {
+            props.onChange(currentTools.filter((t) => t !== toolId));
+        } else {
+            props.onChange([...currentTools, toolId]);
+        }
+    };
+
+    const titleMessage = provider === 'anthropic' ?
+        intl.formatMessage({defaultMessage: 'Native Claude Tools'}) :
+        intl.formatMessage({defaultMessage: 'Native OpenAI Tools'});
+
+    return (
+        <>
+            <ItemLabel>
+                <Horizontal>
+                    {titleMessage}
+                    <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
+                </Horizontal>
+            </ItemLabel>
+            <div>
+                {availableNativeTools.map((tool) => (
+                    <NativeToolContainer key={tool.id}>
+                        <StyledCheckbox
+                            type='checkbox'
+                            checked={props.enabledTools.includes(tool.id)}
+                            onChange={() => toggleTool(tool.id)}
+                        />
+                        <NativeToolLabel>
+                            <div>{tool.label}</div>
+                            <HelpText>{tool.helpText}</HelpText>
+                        </NativeToolLabel>
+                    </NativeToolContainer>
+                ))}
+            </div>
+        </>
+    );
+};
+
 type ServiceItemProps = {
     service: LLMService
     onChange: (service: LLMService) => void
@@ -273,7 +337,31 @@ const ServiceItem = (props: ServiceItemProps) => {
                         onChange={(to: boolean) => props.onChange({...props.service, sendUserId: to})}
                         helpText={intl.formatMessage({defaultMessage: 'Sends the Mattermost user ID to the upstream LLM.'})}
                     />
+                    {(type === 'openai' || type === 'openaicompatible' || type === 'azure') && (
+                        <>
+                            <BooleanItem
+                                label={intl.formatMessage({defaultMessage: 'Use Responses API'})}
+                                value={props.service.useResponsesAPI ?? false}
+                                onChange={(to: boolean) => props.onChange({...props.service, useResponsesAPI: to})}
+                                helpText={intl.formatMessage({defaultMessage: 'Use the new OpenAI Responses API with support for reasoning summaries and other advanced features. Disable for legacy Completions API compatibility.'})}
+                            />
+                            {props.service.useResponsesAPI && (
+                                <NativeToolsItem
+                                    enabledTools={props.service.enabledNativeTools || []}
+                                    onChange={(tools: string[]) => props.onChange({...props.service, enabledNativeTools: tools})}
+                                    provider='openai'
+                                />
+                            )}
+                        </>
+                    )}
                 </>
+            )}
+            {type === 'anthropic' && (
+                <NativeToolsItem
+                    enabledTools={props.service.enabledNativeTools || []}
+                    onChange={(tools: string[]) => props.onChange({...props.service, enabledNativeTools: tools})}
+                    provider='anthropic'
+                />
             )}
             <TextItem
                 label={intl.formatMessage({defaultMessage: 'Default model'})}
@@ -375,6 +463,32 @@ const HeaderContainer = styled.div`
 	gap: 16px;
 	padding: 12px 16px 12px 20px;
 	border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+	cursor: pointer;
+`;
+
+const NativeToolContainer = styled.div`
+	display: flex;
+	flex-direction: row;
+	align-items: flex-start;
+	gap: 8px;
+	margin-bottom: 12px;
+`;
+
+const NativeToolLabel = styled.label`
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	cursor: pointer;
+
+	div:first-child {
+		font-size: 14px;
+		font-weight: 400;
+		line-height: 20px;
+	}
+`;
+
+const StyledCheckbox = styled.input`
+	margin-top: 2px;
 	cursor: pointer;
 `;
 

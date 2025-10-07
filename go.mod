@@ -9,9 +9,9 @@ require (
 	github.com/asticode/go-astisub v0.34.0
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/go-github/v41 v41.0.0
+	github.com/google/jsonschema-go v0.2.3
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/lib/pq v1.10.9
-	github.com/mark3labs/mcp-go v0.34.0
 	github.com/mattermost/mattermost/server/public v0.1.19
 	github.com/mattermost/testcontainers-mattermost-go v0.0.0-20250129100554-3cf1ce84b0e4
 	github.com/modelcontextprotocol/go-sdk v0.2.0
@@ -123,7 +123,6 @@ require (
 	github.com/russellhaering/goxmldsig v1.5.0 // indirect
 	github.com/shirou/gopsutil/v3 v3.23.12 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
-	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/testcontainers/testcontainers-go v0.35.0 // indirect

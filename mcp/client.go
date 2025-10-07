@@ -94,12 +94,13 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	httpClient := c.httpClient(headers)
 
 	// Create an SSE transport with the authenticated HTTP client
-	transport := mcp.NewSSEClientTransport(serverConfig.BaseURL, &mcp.SSEClientTransportOptions{
+	transport := &mcp.SSEClientTransport{
+		Endpoint:   serverConfig.BaseURL,
 		HTTPClient: httpClient,
-	})
+	}
 
 	// Try to connect using the OAuth-enabled SSE transport
-	session, errSSEConnect := client.Connect(ctx, transport)
+	session, errSSEConnect := client.Connect(ctx, transport, nil)
 	if errSSEConnect == nil {
 		// Successfully connected with OAuth
 		return session, nil
@@ -117,9 +118,10 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	}
 
 	// Unauthenticated HTTP
-	session, errUnauthHTTP := client.Connect(ctx, mcp.NewStreamableClientTransport(serverConfig.BaseURL, &mcp.StreamableClientTransportOptions{
+	session, errUnauthHTTP := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:   serverConfig.BaseURL,
 		HTTPClient: httpClient,
-	}))
+	}, nil)
 	if errUnauthHTTP == nil {
 		// Successfully connected without authentication
 		return session, nil

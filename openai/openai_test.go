@@ -7,8 +7,8 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/modelcontextprotocol/go-sdk/jsonschema"
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/shared"
 	"github.com/stretchr/testify/assert"

@@ -38,13 +38,13 @@ Agents is enabled automatically when using the pre-installed version. If you've 
 
 ### Basic configuration
 
-If you have an Enterprise license, upload it to unlock additional features. 
+If you have an Enterprise, or Enterprise Advanced license, upload it to unlock additional features. If you don't have a license but are running Mattermost Enterprise Edition, an Entry license will be automatically applied for you.
 
 For general settings, you can toggle to enable or disable the plugin system-wide, enable debug logging for troubleshooting (use only when needed), enable token usage logging for tracking LLM interactions, and configure the hostname allowlist for API calls.
 
 ### Agent configuration
 
-Configure an LLM for your Agents integration by going to **System Console > Plugins > Agents** and selecting **Add an Agent**. The plugin supports creating multiple Agents with different configurations. The ability to define multiple LLMs for your Agents integration requires a Mattermost Enterprise license.
+Configure an LLM for your Agents integration by going to **System Console > Plugins > Agents** and selecting **Add an Agent**. The plugin supports creating multiple Agents with different configurations. See [license requirements](#license-requirements) for details on features that require a license.
 
 Select **Add an Agent** to create a new Agent, then configure the agent settings:
 
@@ -87,7 +87,7 @@ For example, you could list your organization's specific acronyms so the agent k
 
 ### Embed search configuration
 
-To enable semantic search capabilities, you'll need to enable the `pgvector` extension in your PostgreSQL database, then configure embeddings provider settings including the provider (OpenAI, etc.), model for embeddings, and dimensions that match your chosen embedding model. Embedding search requires an Enterprise license and is available as an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature. Performance may vary with large datasets.
+To enable semantic search capabilities, you'll need to enable the `pgvector` extension in your PostgreSQL database, then configure embeddings provider settings including the provider (OpenAI, etc.), model for embeddings, and dimensions that match your chosen embedding model. Embedding search requires a license (see [license requirements](#license-requirements)) and is available as an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature. Performance may vary with large datasets.
 
 Configure chunking options based on your needs:
 
@@ -242,14 +242,22 @@ The Model Context Protocol (MCP) integration allows Agents to connect to externa
 
 > **Note:** The plugin currently doesn't render Markdown links (e.g., JIRA ticket links) in bot responses. URLs are displayed in plain text rather than as clickable Markdown-rendered links. This is not a bug but intended security behavior to prevent potential data exfiltration through links. While this limitation exists, improvements to link handling are being considered for future development. 
 
-## Enterprise features
+### License requirements
 
-The following features require an Enterprise license:
+The following table outlines which features require a license:
 
-- Multiple agent configurations
-- Fine-grained access controls
-- Embedding search (Experimental)
-- MCP Support (Experimental)
-- Usage analytics
-- **AI Actions** menu options including unread channel and discussion thread summarization
-- Recorded meeting transcripts and summarization
+| Feature | License Required |
+|---------|------------------|
+| Basic agent configuration (single agent) | No license required |
+| Chat with agents in DMs and channels | No license required |
+| Image analysis (vision capabilities) | No license required |
+| Basic tool integrations | No license required |
+| Multiple agent configurations | Entry, Enterprise, and Enterprise Advanced |
+| Fine-grained access controls | Entry, Enterprise, and Enterprise Advanced |
+| Embedding search (semantic AI search) | Entry, Enterprise, and Enterprise Advanced |
+| MCP Support | Entry, Enterprise, and Enterprise Advanced |
+| Usage analytics and token tracking | Entry, Enterprise, and Enterprise Advanced |
+| AI Actions menu (thread summarization) | Entry, Enterprise, and Enterprise Advanced |
+| Channel summarization (unread messages) | Entry, Enterprise, and Enterprise Advanced |
+| Recorded meeting transcripts and summarization | Entry, Enterprise, and Enterprise Advanced |
+

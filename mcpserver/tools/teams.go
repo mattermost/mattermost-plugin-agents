@@ -17,31 +17,31 @@ import (
 
 // GetTeamInfoArgs represents arguments for the get_team_info tool
 type GetTeamInfoArgs struct {
-	TeamID          string `json:"team_id" jsonschema_description:"The exact team ID (fastest, most reliable method)"`
-	TeamDisplayName string `json:"team_display_name" jsonschema_description:"The human-readable display name users see (e.g. 'Engineering Team')"`
-	TeamName        string `json:"team_name" jsonschema_description:"The URL-friendly team name (e.g. 'engineering-team')"`
+	TeamID          string `json:"team_id,omitempty" jsonschema:"The exact team ID (fastest, most reliable method)"`
+	TeamDisplayName string `json:"team_display_name,omitempty" jsonschema:"The human-readable display name users see (e.g. 'Engineering Team')"`
+	TeamName        string `json:"team_name,omitempty" jsonschema:"The URL-friendly team name (e.g. 'engineering-team')"`
 }
 
 // GetTeamMembersArgs represents arguments for the get_team_members tool
 type GetTeamMembersArgs struct {
-	TeamID string `json:"team_id" jsonschema_description:"ID of the team to get members for"`
-	Limit  int    `json:"limit" jsonschema_description:"Number of members to return (default: 50, max: 200)"`
-	Page   int    `json:"page" jsonschema_description:"Page number for pagination (default: 0)"`
+	TeamID string `json:"team_id" jsonschema:"ID of the team to get members for,minLength=26,maxLength=26"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Number of members to return (default: 50, max: 200),minimum=1,maximum=200"`
+	Page   int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
 }
 
 // CreateTeamArgs represents arguments for the create_team tool (dev mode only)
 type CreateTeamArgs struct {
-	Name        string `json:"name" jsonschema_description:"URL name for the team"`
-	DisplayName string `json:"display_name" jsonschema_description:"Display name for the team"`
-	Type        string `json:"type" jsonschema_description:"Team type: 'O' for open, 'I' for invite only"`
-	Description string `json:"description" jsonschema_description:"Team description"`
-	TeamIcon    string `json:"team_icon" jsonschema_description:"File path or URL to set as team icon (supports .jpeg, .jpg, .png, .gif)"`
+	Name        string `json:"name" jsonschema:"URL name for the team,minLength=1,maxLength=64"`
+	DisplayName string `json:"display_name" jsonschema:"Display name for the team,minLength=1,maxLength=64"`
+	Type        string `json:"type" jsonschema:"Team type,enum=O,enum=I"`
+	Description string `json:"description" jsonschema:"Team description,maxLength=255"`
+	TeamIcon    string `json:"team_icon,omitempty" access:"local" jsonschema:"File path or URL to set as team icon (supports .jpeg, .jpg, .png, .gif)"`
 }
 
 // AddUserToTeamArgs represents arguments for the add_user_to_team tool (dev mode only)
 type AddUserToTeamArgs struct {
-	UserID string `json:"user_id" jsonschema_description:"ID of the user to add"`
-	TeamID string `json:"team_id" jsonschema_description:"ID of the team to add user to"`
+	UserID string `json:"user_id" jsonschema:"ID of the user to add"`
+	TeamID string `json:"team_id" jsonschema:"ID of the team to add user to"`
 }
 
 // getTeamTools returns all team-related tools
@@ -49,14 +49,14 @@ func (p *MattermostToolProvider) getTeamTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name:        "get_team_info",
-			Description: "Get information about a team. If you have a team ID, use that for fastest lookup. If the user provides a human-readable name, try team_display_name first (what users see in the UI), then team_name (URL name) as fallback.",
-			Schema:      llm.NewJSONSchemaFromStruct[GetTeamInfoArgs](),
+			Description: "Get information about a team. Provide ONE of the following parameters: team_id (fastest), team_display_name (user-visible name), or team_name (URL name). Returns team metadata including ID, names, type, description, and creation date. Example: {\"team_display_name\": \"Engineering Team\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
+			Schema:      NewJSONSchemaForAccessMode[GetTeamInfoArgs](string(p.accessMode)),
 			Resolver:    p.toolGetTeamInfo,
 		},
 		{
 			Name:        "get_team_members",
-			Description: "Get members of a team with pagination support",
-			Schema:      llm.NewJSONSchemaFromStruct[GetTeamMembersArgs](),
+			Description: "Get members of a team with pagination support. Parameters: team_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and roles. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"limit\": 10, \"page\": 0}",
+			Schema:      NewJSONSchemaForAccessMode[GetTeamMembersArgs](string(p.accessMode)),
 			Resolver:    p.toolGetTeamMembers,
 		},
 	}
@@ -68,13 +68,13 @@ func (p *MattermostToolProvider) getDevTeamTools() []MCPTool {
 		{
 			Name:        "create_team",
 			Description: "Create a new team (dev mode only)",
-			Schema:      llm.NewJSONSchemaFromStruct[CreateTeamArgs](),
+			Schema:      NewJSONSchemaForAccessMode[CreateTeamArgs](string(p.accessMode)),
 			Resolver:    p.toolCreateTeam,
 		},
 		{
 			Name:        "add_user_to_team",
 			Description: "Add a user to a team (dev mode only)",
-			Schema:      llm.NewJSONSchemaFromStruct[AddUserToTeamArgs](),
+			Schema:      NewJSONSchemaForAccessMode[AddUserToTeamArgs](string(p.accessMode)),
 			Resolver:    p.toolAddUserToTeam,
 		},
 	}
@@ -100,6 +100,10 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 	// Try different lookup methods based on provided parameters
 	switch {
 	case args.TeamID != "":
+		// Validate team ID format
+		if !model.IsValidId(args.TeamID) {
+			return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+		}
 		// Direct ID lookup - fastest method
 		team, _, err = client.GetTeam(ctx, args.TeamID, "")
 		if err != nil {
@@ -170,8 +174,8 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 	}
 
 	// Validate required fields
-	if args.TeamID == "" {
-		return "team_id is required", fmt.Errorf("team_id cannot be empty")
+	if !model.IsValidId(args.TeamID) {
+		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
 
 	// Set defaults and validate
@@ -286,11 +290,11 @@ func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, args
 	// Upload team icon if specified
 	if args.TeamIcon != "" {
 		// Validate image file type
-		fileName := getFileNameFromSpec(args.TeamIcon)
+		fileName := extractFileNameForLocal(args.TeamIcon, mcpContext.AccessMode)
 		if !isValidImageFile(fileName) {
 			teamIconMessage = " (team icon upload failed: unsupported file type, only .jpeg, .jpg, .png, .gif are supported)"
 		} else {
-			imageData, err := fetchFileData(args.TeamIcon)
+			imageData, err := fetchFileDataForLocal(args.TeamIcon, mcpContext.AccessMode)
 			if err != nil {
 				teamIconMessage = fmt.Sprintf(" (team icon upload failed: %v)", err)
 			} else {
@@ -316,11 +320,11 @@ func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, a
 	}
 
 	// Validate required fields
-	if args.UserID == "" {
-		return "user_id is required", fmt.Errorf("user_id cannot be empty")
+	if !model.IsValidId(args.UserID) {
+		return "invalid user_id format", fmt.Errorf("user_id must be a valid ID")
 	}
-	if args.TeamID == "" {
-		return "team_id is required", fmt.Errorf("team_id cannot be empty")
+	if !model.IsValidId(args.TeamID) {
+		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
 
 	// Get client from context

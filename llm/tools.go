@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/modelcontextprotocol/go-sdk/jsonschema"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // Tool represents a function that can be called by the language model during a conversation.
@@ -77,7 +77,7 @@ type TraceLog interface {
 // NewJSONSchemaFromStruct creates a JSONSchema from a Go struct using generics
 // It's a helper function for tool providers that currently define schemas as structs
 func NewJSONSchemaFromStruct[T any]() *jsonschema.Schema {
-	schema, err := jsonschema.For[T]()
+	schema, err := jsonschema.For[T](nil)
 	if err != nil {
 		panic(fmt.Sprintf("failed to create JSON schema from struct: %v", err))
 	}

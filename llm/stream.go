@@ -17,6 +17,10 @@ const (
 	EventTypeError
 	// EventTypeToolCalls represents a tool call event
 	EventTypeToolCalls
+	// EventTypeReasoning represents a reasoning summary chunk event
+	EventTypeReasoning
+	// EventTypeReasoningEnd represents the end of reasoning summary
+	EventTypeReasoningEnd
 	// EventTypeUsage represents token usage data
 	EventTypeUsage
 )

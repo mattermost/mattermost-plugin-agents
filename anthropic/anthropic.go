@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -33,10 +34,11 @@ type messageState struct {
 }
 
 type Anthropic struct {
-	client           anthropicSDK.Client
-	defaultModel     string
-	inputTokenLimit  int
-	outputTokenLimit int
+	client             anthropicSDK.Client
+	defaultModel       string
+	inputTokenLimit    int
+	outputTokenLimit   int
+	enabledNativeTools []string
 }
 
 func New(llmService llm.ServiceConfig, httpClient *http.Client) *Anthropic {
@@ -46,10 +48,11 @@ func New(llmService llm.ServiceConfig, httpClient *http.Client) *Anthropic {
 	)
 
 	return &Anthropic{
-		client:           client,
-		defaultModel:     llmService.DefaultModel,
-		inputTokenLimit:  llmService.InputTokenLimit,
-		outputTokenLimit: llmService.OutputTokenLimit,
+		client:             client,
+		defaultModel:       llmService.DefaultModel,
+		inputTokenLimit:    llmService.InputTokenLimit,
+		outputTokenLimit:   llmService.OutputTokenLimit,
+		enabledNativeTools: llmService.EnabledNativeTools,
 	}
 }
 
@@ -190,9 +193,42 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 		}},
 		Tools: convertTools(state.tools),
 	}
+
+	// Add native tools if enabled
+	if a.isNativeToolEnabled("web_search") {
+		// Add web search as a native tool
+		webSearchTool := anthropicSDK.WebSearchTool20250305Param{
+			Name: "web_search",
+			Type: "web_search_20250305",
+		}
+		params.Tools = append(params.Tools, anthropicSDK.ToolUnionParam{
+			OfWebSearchTool20250305: &webSearchTool,
+		})
+	}
+
+	// Enable thinking/reasoning for models that support it
+	// We'll allocate a reasonable budget for thinking tokens (1/4 of max tokens, capped at 8192)
+	thinkingBudget := int64(state.config.MaxGeneratedTokens / 4)
+	if thinkingBudget > 8192 {
+		thinkingBudget = 8192
+	}
+	if thinkingBudget < 1024 {
+		thinkingBudget = 1024
+	}
+
+	params.Thinking = anthropicSDK.ThinkingConfigParamUnion{
+		OfEnabled: &anthropicSDK.ThinkingConfigEnabledParam{
+			Type:         "enabled",
+			BudgetTokens: thinkingBudget,
+		},
+	}
+
 	stream := a.client.Messages.NewStreaming(context.Background(), params)
 
 	message := anthropicSDK.Message{}
+	var thinkingBuffer strings.Builder
+	var isThinkingComplete bool
+
 	for stream.Next() {
 		event := stream.Current()
 		if err := message.Accumulate(event); err != nil {
@@ -203,7 +239,7 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 			return
 		}
 
-		// Stream text content immediately
+		// Stream text and thinking content immediately
 		switch eventVariant := event.AsAny().(type) { //nolint:gocritic
 		case anthropicSDK.ContentBlockDeltaEvent:
 			switch deltaVariant := eventVariant.Delta.AsAny().(type) { //nolint:gocritic
@@ -212,6 +248,25 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 					Type:  llm.EventTypeText,
 					Value: deltaVariant.Text,
 				}
+			case anthropicSDK.ThinkingDelta:
+				// Accumulate thinking text
+				thinkingBuffer.WriteString(deltaVariant.Thinking)
+				// Stream thinking chunks as they arrive
+				state.output <- llm.TextStreamEvent{
+					Type:  llm.EventTypeReasoning,
+					Value: deltaVariant.Thinking,
+				}
+			}
+
+		case anthropicSDK.ContentBlockStopEvent:
+			// Check if this is the end of a thinking block
+			if thinkingBuffer.Len() > 0 && !isThinkingComplete {
+				// Send the complete thinking/reasoning
+				state.output <- llm.TextStreamEvent{
+					Type:  llm.EventTypeReasoningEnd,
+					Value: thinkingBuffer.String(),
+				}
+				isThinkingComplete = true
 			}
 		}
 	}
@@ -222,6 +277,14 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 			Value: fmt.Errorf("error from anthropic stream: %w", err),
 		}
 		return
+	}
+
+	// If we haven't sent the complete thinking yet, send it now before processing tool calls
+	if !isThinkingComplete && thinkingBuffer.Len() > 0 {
+		state.output <- llm.TextStreamEvent{
+			Type:  llm.EventTypeReasoningEnd,
+			Value: thinkingBuffer.String(),
+		}
 	}
 
 	// Check for tool usage in the message
@@ -324,4 +387,14 @@ func (a *Anthropic) InputTokenLimit() int {
 		return a.inputTokenLimit
 	}
 	return 100000
+}
+
+// isNativeToolEnabled checks if a specific native tool is enabled in the configuration
+func (a *Anthropic) isNativeToolEnabled(toolName string) bool {
+	for _, enabledTool := range a.enabledNativeTools {
+		if enabledTool == toolName {
+			return true
+		}
+	}
+	return false
 }
