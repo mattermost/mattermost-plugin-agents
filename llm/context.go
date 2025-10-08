@@ -35,6 +35,7 @@ type Context struct {
 	// Bot Specific
 	BotName            string
 	BotUsername        string
+	BotUserID          string
 	BotModel           string
 	CustomInstructions string
 

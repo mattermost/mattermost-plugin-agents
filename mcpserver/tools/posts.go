@@ -203,6 +203,29 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		FileIds:   fileIDs,
 	}
 
+	// Add AI-generated prop if tracking is enabled
+	if p.trackAIGenerated {
+		var userID string
+
+		// First check if bot user ID was provided via context metadata (from embedded server)
+		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
+			userID = mcpContext.BotUserID
+		} else {
+			// For external servers, fetch the authenticated user's ID
+			if user, _, getMeErr := client.GetMe(ctx, ""); getMeErr == nil && user != nil {
+				userID = user.Id
+			}
+		}
+
+		// Add the prop if we have a valid user ID
+		if userID != "" {
+			if post.Props == nil {
+				post.Props = make(model.StringInterface)
+			}
+			post.Props["ai_generated_by"] = userID
+		}
+	}
+
 	createdPost, _, err := client.CreatePost(ctx, post)
 	if err != nil {
 		return "failed to create post", fmt.Errorf("error creating post: %w", err)
@@ -316,9 +339,31 @@ func (p *MattermostToolProvider) toolDMSelf(mcpContext *MCPToolContext, argsGett
 	}
 
 	// Set props to trigger notifications
-	post.SetProps(map[string]interface{}{
+	props := map[string]interface{}{
 		"from_webhook": "true",
-	})
+	}
+
+	// Add AI-generated prop if tracking is enabled
+	if p.trackAIGenerated {
+		var userID string
+
+		// First check if bot user ID was provided via context metadata (from embedded server)
+		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
+			userID = mcpContext.BotUserID
+		} else {
+			// For external servers, use the current authenticated user's ID
+			// GetMe is already called above, so we have the user
+			userID = user.Id
+		}
+
+		// Add the prop if we have a valid user ID
+		if userID != "" {
+			// Use the string constant as per the Mattermost feature spec
+			props["ai_generated_by"] = userID
+		}
+	}
+
+	post.SetProps(props)
 
 	createdPost, _, err := client.CreatePost(ctx, post)
 	if err != nil {
