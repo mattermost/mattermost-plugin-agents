@@ -6,12 +6,11 @@ package mcpserver
 import (
 	"context"
 	"fmt"
-	"log"
 
-	"github.com/mark3labs/mcp-go/server"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // MattermostStdioMCPServer wraps MattermostMCPServer for STDIO transport
@@ -48,13 +47,12 @@ func NewStdioServer(config StdioConfig, logger *mlog.Logger) (*MattermostStdioMC
 	// Create authentication provider
 	mattermostServer.authProvider = auth.NewTokenAuthenticationProvider(config.GetMMServerURL(), config.GetMMInternalServerURL(), config.PersonalAccessToken, logger)
 
-	// Create MCP server
-	mattermostServer.mcpServer = server.NewMCPServer(
-		"mattermost-mcp-server",
-		"0.1.0",
-		server.WithToolCapabilities(false),
-		server.WithLogging(),
-		server.WithRecovery(),
+	mattermostServer.mcpServer = mcp.NewServer(
+		&mcp.Implementation{
+			Name:    "mattermost-mcp-server",
+			Version: "0.1.0",
+		},
+		&mcp.ServerOptions{}, // ServerOptions
 	)
 
 	// Validate token at startup for STDIO
@@ -75,6 +73,19 @@ func (s *MattermostStdioMCPServer) Serve() error {
 
 // serveStdio starts the server using stdio transport
 func (s *MattermostMCPServer) serveStdio() error {
-	errorLogger := log.New(&mlogWriter{logger: s.logger}, "", 0)
-	return server.ServeStdio(s.mcpServer, server.WithErrorLogger(errorLogger))
+	// Add context with cancellation for graceful shutdown
+	ctx := context.Background()
+
+	// Log startup
+	s.logger.Info("Starting MCP server with STDIO transport")
+
+	transport := &mcp.StdioTransport{}
+
+	err := s.mcpServer.Run(ctx, transport)
+	if err != nil {
+		s.logger.Error("MCP server stopped with error", mlog.Err(err))
+	} else {
+		s.logger.Info("MCP server stopped gracefully")
+	}
+	return err
 }

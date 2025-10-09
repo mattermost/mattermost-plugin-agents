@@ -17,40 +17,40 @@ import (
 
 // ReadChannelArgs represents arguments for the read_channel tool
 type ReadChannelArgs struct {
-	ChannelID string `json:"channel_id" jsonschema_description:"The ID of the channel to read from"`
-	Limit     int    `json:"limit" jsonschema_description:"Number of posts to retrieve (default: 20, max: 100)"`
-	Since     string `json:"since" jsonschema_description:"Only get posts since this timestamp (ISO 8601 format)"`
+	ChannelID string `json:"channel_id" jsonschema:"The ID of the channel to read from,minLength=26,maxLength=26"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"Number of posts to retrieve (default: 20, max: 100),minimum=1,maximum=100"`
+	Since     string `json:"since,omitempty" jsonschema:"Only get posts since this timestamp (ISO 8601 format),format=date-time"`
 }
 
 // CreateChannelArgs represents arguments for the create_channel tool
 type CreateChannelArgs struct {
-	Name        string `json:"name" jsonschema_description:"The channel name (URL-friendly)"`
-	DisplayName string `json:"display_name" jsonschema_description:"The channel display name"`
-	Type        string `json:"type" jsonschema_description:"Channel type: 'O' for public, 'P' for private"`
-	TeamID      string `json:"team_id" jsonschema_description:"The team ID where the channel will be created"`
-	Purpose     string `json:"purpose" jsonschema_description:"Optional channel purpose"`
-	Header      string `json:"header" jsonschema_description:"Optional channel header"`
+	Name        string `json:"name" jsonschema:"The channel name (URL-friendly),minLength=1,maxLength=64"`
+	DisplayName string `json:"display_name" jsonschema:"The channel display name,minLength=1,maxLength=64"`
+	Type        string `json:"type" jsonschema:"Channel type,enum=O,enum=P"`
+	TeamID      string `json:"team_id" jsonschema:"The team ID where the channel will be created,minLength=26,maxLength=26"`
+	Purpose     string `json:"purpose" jsonschema:"Optional channel purpose,maxLength=250"`
+	Header      string `json:"header" jsonschema:"Optional channel header,maxLength=1024"`
 }
 
 // GetChannelInfoArgs represents arguments for the get_channel_info tool
 type GetChannelInfoArgs struct {
-	ChannelID          string `json:"channel_id" jsonschema_description:"The exact channel ID (fastest, most reliable method)"`
-	ChannelDisplayName string `json:"channel_display_name" jsonschema_description:"The human-readable display name users see (e.g. 'General Discussion'). Try this first for user-provided names."`
-	ChannelName        string `json:"channel_name" jsonschema_description:"The URL-friendly channel name (e.g. 'general-discussion'). Use this only if display_name doesn't work."`
-	TeamID             string `json:"team_id" jsonschema_description:"Team ID (optional - if provided, searches within specific team; if omitted, searches across all teams)"`
+	ChannelID          string `json:"channel_id,omitempty" jsonschema:"The exact channel ID (fastest, most reliable method),maxLength=26"`
+	ChannelDisplayName string `json:"channel_display_name,omitempty" jsonschema:"The human-readable display name users see (e.g. 'General Discussion'). Try this first for user-provided names.,maxLength=64"`
+	ChannelName        string `json:"channel_name,omitempty" jsonschema:"The URL-friendly channel name (e.g. 'general-discussion'). Use this only if display_name doesn't work.,maxLength=64"`
+	TeamID             string `json:"team_id,omitempty" jsonschema:"Team ID (optional - if provided, searches within specific team; if omitted, searches across all teams),maxLength=26"`
 }
 
 // GetChannelMembersArgs represents arguments for the get_channel_members tool
 type GetChannelMembersArgs struct {
-	ChannelID string `json:"channel_id" jsonschema_description:"ID of the channel to get members for"`
-	Limit     int    `json:"limit" jsonschema_description:"Number of members to return (default: 50, max: 200)"`
-	Page      int    `json:"page" jsonschema_description:"Page number for pagination (default: 0)"`
+	ChannelID string `json:"channel_id" jsonschema:"ID of the channel to get members for,minLength=26,maxLength=26"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"Number of members to return (default: 50, max: 200),minimum=1,maximum=200"`
+	Page      int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
 }
 
 // AddUserToChannelArgs represents arguments for the add_user_to_channel tool (dev mode only)
 type AddUserToChannelArgs struct {
-	UserID    string `json:"user_id" jsonschema_description:"ID of the user to add"`
-	ChannelID string `json:"channel_id" jsonschema_description:"ID of the channel to add user to"`
+	UserID    string `json:"user_id" jsonschema:"ID of the user to add"`
+	ChannelID string `json:"channel_id" jsonschema:"ID of the channel to add user to"`
 }
 
 // getChannelTools returns all channel-related tools
@@ -58,25 +58,25 @@ func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name:        "read_channel",
-			Description: "Read recent posts from a Mattermost channel",
+			Description: "Read recent posts from a Mattermost channel. Parameters: channel_id (required), limit (1-100, default 20), since (ISO 8601 timestamp, optional). Returns post details including author, content, and timestamps. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 10, \"since\": \"2024-01-01T00:00:00Z\"}",
 			Schema:      llm.NewJSONSchemaFromStruct[ReadChannelArgs](),
 			Resolver:    p.toolReadChannel,
 		},
 		{
 			Name:        "create_channel",
-			Description: "Create a new channel in Mattermost",
+			Description: "Create a new channel in Mattermost. Parameters: name (URL-friendly), display_name (user-visible), type ('O' for public, 'P' for private), team_id (required), purpose (optional), header (optional). Returns created channel details. Example: {\"name\": \"dev-chat\", \"display_name\": \"Development Chat\", \"type\": \"O\", \"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
 			Schema:      llm.NewJSONSchemaFromStruct[CreateChannelArgs](),
 			Resolver:    p.toolCreateChannel,
 		},
 		{
 			Name:        "get_channel_info",
-			Description: "Get information about a channel. Provide EITHER channel_id OR channel_display_name OR channel_name (not multiple). For user-provided names, use channel_display_name first, then try channel_name if that fails.",
+			Description: "Get information about a channel. Provide ONE parameter: channel_id (fastest), channel_display_name (user-visible), or channel_name (URL name). Optional: team_id to limit search scope. Returns channel metadata including ID, names, type, team, purpose, and member count. Example: {\"channel_display_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}",
 			Schema:      llm.NewJSONSchemaFromStruct[GetChannelInfoArgs](),
 			Resolver:    p.toolGetChannelInfo,
 		},
 		{
 			Name:        "get_channel_members",
-			Description: "Get members of a channel with pagination support",
+			Description: "Get members of a channel with pagination support. Parameters: channel_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and join date. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 25, \"page\": 0}",
 			Schema:      llm.NewJSONSchemaFromStruct[GetChannelMembersArgs](),
 			Resolver:    p.toolGetChannelMembers,
 		},

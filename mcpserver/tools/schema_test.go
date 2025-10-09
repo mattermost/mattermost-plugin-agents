@@ -13,17 +13,17 @@ import (
 // Test structs for schema generation
 type TestArgs struct {
 	// No access tag - should be available for all access modes
-	CommonField string `json:"common_field" jsonschema_description:"Available in all access modes"`
+	CommonField string `json:"common_field" jsonschema:"Available in all access modes"`
 
 	// Single access mode
-	LocalOnly  string `json:"local_only" access:"local" jsonschema_description:"Only available for local access"`
-	RemoteOnly string `json:"remote_only" access:"remote" jsonschema_description:"Only available for remote access"`
+	LocalOnly  string `json:"local_only" access:"local" jsonschema:"Only available for local access"`
+	RemoteOnly string `json:"remote_only" access:"remote" jsonschema:"Only available for remote access"`
 
 	// Multiple access modes
-	LocalAndRemote string `json:"local_remote" access:"local,remote" jsonschema_description:"Available for both local and remote"`
+	LocalAndRemote string `json:"local_remote" access:"local,remote" jsonschema:"Available for both local and remote"`
 
 	// Required field with access restrictions
-	RequiredLocal string `json:"required_local" access:"local" jsonschema_description:"Required field only for local"`
+	RequiredLocal string `json:"required_local" access:"local" jsonschema:"Required field only for local"`
 }
 
 type EmptyStruct struct{}

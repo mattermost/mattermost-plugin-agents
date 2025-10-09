@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/server"
 	mmcontainer "github.com/mattermost/testcontainers-mattermost-go"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
@@ -25,7 +25,7 @@ type TestSuite struct {
 	logger     *mlog.Logger
 	mcpServer  interface {
 		Serve() error
-		GetMCPServer() *server.MCPServer
+		GetMCPServer() *mcp.Server
 	}
 	devMode bool
 }

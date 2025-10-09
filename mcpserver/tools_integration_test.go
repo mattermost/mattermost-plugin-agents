@@ -7,7 +7,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -37,8 +37,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"message":    "Hello from MCP integration test!",
 			}
 
-			result := executeToolWithMCP(t, suite, "create_post", args)
-			assert.False(t, result.IsError, "create_post should succeed")
+			result, err := executeToolWithMCP(t, suite, "create_post", args)
+			require.NoError(t, err, "create_post should succeed")
 			assert.NotEmpty(t, result.Content, "create_post should return content")
 
 			// Verify the post was actually created
@@ -60,8 +60,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"message":    "This should fail",
 			}
 
-			result := executeToolWithMCP(t, suite, "create_post", args)
-			assert.True(t, result.IsError, "create_post with invalid channel should fail")
+			_, err := executeToolWithMCP(t, suite, "create_post", args)
+			require.Error(t, err, "create_post with invalid channel should fail")
 		})
 
 		t.Run("MissingParameters", func(t *testing.T) {
@@ -70,8 +70,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				// missing message
 			}
 
-			result := executeToolWithMCP(t, suite, "create_post", args)
-			assert.True(t, result.IsError, "create_post without message should fail")
+			_, err := executeToolWithMCP(t, suite, "create_post", args)
+			require.Error(t, err, "create_post without message should fail")
 		})
 	})
 
@@ -85,13 +85,13 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"limit":      10,
 			}
 
-			result := executeToolWithMCP(t, suite, "read_channel", args)
-			assert.False(t, result.IsError, "read_channel should succeed")
+			result, err := executeToolWithMCP(t, suite, "read_channel", args)
+			require.NoError(t, err, "read_channel should succeed")
 			assert.NotEmpty(t, result.Content, "read_channel should return content")
 
 			// Check that our test post appears in the results
 			if len(result.Content) > 0 {
-				if textContent, ok := result.Content[0].(mcp.TextContent); ok {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
 					assert.Contains(t, textContent.Text, testPost.Id, "Response should contain the test post ID")
 				}
 			}
@@ -103,8 +103,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"limit":      10,
 			}
 
-			result := executeToolWithMCP(t, suite, "read_channel", args)
-			assert.True(t, result.IsError, "read_channel with invalid channel should fail")
+			_, err := executeToolWithMCP(t, suite, "read_channel", args)
+			require.Error(t, err, "read_channel with invalid channel should fail")
 		})
 	})
 
@@ -114,12 +114,12 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"channel_id": testData.Channel.Id,
 			}
 
-			result := executeToolWithMCP(t, suite, "get_channel_info", args)
-			assert.False(t, result.IsError, "get_channel_info should succeed")
+			result, err := executeToolWithMCP(t, suite, "get_channel_info", args)
+			require.NoError(t, err, "get_channel_info should succeed")
 			assert.NotEmpty(t, result.Content, "get_channel_info should return content")
 
 			if len(result.Content) > 0 {
-				if textContent, ok := result.Content[0].(mcp.TextContent); ok {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
 					assert.Contains(t, textContent.Text, testData.Channel.Id, "Response should contain channel ID")
 					assert.Contains(t, textContent.Text, testData.Channel.DisplayName, "Response should contain channel display name")
 				}
@@ -132,8 +132,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"team_id":              testData.Team.Id,
 			}
 
-			result := executeToolWithMCP(t, suite, "get_channel_info", args)
-			assert.False(t, result.IsError, "get_channel_info by display name should succeed")
+			result, err := executeToolWithMCP(t, suite, "get_channel_info", args)
+			require.NoError(t, err, "get_channel_info by display name should succeed")
 			assert.NotEmpty(t, result.Content, "get_channel_info should return content")
 		})
 
@@ -143,8 +143,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"team_id":      testData.Team.Id,
 			}
 
-			result := executeToolWithMCP(t, suite, "get_channel_info", args)
-			assert.False(t, result.IsError, "get_channel_info by channel name should succeed")
+			_, err := executeToolWithMCP(t, suite, "get_channel_info", args)
+			require.NoError(t, err, "get_channel_info by channel name should succeed")
 		})
 
 		t.Run("InvalidChannelID", func(t *testing.T) {
@@ -152,8 +152,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"channel_id": "invalid-channel-id",
 			}
 
-			result := executeToolWithMCP(t, suite, "get_channel_info", args)
-			assert.True(t, result.IsError, "get_channel_info with invalid ID should fail")
+			_, err := executeToolWithMCP(t, suite, "get_channel_info", args)
+			require.Error(t, err, "get_channel_info with invalid ID should fail")
 		})
 
 		t.Run("CrossTeamLookupByChannelName", func(t *testing.T) {
@@ -162,8 +162,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				// missing team_id - should fall back to cross-team search
 			}
 
-			result := executeToolWithMCP(t, suite, "get_channel_info", args)
-			assert.False(t, result.IsError, "get_channel_info with channel name should succeed via cross-team search")
+			result, err := executeToolWithMCP(t, suite, "get_channel_info", args)
+			require.NoError(t, err, "get_channel_info with channel name should succeed via cross-team search")
 			assert.NotEmpty(t, result.Content, "get_channel_info should return content")
 		})
 	})
@@ -174,12 +174,12 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"team_id": testData.Team.Id,
 			}
 
-			result := executeToolWithMCP(t, suite, "get_team_info", args)
-			assert.False(t, result.IsError, "get_team_info should succeed")
+			result, err := executeToolWithMCP(t, suite, "get_team_info", args)
+			require.NoError(t, err, "get_team_info should succeed")
 			assert.NotEmpty(t, result.Content, "get_team_info should return content")
 
 			if len(result.Content) > 0 {
-				if textContent, ok := result.Content[0].(mcp.TextContent); ok {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
 					assert.Contains(t, textContent.Text, testData.Team.Id, "Response should contain team ID")
 					assert.Contains(t, textContent.Text, testData.Team.DisplayName, "Response should contain team display name")
 				}
@@ -191,8 +191,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"team_display_name": testData.Team.DisplayName,
 			}
 
-			result := executeToolWithMCP(t, suite, "get_team_info", args)
-			assert.False(t, result.IsError, "get_team_info by display name should succeed")
+			_, err := executeToolWithMCP(t, suite, "get_team_info", args)
+			require.NoError(t, err, "get_team_info by display name should succeed")
 		})
 
 		t.Run("InvalidTeamID", func(t *testing.T) {
@@ -200,8 +200,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"team_id": "invalid-team-id",
 			}
 
-			result := executeToolWithMCP(t, suite, "get_team_info", args)
-			assert.True(t, result.IsError, "get_team_info with invalid ID should fail")
+			_, err := executeToolWithMCP(t, suite, "get_team_info", args)
+			require.Error(t, err, "get_team_info with invalid ID should fail")
 		})
 	})
 
@@ -212,12 +212,12 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"limit": 10,
 			}
 
-			result := executeToolWithMCP(t, suite, "search_users", args)
-			assert.False(t, result.IsError, "search_users should succeed")
+			result, err := executeToolWithMCP(t, suite, "search_users", args)
+			require.NoError(t, err, "search_users should succeed")
 			assert.NotEmpty(t, result.Content, "search_users should return content")
 
 			if len(result.Content) > 0 {
-				if textContent, ok := result.Content[0].(mcp.TextContent); ok {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
 					assert.Contains(t, textContent.Text, testData.User.Username, "Response should contain the username")
 				}
 			}
@@ -229,8 +229,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"limit": 10,
 			}
 
-			result := executeToolWithMCP(t, suite, "search_users", args)
-			assert.False(t, result.IsError, "search_users with no results should not error")
+			_, err := executeToolWithMCP(t, suite, "search_users", args)
+			require.NoError(t, err, "search_users with no results should not error")
 			// Should return empty results, not an error
 		})
 
@@ -240,8 +240,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				// missing term
 			}
 
-			result := executeToolWithMCP(t, suite, "search_users", args)
-			assert.True(t, result.IsError, "search_users without term should fail")
+			_, err := executeToolWithMCP(t, suite, "search_users", args)
+			require.Error(t, err, "search_users without term should fail")
 		})
 	})
 
@@ -255,12 +255,12 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"include_thread": true,
 			}
 
-			result := executeToolWithMCP(t, suite, "read_post", args)
-			assert.False(t, result.IsError, "read_post should succeed")
+			result, err := executeToolWithMCP(t, suite, "read_post", args)
+			require.NoError(t, err, "read_post should succeed")
 			assert.NotEmpty(t, result.Content, "read_post should return content")
 
 			if len(result.Content) > 0 {
-				if textContent, ok := result.Content[0].(mcp.TextContent); ok {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
 					assert.Contains(t, textContent.Text, testPost.Id, "Response should contain post ID")
 					assert.Contains(t, textContent.Text, "Test post for reading", "Response should contain post message")
 				}
@@ -272,8 +272,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"post_id": "invalid-post-id",
 			}
 
-			result := executeToolWithMCP(t, suite, "read_post", args)
-			assert.True(t, result.IsError, "read_post with invalid ID should fail")
+			_, err := executeToolWithMCP(t, suite, "read_post", args)
+			require.Error(t, err, "read_post with invalid ID should fail")
 		})
 	})
 
@@ -286,8 +286,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"team_id":      testData.Team.Id,
 			}
 
-			result := executeToolWithMCP(t, suite, "create_channel", args)
-			assert.False(t, result.IsError, "create_channel should succeed")
+			result, err := executeToolWithMCP(t, suite, "create_channel", args)
+			require.NoError(t, err, "create_channel should succeed")
 			assert.NotEmpty(t, result.Content, "create_channel should return content")
 		})
 
@@ -299,8 +299,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"team_id":      "invalid-team-id",
 			}
 
-			result := executeToolWithMCP(t, suite, "create_channel", args)
-			assert.True(t, result.IsError, "create_channel with invalid team_id should fail")
+			_, err := executeToolWithMCP(t, suite, "create_channel", args)
+			require.Error(t, err, "create_channel with invalid team_id should fail")
 		})
 	})
 
@@ -317,19 +317,19 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"limit":   10,
 			}
 
-			result := executeToolWithMCP(t, suite, "search_posts", args)
-			assert.False(t, result.IsError, "search_posts should not error")
+			result, err := executeToolWithMCP(t, suite, "search_posts", args)
+			require.NoError(t, err, "search_posts should not error")
 			assert.NotEmpty(t, result.Content, "search_posts should return content")
 
 			// Check that we get a valid response (either posts found or none found message)
 			if len(result.Content) > 0 {
-				if textContent, ok := result.Content[0].(mcp.TextContent); ok {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
 					assert.NotEmpty(t, textContent.Text, "Response should have content")
 				}
 			}
 
 			// Clean up
-			_, err := client.DeletePost(context.Background(), createdPost.Id)
+			_, err = client.DeletePost(context.Background(), createdPost.Id)
 			require.NoError(t, err, "Should be able to clean up test post")
 		})
 
@@ -339,8 +339,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"limit": 10,
 			}
 
-			result := executeToolWithMCP(t, suite, "search_posts", args)
-			assert.False(t, result.IsError, "search_posts with no results should not error")
+			_, err := executeToolWithMCP(t, suite, "search_posts", args)
+			require.NoError(t, err, "search_posts with no results should not error")
 		})
 	})
 
@@ -350,13 +350,13 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"message": "Test DM to myself from integration test!",
 			}
 
-			result := executeToolWithMCP(t, suite, "dm_self", args)
-			assert.False(t, result.IsError, "dm_self should succeed")
+			result, err := executeToolWithMCP(t, suite, "dm_self", args)
+			require.NoError(t, err, "dm_self should succeed")
 			assert.NotEmpty(t, result.Content, "dm_self should return content")
 
 			// Verify the response mentions success
 			if len(result.Content) > 0 {
-				if textContent, ok := result.Content[0].(mcp.TextContent); ok {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
 					assert.Contains(t, textContent.Text, "Successfully sent DM to yourself", "Response should indicate success")
 					assert.Contains(t, textContent.Text, "with ID:", "Response should include post ID")
 				}
@@ -390,7 +390,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"message": "",
 			}
 
-			result := executeToolWithMCP(t, suite, "dm_self", args)
+			result, err := executeToolWithMCP(t, suite, "dm_self", args)
+			require.Error(t, err, "dm_self with empty message should fail")
 			assert.True(t, result.IsError, "dm_self with empty message should fail")
 		})
 
@@ -399,14 +400,15 @@ func TestMCPToolsIntegration(t *testing.T) {
 				// missing message field
 			}
 
-			result := executeToolWithMCP(t, suite, "dm_self", args)
+			result, err := executeToolWithMCP(t, suite, "dm_self", args)
+			require.Error(t, err, "dm_self without message should fail")
 			assert.True(t, result.IsError, "dm_self without message should fail")
 		})
 	})
 }
 
-// executeToolWithMCP calls the MCP tool through the unified helper
-func executeToolWithMCP(t *testing.T, suite *TestSuite, toolName string, args map[string]interface{}) *mcp.CallToolResult {
-	require.NotNil(t, suite.mcpServer, "MCP server must be created before calling tools")
+// executeToolWithMCP creates a test MCP client session connected to the server and calls the tool
+func executeToolWithMCP(t *testing.T, suite *TestSuite, toolName string, args map[string]interface{}) (*mcp.CallToolResult, error) {
+	require.NotNil(t, suite.mcpServer, "MCP server must be created before creating client sessions")
 	return testhelpers.ExecuteMCPTool(t, suite.mcpServer.GetMCPServer(), toolName, args)
 }

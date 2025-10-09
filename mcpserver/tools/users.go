@@ -13,13 +13,13 @@ import (
 
 // CreateUserArgs represents arguments for the create_user tool (dev mode only)
 type CreateUserArgs struct {
-	Username     string `json:"username" jsonschema_description:"Username for the new user"`
-	Email        string `json:"email" jsonschema_description:"Email address for the new user"`
-	Password     string `json:"password" jsonschema_description:"Password for the new user"`
-	FirstName    string `json:"first_name" jsonschema_description:"First name of the user"`
-	LastName     string `json:"last_name" jsonschema_description:"Last name of the user"`
-	Nickname     string `json:"nickname" jsonschema_description:"Nickname for the user"`
-	ProfileImage string `json:"profile_image,omitempty" access:"local" jsonschema_description:"Optional file path or URL to profile image (supports .jpeg, .jpg, .png, .gif)"`
+	Username     string `json:"username" jsonschema:"Username for the new user"`
+	Email        string `json:"email" jsonschema:"Email address for the new user"`
+	Password     string `json:"password" jsonschema:"Password for the new user"`
+	FirstName    string `json:"first_name" jsonschema:"First name of the user"`
+	LastName     string `json:"last_name" jsonschema:"Last name of the user"`
+	Nickname     string `json:"nickname" jsonschema:"Nickname for the user"`
+	ProfileImage string `json:"profile_image,omitempty" access:"local" jsonschema:"Optional file path or URL to profile image (supports .jpeg, .jpg, .png, .gif)"`
 }
 
 // getDevUserTools returns development user-related tools for MCP

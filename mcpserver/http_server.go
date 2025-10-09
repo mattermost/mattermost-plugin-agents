@@ -13,19 +13,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mark3labs/mcp-go/server"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // MattermostHTTPMCPServer wraps MattermostMCPServer for HTTP transport
 type MattermostHTTPMCPServer struct {
 	*MattermostMCPServer
-	config               HTTPConfig
-	sseServer            *server.SSEServer
-	streamableHTTPServer *server.StreamableHTTPServer
-	httpServer           *http.Server
+	config            HTTPConfig
+	sseHandler        http.Handler
+	streamableHandler http.Handler
+	httpServer        *http.Server
 }
 
 // NewHTTPServer creates a new HTTP transport MCP server
@@ -70,48 +70,38 @@ func NewHTTPServer(config HTTPConfig, logger *mlog.Logger) (*MattermostHTTPMCPSe
 		logger,
 	)
 
-	// Create MCP server
-	mattermostServer.mcpServer = server.NewMCPServer(
-		"mattermost-mcp-server",
-		"0.1.0",
-		server.WithToolCapabilities(false),
-		server.WithLogging(),
-		server.WithRecovery(),
+	mattermostServer.mcpServer = mcp.NewServer(
+		&mcp.Implementation{
+			Name:    "mattermost-mcp-server",
+			Version: "0.1.0",
+		},
+		nil, // ServerOptions - keeping nil for now
 	)
 
 	// Register tools with remote access mode
 	mattermostServer.registerTools(types.AccessModeRemote)
 
-	baseURL := fmt.Sprintf("http://%s:%d", config.HTTPBindAddr, config.HTTPPort)
-	if config.SiteURL != "" {
-		baseURL = config.SiteURL
-	}
-
 	// Create HTTP server with OAuth endpoints and MCP routing
 	addr := fmt.Sprintf("%s:%d", config.HTTPBindAddr, config.HTTPPort)
 
-	// Create SSE server for MCP communication (backwards compatibility)
-	// Configure SSE server with custom endpoints to match our path stripping
-	mattermostServer.sseServer = server.NewSSEServer(
-		mattermostServer.mcpServer,
-		server.WithBaseURL(baseURL),
-		server.WithStaticBasePath(""),
-		server.WithUseFullURLForMessageEndpoint(false),
-	)
+	// Create SSE handler for backwards compatibility
+	mattermostServer.sseHandler = mcp.NewSSEHandler(func(req *http.Request) *mcp.Server {
+		return mattermostServer.mcpServer
+	}, &mcp.SSEOptions{})
 
-	// Create Streamable HTTP server for MCP communication (new standard)
-	// Configure with SSE support for GET requests per MCP specification
-	mattermostServer.streamableHTTPServer = server.NewStreamableHTTPServer(
-		mattermostServer.mcpServer,
-	)
+	// Create streamable HTTP handler for modern MCP communication
+	mattermostServer.streamableHandler = mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
+		return mattermostServer.mcpServer
+	}, nil)
 
 	// Create HTTP mux router and setup all routes
 	httpMux := http.NewServeMux()
 	mattermostServer.setupRoutes(httpMux)
 
-	// Apply logging and security middleware to the mux
+	// Apply recovery, logging, and security middleware to the mux
 	mainHandler := mattermostServer.loggingMiddleware(httpMux)
-	secureHandler := mattermostServer.securityMiddleware(mainHandler)
+	recoveryHandler := mattermostServer.recoveryMiddleware(mainHandler)
+	secureHandler := mattermostServer.securityMiddleware(recoveryHandler)
 
 	// Create HTTP server with security middleware
 	mattermostServer.httpServer = &http.Server{
@@ -139,6 +129,25 @@ func (s *MattermostHTTPMCPServer) Serve() error {
 // GetTestHandler returns the HTTP handler for testing purposes
 func (s *MattermostHTTPMCPServer) GetTestHandler() http.Handler {
 	return s.httpServer.Handler
+}
+
+// recoveryMiddleware provides panic recovery for HTTP handlers
+func (s *MattermostHTTPMCPServer) recoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				s.logger.Error("Panic in HTTP handler",
+					mlog.Any("error", err),
+					mlog.String("method", r.Method),
+					mlog.String("path", r.URL.Path),
+					mlog.String("remote_addr", r.RemoteAddr),
+				)
+				// Return 500 Internal Server Error
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // extractBearerToken extracts the Bearer token from the Authorization header
@@ -431,22 +440,20 @@ func (s *MattermostHTTPMCPServer) setupRoutes(httpMux *http.ServeMux) {
 	// OAuth 2.0 Protected Resource Metadata endpoint (RFC 9728) - no auth required
 	httpMux.HandleFunc("/.well-known/oauth-protected-resource", s.handleProtectedResourceMetadata)
 
-	// New Streamable HTTP endpoint for MCP over HTTP standard - requires auth
+	// MCP endpoint for streamable HTTP communication - requires auth
 	httpMux.HandleFunc("/mcp", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
-		s.streamableHTTPServer.ServeHTTP(w, r)
+		s.streamableHandler.ServeHTTP(w, r)
 	}))
 
-	// SSE handler for MCP communication (backwards compatibility) - requires auth
-	sseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.sseServer.ServeHTTP(w, r)
-	})
+	// SSE endpoint (backwards compatibility) - requires auth
+	httpMux.HandleFunc("/sse", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		s.sseHandler.ServeHTTP(w, r)
+	}))
 
-	// Handle /sse and all sub-paths with authentication
-	httpMux.Handle("/sse/", s.requireAuth(sseHandler.ServeHTTP))
-	httpMux.Handle("/sse", s.requireAuth(sseHandler.ServeHTTP))
-
-	// Handle /message endpoint for MCP SSE transport (backwards compatibility) - requires auth
-	httpMux.Handle("/message", s.requireAuth(sseHandler.ServeHTTP))
+	// Message endpoint (backwards compatibility) - requires auth
+	httpMux.HandleFunc("/message", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		s.sseHandler.ServeHTTP(w, r)
+	}))
 
 	// Default 404 handler for any other unmatched paths
 	httpMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

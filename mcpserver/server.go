@@ -4,17 +4,17 @@
 package mcpserver
 
 import (
-	"github.com/mark3labs/mcp-go/server"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // MattermostMCPServer provides a high-level interface for creating an MCP server
 // with Mattermost-specific tools and authentication
 type MattermostMCPServer struct {
-	mcpServer    *server.MCPServer
+	mcpServer    *mcp.Server
 	authProvider auth.AuthenticationProvider
 	logger       *mlog.Logger
 	config       ServerConfig
@@ -27,6 +27,6 @@ func (s *MattermostMCPServer) registerTools(accessMode types.AccessMode) {
 }
 
 // GetMCPServer returns the underlying MCP server for testing purposes
-func (s *MattermostMCPServer) GetMCPServer() *server.MCPServer {
+func (s *MattermostMCPServer) GetMCPServer() *mcp.Server {
 	return s.mcpServer
 }

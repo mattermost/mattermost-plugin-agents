@@ -6,7 +6,7 @@ package mcpserver_test
 import (
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -55,8 +55,8 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 				"last_name":  "User",
 			}
 
-			result := executeDevToolWithMCP(t, suite, "create_user", args)
-			assert.False(t, result.IsError, "create_user should succeed in dev mode")
+			result, err := executeDevToolWithMCP(t, suite, "create_user", args)
+			require.NoError(t, err, "create_user should succeed in dev mode")
 			assert.NotEmpty(t, result.Content, "create_user should return content")
 		})
 
@@ -66,8 +66,8 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 				// missing email and password
 			}
 
-			result := executeDevToolWithMCP(t, suite, "create_user", args)
-			assert.True(t, result.IsError, "create_user should fail with missing required fields")
+			_, err := executeDevToolWithMCP(t, suite, "create_user", args)
+			require.Error(t, err, "create_user should fail with missing required fields")
 		})
 	})
 
@@ -80,8 +80,8 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 				"description":  "Team created for dev testing",
 			}
 
-			result := executeDevToolWithMCP(t, suite, "create_team", args)
-			assert.False(t, result.IsError, "create_team should succeed in dev mode")
+			result, err := executeDevToolWithMCP(t, suite, "create_team", args)
+			require.NoError(t, err, "create_team should succeed in dev mode")
 			assert.NotEmpty(t, result.Content, "create_team should return content")
 		})
 
@@ -92,8 +92,8 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 				"type":         "X", // Invalid type
 			}
 
-			result := executeDevToolWithMCP(t, suite, "create_team", args)
-			assert.True(t, result.IsError, "create_team should fail with invalid type")
+			_, err := executeDevToolWithMCP(t, suite, "create_team", args)
+			require.Error(t, err, "create_team should fail with invalid type")
 		})
 	})
 
@@ -104,8 +104,8 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 			"email":    "teamuser@example.com",
 			"password": "password123",
 		}
-		userResult := executeDevToolWithMCP(t, suite, "create_user", userArgs)
-		require.False(t, userResult.IsError, "User creation should succeed for team test")
+		_, err := executeDevToolWithMCP(t, suite, "create_user", userArgs)
+		require.NoError(t, err, "User creation should succeed for team test")
 
 		t.Run("HappyPath", func(t *testing.T) {
 			// Extract user ID from result (simplified - in real implementation would parse JSON)
@@ -115,8 +115,9 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 				"team_id": testData.Team.Id,
 			}
 
-			result := executeDevToolWithMCP(t, suite, "add_user_to_team", args)
+			result, _ := executeDevToolWithMCP(t, suite, "add_user_to_team", args)
 			// User might already be in team, so we just check the call doesn't crash
+			// Don't require no error since user might already be in team
 			assert.NotNil(t, result, "add_user_to_team should return a result")
 		})
 
@@ -126,8 +127,8 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 				"team_id": testData.Team.Id,
 			}
 
-			result := executeDevToolWithMCP(t, suite, "add_user_to_team", args)
-			assert.True(t, result.IsError, "add_user_to_team should fail with invalid user ID")
+			_, err := executeDevToolWithMCP(t, suite, "add_user_to_team", args)
+			require.Error(t, err, "add_user_to_team should fail with invalid user ID")
 		})
 	})
 
@@ -138,8 +139,9 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 				"channel_id": testData.Channel.Id,
 			}
 
-			result := executeDevToolWithMCP(t, suite, "add_user_to_channel", args)
+			result, _ := executeDevToolWithMCP(t, suite, "add_user_to_channel", args)
 			// User might already be in channel, so we just check the call doesn't crash
+			// Don't require no error since user might already be in channel
 			assert.NotNil(t, result, "add_user_to_channel should return a result")
 		})
 
@@ -149,8 +151,8 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 				"channel_id": "invalid-channel-id",
 			}
 
-			result := executeDevToolWithMCP(t, suite, "add_user_to_channel", args)
-			assert.True(t, result.IsError, "add_user_to_channel should fail with invalid channel ID")
+			_, err := executeDevToolWithMCP(t, suite, "add_user_to_channel", args)
+			require.Error(t, err, "add_user_to_channel should fail with invalid channel ID")
 		})
 	})
 
@@ -161,21 +163,21 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 			"email":    "postuser@example.com",
 			"password": "postpassword123",
 		}
-		userResult := executeDevToolWithMCP(t, suite, "create_user", userArgs)
-		require.False(t, userResult.IsError, "User creation should succeed for post test")
+		_, err := executeDevToolWithMCP(t, suite, "create_user", userArgs)
+		require.NoError(t, err, "User creation should succeed for post test")
 
 		// Add user to team and channel
 		addTeamArgs := map[string]interface{}{
 			"user_id": testData.User.Id, // Using existing user for simplicity
 			"team_id": testData.Team.Id,
 		}
-		executeDevToolWithMCP(t, suite, "add_user_to_team", addTeamArgs)
+		_, _ = executeDevToolWithMCP(t, suite, "add_user_to_team", addTeamArgs)
 
 		addChannelArgs := map[string]interface{}{
 			"user_id":    testData.User.Id,
 			"channel_id": testData.Channel.Id,
 		}
-		executeDevToolWithMCP(t, suite, "add_user_to_channel", addChannelArgs)
+		_, _ = executeDevToolWithMCP(t, suite, "add_user_to_channel", addChannelArgs)
 
 		t.Run("HappyPath", func(t *testing.T) {
 			args := map[string]interface{}{
@@ -185,8 +187,9 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 				"message":    "Hello from dev tool user!",
 			}
 
-			result := executeDevToolWithMCP(t, suite, "create_post_as_user", args)
+			result, _ := executeDevToolWithMCP(t, suite, "create_post_as_user", args)
 			// This might fail due to user permissions, but should not crash
+			// Don't require no error since it might fail due to permissions
 			assert.NotNil(t, result, "create_post_as_user should return a result")
 		})
 
@@ -198,8 +201,8 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 				"message":    "This should fail",
 			}
 
-			result := executeDevToolWithMCP(t, suite, "create_post_as_user", args)
-			assert.True(t, result.IsError, "create_post_as_user should fail with wrong password")
+			_, err := executeDevToolWithMCP(t, suite, "create_post_as_user", args)
+			require.Error(t, err, "create_post_as_user should fail with wrong password")
 		})
 	})
 }
@@ -226,22 +229,18 @@ func TestDevToolsSecurityGating(t *testing.T) {
 				"test": "value", // Generic args since they should be blocked anyway
 			}
 
-			result := executeDevToolWithMCP(t, suite, toolName, args)
-			assert.True(t, result.IsError, "Dev tool %s should be blocked when dev mode is disabled", toolName)
+			_, err := executeDevToolWithMCP(t, suite, toolName, args)
+			require.Error(t, err, "Dev tool %s should be blocked when dev mode is disabled", toolName)
 
 			// Check that the error indicates the tool is not available (correct security behavior)
-			if len(result.Content) > 0 {
-				if textContent, ok := result.Content[0].(mcp.TextContent); ok {
-					assert.Contains(t, textContent.Text, "not found",
-						"Error should indicate tool is not available when dev mode is disabled")
-				}
-			}
+			assert.Contains(t, err.Error(), "unknown tool",
+				"Error should indicate tool is not available when dev mode is disabled")
 		})
 	}
 }
 
-// executeDevToolWithMCP calls the dev MCP tool through the unified helper
-func executeDevToolWithMCP(t *testing.T, suite *TestSuite, toolName string, args map[string]interface{}) *mcp.CallToolResult {
-	require.NotNil(t, suite.mcpServer, "MCP server must be created before calling tools")
+// executeDevToolWithMCP creates a test MCP client session connected to the server and calls the dev tool
+func executeDevToolWithMCP(t *testing.T, suite *TestSuite, toolName string, args map[string]interface{}) (*mcp.CallToolResult, error) {
+	require.NotNil(t, suite.mcpServer, "MCP server must be created before creating client sessions")
 	return testhelpers.ExecuteMCPTool(t, suite.mcpServer.GetMCPServer(), toolName, args)
 }

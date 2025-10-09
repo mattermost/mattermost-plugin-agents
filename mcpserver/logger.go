@@ -65,14 +65,3 @@ func CreateLoggerWithOptions(enableDebug bool, logFile string) (*mlog.Logger, er
 
 	return logger, nil
 }
-
-// mlogWriter adapts *mlog.Logger to io.Writer for the mcp-go error logger
-type mlogWriter struct {
-	logger *mlog.Logger
-}
-
-func (w *mlogWriter) Write(p []byte) (n int, err error) {
-	// Logger is guaranteed to be non-nil by constructor
-	w.logger.Error(string(p))
-	return len(p), nil
-}
