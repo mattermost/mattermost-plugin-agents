@@ -152,7 +152,7 @@ func TestDirectMessageConversations(t *testing.T) {
 			bot.SetLLMForTest(llm.NewLanguageModelTestLogWrapper(t.T, t.LLM))
 
 			// Process the DM request
-			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), "")
+			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost())
 			require.NoError(t, err, "Failed to process DM request")
 			require.NotNil(t, textStream, "Expected a non-nil text stream")
 
