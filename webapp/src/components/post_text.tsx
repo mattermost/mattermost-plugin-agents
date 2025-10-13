@@ -9,6 +9,8 @@ import {GlobalState} from '@mattermost/types/store';
 import {Channel} from '@mattermost/types/channels';
 import {Team} from '@mattermost/types/teams';
 
+import manifest from '@/manifest';
+
 export type ChannelNamesMap = {
     [name: string]: {
         display_name: string;
@@ -62,6 +64,7 @@ const PostText = (props: Props) => {
     const channel = useSelector<GlobalState, Channel>((state) => state.entities.channels.channels[props.channelID]);
     const team = useSelector<GlobalState, Team>((state) => state.entities.teams.teams[channel?.team_id]);
     const siteURL = useSelector<GlobalState, string | undefined>((state) => state.entities.general.config.SiteURL);
+    const allowUnsafeLinks = useSelector<GlobalState, boolean>((state: any) => state['plugins-' + manifest.id]?.allowUnsafeLinks ?? false);
 
     // @ts-ignore
     const {formatText, messageHtmlToComponent} = window.PostUtils;
@@ -71,7 +74,7 @@ const PostText = (props: Props) => {
         mentionHighlight: true,
         atMentions: true,
         team,
-        unsafeLinks: true,
+        unsafeLinks: !allowUnsafeLinks,
         minimumHashtagLength: 1000000000,
         siteURL,
     };

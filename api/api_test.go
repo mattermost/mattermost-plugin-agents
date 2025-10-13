@@ -33,10 +33,13 @@ type TestEnvironment struct {
 	api     *API
 	mockAPI *plugintest.API
 	bots    *bots.MMBots
+	config  *testConfigImpl
 }
 
 // testConfigImpl is a minimal implementation of Config for testing
-type testConfigImpl struct{}
+type testConfigImpl struct {
+	allowUnsafeLinks bool
+}
 
 func (tc *testConfigImpl) GetDefaultBotName() string {
 	return "ai"
@@ -44,6 +47,10 @@ func (tc *testConfigImpl) GetDefaultBotName() string {
 
 func (tc *testConfigImpl) MCP() mcp.Config {
 	return mcp.Config{}
+}
+
+func (tc *testConfigImpl) AllowUnsafeLinks() bool {
+	return tc.allowUnsafeLinks
 }
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
@@ -98,12 +105,15 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	// Create minimal conversations service for testing
 	conversationsService := &conversations.Conversations{}
 
-	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, &testConfigImpl{}, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{})
+	cfg := &testConfigImpl{}
+
+	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{})
 
 	return &TestEnvironment{
 		api:     api,
 		mockAPI: mockAPI,
 		bots:    testBots,
+		config:  cfg,
 	}
 }
 
@@ -394,36 +404,51 @@ func TestHandleGetAIBots(t *testing.T) {
 	gin.DefaultWriter = io.Discard
 
 	tests := []struct {
-		name                  string
-		searchService         *search.Search
-		expectedSearchEnabled bool
-		expectedStatus        int
-		envSetup              func(e *TestEnvironment)
+		name                     string
+		searchService            *search.Search
+		expectedSearchEnabled    bool
+		expectedAllowUnsafeLinks bool
+		expectedStatus           int
+		envSetup                 func(e *TestEnvironment)
 	}{
 		{
-			name:                  "search enabled - non-nil service with non-nil embedding search",
-			searchService:         search.New(mocks.NewMockEmbeddingSearch(t), nil, nil, nil, nil),
-			expectedSearchEnabled: true,
-			expectedStatus:        http.StatusOK,
+			name:                     "search enabled - non-nil service with non-nil embedding search",
+			searchService:            search.New(mocks.NewMockEmbeddingSearch(t), nil, nil, nil, nil),
+			expectedSearchEnabled:    true,
+			expectedAllowUnsafeLinks: false,
+			expectedStatus:           http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
 			},
 		},
 		{
-			name:                  "search disabled - non-nil service with nil embedding search",
-			searchService:         search.New(nil, nil, nil, nil, nil),
-			expectedSearchEnabled: false,
-			expectedStatus:        http.StatusOK,
+			name:                     "search disabled - non-nil service with nil embedding search",
+			searchService:            search.New(nil, nil, nil, nil, nil),
+			expectedSearchEnabled:    false,
+			expectedAllowUnsafeLinks: false,
+			expectedStatus:           http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
 			},
 		},
 		{
-			name:                  "no search service - nil service",
-			searchService:         nil,
-			expectedSearchEnabled: false,
-			expectedStatus:        http.StatusOK,
+			name:                     "no search service - nil service",
+			searchService:            nil,
+			expectedSearchEnabled:    false,
+			expectedAllowUnsafeLinks: false,
+			expectedStatus:           http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
+				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+			},
+		},
+		{
+			name:                     "unsafe links enabled via config",
+			searchService:            nil,
+			expectedSearchEnabled:    false,
+			expectedAllowUnsafeLinks: true,
+			expectedStatus:           http.StatusOK,
+			envSetup: func(e *TestEnvironment) {
+				e.config.allowUnsafeLinks = true
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
 			},
 		},
@@ -465,6 +490,7 @@ func TestHandleGetAIBots(t *testing.T) {
 				err := json.NewDecoder(resp.Body).Decode(&response)
 				require.NoError(t, err)
 				require.Equal(t, test.expectedSearchEnabled, response.SearchEnabled, "SearchEnabled field should match expected value")
+				require.Equal(t, test.expectedAllowUnsafeLinks, response.AllowUnsafeLinks, "AllowUnsafeLinks field should match expected value")
 				require.NotEmpty(t, response.Bots, "Should return at least one bot")
 			}
 		})

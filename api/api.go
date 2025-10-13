@@ -39,6 +39,7 @@ const (
 type Config interface {
 	GetDefaultBotName() string
 	MCP() mcp.Config
+	AllowUnsafeLinks() bool
 }
 
 type MCPClientManager interface {
@@ -249,8 +250,9 @@ type AIBotInfo struct {
 }
 
 type AIBotsResponse struct {
-	Bots          []AIBotInfo `json:"bots"`
-	SearchEnabled bool        `json:"searchEnabled"`
+	Bots             []AIBotInfo `json:"bots"`
+	SearchEnabled    bool        `json:"searchEnabled"`
+	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
 }
 
 // getAIBotsForUser returns all AI bots available to a user
@@ -307,7 +309,8 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 	searchEnabled := a.searchService.Enabled()
 
 	c.JSON(http.StatusOK, AIBotsResponse{
-		Bots:          bots,
-		SearchEnabled: searchEnabled,
+		Bots:             bots,
+		SearchEnabled:    searchEnabled,
+		AllowUnsafeLinks: a.config.AllowUnsafeLinks(),
 	})
 }
