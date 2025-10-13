@@ -53,6 +53,10 @@ func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
 	return nil
 }
 
+func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
+	return nil
+}
+
 func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error) {
 	return nil, nil
 }

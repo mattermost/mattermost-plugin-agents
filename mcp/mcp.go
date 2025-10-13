@@ -43,9 +43,11 @@ func DiscoverServerTools(
 	serverConfig ServerConfig,
 	log pluginapi.LogService,
 	oauthManger *OAuthManager,
+	toolsCache *ToolsCache,
 ) ([]ToolInfo, error) {
 	// Create and connect to the server
-	client, err := NewClient(ctx, userID, serverConfig, log, oauthManger)
+	// Use the provided cache to benefit from cached tools even for discovery
+	client, err := NewClient(ctx, userID, serverConfig, log, oauthManger, toolsCache)
 	if err != nil {
 		return nil, err
 	}

@@ -31,7 +31,7 @@ type KVStore interface {
 	Delete(key string) error
 }
 
-// Logger interface for logging operations (allows mocking)
+// Logger interface for logging operations
 type Logger interface {
 	Debug(msg string, keyValuePairs ...interface{})
 	Info(msg string, keyValuePairs ...interface{})
@@ -59,8 +59,16 @@ func (tc *ToolsCache) GetTools(serverID string) map[string]*mcp.Tool {
 	key := tc.buildCacheKey(serverID)
 
 	var cached CachedTools
-	if err := tc.kvAPI.Get(key, &cached); err != nil {
-		tc.log.Debug("Cache miss for server", "serverID", serverID, "error", err)
+	err := tc.kvAPI.Get(key, &cached)
+	if err != nil {
+		tc.log.Error("Failed to retrieve tools cache from KV store", "serverID", serverID, "error", err)
+		return nil
+	}
+
+	// Get() returns no error for non-existent keys, just doesn't populate the struct
+	// Check if data was actually populated
+	if cached.Tools == nil || cached.Timestamp.IsZero() {
+		tc.log.Debug("Cache miss for server", "serverID", serverID)
 		return nil
 	}
 
@@ -78,11 +86,18 @@ func (tc *ToolsCache) SetTools(serverID string, serverName string, serverURL str
 	}
 
 	// Persist directly to KV store
+	// Set returns (false, err) if DB error occurred
+	// Set returns (false, nil) if the value was not set
+	// Set returns (true, nil) if the value was set
 	key := tc.buildCacheKey(serverID)
-	_, err := tc.kvAPI.Set(key, cached, pluginapi.SetExpiry(cacheTTL))
+	success, err := tc.kvAPI.Set(key, cached, pluginapi.SetExpiry(cacheTTL))
 	if err != nil {
-		tc.log.Error("Failed to persist tools cache to KV store", "serverID", serverID, "error", err)
+		tc.log.Error("Failed to persist tools cache to KV store (DB error)", "serverID", serverID, "error", err)
 		return fmt.Errorf("failed to persist cache: %w", err)
+	}
+	if !success {
+		tc.log.Warn("Tools cache was not persisted to KV store", "serverID", serverID)
+		return fmt.Errorf("cache was not persisted for server %s", serverID)
 	}
 
 	tc.log.Debug("Updated tools cache for server", "serverID", serverID, "tools", len(tools))
@@ -90,14 +105,16 @@ func (tc *ToolsCache) SetTools(serverID string, serverName string, serverURL str
 }
 
 // InvalidateServer removes a server's cache entry from KV store
+// Delete returns no error for non-existent keys, only errors on actual failures
 func (tc *ToolsCache) InvalidateServer(serverID string) error {
 	key := tc.buildCacheKey(serverID)
-	if err := tc.kvAPI.Delete(key); err != nil {
+	err := tc.kvAPI.Delete(key)
+	if err != nil {
 		tc.log.Error("Failed to delete tools cache from KV store", "serverID", serverID, "error", err)
 		return fmt.Errorf("failed to delete cache: %w", err)
 	}
 
-	tc.log.Debug("Invalidated tools cache for server", "serverID", serverID)
+	tc.log.Debug("Invalidated tools cache for server (deleted if existed)", "serverID", serverID)
 	return nil
 }
 

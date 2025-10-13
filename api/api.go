@@ -43,6 +43,7 @@ type Config interface {
 
 type MCPClientManager interface {
 	GetOAuthManager() *mcp.OAuthManager
+	GetToolsCache() *mcp.ToolsCache
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
 }
 

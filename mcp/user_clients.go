@@ -25,14 +25,16 @@ type UserClients struct {
 	userID       string
 	log          pluginapi.LogService
 	oauthManager *OAuthManager
+	toolsCache   *ToolsCache
 }
 
-func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager) *UserClients {
+func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, toolsCache *ToolsCache) *UserClients {
 	return &UserClients{
 		log:          log,
 		clients:      make(map[string]*Client),
 		userID:       userID,
 		oauthManager: oauthManager,
+		toolsCache:   toolsCache,
 	}
 }
 
@@ -79,7 +81,7 @@ func (c *UserClients) ConnectToAllServers(servers []ServerConfig) *Errors {
 
 // connectToServer establishes a connection to a single server
 func (c *UserClients) connectToServer(ctx context.Context, serverID string, serverConfig ServerConfig) error {
-	serverClient, err := NewClient(ctx, c.userID, serverConfig, c.log, c.oauthManager)
+	serverClient, err := NewClient(ctx, c.userID, serverConfig, c.log, c.oauthManager, c.toolsCache)
 	if err != nil {
 		return err
 	}

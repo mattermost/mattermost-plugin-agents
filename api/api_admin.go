@@ -189,7 +189,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 
 // discoverServerTools connects to a single MCP server and discovers its tools
 func (a *API) discoverServerTools(ctx context.Context, requestingAdminID string, serverConfig mcp.ServerConfig) ([]MCPToolInfo, error) {
-	toolInfos, err := mcp.DiscoverServerTools(ctx, requestingAdminID, serverConfig, a.pluginAPI.Log, a.mcpClientManager.GetOAuthManager())
+	toolInfos, err := mcp.DiscoverServerTools(ctx, requestingAdminID, serverConfig, a.pluginAPI.Log, a.mcpClientManager.GetOAuthManager(), a.mcpClientManager.GetToolsCache())
 	if err != nil {
 		return nil, err
 	}

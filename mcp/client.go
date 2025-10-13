@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -34,7 +35,7 @@ type ServerConfig struct {
 }
 
 // NewClient creates a new MCP client for the given server and user and connects to the specified MCP server
-func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager) (*Client, error) {
+func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, toolsCache *ToolsCache) (*Client, error) {
 	c := &Client{
 		session:      nil,
 		config:       serverConfig,
@@ -49,6 +50,23 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 		return nil, fmt.Errorf("failed to create MCP session for server %s: %w", serverConfig.Name, err)
 	}
 
+	// Try to get tools from global cache first
+	serverID := serverConfig.Name
+	if toolsCache != nil {
+		cachedTools := toolsCache.GetTools(serverID)
+		if len(cachedTools) > 0 {
+			// Cache hit - use cached tools
+			c.tools = cachedTools
+			log.Debug("Using cached tools for MCP server",
+				"userID", userID,
+				"server", serverConfig.Name,
+				"toolCount", len(cachedTools))
+			c.session = session
+			return c, nil
+		}
+	}
+
+	// Cache miss - fetch tools from server
 	initResult, err := session.ListTools(ctx, &mcp.ListToolsParams{})
 	if err != nil {
 		session.Close()
@@ -68,6 +86,13 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 			"name", tool.Name,
 			"description", tool.Description,
 			"server", serverConfig.Name)
+	}
+
+	// Update the global cache with fetched tools
+	if toolsCache != nil {
+		if err := toolsCache.SetTools(serverID, serverConfig.Name, serverConfig.BaseURL, c.tools, time.Now()); err != nil {
+			log.Warn("Failed to update tools cache", "server", serverConfig.Name, "error", err)
+		}
 	}
 
 	c.session = session

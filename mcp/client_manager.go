@@ -23,6 +23,7 @@ type ClientManager struct {
 	closeChan     chan struct{}
 	clientTimeout time.Duration
 	oauthManager  *OAuthManager
+	toolsCache    *ToolsCache
 }
 
 // NewClientManager creates a new MCP client manager
@@ -30,6 +31,7 @@ func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *plugin
 	manager := &ClientManager{
 		log:          log,
 		oauthManager: oauthManager,
+		toolsCache:   NewToolsCache(&pluginAPI.KV, &log),
 	}
 	manager.ReInit(config)
 	return manager
@@ -112,7 +114,7 @@ func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClients, *
 		return client, nil
 	}
 
-	userClients := NewUserClients(userID, m.log, m.oauthManager)
+	userClients := NewUserClients(userID, m.log, m.oauthManager, m.toolsCache)
 
 	// Let user client connect to all servers
 	mcpErrors := userClients.ConnectToAllServers(m.config.Servers)
@@ -164,4 +166,9 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 // GetOAuthManager returns the OAuth manager instance
 func (m *ClientManager) GetOAuthManager() *OAuthManager {
 	return m.oauthManager
+}
+
+// GetToolsCache returns the tools cache instance
+func (m *ClientManager) GetToolsCache() *ToolsCache {
+	return m.toolsCache
 }
