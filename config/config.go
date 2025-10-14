@@ -36,6 +36,16 @@ func (c *Config) Clone() *Config {
 	return &clone
 }
 
+// GetServiceByID returns the service configuration for the given ID
+func (c *Config) GetServiceByID(id string) (llm.ServiceConfig, bool) {
+	for i := range c.Services {
+		if c.Services[i].ID == id {
+			return c.Services[i], true
+		}
+	}
+	return llm.ServiceConfig{}, false
+}
+
 type UpdateListener func()
 
 type Container struct {
@@ -83,6 +93,15 @@ func (c *Container) RegisterUpdateListener(listener UpdateListener) {
 
 func (c *Container) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
 	return c.cfg.Load().EmbeddingSearchConfig
+}
+
+// GetServiceByID returns the service configuration for the given ID
+func (c *Container) GetServiceByID(id string) (llm.ServiceConfig, bool) {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return llm.ServiceConfig{}, false
+	}
+	return cfg.GetServiceByID(id)
 }
 
 // Updates the current configuration

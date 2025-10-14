@@ -24,6 +24,8 @@ import (
 )
 
 type Config interface {
+	GetBots() []llm.BotConfig
+	GetServiceByID(id string) (llm.ServiceConfig, bool)
 	GetDefaultBotName() string
 	EnableLLMLogging() bool
 	EnableTokenUsageLogging() bool
@@ -58,7 +60,7 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 	}
 }
 
-func (b *MMBots) EnsureBots(cfgBots []llm.BotConfig) error {
+func (b *MMBots) EnsureBots() error {
 	mtx, err := cluster.NewMutex(b.ensureBotsClusterMutex, "ai_ensure_bots")
 	if err != nil {
 		return fmt.Errorf("failed to create mutex: %w", err)
@@ -72,22 +74,47 @@ func (b *MMBots) EnsureBots(cfgBots []llm.BotConfig) error {
 	}
 
 	// Only allow one bot if not multi-LLM licensed
-	if len(cfgBots) > 1 && !b.licenseChecker.IsMultiLLMLicensed() {
+	botCfgs := b.config.GetBots()
+	if len(botCfgs) > 1 && !b.licenseChecker.IsMultiLLMLicensed() {
 		b.pluginAPI.Log.Error("Only one bot allowed with current license.")
-		cfgBots = cfgBots[:1]
+		botCfgs = botCfgs[:1]
 	}
 
-	aiBotConfigsByUsername := make(map[string]llm.BotConfig)
-	for _, bot := range cfgBots {
-		if !bot.IsValid() {
-			b.pluginAPI.Log.Error("Configured bot is not valid", "bot_name", bot.Name, "bot_display_name", bot.DisplayName)
+	var bots []*Bot
+	aiBotsByUsername := make(map[string]*Bot)
+	for _, botCfg := range botCfgs {
+		if !botCfg.IsValid() {
+			b.pluginAPI.Log.Error("Configured bot is not valid", "bot_name", botCfg.Name, "bot_display_name", botCfg.DisplayName)
 			continue
 		}
-		if _, ok := aiBotConfigsByUsername[bot.Name]; ok {
-			// Duplicate bot names have to be fatal because they would cause a bot to be modified inappropreately.
-			return fmt.Errorf("duplicate bot name: %s", bot.Name)
+
+		var service llm.ServiceConfig
+		if botCfg.Service != nil {
+			service = *botCfg.Service
+		} else {
+			// Validate service exists
+			var ok bool
+			service, ok = b.config.GetServiceByID(botCfg.ServiceID)
+			if !ok {
+				b.pluginAPI.Log.Error("Bot references non-existent service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID)
+				continue
+			}
+
+			// Validate service configuration
+			if !llm.IsValidService(service) {
+				b.pluginAPI.Log.Error("Bot references invalid service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID, "service_type", service.Type)
+				continue
+			}
 		}
-		aiBotConfigsByUsername[bot.Name] = bot
+
+		if _, ok := aiBotsByUsername[botCfg.Name]; ok {
+			// Duplicate bot names have to be fatal because they would cause a bot to be modified inappropreately.
+			return fmt.Errorf("duplicate bot name: %s", botCfg.Name)
+		}
+
+		bot := &Bot{cfg: botCfg, service: service}
+		bots = append(bots, bot)
+		aiBotsByUsername[botCfg.Name] = bot
 	}
 
 	prevousMMBotsByUsername := make(map[string]*model.Bot)
@@ -97,7 +124,7 @@ func (b *MMBots) EnsureBots(cfgBots []llm.BotConfig) error {
 
 	// For each of the bots we found, if it's not in the configuration, delete it.
 	for _, bot := range previousMMBots {
-		if _, ok := aiBotConfigsByUsername[bot.Username]; !ok {
+		if _, ok := aiBotsByUsername[bot.Username]; !ok {
 			if _, err := b.pluginAPI.Bot.UpdateActive(bot.UserId, false); err != nil {
 				b.pluginAPI.Log.Error("Failed to delete bot", "bot_name", bot.Username, "error", err.Error())
 				continue
@@ -107,68 +134,44 @@ func (b *MMBots) EnsureBots(cfgBots []llm.BotConfig) error {
 
 	// For each bot in the configuration, try to find an existing bot matching the username.
 	// If it exists, update it to match. Otherwise, create a new bot.
-	for _, bot := range cfgBots {
-		if !bot.IsValid() {
-			continue
-		}
-		description := "Powered by " + bot.Service.Type
-		if prevBot, ok := prevousMMBotsByUsername[bot.Name]; ok {
-			if _, err := b.pluginAPI.Bot.Patch(prevBot.UserId, &model.BotPatch{
-				DisplayName: &bot.DisplayName,
+	for _, bot := range bots {
+		description := "Powered by " + bot.service.Type
+		if prevBot, ok := prevousMMBotsByUsername[bot.cfg.Name]; ok {
+			var err error
+			bot.mmBot, err = b.pluginAPI.Bot.Patch(prevBot.UserId, &model.BotPatch{
+				DisplayName: &bot.cfg.DisplayName,
 				Description: &description,
-			}); err != nil {
-				b.pluginAPI.Log.Error("Failed to patch bot", "bot_name", bot.Name, "error", err.Error())
+			})
+			if err != nil {
+				b.pluginAPI.Log.Error("Failed to patch bot", "bot_name", bot.cfg.Name, "error", err.Error())
 				continue
 			}
 			if _, err := b.pluginAPI.Bot.UpdateActive(prevBot.UserId, true); err != nil {
-				b.pluginAPI.Log.Error("Failed to update bot active", "bot_name", bot.Name, "error", err.Error())
+				b.pluginAPI.Log.Error("Failed to update bot active", "bot_name", bot.cfg.Name, "error", err.Error())
 				continue
 			}
 		} else {
-			err := b.pluginAPI.Bot.Create(&model.Bot{
-				Username:    bot.Name,
-				DisplayName: bot.DisplayName,
+			bot.mmBot = &model.Bot{
+				Username:    bot.cfg.Name,
+				DisplayName: bot.cfg.DisplayName,
 				Description: description,
-			})
+			}
+			err := b.pluginAPI.Bot.Create(bot.mmBot)
 			if err != nil {
-				b.pluginAPI.Log.Error("Failed to ensure bot", "bot_name", bot.Name, "error", err.Error())
+				b.pluginAPI.Log.Error("Failed to ensure bot", "bot_name", bot.cfg.Name, "error", err.Error())
 				continue
 			}
 		}
-	}
-
-	if err := b.UpdateBotsCache(cfgBots); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (b *MMBots) UpdateBotsCache(cfgBots []llm.BotConfig) error {
-	bots, err := b.pluginAPI.Bot.List(0, 1000, pluginapi.BotOwner("mattermost-ai"))
-	if err != nil {
-		return fmt.Errorf("failed to list bots: %w", err)
-	}
-
-	b.botsLock.Lock()
-	defer b.botsLock.Unlock()
-	b.bots = make([]*Bot, 0, len(cfgBots))
-	for _, botCfg := range cfgBots {
-		for _, bot := range bots {
-			if bot.Username == botCfg.Name {
-				createdBot := NewBot(botCfg, bot)
-				b.bots = append(b.bots, createdBot)
-			}
-		}
-	}
-
-	for _, bot := range b.bots {
 		var err error
-		bot.llm, err = b.getLLM(*bot.cfg.Service, bot.cfg.Name)
+		bot.llm, err = b.getLLM(bot.service, bot.cfg.Name)
 		if err != nil {
 			return err
 		}
 	}
+
+	b.botsLock.Lock()
+	b.bots = bots
+	b.botsLock.Unlock()
 
 	return nil
 }
@@ -192,6 +195,9 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botName string) (llm.La
 		cohereCfg := serviceConfig
 		cohereCfg.APIURL = "https://api.cohere.ai/compatibility/v1"
 		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfig(cohereCfg), b.llmUpstreamHTTPClient)
+	default:
+		b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botName, "service_type", serviceConfig.Type)
+		return nil, fmt.Errorf("unsupported service type: %s", serviceConfig.Type)
 	}
 
 	// Truncation Support
@@ -219,7 +225,7 @@ func (b *MMBots) GetTranscribe() Transcriber {
 		return nil
 	}
 
-	service := *bot.GetConfig().Service
+	service := bot.service
 	switch service.Type {
 	case llm.ServiceTypeOpenAI:
 		return openai.New(config.OpenAIConfigFromServiceConfig(service), b.llmUpstreamHTTPClient)

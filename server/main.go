@@ -86,13 +86,13 @@ func (p *Plugin) OnActivate() error {
 
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient, tokenLogger)
 	p.configuration.RegisterUpdateListener(func() {
-		if ensureErr := bots.EnsureBots(p.configuration.GetBots()); ensureErr != nil {
+		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
 			return
 		}
 	})
 
-	if ensureBotsErr := bots.EnsureBots(potentiallyUpdatedConfig.Bots); ensureBotsErr != nil {
+	if ensureBotsErr := bots.EnsureBots(); ensureBotsErr != nil {
 		// If we fail to ensure bots, we log the error but do not return
 		// as it would leave the plugin in a state where it can't be configured from the system console.
 		pluginAPI.Log.Error("failed to ensure bots", "error", ensureBotsErr)
