@@ -15,7 +15,7 @@ func TestBotConfig_IsValid(t *testing.T) {
 		Name               string
 		DisplayName        string
 		CustomInstructions string
-		Service            ServiceConfig
+		Service            *ServiceConfig
 		EnableVision       bool
 		DisableTools       bool
 		ChannelAccessLevel ChannelAccessLevel
@@ -37,7 +37,7 @@ func TestBotConfig_IsValid(t *testing.T) {
 				Name:               "xxx",
 				DisplayName:        "xxx",
 				CustomInstructions: "",
-				Service: ServiceConfig{
+				Service: &ServiceConfig{
 					Name:                    "Agents",
 					Type:                    "openai",
 					APIKey:                  "sk-xyz",
@@ -58,7 +58,7 @@ func TestBotConfig_IsValid(t *testing.T) {
 				Name:               "xxx",
 				DisplayName:        "xxx",
 				CustomInstructions: "",
-				Service: ServiceConfig{
+				Service: &ServiceConfig{
 					Name:                    "Agents",
 					Type:                    "openai",
 					APIKey:                  "sk-xyz",
@@ -79,7 +79,7 @@ func TestBotConfig_IsValid(t *testing.T) {
 				Name:               "", // bad
 				DisplayName:        "xxx",
 				CustomInstructions: "",
-				Service: ServiceConfig{
+				Service: &ServiceConfig{
 					Name:                    "Agents",
 					Type:                    "openai",
 					APIKey:                  "sk-xyz",
@@ -100,7 +100,7 @@ func TestBotConfig_IsValid(t *testing.T) {
 				Name:               "xxx",
 				DisplayName:        "", // bad
 				CustomInstructions: "",
-				Service: ServiceConfig{
+				Service: &ServiceConfig{
 					Name:                    "Agents",
 					Type:                    "openai",
 					APIKey:                  "sk-xyz",
@@ -121,7 +121,7 @@ func TestBotConfig_IsValid(t *testing.T) {
 				Name:               "xxx",
 				DisplayName:        "xxx",
 				CustomInstructions: "",
-				Service: ServiceConfig{
+				Service: &ServiceConfig{
 					Name:                    "Agents",
 					Type:                    "mattermostllm", // bad
 					APIKey:                  "sk-xyz",
@@ -142,7 +142,7 @@ func TestBotConfig_IsValid(t *testing.T) {
 				Name:               "xxx",
 				DisplayName:        "xxx",
 				CustomInstructions: "",
-				Service: ServiceConfig{
+				Service: &ServiceConfig{
 					Name:                    "Agents",
 					Type:                    "openai",
 					APIKey:                  "sk-xyz",
@@ -163,7 +163,7 @@ func TestBotConfig_IsValid(t *testing.T) {
 				Name:               "xxx",
 				DisplayName:        "xxx",
 				CustomInstructions: "",
-				Service: ServiceConfig{
+				Service: &ServiceConfig{
 					Name:                    "Agents",
 					Type:                    "openai",
 					APIKey:                  "sk-xyz",
@@ -184,7 +184,7 @@ func TestBotConfig_IsValid(t *testing.T) {
 				Name:               "xxx",
 				DisplayName:        "xxx",
 				CustomInstructions: "",
-				Service: ServiceConfig{
+				Service: &ServiceConfig{
 					Name:                    "Agents",
 					Type:                    "openai",
 					APIKey:                  "sk-xyz",
@@ -205,7 +205,7 @@ func TestBotConfig_IsValid(t *testing.T) {
 				Name:               "xxx",
 				DisplayName:        "xxx",
 				CustomInstructions: "",
-				Service: ServiceConfig{
+				Service: &ServiceConfig{
 					Name:                    "Agents",
 					Type:                    "openai",
 					APIKey:                  "sk-xyz",
@@ -226,7 +226,7 @@ func TestBotConfig_IsValid(t *testing.T) {
 				Name:               "xxx",
 				DisplayName:        "xxx",
 				CustomInstructions: "",
-				Service: ServiceConfig{
+				Service: &ServiceConfig{
 					Name:                    "Agents",
 					Type:                    "openaicompatible",
 					APIKey:                  "sk-xyz",
@@ -248,7 +248,7 @@ func TestBotConfig_IsValid(t *testing.T) {
 				Name:               "xxx",
 				DisplayName:        "xxx",
 				CustomInstructions: "",
-				Service: ServiceConfig{
+				Service: &ServiceConfig{
 					Name:                    "Agents",
 					Type:                    "openaicompatible",
 					APIKey:                  "", // not bad

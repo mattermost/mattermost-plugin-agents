@@ -140,7 +140,7 @@ func TestDirectMessageConversations(t *testing.T) {
 					CustomInstructions: "",
 					EnableVision:       false,
 					DisableTools:       false,
-					Service: llm.ServiceConfig{
+					Service: &llm.ServiceConfig{
 						DefaultModel: "mattermodel-5.4",
 					},
 				},

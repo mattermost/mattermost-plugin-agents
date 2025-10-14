@@ -164,7 +164,7 @@ func (b *MMBots) UpdateBotsCache(cfgBots []llm.BotConfig) error {
 
 	for _, bot := range b.bots {
 		var err error
-		bot.llm, err = b.getLLM(bot.cfg.Service, bot.cfg.Name)
+		bot.llm, err = b.getLLM(*bot.cfg.Service, bot.cfg.Name)
 		if err != nil {
 			return err
 		}
@@ -219,7 +219,7 @@ func (b *MMBots) GetTranscribe() Transcriber {
 		return nil
 	}
 
-	service := bot.GetConfig().Service
+	service := *bot.GetConfig().Service
 	switch service.Type {
 	case llm.ServiceTypeOpenAI:
 		return openai.New(config.OpenAIConfigFromServiceConfig(service), b.llmUpstreamHTTPClient)

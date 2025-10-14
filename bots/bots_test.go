@@ -63,7 +63,7 @@ func TestEnsureBots(t *testing.T) {
 					ID:          "test1",
 					Name:        "testbot1",
 					DisplayName: "Test Bot 1",
-					Service: llm.ServiceConfig{
+					Service: &llm.ServiceConfig{
 						Type:   llm.ServiceTypeOpenAI,
 						APIKey: "test-api-key",
 					},
@@ -80,7 +80,7 @@ func TestEnsureBots(t *testing.T) {
 					ID:          "test1",
 					Name:        "testbot1",
 					DisplayName: "Test Bot 1",
-					Service: llm.ServiceConfig{
+					Service: &llm.ServiceConfig{
 						Type:   llm.ServiceTypeOpenAI,
 						APIKey: "test-api-key",
 					},
@@ -89,7 +89,7 @@ func TestEnsureBots(t *testing.T) {
 					ID:          "test2",
 					Name:        "testbot2",
 					DisplayName: "Test Bot 2",
-					Service: llm.ServiceConfig{
+					Service: &llm.ServiceConfig{
 						Type:   llm.ServiceTypeOpenAI,
 						APIKey: "test-api-key-2",
 					},
@@ -106,7 +106,7 @@ func TestEnsureBots(t *testing.T) {
 					ID:          "test1",
 					Name:        "testbot1",
 					DisplayName: "Test Bot 1",
-					Service: llm.ServiceConfig{
+					Service: &llm.ServiceConfig{
 						Type:   llm.ServiceTypeOpenAI,
 						APIKey: "test-api-key",
 					},
@@ -115,7 +115,7 @@ func TestEnsureBots(t *testing.T) {
 					ID:          "test2",
 					Name:        "testbot2",
 					DisplayName: "Test Bot 2",
-					Service: llm.ServiceConfig{
+					Service: &llm.ServiceConfig{
 						Type:   llm.ServiceTypeOpenAI,
 						APIKey: "test-api-key-2",
 					},

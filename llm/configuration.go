@@ -4,6 +4,7 @@
 package llm
 
 type ServiceConfig struct {
+	ID           string `json:"id"`
 	Name         string `json:"name"`
 	Type         string `json:"type"`
 	APIKey       string `json:"apiKey"`
@@ -48,11 +49,17 @@ const (
 )
 
 type BotConfig struct {
-	ID                 string             `json:"id"`
-	Name               string             `json:"name"`
-	DisplayName        string             `json:"displayName"`
-	CustomInstructions string             `json:"customInstructions"`
-	Service            ServiceConfig      `json:"service"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	DisplayName        string `json:"displayName"`
+	CustomInstructions string `json:"customInstructions"`
+	ServiceID          string `json:"serviceID"`
+
+	// Service is deprecated and kept only for backwards compatibility during migration.
+	// Old configs had the service embedded directly in the bot config.
+	// New configs should use ServiceID to reference a service in the Services array.
+	Service *ServiceConfig `json:"service,omitempty"`
+
 	EnableVision       bool               `json:"enableVision"`
 	DisableTools       bool               `json:"disableTools"`
 	ChannelAccessLevel ChannelAccessLevel `json:"channelAccessLevel"`
