@@ -226,19 +226,16 @@ func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Clie
 		pluginAPI.Log.Info("Migration completed: services to bots")
 	}
 
-	// temporarily disable separate services migration
+	var migrateErr error
 	didMigrateSeparateServicesFromBots := false
-	if false {
-		var migrateErr error
-		didMigrateSeparateServicesFromBots, newCfg, migrateErr = migrateSeparateServicesFromBots(pluginAPI, cfg)
-		if migrateErr != nil {
-			return cfg, false, fmt.Errorf("failed to migrate separate services from bots: %w", migrateErr)
-		}
-		if didMigrateSeparateServicesFromBots {
-			changed = true
-			cfg = newCfg
-			pluginAPI.Log.Info("Migration completed: separate services from bots")
-		}
+	didMigrateSeparateServicesFromBots, newCfg, migrateErr = migrateSeparateServicesFromBots(pluginAPI, cfg)
+	if migrateErr != nil {
+		return cfg, false, fmt.Errorf("failed to migrate separate services from bots: %w", migrateErr)
+	}
+	if didMigrateSeparateServicesFromBots {
+		changed = true
+		cfg = newCfg
+		pluginAPI.Log.Info("Migration completed: separate services from bots")
 	}
 
 	// If any migrations ran, persist the config and mark them as complete

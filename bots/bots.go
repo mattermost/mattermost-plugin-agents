@@ -88,23 +88,17 @@ func (b *MMBots) EnsureBots() error {
 			continue
 		}
 
-		var service llm.ServiceConfig
-		if botCfg.Service != nil {
-			service = *botCfg.Service
-		} else {
-			// Validate service exists
-			var ok bool
-			service, ok = b.config.GetServiceByID(botCfg.ServiceID)
-			if !ok {
-				b.pluginAPI.Log.Error("Bot references non-existent service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID)
-				continue
-			}
+		// Validate service exists
+		service, ok := b.config.GetServiceByID(botCfg.ServiceID)
+		if !ok {
+			b.pluginAPI.Log.Error("Bot references non-existent service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID)
+			continue
+		}
 
-			// Validate service configuration
-			if !llm.IsValidService(service) {
-				b.pluginAPI.Log.Error("Bot references invalid service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID, "service_type", service.Type)
-				continue
-			}
+		// Validate service configuration
+		if !llm.IsValidService(service) {
+			b.pluginAPI.Log.Error("Bot references invalid service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID, "service_type", service.Type)
+			continue
 		}
 
 		if _, ok := aiBotsByUsername[botCfg.Name]; ok {

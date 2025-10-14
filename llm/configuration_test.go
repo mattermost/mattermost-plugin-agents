@@ -175,40 +175,6 @@ func TestBotConfig_IsValid(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "DEPRECATED: Bot with embedded service (no ServiceID) should be valid",
-			fields: fields{
-				ID:          "xxx",
-				Name:        "xxx",
-				DisplayName: "xxx",
-				ServiceID:   "", // empty service ID
-				Service: &ServiceConfig{
-					ID:     "embedded-service",
-					Type:   ServiceTypeOpenAI,
-					APIKey: "sk-test",
-				},
-				ChannelAccessLevel: ChannelAccessLevelAll,
-				UserAccessLevel:    UserAccessLevelAll,
-			},
-			want: true,
-		},
-		{
-			name: "DEPRECATED: Bot with both ServiceID and embedded Service should be valid",
-			fields: fields{
-				ID:          "xxx",
-				Name:        "xxx",
-				DisplayName: "xxx",
-				ServiceID:   "service-id", // has both
-				Service: &ServiceConfig{
-					ID:     "embedded-service",
-					Type:   ServiceTypeOpenAI,
-					APIKey: "sk-test",
-				},
-				ChannelAccessLevel: ChannelAccessLevelAll,
-				UserAccessLevel:    UserAccessLevelAll,
-			},
-			want: true,
-		},
-		{
 			name: "Bot with neither ServiceID nor embedded Service should fail",
 			fields: fields{
 				ID:                 "xxx",
