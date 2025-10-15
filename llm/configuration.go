@@ -70,13 +70,7 @@ type BotConfig struct {
 
 func (c *BotConfig) IsValid() bool {
 	// Basic validation - service validation happens separately
-	// Note: ServiceID can be empty if Service is embedded (deprecated)
-	if c.Name == "" || c.DisplayName == "" {
-		return false
-	}
-
-	// Either ServiceID must be set (new way) or Service must be embedded (deprecated)
-	if c.ServiceID == "" && c.Service == nil {
+	if c.Name == "" || c.DisplayName == "" || c.ServiceID == "" {
 		return false
 	}
 
