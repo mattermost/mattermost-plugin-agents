@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -72,30 +71,12 @@ func (p *Plugin) OnActivate() error {
 
 	potentiallyUpdatedConfig, wasUpdated, err := runAllMigrations(p.API, pluginAPI, *p.configuration.Config())
 	if err != nil {
-		// Log error but don't fail activation - migrations may have already run on another instance
-		pluginAPI.Log.Error("failed to run migrations", "error", err)
-	} else if wasUpdated {
-		// Wrap config in the configuration struct that has the proper nesting
-		wrappedConfig := configuration{Config: potentiallyUpdatedConfig}
-
-		// Convert config to map[string]any for plugin API
-		out := map[string]any{}
-		marshalBytes, marshalErr := json.Marshal(wrappedConfig)
-		if marshalErr != nil {
-			return fmt.Errorf("failed to marshal migrated configuration: %w", marshalErr)
-		}
-		if unmarshalErr := json.Unmarshal(marshalBytes, &out); unmarshalErr != nil {
-			return fmt.Errorf("failed to unmarshal migrated configuration: %w", unmarshalErr)
-		}
-
-		// Persist to database via API
-		if saveErr := pluginAPI.Configuration.SavePluginConfig(out); saveErr != nil {
-			return fmt.Errorf("failed to save migrated configuration: %w", saveErr)
-		}
-
+		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+	if wasUpdated {
 		// Update in-memory copy immediately (can't wait for async callbacks)
 		p.configuration.Update(&potentiallyUpdatedConfig)
-		pluginAPI.Log.Info("Configuration updated after migrations")
+		pluginAPI.Log.Info("In-memory configuration updated after migrations")
 	}
 
 	tokenLogger, err := llm.CreateTokenLogger()

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -110,10 +111,6 @@ func migrateSeparateServicesFromBots(pluginAPI *pluginapi.Client, cfg config.Con
 		}
 	}
 
-	if _, kvErr := pluginAPI.KV.Set("migrate_separate_services_from_bots_done", true); kvErr != nil {
-		pluginAPI.Log.Error("failed to mark migration as done", "key", "migrate_separate_services_from_bots_done", "error", kvErr)
-	}
-
 	return true, *existingConfig, nil
 }
 
@@ -202,15 +199,12 @@ func migrateServicesToBots(pluginAPI *pluginapi.Client, cfg config.Config) (bool
 		})
 	}
 
-	if _, kvErr := pluginAPI.KV.Set("migrate_services_to_bots_done", true); kvErr != nil {
-		pluginAPI.Log.Error("failed to mark migration as done", "key", "migrate_services_to_bots_done", "error", kvErr)
-	}
-
 	return true, *existingConfig, nil
 }
 
 // runAllMigrations executes all migrations under a single mutex to prevent race conditions
-// in multi-instance deployments. Returns the final configuration and any errors encountered.
+// in multi-instance deployments. Persists the updated configuration and marks migrations as
+// complete only after successful save. Returns the final configuration and any errors encountered.
 func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, cfg config.Config) (config.Config, bool, error) {
 	mtx, err := cluster.NewMutex(mutexAPI, "ai_all_migrations")
 	if err != nil {
@@ -222,29 +216,62 @@ func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Clie
 	changed := false
 	currentCfg := cfg
 
-	migrated1, newCfg, err := migrateServicesToBots(pluginAPI, currentCfg)
+	didMigrateServicesToBots, newCfg, err := migrateServicesToBots(pluginAPI, currentCfg)
 	if err != nil {
 		return cfg, false, fmt.Errorf("failed to migrate services to bots: %w", err)
 	}
-	if migrated1 {
+	if didMigrateServicesToBots {
 		changed = true
 		currentCfg = newCfg
 		pluginAPI.Log.Info("Migration completed: services to bots")
 	}
 
 	// temporarily disable separate services migration
-	if true {
-		return currentCfg, changed, nil
+	didMigrateSeparateServicesFromBots := false
+	if false {
+		var migrateErr error
+		didMigrateSeparateServicesFromBots, newCfg, migrateErr = migrateSeparateServicesFromBots(pluginAPI, currentCfg)
+		if migrateErr != nil {
+			return cfg, false, fmt.Errorf("failed to migrate separate services from bots: %w", migrateErr)
+		}
+		if didMigrateSeparateServicesFromBots {
+			changed = true
+			currentCfg = newCfg
+			pluginAPI.Log.Info("Migration completed: separate services from bots")
+		}
 	}
 
-	migrated2, newCfg, err := migrateSeparateServicesFromBots(pluginAPI, currentCfg)
-	if err != nil {
-		return cfg, false, fmt.Errorf("failed to migrate separate services from bots: %w", err)
-	}
-	if migrated2 {
-		changed = true
-		currentCfg = newCfg
-		pluginAPI.Log.Info("Migration completed: separate services from bots")
+	// If any migrations ran, persist the config and mark them as complete
+	if changed {
+		// Wrap config in the configuration struct that has the proper nesting
+		wrappedConfig := configuration{Config: currentCfg}
+
+		// Convert config to map[string]any for plugin API
+		out := map[string]any{}
+		marshalBytes, marshalErr := json.Marshal(wrappedConfig)
+		if marshalErr != nil {
+			return cfg, false, fmt.Errorf("failed to marshal migrated configuration: %w", marshalErr)
+		}
+		if unmarshalErr := json.Unmarshal(marshalBytes, &out); unmarshalErr != nil {
+			return cfg, false, fmt.Errorf("failed to unmarshal migrated configuration: %w", unmarshalErr)
+		}
+
+		if saveErr := pluginAPI.Configuration.SavePluginConfig(out); saveErr != nil {
+			return cfg, false, fmt.Errorf("failed to save migrated configuration: %w", saveErr)
+		}
+
+		if didMigrateServicesToBots {
+			if _, kvErr := pluginAPI.KV.Set("migrate_services_to_bots_done", true); kvErr != nil {
+				pluginAPI.Log.Error("failed to mark migration as done", "key", "migrate_services_to_bots_done", "error", kvErr)
+			}
+		}
+		if didMigrateSeparateServicesFromBots {
+			if _, kvErr := pluginAPI.KV.Set("migrate_separate_services_from_bots_done", true); kvErr != nil {
+				pluginAPI.Log.Error("failed to mark migration as done", "key", "migrate_separate_services_from_bots_done", "error", kvErr)
+			}
+		}
+
+		pluginAPI.Log.Info("Configuration persisted after migrations")
 	}
 
 	return currentCfg, changed, nil
