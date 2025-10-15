@@ -27,6 +27,7 @@ const defaultNewBot: LLMBotConfig = {
     userAccessLevel: UserAccessLevel.All,
     userIDs: [],
     teamIDs: [],
+    enabledNativeTools: [],
 };
 
 export const firstNewBot = {

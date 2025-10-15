@@ -23,11 +23,6 @@ type ServiceConfig struct {
 	// UseResponsesAPI determines whether to use the new OpenAI Responses API
 	// Only applicable to OpenAI and OpenAI-compatible services
 	UseResponsesAPI bool `json:"useResponsesAPI"`
-
-	// EnabledNativeTools contains the list of enabled OpenAI native tools
-	// Only works when UseResponsesAPI is true
-	// Example: ["web_search", "file_search", "code_interpreter"]
-	EnabledNativeTools []string `json:"enabledNativeTools"`
 }
 
 type ChannelAccessLevel int
@@ -66,6 +61,11 @@ type BotConfig struct {
 	UserIDs            []string           `json:"userIDs"`
 	TeamIDs            []string           `json:"teamIDs"`
 	MaxFileSize        int64              `json:"maxFileSize"`
+
+	// EnabledNativeTools contains the list of enabled native tools for this bot
+	// For OpenAI: ["web_search", "file_search", "code_interpreter"] (only works when UseResponsesAPI is true)
+	// For Anthropic: ["web_search"]
+	EnabledNativeTools []string `json:"enabledNativeTools"`
 }
 
 func (c *BotConfig) IsValid() bool {

@@ -12,7 +12,7 @@ import {DangerPill, Pill} from '../pill';
 
 import {ButtonIcon} from '../assets/buttons';
 
-import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from './item';
+import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
@@ -44,7 +44,70 @@ export type LLMBotConfig = {
     userAccessLevel: UserAccessLevel
     userIDs: string[]
     teamIDs: string[]
+    enabledNativeTools?: string[]
 }
+
+// Component for configuring native tools (OpenAI/Anthropic)
+type NativeToolsItemProps = {
+    enabledTools: string[]
+    onChange: (tools: string[]) => void
+    provider?: 'openai' | 'anthropic'
+}
+
+const NativeToolsItem = (props: NativeToolsItemProps) => {
+    const intl = useIntl();
+    const provider = props.provider || 'openai';
+
+    const availableNativeTools = [
+        {
+            id: 'web_search',
+            label: intl.formatMessage({defaultMessage: 'Web Search'}),
+            helpText: provider === 'anthropic' ?
+                intl.formatMessage({defaultMessage: 'Enable Claude\'s built-in web search capability'}) :
+                intl.formatMessage({defaultMessage: 'Enable OpenAI\'s built-in web search capability'}),
+        },
+
+    ];
+
+    const toggleTool = (toolId: string) => {
+        const currentTools = props.enabledTools || [];
+        if (currentTools.includes(toolId)) {
+            props.onChange(currentTools.filter((t) => t !== toolId));
+        } else {
+            props.onChange([...currentTools, toolId]);
+        }
+    };
+
+    const titleMessage = provider === 'anthropic' ?
+        intl.formatMessage({defaultMessage: 'Native Claude Tools'}) :
+        intl.formatMessage({defaultMessage: 'Native OpenAI Tools'});
+
+    return (
+        <>
+            <ItemLabel>
+                <Horizontal>
+                    {titleMessage}
+                    <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
+                </Horizontal>
+            </ItemLabel>
+            <div>
+                {availableNativeTools.map((tool) => (
+                    <NativeToolContainer key={tool.id}>
+                        <StyledCheckbox
+                            type='checkbox'
+                            checked={props.enabledTools.includes(tool.id)}
+                            onChange={() => toggleTool(tool.id)}
+                        />
+                        <NativeToolLabel>
+                            <div>{tool.label}</div>
+                            <HelpText>{tool.helpText}</HelpText>
+                        </NativeToolLabel>
+                    </NativeToolContainer>
+                ))}
+            </div>
+        </>
+    );
+};
 
 type Props = {
     bot: LLMBotConfig
@@ -168,6 +231,33 @@ const Bot = (props: Props) => {
                                         onChange={(to: boolean) => props.onChange({...props.bot, disableTools: !to})}
                                         helpText={intl.formatMessage({defaultMessage: 'By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools.'})}
                                     />
+                                    {(() => {
+                                        // Show native tools for Anthropic or OpenAI-based services with ResponsesAPI enabled
+                                        const isAnthropic = selectedService.type === 'anthropic';
+                                        const isOpenAIWithResponses = ['openai', 'openaicompatible', 'azure'].includes(selectedService.type) && selectedService.useResponsesAPI;
+
+                                        if (isAnthropic) {
+                                            return (
+                                                <NativeToolsItem
+                                                    enabledTools={props.bot.enabledNativeTools || []}
+                                                    onChange={(tools: string[]) => props.onChange({...props.bot, enabledNativeTools: tools})}
+                                                    provider='anthropic'
+                                                />
+                                            );
+                                        }
+
+                                        if (isOpenAIWithResponses) {
+                                            return (
+                                                <NativeToolsItem
+                                                    enabledTools={props.bot.enabledNativeTools || []}
+                                                    onChange={(tools: string[]) => props.onChange({...props.bot, enabledNativeTools: tools})}
+                                                    provider='openai'
+                                                />
+                                            );
+                                        }
+
+                                        return null;
+                                    })()}
                                 </>
                             );
                         })()}
@@ -249,6 +339,32 @@ const Horizontal = styled.div`
 	flex-direction: row;
 	align-items: center;
 	gap: 8px;
+`;
+
+const NativeToolContainer = styled.div`
+	display: flex;
+	flex-direction: row;
+	align-items: flex-start;
+	gap: 8px;
+	margin-bottom: 12px;
+`;
+
+const NativeToolLabel = styled.label`
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	cursor: pointer;
+
+	div:first-child {
+		font-size: 14px;
+		font-weight: 400;
+		line-height: 20px;
+	}
+`;
+
+const StyledCheckbox = styled.input`
+	margin-top: 2px;
+	cursor: pointer;
 `;
 
 export default Bot;

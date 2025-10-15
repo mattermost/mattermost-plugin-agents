@@ -25,7 +25,6 @@ const defaultNewService: LLMService = {
     sendUserId: false,
     outputTokenLimit: 0,
     useResponsesAPI: false,
-    enabledNativeTools: [],
 };
 
 export const firstNewService = {

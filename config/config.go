@@ -138,7 +138,7 @@ func DeepCopyJSON[T any](src T) (T, error) {
 	return dst, err
 }
 
-func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig) openai.Config {
+func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig, enabledNativeTools []string) openai.Config {
 	streamingTimeout := time.Second * 30
 	if serviceConfig.StreamingTimeoutSeconds > 0 {
 		streamingTimeout = time.Duration(serviceConfig.StreamingTimeoutSeconds) * time.Second
@@ -154,6 +154,6 @@ func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig) openai.Confi
 		StreamingTimeout:   streamingTimeout,
 		SendUserID:         serviceConfig.SendUserID,
 		UseResponsesAPI:    serviceConfig.UseResponsesAPI,
-		EnabledNativeTools: serviceConfig.EnabledNativeTools,
+		EnabledNativeTools: enabledNativeTools,
 	}
 }

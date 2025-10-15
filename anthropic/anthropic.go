@@ -41,7 +41,7 @@ type Anthropic struct {
 	enabledNativeTools []string
 }
 
-func New(llmService llm.ServiceConfig, httpClient *http.Client) *Anthropic {
+func New(llmService llm.ServiceConfig, enabledNativeTools []string, httpClient *http.Client) *Anthropic {
 	client := anthropicSDK.NewClient(
 		option.WithAPIKey(llmService.APIKey),
 		option.WithHTTPClient(httpClient),
@@ -52,7 +52,7 @@ func New(llmService llm.ServiceConfig, httpClient *http.Client) *Anthropic {
 		defaultModel:       llmService.DefaultModel,
 		inputTokenLimit:    llmService.InputTokenLimit,
 		outputTokenLimit:   llmService.OutputTokenLimit,
-		enabledNativeTools: llmService.EnabledNativeTools,
+		enabledNativeTools: enabledNativeTools,
 	}
 }
 
