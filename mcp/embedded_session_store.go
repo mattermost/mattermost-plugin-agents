@@ -36,38 +36,60 @@ func (m *ClientManager) storeEmbeddedSessionID(userID, sessionID string) error {
 	return nil
 }
 
+func (m *ClientManager) deleteEmbeddedSessionID(userID string) error {
+	return m.pluginAPI.KV.Delete(buildEmbeddedSessionKey(userID))
+}
+
 // ensureEmbeddedSessionID ensures there is a valid embedded session for the user
 // It loads from KV, validates via Session.Get, and if missing/invalid, creates a new one
 // The created session is tagged for MCP via DeviceId and Props
 func (m *ClientManager) ensureEmbeddedSessionID(userID string) (string, error) {
-	// Try existing stored session id
-	if stored, err := m.loadEmbeddedSessionID(userID); err == nil && stored != "" {
-		if sess, getErr := m.pluginAPI.Session.Get(stored); getErr == nil && sess != nil {
-			// Proactively extend if expiring within 24h; ExpiresAt is in milliseconds
-			const renewalWindow = 24 * time.Hour
-			nowPlusWindowMs := time.Now().Add(renewalWindow).UnixMilli()
-			if sess.ExpiresAt == 0 || sess.ExpiresAt > nowPlusWindowMs {
-				return stored, nil
-			}
-			// Extend expiry to align with configured session length
-			sessionDuration := m.sessionLengthDuration()
-			newExpiryMs := time.Now().Add(sessionDuration).UnixMilli()
-			if err = m.pluginAPI.Session.ExtendExpiry(stored, newExpiryMs); err == nil {
-				m.log.Debug("Extended embedded session expiry", "userID", userID, "new_expires_at", newExpiryMs)
-				return stored, nil
-			}
-			m.log.Debug("Failed to extend embedded session; creating new", "userID", userID, "expires_at", sess.ExpiresAt)
-		} else {
-			m.log.Debug("Stored embedded session invalid or missing; creating new", "userID", userID, "sessionID", stored, "error", getErr)
-			if deleteErr := m.pluginAPI.KV.Delete(buildEmbeddedSessionKey(userID)); deleteErr != nil {
-				m.log.Debug("Failed to delete stale embedded session key", "userID", userID, "error", deleteErr)
-			}
-		}
-	} else if err != nil {
-		m.log.Debug("Failed to load embedded session ID; will create new", "userID", userID, "error", err)
+	if sessionID, err := m.tryReuseEmbeddedSession(userID); err != nil {
+		return "", err
+	} else if sessionID != "" {
+		return sessionID, nil
 	}
 
-	// Create a new dedicated session for embedded MCP usage
+	return m.createEmbeddedSession(userID)
+}
+
+func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, error) {
+	stored, err := m.loadEmbeddedSessionID(userID)
+	if err != nil {
+		m.log.Debug("Failed to load embedded session ID; will create new", "userID", userID, "error", err)
+		return "", nil
+	}
+
+	if stored == "" {
+		return "", nil
+	}
+
+	sess, getErr := m.pluginAPI.Session.Get(stored)
+	if getErr != nil || sess == nil {
+		m.log.Debug("Stored embedded session invalid or missing; creating new", "userID", userID, "sessionID", stored, "error", getErr)
+		if deleteErr := m.deleteEmbeddedSessionID(userID); deleteErr != nil {
+			m.log.Debug("Failed to delete stale embedded session key", "userID", userID, "error", deleteErr)
+		}
+		return "", nil
+	}
+
+	const renewalWindow = 24 * time.Hour
+	renewalDeadline := time.Now().Add(renewalWindow).UnixMilli()
+	if sess.ExpiresAt == 0 || sess.ExpiresAt > renewalDeadline {
+		return stored, nil
+	}
+
+	newExpiry := time.Now().Add(m.sessionLengthDuration()).UnixMilli()
+	if err := m.pluginAPI.Session.ExtendExpiry(stored, newExpiry); err == nil {
+		m.log.Debug("Extended embedded session expiry", "userID", userID, "new_expires_at", newExpiry)
+		return stored, nil
+	}
+
+	m.log.Debug("Failed to extend embedded session; creating new", "userID", userID, "expires_at", sess.ExpiresAt)
+	return "", nil
+}
+
+func (m *ClientManager) createEmbeddedSession(userID string) (string, error) {
 	user, err := m.pluginAPI.User.Get(userID)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch user for embedded session: %w", err)
@@ -82,8 +104,7 @@ func (m *ClientManager) ensureEmbeddedSessionID(userID string) (string, error) {
 
 	newSession := &model.Session{
 		UserId:    userID,
-		DeviceId:  "mcp-embedded",
-		Props:     map[string]string{"mcp": "true"},
+		Props:     map[string]string{"isMCP": "true"},
 		Roles:     roles,
 		ExpiresAt: expiresAt,
 	}
@@ -94,15 +115,6 @@ func (m *ClientManager) ensureEmbeddedSessionID(userID string) (string, error) {
 
 	if created == nil || created.Id == "" {
 		return "", fmt.Errorf("embedded session creation returned empty result")
-	}
-
-	// Ensure the stored session expiry matches current configuration if the server ignored our suggestion.
-	if created.ExpiresAt == 0 || created.ExpiresAt < expiresAt {
-		if extendErr := m.pluginAPI.Session.ExtendExpiry(created.Id, expiresAt); extendErr != nil {
-			m.log.Debug("Failed to align embedded session expiry with configuration", "userID", userID, "sessionID", created.Id, "error", extendErr)
-		} else {
-			created.ExpiresAt = expiresAt
-		}
 	}
 
 	if err := m.storeEmbeddedSessionID(userID, created.Id); err != nil {
