@@ -257,6 +257,9 @@ func newMockPluginAPI() *mockPluginAPI {
 	mockAPI.On("LogInfo", anyArgs...).Maybe()
 	mockAPI.On("LogWarn", anyArgs...).Maybe()
 	mockAPI.On("LogError", anyArgs...).Maybe()
+	mockAPI.On("KVGet", mock.AnythingOfType("string")).Return(([]byte)(nil), (*model.AppError)(nil)).Maybe()
+	mockAPI.On("KVSet", mock.AnythingOfType("string"), mock.Anything).Return(true, (*model.AppError)(nil)).Maybe()
+	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return((*model.AppError)(nil)).Maybe()
 
 	return &mockPluginAPI{
 		API:      mockAPI,
