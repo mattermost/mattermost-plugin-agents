@@ -20,28 +20,36 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 		  "enableLLMTrace": true,
 		  "enableUserRestrictions": false,
 		  "defaultBotName": "mock",
+		  "services": [
+			  {
+				  "id": "mock-service",
+				  "name": "Mock Service",
+				  "type": "openaicompatible",
+				  "apiKey": "mock",
+				  "apiURL": "http://openai:8080",
+			  },
+			  {
+				  "id": "second-service",
+				  "name": "Second Service",
+				  "type": "openaicompatible",
+				  "apiKey": "ohno",
+				  "apiURL": "http://openai:8080/second",
+			  },
+		  ],
 		  "bots": [
 			  {
 				  "id": "y6fcxh0xc",
 				  "name": "mock",
 				  "displayName": "Mock Bot",
 				  "customInstructions": "",
-				  "service": {
-					  "type": "openaicompatible",
-					  "apiKey": "mock",
-					  "apiURL": "http://openai:8080",
-				  },
+				  "serviceID": "mock-service",
 			  },
 			  {
 				  "id": "oawiejfoj",
 				  "name": "second",
 				  "displayName": "Second Bot",
 				  "customInstructions": "",
-				  "service": {
-					  "type": "openaicompatible",
-					  "apiKey": "ohno",
-					  "apiURL": "http://openai:8080/second",
-				  },
+				  "serviceID": "second-service",
 			  },
 		  ],
 	  }
