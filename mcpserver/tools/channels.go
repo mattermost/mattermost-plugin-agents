@@ -46,7 +46,7 @@ type GetChannelMembersArgs struct {
 	Page      int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
 }
 
-// AddUserToChannelArgs represents arguments for the add_user_to_channel tool (dev mode only)
+// AddUserToChannelArgs represents arguments for the add_user_to_channel tool
 type AddUserToChannelArgs struct {
 	UserID    string `json:"user_id" jsonschema:"ID of the user to add"`
 	ChannelID string `json:"channel_id" jsonschema:"ID of the channel to add user to"`
@@ -79,15 +79,9 @@ func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 			Schema:      llm.NewJSONSchemaFromStruct[GetChannelMembersArgs](),
 			Resolver:    p.toolGetChannelMembers,
 		},
-	}
-}
-
-// getDevChannelTools returns development channel-related tools for MCP
-func (p *MattermostToolProvider) getDevChannelTools() []MCPTool {
-	return []MCPTool{
 		{
 			Name:        "add_user_to_channel",
-			Description: "Add a user to a channel (dev mode only)",
+			Description: "Add a user to a channel. Parameters: user_id (required), channel_id (required). Returns confirmation message.",
 			Schema:      llm.NewJSONSchemaFromStruct[AddUserToChannelArgs](),
 			Resolver:    p.toolAddUserToChannel,
 		},

@@ -3,12 +3,6 @@
 
 package mcpserver
 
-import "github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
-
-// ServerConfig is an alias for the interface in the types package
-// This avoids circular dependencies while maintaining backward compatibility
-type ServerConfig = types.ServerConfig
-
 // BaseConfig represents common configuration for all MCP server types
 type BaseConfig struct {
 	// Mattermost server URL (e.g., "https://mattermost.company.com")

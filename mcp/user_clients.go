@@ -175,7 +175,7 @@ func (c *UserClients) GetTools() []llm.Tool {
 
 // prepareToolCallMetadata prepares metadata to be sent with MCP tool calls
 // This is where we inject context-specific information that tools need but shouldn't be in arguments
-func (c *UserClients) prepareToolCallMetadata(client *Client, toolName string, llmContext *llm.Context) map[string]any {
+func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Context) map[string]any {
 	// Only add metadata if we have a valid context
 	if llmContext == nil {
 		return nil
@@ -201,7 +201,7 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 		}
 
 		// Prepare metadata for the tool call
-		metadata := c.prepareToolCallMetadata(client, toolName, llmContext)
+		metadata := c.prepareToolCallMetadata(client, llmContext)
 
 		return client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
 	}

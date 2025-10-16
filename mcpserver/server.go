@@ -16,7 +16,7 @@ type MattermostMCPServer struct {
 	mcpServer    *mcp.Server
 	authProvider auth.AuthenticationProvider
 	logger       Logger
-	config       ServerConfig
+	config       types.ServerConfig
 }
 
 // registerTools registers all tools using the tool provider

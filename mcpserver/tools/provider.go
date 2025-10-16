@@ -86,7 +86,6 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 		mcpTools = append(mcpTools, p.getDevUserTools()...)
 		mcpTools = append(mcpTools, p.getDevPostTools()...)
 		mcpTools = append(mcpTools, p.getDevTeamTools()...)
-		mcpTools = append(mcpTools, p.getDevChannelTools()...)
 	}
 
 	for _, mcpTool := range mcpTools {
