@@ -5,6 +5,7 @@ package anthropic
 
 import (
 	"bytes"
+	"encoding/json"
 	"testing"
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
@@ -225,6 +226,66 @@ func TestConversationToMessages(t *testing.T) {
 						anthropicSDK.NewImageBlockBase64("image/webp", "aW1hZ2UtMw=="),
 						anthropicSDK.NewTextBlock("[Unsupported image type: image/tiff]"),
 						anthropicSDK.NewImageBlockBase64("image/gif", "aW1hZ2UtNQ=="),
+					},
+				},
+			},
+		},
+		{
+			name: "bot message with tool use and reasoning",
+			conversation: []llm.Post{
+				{Role: llm.PostRoleUser, Message: "What's the weather?"},
+				{
+					Role:               llm.PostRoleBot,
+					Message:            "Let me check that for you.",
+					Reasoning:          "I need to use the weather tool to get current weather information for the user's location.",
+					ReasoningSignature: "test_signature_abc123",
+					ToolUse: []llm.ToolCall{
+						{
+							ID:        "call_123",
+							Name:      "get_weather",
+							Arguments: json.RawMessage(`{"location": "New York"}`),
+							Result:    "Sunny, 72°F",
+							Status:    llm.ToolCallStatusSuccess,
+						},
+					},
+				},
+			},
+			wantSystem: "",
+			wantMessages: []anthropicSDK.MessageParam{
+				{
+					Role: anthropicSDK.MessageParamRoleUser,
+					Content: []anthropicSDK.ContentBlockParamUnion{
+						anthropicSDK.NewTextBlock("What's the weather?"),
+					},
+				},
+				{
+					Role: anthropicSDK.MessageParamRoleAssistant,
+					Content: []anthropicSDK.ContentBlockParamUnion{
+						// Thinking block should come first with signature
+						anthropicSDK.NewThinkingBlock("test_signature_abc123", "I need to use the weather tool to get current weather information for the user's location."),
+						anthropicSDK.NewTextBlock("Let me check that for you."),
+						anthropicSDK.NewToolUseBlock("call_123", json.RawMessage(`{"location": "New York"}`), "get_weather"),
+					},
+				},
+				{
+					Role: anthropicSDK.MessageParamRoleUser,
+					Content: []anthropicSDK.ContentBlockParamUnion{
+						anthropicSDK.NewToolResultBlock("call_123", "Sunny, 72°F", false),
+					},
+				},
+			},
+		},
+		{
+			name: "conversation without system message",
+			conversation: []llm.Post{
+				{Role: llm.PostRoleUser, Message: "Generate a title for this: Hello world"},
+			},
+			wantSystem: "",
+			wantMessages: []anthropicSDK.MessageParam{
+				{
+					Role: anthropicSDK.MessageParamRoleUser,
+					Content: []anthropicSDK.ContentBlockParamUnion{
+						anthropicSDK.NewTextBlock("Generate a title for this: Hello world"),
 					},
 				},
 			},

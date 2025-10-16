@@ -31,6 +31,12 @@ type TokenUsage struct {
 	OutputTokens int64 `json:"output_tokens"`
 }
 
+// ReasoningData represents the complete reasoning/thinking data including signature
+type ReasoningData struct {
+	Text      string // The reasoning/thinking text content
+	Signature string // Opaque verification signature from the model
+}
+
 // TextStreamEvent represents an event in the text stream
 type TextStreamEvent struct {
 	Type  EventType

@@ -25,10 +25,12 @@ const (
 )
 
 type Post struct {
-	Role    PostRole
-	Message string
-	Files   []File
-	ToolUse []ToolCall
+	Role               PostRole
+	Message            string
+	Files              []File
+	ToolUse            []ToolCall
+	Reasoning          string // Extended thinking/reasoning content from models that support it
+	ReasoningSignature string // Signature for thinking blocks (opaque verification field)
 }
 
 type CompletionRequest struct {
