@@ -169,7 +169,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     setShowReasoning(true);
                     setIsReasoningLoading(true);
 
-                    // Don't set generating=true here - only set it when actual content starts streaming
+                    // Explicitly set generating to false to prevent blinking cursor during reasoning
+                    setGenerating(false);
                     setPrecontent(false); // Clear "Starting..." when reasoning begins
                     return;
                 }
@@ -297,9 +298,12 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         }
     }
 
-    const showRegenerate = !generating && requesterIsCurrentUser && !isNoShowRegen;
-    const showPostbackButton = !generating && requesterIsCurrentUser && isTranscriptionResult;
-    const showStopGeneratingButton = generating && requesterIsCurrentUser;
+    // Consider both generating and reasoning loading states for determining if generation is in progress
+    const isGenerationInProgress = generating || isReasoningLoading;
+
+    const showRegenerate = !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
+    const showPostbackButton = !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
+    const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
     const hasContent = message !== '' || reasoningSummary !== '';
     const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
 
@@ -333,7 +337,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 message={message}
                 channelID={props.post.channel_id}
                 postID={props.post.id}
-                showCursor={generating}
+                showCursor={generating && !precontent}
                 annotations={annotations.length > 0 ? annotations : undefined} // eslint-disable-line no-undefined
             />
             {props.post.props?.[SearchResultsPropKey] && (
