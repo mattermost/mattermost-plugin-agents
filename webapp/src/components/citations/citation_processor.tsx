@@ -29,7 +29,7 @@ export function replaceCitationMarkers(element: any, annotations: Annotation[]):
         const cleanedElement = element.replace(openAICitationRegex, '').replace(/\s+\./g, '.');
 
         // Use regex to find all citation markers at once
-        const markerRegex = (/!!CITE(\d+)!!/g);
+        const markerRegex = /!!CITE(\d+)!!/g;
         const matches = [...cleanedElement.matchAll(markerRegex)];
 
         if (matches.length > 0) {
