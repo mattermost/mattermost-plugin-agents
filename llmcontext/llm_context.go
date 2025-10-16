@@ -211,8 +211,8 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 		c.BotModel = bot.GetConfig().Service.DefaultModel
 		c.CustomInstructions = bot.GetConfig().CustomInstructions
 		// Set the bot user ID for AI-generated content tracking
-		if bot.GetMMBot() != nil {
-			c.BotUserID = bot.GetMMBot().UserId
+		if mmbot := bot.GetMMBot(); mmbot != nil {
+			c.BotUserID = mmbot.UserId
 		}
 	}
 }
