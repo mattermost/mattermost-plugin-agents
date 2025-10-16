@@ -21,6 +21,8 @@ const (
 	EventTypeReasoning
 	// EventTypeReasoningEnd represents the end of reasoning summary
 	EventTypeReasoningEnd
+	// EventTypeAnnotations represents annotations/citations in the response
+	EventTypeAnnotations
 	// EventTypeUsage represents token usage data
 	EventTypeUsage
 )
@@ -79,9 +81,12 @@ func (t *TextStreamResult) ReadAll() (string, error) {
 				return "", err
 			}
 		case EventTypeEnd:
-			break
+			return result, nil
 		case EventTypeToolCalls:
 			return result, fmt.Errorf("Tool calls are not supported for read all")
+		case EventTypeAnnotations:
+			// Annotations are ignored in ReadAll, continue reading text
+			continue
 		}
 	}
 

@@ -9,6 +9,7 @@ export interface PostUpdateWebsocketMessage {
     control?: string
     tool_call?: string
     reasoning?: string
+    annotations?: string
 }
 
 export enum ToolCallStatus {

@@ -15,6 +15,7 @@ import {PostMessagePreview} from '@/mm_webapp';
 import {SearchSources} from '../search_sources';
 import PostText from '../post_text';
 import ToolApprovalSet from '../tool_approval_set';
+import {Annotation} from '../citations/types';
 
 import {
     LLMBotPostProps,
@@ -72,6 +73,20 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [isReasoningCollapsed, setIsReasoningCollapsed] = useState(true);
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
 
+    // State for annotations/citations
+    // Initialize from persisted annotations if available
+    const persistedAnnotations = props.post.props?.annotations || '';
+    const [annotations, setAnnotations] = useState<Annotation[]>(() => {
+        if (persistedAnnotations) {
+            try {
+                return JSON.parse(persistedAnnotations);
+            } catch (error) {
+                return [];
+            }
+        }
+        return [];
+    });
+
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
 
@@ -96,13 +111,25 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setIsReasoningLoading(false);
             }
 
+            // Initialize annotations from persisted data
+            const persistedAnnotations = props.post.props?.annotations || '';
+            if (persistedAnnotations) {
+                try {
+                    setAnnotations(JSON.parse(persistedAnnotations));
+                } catch (error) {
+                    setAnnotations([]);
+                }
+            } else {
+                setAnnotations([]);
+            }
+
             // Set precontent if this is a fresh empty post (no content and no reasoning)
             // Otherwise reset to false (historical posts)
             setPrecontent(props.post.message === '' && persistedReasoning === '');
 
             previousPostIdRef.current = props.post.id;
         }
-    }, [props.post.id, props.post.props?.reasoning_summary, props.post.message]);
+    }, [props.post.id, props.post.props?.reasoning_summary, props.post.props?.annotations, props.post.message]);
 
     // Update tool calls from props when available
     useEffect(() => {
@@ -168,6 +195,18 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     return;
                 }
 
+                // Handle annotation events from the websocket
+                if (data.control === 'annotations' && data.annotations) {
+                    try {
+                        const parsedAnnotations = JSON.parse(data.annotations);
+                        setAnnotations(parsedAnnotations);
+                    } catch (error) {
+                        // Handle error silently
+                        setError('Error parsing annotation data');
+                    }
+                    return;
+                }
+
                 // Handle regular post updates
                 if (data.next && !stoppedRef.current) {
                     setGenerating(true);
@@ -221,6 +260,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setShowReasoning(false);
         setIsReasoningCollapsed(true);
         setIsReasoningLoading(false);
+
+        // Clear annotations/citations when regenerating
+        setAnnotations([]);
+
         doRegenerate(props.post.id);
     };
 
@@ -291,6 +334,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 channelID={props.post.channel_id}
                 postID={props.post.id}
                 showCursor={generating}
+                annotations={annotations.length > 0 ? annotations : undefined} // eslint-disable-line no-undefined
             />
             {props.post.props?.[SearchResultsPropKey] && (
                 <SearchSources
@@ -321,4 +365,3 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         </PostBody>
     );
 };
-
