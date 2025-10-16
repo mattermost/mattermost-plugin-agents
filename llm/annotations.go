@@ -9,7 +9,6 @@ type AnnotationType string
 const (
 	// AnnotationTypeURLCitation represents a web search citation
 	AnnotationTypeURLCitation AnnotationType = "url_citation"
-	// Future annotation types can be added here (e.g., "tool_search", "vector_search")
 )
 
 // Annotation represents an inline annotation/citation in the response text
