@@ -257,9 +257,40 @@ func newMockPluginAPI() *mockPluginAPI {
 	mockAPI.On("LogInfo", anyArgs...).Maybe()
 	mockAPI.On("LogWarn", anyArgs...).Maybe()
 	mockAPI.On("LogError", anyArgs...).Maybe()
+
+	// Mock KV operations for session storage
 	mockAPI.On("KVGet", mock.AnythingOfType("string")).Return(([]byte)(nil), (*model.AppError)(nil)).Maybe()
 	mockAPI.On("KVSet", mock.AnythingOfType("string"), mock.Anything).Return(true, (*model.AppError)(nil)).Maybe()
 	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return((*model.AppError)(nil)).Maybe()
+
+	// Mock User.Get for createEmbeddedSession
+	mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{
+		Id:    "test-user-id",
+		Roles: "system_user",
+	}, (*model.AppError)(nil)).Maybe()
+
+	// Mock Session.Create for createEmbeddedSession
+	mockAPI.On("CreateSession", mock.AnythingOfType("*model.Session")).Return(func(session *model.Session) *model.Session {
+		// Generate a session ID if not set
+		if session.Id == "" {
+			session.Id = model.NewId()
+		}
+		if session.Token == "" {
+			session.Token = model.NewId()
+		}
+		return session
+	}, (*model.AppError)(nil)).Maybe()
+
+	// Mock Session.Get for embedded session validation
+	mockAPI.On("GetSession", mock.AnythingOfType("string")).Return((*model.Session)(nil), (*model.AppError)(nil)).Maybe()
+
+	// Mock Session.ExtendExpiry for session renewal
+	mockAPI.On("ExtendSessionExpiry", mock.AnythingOfType("string"), mock.AnythingOfType("int64")).Return((*model.AppError)(nil)).Maybe()
+
+	// Mock Configuration.GetConfig for sessionLengthDuration
+	defaultConfig := &model.Config{}
+	defaultConfig.SetDefaults()
+	mockAPI.On("GetConfig").Return(defaultConfig).Maybe()
 
 	return &mockPluginAPI{
 		API:      mockAPI,
