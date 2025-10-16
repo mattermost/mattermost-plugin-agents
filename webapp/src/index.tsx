@@ -19,7 +19,8 @@ import IconThreadSummarization from './components/assets/icon_thread_summarizati
 import IconReactForMe from './components/assets/icon_react_for_me';
 import RHS from './components/rhs/rhs';
 import Config from './components/system_console/config';
-import {doReaction, doRunSearch, doThreadAnalysis, getAIDirectChannel} from './client';
+import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis, getAIDirectChannel} from './client';
+
 import {setOpenRHSAction} from './redux_actions';
 import PostEventListener from './websocket';
 import {BotsHandler, setupRedux} from './redux';
@@ -64,6 +65,14 @@ export default class Plugin {
     public async initialize(registry: any, store: WebappStore) {
         setupRedux(registry, store);
         this.store = store;
+
+        let siteURL = store.getState().entities.general.config.SiteURL;
+
+        // Site URL should always be set by this point if the workspace is to be properly functional, but fall back to the window.location.origin just in case
+        if (!siteURL) {
+            siteURL = window.location.origin;
+        }
+        setSiteURL(siteURL);
 
         registry.registerDesktopNotificationHook(this.blockFastBotNotifications.bind(this));
 

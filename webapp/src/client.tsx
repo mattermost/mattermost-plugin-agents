@@ -10,8 +10,12 @@ import manifest from './manifest';
 
 const Client4 = new Client4Class();
 
+export function setSiteURL(siteURL: string) {
+    Client4.setUrl(siteURL);
+}
+
 function baseRoute(): string {
-    return `/plugins/${manifest.id}`;
+    return `${Client4.url}/plugins/${manifest.id}`;
 }
 
 function postRoute(postid: string): string {
