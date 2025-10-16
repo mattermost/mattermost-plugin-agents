@@ -246,7 +246,7 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 	message := anthropicSDK.Message{}
 	var thinkingBuffer strings.Builder
 	var signatureBuffer strings.Builder
-	var isThinkingComplete bool
+	var currentBlockIsThinking bool
 
 	for stream.Next() {
 		event := stream.Current()
@@ -260,6 +260,14 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 
 		// Stream text and thinking content immediately
 		switch eventVariant := event.AsAny().(type) { //nolint:gocritic
+		case anthropicSDK.ContentBlockStartEvent:
+			// Check what type of content block is starting
+			if eventVariant.ContentBlock.Type == "thinking" {
+				currentBlockIsThinking = true
+			} else {
+				currentBlockIsThinking = false
+			}
+
 		case anthropicSDK.ContentBlockDeltaEvent:
 			switch deltaVariant := eventVariant.Delta.AsAny().(type) { //nolint:gocritic
 			case anthropicSDK.TextDelta:
@@ -282,8 +290,8 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 
 		case anthropicSDK.ContentBlockStopEvent:
 			// Check if this is the end of a thinking block
-			if thinkingBuffer.Len() > 0 && !isThinkingComplete {
-				// Send the complete thinking/reasoning with signature
+			if currentBlockIsThinking && thinkingBuffer.Len() > 0 {
+				// Send the complete thinking/reasoning for this block with signature
 				state.output <- llm.TextStreamEvent{
 					Type: llm.EventTypeReasoningEnd,
 					Value: llm.ReasoningData{
@@ -291,7 +299,10 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 						Signature: signatureBuffer.String(),
 					},
 				}
-				isThinkingComplete = true
+				// Reset the buffers for the next potential thinking block
+				thinkingBuffer.Reset()
+				signatureBuffer.Reset()
+				currentBlockIsThinking = false
 			}
 		}
 	}
@@ -304,8 +315,8 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 		return
 	}
 
-	// If we haven't sent the complete thinking yet, send it now before processing tool calls
-	if !isThinkingComplete && thinkingBuffer.Len() > 0 {
+	// If we have any unsent thinking (edge case), send it now before processing tool calls
+	if thinkingBuffer.Len() > 0 {
 		state.output <- llm.TextStreamEvent{
 			Type: llm.EventTypeReasoningEnd,
 			Value: llm.ReasoningData{
@@ -336,6 +347,15 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 		}
 	}
 
+	// Extract annotations/citations from the message content
+	annotations := a.extractAnnotations(message)
+	if len(annotations) > 0 {
+		state.output <- llm.TextStreamEvent{
+			Type:  llm.EventTypeAnnotations,
+			Value: annotations,
+		}
+	}
+
 	// Extract and send token usage data
 	usage := llm.TokenUsage{
 		InputTokens:  message.Usage.InputTokens,
@@ -351,6 +371,67 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 		Type:  llm.EventTypeEnd,
 		Value: nil,
 	}
+}
+
+// extractAnnotations extracts citations from Anthropic's message content blocks
+func (a *Anthropic) extractAnnotations(message anthropicSDK.Message) []llm.Annotation {
+	var annotations []llm.Annotation
+
+	// Track text position as we build the complete message
+	type textBlockInfo struct {
+		startPos  int
+		endPos    int
+		text      string
+		citations []anthropicSDK.TextCitationUnion
+	}
+	var textBlocks []textBlockInfo
+	var completeText strings.Builder
+
+	// First pass: build complete text and track block positions
+	for _, block := range message.Content {
+		if block.Type == "text" {
+			blockVariant := block.AsAny()
+			if textBlock, ok := blockVariant.(anthropicSDK.TextBlock); ok {
+				startPos := completeText.Len()
+				completeText.WriteString(textBlock.Text)
+				endPos := completeText.Len()
+
+				textBlocks = append(textBlocks, textBlockInfo{
+					startPos:  startPos,
+					endPos:    endPos,
+					text:      textBlock.Text,
+					citations: textBlock.Citations,
+				})
+			}
+		}
+	}
+
+	citationIndex := 1
+
+	// Second pass: extract citations from text blocks
+	for _, blockInfo := range textBlocks {
+		if len(blockInfo.citations) > 0 {
+			for _, citation := range blockInfo.citations {
+				citationVariant := citation.AsAny()
+				if webSearchCitation, ok := citationVariant.(anthropicSDK.CitationsWebSearchResultLocation); ok {
+					// Annotate the entire text block that contains the citation
+					// This is appropriate since citations in Anthropic are associated with text blocks
+					annotations = append(annotations, llm.Annotation{
+						Type:       llm.AnnotationTypeURLCitation,
+						StartIndex: blockInfo.startPos,
+						EndIndex:   blockInfo.endPos,
+						URL:        webSearchCitation.URL,
+						Title:      webSearchCitation.Title,
+						CitedText:  webSearchCitation.CitedText,
+						Index:      citationIndex,
+					})
+					citationIndex++
+				}
+			}
+		}
+	}
+
+	return annotations
 }
 
 func (a *Anthropic) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
