@@ -4,6 +4,7 @@
 package llm
 
 type ServiceConfig struct {
+	ID           string `json:"id"`
 	Name         string `json:"name"`
 	Type         string `json:"type"`
 	APIKey       string `json:"apiKey"`
@@ -48,11 +49,15 @@ const (
 )
 
 type BotConfig struct {
-	ID                 string             `json:"id"`
-	Name               string             `json:"name"`
-	DisplayName        string             `json:"displayName"`
-	CustomInstructions string             `json:"customInstructions"`
-	Service            ServiceConfig      `json:"service"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	DisplayName        string `json:"displayName"`
+	CustomInstructions string `json:"customInstructions"`
+	ServiceID          string `json:"serviceID"`
+
+	// Service is deprecated and kept only for backwards compatibility during migration.
+	Service *ServiceConfig `json:"service,omitempty"`
+
 	EnableVision       bool               `json:"enableVision"`
 	DisableTools       bool               `json:"disableTools"`
 	ChannelAccessLevel ChannelAccessLevel `json:"channelAccessLevel"`
@@ -64,8 +69,14 @@ type BotConfig struct {
 }
 
 func (c *BotConfig) IsValid() bool {
-	// Basic validation
-	if c.Name == "" || c.DisplayName == "" || c.Service.Type == "" {
+	// Basic validation - service validation happens separately
+	// Note: ServiceID can be empty if Service is embedded (deprecated)
+	if c.Name == "" || c.DisplayName == "" {
+		return false
+	}
+
+	// Either ServiceID must be set (new way) or Service must be embedded (deprecated)
+	if c.ServiceID == "" && c.Service == nil {
 		return false
 	}
 
@@ -77,20 +88,30 @@ func (c *BotConfig) IsValid() bool {
 		return false
 	}
 
+	return true
+}
+
+// IsValidService validates a service configuration
+func IsValidService(service ServiceConfig) bool {
+	// Basic validation
+	if service.ID == "" || service.Type == "" {
+		return false
+	}
+
 	// Service-specific validation
-	switch c.Service.Type {
+	switch service.Type {
 	case ServiceTypeOpenAI:
-		return c.Service.APIKey != ""
+		return service.APIKey != ""
 	case ServiceTypeOpenAICompatible:
-		return c.Service.APIURL != ""
+		return service.APIURL != ""
 	case ServiceTypeAzure:
-		return c.Service.APIKey != "" && c.Service.APIURL != ""
+		return service.APIKey != "" && service.APIURL != ""
 	case ServiceTypeAnthropic:
-		return c.Service.APIKey != ""
+		return service.APIKey != ""
 	case ServiceTypeASage:
-		return c.Service.APIKey != ""
+		return service.APIKey != ""
 	case ServiceTypeCohere:
-		return c.Service.APIKey != ""
+		return service.APIKey != ""
 	default:
 		return false
 	}

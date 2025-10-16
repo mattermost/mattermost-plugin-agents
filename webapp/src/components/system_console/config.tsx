@@ -27,6 +27,7 @@ type Config = {
     enableTokenUsageLogging: boolean,
     enableCallSummary: boolean,
     allowedUpstreamHostnames: string,
+    allowUnsafeLinks: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig
 }
@@ -77,6 +78,7 @@ const defaultConfig = {
     transcriptBackend: '',
     enableLLMTrace: false,
     enableTokenUsageLogging: false,
+    allowUnsafeLinks: false,
     embeddingSearchConfig: {
         type: 'disabled',
         vectorStore: {
@@ -217,6 +219,15 @@ const Config = (props: Props) => {
                         value={value.allowedUpstreamHostnames}
                         onChange={(e) => props.onChange(props.id, {...value, allowedUpstreamHostnames: e.target.value})}
                         helptext={intl.formatMessage({defaultMessage: 'Comma separated list of hostnames that LLMs are allowed to contact when using tools. Supports wildcards like *.mydomain.com. For instance to allow JIRA tool use to the Mattermost JIRA instance use mattermost.atlassian.net'})}
+                    />
+                    <BooleanItem
+                        label={<FormattedMessage defaultMessage='Render AI-generated links'/>}
+                        value={Boolean(value.allowUnsafeLinks)}
+                        onChange={(to) => {
+                            props.onChange(props.id, {...value, allowUnsafeLinks: to});
+                            props.setSaveNeeded();
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, AI responses may contain clickable links, including potentially malicious destinations. Enable only if you trust the LLM output and have mitigations for exfiltration risks.'})}
                     />
                 </ItemList>
             </Panel>
