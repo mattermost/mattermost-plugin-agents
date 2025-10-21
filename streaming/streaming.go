@@ -309,14 +309,6 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 						p.mmClient.LogDebug("Added reasoning signature to post props", "post_id", post.Id)
 					}
 					reasoningBuffer.Reset()
-				} else if reasoningText, ok := event.Value.(string); ok {
-					// Backward compatibility: handle old string format
-					p.sendPostStreamingReasoningEvent(post, reasoningText, "reasoning_summary_done")
-					if reasoningText != "" {
-						post.AddProp(ReasoningSummaryProp, reasoningText)
-						p.mmClient.LogDebug("Added reasoning summary to post props (legacy format)", "post_id", post.Id, "reasoning_length", len(reasoningText))
-					}
-					reasoningBuffer.Reset()
 				}
 			case llm.EventTypeToolCalls:
 				// Handle tool call event
