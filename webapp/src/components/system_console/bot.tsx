@@ -215,12 +215,7 @@ const Bot = (props: Props) => {
                             return (
                                 <>
                                     <BooleanItem
-                                        label={
-                                            <Horizontal>
-                                                <FormattedMessage defaultMessage='Enable Vision'/>
-                                                <Pill><FormattedMessage defaultMessage='BETA'/></Pill>
-                                            </Horizontal>
-                                        }
+                                        label={intl.formatMessage({defaultMessage: 'Enable Vision'})}
                                         value={props.bot.enableVision}
                                         onChange={(to: boolean) => props.onChange({...props.bot, enableVision: to})}
                                         helpText={intl.formatMessage({defaultMessage: 'Enable Vision to allow the bot to process images. Requires a compatible model.'})}

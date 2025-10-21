@@ -202,6 +202,40 @@ func migrateServicesToBots(pluginAPI *pluginapi.Client, cfg config.Config) (bool
 	return true, *existingConfig, nil
 }
 
+func migrateEnableVisionByDefault(pluginAPI *pluginapi.Client, cfg config.Config) (bool, config.Config, error) {
+	migrationDone := false
+	_ = pluginAPI.KV.Get("migrate_enable_vision_by_default_done", &migrationDone)
+	if migrationDone {
+		return false, cfg, nil
+	}
+
+	pluginAPI.Log.Debug("Migrating to enable vision by default for all bots")
+
+	existingConfig := cfg.Clone()
+
+	// If no bots, nothing to migrate
+	if len(existingConfig.Bots) == 0 {
+		_, _ = pluginAPI.KV.Set("migrate_enable_vision_by_default_done", true)
+		return false, cfg, nil
+	}
+
+	// Enable vision for all bots that don't have it enabled
+	changed := false
+	for i := range existingConfig.Bots {
+		if !existingConfig.Bots[i].EnableVision {
+			existingConfig.Bots[i].EnableVision = true
+			changed = true
+		}
+	}
+
+	if !changed {
+		_, _ = pluginAPI.KV.Set("migrate_enable_vision_by_default_done", true)
+		return false, cfg, nil
+	}
+
+	return true, *existingConfig, nil
+}
+
 // runAllMigrations executes all migrations under a single mutex to prevent race conditions
 // in multi-instance deployments. Persists the updated configuration and marks migrations as
 // complete only after successful save. Returns the final configuration and any errors encountered.
@@ -238,6 +272,17 @@ func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Clie
 		pluginAPI.Log.Info("Migration completed: separate services from bots")
 	}
 
+	didMigrateEnableVisionByDefault := false
+	didMigrateEnableVisionByDefault, newCfg, migrateErr = migrateEnableVisionByDefault(pluginAPI, cfg)
+	if migrateErr != nil {
+		return cfg, false, fmt.Errorf("failed to migrate enable vision by default: %w", migrateErr)
+	}
+	if didMigrateEnableVisionByDefault {
+		changed = true
+		cfg = newCfg
+		pluginAPI.Log.Info("Migration completed: enable vision by default")
+	}
+
 	// If any migrations ran, persist the config and mark them as complete
 	if changed {
 		// Wrap config in the configuration struct that has the proper nesting
@@ -265,6 +310,11 @@ func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Clie
 		if didMigrateSeparateServicesFromBots {
 			if _, kvErr := pluginAPI.KV.Set("migrate_separate_services_from_bots_done", true); kvErr != nil {
 				pluginAPI.Log.Error("failed to mark migration as done", "key", "migrate_separate_services_from_bots_done", "error", kvErr)
+			}
+		}
+		if didMigrateEnableVisionByDefault {
+			if _, kvErr := pluginAPI.KV.Set("migrate_enable_vision_by_default_done", true); kvErr != nil {
+				pluginAPI.Log.Error("failed to mark migration as done", "key", "migrate_enable_vision_by_default_done", "error", kvErr)
 			}
 		}
 
