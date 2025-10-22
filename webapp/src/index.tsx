@@ -30,6 +30,7 @@ import SearchButton from './components/search_button';
 import {doSelectPost} from './hooks';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
+import {useBotlist} from './bots';
 
 type WebappStore = Store<GlobalState, Action<Record<string, unknown>>>
 
@@ -53,6 +54,17 @@ const RHSTitle = () => {
             {'Agents'}
         </RHSTitleContainer>
     );
+};
+
+const ChannelHeaderIcon = () => {
+    const {bots} = useBotlist();
+
+    // Only show icon if user has access to at least one bot
+    if (!bots || bots.length === 0) {
+        return null;
+    }
+
+    return <IconAIContainer src={aiIcon}/>;
 };
 
 export default class Plugin {
@@ -143,7 +155,7 @@ export default class Plugin {
 
         registry.registerAdminConsoleCustomSetting('Config', Config);
         if (rhs) {
-            registry.registerChannelHeaderButtonAction(<IconAIContainer src={aiIcon}/>, () => {
+            registry.registerChannelHeaderButtonAction(<ChannelHeaderIcon/>, () => {
                 store.dispatch(rhs.toggleRHSPlugin);
             },
             'Agents',

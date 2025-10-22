@@ -18,7 +18,7 @@ import IconSparkleQuestion from './assets/icon_sparkle_question';
 import IconThreadSummarization from './assets/icon_thread_summarization';
 
 import DotMenu, {DropdownMenu, DropdownMenuItem} from './dot_menu';
-import {Divider, DropdownChannelBlocked, DropdownInfoOnlyVisibleToYou} from './dropdown_info';
+import {Divider, DropdownInfoOnlyVisibleToYou} from './dropdown_info';
 import {DropdownBotSelector} from './bot_selector';
 
 const AskAIButton = styled(DotMenu)`
@@ -84,7 +84,7 @@ interface Props {
 const UnreadsSumarize = (props: Props) => {
     const selectPost = useSelectPost();
     const isBasicsLicensed = useIsBasicsLicensed();
-    const {bots, activeBot, setActiveBot, wasFiltered} = useBotlistForChannel(props.channelId);
+    const {bots, activeBot, setActiveBot} = useBotlistForChannel(props.channelId);
 
     const summarizeNew = async () => {
         const result = await getChannelInterval(props.channelId, props.lastViewedAt, 0, 'summarize_unreads', '', activeBot?.username || '');
@@ -106,21 +106,7 @@ const UnreadsSumarize = (props: Props) => {
     }
 
     if (bots && bots.length === 0) {
-        if (wasFiltered) {
-            // Filtered by permissions state
-            return (
-                <AskAIButton
-                    icon={<><SmallerIconAI/>
-                        <FormattedMessage defaultMessage=' Ask AI'/>
-                    </>}
-                    dropdownMenu={StyledDropdownMenu}
-                >
-                    <DropdownChannelBlocked/>
-                </AskAIButton>
-            );
-        }
-
-        // Unconfigured state
+        // No bots available (either unconfigured or filtered by permissions)
         return null;
     }
 
