@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
@@ -32,7 +33,9 @@ type LLMBridgePost struct {
 
 // LLMBridgeCompletionRequest represents the request body for completion endpoints
 type LLMBridgeCompletionRequest struct {
-	Posts []LLMBridgePost `json:"posts"`
+	Posts              []LLMBridgePost        `json:"posts"`
+	MaxGeneratedTokens int                    `json:"max_generated_tokens,omitempty"`
+	JSONOutputFormat   map[string]interface{} `json:"json_output_format,omitempty"`
 }
 
 // LLMBridgeCompletionResponse represents the response for non-streaming endpoints
@@ -95,6 +98,37 @@ func (a *API) convertLLMBridgeRequestToInternal(req LLMBridgeCompletionRequest) 
 	}, nil
 }
 
+// convertRequestToLLMOptions converts the API request options to llm.LanguageModelOption
+func (a *API) convertRequestToLLMOptions(req LLMBridgeCompletionRequest) ([]llm.LanguageModelOption, error) {
+	var options []llm.LanguageModelOption
+
+	// Add MaxGeneratedTokens option if provided
+	if req.MaxGeneratedTokens != 0 {
+		options = append(options, llm.WithMaxGeneratedTokens(req.MaxGeneratedTokens))
+	}
+
+	// Add JSONOutputFormat option if provided
+	if len(req.JSONOutputFormat) > 0 {
+		// Convert map to *jsonschema.Schema
+		schemaJSON, err := json.Marshal(req.JSONOutputFormat)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal JSON schema: %w", err)
+		}
+
+		var schema jsonschema.Schema
+		if err := json.Unmarshal(schemaJSON, &schema); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal JSON schema: %w", err)
+		}
+
+		// Add the option directly using a closure
+		options = append(options, func(cfg *llm.LanguageModelConfig) {
+			cfg.JSONOutputFormat = &schema
+		})
+	}
+
+	return options, nil
+}
+
 // getBotByAgent finds a bot by its username (agent name)
 func (a *API) getBotByAgent(agent string) (*bots.Bot, error) {
 	bot := a.bots.GetBotByUsername(agent)
@@ -116,7 +150,7 @@ func (a *API) getBotByService(service string) (*bots.Bot, error) {
 }
 
 // streamLLMResponse handles streaming LLM responses as Server-Sent Events
-func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest) {
+func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest, opts ...llm.LanguageModelOption) {
 	// Start streaming response
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -124,7 +158,7 @@ func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.Co
 	c.Status(http.StatusOK)
 
 	// Make the streaming LLM call
-	streamResult, err := bot.LLM().ChatCompletion(llmRequest)
+	streamResult, err := bot.LLM().ChatCompletion(llmRequest, opts...)
 	if err != nil {
 		// If streaming hasn't started, we can still send a JSON error
 		errorEvent := llm.TextStreamEvent{
@@ -159,9 +193,9 @@ func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.Co
 }
 
 // handleNonStreamingLLMResponse handles non-streaming LLM responses
-func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest) {
+func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest, opts ...llm.LanguageModelOption) {
 	// Make the non-streaming LLM call
-	response, err := bot.LLM().ChatCompletionNoStream(llmRequest)
+	response, err := bot.LLM().ChatCompletionNoStream(llmRequest, opts...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, LLMBridgeErrorResponse{
 			Error: fmt.Sprintf("failed to complete LLM request: %v", err),
@@ -217,8 +251,17 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
+	// Convert request options
+	opts, err := a.convertRequestToLLMOptions(req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+			Error: fmt.Sprintf("invalid options: %v", err),
+		})
+		return
+	}
+
 	// Stream the response
-	a.streamLLMResponse(c, bot, llmRequest)
+	a.streamLLMResponse(c, bot, llmRequest, opts...)
 }
 
 // handleAgentCompletionNoStream handles non-streaming completion requests for a specific agent
@@ -261,8 +304,17 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		return
 	}
 
+	// Convert request options
+	opts, err := a.convertRequestToLLMOptions(req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+			Error: fmt.Sprintf("invalid options: %v", err),
+		})
+		return
+	}
+
 	// Handle non-streaming response
-	a.handleNonStreamingLLMResponse(c, bot, llmRequest)
+	a.handleNonStreamingLLMResponse(c, bot, llmRequest, opts...)
 }
 
 // handleServiceCompletionStreaming handles streaming completion requests for a specific service
@@ -308,8 +360,17 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 		return
 	}
 
+	// Convert request options
+	opts, err := a.convertRequestToLLMOptions(req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+			Error: fmt.Sprintf("invalid options: %v", err),
+		})
+		return
+	}
+
 	// Stream the response
-	a.streamLLMResponse(c, bot, llmRequest)
+	a.streamLLMResponse(c, bot, llmRequest, opts...)
 }
 
 // handleServiceCompletionNoStream handles non-streaming completion requests for a specific service
@@ -355,6 +416,15 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 		return
 	}
 
+	// Convert request options
+	opts, err := a.convertRequestToLLMOptions(req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+			Error: fmt.Sprintf("invalid options: %v", err),
+		})
+		return
+	}
+
 	// Handle non-streaming response
-	a.handleNonStreamingLLMResponse(c, bot, llmRequest)
+	a.handleNonStreamingLLMResponse(c, bot, llmRequest, opts...)
 }

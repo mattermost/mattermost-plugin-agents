@@ -108,7 +108,9 @@ type File struct {
 
 // CompletionRequest represents a completion request
 type CompletionRequest struct {
-	Posts []Post `json:"posts"`
+	Posts              []Post                 `json:"posts"`
+	MaxGeneratedTokens int                    `json:"max_generated_tokens,omitempty"`
+	JSONOutputFormat   map[string]interface{} `json:"json_output_format,omitempty"`
 }
 
 // CompletionResponse represents a non-streaming completion response
