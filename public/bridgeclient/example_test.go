@@ -141,20 +141,14 @@ func ExampleCompletionRequest_withFiles() {
 	var p MyPlugin
 	llmClient := bridgeclient.NewClient(p.API)
 
-	// Example with a file attachment (base64 encoded)
+	// Example with a file attachment using Mattermost file ID
+	// The file must already be uploaded to Mattermost
 	response, err := llmClient.AgentCompletion("gpt4", bridgeclient.CompletionRequest{
 		Posts: []bridgeclient.Post{
 			{
 				Role:    "user",
 				Message: "What's in this image?",
-				Files: []bridgeclient.File{
-					{
-						ID:       "file123",
-						Name:     "image.png",
-						MimeType: "image/png",
-						Data:     "base64encodeddata...",
-					},
-				},
+				FileIDs: []string{"abc123def456"}, // Mattermost file IDs
 			},
 		},
 	})

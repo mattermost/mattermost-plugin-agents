@@ -93,17 +93,9 @@ func (a *appAPIRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 
 // Post represents a single message in the conversation
 type Post struct {
-	Role    string `json:"role"` // user|assistant|system
-	Message string `json:"message"`
-	Files   []File `json:"files,omitempty"`
-}
-
-// File represents a file attachment
-type File struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	MimeType string `json:"mime_type"`
-	Data     string `json:"data"` // base64 encoded
+	Role    string   `json:"role"`               // user|assistant|system
+	Message string   `json:"message"`            // message content
+	FileIDs []string `json:"file_ids,omitempty"` // Mattermost file IDs
 }
 
 // CompletionRequest represents a completion request

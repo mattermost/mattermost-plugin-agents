@@ -4,7 +4,6 @@
 package api
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -37,19 +36,29 @@ func (a *API) convertLLMBridgeRequestToInternal(req bridgeclient.CompletionReque
 
 		// Convert files
 		var files []llm.File
-		if len(apiPost.Files) > 0 {
-			files = make([]llm.File, len(apiPost.Files))
-			for j, apiFile := range apiPost.Files {
-				// Decode base64 data
-				data, err := base64.StdEncoding.DecodeString(apiFile.Data)
+		if len(apiPost.FileIDs) > 0 {
+			files = make([]llm.File, len(apiPost.FileIDs))
+			for j, fileID := range apiPost.FileIDs {
+				if fileID == "" {
+					return llm.CompletionRequest{}, fmt.Errorf("file ID cannot be empty for file %d in post %d", j, i)
+				}
+
+				// Get file info
+				fileInfo, err := a.mmClient.GetFileInfo(fileID)
 				if err != nil {
-					return llm.CompletionRequest{}, fmt.Errorf("failed to decode file data for file %s: %w", apiFile.Name, err)
+					return llm.CompletionRequest{}, fmt.Errorf("failed to get file info for file ID %s: %w", fileID, err)
+				}
+
+				// Get file reader
+				fileReader, err := a.mmClient.GetFile(fileID)
+				if err != nil {
+					return llm.CompletionRequest{}, fmt.Errorf("failed to get file for file ID %s: %w", fileID, err)
 				}
 
 				files[j] = llm.File{
-					MimeType: apiFile.MimeType,
-					Size:     int64(len(data)),
-					Reader:   strings.NewReader(string(data)),
+					MimeType: fileInfo.MimeType,
+					Size:     fileInfo.Size,
+					Reader:   fileReader,
 				}
 			}
 		}
