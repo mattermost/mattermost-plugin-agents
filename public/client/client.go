@@ -352,10 +352,17 @@ func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
 
+	// Ensure body is closed in all paths
+	bodyClosed := false
+	defer func() {
+		if !bodyClosed {
+			resp.Body.Close()
+		}
+	}()
+
 	// Check for error status codes
 	if resp.StatusCode != http.StatusOK {
 		respBody, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("request failed with status %d", resp.StatusCode)
 		}
@@ -418,6 +425,9 @@ func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm
 			}
 		}
 	}()
+
+	// Mark body as handled by goroutine so defer doesn't close it
+	bodyClosed = true
 
 	return &llm.TextStreamResult{
 		Stream: stream,
