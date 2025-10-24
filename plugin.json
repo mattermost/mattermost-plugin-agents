@@ -28,8 +28,5 @@
         "type": "custom"
       }
     ]
-  },
-  "props": {
-    "bridge_supported": true
   }
 }
