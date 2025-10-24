@@ -7,7 +7,7 @@
 // Security Notice: The AI plugin's inter-plugin API does not perform permission checks.
 // The calling plugin is responsible for verifying that the user has appropriate permissions
 // before making requests on their behalf.
-package client
+package bridgeclient
 
 import (
 	"bufio"

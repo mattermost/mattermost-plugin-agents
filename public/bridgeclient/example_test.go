@@ -1,13 +1,13 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package client_test
+package bridgeclient_test
 
 import (
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/public/client"
+	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
@@ -16,17 +16,17 @@ func Example() {
 	// In a real plugin, you would embed plugin.MattermostPlugin in your plugin struct
 	type MyPlugin struct {
 		plugin.MattermostPlugin
-		llmClient *client.Client
+		llmClient *bridgeclient.Client
 	}
 
 	var p MyPlugin
 
 	// Create the client in OnActivate
-	p.llmClient = client.NewClient(p.API)
+	p.llmClient = bridgeclient.NewClient(p.API)
 
 	// Make a non-streaming request to an agent
-	response, err := p.llmClient.AgentCompletion("gpt4", client.CompletionRequest{
-		Posts: []client.Post{
+	response, err := p.llmClient.AgentCompletion("gpt4", bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
 			{
 				Role:    "user",
 				Message: "What is the capital of France?",
@@ -59,10 +59,10 @@ func ExampleClient_AgentCompletion() {
 	}
 
 	var p MyPlugin
-	llmClient := client.NewClient(p.API)
+	llmClient := bridgeclient.NewClient(p.API)
 
-	response, err := llmClient.AgentCompletion("gpt4", client.CompletionRequest{
-		Posts: []client.Post{
+	response, err := llmClient.AgentCompletion("gpt4", bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "Hello!"},
 		},
 	})
@@ -81,10 +81,10 @@ func ExampleClient_AgentCompletionStream() {
 	}
 
 	var p MyPlugin
-	llmClient := client.NewClient(p.API)
+	llmClient := bridgeclient.NewClient(p.API)
 
-	result, err := llmClient.AgentCompletionStream("gpt4", client.CompletionRequest{
-		Posts: []client.Post{
+	result, err := llmClient.AgentCompletionStream("gpt4", bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "Tell me a story"},
 		},
 	})
@@ -116,10 +116,10 @@ func ExampleClient_ServiceCompletion() {
 	}
 
 	var p MyPlugin
-	llmClient := client.NewClient(p.API)
+	llmClient := bridgeclient.NewClient(p.API)
 
-	response, err := llmClient.ServiceCompletion("openai", client.CompletionRequest{
-		Posts: []client.Post{
+	response, err := llmClient.ServiceCompletion("openai", bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
 			{Role: "system", Message: "You are a helpful assistant"},
 			{Role: "user", Message: "What is 2+2?"},
 		},
@@ -139,15 +139,15 @@ func ExampleCompletionRequest_withFiles() {
 	}
 
 	var p MyPlugin
-	llmClient := client.NewClient(p.API)
+	llmClient := bridgeclient.NewClient(p.API)
 
 	// Example with a file attachment (base64 encoded)
-	response, err := llmClient.AgentCompletion("gpt4", client.CompletionRequest{
-		Posts: []client.Post{
+	response, err := llmClient.AgentCompletion("gpt4", bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
 			{
 				Role:    "user",
 				Message: "What's in this image?",
-				Files: []client.File{
+				Files: []bridgeclient.File{
 					{
 						ID:       "file123",
 						Name:     "image.png",
@@ -173,11 +173,11 @@ func ExampleCompletionRequest_multiTurn() {
 	}
 
 	var p MyPlugin
-	llmClient := client.NewClient(p.API)
+	llmClient := bridgeclient.NewClient(p.API)
 
 	// Multi-turn conversation
-	response, err := llmClient.AgentCompletion("gpt4", client.CompletionRequest{
-		Posts: []client.Post{
+	response, err := llmClient.AgentCompletion("gpt4", bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
 			{Role: "system", Message: "You are a helpful math tutor"},
 			{Role: "user", Message: "What is calculus?"},
 			{Role: "assistant", Message: "Calculus is a branch of mathematics..."},
@@ -196,17 +196,17 @@ func ExampleCompletionRequest_multiTurn() {
 func Example_fullPlugin() {
 	type MyPlugin struct {
 		plugin.MattermostPlugin
-		llmClient *client.Client
+		llmClient *bridgeclient.Client
 	}
 
 	var p MyPlugin
 
 	// OnActivate - create the client
-	p.llmClient = client.NewClient(p.API)
+	p.llmClient = bridgeclient.NewClient(p.API)
 
 	// Use the client in a command or other handler
-	response, err := p.llmClient.AgentCompletion("gpt4", client.CompletionRequest{
-		Posts: []client.Post{
+	response, err := p.llmClient.AgentCompletion("gpt4", bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
 			{
 				Role:    "system",
 				Message: "You are a helpful assistant for my plugin",
@@ -232,10 +232,10 @@ func ExampleClient_AgentCompletionStream_readAll() {
 	}
 
 	var p MyPlugin
-	llmClient := client.NewClient(p.API)
+	llmClient := bridgeclient.NewClient(p.API)
 
-	result, err := llmClient.AgentCompletionStream("gpt4", client.CompletionRequest{
-		Posts: []client.Post{
+	result, err := llmClient.AgentCompletionStream("gpt4", bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "What is 2+2?"},
 		},
 	})
@@ -261,10 +261,10 @@ func ExampleClient_ServiceCompletionStream() {
 	}
 
 	var p MyPlugin
-	llmClient := client.NewClient(p.API)
+	llmClient := bridgeclient.NewClient(p.API)
 
-	result, err := llmClient.ServiceCompletionStream("anthropic", client.CompletionRequest{
-		Posts: []client.Post{
+	result, err := llmClient.ServiceCompletionStream("anthropic", bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "Explain quantum computing"},
 		},
 	})
