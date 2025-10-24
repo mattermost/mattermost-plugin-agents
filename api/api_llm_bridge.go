@@ -14,42 +14,11 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 )
 
-// LLMBridgeFile represents a file attachment in the API request
-type LLMBridgeFile struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	MimeType string `json:"mime_type"`
-	Data     string `json:"data"` // base64 encoded
-}
-
-// LLMBridgePost represents a single message in the conversation
-type LLMBridgePost struct {
-	Role    string          `json:"role"` // user|assistant|system
-	Message string          `json:"message"`
-	Files   []LLMBridgeFile `json:"files,omitempty"`
-}
-
-// LLMBridgeCompletionRequest represents the request body for completion endpoints
-type LLMBridgeCompletionRequest struct {
-	Posts              []LLMBridgePost        `json:"posts"`
-	MaxGeneratedTokens int                    `json:"max_generated_tokens,omitempty"`
-	JSONOutputFormat   map[string]interface{} `json:"json_output_format,omitempty"`
-}
-
-// LLMBridgeCompletionResponse represents the response for non-streaming endpoints
-type LLMBridgeCompletionResponse struct {
-	Completion string `json:"completion"`
-}
-
-// LLMBridgeErrorResponse represents an error response
-type LLMBridgeErrorResponse struct {
-	Error string `json:"error"`
-}
-
 // convertLLMBridgeRequestToInternal converts the API request format to internal llm.CompletionRequest
-func (a *API) convertLLMBridgeRequestToInternal(req LLMBridgeCompletionRequest) (llm.CompletionRequest, error) {
+func (a *API) convertLLMBridgeRequestToInternal(req bridgeclient.CompletionRequest) (llm.CompletionRequest, error) {
 	posts := make([]llm.Post, len(req.Posts))
 
 	for i, apiPost := range req.Posts {
@@ -99,7 +68,7 @@ func (a *API) convertLLMBridgeRequestToInternal(req LLMBridgeCompletionRequest) 
 }
 
 // convertRequestToLLMOptions converts the API request options to llm.LanguageModelOption
-func (a *API) convertRequestToLLMOptions(req LLMBridgeCompletionRequest) ([]llm.LanguageModelOption, error) {
+func (a *API) convertRequestToLLMOptions(req bridgeclient.CompletionRequest) ([]llm.LanguageModelOption, error) {
 	var options []llm.LanguageModelOption
 
 	// Add MaxGeneratedTokens option if provided
@@ -197,13 +166,13 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRe
 	// Make the non-streaming LLM call
 	response, err := bot.LLM().ChatCompletionNoStream(llmRequest, opts...)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, LLMBridgeErrorResponse{
+		c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("failed to complete LLM request: %v", err),
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, LLMBridgeCompletionResponse{
+	c.JSON(http.StatusOK, bridgeclient.CompletionResponse{
 		Completion: response,
 	})
 }
@@ -212,22 +181,22 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRe
 func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 	agent := c.Param("agent")
 	if agent == "" {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: "agent parameter is required",
 		})
 		return
 	}
 
-	var req LLMBridgeCompletionRequest
+	var req bridgeclient.CompletionRequest
 	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request body: %v", err),
 		})
 		return
 	}
 
 	if len(req.Posts) == 0 {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: "posts array cannot be empty",
 		})
 		return
@@ -236,7 +205,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 	// Find the bot by username
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
-		c.JSON(http.StatusNotFound, LLMBridgeErrorResponse{
+		c.JSON(http.StatusNotFound, bridgeclient.ErrorResponse{
 			Error: err.Error(),
 		})
 		return
@@ -245,7 +214,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 	// Convert request to internal format
 	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
 		})
 		return
@@ -254,7 +223,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 	// Convert request options
 	opts, err := a.convertRequestToLLMOptions(req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid options: %v", err),
 		})
 		return
@@ -271,16 +240,16 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		agent = a.config.GetDefaultBotName()
 	}
 
-	var req LLMBridgeCompletionRequest
+	var req bridgeclient.CompletionRequest
 	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request body: %v", err),
 		})
 		return
 	}
 
 	if len(req.Posts) == 0 {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: "posts array cannot be empty",
 		})
 		return
@@ -289,7 +258,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 	// Find the bot by username
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
-		c.JSON(http.StatusNotFound, LLMBridgeErrorResponse{
+		c.JSON(http.StatusNotFound, bridgeclient.ErrorResponse{
 			Error: err.Error(),
 		})
 		return
@@ -298,7 +267,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 	// Convert request to internal format
 	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
 		})
 		return
@@ -307,7 +276,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 	// Convert request options
 	opts, err := a.convertRequestToLLMOptions(req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid options: %v", err),
 		})
 		return
@@ -321,22 +290,22 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	service := c.Param("service")
 	if service == "" {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: "service parameter is required",
 		})
 		return
 	}
 
-	var req LLMBridgeCompletionRequest
+	var req bridgeclient.CompletionRequest
 	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request body: %v", err),
 		})
 		return
 	}
 
 	if len(req.Posts) == 0 {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: "posts array cannot be empty",
 		})
 		return
@@ -345,7 +314,7 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	// Find a bot that uses the specified service (by ID or name)
 	bot, err := a.getBotByService(service)
 	if err != nil {
-		c.JSON(http.StatusNotFound, LLMBridgeErrorResponse{
+		c.JSON(http.StatusNotFound, bridgeclient.ErrorResponse{
 			Error: err.Error(),
 		})
 		return
@@ -354,7 +323,7 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	// Convert request to internal format
 	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
 		})
 		return
@@ -363,7 +332,7 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	// Convert request options
 	opts, err := a.convertRequestToLLMOptions(req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid options: %v", err),
 		})
 		return
@@ -377,22 +346,22 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	service := c.Param("service")
 	if service == "" {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: "service parameter is required",
 		})
 		return
 	}
 
-	var req LLMBridgeCompletionRequest
+	var req bridgeclient.CompletionRequest
 	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request body: %v", err),
 		})
 		return
 	}
 
 	if len(req.Posts) == 0 {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: "posts array cannot be empty",
 		})
 		return
@@ -401,7 +370,7 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	// Find a bot that uses the specified service (by ID or name)
 	bot, err := a.getBotByService(service)
 	if err != nil {
-		c.JSON(http.StatusNotFound, LLMBridgeErrorResponse{
+		c.JSON(http.StatusNotFound, bridgeclient.ErrorResponse{
 			Error: err.Error(),
 		})
 		return
@@ -410,7 +379,7 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	// Convert request to internal format
 	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
 		})
 		return
@@ -419,7 +388,7 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	// Convert request options
 	opts, err := a.convertRequestToLLMOptions(req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, LLMBridgeErrorResponse{
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid options: %v", err),
 		})
 		return
