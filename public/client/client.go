@@ -188,7 +188,7 @@ func NewClientFromApp(api AppAPI, userID string) *Client {
 //	    },
 //	})
 func (c *Client) AgentCompletion(agent string, request CompletionRequest) (string, error) {
-	url := fmt.Sprintf("/%s/api/v1/agent/%s/completion/nostream", aiPluginID, agent)
+	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s/nostream", aiPluginID, agent)
 	return c.doCompletionRequest(url, request)
 }
 
@@ -208,7 +208,7 @@ func (c *Client) AgentCompletion(agent string, request CompletionRequest) (strin
 //	    },
 //	})
 func (c *Client) ServiceCompletion(service string, request CompletionRequest) (string, error) {
-	url := fmt.Sprintf("/%s/api/v1/service/%s/completion/nostream", aiPluginID, service)
+	url := fmt.Sprintf("/%s/bridge/v1/completion/service/%s/nostream", aiPluginID, service)
 	return c.doCompletionRequest(url, request)
 }
 
@@ -292,7 +292,7 @@ func (c *Client) doCompletionRequest(url string, request CompletionRequest) (str
 //	    }
 //	}
 func (c *Client) AgentCompletionStream(agent string, request CompletionRequest) (*llm.TextStreamResult, error) {
-	url := fmt.Sprintf("/%s/api/v1/agent/%s/completion", aiPluginID, agent)
+	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", aiPluginID, agent)
 	return c.doStreamingRequest(url, request)
 }
 
@@ -324,7 +324,7 @@ func (c *Client) AgentCompletionStream(agent string, request CompletionRequest) 
 //	}
 //	fmt.Println(text)
 func (c *Client) ServiceCompletionStream(service string, request CompletionRequest) (*llm.TextStreamResult, error) {
-	url := fmt.Sprintf("/%s/api/v1/service/%s/completion", aiPluginID, service)
+	url := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", aiPluginID, service)
 	return c.doStreamingRequest(url, request)
 }
 
