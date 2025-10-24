@@ -127,6 +127,32 @@ func (a *API) getBotByService(service string) (*bots.Bot, error) {
 	return nil, fmt.Errorf("no bot found for service: %s", service)
 }
 
+// checkBridgePermissions checks usage restrictions based on the provided UserID and ChannelID.
+// Returns nil if checks pass or should be skipped.
+// Permission checking behavior:
+//   - Both UserID and ChannelID empty: no checks performed (backward compatibility)
+//   - UserID only: checks user-level permissions
+//   - Both provided: checks both user and channel-level permissions
+func (a *API) checkBridgePermissions(userID, channelID string, bot *bots.Bot) error {
+	// If no user ID provided, skip permission checks
+	if userID == "" {
+		return nil
+	}
+
+	// If only user ID provided, check user permissions
+	if channelID == "" {
+		return a.bots.CheckUsageRestrictionsForUser(bot, userID)
+	}
+
+	// Both user ID and channel ID provided, check full permissions
+	channel, err := a.pluginAPI.Channel.Get(channelID)
+	if err != nil {
+		return fmt.Errorf("failed to get channel: %w", err)
+	}
+
+	return a.bots.CheckUsageRestrictions(userID, bot, channel)
+}
+
 // streamLLMResponse handles streaming LLM responses as Server-Sent Events
 func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest, opts ...llm.LanguageModelOption) {
 	// Start streaming response
@@ -220,6 +246,14 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
+	// Check permissions if UserID/ChannelID provided
+	if err := a.checkBridgePermissions(req.UserID, req.ChannelID, bot); err != nil {
+		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
+			Error: fmt.Sprintf("permission denied: %v", err),
+		})
+		return
+	}
+
 	// Convert request to internal format
 	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
 	if err != nil {
@@ -269,6 +303,14 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusNotFound, bridgeclient.ErrorResponse{
 			Error: err.Error(),
+		})
+		return
+	}
+
+	// Check permissions if UserID/ChannelID provided
+	if err := a.checkBridgePermissions(req.UserID, req.ChannelID, bot); err != nil {
+		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
+			Error: fmt.Sprintf("permission denied: %v", err),
 		})
 		return
 	}
@@ -329,6 +371,14 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 		return
 	}
 
+	// Check permissions if UserID/ChannelID provided
+	if err := a.checkBridgePermissions(req.UserID, req.ChannelID, bot); err != nil {
+		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
+			Error: fmt.Sprintf("permission denied: %v", err),
+		})
+		return
+	}
+
 	// Convert request to internal format
 	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
 	if err != nil {
@@ -381,6 +431,14 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusNotFound, bridgeclient.ErrorResponse{
 			Error: err.Error(),
+		})
+		return
+	}
+
+	// Check permissions if UserID/ChannelID provided
+	if err := a.checkBridgePermissions(req.UserID, req.ChannelID, bot); err != nil {
+		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
+			Error: fmt.Sprintf("permission denied: %v", err),
 		})
 		return
 	}

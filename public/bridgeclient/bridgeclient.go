@@ -4,9 +4,12 @@
 // Package client provides a client library for other Mattermost plugins to interact
 // with the AI plugin's LLM Bridge API.
 //
-// Security Notice: The AI plugin's inter-plugin API does not perform permission checks.
-// The calling plugin is responsible for verifying that the user has appropriate permissions
-// before making requests on their behalf.
+// Security Notice: The AI plugin's inter-plugin API supports optional permission checking.
+// By default, if no UserID is provided in the CompletionRequest, no permission checks are performed.
+// To enable permission checking, provide the UserID field (for user-level checks) or both UserID and
+// ChannelID fields (for user and channel-level checks). If permission checks fail, the API will
+// return a 403 Forbidden error. The calling plugin remains responsible for verifying permissions
+// when not using the built-in permission checking.
 package bridgeclient
 
 import (
@@ -103,6 +106,12 @@ type CompletionRequest struct {
 	Posts              []Post                 `json:"posts"`
 	MaxGeneratedTokens int                    `json:"max_generated_tokens,omitempty"`
 	JSONOutputFormat   map[string]interface{} `json:"json_output_format,omitempty"`
+	// UserID is the optional Mattermost user ID making the request.
+	// If provided, the bridge will check user-level permissions.
+	UserID string `json:"user_id,omitempty"`
+	// ChannelID is the optional Mattermost channel ID context for the request.
+	// If provided along with UserID, the bridge will check both user and channel permissions.
+	ChannelID string `json:"channel_id,omitempty"`
 }
 
 // CompletionResponse represents a non-streaming completion response
