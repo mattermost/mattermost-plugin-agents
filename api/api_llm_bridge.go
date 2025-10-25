@@ -247,7 +247,8 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 	}
 
 	// Check permissions if UserID/ChannelID provided
-	if err := a.checkBridgePermissions(req.UserID, req.ChannelID, bot); err != nil {
+	err = a.checkBridgePermissions(req.UserID, req.ChannelID, bot)
+	if err != nil {
 		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("permission denied: %v", err),
 		})
@@ -308,7 +309,8 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 	}
 
 	// Check permissions if UserID/ChannelID provided
-	if err := a.checkBridgePermissions(req.UserID, req.ChannelID, bot); err != nil {
+	err = a.checkBridgePermissions(req.UserID, req.ChannelID, bot)
+	if err != nil {
 		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("permission denied: %v", err),
 		})
@@ -372,7 +374,8 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	}
 
 	// Check permissions if UserID/ChannelID provided
-	if err := a.checkBridgePermissions(req.UserID, req.ChannelID, bot); err != nil {
+	err = a.checkBridgePermissions(req.UserID, req.ChannelID, bot)
+	if err != nil {
 		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("permission denied: %v", err),
 		})
@@ -436,7 +439,8 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	}
 
 	// Check permissions if UserID/ChannelID provided
-	if err := a.checkBridgePermissions(req.UserID, req.ChannelID, bot); err != nil {
+	err = a.checkBridgePermissions(req.UserID, req.ChannelID, bot)
+	if err != nil {
 		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("permission denied: %v", err),
 		})
