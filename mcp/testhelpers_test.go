@@ -261,6 +261,7 @@ func newMockPluginAPI() *mockPluginAPI {
 	// Mock KV operations for session storage
 	mockAPI.On("KVGet", mock.AnythingOfType("string")).Return(([]byte)(nil), (*model.AppError)(nil)).Maybe()
 	mockAPI.On("KVSet", mock.AnythingOfType("string"), mock.Anything).Return(true, (*model.AppError)(nil)).Maybe()
+	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.Anything, mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, (*model.AppError)(nil)).Maybe()
 	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return((*model.AppError)(nil)).Maybe()
 
 	// Mock User.Get for createEmbeddedSession
@@ -268,6 +269,11 @@ func newMockPluginAPI() *mockPluginAPI {
 		Id:    "test-user-id",
 		Roles: "system_user",
 	}, (*model.AppError)(nil)).Maybe()
+
+	m := &mockPluginAPI{
+		API:      mockAPI,
+		sessions: make(map[string]*model.Session),
+	}
 
 	// Mock Session.Create for createEmbeddedSession
 	mockAPI.On("CreateSession", mock.AnythingOfType("*model.Session")).Return(func(session *model.Session) *model.Session {
@@ -278,11 +284,19 @@ func newMockPluginAPI() *mockPluginAPI {
 		if session.Token == "" {
 			session.Token = model.NewId()
 		}
+		// Add to mock's session storage so GetSession can find it
+		m.addSession(session)
 		return session
 	}, (*model.AppError)(nil)).Maybe()
 
-	// Mock Session.Get for embedded session validation
-	mockAPI.On("GetSession", mock.AnythingOfType("string")).Return((*model.Session)(nil), (*model.AppError)(nil)).Maybe()
+	// Mock Session.Get for embedded session validation - delegate to mockPluginAPI.GetSession
+	mockAPI.On("GetSession", mock.AnythingOfType("string")).Return(func(sessionID string) *model.Session {
+		session, _ := m.GetSession(sessionID)
+		return session
+	}, func(sessionID string) *model.AppError {
+		_, err := m.GetSession(sessionID)
+		return err
+	}).Maybe()
 
 	// Mock Session.ExtendExpiry for session renewal
 	mockAPI.On("ExtendSessionExpiry", mock.AnythingOfType("string"), mock.AnythingOfType("int64")).Return((*model.AppError)(nil)).Maybe()
@@ -292,10 +306,7 @@ func newMockPluginAPI() *mockPluginAPI {
 	defaultConfig.SetDefaults()
 	mockAPI.On("GetConfig").Return(defaultConfig).Maybe()
 
-	return &mockPluginAPI{
-		API:      mockAPI,
-		sessions: make(map[string]*model.Session),
-	}
+	return m
 }
 
 func (m *mockPluginAPI) addSession(session *model.Session) {
@@ -375,6 +386,13 @@ func (s *EmbeddedTestSuite) CreateClientManager(t *testing.T, session *model.Ses
 	// Create mock plugin API and add the session
 	mockPluginAPI := newMockPluginAPI()
 	mockPluginAPI.addSession(session)
+
+	// Pre-populate KV with the session ID so ensureEmbeddedSessionID finds it
+	// This simulates the session already being stored for this user
+	// Use Unset first to remove the generic mock, then add specific one
+	embeddedSessionKey := fmt.Sprintf("mcp_embedded_session_id_%s", session.UserId)
+	mockPluginAPI.API.On("KVGet", embeddedSessionKey).Unset()
+	mockPluginAPI.API.On("KVGet", embeddedSessionKey).Return([]byte(session.Id), (*model.AppError)(nil))
 
 	// Create a real pluginapi.Client to get a proper LogService
 	pluginAPIClient := pluginapi.NewClient(mockPluginAPI, nil)
