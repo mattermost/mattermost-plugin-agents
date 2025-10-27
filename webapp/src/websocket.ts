@@ -3,7 +3,7 @@
 
 import {WebSocketMessage} from '@mattermost/client';
 
-import {PostUpdateWebsocketMessage} from './components/llmbot_post';
+import {PostUpdateWebsocketMessage} from './components/llmbot_post/llmbot_post';
 
 type WebsocketListener = (msg: WebSocketMessage<PostUpdateWebsocketMessage>) => void
 type WebsocketListenerObject = {

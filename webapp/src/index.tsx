@@ -13,7 +13,7 @@ import aiIcon from '../../assets/bot_icon.png';
 
 import manifest from '@/manifest';
 
-import {LLMBotPost} from './components/llmbot_post';
+import {LLMBotPost} from './components/llmbot_post/llmbot_post';
 import PostMenu from './components/post_menu';
 import IconThreadSummarization from './components/assets/icon_thread_summarization';
 import IconReactForMe from './components/assets/icon_react_for_me';

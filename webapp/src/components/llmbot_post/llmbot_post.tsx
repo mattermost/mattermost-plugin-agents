@@ -4,6 +4,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {FormattedMessage} from 'react-intl';
 import {useSelector} from 'react-redux';
+import styled from 'styled-components';
 
 import {WebSocketMessage} from '@mattermost/client';
 import {GlobalState} from '@mattermost/types/store';
@@ -17,30 +18,42 @@ import PostText from '../post_text';
 import ToolApprovalSet from '../tool_approval_set';
 import {Annotation} from '../citations/types';
 
-import {
-    LLMBotPostProps,
-    PostUpdateWebsocketMessage,
-    ToolCall,
-    ToolCallStatus,
-} from './types';
-import {
-    PostBody,
-    PostSummaryHelpMessage,
-    MinimalReasoningContainer,
-    LoadingSpinner,
-} from './styles';
-import {ReasoningDisplay} from './reasoning_display';
+import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
 import {ControlsBarComponent} from './controls_bar';
-import {extractPermalinkData} from './utils';
+import {extractPermalinkData} from './permalink_data';
 
-// Re-export types for external use
-export type {
-    PostUpdateWebsocketMessage,
-    ToolCall,
-};
+// Types
+export interface PostUpdateWebsocketMessage {
+    post_id: string
+    next?: string
+    control?: string
+    tool_call?: string
+    reasoning?: string
+    annotations?: string
+}
 
-// Re-export enum (needs regular export, not type-only export)
-export {ToolCallStatus};
+export enum ToolCallStatus {
+    Pending = 0,
+    Accepted = 1,
+    Rejected = 2,
+    Error = 3,
+    Success = 4
+}
+
+export interface ToolCall {
+    id: string;
+    name: string;
+    description: string;
+    arguments: any;
+    result?: string;
+    status: ToolCallStatus;
+}
+
+interface LLMBotPostProps {
+    post: any;
+    websocketRegister?: (postID: string, listenerID: string, handler: (msg: WebSocketMessage<any>) => void) => void;
+    websocketUnregister?: (postID: string, listenerID: string) => void;
+}
 
 const SearchResultsPropKey = 'search_results';
 
@@ -369,3 +382,20 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         </PostBody>
     );
 };
+
+// Styled components
+const PostBody = styled.div`
+`;
+
+const PostSummaryHelpMessage = styled.div`
+	font-size: 14px;
+	font-style: italic;
+	font-weight: 400;
+	line-height: 20px;
+	border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+
+	padding-top: 8px;
+	padding-bottom: 8px;
+	margin-top: 16px;
+`;
+

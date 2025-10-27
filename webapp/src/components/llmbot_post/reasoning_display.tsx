@@ -2,19 +2,9 @@
 // See LICENSE.txt for license information.
 
 import React, {useRef} from 'react';
+import styled from 'styled-components';
 
 import {ChevronRightIcon} from '@mattermost/compass-icons/components';
-
-import {
-    MinimalReasoningContainer,
-    MinimalExpandIcon,
-    LoadingSpinner,
-    ExpandedReasoningHeader,
-    ExpandedChevron,
-    ExpandedReasoningContainer,
-    ReasoningContent,
-    ReasoningText,
-} from './styles';
 
 interface ReasoningDisplayProps {
     reasoningSummary: string;
@@ -84,3 +74,105 @@ export const ReasoningDisplay: React.FC<ReasoningDisplayProps> = ({
     );
 };
 
+// Styled components
+const ExpandedReasoningContainer = styled.div`
+	background: rgba(var(--center-channel-color-rgb), 0.02);
+	border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+	border-radius: 8px;
+	margin-bottom: 16px;
+	margin-top: 4px;
+	overflow: hidden;
+`;
+
+const ExpandedReasoningHeader = styled.div`
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 12px;
+	font-size: 14px;
+	color: rgba(var(--center-channel-color-rgb), 0.64);
+	cursor: pointer;
+	user-select: none;
+
+	&:hover {
+		color: rgba(var(--center-channel-color-rgb), 0.8);
+	}
+`;
+
+const ExpandedChevron = styled.div`
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	transition: transform 0.2s ease;
+	transform: rotate(90deg);
+
+	svg {
+		width: 14px;
+		height: 14px;
+	}
+`;
+
+export const LoadingSpinner = styled.div`
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	border: 2px solid rgba(var(--center-channel-color-rgb), 0.16);
+	border-radius: 50%;
+	border-top-color: rgba(var(--center-channel-color-rgb), 0.64);
+	animation: spin 1s linear infinite;
+
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+`;
+
+export const MinimalReasoningContainer = styled.div`
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 12px;
+	font-size: 14px;
+	color: rgba(var(--center-channel-color-rgb), 0.64);
+	cursor: pointer;
+	user-select: none;
+
+	&:hover {
+		color: rgba(var(--center-channel-color-rgb), 0.8);
+	}
+`;
+
+const MinimalExpandIcon = styled.div<{isExpanded: boolean}>`
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	transition: transform 0.2s ease;
+	transform: ${(props) => (props.isExpanded ? 'rotate(180deg)' : 'rotate(0)')};
+
+	svg {
+		width: 14px;
+		height: 14px;
+	}
+`;
+
+const ReasoningContent = styled.div<{collapsed: boolean}>`
+	max-height: ${(props) => (props.collapsed ? '0' : '600px')};
+	overflow-y: auto;
+	transition: max-height 0.3s ease-in-out;
+	opacity: ${(props) => (props.collapsed ? '0' : '1')};
+	transition: opacity 0.2s ease-in-out, max-height 0.3s ease-in-out;
+`;
+
+const ReasoningText = styled.div`
+	padding: 16px;
+	font-size: 14px;
+	line-height: 22px;
+	color: rgba(var(--center-channel-color-rgb), 0.8);
+	white-space: pre-wrap;
+	word-break: break-word;
+`;
