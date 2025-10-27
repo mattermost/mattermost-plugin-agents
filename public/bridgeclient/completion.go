@@ -15,109 +15,29 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
 
-// AgentCompletion makes a non-streaming completion request to a specific agent
-//
-// Parameters:
-//   - agent: The username of the agent to use
-//   - request: The completion request containing the conversation
-//
-// Returns the complete response text or an error.
-//
-// Example:
-//
-//	response, err := client.AgentCompletion("matty", client.CompletionRequest{
-//	    Posts: []client.Post{
-//	        {Role: "user", Message: "Take me on an adventure"},
-//	    },
-//	})
+// AgentCompletion makes a non-streaming completion request to a specific agent by username.
 func (c *Client) AgentCompletion(agent string, request CompletionRequest) (string, error) {
 	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s/nostream", aiPluginID, agent)
 	return c.doCompletionRequest(url, request)
 }
 
-// ServiceCompletion makes a non-streaming completion request to a specific service
-//
-// Parameters:
-//   - service: The ID or name of the LLM service to use
-//   - request: The completion request containing the conversation
-//
-// Returns the complete response text or an error.
-//
-// Example:
-//
-//	response, err := client.ServiceCompletion("anthropic", client.CompletionRequest{
-//	    Posts: []client.Post{
-//	        {Role: "user", Message: "Write a haiku about coding"},
-//	    },
-//	})
+// ServiceCompletion makes a non-streaming completion request to a specific service.
+// The service parameter can be either a service ID or name (e.g., "openai", "anthropic").
 func (c *Client) ServiceCompletion(service string, request CompletionRequest) (string, error) {
 	url := fmt.Sprintf("/%s/bridge/v1/completion/service/%s/nostream", aiPluginID, service)
 	return c.doCompletionRequest(url, request)
 }
 
-// AgentCompletionStream makes a streaming completion request to a specific agent (bot)
-// and returns a TextStreamResult for processing the stream.
-//
-// Parameters:
-//   - agent: The username of the agent/bot to use
-//   - request: The completion request containing the conversation
-//
-// Returns a *llm.TextStreamResult that provides a channel of TextStreamEvent objects.
-// The caller should read from the Stream channel to process events.
-//
-// Example:
-//
-//	result, err := client.AgentCompletionStream("gpt4", client.CompletionRequest{
-//	    Posts: []client.Post{
-//	        {Role: "user", Message: "Tell me a story"},
-//	    },
-//	})
-//	if err != nil {
-//	    return err
-//	}
-//
-//	for event := range result.Stream {
-//	    switch event.Type {
-//	    case llm.EventTypeText:
-//	        fmt.Print(event.Value.(string))
-//	    case llm.EventTypeError:
-//	        return event.Value.(error)
-//	    case llm.EventTypeEnd:
-//	        return nil
-//	    }
-//	}
+// AgentCompletionStream makes a streaming completion request to a specific agent by username.
+// Returns a TextStreamResult with a Stream channel for processing events.
 func (c *Client) AgentCompletionStream(agent string, request CompletionRequest) (*llm.TextStreamResult, error) {
 	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", aiPluginID, agent)
 	return c.doStreamingRequest(url, request)
 }
 
-// ServiceCompletionStream makes a streaming completion request to a specific service
-// and returns a TextStreamResult for processing the stream.
-//
-// Parameters:
-//   - service: The ID or name of the LLM service to use
-//   - request: The completion request containing the conversation
-//
-// Returns a *llm.TextStreamResult that provides a channel of TextStreamEvent objects.
-// The caller should read from the Stream channel to process events.
-//
-// Example:
-//
-//	result, err := client.ServiceCompletionStream("anthropic", client.CompletionRequest{
-//	    Posts: []client.Post{
-//	        {Role: "user", Message: "Explain quantum computing"},
-//	    },
-//	})
-//	if err != nil {
-//	    return err
-//	}
-//
-//	// Use the helper method to read all text
-//	text, err := result.ReadAll()
-//	if err != nil {
-//	    return err
-//	}
-//	fmt.Println(text)
+// ServiceCompletionStream makes a streaming completion request to a specific service.
+// The service parameter can be either a service ID or name (e.g., "openai", "anthropic").
+// Returns a TextStreamResult with a Stream channel for processing events.
 func (c *Client) ServiceCompletionStream(service string, request CompletionRequest) (*llm.TextStreamResult, error) {
 	url := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", aiPluginID, service)
 	return c.doStreamingRequest(url, request)

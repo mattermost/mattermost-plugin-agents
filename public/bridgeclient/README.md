@@ -129,6 +129,6 @@ If not using built-in permission checks, your plugin must verify permissions bef
 - **Agent**: Target a specific bot by username (e.g., "gpt4")
   - Uses bot's custom configuration, tools, and prompts
 
-- **Service**: Target an LLM service by name (e.g., "openai", "anthropic")
+- **Service**: Target an LLM service by ID or name (e.g., "openai", "anthropic")
   - Uses any bot configured with that service
   - Useful when bot-specific configuration doesn't matter

@@ -1,15 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-// Package client provides a client library for other Mattermost plugins to interact
-// with the AI plugin's LLM Bridge API.
-//
-// Security Notice: The AI plugin's inter-plugin API supports optional permission checking.
-// By default, if no UserID is provided in the CompletionRequest, no permission checks are performed.
-// To enable permission checking, provide the UserID field (for user-level checks) or both UserID and
-// ChannelID fields (for user and channel-level checks). If permission checks fail, the API will
-// return a 403 Forbidden error. The calling plugin remains responsible for verifying permissions
-// when not using the built-in permission checking.
+// Package bridgeclient provides a client library for Mattermost plugins and the server
+// to interact with the AI plugin's LLM Bridge API to make requests to Agents to LLM providers.
 package bridgeclient
 
 import (
@@ -66,49 +59,15 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
-// NewClient creates a new LLM Bridge API client using a PluginAPI interface
-//
-// Parameters:
-//   - api: Usually p.API from the plugin
-//
-// Example:
-//
-//	type MyPlugin struct {
-//	    plugin.MattermostPlugin
-//	    llmClient *client.Client
-//	}
-//
-//	func (p *MyPlugin) OnActivate() error {
-//	    p.llmClient = client.NewClient(p.API)
-//	    return nil
-//	}
+// NewClient creates a new LLM Bridge API client from a plugin's API interface.
 func NewClient(api PluginAPI) *Client {
 	client := &Client{}
 	client.httpClient.Transport = &pluginAPIRoundTripper{api}
 	return client
 }
 
-// NewClientFromApp creates a new LLM Bridge API client using the app layer API
-//
-// This constructor is for use within the Mattermost server app layer to make
-// inter-plugin requests to the AI plugin.
-//
-// Parameters:
-//   - api: The App struct from the app package
-//
-// Example:
-//
-//	type MyService struct {
-//	    app       *app.App
-//	    llmClient *client.Client
-//	}
-//
-//	func NewMyService(app *app.App) *MyService {
-//	    return &MyService{
-//	        app:       app,
-//	        llmClient: client.NewClientFromApp(app, userID),
-//	    }
-//	}
+// NewClientFromApp creates a new LLM Bridge API client from the Mattermost server app layer.
+// The userID is used for inter-plugin request authentication.
 func NewClientFromApp(api AppAPI, userID string) *Client {
 	client := &Client{}
 	client.httpClient.Transport = &appAPIRoundTripper{api, userID}
