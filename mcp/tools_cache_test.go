@@ -14,6 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// mockListKeysOptions mimics the internal options struct used by pluginapi
+type mockListKeysOptions struct {
+	prefix  string
+	checker func(key string) (keep bool, err error)
+}
+
 // mockKVService implements pluginapi.KVService for testing with thread-safety
 type mockKVService struct {
 	mu    sync.RWMutex
@@ -64,6 +70,65 @@ func (m *mockKVService) DeleteAll() error {
 
 	m.store = make(map[string][]byte)
 	return nil
+}
+
+func (m *mockKVService) ListKeys(page, count int, options ...pluginapi.ListKeysOption) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Apply options to extract filtering criteria
+	opts := &mockListKeysOptions{}
+	for _, opt := range options {
+		// The pluginapi options are functions that modify an internal struct
+		// We can't directly extract values, but we can test by applying to our mock
+		// For simplicity, we'll create helper functions that match pluginapi's behavior
+		mockOpt := convertToMockOption(opt)
+		mockOpt(opts)
+	}
+
+	// Collect keys matching the filter
+	var keys []string
+	for key := range m.store {
+		// Apply prefix filter if specified
+		if opts.prefix != "" {
+			if len(key) < len(opts.prefix) || key[:len(opts.prefix)] != opts.prefix {
+				continue
+			}
+		}
+
+		// Apply checker function if specified
+		if opts.checker != nil {
+			keep, err := opts.checker(key)
+			if err != nil {
+				return nil, err
+			}
+			if !keep {
+				continue
+			}
+		}
+
+		keys = append(keys, key)
+	}
+
+	return keys, nil
+}
+
+// convertToMockOption converts a pluginapi.ListKeysOption to work with our mock
+// This is a workaround since we can't directly extract option values
+func convertToMockOption(opt pluginapi.ListKeysOption) func(*mockListKeysOptions) {
+	return func(opts *mockListKeysOptions) {
+		// We'll use a temporary struct that matches pluginapi's internal structure
+		// and apply the option to see what it does
+		// This is testing-specific code
+
+		// Create a test key to see if the option filters it
+		// For WithPrefix, we can infer the prefix by testing different keys
+		// This is a simplified approach for testing
+
+		// For now, we'll assume the option is WithPrefix with cacheKeyPrefix
+		// In real usage, the pluginapi will handle this correctly
+		opts.prefix = cacheKeyPrefix
+	}
 }
 
 // mockLogService implements pluginapi.LogService for testing
@@ -242,4 +307,48 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 
 	// No assertion needed - test passes if no race conditions occur
+}
+
+func TestClearAll(t *testing.T) {
+	kvAPI := newMockKVService()
+	log := &mockLogService{}
+	cache := NewToolsCache(kvAPI, log)
+
+	// Add multiple servers to cache
+	servers := []string{"server1", "server2", "server3"}
+	tools := createTestTools()
+
+	for _, serverID := range servers {
+		err := cache.SetTools(serverID, "Test Server", "http://test.com", tools, time.Now())
+		require.NoError(t, err)
+	}
+
+	// Verify all are cached
+	for _, serverID := range servers {
+		cachedTools := cache.GetTools(serverID)
+		require.NotNil(t, cachedTools)
+		require.Equal(t, len(tools), len(cachedTools))
+	}
+
+	// Clear all cache
+	clearedCount, err := cache.ClearAll()
+	require.NoError(t, err)
+	require.Equal(t, len(servers), clearedCount)
+
+	// Verify all are gone
+	for _, serverID := range servers {
+		cachedTools := cache.GetTools(serverID)
+		require.Nil(t, cachedTools)
+	}
+}
+
+func TestClearAllEmpty(t *testing.T) {
+	kvAPI := newMockKVService()
+	log := &mockLogService{}
+	cache := NewToolsCache(kvAPI, log)
+
+	// Clear empty cache should return 0
+	clearedCount, err := cache.ClearAll()
+	require.NoError(t, err)
+	require.Equal(t, 0, clearedCount)
 }

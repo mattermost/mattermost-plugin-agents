@@ -205,3 +205,35 @@ func (a *API) discoverServerTools(ctx context.Context, requestingAdminID string,
 
 	return tools, nil
 }
+
+// ClearMCPToolsCacheResponse represents the response for clearing the cache
+type ClearMCPToolsCacheResponse struct {
+	ClearedServers int    `json:"cleared_servers"`
+	Message        string `json:"message"`
+}
+
+// handleClearMCPToolsCache clears the tools cache for all MCP servers
+func (a *API) handleClearMCPToolsCache(c *gin.Context) {
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	toolsCache := a.mcpClientManager.GetToolsCache()
+	if toolsCache == nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("tools cache not available"))
+		return
+	}
+
+	// Clear all cache entries
+	clearedCount, err := toolsCache.ClearAll()
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to clear cache: %w", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, ClearMCPToolsCacheResponse{
+		ClearedServers: clearedCount,
+		Message:        fmt.Sprintf("Successfully cleared cache for %d servers", clearedCount),
+	})
+}

@@ -29,6 +29,7 @@ type KVStore interface {
 	Get(key string, o any) error
 	Set(key string, value any, options ...pluginapi.KVSetOption) (bool, error)
 	Delete(key string) error
+	ListKeys(page, count int, options ...pluginapi.ListKeysOption) ([]string, error)
 }
 
 // Logger interface for logging operations
@@ -116,6 +117,36 @@ func (tc *ToolsCache) InvalidateServer(serverID string) error {
 
 	tc.log.Debug("Invalidated tools cache for server (deleted if existed)", "serverID", serverID)
 	return nil
+}
+
+// ClearAll removes all cached tools from KV store
+func (tc *ToolsCache) ClearAll() (int, error) {
+	tc.log.Info("Clearing all MCP tools cache entries")
+
+	// List all keys with the cache prefix
+	keys, err := tc.kvAPI.ListKeys(0, 1000, pluginapi.WithPrefix(cacheKeyPrefix))
+	if err != nil {
+		tc.log.Error("Failed to list cache keys from KV store", "error", err)
+		return 0, fmt.Errorf("failed to list cache keys: %w", err)
+	}
+
+	if len(keys) == 0 {
+		tc.log.Debug("No cache entries found to clear")
+		return 0, nil
+	}
+
+	// Delete each key
+	clearedCount := 0
+	for _, key := range keys {
+		if err := tc.kvAPI.Delete(key); err != nil {
+			tc.log.Warn("Failed to delete cache key", "key", key, "error", err)
+			continue
+		}
+		clearedCount++
+	}
+
+	tc.log.Info("Cleared MCP tools cache", "clearedCount", clearedCount, "totalKeys", len(keys))
+	return clearedCount, nil
 }
 
 // buildCacheKey constructs the KV store key for a server

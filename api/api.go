@@ -148,6 +148,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.GET("/reindex/status", a.handleGetJobStatus)
 	adminRouter.POST("/reindex/cancel", a.handleCancelJob)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
+	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
 
 	searchRouter := botRequiredRouter.Group("/search")
 	// Only returns search results
