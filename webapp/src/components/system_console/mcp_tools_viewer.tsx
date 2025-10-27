@@ -164,6 +164,7 @@ const MCPToolsViewer = () => {
         try {
             const response = await clearMCPToolsCache();
             setClearSuccess(response.message);
+
             // Automatically refresh tools after clearing cache
             await fetchTools();
         } catch (err) {
