@@ -4,192 +4,655 @@
 package api
 
 import (
-	"bytes"
-	"encoding/json"
+	"fmt"
 	"io"
-	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-func TestLLMBridgePermissions(t *testing.T) {
-	// Disable gin debug output
+// Full-stack integration tests using bridge client → real API → fake LLM
+
+func TestBridgeClientAgentCompletion(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
-	endpoints := []struct {
-		name string
-		url  string
+	tests := []struct {
+		name        string
+		agent       string
+		request     bridgeclient.CompletionRequest
+		fakeLLM     *FakeLLM
+		expectError bool
+		errorMsg    string
+		validateRes func(t *testing.T, result string)
 	}{
-		{"agent_streaming", "/bridge/v1/completion/agent/testbot"},
-		{"agent_nostream", "/bridge/v1/completion/agent/testbot/nostream"},
-		{"service_streaming", "/bridge/v1/completion/service/testservice"},
-		{"service_nostream", "/bridge/v1/completion/service/testservice/nostream"},
+		{
+			name:  "successful completion",
+			agent: "testbot",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hello"},
+				},
+			},
+			fakeLLM:     NewFakeLLM("Hello! How can I help you?"),
+			expectError: false,
+			validateRes: func(t *testing.T, result string) {
+				require.Equal(t, "Hello! How can I help you?", result)
+			},
+		},
+		{
+			name:  "multiple posts with different roles",
+			agent: "testbot",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "system", Message: "You are helpful"},
+					{Role: "user", Message: "What's 2+2?"},
+				},
+			},
+			fakeLLM:     NewFakeLLM("The answer is 4"),
+			expectError: false,
+			validateRes: func(t *testing.T, result string) {
+				require.Equal(t, "The answer is 4", result)
+			},
+		},
+		{
+			name:  "LLM returns error",
+			agent: "testbot",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hello"},
+				},
+			},
+			fakeLLM:     NewFakeLLMWithError(fmt.Errorf("LLM service unavailable")),
+			expectError: true,
+			errorMsg:    "failed to complete LLM request",
+		},
+		{
+			name:  "empty posts array",
+			agent: "testbot",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{},
+			},
+			fakeLLM:     NewFakeLLM("test"),
+			expectError: true,
+			errorMsg:    "posts array cannot be empty",
+		},
+		{
+			name:  "agent not found",
+			agent: "nonexistent",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hello"},
+				},
+			},
+			fakeLLM:     NewFakeLLM("test"),
+			expectError: true,
+			errorMsg:    "agent not found",
+		},
+		{
+			name:  "bot role alias works",
+			agent: "testbot",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "bot", Message: "I'm a bot"},
+					{Role: "user", Message: "Hi"},
+				},
+			},
+			fakeLLM:     NewFakeLLM("Hello!"),
+			expectError: false,
+			validateRes: func(t *testing.T, result string) {
+				require.Equal(t, "Hello!", result)
+			},
+		},
+		{
+			name:  "invalid role",
+			agent: "testbot",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "invalid", Message: "test"},
+				},
+			},
+			fakeLLM:     NewFakeLLM("test"),
+			expectError: true,
+			errorMsg:    "invalid role",
+		},
 	}
 
-	for _, endpoint := range endpoints {
-		t.Run(endpoint.name, func(t *testing.T) {
-			tests := []struct {
-				name           string
-				userID         string
-				channelID      string
-				botConfig      llm.BotConfig
-				envSetup       func(e *TestEnvironment)
-				expectedStatus int
-			}{
-				{
-					name:           "no UserID or ChannelID - succeeds (backward compatibility)",
-					userID:         "",
-					channelID:      "",
-					botConfig:      llm.BotConfig{},
-					envSetup:       func(e *TestEnvironment) {},
-					expectedStatus: http.StatusInternalServerError, // Will fail at LLM call but pass permission check
-				},
-				{
-					name:      "UserID only with allowed user - succeeds",
-					userID:    "user-123",
-					channelID: "",
-					botConfig: llm.BotConfig{
-						UserAccessLevel: llm.UserAccessLevelAll,
-					},
-					envSetup:       func(e *TestEnvironment) {},
-					expectedStatus: http.StatusInternalServerError, // Will fail at LLM call but pass permission check
-				},
-				{
-					name:      "UserID only with blocked user - returns 403",
-					userID:    "user-123",
-					channelID: "",
-					botConfig: llm.BotConfig{
-						UserAccessLevel: llm.UserAccessLevelBlock,
-						UserIDs:         []string{"user-123"},
-					},
-					envSetup:       func(e *TestEnvironment) {},
-					expectedStatus: http.StatusForbidden,
-				},
-				{
-					name:      "UserID + ChannelID with allowed user and channel - succeeds",
-					userID:    "user-123",
-					channelID: "channel-123",
-					botConfig: llm.BotConfig{
-						UserAccessLevel:    llm.UserAccessLevelAll,
-						ChannelAccessLevel: llm.ChannelAccessLevelAll,
-					},
-					envSetup: func(e *TestEnvironment) {
-						e.mockAPI.On("GetChannel", "channel-123").Return(&model.Channel{
-							Id:     "channel-123",
-							Type:   model.ChannelTypeOpen,
-							TeamId: "team-123",
-						}, nil).Once()
-					},
-					expectedStatus: http.StatusInternalServerError, // Will fail at LLM call but pass permission check
-				},
-				{
-					name:      "UserID + ChannelID with blocked channel - returns 403",
-					userID:    "user-123",
-					channelID: "channel-123",
-					botConfig: llm.BotConfig{
-						UserAccessLevel:    llm.UserAccessLevelAll,
-						ChannelAccessLevel: llm.ChannelAccessLevelBlock,
-						ChannelIDs:         []string{"channel-123"},
-					},
-					envSetup: func(e *TestEnvironment) {
-						e.mockAPI.On("GetChannel", "channel-123").Return(&model.Channel{
-							Id:     "channel-123",
-							Type:   model.ChannelTypeOpen,
-							TeamId: "team-123",
-						}, nil).Once()
-					},
-					expectedStatus: http.StatusForbidden,
-				},
-				{
-					name:      "UserID + ChannelID with blocked user - returns 403",
-					userID:    "user-123",
-					channelID: "channel-123",
-					botConfig: llm.BotConfig{
-						UserAccessLevel: llm.UserAccessLevelBlock,
-						UserIDs:         []string{"user-123"},
-					},
-					envSetup: func(e *TestEnvironment) {
-						e.mockAPI.On("GetChannel", "channel-123").Return(&model.Channel{
-							Id:     "channel-123",
-							Type:   model.ChannelTypeOpen,
-							TeamId: "team-123",
-						}, nil).Once()
-					},
-					expectedStatus: http.StatusForbidden,
-				},
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			// Setup bot with fake LLM
+			botConfig := llm.BotConfig{
+				Name:            "testbot",
+				DisplayName:     "Test Bot",
+				UserAccessLevel: llm.UserAccessLevelAll,
+			}
+			e.setupTestBot(botConfig)
+
+			// Inject fake LLM
+			if tc.fakeLLM != nil {
+				for _, bot := range e.bots.GetAllBots() {
+					if bot.GetConfig().Name == "testbot" {
+						bot.SetLLMForTest(tc.fakeLLM)
+					}
+				}
 			}
 
-			for _, tc := range tests {
-				t.Run(tc.name, func(t *testing.T) {
-					e := SetupTestEnvironment(t)
-					defer e.Cleanup(t)
+			// Allow error logging
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
 
-					// Setup bot
-					tc.botConfig.Name = "testbot"
-					tc.botConfig.DisplayName = "Test Bot"
-					e.setupTestBot(tc.botConfig)
+			// Create bridge client and make request
+			client := e.CreateBridgeClient()
+			result, err := client.AgentCompletion(tc.agent, tc.request)
 
-					// Set the service for testing (needed for service endpoints)
-					serviceConfig := llm.ServiceConfig{
-						ID:   "testservice",
-						Name: "Test Service",
+			if tc.expectError {
+				require.Error(t, err)
+				if tc.errorMsg != "" {
+					require.Contains(t, err.Error(), tc.errorMsg)
+				}
+			} else {
+				require.NoError(t, err)
+				if tc.validateRes != nil {
+					tc.validateRes(t, result)
+				}
+			}
+		})
+	}
+}
+
+func TestBridgeClientAgentCompletionStream(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name        string
+		agent       string
+		request     bridgeclient.CompletionRequest
+		fakeLLM     *FakeLLM
+		expectError bool
+		errorMsg    string
+		validateRes func(t *testing.T, result *llm.TextStreamResult)
+	}{
+		{
+			name:  "successful streaming",
+			agent: "testbot",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Count to 3"},
+				},
+			},
+			fakeLLM: NewFakeLLMWithStreamEvents([]llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "1"},
+				{Type: llm.EventTypeText, Value: " "},
+				{Type: llm.EventTypeText, Value: "2"},
+				{Type: llm.EventTypeText, Value: " "},
+				{Type: llm.EventTypeText, Value: "3"},
+				{Type: llm.EventTypeEnd, Value: nil},
+			}),
+			expectError: false,
+			validateRes: func(t *testing.T, result *llm.TextStreamResult) {
+				require.NotNil(t, result)
+				require.NotNil(t, result.Stream)
+
+				var text strings.Builder
+				for event := range result.Stream {
+					if event.Type == llm.EventTypeText {
+						if textValue, ok := event.Value.(string); ok {
+							text.WriteString(textValue)
+						}
+					} else if event.Type == llm.EventTypeEnd {
+						break
 					}
-					for _, bot := range e.bots.GetAllBots() {
-						bot.SetServiceForTest(serviceConfig)
+				}
+
+				require.Equal(t, "1 2 3", text.String())
+			},
+		},
+		{
+			name:  "streaming with error event",
+			agent: "testbot",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hello"},
+				},
+			},
+			fakeLLM:     StreamingLLMError("simulated error"),
+			expectError: false, // Request succeeds, error is in stream
+			validateRes: func(t *testing.T, result *llm.TextStreamResult) {
+				require.NotNil(t, result)
+
+				gotError := false
+				for event := range result.Stream {
+					if event.Type == llm.EventTypeError {
+						gotError = true
+						break
 					}
+				}
+				require.True(t, gotError, "should receive error event in stream")
+			},
+		},
+		{
+			name:  "agent not found",
+			agent: "nonexistent",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hello"},
+				},
+			},
+			fakeLLM:     NewFakeLLM("test"),
+			expectError: true,
+			errorMsg:    "agent not found",
+		},
+	}
 
-					// Setup environment
-					tc.envSetup(e)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
 
-					// Allow error logging
-					e.mockAPI.On("LogError", mock.Anything).Maybe()
+			// Setup bot with fake LLM
+			botConfig := llm.BotConfig{
+				Name:            "testbot",
+				DisplayName:     "Test Bot",
+				UserAccessLevel: llm.UserAccessLevelAll,
+			}
+			e.setupTestBot(botConfig)
 
-					// Create request body
-					reqBody := bridgeclient.CompletionRequest{
-						Posts: []bridgeclient.Post{
-							{
-								Role:    "user",
-								Message: "test message",
-							},
-						},
-						UserID:    tc.userID,
-						ChannelID: tc.channelID,
+			// Inject fake LLM
+			for _, bot := range e.bots.GetAllBots() {
+				if bot.GetConfig().Name == "testbot" {
+					bot.SetLLMForTest(tc.fakeLLM)
+				}
+			}
+
+			// Allow error logging
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			// Create bridge client and make streaming request
+			client := e.CreateBridgeClient()
+			result, err := client.AgentCompletionStream(tc.agent, tc.request)
+
+			if tc.expectError {
+				require.Error(t, err)
+				if tc.errorMsg != "" {
+					require.Contains(t, err.Error(), tc.errorMsg)
+				}
+			} else {
+				require.NoError(t, err)
+				if tc.validateRes != nil {
+					tc.validateRes(t, result)
+				}
+			}
+		})
+	}
+}
+
+func TestBridgeClientServiceCompletion(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name          string
+		service       string
+		request       bridgeclient.CompletionRequest
+		serviceConfig llm.ServiceConfig
+		fakeLLM       *FakeLLM
+		expectError   bool
+		errorMsg      string
+		validateRes   func(t *testing.T, result string)
+	}{
+		{
+			name:    "successful service completion by ID",
+			service: "test-service-id",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hello"},
+				},
+			},
+			serviceConfig: llm.ServiceConfig{
+				ID:   "test-service-id",
+				Name: "Test Service",
+			},
+			fakeLLM:     NewFakeLLM("Service response"),
+			expectError: false,
+			validateRes: func(t *testing.T, result string) {
+				require.Equal(t, "Service response", result)
+			},
+		},
+		{
+			name:    "successful service completion by name",
+			service: "TestService",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hello"},
+				},
+			},
+			serviceConfig: llm.ServiceConfig{
+				ID:   "test-service-id",
+				Name: "TestService",
+			},
+			fakeLLM:     NewFakeLLM("Service response by name"),
+			expectError: false,
+			validateRes: func(t *testing.T, result string) {
+				require.Equal(t, "Service response by name", result)
+			},
+		},
+		{
+			name:    "service not found",
+			service: "nonexistent-service",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hello"},
+				},
+			},
+			serviceConfig: llm.ServiceConfig{ID: "other-service", Name: "Other"},
+			fakeLLM:       NewFakeLLM("test"),
+			expectError:   true,
+			errorMsg:      "no bot found for service",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			// Setup bot with service
+			botConfig := llm.BotConfig{
+				Name:            "testbot",
+				DisplayName:     "Test Bot",
+				UserAccessLevel: llm.UserAccessLevelAll,
+			}
+			e.setupTestBot(botConfig)
+
+			// Set service and LLM
+			for _, bot := range e.bots.GetAllBots() {
+				bot.SetServiceForTest(tc.serviceConfig)
+				if tc.fakeLLM != nil {
+					bot.SetLLMForTest(tc.fakeLLM)
+				}
+			}
+
+			// Allow error logging
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			// Create bridge client and make request
+			client := e.CreateBridgeClient()
+			result, err := client.ServiceCompletion(tc.service, tc.request)
+
+			if tc.expectError {
+				require.Error(t, err)
+				if tc.errorMsg != "" {
+					require.Contains(t, err.Error(), tc.errorMsg)
+				}
+			} else {
+				require.NoError(t, err)
+				if tc.validateRes != nil {
+					tc.validateRes(t, result)
+				}
+			}
+		})
+	}
+}
+
+func TestBridgeClientServiceCompletionStream(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name          string
+		service       string
+		request       bridgeclient.CompletionRequest
+		serviceConfig llm.ServiceConfig
+		fakeLLM       *FakeLLM
+		expectError   bool
+		errorMsg      string
+		validateRes   func(t *testing.T, result *llm.TextStreamResult)
+	}{
+		{
+			name:    "successful service streaming",
+			service: "openai-service",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Stream test"},
+				},
+			},
+			serviceConfig: llm.ServiceConfig{
+				ID:   "openai-service",
+				Name: "OpenAI",
+			},
+			fakeLLM: NewFakeLLMWithStreamEvents([]llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "OpenAI "},
+				{Type: llm.EventTypeText, Value: "stream"},
+				{Type: llm.EventTypeEnd, Value: nil},
+			}),
+			expectError: false,
+			validateRes: func(t *testing.T, result *llm.TextStreamResult) {
+				require.NotNil(t, result)
+
+				var text strings.Builder
+				for event := range result.Stream {
+					if event.Type == llm.EventTypeText {
+						if textValue, ok := event.Value.(string); ok {
+							text.WriteString(textValue)
+						}
+					} else if event.Type == llm.EventTypeEnd {
+						break
 					}
-					bodyJSON, err := json.Marshal(reqBody)
-					require.NoError(t, err)
+				}
 
-					// Create request
-					req := httptest.NewRequest(http.MethodPost, endpoint.url, bytes.NewReader(bodyJSON))
-					req.Header.Set("Content-Type", "application/json")
-					req.Header.Set("Mattermost-Plugin-ID", "test-plugin")
+				require.Equal(t, "OpenAI stream", text.String())
+			},
+		},
+		{
+			name:    "service not found",
+			service: "nonexistent",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hello"},
+				},
+			},
+			serviceConfig: llm.ServiceConfig{ID: "other", Name: "Other"},
+			fakeLLM:       NewFakeLLM("test"),
+			expectError:   true,
+			errorMsg:      "no bot found for service",
+		},
+	}
 
-					// Execute request
-					recorder := httptest.NewRecorder()
-					e.api.ServeHTTP(&plugin.Context{}, recorder, req)
-					resp := recorder.Result()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
 
-					// Assert status code
-					require.Equal(t, tc.expectedStatus, resp.StatusCode)
+			// Setup bot with service
+			botConfig := llm.BotConfig{
+				Name:            "testbot",
+				DisplayName:     "Test Bot",
+				UserAccessLevel: llm.UserAccessLevelAll,
+			}
+			e.setupTestBot(botConfig)
 
-					// If expecting 403, verify error message
-					if tc.expectedStatus == http.StatusForbidden {
-						body, err := io.ReadAll(resp.Body)
-						require.NoError(t, err)
-						var errResp bridgeclient.ErrorResponse
-						err = json.Unmarshal(body, &errResp)
-						require.NoError(t, err)
-						require.Contains(t, errResp.Error, "permission denied")
-					}
-				})
+			// Set service and LLM
+			for _, bot := range e.bots.GetAllBots() {
+				bot.SetServiceForTest(tc.serviceConfig)
+				if tc.fakeLLM != nil {
+					bot.SetLLMForTest(tc.fakeLLM)
+				}
+			}
+
+			// Allow error logging
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			// Create bridge client and make streaming request
+			client := e.CreateBridgeClient()
+			result, err := client.ServiceCompletionStream(tc.service, tc.request)
+
+			if tc.expectError {
+				require.Error(t, err)
+				if tc.errorMsg != "" {
+					require.Contains(t, err.Error(), tc.errorMsg)
+				}
+			} else {
+				require.NoError(t, err)
+				if tc.validateRes != nil {
+					tc.validateRes(t, result)
+				}
+			}
+		})
+	}
+}
+
+func TestBridgeClientPermissions(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name        string
+		userID      string
+		channelID   string
+		botConfig   llm.BotConfig
+		envSetup    func(e *TestEnvironment)
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:      "no UserID or ChannelID - succeeds (backward compatibility)",
+			userID:    "",
+			channelID: "",
+			botConfig: llm.BotConfig{
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+			envSetup:    func(e *TestEnvironment) {},
+			expectError: false,
+		},
+		{
+			name:      "UserID only with allowed user - succeeds",
+			userID:    "user-123",
+			channelID: "",
+			botConfig: llm.BotConfig{
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+			envSetup:    func(e *TestEnvironment) {},
+			expectError: false,
+		},
+		{
+			name:      "UserID only with blocked user - returns error",
+			userID:    "user-123",
+			channelID: "",
+			botConfig: llm.BotConfig{
+				UserAccessLevel: llm.UserAccessLevelBlock,
+				UserIDs:         []string{"user-123"},
+			},
+			envSetup:    func(e *TestEnvironment) {},
+			expectError: true,
+			errorMsg:    "permission denied",
+		},
+		{
+			name:      "UserID + ChannelID with allowed user and channel - succeeds",
+			userID:    "user-123",
+			channelID: "channel-123",
+			botConfig: llm.BotConfig{
+				UserAccessLevel:    llm.UserAccessLevelAll,
+				ChannelAccessLevel: llm.ChannelAccessLevelAll,
+			},
+			envSetup: func(e *TestEnvironment) {
+				e.mockAPI.On("GetChannel", "channel-123").Return(&model.Channel{
+					Id:     "channel-123",
+					Type:   model.ChannelTypeOpen,
+					TeamId: "team-123",
+				}, nil).Once()
+			},
+			expectError: false,
+		},
+		{
+			name:      "UserID + ChannelID with blocked channel - returns error",
+			userID:    "user-123",
+			channelID: "channel-123",
+			botConfig: llm.BotConfig{
+				UserAccessLevel:    llm.UserAccessLevelAll,
+				ChannelAccessLevel: llm.ChannelAccessLevelBlock,
+				ChannelIDs:         []string{"channel-123"},
+			},
+			envSetup: func(e *TestEnvironment) {
+				e.mockAPI.On("GetChannel", "channel-123").Return(&model.Channel{
+					Id:     "channel-123",
+					Type:   model.ChannelTypeOpen,
+					TeamId: "team-123",
+				}, nil).Once()
+			},
+			expectError: true,
+			errorMsg:    "permission denied",
+		},
+		{
+			name:      "UserID + ChannelID with blocked user - returns error",
+			userID:    "user-123",
+			channelID: "channel-123",
+			botConfig: llm.BotConfig{
+				UserAccessLevel: llm.UserAccessLevelBlock,
+				UserIDs:         []string{"user-123"},
+			},
+			envSetup: func(e *TestEnvironment) {
+				e.mockAPI.On("GetChannel", "channel-123").Return(&model.Channel{
+					Id:     "channel-123",
+					Type:   model.ChannelTypeOpen,
+					TeamId: "team-123",
+				}, nil).Once()
+			},
+			expectError: true,
+			errorMsg:    "permission denied",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			// Setup bot
+			tc.botConfig.Name = "testbot"
+			tc.botConfig.DisplayName = "Test Bot"
+			e.setupTestBot(tc.botConfig)
+
+			// Inject fake LLM
+			fakeLLM := NewFakeLLM("Test response")
+			for _, bot := range e.bots.GetAllBots() {
+				bot.SetLLMForTest(fakeLLM)
+			}
+
+			// Setup environment
+			tc.envSetup(e)
+
+			// Allow error logging
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			// Create request with permissions fields
+			request := bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "test message"},
+				},
+				UserID:    tc.userID,
+				ChannelID: tc.channelID,
+			}
+
+			// Create bridge client and make request
+			client := e.CreateBridgeClient()
+			_, err := client.AgentCompletion("testbot", request)
+
+			if tc.expectError {
+				require.Error(t, err)
+				if tc.errorMsg != "" {
+					require.Contains(t, err.Error(), tc.errorMsg)
+				}
+			} else {
+				require.NoError(t, err)
 			}
 		})
 	}
