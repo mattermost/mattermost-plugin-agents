@@ -10,7 +10,6 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
 // ReadPostArgs represents arguments for the read_post tool
@@ -153,7 +152,7 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 		// Get user info for the post
 		user, _, err := client.GetUser(ctx, post.UserId, "")
 		if err != nil {
-			p.logger.Warn("failed to get user for post", mlog.String("user_id", post.UserId), mlog.Err(err))
+			p.logger.Warn("failed to get user for post", "user_id", post.UserId, "error", err)
 			result.WriteString(fmt.Sprintf("**Post %d** by Unknown User:\n", i+1))
 		} else {
 			result.WriteString(fmt.Sprintf("**Post %d** by %s:\n", i+1, user.Username))

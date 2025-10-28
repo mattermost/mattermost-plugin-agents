@@ -59,3 +59,11 @@ type HTTPConfig struct {
 	HTTPBindAddr string `json:"http_bind_addr"` // Bind address (default: "127.0.0.1" for security)
 	SiteURL      string `json:"site_url"`       // Site URL for external access (optional)
 }
+
+// InMemoryConfig represents configuration for in-memory transport MCP server
+// Used for embedded MCP servers that run within the same process as the plugin
+type InMemoryConfig struct {
+	BaseConfig
+	// No additional configuration needed for in-memory transport
+	// Authentication is handled through session tokens passed via context
+}

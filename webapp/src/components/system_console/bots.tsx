@@ -12,25 +12,14 @@ import {useIsMultiLLMLicensed} from '@/license';
 
 import Bot, {ChannelAccessLevel, LLMBotConfig, UserAccessLevel} from './bot';
 import EnterpriseChip from './enterprise_chip';
+import {LLMService} from './service';
 
 const defaultNewBot: LLMBotConfig = {
     id: '',
     name: '',
     displayName: '',
+    serviceID: '',
     customInstructions: '',
-    service: {
-        type: 'openai',
-        apiKey: '',
-        apiURL: '',
-        orgId: '',
-        defaultModel: '',
-        tokenLimit: 0,
-        streamingTimeoutSeconds: 0,
-        sendUserId: false,
-        outputTokenLimit: 0,
-        useResponsesAPI: false,
-        enabledNativeTools: [],
-    },
     enableVision: false,
     disableTools: false,
     channelAccessLevel: ChannelAccessLevel.All,
@@ -38,6 +27,7 @@ const defaultNewBot: LLMBotConfig = {
     userAccessLevel: UserAccessLevel.All,
     userIDs: [],
     teamIDs: [],
+    enabledNativeTools: [],
 };
 
 export const firstNewBot = {
@@ -48,6 +38,7 @@ export const firstNewBot = {
 
 type Props = {
     bots: LLMBotConfig[]
+    services: LLMService[]
     onChange: (bots: LLMBotConfig[]) => void
     botChangedAvatar: (bot: LLMBotConfig, image: File) => void
 }
@@ -59,9 +50,8 @@ const Bots = (props: Props) => {
 
     const addNewBot = (e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
-        const id = Math.random().toString(36).substring(2, 22);
+        const id = crypto.randomUUID();
         if (props.bots.length === 0) {
-            // Suggest the '@ai' and 'Agents' name for the first bot
             props.onChange([{
                 ...firstNewBot,
                 id,
@@ -89,6 +79,7 @@ const Bots = (props: Props) => {
                     <Bot
                         key={bot.id}
                         bot={bot}
+                        services={props.services}
                         onChange={onChange}
                         onDelete={() => onDelete(bot.id)}
                         changedAvatar={(image: File) => props.botChangedAvatar(bot, image)}

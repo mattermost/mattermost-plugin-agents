@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
 // ProtectedResourceMetadata represents OAuth 2.0 Protected Resource Metadata (RFC 9728)
@@ -67,7 +65,7 @@ func (s *MattermostHTTPMCPServer) handleProtectedResourceMetadata(w http.Respons
 	// Marshal and write the JSON response
 	jsonBytes, err := json.Marshal(metadata)
 	if err != nil {
-		s.logger.Error("Failed to marshal OAuth metadata", mlog.Err(err))
+		s.logger.Error("Failed to marshal OAuth metadata", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -75,5 +73,5 @@ func (s *MattermostHTTPMCPServer) handleProtectedResourceMetadata(w http.Respons
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(jsonBytes)
 
-	s.logger.Debug("Protected resource metadata requested", mlog.String("remote_addr", r.RemoteAddr))
+	s.logger.Debug("Protected resource metadata requested", "remote_addr", r.RemoteAddr)
 }

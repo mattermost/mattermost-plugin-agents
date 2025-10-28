@@ -27,7 +27,7 @@ var (
 )
 
 func (c *Conversations) MessageHasBeenPosted(ctx *plugin.Context, post *model.Post) {
-	if err := c.handleMessages(post); err != nil {
+	if err := c.handleMessages(ctx, post); err != nil {
 		if errors.Is(err, ErrNoResponse) {
 			c.mmClient.LogDebug(err.Error())
 		} else {
@@ -36,7 +36,7 @@ func (c *Conversations) MessageHasBeenPosted(ctx *plugin.Context, post *model.Po
 	}
 }
 
-func (c *Conversations) handleMessages(post *model.Post) error {
+func (c *Conversations) handleMessages(ctx *plugin.Context, post *model.Post) error {
 	// Don't respond to ourselves
 	if c.bots.IsAnyBot(post.UserId) {
 		return fmt.Errorf("not responding to ourselves: %w", ErrNoResponse)
@@ -79,23 +79,27 @@ func (c *Conversations) handleMessages(post *model.Post) error {
 
 	// Check we are mentioned like @ai
 	if bot := c.bots.GetBotMentioned(post.Message); bot != nil {
-		return c.handleMentions(bot, post, postingUser, channel)
+		return c.handleMentions(ctx, bot, post, postingUser, channel)
 	}
 
 	// Check if this is post in the DM channel with any bot
 	if bot := c.bots.GetBotForDMChannel(channel); bot != nil {
-		return c.handleDMs(bot, channel, postingUser, post)
+		return c.handleDMs(ctx, bot, channel, postingUser, post)
 	}
 
 	return nil
 }
 
-func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) error {
+func (c *Conversations) handleMentions(ctx *plugin.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) error {
 	if err := c.bots.CheckUsageRestrictions(postingUser.Id, bot, channel); err != nil {
 		return err
 	}
 
-	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post)
+	sessionID := ""
+	if ctx != nil {
+		sessionID = ctx.SessionId
+	}
+	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, sessionID)
 	if err != nil {
 		return fmt.Errorf("unable to process bot mention: %w", err)
 	}
@@ -116,12 +120,16 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 	return nil
 }
 
-func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
+func (c *Conversations) handleDMs(ctx *plugin.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
 	if err := c.bots.CheckUsageRestrictionsForUser(bot, postingUser.Id); err != nil {
 		return err
 	}
 
-	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post)
+	sessionID := ""
+	if ctx != nil {
+		sessionID = ctx.SessionId
+	}
+	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, sessionID)
 	if err != nil {
 		return fmt.Errorf("unable to process bot mention: %w", err)
 	}
