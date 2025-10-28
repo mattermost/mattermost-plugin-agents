@@ -758,6 +758,18 @@ func (s *OpenAI) streamResponsesAPIToChannels(params openai.ChatCompletionNewPar
 				}
 			}
 
+			// Emit usage event if available
+			if event.Response.Usage.InputTokens > 0 || event.Response.Usage.OutputTokens > 0 {
+				usage := llm.TokenUsage{
+					InputTokens:  event.Response.Usage.InputTokens,
+					OutputTokens: event.Response.Usage.OutputTokens,
+				}
+				output <- llm.TextStreamEvent{
+					Type:  llm.EventTypeUsage,
+					Value: usage,
+				}
+			}
+
 			// Check if we have tool calls to emit
 			if len(toolsBuffer) > 0 {
 				handleToolCalls()

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
@@ -102,6 +103,17 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(request CompletionRequest, opt
 				}
 				if request.Context.Team != nil {
 					teamID = request.Context.Team.Id
+				} else if request.Context.Channel != nil {
+					// For DM and Group channels, use a special identifier
+					// instead of "unknown" to distinguish them in metrics
+					switch request.Context.Channel.Type {
+					case model.ChannelTypeDirect:
+						teamID = "dm"
+					case model.ChannelTypeGroup:
+						teamID = "group"
+					default:
+						teamID = "unknown"
+					}
 				}
 			}
 
