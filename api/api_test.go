@@ -73,7 +73,7 @@ func (e *TestEnvironment) Cleanup(t *testing.T) {
 // createTestBots creates a test MMBots instance for testing
 func createTestBots(mockAPI *plugintest.API, client *pluginapi.Client) *bots.MMBots {
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	testBots := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+	testBots := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
 	return testBots
 }
 
