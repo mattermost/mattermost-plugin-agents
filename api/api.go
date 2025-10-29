@@ -119,7 +119,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	llmBridgeRoute.Use(a.interPluginAuthorizationRequired)
 
 	// Discovery endpoints
-	llmBridgeRoute.GET("/bots", a.handleGetBots)
+	llmBridgeRoute.GET("/agents", a.handleGetAgents)
 	llmBridgeRoute.GET("/services", a.handleGetServices)
 
 	// Completion endpoints

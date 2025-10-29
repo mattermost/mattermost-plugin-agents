@@ -10,10 +10,10 @@ import (
 	"net/http"
 )
 
-// GetBots retrieves all available bots from the bridge API.
-// If userID is provided, only bots accessible to that user are returned.
-func (c *Client) GetBots(userID string) ([]BridgeBotInfo, error) {
-	url := fmt.Sprintf("/%s/bridge/v1/bots", aiPluginID)
+// GetAgents retrieves all available agents from the bridge API.
+// If userID is provided, only agents accessible to that user are returned.
+func (c *Client) GetAgents(userID string) ([]BridgeAgentInfo, error) {
+	url := fmt.Sprintf("/%s/bridge/v1/agents", aiPluginID)
 	if userID != "" {
 		url = fmt.Sprintf("%s?user_id=%s", url, userID)
 	}
@@ -42,12 +42,12 @@ func (c *Client) GetBots(userID string) ([]BridgeBotInfo, error) {
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errResp.Error)
 	}
 
-	var botsResp BotsResponse
-	if err := json.Unmarshal(respBody, &botsResp); err != nil {
+	var agentsResp AgentsResponse
+	if err := json.Unmarshal(respBody, &agentsResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	return botsResp.Bots, nil
+	return agentsResp.Agents, nil
 }
 
 // GetServices retrieves all available services from the bridge API.

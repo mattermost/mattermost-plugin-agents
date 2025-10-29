@@ -668,7 +668,7 @@ func TestBridgeGetBots(t *testing.T) {
 		userID      string
 		botConfigs  []llm.BotConfig
 		expectBots  int
-		validateRes func(t *testing.T, bots []bridgeclient.BridgeBotInfo)
+		validateRes func(t *testing.T, agents []bridgeclient.BridgeAgentInfo)
 	}{
 		{
 			name:   "get all bots without user_id",
@@ -688,15 +688,15 @@ func TestBridgeGetBots(t *testing.T) {
 				},
 			},
 			expectBots: 2,
-			validateRes: func(t *testing.T, bots []bridgeclient.BridgeBotInfo) {
-				require.Len(t, bots, 2)
-				// Verify bot fields are populated
-				for _, bot := range bots {
-					require.NotEmpty(t, bot.ID)
-					require.NotEmpty(t, bot.DisplayName)
-					require.NotEmpty(t, bot.Username)
-					require.NotEmpty(t, bot.ServiceID)
-					require.NotEmpty(t, bot.ServiceType)
+			validateRes: func(t *testing.T, agents []bridgeclient.BridgeAgentInfo) {
+				require.Len(t, agents, 2)
+				// Verify agent fields are populated
+				for _, agent := range agents {
+					require.NotEmpty(t, agent.ID)
+					require.NotEmpty(t, agent.DisplayName)
+					require.NotEmpty(t, agent.Username)
+					require.NotEmpty(t, agent.ServiceID)
+					require.NotEmpty(t, agent.ServiceType)
 				}
 			},
 		},
@@ -719,9 +719,9 @@ func TestBridgeGetBots(t *testing.T) {
 				},
 			},
 			expectBots: 1,
-			validateRes: func(t *testing.T, bots []bridgeclient.BridgeBotInfo) {
-				require.Len(t, bots, 1)
-				require.Equal(t, "bot1", bots[0].Username)
+			validateRes: func(t *testing.T, agents []bridgeclient.BridgeAgentInfo) {
+				require.Len(t, agents, 1)
+				require.Equal(t, "bot1", agents[0].Username)
 			},
 		},
 		{
@@ -729,8 +729,8 @@ func TestBridgeGetBots(t *testing.T) {
 			userID:     "",
 			botConfigs: []llm.BotConfig{},
 			expectBots: 0,
-			validateRes: func(t *testing.T, bots []bridgeclient.BridgeBotInfo) {
-				require.Empty(t, bots)
+			validateRes: func(t *testing.T, agents []bridgeclient.BridgeAgentInfo) {
+				require.Empty(t, agents)
 			},
 		},
 	}
@@ -759,12 +759,12 @@ func TestBridgeGetBots(t *testing.T) {
 
 			// Create bridge client and make request
 			client := e.CreateBridgeClient()
-			bots, err := client.GetBots(tc.userID)
+			agents, err := client.GetAgents(tc.userID)
 			require.NoError(t, err)
 
-			require.Len(t, bots, tc.expectBots)
+			require.Len(t, agents, tc.expectBots)
 			if tc.validateRes != nil {
-				tc.validateRes(t, bots)
+				tc.validateRes(t, agents)
 			}
 		})
 	}

@@ -59,8 +59,8 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
-// BridgeBotInfo represents basic bot information from the bridge API
-type BridgeBotInfo struct {
+// BridgeAgentInfo represents basic agent information from the bridge API
+type BridgeAgentInfo struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
 	Username    string `json:"username"`
@@ -75,9 +75,9 @@ type BridgeServiceInfo struct {
 	Type string `json:"type"`
 }
 
-// BotsResponse represents the response for the bots endpoint
-type BotsResponse struct {
-	Bots []BridgeBotInfo `json:"bots"`
+// AgentsResponse represents the response for the agents endpoint
+type AgentsResponse struct {
+	Agents []BridgeAgentInfo `json:"agents"`
 }
 
 // ServicesResponse represents the response for the services endpoint

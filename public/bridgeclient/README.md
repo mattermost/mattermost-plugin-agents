@@ -135,20 +135,20 @@ If not using built-in permission checks, your plugin must verify permissions bef
 
 ## Discovery Endpoints
 
-The bridge API provides discovery endpoints to help clients find available bots and services before making completion requests.
+The bridge API provides discovery endpoints to help clients find available agents and services before making completion requests.
 
-### Get Available Bots
+### Get Available Agents
 
 ```go
-// Get all bots
-bots, err := client.GetBots("")
+// Get all agents
+agents, err := client.GetAgents("")
 if err != nil {
     return err
 }
 
-for _, bot := range bots {
-    fmt.Printf("Bot: %s (%s) - Service: %s (%s)\n",
-        bot.DisplayName, bot.Username, bot.ServiceID, bot.ServiceType)
+for _, agent := range agents {
+    fmt.Printf("Agent: %s (%s) - Service: %s (%s)\n",
+        agent.DisplayName, agent.Username, agent.ServiceID, agent.ServiceType)
 }
 ```
 
@@ -172,11 +172,11 @@ for _, service := range services {
 Like completion endpoints, discovery endpoints support optional user filtering:
 
 ```go
-// Get bots accessible to a specific user
-bots, err := client.GetBots(userID)
+// Get agents accessible to a specific user
+agents, err := client.GetAgents(userID)
 
-// Get services accessible to a specific user (via their permitted bots)
+// Get services accessible to a specific user (via their permitted agents)
 services, err := client.GetServices(userID)
 ```
 
-This is useful for showing users only the bots and services they have permission to use.
+This is useful for showing users only the agents and services they have permission to use.

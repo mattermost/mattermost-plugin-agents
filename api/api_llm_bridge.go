@@ -212,12 +212,12 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRe
 	})
 }
 
-// handleGetBots returns all available bots, optionally filtered by user permissions
-func (a *API) handleGetBots(c *gin.Context) {
+// handleGetAgents returns all available agents, optionally filtered by user permissions
+func (a *API) handleGetAgents(c *gin.Context) {
 	userID := c.Query("user_id")
 
 	allBots := a.bots.GetAllBots()
-	bots := make([]bridgeclient.BridgeBotInfo, 0, len(allBots))
+	agents := make([]bridgeclient.BridgeAgentInfo, 0, len(allBots))
 
 	for _, bot := range allBots {
 		// If user_id is provided, filter by permissions
@@ -228,7 +228,7 @@ func (a *API) handleGetBots(c *gin.Context) {
 		}
 
 		service := bot.GetService()
-		bots = append(bots, bridgeclient.BridgeBotInfo{
+		agents = append(agents, bridgeclient.BridgeAgentInfo{
 			ID:          bot.GetMMBot().UserId,
 			DisplayName: bot.GetMMBot().DisplayName,
 			Username:    bot.GetMMBot().Username,
@@ -237,8 +237,8 @@ func (a *API) handleGetBots(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, bridgeclient.BotsResponse{
-		Bots: bots,
+	c.JSON(http.StatusOK, bridgeclient.AgentsResponse{
+		Agents: agents,
 	})
 }
 
