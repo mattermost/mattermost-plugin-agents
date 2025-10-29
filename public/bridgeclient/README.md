@@ -132,3 +132,51 @@ If not using built-in permission checks, your plugin must verify permissions bef
 - **Service**: Target an LLM service by ID or name (e.g., "openai", "anthropic")
   - Uses any bot configured with that service
   - Useful when bot-specific configuration doesn't matter
+
+## Discovery Endpoints
+
+The bridge API provides discovery endpoints to help clients find available bots and services before making completion requests.
+
+### Get Available Bots
+
+```go
+// Get all bots
+bots, err := client.GetBots("")
+if err != nil {
+    return err
+}
+
+for _, bot := range bots {
+    fmt.Printf("Bot: %s (%s) - Service: %s (%s)\n",
+        bot.DisplayName, bot.Username, bot.ServiceID, bot.ServiceType)
+}
+```
+
+### Get Available Services
+
+```go
+// Get all services
+services, err := client.GetServices("")
+if err != nil {
+    return err
+}
+
+for _, service := range services {
+    fmt.Printf("Service: %s (%s) - Type: %s\n",
+        service.Name, service.ID, service.Type)
+}
+```
+
+### Discovery with User Permissions
+
+Like completion endpoints, discovery endpoints support optional user filtering:
+
+```go
+// Get bots accessible to a specific user
+bots, err := client.GetBots(userID)
+
+// Get services accessible to a specific user (via their permitted bots)
+services, err := client.GetServices(userID)
+```
+
+This is useful for showing users only the bots and services they have permission to use.

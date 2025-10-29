@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -653,6 +654,248 @@ func TestBridgeClientPermissions(t *testing.T) {
 				}
 			} else {
 				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestBridgeGetBots(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name        string
+		userID      string
+		botConfigs  []llm.BotConfig
+		expectBots  int
+		validateRes func(t *testing.T, bots []bridgeclient.BridgeBotInfo)
+	}{
+		{
+			name:   "get all bots without user_id",
+			userID: "",
+			botConfigs: []llm.BotConfig{
+				{
+					Name:            "bot1",
+					DisplayName:     "Bot One",
+					ServiceID:       "service1",
+					UserAccessLevel: llm.UserAccessLevelAll,
+				},
+				{
+					Name:            "bot2",
+					DisplayName:     "Bot Two",
+					ServiceID:       "service2",
+					UserAccessLevel: llm.UserAccessLevelAll,
+				},
+			},
+			expectBots: 2,
+			validateRes: func(t *testing.T, bots []bridgeclient.BridgeBotInfo) {
+				require.Len(t, bots, 2)
+				// Verify bot fields are populated
+				for _, bot := range bots {
+					require.NotEmpty(t, bot.ID)
+					require.NotEmpty(t, bot.DisplayName)
+					require.NotEmpty(t, bot.Username)
+					require.NotEmpty(t, bot.ServiceID)
+					require.NotEmpty(t, bot.ServiceType)
+				}
+			},
+		},
+		{
+			name:   "get filtered bots with user_id",
+			userID: "user-123",
+			botConfigs: []llm.BotConfig{
+				{
+					Name:            "bot1",
+					DisplayName:     "Bot One",
+					ServiceID:       "service1",
+					UserAccessLevel: llm.UserAccessLevelAll,
+				},
+				{
+					Name:            "bot2",
+					DisplayName:     "Bot Two",
+					ServiceID:       "service2",
+					UserAccessLevel: llm.UserAccessLevelAllow,
+					UserIDs:         []string{"other-user"},
+				},
+			},
+			expectBots: 1,
+			validateRes: func(t *testing.T, bots []bridgeclient.BridgeBotInfo) {
+				require.Len(t, bots, 1)
+				require.Equal(t, "bot1", bots[0].Username)
+			},
+		},
+		{
+			name:       "no bots configured",
+			userID:     "",
+			botConfigs: []llm.BotConfig{},
+			expectBots: 0,
+			validateRes: func(t *testing.T, bots []bridgeclient.BridgeBotInfo) {
+				require.Empty(t, bots)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			// Setup bots - create all at once
+			allBots := make([]*bots.Bot, 0, len(tc.botConfigs))
+			for i, config := range tc.botConfigs {
+				mmBot := &model.Bot{
+					UserId:      fmt.Sprintf("bot-user-id-%d", i),
+					Username:    config.Name,
+					DisplayName: config.DisplayName,
+				}
+				bot := bots.NewBot(config, llm.ServiceConfig{
+					ID:   config.ServiceID,
+					Name: config.ServiceID,
+					Type: "test",
+				}, mmBot, nil)
+				allBots = append(allBots, bot)
+			}
+			e.bots.SetBotsForTesting(allBots)
+
+			// Create bridge client and make request
+			client := e.CreateBridgeClient()
+			bots, err := client.GetBots(tc.userID)
+			require.NoError(t, err)
+
+			require.Len(t, bots, tc.expectBots)
+			if tc.validateRes != nil {
+				tc.validateRes(t, bots)
+			}
+		})
+	}
+}
+
+func TestBridgeGetServices(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name           string
+		userID         string
+		botConfigs     []llm.BotConfig
+		expectServices int
+		validateRes    func(t *testing.T, services []bridgeclient.BridgeServiceInfo)
+	}{
+		{
+			name:   "get all services without user_id",
+			userID: "",
+			botConfigs: []llm.BotConfig{
+				{
+					Name:            "bot1",
+					DisplayName:     "Bot One",
+					ServiceID:       "service1",
+					UserAccessLevel: llm.UserAccessLevelAll,
+				},
+				{
+					Name:            "bot2",
+					DisplayName:     "Bot Two",
+					ServiceID:       "service2",
+					UserAccessLevel: llm.UserAccessLevelAll,
+				},
+			},
+			expectServices: 2,
+			validateRes: func(t *testing.T, services []bridgeclient.BridgeServiceInfo) {
+				require.Len(t, services, 2)
+				// Verify service fields are populated
+				for _, svc := range services {
+					require.NotEmpty(t, svc.ID)
+					require.NotEmpty(t, svc.Name)
+					require.NotEmpty(t, svc.Type)
+				}
+			},
+		},
+		{
+			name:   "deduplicate services from multiple bots",
+			userID: "",
+			botConfigs: []llm.BotConfig{
+				{
+					Name:            "bot1",
+					DisplayName:     "Bot One",
+					ServiceID:       "service1",
+					UserAccessLevel: llm.UserAccessLevelAll,
+				},
+				{
+					Name:            "bot2",
+					DisplayName:     "Bot Two",
+					ServiceID:       "service1",
+					UserAccessLevel: llm.UserAccessLevelAll,
+				},
+			},
+			expectServices: 1,
+			validateRes: func(t *testing.T, services []bridgeclient.BridgeServiceInfo) {
+				require.Len(t, services, 1)
+			},
+		},
+		{
+			name:   "filter services by user permissions",
+			userID: "user-123",
+			botConfigs: []llm.BotConfig{
+				{
+					Name:            "bot1",
+					DisplayName:     "Bot One",
+					ServiceID:       "service1",
+					UserAccessLevel: llm.UserAccessLevelAll,
+				},
+				{
+					Name:            "bot2",
+					DisplayName:     "Bot Two",
+					ServiceID:       "service2",
+					UserAccessLevel: llm.UserAccessLevelAllow,
+					UserIDs:         []string{"other-user"},
+				},
+			},
+			expectServices: 1,
+			validateRes: func(t *testing.T, services []bridgeclient.BridgeServiceInfo) {
+				require.Len(t, services, 1)
+				require.Equal(t, "service1", services[0].ID)
+			},
+		},
+		{
+			name:           "no services configured",
+			userID:         "",
+			botConfigs:     []llm.BotConfig{},
+			expectServices: 0,
+			validateRes: func(t *testing.T, services []bridgeclient.BridgeServiceInfo) {
+				require.Empty(t, services)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			// Setup bots - create all at once
+			allBots := make([]*bots.Bot, 0, len(tc.botConfigs))
+			for i, config := range tc.botConfigs {
+				mmBot := &model.Bot{
+					UserId:      fmt.Sprintf("bot-user-id-%d", i),
+					Username:    config.Name,
+					DisplayName: config.DisplayName,
+				}
+				bot := bots.NewBot(config, llm.ServiceConfig{
+					ID:   config.ServiceID,
+					Name: config.ServiceID,
+					Type: "test",
+				}, mmBot, nil)
+				allBots = append(allBots, bot)
+			}
+			e.bots.SetBotsForTesting(allBots)
+
+			// Create bridge client and make request
+			client := e.CreateBridgeClient()
+			services, err := client.GetServices(tc.userID)
+			require.NoError(t, err)
+
+			require.Len(t, services, tc.expectServices)
+			if tc.validateRes != nil {
+				tc.validateRes(t, services)
 			}
 		})
 	}

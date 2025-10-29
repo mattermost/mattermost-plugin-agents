@@ -115,12 +115,19 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.Use(a.metricsMiddleware)
 
 	// LLM Bridge API v1 routes - inter-plugin only
-	llmBridgeRoute := router.Group("/bridge/v1/completion")
+	llmBridgeRoute := router.Group("/bridge/v1")
 	llmBridgeRoute.Use(a.interPluginAuthorizationRequired)
-	llmBridgeRoute.POST("/agent/:agent", a.handleAgentCompletionStreaming)
-	llmBridgeRoute.POST("/agent/:agent/nostream", a.handleAgentCompletionNoStream)
-	llmBridgeRoute.POST("/service/:service", a.handleServiceCompletionStreaming)
-	llmBridgeRoute.POST("/service/:service/nostream", a.handleServiceCompletionNoStream)
+
+	// Discovery endpoints
+	llmBridgeRoute.GET("/bots", a.handleGetBots)
+	llmBridgeRoute.GET("/services", a.handleGetServices)
+
+	// Completion endpoints
+	completionRoute := llmBridgeRoute.Group("/completion")
+	completionRoute.POST("/agent/:agent", a.handleAgentCompletionStreaming)
+	completionRoute.POST("/agent/:agent/nostream", a.handleAgentCompletionNoStream)
+	completionRoute.POST("/service/:service", a.handleServiceCompletionStreaming)
+	completionRoute.POST("/service/:service/nostream", a.handleServiceCompletionNoStream)
 
 	router.Use(a.MattermostAuthorizationRequired)
 

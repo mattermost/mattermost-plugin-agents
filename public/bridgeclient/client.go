@@ -59,6 +59,32 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// BridgeBotInfo represents basic bot information from the bridge API
+type BridgeBotInfo struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	Username    string `json:"username"`
+	ServiceID   string `json:"service_id"`
+	ServiceType string `json:"service_type"`
+}
+
+// BridgeServiceInfo represents basic service information from the bridge API
+type BridgeServiceInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// BotsResponse represents the response for the bots endpoint
+type BotsResponse struct {
+	Bots []BridgeBotInfo `json:"bots"`
+}
+
+// ServicesResponse represents the response for the services endpoint
+type ServicesResponse struct {
+	Services []BridgeServiceInfo `json:"services"`
+}
+
 // NewClient creates a new LLM Bridge API client from a plugin's API interface.
 func NewClient(api PluginAPI) *Client {
 	client := &Client{}

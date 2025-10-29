@@ -212,6 +212,73 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRe
 	})
 }
 
+// handleGetBots returns all available bots, optionally filtered by user permissions
+func (a *API) handleGetBots(c *gin.Context) {
+	userID := c.Query("user_id")
+
+	allBots := a.bots.GetAllBots()
+	bots := make([]bridgeclient.BridgeBotInfo, 0, len(allBots))
+
+	for _, bot := range allBots {
+		// If user_id is provided, filter by permissions
+		if userID != "" {
+			if err := a.bots.CheckUsageRestrictionsForUser(bot, userID); err != nil {
+				continue
+			}
+		}
+
+		service := bot.GetService()
+		bots = append(bots, bridgeclient.BridgeBotInfo{
+			ID:          bot.GetMMBot().UserId,
+			DisplayName: bot.GetMMBot().DisplayName,
+			Username:    bot.GetMMBot().Username,
+			ServiceID:   service.ID,
+			ServiceType: service.Type,
+		})
+	}
+
+	c.JSON(http.StatusOK, bridgeclient.BotsResponse{
+		Bots: bots,
+	})
+}
+
+// handleGetServices returns all available services, optionally filtered by user permissions
+func (a *API) handleGetServices(c *gin.Context) {
+	userID := c.Query("user_id")
+
+	// Get all unique services
+	servicesMap := make(map[string]bridgeclient.BridgeServiceInfo)
+	allBots := a.bots.GetAllBots()
+
+	for _, bot := range allBots {
+		// If user_id is provided, filter by permissions
+		if userID != "" {
+			if err := a.bots.CheckUsageRestrictionsForUser(bot, userID); err != nil {
+				continue
+			}
+		}
+
+		service := bot.GetService()
+		if _, exists := servicesMap[service.ID]; !exists {
+			servicesMap[service.ID] = bridgeclient.BridgeServiceInfo{
+				ID:   service.ID,
+				Name: service.Name,
+				Type: service.Type,
+			}
+		}
+	}
+
+	// Convert map to slice
+	services := make([]bridgeclient.BridgeServiceInfo, 0, len(servicesMap))
+	for _, service := range servicesMap {
+		services = append(services, service)
+	}
+
+	c.JSON(http.StatusOK, bridgeclient.ServicesResponse{
+		Services: services,
+	})
+}
+
 // handleAgentCompletionStreaming handles streaming completion requests for a specific agent
 func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 	agent := c.Param("agent")
