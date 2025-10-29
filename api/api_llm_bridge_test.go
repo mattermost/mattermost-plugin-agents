@@ -35,7 +35,7 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 	}{
 		{
 			name:  "successful completion",
-			agent: "testbot",
+			agent: "bot-user-id",
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Hello"},
@@ -49,7 +49,7 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 		},
 		{
 			name:  "multiple posts with different roles",
-			agent: "testbot",
+			agent: "bot-user-id",
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "system", Message: "You are helpful"},
@@ -64,7 +64,7 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 		},
 		{
 			name:  "LLM returns error",
-			agent: "testbot",
+			agent: "bot-user-id",
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Hello"},
@@ -76,7 +76,7 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 		},
 		{
 			name:  "empty posts array",
-			agent: "testbot",
+			agent: "bot-user-id",
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{},
 			},
@@ -85,8 +85,8 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 			errorMsg:    "posts array cannot be empty",
 		},
 		{
-			name:  "agent not found",
-			agent: "nonexistent",
+			name:  "bot not found",
+			agent: "nonexistent-bot-id",
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Hello"},
@@ -94,11 +94,11 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 			},
 			fakeLLM:     NewFakeLLM("test"),
 			expectError: true,
-			errorMsg:    "agent not found",
+			errorMsg:    "bot not found",
 		},
 		{
 			name:  "bot role alias works",
-			agent: "testbot",
+			agent: "bot-user-id",
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "bot", Message: "I'm a bot"},
@@ -113,7 +113,7 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 		},
 		{
 			name:  "invalid role",
-			agent: "testbot",
+			agent: "bot-user-id",
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "invalid", Message: "test"},
@@ -184,7 +184,7 @@ func TestBridgeClientAgentCompletionStream(t *testing.T) {
 	}{
 		{
 			name:  "successful streaming",
-			agent: "testbot",
+			agent: "bot-user-id",
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Count to 3"},
@@ -219,7 +219,7 @@ func TestBridgeClientAgentCompletionStream(t *testing.T) {
 		},
 		{
 			name:  "streaming with error event",
-			agent: "testbot",
+			agent: "bot-user-id",
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Hello"},
@@ -241,8 +241,8 @@ func TestBridgeClientAgentCompletionStream(t *testing.T) {
 			},
 		},
 		{
-			name:  "agent not found",
-			agent: "nonexistent",
+			name:  "bot not found",
+			agent: "nonexistent-bot-id",
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Hello"},
@@ -250,7 +250,7 @@ func TestBridgeClientAgentCompletionStream(t *testing.T) {
 			},
 			fakeLLM:     NewFakeLLM("test"),
 			expectError: true,
-			errorMsg:    "agent not found",
+			errorMsg:    "bot not found",
 		},
 	}
 
@@ -645,7 +645,7 @@ func TestBridgeClientPermissions(t *testing.T) {
 
 			// Create bridge client and make request
 			client := e.CreateBridgeClient()
-			_, err := client.AgentCompletion("testbot", request)
+			_, err := client.AgentCompletion("bot-user-id", request)
 
 			if tc.expectError {
 				require.Error(t, err)

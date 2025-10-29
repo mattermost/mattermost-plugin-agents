@@ -20,7 +20,9 @@ func (p *MyPlugin) OnActivate() error {
 }
 
 func (p *MyPlugin) handleCommand() {
-    response, err := p.llmClient.AgentCompletion("gpt4", bridgeclient.CompletionRequest{
+    // Get the bot ID first (e.g., from discovery or configuration)
+    botID := "bot-user-id-here"
+    response, err := p.llmClient.AgentCompletion(botID, bridgeclient.CompletionRequest{
         Posts: []bridgeclient.Post{
             {Role: "user", Message: "What is the capital of France?"},
         },
@@ -61,8 +63,8 @@ func (s *MyService) process() {
 ### Non-Streaming
 
 ```go
-// Request by agent username
-response, err := client.AgentCompletion("gpt4", request)
+// Request by agent Bot ID
+response, err := client.AgentCompletion("bot-user-id", request)
 
 // Request by service name
 response, err := client.ServiceCompletion("openai", request)
@@ -73,8 +75,8 @@ response, err := client.ServiceCompletion("openai", request)
 ```go
 import "github.com/mattermost/mattermost-plugin-ai/llm"
 
-// Start streaming request
-result, err := client.AgentCompletionStream("gpt4", request)
+// Start streaming request (using Bot ID)
+result, err := client.AgentCompletionStream("bot-user-id", request)
 if err != nil {
     return err
 }
@@ -119,15 +121,16 @@ request := bridgeclient.CompletionRequest{
 }
 
 // Returns 403 Forbidden if user lacks permission
-response, err := client.AgentCompletion("gpt4", request)
+response, err := client.AgentCompletion("bot-user-id", request)
 ```
 
 If not using built-in permission checks, your plugin must verify permissions before making requests.
 
 ## Agent vs Service
 
-- **Agent**: Target a specific bot by username (e.g., "gpt4")
+- **Agent**: Target a specific bot by its Bot ID (the immutable Mattermost Bot User ID)
   - Uses bot's custom configuration, tools, and prompts
+  - Get bot IDs via the `GetAgents()` discovery endpoint
 
 - **Service**: Target an LLM service by ID or name (e.g., "openai", "anthropic")
   - Uses any bot configured with that service
@@ -147,8 +150,11 @@ if err != nil {
 }
 
 for _, agent := range agents {
-    fmt.Printf("Agent: %s (%s) - Service: %s (%s)\n",
-        agent.DisplayName, agent.Username, agent.ServiceID, agent.ServiceType)
+    fmt.Printf("Agent: %s (ID: %s, Username: %s) - Service: %s (%s)\n",
+        agent.DisplayName, agent.ID, agent.Username, agent.ServiceID, agent.ServiceType)
+    
+    // Use agent.ID when making completion requests
+    // response, err := client.AgentCompletion(agent.ID, request)
 }
 ```
 

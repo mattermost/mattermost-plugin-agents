@@ -15,7 +15,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
 
-// AgentCompletion makes a non-streaming completion request to a specific agent by username.
+// AgentCompletion makes a non-streaming completion request to a specific agent by Bot ID.
+// The agent parameter should be the Mattermost Bot User ID (an immutable identifier).
 func (c *Client) AgentCompletion(agent string, request CompletionRequest) (string, error) {
 	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s/nostream", aiPluginID, agent)
 	return c.doCompletionRequest(url, request)
@@ -28,7 +29,8 @@ func (c *Client) ServiceCompletion(service string, request CompletionRequest) (s
 	return c.doCompletionRequest(url, request)
 }
 
-// AgentCompletionStream makes a streaming completion request to a specific agent by username.
+// AgentCompletionStream makes a streaming completion request to a specific agent by Bot ID.
+// The agent parameter should be the Mattermost Bot User ID (an immutable identifier).
 // Returns a TextStreamResult with a Stream channel for processing events.
 func (c *Client) AgentCompletionStream(agent string, request CompletionRequest) (*llm.TextStreamResult, error) {
 	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", aiPluginID, agent)
