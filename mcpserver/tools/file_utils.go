@@ -92,37 +92,14 @@ func fetchFileDataForLocal(filespec string, accessMode AccessMode) ([]byte, erro
 		return nil, fmt.Errorf("failed to create data directory: %w", dirErr)
 	}
 
-	// Reject absolute paths upfront
-	if filepath.IsAbs(cleanPath) {
-		return nil, fmt.Errorf("absolute paths not allowed: %s", filespec)
-	}
-
-	// Build and resolve paths for containment verification
-	requestedPath := filepath.Join(dataDir, cleanPath)
-	absDataDir, err := filepath.Abs(dataDir)
+	// Use os.Root for secure path traversal protection
+	root, err := os.OpenRoot(dataDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve data directory: %w", err)
+		return nil, fmt.Errorf("failed to open data directory root: %w", err)
 	}
+	defer root.Close()
 
-	absRequestedPath, err := filepath.Abs(requestedPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve requested path: %w", err)
-	}
-
-	// Use filepath.Rel to verify the requested path is within data directory
-	rel, err := filepath.Rel(absDataDir, absRequestedPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to determine path relationship: %w", err)
-	}
-
-	// If rel starts with ".." or is "..", the path is outside data directory
-	if strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
-		return nil, fmt.Errorf("path outside data directory: %s", filespec)
-	}
-
-	filePath := absRequestedPath
-
-	file, err := os.Open(filePath)
+	file, err := root.Open(cleanPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}

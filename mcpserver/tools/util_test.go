@@ -91,7 +91,7 @@ func TestFetchFileData_FilePathValidation(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, testErr := fetchFileData(tc.filespec)
+			_, testErr := fetchFileDataForLocal(tc.filespec, AccessModeLocal)
 
 			if tc.shouldFail {
 				if testErr == nil {
