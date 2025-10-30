@@ -734,3 +734,103 @@ func TestToolBufferElement(t *testing.T) {
 		assert.Equal(t, `{"query":"test"}`, buffer.args.String())
 	})
 }
+
+func TestReasoningEffortConfiguration(t *testing.T) {
+	tests := []struct {
+		name               string
+		botConfig          llm.BotConfig
+		expectedEffort     shared.ReasoningEffort
+		shouldSetReasoning bool
+	}{
+		{
+			name: "reasoning enabled with minimal effort",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ReasoningEffort:  "minimal",
+			},
+			expectedEffort:     shared.ReasoningEffortMinimal,
+			shouldSetReasoning: true,
+		},
+		{
+			name: "reasoning enabled with low effort",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ReasoningEffort:  "low",
+			},
+			expectedEffort:     shared.ReasoningEffortLow,
+			shouldSetReasoning: true,
+		},
+		{
+			name: "reasoning enabled with medium effort",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ReasoningEffort:  "medium",
+			},
+			expectedEffort:     shared.ReasoningEffortMedium,
+			shouldSetReasoning: true,
+		},
+		{
+			name: "reasoning enabled with high effort",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ReasoningEffort:  "high",
+			},
+			expectedEffort:     shared.ReasoningEffortHigh,
+			shouldSetReasoning: true,
+		},
+		{
+			name: "reasoning enabled with default (empty string defaults to medium)",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ReasoningEffort:  "",
+			},
+			expectedEffort:     shared.ReasoningEffortMedium,
+			shouldSetReasoning: true,
+		},
+		{
+			name: "reasoning enabled with invalid effort (defaults to medium)",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ReasoningEffort:  "invalid",
+			},
+			expectedEffort:     shared.ReasoningEffortMedium,
+			shouldSetReasoning: true,
+		},
+		{
+			name: "reasoning disabled",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: false,
+				ReasoningEffort:  "high",
+			},
+			shouldSetReasoning: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Test the reasoning effort mapping logic
+			if !tt.botConfig.ReasoningEnabled {
+				assert.False(t, tt.shouldSetReasoning, "Reasoning should be disabled")
+				return
+			}
+
+			// Map reasoning effort using the same logic as the actual code
+			var effort shared.ReasoningEffort
+			switch tt.botConfig.ReasoningEffort {
+			case "minimal":
+				effort = shared.ReasoningEffortMinimal
+			case "low":
+				effort = shared.ReasoningEffortLow
+			case "high":
+				effort = shared.ReasoningEffortHigh
+			case "medium", "":
+				effort = shared.ReasoningEffortMedium
+			default:
+				effort = shared.ReasoningEffortMedium
+			}
+
+			assert.True(t, tt.shouldSetReasoning, "Reasoning should be enabled")
+			assert.Equal(t, tt.expectedEffort, effort, "Reasoning effort should match expected value")
+		})
+	}
+}

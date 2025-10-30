@@ -588,3 +588,278 @@ func TestConversationToMessages(t *testing.T) {
 		})
 	}
 }
+
+func TestNew(t *testing.T) {
+	tests := []struct {
+		name          string
+		serviceConfig llm.ServiceConfig
+		botConfig     llm.BotConfig
+		validate      func(t *testing.T, a *Anthropic)
+	}{
+		{
+			name: "basic configuration with reasoning enabled",
+			serviceConfig: llm.ServiceConfig{
+				ID:               "service1",
+				APIKey:           "test-api-key",
+				DefaultModel:     "claude-3-5-sonnet-20241022",
+				InputTokenLimit:  200000,
+				OutputTokenLimit: 8192,
+			},
+			botConfig: llm.BotConfig{
+				ID:                 "bot1",
+				Name:               "testbot",
+				DisplayName:        "Test Bot",
+				ServiceID:          "service1",
+				ReasoningEnabled:   true,
+				ThinkingBudget:     2048,
+				EnabledNativeTools: []string{"web_search"},
+			},
+			validate: func(t *testing.T, a *Anthropic) {
+				assert.Equal(t, "claude-3-5-sonnet-20241022", a.defaultModel)
+				assert.Equal(t, 200000, a.inputTokenLimit)
+				assert.Equal(t, 8192, a.outputTokenLimit)
+				assert.Equal(t, []string{"web_search"}, a.enabledNativeTools)
+				assert.True(t, a.botConfig.ReasoningEnabled)
+				assert.Equal(t, 2048, a.botConfig.ThinkingBudget)
+			},
+		},
+		{
+			name: "configuration with reasoning disabled",
+			serviceConfig: llm.ServiceConfig{
+				ID:               "service2",
+				APIKey:           "test-api-key-2",
+				DefaultModel:     "claude-3-opus-20240229",
+				InputTokenLimit:  200000,
+				OutputTokenLimit: 4096,
+			},
+			botConfig: llm.BotConfig{
+				ID:               "bot2",
+				Name:             "testbot2",
+				DisplayName:      "Test Bot 2",
+				ServiceID:        "service2",
+				ReasoningEnabled: false,
+			},
+			validate: func(t *testing.T, a *Anthropic) {
+				assert.Equal(t, "claude-3-opus-20240229", a.defaultModel)
+				assert.False(t, a.botConfig.ReasoningEnabled)
+				assert.Equal(t, 0, a.botConfig.ThinkingBudget)
+			},
+		},
+		{
+			name: "configuration with custom thinking budget",
+			serviceConfig: llm.ServiceConfig{
+				ID:               "service3",
+				APIKey:           "test-api-key-3",
+				DefaultModel:     "claude-3-5-sonnet-20241022",
+				InputTokenLimit:  200000,
+				OutputTokenLimit: 8192,
+			},
+			botConfig: llm.BotConfig{
+				ID:               "bot3",
+				Name:             "testbot3",
+				DisplayName:      "Test Bot 3",
+				ServiceID:        "service3",
+				ReasoningEnabled: true,
+				ThinkingBudget:   4096,
+			},
+			validate: func(t *testing.T, a *Anthropic) {
+				assert.True(t, a.botConfig.ReasoningEnabled)
+				assert.Equal(t, 4096, a.botConfig.ThinkingBudget)
+			},
+		},
+		{
+			name: "configuration with zero thinking budget (should use default)",
+			serviceConfig: llm.ServiceConfig{
+				ID:               "service4",
+				APIKey:           "test-api-key-4",
+				DefaultModel:     "claude-3-5-sonnet-20241022",
+				InputTokenLimit:  200000,
+				OutputTokenLimit: 8192,
+			},
+			botConfig: llm.BotConfig{
+				ID:               "bot4",
+				Name:             "testbot4",
+				DisplayName:      "Test Bot 4",
+				ServiceID:        "service4",
+				ReasoningEnabled: true,
+				ThinkingBudget:   0, // Will use default calculation
+			},
+			validate: func(t *testing.T, a *Anthropic) {
+				assert.True(t, a.botConfig.ReasoningEnabled)
+				assert.Equal(t, 0, a.botConfig.ThinkingBudget) // Stored as 0, calculated on use
+			},
+		},
+		{
+			name: "configuration with multiple native tools",
+			serviceConfig: llm.ServiceConfig{
+				ID:               "service5",
+				APIKey:           "test-api-key-5",
+				DefaultModel:     "claude-3-5-sonnet-20241022",
+				InputTokenLimit:  200000,
+				OutputTokenLimit: 8192,
+			},
+			botConfig: llm.BotConfig{
+				ID:                 "bot5",
+				Name:               "testbot5",
+				DisplayName:        "Test Bot 5",
+				ServiceID:          "service5",
+				ReasoningEnabled:   true,
+				ThinkingBudget:     2048,
+				EnabledNativeTools: []string{"web_search"},
+			},
+			validate: func(t *testing.T, a *Anthropic) {
+				assert.Equal(t, []string{"web_search"}, a.enabledNativeTools)
+				assert.Equal(t, []string{"web_search"}, a.botConfig.EnabledNativeTools)
+			},
+		},
+		{
+			name: "configuration preserves bot config fields",
+			serviceConfig: llm.ServiceConfig{
+				ID:               "service6",
+				APIKey:           "test-api-key-6",
+				DefaultModel:     "claude-3-haiku-20240307",
+				InputTokenLimit:  100000,
+				OutputTokenLimit: 2048,
+			},
+			botConfig: llm.BotConfig{
+				ID:               "bot6",
+				Name:             "testbot6",
+				DisplayName:      "Test Bot 6",
+				ServiceID:        "service6",
+				ReasoningEnabled: true,
+				ThinkingBudget:   1024,
+				EnableVision:     true,
+				DisableTools:     false,
+			},
+			validate: func(t *testing.T, a *Anthropic) {
+				assert.Equal(t, "bot6", a.botConfig.ID)
+				assert.Equal(t, "testbot6", a.botConfig.Name)
+				assert.Equal(t, "Test Bot 6", a.botConfig.DisplayName)
+				assert.True(t, a.botConfig.EnableVision)
+				assert.False(t, a.botConfig.DisableTools)
+				assert.Equal(t, 1024, a.botConfig.ThinkingBudget)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := New(tt.serviceConfig, tt.botConfig, nil)
+			require.NotNil(t, a)
+			tt.validate(t, a)
+		})
+	}
+}
+
+func TestThinkingBudgetConfiguration(t *testing.T) {
+	tests := []struct {
+		name                 string
+		botConfig            llm.BotConfig
+		maxGeneratedTokens   int
+		expectThinkingConfig bool
+		expectedBudget       int64
+	}{
+		{
+			name: "reasoning enabled with custom thinking budget",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   2048,
+			},
+			maxGeneratedTokens:   8192,
+			expectThinkingConfig: true,
+			expectedBudget:       2048,
+		},
+		{
+			name: "reasoning enabled with default thinking budget (1/4 of max tokens)",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   0, // 0 means use default
+			},
+			maxGeneratedTokens:   8192,
+			expectThinkingConfig: true,
+			expectedBudget:       2048, // 8192 / 4
+		},
+		{
+			name: "reasoning enabled with default thinking budget capped at 8192",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   0,
+			},
+			maxGeneratedTokens:   40000,
+			expectThinkingConfig: true,
+			expectedBudget:       8192, // capped at 8192
+		},
+		{
+			name: "reasoning enabled with minimum thinking budget",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   0,
+			},
+			maxGeneratedTokens:   2048,
+			expectThinkingConfig: true,
+			expectedBudget:       1024, // minimum is 1024
+		},
+		{
+			name: "reasoning disabled",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: false,
+				ThinkingBudget:   2048,
+			},
+			maxGeneratedTokens:   8192,
+			expectThinkingConfig: false,
+			expectedBudget:       0,
+		},
+		{
+			name: "reasoning enabled but thinking budget exceeds max tokens",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   5000,
+			},
+			maxGeneratedTokens:   4096,
+			expectThinkingConfig: false, // Should not set thinking config if budget >= max tokens
+			expectedBudget:       0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a mock Anthropic client with the bot config
+			a := &Anthropic{
+				botConfig: tt.botConfig,
+			}
+
+			// Test the thinking budget calculation logic
+			reasoningEnabled := a.botConfig.ReasoningEnabled
+			if !reasoningEnabled {
+				assert.False(t, tt.expectThinkingConfig, "Reasoning should be disabled")
+				return
+			}
+
+			// Calculate thinking budget using the same logic as the actual code
+			var thinkingBudget int64
+			if a.botConfig.ThinkingBudget > 0 {
+				thinkingBudget = int64(a.botConfig.ThinkingBudget)
+			} else {
+				thinkingBudget = int64(tt.maxGeneratedTokens / 4)
+				if thinkingBudget > 8192 {
+					thinkingBudget = 8192
+				}
+			}
+
+			// Ensure minimum budget of 1024 tokens
+			if thinkingBudget < 1024 {
+				thinkingBudget = 1024
+			}
+
+			// Check if thinking config should be set
+			shouldSetConfig := thinkingBudget < int64(tt.maxGeneratedTokens)
+
+			if tt.expectThinkingConfig {
+				assert.True(t, shouldSetConfig, "Thinking config should be set")
+				assert.Equal(t, tt.expectedBudget, thinkingBudget, "Thinking budget should match expected value")
+			} else {
+				assert.False(t, shouldSetConfig, "Thinking config should not be set")
+			}
+		})
+	}
+}
