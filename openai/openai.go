@@ -846,7 +846,10 @@ func (s *OpenAI) convertToResponseParams(params openai.ChatCompletionNewParams, 
 			effort = shared.ReasoningEffortLow
 		case "high":
 			effort = shared.ReasoningEffortHigh
-		case "medium", "":
+		case "medium":
+			effort = shared.ReasoningEffortMedium
+		case "":
+			// Empty string defaults to medium effort for clarity
 			effort = shared.ReasoningEffortMedium
 		default:
 			effort = shared.ReasoningEffortMedium
