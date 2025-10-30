@@ -107,11 +107,11 @@ func (a *API) convertRequestToLLMOptions(req bridgeclient.CompletionRequest) ([]
 	return options, nil
 }
 
-// getBotByAgent finds a bot by its username (agent name)
+// getBotByAgent finds a bot by its Bot ID
 func (a *API) getBotByAgent(agent string) (*bots.Bot, error) {
-	bot := a.bots.GetBotByUsername(agent)
+	bot := a.bots.GetBotByID(agent)
 	if bot == nil {
-		return nil, fmt.Errorf("agent not found: %s", agent)
+		return nil, fmt.Errorf("bot not found with ID: %s", agent)
 	}
 	return bot, nil
 }
@@ -304,7 +304,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
-	// Find the bot by username
+	// Find the bot by ID
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
 		c.JSON(http.StatusNotFound, bridgeclient.ErrorResponse{
@@ -366,7 +366,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		return
 	}
 
-	// Find the bot by username
+	// Find the bot by ID
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
 		c.JSON(http.StatusNotFound, bridgeclient.ErrorResponse{
