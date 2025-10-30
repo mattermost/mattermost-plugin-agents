@@ -45,6 +45,16 @@ type DMSelfArgs struct {
 
 // getPostTools returns all post-related tools
 func (p *MattermostToolProvider) getPostTools() []MCPTool {
+	// Build descriptions conditionally based on access mode
+	attachmentsParam := ""
+	if p.accessMode == AccessModeLocal {
+		attachmentsParam = ", attachments (optional file paths/URLs)"
+	}
+
+	createPostDesc := fmt.Sprintf("Create a new post in Mattermost. Parameters: channel_id (required), message (required), root_id (optional - for replies)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}", attachmentsParam)
+
+	dmSelfDesc := fmt.Sprintf("Send a direct message to yourself. Use when user requests to send something to themselves (e.g., 'send me this', 'DM me that'). Parameters: message (required)%s. Returns confirmation with message ID. Example: {\"message\": \"Reminder: Follow up on project\"}", attachmentsParam)
+
 	return []MCPTool{
 		{
 			Name:        "read_post",
@@ -54,13 +64,13 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 		},
 		{
 			Name:        "create_post",
-			Description: "Create a new post in Mattermost. Parameters: channel_id (required), message (required), root_id (optional - for replies), attachments (optional file paths/URLs). Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}",
+			Description: createPostDesc,
 			Schema:      NewJSONSchemaForAccessMode[CreatePostArgs](string(p.accessMode)),
 			Resolver:    p.toolCreatePost,
 		},
 		{
 			Name:        "dm_self",
-			Description: "Send a direct message to yourself. Use when user requests to send something to themselves (e.g., 'send me this', 'DM me that'). Parameters: message (required), attachments (optional file paths/URLs). Returns confirmation with message ID. Example: {\"message\": \"Reminder: Follow up on project\"}",
+			Description: dmSelfDesc,
 			Schema:      NewJSONSchemaForAccessMode[DMSelfArgs](string(p.accessMode)),
 			Resolver:    p.toolDMSelf,
 		},
