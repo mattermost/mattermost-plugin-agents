@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
 	"github.com/mattermost/mattermost-plugin-ai/meetings"
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
@@ -66,6 +67,7 @@ type API struct {
 	streamingService     streaming.Service
 	i18nBundle           *i18n.Bundle
 	mcpClientManager     MCPClientManager
+	mcpHandlers          *mcpserver.PluginMCPHandlers
 }
 
 // New creates a new API instance
@@ -86,6 +88,7 @@ func New(
 	streamingService streaming.Service,
 	i18nBundle *i18n.Bundle,
 	mcpClientManager MCPClientManager,
+	mcpHandlers *mcpserver.PluginMCPHandlers,
 ) *API {
 	return &API{
 		bots:                 bots,
@@ -105,6 +108,7 @@ func New(
 		streamingService:     streamingService,
 		i18nBundle:           i18nBundle,
 		mcpClientManager:     mcpClientManager,
+		mcpHandlers:          mcpHandlers,
 	}
 }
 
@@ -114,9 +118,29 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.Use(a.ginlogger)
 	router.Use(a.metricsMiddleware)
 
+	// Store plugin.Context in gin.Context for use in middleware
+	router.Use(func(gc *gin.Context) {
+		gc.Set("pluginContext", c)
+		gc.Next()
+	})
+
 	interPluginRoute := router.Group("/inter-plugin/v1")
 	interPluginRoute.Use(a.interPluginAuthorizationRequired)
 	interPluginRoute.POST("/simple_completion", a.handleInterPluginSimpleCompletion)
+
+	// MCP server endpoints - grouped under /mcp-server/
+	if a.mcpHandlers != nil {
+		mcpServerGroup := router.Group("/mcp-server")
+
+		// OAuth metadata endpoint - no authentication required
+		mcpServerGroup.GET("/.well-known/oauth-protected-resource", a.handleOAuthResourceMetadata)
+
+		// MCP endpoints with authentication
+		mcpServerGroup.Use(a.mcpAuthMiddleware)
+		mcpServerGroup.Any("/mcp", a.handleMCP)
+		mcpServerGroup.Any("/sse", a.handleSSE)
+		mcpServerGroup.Any("/message", a.handleMessage)
+	}
 
 	router.Use(a.MattermostAuthorizationRequired)
 
