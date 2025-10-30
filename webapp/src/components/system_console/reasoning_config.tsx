@@ -32,8 +32,17 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
     }
 
     const reasoningEnabled = props.bot.reasoningEnabled ?? true; // Default to enabled
+    const reasoningEffort = props.bot.reasoningEffort || 'medium';
 
-    // Calculate default thinking budget for Anthropic
+    // For thinking budget, use the value from the bot config, or empty string if 0/undefined
+    const thinkingBudgetValue = (props.bot.thinkingBudget && props.bot.thinkingBudget > 0) ? props.bot.thinkingBudget.toString() : '';
+
+    const handleThinkingBudgetChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+        props.onChange({...props.bot, thinkingBudget: value});
+    };
+
+    // Calculate default for help text
     const getDefaultThinkingBudget = () => {
         let defaultBudget = Math.floor(props.maxTokens / 4);
         if (defaultBudget > 8192) {
@@ -43,16 +52,6 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
             defaultBudget = 1024;
         }
         return defaultBudget;
-    };
-
-    const thinkingBudget = props.bot.thinkingBudget || getDefaultThinkingBudget();
-    const reasoningEffort = props.bot.reasoningEffort || 'medium';
-
-    const handleThinkingBudgetChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const value = parseInt(e.target.value, 10);
-        if (!isNaN(value)) {
-            props.onChange({...props.bot, thinkingBudget: value});
-        }
     };
 
     return (
@@ -88,23 +87,24 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     type='number'
                                     min='1024'
                                     max={props.maxTokens}
-                                    value={thinkingBudget}
+                                    value={thinkingBudgetValue}
                                     onChange={handleThinkingBudgetChange}
+                                    placeholder={getDefaultThinkingBudget().toString()}
                                 />
                                 <HelpText>
                                     {intl.formatMessage({
-                                        defaultMessage: 'Token budget for extended thinking. Higher values allow deeper reasoning but increase response time and cost. Must be between 1024 and {maxTokens}. Default is {defaultBudget}.',
+                                        defaultMessage: 'Token budget for extended thinking. Higher values allow deeper reasoning but increase response time and cost. Must be between 1024 and {maxTokens}. Leave blank to use default ({defaultBudget}).',
                                     }, {
                                         maxTokens: props.maxTokens,
                                         defaultBudget: getDefaultThinkingBudget(),
                                     })}
                                 </HelpText>
-                                {thinkingBudget < 1024 && (
+                                {typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > 0 && props.bot.thinkingBudget < 1024 && (
                                     <ErrorText>
                                         {intl.formatMessage({defaultMessage: 'Thinking budget must be at least 1024 tokens.'})}
                                     </ErrorText>
                                 )}
-                                {thinkingBudget > props.maxTokens && (
+                                {typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > props.maxTokens && (
                                     <ErrorText>
                                         {intl.formatMessage({
                                             defaultMessage: 'Thinking budget cannot exceed max tokens ({maxTokens}).',
