@@ -274,14 +274,6 @@ mattermost-plugin-ai/
 └── bin/                           # Other project binaries
 ```
 
-### File Path Usage
-
-When specifying file paths in tool parameters:
-
-- **Use relative paths**: `document.pdf`, `images/logo.png`, `folder/subfolder/file.txt`
-- **Do not use absolute paths**: `/path/to/file` or `C:\path\to\file` (these will be rejected)
-- **Do not use parent directories**: `../file.txt` or `../../etc/passwd` (these will be rejected)
-
 ### Supported Tools with File Operations
 
 - **`create_post`**: Attach files to posts using the `attachments` parameter
@@ -294,8 +286,6 @@ When specifying file paths in tool parameters:
 1. **Place files in the data directory**: Copy your files to `mcpserver/data/` or subdirectories within it
 2. **Reference with relative paths**: Use paths relative to the data directory (e.g., `report.pdf` for `mcpserver/data/report.pdf`)
 3. **Organize as needed**: Create subdirectories for better organization (e.g., `documents/`, `images/`)
-
-**Note**: The data directory is automatically created when the server starts and is excluded from git commits for security.
 
 ### Advanced Configuration: Internal Server URL
 
