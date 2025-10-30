@@ -6,7 +6,7 @@ import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 
-import {ToolCall, ToolCallStatus} from './llmbot_post';
+import {ToolCall, ToolCallStatus} from './llmbot_post/llmbot_post';
 
 import LoadingSpinner from './assets/loading_spinner';
 import IconTool from './assets/icon_tool';

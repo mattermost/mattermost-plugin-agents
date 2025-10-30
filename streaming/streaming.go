@@ -21,6 +21,9 @@ const PostStreamingControlEnd = "end"
 const PostStreamingControlStart = "start"
 
 const ToolCallProp = "pending_tool_call"
+const ReasoningSummaryProp = "reasoning_summary"
+const ReasoningSignatureProp = "reasoning_signature"
+const AnnotationsProp = "annotations"
 
 type Service interface {
 	StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error
@@ -154,6 +157,26 @@ func (p *MMPostStreamService) sendPostStreamingControlEvent(post *model.Post, co
 	})
 }
 
+func (p *MMPostStreamService) sendPostStreamingReasoningEvent(post *model.Post, reasoning string, control string) {
+	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+		"post_id":   post.Id,
+		"control":   control,
+		"reasoning": reasoning,
+	}, &model.WebsocketBroadcast{
+		ChannelId: post.ChannelId,
+	})
+}
+
+func (p *MMPostStreamService) sendPostStreamingAnnotationsEvent(post *model.Post, annotations string) {
+	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+		"post_id":     post.Id,
+		"control":     "annotations",
+		"annotations": annotations,
+	}, &model.WebsocketBroadcast{
+		ChannelId: post.ChannelId,
+	})
+}
+
 func (p *MMPostStreamService) StopStreaming(postID string) {
 	p.contextsMutex.Lock()
 	defer p.contextsMutex.Unlock()
@@ -199,6 +222,8 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 		p.sendPostStreamingControlEvent(post, PostStreamingControlEnd)
 	}()
 
+	var reasoningBuffer strings.Builder
+
 	for {
 		select {
 		case event := <-stream.Stream:
@@ -215,6 +240,15 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					p.mmClient.LogError("LLM closed stream with no result")
 					post.Message = T("agents.stream_to_post_llm_not_return", "Sorry! The LLM did not return a result.")
 					p.sendPostStreamingUpdateEvent(post, post.Message)
+				}
+
+				// Inline citations have already been cleaned in EventTypeAnnotations handler
+				// (if there were any citations, they were cleaned before annotations were sent)
+
+				// Update post with all accumulated data
+				// This includes the message and any reasoning that was added to props in EventTypeReasoningEnd
+				if reasoningProp := post.GetProp(ReasoningSummaryProp); reasoningProp != nil {
+					p.mmClient.LogDebug("Persisting post with reasoning summary", "post_id", post.Id)
 				}
 				if err := p.mmClient.UpdatePost(post); err != nil {
 					p.mmClient.LogError("Streaming failed to update post", "error", err)
@@ -239,12 +273,43 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 				p.mmClient.LogError("Streaming result to post failed partway", "error", err)
 				post.Message = T("agents.stream_to_post_access_llm_error", "Sorry! An error occurred while accessing the LLM. See server logs for details.")
 
+				// Persist any accumulated reasoning before erroring out
+				if reasoningBuffer.Len() > 0 {
+					post.AddProp(ReasoningSummaryProp, reasoningBuffer.String())
+					p.mmClient.LogDebug("Saved partial reasoning summary on error", "post_id", post.Id, "reasoning_length", reasoningBuffer.Len())
+				}
+
 				if err := p.mmClient.UpdatePost(post); err != nil {
 					p.mmClient.LogError("Error recovering from streaming error", "error", err)
 					return
 				}
 				p.sendPostStreamingUpdateEvent(post, post.Message)
 				return
+			case llm.EventTypeReasoning:
+				// Handle reasoning summary chunk - accumulate and stream
+				if reasoningChunk, ok := event.Value.(string); ok {
+					reasoningBuffer.WriteString(reasoningChunk)
+					// Send reasoning event with accumulated text so far
+					p.sendPostStreamingReasoningEvent(post, reasoningBuffer.String(), "reasoning_summary")
+				}
+			case llm.EventTypeReasoningEnd:
+				// Reasoning summary completed - stream final and persist
+				if reasoningData, ok := event.Value.(llm.ReasoningData); ok {
+					// Send final reasoning event (only text goes to frontend)
+					p.sendPostStreamingReasoningEvent(post, reasoningData.Text, "reasoning_summary_done")
+
+					// Persist reasoning summary and signature to post props
+					// This will be saved when the post is updated at the end of the stream
+					if reasoningData.Text != "" {
+						post.AddProp(ReasoningSummaryProp, reasoningData.Text)
+						p.mmClient.LogDebug("Added reasoning summary to post props", "post_id", post.Id, "reasoning_length", len(reasoningData.Text))
+					}
+					if reasoningData.Signature != "" {
+						post.AddProp(ReasoningSignatureProp, reasoningData.Signature)
+						p.mmClient.LogDebug("Added reasoning signature to post props", "post_id", post.Id)
+					}
+					reasoningBuffer.Reset()
+				}
 			case llm.EventTypeToolCalls:
 				// Handle tool call event
 				if toolCalls, ok := event.Value.([]llm.ToolCall); ok {
@@ -261,7 +326,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 						post.AddProp(ToolCallProp, string(toolCallJSON))
 					}
 
-					// Update the post with the tool call
+					// Update the post with the tool call and any reasoning that was previously added
 					if err := p.mmClient.UpdatePost(post); err != nil {
 						p.mmClient.LogError("Failed to update post with tool call", "error", err)
 					}
@@ -276,8 +341,25 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					})
 				}
 				return
+			case llm.EventTypeAnnotations:
+				if annotations, ok := event.Value.([]llm.Annotation); ok {
+					annotationsJSON, err := json.Marshal(annotations)
+					if err != nil {
+						p.mmClient.LogError("Failed to marshal annotations", "error", err)
+					} else {
+						post.AddProp(AnnotationsProp, string(annotationsJSON))
+						p.mmClient.LogDebug("Added annotations to post props", "post_id", post.Id, "count", len(annotations))
+						p.sendPostStreamingAnnotationsEvent(post, string(annotationsJSON))
+					}
+				}
 			}
 		case <-ctx.Done():
+			// Persist any accumulated reasoning before canceling
+			if reasoningBuffer.Len() > 0 {
+				post.AddProp(ReasoningSummaryProp, reasoningBuffer.String())
+				p.mmClient.LogDebug("Saved partial reasoning summary on cancel", "post_id", post.Id, "reasoning_length", reasoningBuffer.Len())
+			}
+
 			if err := p.mmClient.UpdatePost(post); err != nil {
 				p.mmClient.LogError("Error updating post on stop signaled", "error", err)
 				return

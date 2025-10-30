@@ -21,7 +21,7 @@
 package llm
 
 import (
-	"github.com/modelcontextprotocol/go-sdk/jsonschema"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 type LanguageModel interface {

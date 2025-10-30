@@ -5,12 +5,11 @@ package testhelpers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -119,91 +118,70 @@ func SetupBasicTestData(t *testing.T, client *model.Client4, adminPAT string) *T
 	}
 }
 
-// ExecuteMCPTool calls an MCP tool through the MCP server's message handler
-// This provides true integration testing by using the actual MCP protocol
-func ExecuteMCPTool(t *testing.T, mcpServer *server.MCPServer, toolName string, args map[string]interface{}) *mcp.CallToolResult {
+// CreateTestMCPSession creates an in-memory MCP client session connected to the server
+// This enables testing tools through the full MCP protocol stack without external transports
+func CreateTestMCPSession(t *testing.T, mcpServer *mcp.Server) *mcp.ClientSession {
 	require.NotNil(t, mcpServer, "MCP server must be provided")
 
+	// Create in-memory transport pair
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	// Start server with in-memory transport in a goroutine
 	ctx := context.Background()
-
-	// Create a proper MCP JSON-RPC request
-	jsonrpcRequest := mcp.JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      mcp.NewRequestId("test-" + toolName),
-		Request: mcp.Request{
-			Method: "tools/call",
-		},
-		Params: map[string]interface{}{
-			"name":      toolName,
-			"arguments": args,
-		},
-	}
-
-	// Marshal the request to JSON (as it would come over the wire)
-	requestBytes, err := json.Marshal(jsonrpcRequest)
-	require.NoError(t, err, "Failed to marshal MCP request")
-
-	// Send through the MCP server's message handler (same as production)
-	responseMessage := mcpServer.HandleMessage(ctx, json.RawMessage(requestBytes))
-
-	// Parse the response
-	responseBytes, err := json.Marshal(responseMessage)
-	require.NoError(t, err, "Failed to marshal MCP response")
-
-	// Check if it's an error response
-	var errorResponse struct {
-		JSONRPC string      `json:"jsonrpc"`
-		ID      interface{} `json:"id"`
-		Error   *struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(responseBytes, &errorResponse) == nil && errorResponse.Error != nil {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
-					Text: fmt.Sprintf("Error: %s", errorResponse.Error.Message),
-				},
-			},
-			IsError: true,
+	go func() {
+		if err := mcpServer.Run(ctx, serverTransport); err != nil {
+			// Log error but don't fail the test here since it might be normal shutdown
+			t.Logf("Server stopped with error: %v", err)
 		}
+	}()
+
+	// Create test client
+	client := mcp.NewClient(&mcp.Implementation{
+		Name:    "test-client",
+		Version: "1.0.0",
+	}, nil)
+
+	// Connect client to server
+	session, err := client.Connect(ctx, clientTransport, nil)
+	require.NoError(t, err, "Failed to connect test client to MCP server")
+
+	return session
+}
+
+// ExecuteMCPTool calls an MCP tool through a test client session
+// This provides true integration testing by using the actual MCP protocol with in-memory transport
+func ExecuteMCPTool(t *testing.T, mcpServer *mcp.Server, toolName string, args map[string]interface{}) (*mcp.CallToolResult, error) {
+	// Create test session
+	session := CreateTestMCPSession(t, mcpServer)
+	defer session.Close()
+
+	// Call the tool
+	ctx := context.Background()
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      toolName,
+		Arguments: args,
+	})
+
+	if err != nil {
+		return result, err
 	}
 
-	// Parse as successful response with custom structure to handle Content interface
-	var successResponse struct {
-		JSONRPC string      `json:"jsonrpc"`
-		ID      interface{} `json:"id"`
-		Result  struct {
-			Content []map[string]interface{} `json:"content"` // Handle as raw JSON first
-			IsError bool                     `json:"isError,omitempty"`
-		} `json:"result"`
-	}
-	err = json.Unmarshal(responseBytes, &successResponse)
-	require.NoError(t, err, "Failed to unmarshal MCP tool response")
-
-	// Convert to proper CallToolResult with TextContent
-	result := &mcp.CallToolResult{
-		IsError: successResponse.Result.IsError,
-		Content: make([]mcp.Content, len(successResponse.Result.Content)),
-	}
-
-	// Convert each content item to TextContent (most common case for our tools)
-	for i, content := range successResponse.Result.Content {
-		if text, ok := content["text"].(string); ok {
-			result.Content[i] = mcp.TextContent{
-				Type: "text",
-				Text: text,
-			}
-		} else {
-			// Fallback for other content types - just convert to string
-			result.Content[i] = mcp.TextContent{
-				Type: "text",
-				Text: fmt.Sprintf("%v", content),
+	// Check if the result indicates an error from the tool resolver
+	if result.IsError {
+		// Extract error message from content
+		var errorMsgs []string
+		for _, content := range result.Content {
+			if textContent, ok := content.(*mcp.TextContent); ok {
+				errorMsgs = append(errorMsgs, textContent.Text)
 			}
 		}
+
+		errorMsg := "tool execution failed"
+		if len(errorMsgs) > 0 {
+			errorMsg = strings.Join(errorMsgs, "\n")
+		}
+		return result, fmt.Errorf("%s", errorMsg)
 	}
 
-	return result
+	return result, nil
 }

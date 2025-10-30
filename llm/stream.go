@@ -17,7 +17,27 @@ const (
 	EventTypeError
 	// EventTypeToolCalls represents a tool call event
 	EventTypeToolCalls
+	// EventTypeReasoning represents a reasoning summary chunk event
+	EventTypeReasoning
+	// EventTypeReasoningEnd represents the end of reasoning summary
+	EventTypeReasoningEnd
+	// EventTypeAnnotations represents annotations/citations in the response
+	EventTypeAnnotations
+	// EventTypeUsage represents token usage data
+	EventTypeUsage
 )
+
+// TokenUsage represents token usage statistics for an LLM request
+type TokenUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+}
+
+// ReasoningData represents the complete reasoning/thinking data including signature
+type ReasoningData struct {
+	Text      string // The reasoning/thinking text content
+	Signature string // Opaque verification signature from the model
+}
 
 // TextStreamEvent represents an event in the text stream
 type TextStreamEvent struct {
@@ -67,9 +87,12 @@ func (t *TextStreamResult) ReadAll() (string, error) {
 				return "", err
 			}
 		case EventTypeEnd:
-			break
+			return result, nil
 		case EventTypeToolCalls:
 			return result, fmt.Errorf("Tool calls are not supported for read all")
+		case EventTypeAnnotations:
+			// Annotations are ignored in ReadAll, continue reading text
+			continue
 		}
 	}
 

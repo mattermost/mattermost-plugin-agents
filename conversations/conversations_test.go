@@ -48,7 +48,7 @@ func (m *mockToolProvider) GetTools(isDM bool, bot *bots.Bot) []llm.Tool {
 
 type mockMCPClientManager struct{}
 
-func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetToolsForUser(userID, sessionID string) ([]llm.Tool, *mcp.Errors) {
 	return []llm.Tool{}, nil
 }
 
@@ -56,6 +56,10 @@ type mockConfigProvider struct{}
 
 func (m *mockConfigProvider) GetEnableLLMTrace() bool {
 	return false
+}
+
+func (m *mockConfigProvider) GetServiceByID(id string) (llm.ServiceConfig, bool) {
+	return llm.ServiceConfig{}, false
 }
 
 func TestConversationMentionHandling(t *testing.T) {
@@ -89,7 +93,7 @@ func TestConversationMentionHandling(t *testing.T) {
 			client := pluginapi.NewClient(mockAPI, nil)
 			mmClient := mocks.NewMockClient(t)
 			licenseChecker := enterprise.NewLicenseChecker(client)
-			botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{})
+			botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
 			prompts, err := llm.NewPrompts(prompts.PromptsFolder)
 			require.NoError(t, err, "Failed to load prompts")
 
@@ -132,23 +136,28 @@ func TestConversationMentionHandling(t *testing.T) {
 			)
 
 			// Create a mock bot
-			bot := bots.NewBot(
-				llm.BotConfig{
-					ID:                 "botid",
-					Name:               "matty",
-					DisplayName:        "Matty",
-					CustomInstructions: "",
-					EnableVision:       true,
-					DisableTools:       false,
-				},
-				&model.Bot{
-					UserId: "botid",
-				},
-			)
+			botConfig := llm.BotConfig{
+				ID:                 "botid",
+				Name:               "matty",
+				DisplayName:        "Matty",
+				CustomInstructions: "",
+				EnableVision:       true,
+				DisableTools:       false,
+				ServiceID:          "test-service",
+			}
+			serviceConfig := llm.ServiceConfig{
+				ID:           "test-service",
+				Type:         llm.ServiceTypeOpenAI,
+				DefaultModel: "gpt-4",
+			}
+			mmBot := &model.Bot{
+				UserId: "botid",
+			}
+			llmInstance := llm.NewLanguageModelTestLogWrapper(t.T, t.LLM)
 
-			bot.SetLLMForTest(llm.NewLanguageModelTestLogWrapper(t.T, t.LLM))
+			bot := bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
 
-			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost())
+			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), "")
 			require.NoError(t, err, "Failed to process user request")
 			require.NotNil(t, textStream, "Expected a non-nil text stream")
 

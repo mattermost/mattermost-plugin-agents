@@ -7,7 +7,7 @@ import {FormattedMessage} from 'react-intl';
 
 import {doToolCall} from '@/client';
 
-import {ToolCall, ToolCallStatus} from './llmbot_post';
+import {ToolCall, ToolCallStatus} from './llmbot_post/llmbot_post';
 import ToolCard from './tool_card';
 
 // Styled components

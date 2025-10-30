@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React, {useState, useEffect, useCallback} from 'react';
-import {FormattedMessage, useIntl} from 'react-intl';
+import {useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 import styled from 'styled-components';
 
@@ -14,14 +14,11 @@ import {getAIThreads, updateRead} from '@/client';
 
 import {useBotlist} from '@/bots';
 
-import RHSImage from '../assets/rhs_image';
-
 import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
 
 import ThreadItem from './thread_item';
 import RHSHeader from './rhs_header';
 import RHSNewTab from './rhs_new_tab';
-import {RHSPaddingContainer, RHSText, RHSTitle} from './common';
 
 const ThreadViewer = UnstyledThreadViewer && styled(UnstyledThreadViewer)`
     height: 100%;
@@ -35,20 +32,6 @@ const RhsContainer = styled.div`
     height: 100%;
     display: flex;
     flex-direction: column;
-`;
-
-const RHSDivider = styled.div`
-	border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-	margin-top: 12px;
-	margin-bottom: 12px;
-`;
-
-const RHSSubtitle = styled(RHSText)`
-	font-weight: 600;
-`;
-
-const RHSBullet = styled.li`
-	margin-bottom: 8px;
 `;
 
 export interface AIThread {
@@ -96,28 +79,9 @@ export default function RHS() {
 
     const {bots, activeBot, setActiveBot} = useBotlist();
 
-    // Unconfigured state
+    // No bots available - hide the RHS entirely
     if (bots && bots.length === 0) {
-        return (
-            <RhsContainer>
-                <RHSPaddingContainer>
-                    <RHSImage/>
-                    <RHSTitle><FormattedMessage defaultMessage='Agents is not yet configured for this workspace'/></RHSTitle>
-                    <RHSText><FormattedMessage defaultMessage='A system admin needs to complete the configuration before it can be used.'/></RHSText>
-                    <RHSDivider/>
-                    <RHSSubtitle><FormattedMessage defaultMessage='What is Agents?'/></RHSSubtitle>
-                    <RHSText><FormattedMessage defaultMessage='Agents is a plugin that enables you to leverage the power of AI to:'/></RHSText>
-                    <RHSText>
-                        <ul>
-                            <RHSBullet><FormattedMessage defaultMessage='Get caught up quickly with instant summarization for channels and threads.'/></RHSBullet>
-                            <RHSBullet><FormattedMessage defaultMessage='Create meeting summaries in a flash.'/></RHSBullet>
-                            <RHSBullet><FormattedMessage defaultMessage='Ask Agents anything to get quick answers.'/></RHSBullet>
-                        </ul>
-                    </RHSText>
-
-                </RHSPaddingContainer>
-            </RhsContainer>
-        );
+        return null;
     }
 
     let content = null;

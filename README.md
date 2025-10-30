@@ -54,11 +54,19 @@ After installation, complete these steps to get started:
 
 For detailed configuration instructions, see the [Admin Guide](docs/admin_guide.md).
 
+## Integration
+
+### Bridge Client
+
+The plugin provides a Go client library for other Mattermost plugins and the Mattermost server to interact with the AI plugin's LLM Bridge API. This allows you to easily add AI capabilities to your own plugins or server-side features.
+
+See the [Bridge Client README](public/bridgeclient/README.md) for installation and usage instructions.
+
 ## Development
 
 ### Prerequisites
 
-- Go 1.23+
+- Go 1.24+
 - Node.js 20.11+
 - Access to an LLM provider (OpenAI, Anthropic, etc.)
 

@@ -21,7 +21,9 @@ type Config struct {
 	DefaultBotName           string                           `json:"defaultBotName"`
 	TranscriptGenerator      string                           `json:"transcriptBackend"`
 	EnableLLMTrace           bool                             `json:"enableLLMTrace"`
+	EnableTokenUsageLogging  bool                             `json:"enableTokenUsageLogging"`
 	AllowedUpstreamHostnames string                           `json:"allowedUpstreamHostnames"`
+	AllowUnsafeLinks         bool                             `json:"allowUnsafeLinks"`
 	EmbeddingSearchConfig    embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                      mcp.Config                       `json:"mcp"`
 }
@@ -33,6 +35,16 @@ func (c *Config) Clone() *Config {
 	}
 
 	return &clone
+}
+
+// GetServiceByID returns the service configuration for the given ID
+func (c *Config) GetServiceByID(id string) (llm.ServiceConfig, bool) {
+	for i := range c.Services {
+		if c.Services[i].ID == id {
+			return c.Services[i], true
+		}
+	}
+	return llm.ServiceConfig{}, false
 }
 
 type UpdateListener func()
@@ -68,8 +80,21 @@ func (c *Container) EnableLLMLogging() bool {
 	return c.cfg.Load().EnableLLMTrace
 }
 
+func (c *Container) EnableTokenUsageLogging() bool {
+	return c.cfg.Load().EnableTokenUsageLogging
+}
+
 func (c *Container) MCP() mcp.Config {
 	return c.cfg.Load().MCP
+}
+
+func (c *Container) AllowUnsafeLinks() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return false
+	}
+
+	return cfg.AllowUnsafeLinks
 }
 
 func (c *Container) RegisterUpdateListener(listener UpdateListener) {
@@ -78,6 +103,15 @@ func (c *Container) RegisterUpdateListener(listener UpdateListener) {
 
 func (c *Container) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
 	return c.cfg.Load().EmbeddingSearchConfig
+}
+
+// GetServiceByID returns the service configuration for the given ID
+func (c *Container) GetServiceByID(id string) (llm.ServiceConfig, bool) {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return llm.ServiceConfig{}, false
+	}
+	return cfg.GetServiceByID(id)
 }
 
 // Updates the current configuration
@@ -114,20 +148,22 @@ func DeepCopyJSON[T any](src T) (T, error) {
 	return dst, err
 }
 
-func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig) openai.Config {
+func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig, enabledNativeTools []string) openai.Config {
 	streamingTimeout := time.Second * 30
 	if serviceConfig.StreamingTimeoutSeconds > 0 {
 		streamingTimeout = time.Duration(serviceConfig.StreamingTimeoutSeconds) * time.Second
 	}
 
 	return openai.Config{
-		APIKey:           serviceConfig.APIKey,
-		APIURL:           serviceConfig.APIURL,
-		OrgID:            serviceConfig.OrgID,
-		DefaultModel:     serviceConfig.DefaultModel,
-		InputTokenLimit:  serviceConfig.InputTokenLimit,
-		OutputTokenLimit: serviceConfig.OutputTokenLimit,
-		StreamingTimeout: streamingTimeout,
-		SendUserID:       serviceConfig.SendUserID,
+		APIKey:             serviceConfig.APIKey,
+		APIURL:             serviceConfig.APIURL,
+		OrgID:              serviceConfig.OrgID,
+		DefaultModel:       serviceConfig.DefaultModel,
+		InputTokenLimit:    serviceConfig.InputTokenLimit,
+		OutputTokenLimit:   serviceConfig.OutputTokenLimit,
+		StreamingTimeout:   streamingTimeout,
+		SendUserID:         serviceConfig.SendUserID,
+		UseResponsesAPI:    serviceConfig.UseResponsesAPI,
+		EnabledNativeTools: enabledNativeTools,
 	}
 }

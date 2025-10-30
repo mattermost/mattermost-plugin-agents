@@ -19,9 +19,14 @@ export type MCPServerConfig = {
     headers: {[key: string]: string};
 };
 
+export type MCPEmbeddedServerConfig = {
+    enabled: boolean;
+};
+
 export type MCPConfig = {
     enabled: boolean;
     servers: MCPServerConfig[];
+    embeddedServer: MCPEmbeddedServerConfig;
     idleTimeoutMinutes?: number;
 };
 
@@ -103,7 +108,7 @@ const MCPServer = ({
         const headers = {...(config.headers || {})};
 
         // If the key has changed, remove the old one
-        if (oldKey !== newKey && oldKey !== '') {
+        if (oldKey !== newKey) {
             delete headers[oldKey];
         }
 
@@ -194,8 +199,8 @@ const MCPServer = ({
                 </HeadersSectionTitle>
 
                 <HeadersList>
-                    {Object.entries(config.headers || {}).map(([key, value]) => (
-                        <HeaderRow key={key}>
+                    {Object.entries(config.headers || {}).map(([key, value], index) => (
+                        <HeaderRow key={index}>
                             <HeaderInput
                                 placeholder={intl.formatMessage({defaultMessage: 'Header name'})}
                                 value={key}
@@ -235,6 +240,9 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     const config: MCPConfig = {
         enabled: mcpConfig?.enabled || false,
         servers: Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [],
+        embeddedServer: mcpConfig?.embeddedServer || {
+            enabled: !mcpConfig?.enabled,
+        },
         idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes || 30,
     };
 
@@ -333,12 +341,23 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                         }}
                                         helptext={intl.formatMessage({defaultMessage: 'How long to keep an inactive user connection open before closing it automatically. Lower values save resources, higher values improve response times.'})}
                                     />
+                                    <BooleanItem
+                                        label={intl.formatMessage({defaultMessage: 'Enable Embedded Server'})}
+                                        value={config.embeddedServer.enabled}
+                                        onChange={(enabled) => onChange({
+                                            ...config,
+                                            embeddedServer: {
+                                                ...config.embeddedServer,
+                                                enabled,
+                                            },
+                                        })}
+                                        helpText={intl.formatMessage({defaultMessage: 'Enable the built-in Mattermost MCP server that provides tools for accessing channels, users, and posts without external OAuth setup.'})}
+                                    />
                                 </ItemList>
-
                                 <ServersList>
                                     {!Array.isArray(config.servers) || config.servers.length < 1 ? (
                                         <EmptyState>
-                                            <FormattedMessage defaultMessage='No MCP servers configured. Add a server to enable MCP tools.'/>
+                                            <FormattedMessage defaultMessage='No remote MCP servers configured. Add a server to connect to external MCP tools.'/>
                                         </EmptyState>
                                     ) : (
                                         config.servers.map((serverConfig, index) => (
@@ -358,7 +377,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                         onClick={addServer}
                                     >
                                         <PlusServerIcon/>
-                                        <FormattedMessage defaultMessage='Add MCP Server'/>
+                                        <FormattedMessage defaultMessage='Add Remote MCP Server'/>
                                     </TertiaryButton>
                                 </AddServerContainer>
                             </>

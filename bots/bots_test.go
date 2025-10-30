@@ -16,13 +16,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type mockConfig struct{}
+type mockConfig struct {
+	bots     []llm.BotConfig
+	services []llm.ServiceConfig
+}
+
+func (m *mockConfig) GetBots() []llm.BotConfig {
+	return m.bots
+}
+
+func (m *mockConfig) GetServiceByID(id string) (llm.ServiceConfig, bool) {
+	for _, service := range m.services {
+		if service.ID == id {
+			return service, true
+		}
+	}
+	return llm.ServiceConfig{}, false
+}
 
 func (m *mockConfig) GetDefaultBotName() string {
 	return "testbot"
 }
 
 func (m *mockConfig) EnableLLMLogging() bool {
+	return false
+}
+
+func (m *mockConfig) EnableTokenUsageLogging() bool {
 	return false
 }
 
@@ -34,6 +54,7 @@ func TestEnsureBots(t *testing.T) {
 	testCases := []struct {
 		name               string
 		cfgBots            []llm.BotConfig
+		cfgServices        []llm.ServiceConfig
 		isMultiLLMLicensed bool
 		numCreatedBots     int
 		expectError        bool
@@ -41,6 +62,7 @@ func TestEnsureBots(t *testing.T) {
 		{
 			name:               "empty bots config with unlicensed server should not crash",
 			cfgBots:            []llm.BotConfig{},
+			cfgServices:        []llm.ServiceConfig{},
 			isMultiLLMLicensed: false,
 			expectError:        false,
 			numCreatedBots:     0,
@@ -48,6 +70,7 @@ func TestEnsureBots(t *testing.T) {
 		{
 			name:               "empty bots config with licensed server should not crash",
 			cfgBots:            []llm.BotConfig{},
+			cfgServices:        []llm.ServiceConfig{},
 			isMultiLLMLicensed: true,
 			expectError:        false,
 			numCreatedBots:     0,
@@ -59,10 +82,14 @@ func TestEnsureBots(t *testing.T) {
 					ID:          "test1",
 					Name:        "testbot1",
 					DisplayName: "Test Bot 1",
-					Service: llm.ServiceConfig{
-						Type:   llm.ServiceTypeOpenAI,
-						APIKey: "test-api-key",
-					},
+					ServiceID:   "service1",
+				},
+			},
+			cfgServices: []llm.ServiceConfig{
+				{
+					ID:     "service1",
+					Type:   llm.ServiceTypeOpenAI,
+					APIKey: "test-api-key",
 				},
 			},
 			isMultiLLMLicensed: false,
@@ -76,19 +103,25 @@ func TestEnsureBots(t *testing.T) {
 					ID:          "test1",
 					Name:        "testbot1",
 					DisplayName: "Test Bot 1",
-					Service: llm.ServiceConfig{
-						Type:   llm.ServiceTypeOpenAI,
-						APIKey: "test-api-key",
-					},
+					ServiceID:   "service1",
 				},
 				{
 					ID:          "test2",
 					Name:        "testbot2",
 					DisplayName: "Test Bot 2",
-					Service: llm.ServiceConfig{
-						Type:   llm.ServiceTypeOpenAI,
-						APIKey: "test-api-key-2",
-					},
+					ServiceID:   "service2",
+				},
+			},
+			cfgServices: []llm.ServiceConfig{
+				{
+					ID:     "service1",
+					Type:   llm.ServiceTypeOpenAI,
+					APIKey: "test-api-key",
+				},
+				{
+					ID:     "service2",
+					Type:   llm.ServiceTypeOpenAI,
+					APIKey: "test-api-key-2",
 				},
 			},
 			isMultiLLMLicensed: false,
@@ -102,19 +135,25 @@ func TestEnsureBots(t *testing.T) {
 					ID:          "test1",
 					Name:        "testbot1",
 					DisplayName: "Test Bot 1",
-					Service: llm.ServiceConfig{
-						Type:   llm.ServiceTypeOpenAI,
-						APIKey: "test-api-key",
-					},
+					ServiceID:   "service1",
 				},
 				{
 					ID:          "test2",
 					Name:        "testbot2",
 					DisplayName: "Test Bot 2",
-					Service: llm.ServiceConfig{
-						Type:   llm.ServiceTypeOpenAI,
-						APIKey: "test-api-key-2",
-					},
+					ServiceID:   "service2",
+				},
+			},
+			cfgServices: []llm.ServiceConfig{
+				{
+					ID:     "service1",
+					Type:   llm.ServiceTypeOpenAI,
+					APIKey: "test-api-key",
+				},
+				{
+					ID:     "service2",
+					Type:   llm.ServiceTypeOpenAI,
+					APIKey: "test-api-key-2",
 				},
 			},
 			isMultiLLMLicensed: true,
@@ -161,11 +200,15 @@ func TestEnsureBots(t *testing.T) {
 			mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
 
 			licenseChecker := enterprise.NewLicenseChecker(client)
-			mmBots := New(mockAPI, client, licenseChecker, &mockConfig{}, &http.Client{})
+			cfg := &mockConfig{
+				bots:     tc.cfgBots,
+				services: tc.cfgServices,
+			}
+			mmBots := New(mockAPI, client, licenseChecker, cfg, &http.Client{}, nil)
 
 			defer mockAPI.AssertExpectations(t)
 
-			err := mmBots.EnsureBots(tc.cfgBots)
+			err := mmBots.EnsureBots()
 			if tc.expectError {
 				require.Error(t, err)
 			} else {

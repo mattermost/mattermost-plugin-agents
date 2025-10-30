@@ -4,7 +4,6 @@
 package llm
 
 import (
-	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -25,10 +24,12 @@ const (
 )
 
 type Post struct {
-	Role    PostRole
-	Message string
-	Files   []File
-	ToolUse []ToolCall
+	Role               PostRole
+	Message            string
+	Files              []File
+	ToolUse            []ToolCall
+	Reasoning          string // Extended thinking/reasoning content from models that support it
+	ReasoningSignature string // Signature for thinking blocks (opaque verification field)
 }
 
 type CompletionRequest struct {
@@ -90,7 +91,7 @@ func (b CompletionRequest) String() string {
 		result.WriteString(post.Message)
 	}
 	result.WriteString("\n--- Context ---\n")
-	result.WriteString(fmt.Sprintf("%+v\n", b.Context))
+	result.WriteString(b.Context.String())
 
 	return result.String()
 }
