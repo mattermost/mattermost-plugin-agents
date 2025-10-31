@@ -166,7 +166,7 @@ const ReasoningContainer = styled.div`
 const BooleanToggle = styled.div`
     display: flex;
     flex-direction: row;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
 `;
 
@@ -239,8 +239,8 @@ const ErrorText = styled.div`
 `;
 
 const StyledCheckbox = styled.input`
-    margin-top: 2px;
     cursor: pointer;
+    margin: 0;
 `;
 
 export default ReasoningConfigItem;

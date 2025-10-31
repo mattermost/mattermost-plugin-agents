@@ -852,11 +852,11 @@ func (s *OpenAI) convertToResponseParams(params openai.ChatCompletionNewParams, 
 			effort = shared.ReasoningEffortMedium
 		}
 
-		result.Reasoning = shared.ReasoningParam{
+	result.Reasoning = shared.ReasoningParam{
 			Effort: effort,
-			// Request a detailed summary of the reasoning
-			// Can be "auto", "concise", or "detailed"
-			Summary: shared.ReasoningSummaryAuto,
+		// Request a detailed summary of the reasoning
+		// Can be "auto", "concise", or "detailed"
+		Summary: shared.ReasoningSummaryAuto,
 		}
 	}
 
