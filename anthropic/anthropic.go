@@ -234,24 +234,24 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 		} else {
 			// Use default: 1/4 of max tokens, capped at 8192
 			thinkingBudget = int64(state.config.MaxGeneratedTokens / 4)
-	if thinkingBudget > 8192 {
-		thinkingBudget = 8192
-	}
+			if thinkingBudget > 8192 {
+				thinkingBudget = 8192
+			}
 		}
 
 		// Ensure minimum budget of 1024 tokens
-	if thinkingBudget < 1024 {
-		thinkingBudget = 1024
-	}
+		if thinkingBudget < 1024 {
+			thinkingBudget = 1024
+		}
 
-	// Anthropic requires a minimum thinking budget of 1024 tokens
-	// If the thinking budget is more than the max_tokens, Anthropic will return an error.
-	if thinkingBudget < int64(state.config.MaxGeneratedTokens) {
-		params.Thinking = anthropicSDK.ThinkingConfigParamUnion{
-			OfEnabled: &anthropicSDK.ThinkingConfigEnabledParam{
-				Type:         "enabled",
-				BudgetTokens: thinkingBudget,
-			},
+		// Anthropic requires a minimum thinking budget of 1024 tokens
+		// If the thinking budget is more than the max_tokens, Anthropic will return an error.
+		if thinkingBudget < int64(state.config.MaxGeneratedTokens) {
+			params.Thinking = anthropicSDK.ThinkingConfigParamUnion{
+				OfEnabled: &anthropicSDK.ThinkingConfigEnabledParam{
+					Type:         "enabled",
+					BudgetTokens: thinkingBudget,
+				},
 			}
 		}
 	}
