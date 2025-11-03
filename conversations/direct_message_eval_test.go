@@ -132,24 +132,26 @@ func TestDirectMessageConversations(t *testing.T) {
 			)
 
 			// Create a mock bot for DM
-			bot := bots.NewBot(
-				llm.BotConfig{
-					ID:                 "testbotid",
-					Name:               "matty",
-					DisplayName:        "Matty",
-					CustomInstructions: "",
-					EnableVision:       false,
-					DisableTools:       false,
-					Service: llm.ServiceConfig{
-						DefaultModel: "mattermodel-5.4",
-					},
-				},
-				&model.Bot{
-					UserId: "testbotid",
-				},
-			)
+			botConfig := llm.BotConfig{
+				ID:                 "testbotid",
+				Name:               "matty",
+				DisplayName:        "Matty",
+				CustomInstructions: "",
+				EnableVision:       false,
+				DisableTools:       false,
+				ServiceID:          "test-service",
+			}
+			serviceConfig := llm.ServiceConfig{
+				ID:           "test-service",
+				Type:         llm.ServiceTypeOpenAI,
+				DefaultModel: "mattermodel-5.4",
+			}
+			mmBot := &model.Bot{
+				UserId: "testbotid",
+			}
+			llmInstance := llm.NewLanguageModelTestLogWrapper(t.T, t.LLM)
 
-			bot.SetLLMForTest(llm.NewLanguageModelTestLogWrapper(t.T, t.LLM))
+			bot := bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
 
 			// Process the DM request
 			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost())

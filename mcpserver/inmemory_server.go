@@ -9,7 +9,8 @@ import (
 	"runtime/debug"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
+	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -23,14 +24,14 @@ type MattermostInMemoryMCPServer struct {
 
 // NewInMemoryServer creates a new in-memory transport MCP server
 // This server is designed to run embedded within the plugin process
-func NewInMemoryServer(config InMemoryConfig, logger Logger) (*MattermostInMemoryMCPServer, error) {
+func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger) (*MattermostInMemoryMCPServer, error) {
 	if config.MMServerURL == "" {
 		return nil, fmt.Errorf("mattermost server URL cannot be empty for in-memory transport")
 	}
 
 	if logger == nil {
 		var err error
-		logger, err = createDefaultLogger()
+		logger, err = loggerlib.CreateDefaultLogger()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create default logger: %w", err)
 		}
@@ -61,7 +62,7 @@ func NewInMemoryServer(config InMemoryConfig, logger Logger) (*MattermostInMemor
 	)
 
 	// Register tools with remote access mode (embedded clients are treated as remote)
-	mattermostServer.registerTools(types.AccessModeRemote)
+	mattermostServer.registerTools(tools.AccessModeRemote)
 
 	logger.Info("Created in-memory MCP server")
 

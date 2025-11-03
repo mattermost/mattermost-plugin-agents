@@ -25,24 +25,19 @@ type ClientManager struct {
 	clientTimeout  time.Duration
 	oauthManager   *OAuthManager
 	embeddedClient *EmbeddedServerClient // Helper for embedded server (nil if disabled)
+	toolsCache     *ToolsCache
 }
 
 // NewClientManager creates a new MCP client manager
 // embeddedServer can be nil if embedded server is not available
-
 func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *pluginapi.Client, oauthManager *OAuthManager, embeddedServer EmbeddedMCPServer) *ClientManager {
-	var embeddedClient *EmbeddedServerClient
-	if embeddedServer != nil {
-		embeddedClient = NewEmbeddedServerClient(embeddedServer, log, pluginAPI)
-	}
-
 	manager := &ClientManager{
-		log:            log,
-		pluginAPI:      pluginAPI,
-		oauthManager:   oauthManager,
-		embeddedClient: embeddedClient,
+		log:          log,
+		pluginAPI:    pluginAPI,
+		oauthManager: oauthManager,
+		toolsCache:   NewToolsCache(&pluginAPI.KV, &log),
 	}
-	manager.ReInit(config)
+	manager.ReInit(config, embeddedServer)
 	return manager
 }
 
@@ -68,12 +63,19 @@ func (m *ClientManager) cleanupInactiveClients() {
 	}
 }
 
-// ReInit re-initializes the client manager with a new configuration
-func (m *ClientManager) ReInit(config Config) {
+// ReInit re-initializes the client manager with a new configuration and embedded server
+func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) {
 	m.Close()
 
 	if config.IdleTimeoutMinutes <= 0 {
 		config.IdleTimeoutMinutes = 30
+	}
+
+	// Update embedded server client
+	if embeddedServer != nil {
+		m.embeddedClient = NewEmbeddedServerClient(embeddedServer, m.log, m.pluginAPI)
+	} else {
+		m.embeddedClient = nil
 	}
 
 	m.config = config
@@ -123,7 +125,7 @@ func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClients, *
 		return client, nil
 	}
 
-	userClients := NewUserClients(userID, m.log, m.oauthManager)
+	userClients := NewUserClients(userID, m.log, m.oauthManager, m.toolsCache)
 
 	// Let user client connect to remote servers only
 	mcpErrors := userClients.ConnectToRemoteServers(m.config.Servers)
@@ -187,6 +189,11 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 // GetOAuthManager returns the OAuth manager instance
 func (m *ClientManager) GetOAuthManager() *OAuthManager {
 	return m.oauthManager
+}
+
+// GetToolsCache returns the tools cache instance
+func (m *ClientManager) GetToolsCache() *ToolsCache {
+	return m.toolsCache
 }
 
 // GetEmbeddedServer returns the embedded MCP server instance (may be nil)

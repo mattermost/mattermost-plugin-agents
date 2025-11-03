@@ -4,18 +4,18 @@
 package main
 
 import (
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
-// PluginAPILoggerAdapter adapts pluginapi.LogService to types.Logger
+// PluginAPILoggerAdapter adapts pluginapi.LogService to logger.Logger
 // This allows the embedded MCP server to use the plugin's logging infrastructure
 type PluginAPILoggerAdapter struct {
 	log pluginapi.LogService
 }
 
 // NewPluginAPILoggerAdapter creates a new adapter
-func NewPluginAPILoggerAdapter(log pluginapi.LogService) types.Logger {
+func NewPluginAPILoggerAdapter(log pluginapi.LogService) logger.Logger {
 	return &PluginAPILoggerAdapter{log: log}
 }
 

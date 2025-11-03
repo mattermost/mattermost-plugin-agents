@@ -7,8 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
-
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -17,12 +16,12 @@ import (
 type OAuthAuthenticationProvider struct {
 	mmServerURL string // Mattermost server URL for API communication
 	issuer      string
-	logger      types.Logger
+	logger      logger.Logger
 }
 
 // NewOAuthAuthenticationProvider creates a new OAuth authentication provider for resource server
 // Uses internalURL for API communication if provided, otherwise falls back to externalURL
-func NewOAuthAuthenticationProvider(externalURL, internalURL, issuer string, logger types.Logger) *OAuthAuthenticationProvider {
+func NewOAuthAuthenticationProvider(externalURL, internalURL, issuer string, logger logger.Logger) *OAuthAuthenticationProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	mmServerURL := internalURL
 	if mmServerURL == "" {

@@ -14,7 +14,6 @@ import (
 	"github.com/gin-gonic/gin/render"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
-	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/react"
@@ -329,15 +328,9 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 
 // makeAnalysisPost creates a post for thread analysis results
 func (a *API) makeAnalysisPost(locale string, postIDToAnalyze string, analysisType string, siteURL string) *model.Post {
-	post := &model.Post{
-		Message: a.analysisPostMessage(locale, postIDToAnalyze, analysisType, siteURL),
-	}
+	post := &model.Post{}
 	post.AddProp(conversations.ThreadIDProp, postIDToAnalyze)
 	post.AddProp(conversations.AnalysisTypeProp, analysisType)
 
 	return post
-}
-
-func (a *API) analysisPostMessage(locale string, postIDToAnalyze string, analysisType string, siteURL string) string {
-	return i18n.FormatAnalysisPostMessage(a.i18nBundle, locale, postIDToAnalyze, analysisType, siteURL)
 }

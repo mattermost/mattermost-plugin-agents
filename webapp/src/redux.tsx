@@ -19,6 +19,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         botChannelId,
         selectedPostId,
         searchEnabled,
+        allowUnsafeLinks,
     });
     registry.registerReducer(reducer);
 
@@ -69,6 +70,15 @@ function searchEnabled(state = false, action: any) {
     switch (action.type) {
     case 'SET_SEARCH_ENABLED':
         return action.searchEnabled;
+    default:
+        return state;
+    }
+}
+
+function allowUnsafeLinks(state = false, action: any) {
+    switch (action.type) {
+    case 'SET_ALLOW_UNSAFE_LINKS':
+        return action.allowUnsafeLinks;
     default:
         return state;
     }

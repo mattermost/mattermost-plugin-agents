@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
+	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
@@ -22,7 +23,7 @@ type TestSuite struct {
 	container  *mmcontainer.MattermostContainer
 	serverURL  string
 	adminToken string
-	logger     mcpserver.Logger
+	logger     loggerlib.Logger
 	mcpServer  interface {
 		Serve() error
 		GetMCPServer() *mcp.Server
@@ -78,7 +79,7 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 		container:  container,
 		serverURL:  serverURL,
 		adminToken: adminToken,
-		logger:     mcpserver.NewStandaloneLogger(mlogger),
+		logger:     loggerlib.NewStandaloneLogger(mlogger),
 	}
 }
 

@@ -10,8 +10,12 @@ import manifest from './manifest';
 
 const Client4 = new Client4Class();
 
+export function setSiteURL(siteURL: string) {
+    Client4.setUrl(siteURL);
+}
+
 function baseRoute(): string {
-    return `/plugins/${manifest.id}`;
+    return `${Client4.url}/plugins/${manifest.id}`;
 }
 
 function postRoute(postid: string): string {
@@ -377,6 +381,23 @@ export async function getMCPTools() {
     const url = `${baseRoute()}/admin/mcp/tools`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function clearMCPToolsCache() {
+    const url = `${baseRoute()}/admin/mcp/tools/cache/clear`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
     }));
 
     if (response.ok) {
