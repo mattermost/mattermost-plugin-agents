@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
+	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -62,7 +63,7 @@ Authentication is handled via Personal Access Tokens (PAT).`,
 func runServer(cmd *cobra.Command, args []string) error {
 	// Create logger with debug and file logging options
 	// This automatically configures std log redirection
-	logger, err := mcpserver.CreateLoggerWithOptions(debug, logFile)
+	logger, err := loggerlib.CreateLoggerWithOptions(debug, logFile)
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}

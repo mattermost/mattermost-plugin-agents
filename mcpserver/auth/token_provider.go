@@ -7,8 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
-
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -16,12 +15,12 @@ import (
 type TokenAuthenticationProvider struct {
 	mmServerURL string // Mattermost server URL for API communication
 	token       string
-	logger      types.Logger
+	logger      logger.Logger
 }
 
 // NewTokenAuthenticationProvider creates a new PAT token authentication provider for STDIO transport
 // Uses internalURL for API communication if provided, otherwise falls back to externalURL
-func NewTokenAuthenticationProvider(externalURL, internalURL, token string, logger types.Logger) *TokenAuthenticationProvider {
+func NewTokenAuthenticationProvider(externalURL, internalURL, token string, logger logger.Logger) *TokenAuthenticationProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	mmServerURL := internalURL
 	if mmServerURL == "" {

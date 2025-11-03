@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
@@ -58,9 +57,6 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 	case threadIDProp != nil:
 		threadID := threadIDProp.(string)
 		analysisType := analysisTypeProp.(string)
-		config := c.mmClient.GetConfig()
-		siteURL := config.ServiceSettings.SiteURL
-		post.Message = i18n.FormatAnalysisPostMessage(c.i18n, user.Locale, threadID, analysisType, *siteURL)
 		threadPost, getPostErr := c.mmClient.GetPost(threadID)
 		if getPostErr != nil {
 			return fmt.Errorf("could not get thread post on regen: %w", getPostErr)

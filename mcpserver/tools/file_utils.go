@@ -13,18 +13,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // fetchFileDataForLocal fetches file data from a file path or URL (local access only)
-func fetchFileDataForLocal(filespec string, accessMode types.AccessMode) ([]byte, error) {
+func fetchFileDataForLocal(filespec string, accessMode AccessMode) ([]byte, error) {
 	if filespec == "" {
 		return nil, fmt.Errorf("empty filespec provided")
 	}
 
 	// URLs are only allowed for local access mode
-	if accessMode != types.AccessModeLocal {
+	if accessMode != AccessModeLocal {
 		return nil, fmt.Errorf("URL access not supported in remote access mode, only local access allows URL access")
 	}
 
@@ -69,12 +68,12 @@ func isURL(filespec string) bool {
 }
 
 // extractFileNameForLocal extracts the filename from a filespec (URL or file path, local access only)
-func extractFileNameForLocal(filespec string, accessMode types.AccessMode) string {
+func extractFileNameForLocal(filespec string, accessMode AccessMode) string {
 	if filespec == "" {
 		return ""
 	}
 
-	if accessMode != types.AccessModeLocal {
+	if accessMode != AccessModeLocal {
 		return "url-access-denied"
 	}
 
@@ -114,11 +113,11 @@ func isValidImageFile(filename string) bool {
 }
 
 // uploadFilesForLocal uploads multiple files from URLs or file paths (local access only) and returns their file IDs
-func uploadFilesForLocal(ctx context.Context, client *model.Client4, channelID string, filespecs []string, accessMode types.AccessMode) ([]string, error) {
+func uploadFilesForLocal(ctx context.Context, client *model.Client4, channelID string, filespecs []string, accessMode AccessMode) ([]string, error) {
 	var fileIDs []string
 
 	// Early validation - only local access can upload files
-	if accessMode != types.AccessModeLocal {
+	if accessMode != AccessModeLocal {
 		return nil, fmt.Errorf("file uploads not supported in remote access mode, only local access allows file operations")
 	}
 
@@ -151,12 +150,12 @@ func uploadFilesForLocal(ctx context.Context, client *model.Client4, channelID s
 }
 
 // uploadFilesAndUrlsForLocal uploads files from URLs or file paths (local access only) and returns file IDs and status message
-func uploadFilesAndUrlsForLocal(ctx context.Context, client *model.Client4, channelID string, attachments []string, accessMode types.AccessMode) ([]string, string) {
+func uploadFilesAndUrlsForLocal(ctx context.Context, client *model.Client4, channelID string, attachments []string, accessMode AccessMode) ([]string, string) {
 	var fileIDs []string
 	var attachmentMessage string
 
 	if len(attachments) > 0 {
-		if accessMode != types.AccessModeLocal {
+		if accessMode != AccessModeLocal {
 			attachmentMessage = " (file attachments not supported in remote access mode)"
 			return nil, attachmentMessage
 		}

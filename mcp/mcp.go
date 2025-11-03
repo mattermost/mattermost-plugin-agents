@@ -33,8 +33,6 @@ type Errors struct {
 // EmbeddedServerConfig contains configuration for the embedded MCP server
 type EmbeddedServerConfig struct {
 	Enabled bool `json:"enabled"`
-
-	// Future configuration options can be added here
 }
 
 // Config contains the configuration for the MCP  servers
@@ -52,9 +50,10 @@ func DiscoverRemoteServerTools(
 	serverConfig ServerConfig,
 	log pluginapi.LogService,
 	oauthManger *OAuthManager,
+	toolsCache *ToolsCache,
 ) ([]ToolInfo, error) {
 	// Create and connect to the remote server
-	client, err := NewClient(ctx, userID, serverConfig, log, oauthManger)
+	client, err := NewClient(ctx, userID, serverConfig, log, oauthManger, toolsCache)
 	if err != nil {
 		return nil, err
 	}

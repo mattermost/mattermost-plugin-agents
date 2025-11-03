@@ -14,7 +14,8 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
+	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -28,7 +29,7 @@ type MattermostHTTPMCPServer struct {
 }
 
 // NewHTTPServer creates a new HTTP transport MCP server
-func NewHTTPServer(config HTTPConfig, logger Logger) (*MattermostHTTPMCPServer, error) {
+func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPMCPServer, error) {
 	if config.MMServerURL == "" {
 		return nil, fmt.Errorf("server URL cannot be empty")
 	}
@@ -47,7 +48,7 @@ func NewHTTPServer(config HTTPConfig, logger Logger) (*MattermostHTTPMCPServer, 
 
 	if logger == nil {
 		var err error
-		logger, err = createDefaultLogger()
+		logger, err = loggerlib.CreateDefaultLogger()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create default logger: %w", err)
 		}
@@ -78,7 +79,7 @@ func NewHTTPServer(config HTTPConfig, logger Logger) (*MattermostHTTPMCPServer, 
 	)
 
 	// Register tools with remote access mode
-	mattermostServer.registerTools(types.AccessModeRemote)
+	mattermostServer.registerTools(tools.AccessModeRemote)
 
 	// Create HTTP server with OAuth endpoints and MCP routing
 	addr := fmt.Sprintf("%s:%d", config.HTTPBindAddr, config.HTTPPort)
@@ -370,7 +371,7 @@ type responseRecorder struct {
 	http.ResponseWriter
 	statusCode    int
 	headerWritten bool
-	logger        Logger
+	logger        loggerlib.Logger
 	requestPath   string
 }
 
