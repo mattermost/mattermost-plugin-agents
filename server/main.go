@@ -49,7 +49,6 @@ type Plugin struct {
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
-	embeddedMCPServer    mcp.EmbeddedMCPServer
 }
 
 func (p *Plugin) OnActivate() error {
