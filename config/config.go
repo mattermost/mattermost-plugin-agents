@@ -165,6 +165,7 @@ func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig ll
 		SendUserID:         serviceConfig.SendUserID,
 		UseResponsesAPI:    serviceConfig.UseResponsesAPI,
 		EnabledNativeTools: botConfig.EnabledNativeTools,
-		BotConfig:          botConfig,
+		ReasoningEnabled:   botConfig.ReasoningEnabled,
+		ReasoningEffort:    botConfig.ReasoningEffort,
 	}
 }

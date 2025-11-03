@@ -41,7 +41,8 @@ type Config struct {
 	EmbeddingDimensions int           `json:"embeddingDimensions"`
 	UseResponsesAPI     bool          `json:"useResponsesAPI"`
 	EnabledNativeTools  []string      `json:"enabledNativeTools"`
-	BotConfig           llm.BotConfig `json:"botConfig"`
+	ReasoningEnabled    bool          `json:"reasoningEnabled"`
+	ReasoningEffort     string        `json:"reasoningEffort"`
 }
 
 type OpenAI struct {
@@ -836,10 +837,10 @@ func (s *OpenAI) convertToResponseParams(params openai.ChatCompletionNewParams, 
 
 	// Add reasoning parameters for models that support it
 	// Check if reasoning is enabled for this bot
-	if s.config.BotConfig.ReasoningEnabled {
+	if s.config.ReasoningEnabled {
 		// Determine reasoning effort
 		var effort shared.ReasoningEffort
-		switch s.config.BotConfig.ReasoningEffort {
+		switch s.config.ReasoningEffort {
 		case "minimal":
 			effort = shared.ReasoningEffortMinimal
 		case "low":
@@ -857,7 +858,6 @@ func (s *OpenAI) convertToResponseParams(params openai.ChatCompletionNewParams, 
 
 		result.Reasoning = shared.ReasoningParam{
 			Effort: effort,
-			// Request a detailed summary of the reasoning
 			// Can be "auto", "concise", or "detailed"
 			Summary: shared.ReasoningSummaryAuto,
 		}

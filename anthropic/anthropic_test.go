@@ -619,8 +619,8 @@ func TestNew(t *testing.T) {
 				assert.Equal(t, 200000, a.inputTokenLimit)
 				assert.Equal(t, 8192, a.outputTokenLimit)
 				assert.Equal(t, []string{"web_search"}, a.enabledNativeTools)
-				assert.True(t, a.botConfig.ReasoningEnabled)
-				assert.Equal(t, 2048, a.botConfig.ThinkingBudget)
+				assert.True(t, a.reasoningEnabled)
+				assert.Equal(t, 2048, a.thinkingBudget)
 			},
 		},
 		{
@@ -641,8 +641,8 @@ func TestNew(t *testing.T) {
 			},
 			validate: func(t *testing.T, a *Anthropic) {
 				assert.Equal(t, "claude-3-opus-20240229", a.defaultModel)
-				assert.False(t, a.botConfig.ReasoningEnabled)
-				assert.Equal(t, 0, a.botConfig.ThinkingBudget)
+				assert.False(t, a.reasoningEnabled)
+				assert.Equal(t, 0, a.thinkingBudget)
 			},
 		},
 		{
@@ -663,8 +663,8 @@ func TestNew(t *testing.T) {
 				ThinkingBudget:   4096,
 			},
 			validate: func(t *testing.T, a *Anthropic) {
-				assert.True(t, a.botConfig.ReasoningEnabled)
-				assert.Equal(t, 4096, a.botConfig.ThinkingBudget)
+				assert.True(t, a.reasoningEnabled)
+				assert.Equal(t, 4096, a.thinkingBudget)
 			},
 		},
 		{
@@ -685,8 +685,8 @@ func TestNew(t *testing.T) {
 				ThinkingBudget:   0, // Will use default calculation
 			},
 			validate: func(t *testing.T, a *Anthropic) {
-				assert.True(t, a.botConfig.ReasoningEnabled)
-				assert.Equal(t, 0, a.botConfig.ThinkingBudget) // Stored as 0, calculated on use
+				assert.True(t, a.reasoningEnabled)
+				assert.Equal(t, 0, a.thinkingBudget) // Stored as 0, calculated on use
 			},
 		},
 		{
@@ -709,7 +709,6 @@ func TestNew(t *testing.T) {
 			},
 			validate: func(t *testing.T, a *Anthropic) {
 				assert.Equal(t, []string{"web_search"}, a.enabledNativeTools)
-				assert.Equal(t, []string{"web_search"}, a.botConfig.EnabledNativeTools)
 			},
 		},
 		{
@@ -732,12 +731,9 @@ func TestNew(t *testing.T) {
 				DisableTools:     false,
 			},
 			validate: func(t *testing.T, a *Anthropic) {
-				assert.Equal(t, "bot6", a.botConfig.ID)
-				assert.Equal(t, "testbot6", a.botConfig.Name)
-				assert.Equal(t, "Test Bot 6", a.botConfig.DisplayName)
-				assert.True(t, a.botConfig.EnableVision)
-				assert.False(t, a.botConfig.DisableTools)
-				assert.Equal(t, 1024, a.botConfig.ThinkingBudget)
+				assert.Equal(t, "claude-3-haiku-20240307", a.defaultModel)
+				assert.True(t, a.reasoningEnabled)
+				assert.Equal(t, 1024, a.thinkingBudget)
 			},
 		},
 	}
@@ -823,43 +819,24 @@ func TestThinkingBudgetConfiguration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a mock Anthropic client with the bot config
+			// Create an Anthropic client with the reasoning fields
 			a := &Anthropic{
-				botConfig: tt.botConfig,
+				reasoningEnabled: tt.botConfig.ReasoningEnabled,
+				thinkingBudget:   tt.botConfig.ThinkingBudget,
 			}
 
-			// Test the thinking budget calculation logic
-			reasoningEnabled := a.botConfig.ReasoningEnabled
-			if !reasoningEnabled {
-				assert.False(t, tt.expectThinkingConfig, "Reasoning should be disabled")
+			// Call the actual function that calculates thinking config
+			thinkingConfig, ok := a.calculateThinkingConfig(tt.maxGeneratedTokens)
+
+			if !tt.expectThinkingConfig {
+				assert.False(t, ok, "Thinking config should not be enabled")
 				return
 			}
 
-			// Calculate thinking budget using the same logic as the actual code
-			var thinkingBudget int64
-			if a.botConfig.ThinkingBudget > 0 {
-				thinkingBudget = int64(a.botConfig.ThinkingBudget)
-			} else {
-				thinkingBudget = int64(tt.maxGeneratedTokens / 4)
-				if thinkingBudget > 8192 {
-					thinkingBudget = 8192
-				}
-			}
-
-			// Ensure minimum budget of 1024 tokens
-			if thinkingBudget < 1024 {
-				thinkingBudget = 1024
-			}
-
-			// Check if thinking config should be set
-			shouldSetConfig := thinkingBudget < int64(tt.maxGeneratedTokens)
-
-			if tt.expectThinkingConfig {
-				assert.True(t, shouldSetConfig, "Thinking config should be set")
-				assert.Equal(t, tt.expectedBudget, thinkingBudget, "Thinking budget should match expected value")
-			} else {
-				assert.False(t, shouldSetConfig, "Thinking config should not be set")
-			}
+			// When thinking is expected, verify it's enabled and has the correct budget
+			assert.True(t, ok, "Thinking config should be enabled")
+			require.NotNil(t, thinkingConfig.OfEnabled, "Thinking config should have OfEnabled set")
+			assert.Equal(t, tt.expectedBudget, thinkingConfig.OfEnabled.BudgetTokens, "Thinking budget should match expected value")
 		})
 	}
 }

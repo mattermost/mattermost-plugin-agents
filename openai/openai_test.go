@@ -5,6 +5,7 @@ package openai
 
 import (
 	"bytes"
+	"net/http"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -738,99 +739,89 @@ func TestToolBufferElement(t *testing.T) {
 func TestReasoningEffortConfiguration(t *testing.T) {
 	tests := []struct {
 		name               string
-		botConfig          llm.BotConfig
+		reasoningEnabled   bool
+		reasoningEffort    string
 		expectedEffort     shared.ReasoningEffort
 		shouldSetReasoning bool
 	}{
 		{
-			name: "reasoning enabled with minimal effort",
-			botConfig: llm.BotConfig{
-				ReasoningEnabled: true,
-				ReasoningEffort:  "minimal",
-			},
+			name:               "reasoning enabled with minimal effort",
+			reasoningEnabled:   true,
+			reasoningEffort:    "minimal",
 			expectedEffort:     shared.ReasoningEffortMinimal,
 			shouldSetReasoning: true,
 		},
 		{
-			name: "reasoning enabled with low effort",
-			botConfig: llm.BotConfig{
-				ReasoningEnabled: true,
-				ReasoningEffort:  "low",
-			},
+			name:               "reasoning enabled with low effort",
+			reasoningEnabled:   true,
+			reasoningEffort:    "low",
 			expectedEffort:     shared.ReasoningEffortLow,
 			shouldSetReasoning: true,
 		},
 		{
-			name: "reasoning enabled with medium effort",
-			botConfig: llm.BotConfig{
-				ReasoningEnabled: true,
-				ReasoningEffort:  "medium",
-			},
+			name:               "reasoning enabled with medium effort",
+			reasoningEnabled:   true,
+			reasoningEffort:    "medium",
 			expectedEffort:     shared.ReasoningEffortMedium,
 			shouldSetReasoning: true,
 		},
 		{
-			name: "reasoning enabled with high effort",
-			botConfig: llm.BotConfig{
-				ReasoningEnabled: true,
-				ReasoningEffort:  "high",
-			},
+			name:               "reasoning enabled with high effort",
+			reasoningEnabled:   true,
+			reasoningEffort:    "high",
 			expectedEffort:     shared.ReasoningEffortHigh,
 			shouldSetReasoning: true,
 		},
 		{
-			name: "reasoning enabled with default (empty string defaults to medium)",
-			botConfig: llm.BotConfig{
-				ReasoningEnabled: true,
-				ReasoningEffort:  "",
-			},
+			name:               "reasoning enabled with default (empty string defaults to medium)",
+			reasoningEnabled:   true,
+			reasoningEffort:    "",
 			expectedEffort:     shared.ReasoningEffortMedium,
 			shouldSetReasoning: true,
 		},
 		{
-			name: "reasoning enabled with invalid effort (defaults to medium)",
-			botConfig: llm.BotConfig{
-				ReasoningEnabled: true,
-				ReasoningEffort:  "invalid",
-			},
+			name:               "reasoning enabled with invalid effort (defaults to medium)",
+			reasoningEnabled:   true,
+			reasoningEffort:    "invalid",
 			expectedEffort:     shared.ReasoningEffortMedium,
 			shouldSetReasoning: true,
 		},
 		{
-			name: "reasoning disabled",
-			botConfig: llm.BotConfig{
-				ReasoningEnabled: false,
-				ReasoningEffort:  "high",
-			},
+			name:               "reasoning disabled",
+			reasoningEnabled:   false,
+			reasoningEffort:    "high",
 			shouldSetReasoning: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Test the reasoning effort mapping logic
-			if !tt.botConfig.ReasoningEnabled {
-				assert.False(t, tt.shouldSetReasoning, "Reasoning should be disabled")
+			// Create an OpenAI instance with the test config
+			oai := New(Config{
+				APIKey:           "test-key",
+				DefaultModel:     "gpt-4o",
+				ReasoningEnabled: tt.reasoningEnabled,
+				ReasoningEffort:  tt.reasoningEffort,
+			}, &http.Client{})
+
+			// Create test params
+			chatParams := openai.ChatCompletionNewParams{
+				Model:    shared.ChatModelGPT4o,
+				Messages: []openai.ChatCompletionMessageParamUnion{},
+			}
+
+			// Call the actual function that handles reasoning configuration
+			result := oai.convertToResponseParams(chatParams, &llm.Context{})
+
+			if !tt.shouldSetReasoning {
+				// When reasoning is disabled, Reasoning should be empty
+				assert.Equal(t, shared.ReasoningParam{}, result.Reasoning, "Reasoning should not be set when disabled")
 				return
 			}
 
-			// Map reasoning effort using the same logic as the actual code
-			var effort shared.ReasoningEffort
-			switch tt.botConfig.ReasoningEffort {
-			case "minimal":
-				effort = shared.ReasoningEffortMinimal
-			case "low":
-				effort = shared.ReasoningEffortLow
-			case "high":
-				effort = shared.ReasoningEffortHigh
-			case "medium", "":
-				effort = shared.ReasoningEffortMedium
-			default:
-				effort = shared.ReasoningEffortMedium
-			}
-
-			assert.True(t, tt.shouldSetReasoning, "Reasoning should be enabled")
-			assert.Equal(t, tt.expectedEffort, effort, "Reasoning effort should match expected value")
+			// When reasoning is enabled, verify the effort is set correctly
+			assert.Equal(t, tt.expectedEffort, result.Reasoning.Effort, "Reasoning effort should match expected value")
+			assert.Equal(t, shared.ReasoningSummaryAuto, result.Reasoning.Summary, "Reasoning summary should be set to auto")
 		})
 	}
 }

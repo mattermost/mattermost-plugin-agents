@@ -52,8 +52,8 @@ func TestOpenAIConfigFromServiceConfig(t *testing.T) {
 				assert.True(t, config.SendUserID)
 				assert.True(t, config.UseResponsesAPI)
 				assert.Equal(t, []string{"web_search"}, config.EnabledNativeTools)
-				assert.True(t, config.BotConfig.ReasoningEnabled)
-				assert.Equal(t, "medium", config.BotConfig.ReasoningEffort)
+				assert.True(t, config.ReasoningEnabled)
+				assert.Equal(t, "medium", config.ReasoningEffort)
 			},
 		},
 		{
@@ -76,7 +76,7 @@ func TestOpenAIConfigFromServiceConfig(t *testing.T) {
 			validate: func(t *testing.T, config openai.Config) {
 				assert.Equal(t, "test-api-key-2", config.APIKey)
 				assert.Equal(t, "gpt-4", config.DefaultModel)
-				assert.False(t, config.BotConfig.ReasoningEnabled)
+				assert.False(t, config.ReasoningEnabled)
 				assert.Equal(t, 30*time.Second, config.StreamingTimeout) // default
 			},
 		},
@@ -99,8 +99,8 @@ func TestOpenAIConfigFromServiceConfig(t *testing.T) {
 				ReasoningEffort:  "high",
 			},
 			validate: func(t *testing.T, config openai.Config) {
-				assert.True(t, config.BotConfig.ReasoningEnabled)
-				assert.Equal(t, "high", config.BotConfig.ReasoningEffort)
+				assert.True(t, config.ReasoningEnabled)
+				assert.Equal(t, "high", config.ReasoningEffort)
 			},
 		},
 		{
