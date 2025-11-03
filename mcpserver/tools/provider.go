@@ -13,6 +13,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -21,7 +22,7 @@ import (
 // MCPToolContext provides MCP-specific functionality with the authenticated client
 type MCPToolContext struct {
 	Client     *model.Client4
-	AccessMode types.AccessMode
+	AccessMode AccessMode
 	BotUserID  string // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
 }
 
@@ -43,17 +44,17 @@ type ToolProvider interface {
 // MattermostToolProvider provides Mattermost tools following the mmtools pattern
 type MattermostToolProvider struct {
 	authProvider        auth.AuthenticationProvider
-	logger              types.Logger
+	logger              logger.Logger
 	mmServerURL         string // External server URL for OAuth redirects
 	mmInternalServerURL string // Internal server URL for API communication
 	devMode             bool
-	accessMode          types.AccessMode
+	accessMode          AccessMode
 	trackAIGenerated    bool // Whether to add ai_generated_by props to posts
 }
 
 // NewMattermostToolProvider creates a new tool provider
 // Now accepts a ServerConfig interface to avoid circular dependencies
-func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger types.Logger, config types.ServerConfig, accessMode types.AccessMode) *MattermostToolProvider {
+func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config types.ServerConfig, accessMode AccessMode) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	internalURL := config.GetMMInternalServerURL()
 	if internalURL == "" {

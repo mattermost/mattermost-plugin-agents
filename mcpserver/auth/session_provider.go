@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -17,12 +17,12 @@ import (
 type SessionAuthenticationProvider struct {
 	mmServerURL         string // Mattermost server URL for API communication
 	mmInternalServerURL string // Internal server URL (may be different for containerized deployments)
-	logger              types.Logger
+	logger              logger.Logger
 }
 
 // NewSessionAuthenticationProvider creates a new session authentication provider for in-memory transport
 // Uses internalURL for API communication if provided, otherwise falls back to externalURL
-func NewSessionAuthenticationProvider(externalURL, internalURL string, logger types.Logger) *SessionAuthenticationProvider {
+func NewSessionAuthenticationProvider(externalURL, internalURL string, logger logger.Logger) *SessionAuthenticationProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	mmServerURL := internalURL
 	if mmServerURL == "" {

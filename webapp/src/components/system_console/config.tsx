@@ -8,18 +8,20 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {setUserProfilePictureByUsername} from '@/client';
 import {Pill} from '../../components/pill';
 
-import {ServiceData} from './service';
 import Panel, {PanelFooterText} from './panel';
 import Bots, {firstNewBot} from './bots';
 import {LLMBotConfig} from './bot';
+import Services, {firstNewService} from './services';
+import {LLMService} from './service';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from './item';
 import NoBotsPage from './no_bots_page';
+import NoServicesPage from './no_services_page';
 import EmbeddingSearchPanel from './embedding_search/embedding_search_panel';
 import {EmbeddingSearchConfig} from './embedding_search/types';
 import MCPServers, {MCPConfig} from './mcp_servers';
 
 type Config = {
-    services: ServiceData[],
+    services: LLMService[],
     bots: LLMBotConfig[],
     defaultBotName: string,
     transcriptBackend: string,
@@ -27,6 +29,7 @@ type Config = {
     enableTokenUsageLogging: boolean,
     enableCallSummary: boolean,
     allowedUpstreamHostnames: string,
+    allowUnsafeLinks: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig
 }
@@ -77,6 +80,7 @@ const defaultConfig = {
     transcriptBackend: '',
     enableLLMTrace: false,
     enableTokenUsageLogging: false,
+    allowUnsafeLinks: false,
     embeddingSearchConfig: {
         type: 'disabled',
         vectorStore: {
@@ -144,8 +148,19 @@ const Config = (props: Props) => {
         props.setSaveNeeded();
     };
 
+    const addFirstService = () => {
+        const id = crypto.randomUUID();
+        props.onChange(props.id, {
+            ...value,
+            services: [{
+                ...firstNewService,
+                id,
+            }],
+        });
+    };
+
     const addFirstBot = () => {
-        const id = Math.random().toString(36).substring(2, 22);
+        const id = crypto.randomUUID();
         props.onChange(props.id, {
             ...value,
             bots: [{
@@ -155,11 +170,41 @@ const Config = (props: Props) => {
         });
     };
 
-    if (!props.value?.bots || props.value.bots.length === 0) {
+    const hasServiceConfigured = props.value?.services && props.value.services.length > 0;
+    const hasBotConfigured = props.value?.bots && props.value.bots.length > 0;
+
+    if (!hasServiceConfigured) {
         return (
             <ConfigContainer>
                 <BetaMessage/>
-                <NoBotsPage onAddBotPressed={addFirstBot}/>
+                <NoServicesPage onAddServicePressed={addFirstService}/>
+            </ConfigContainer>
+        );
+    }
+
+    if (!hasBotConfigured) {
+        return (
+            <ConfigContainer>
+                <BetaMessage/>
+                <Panel
+                    title={intl.formatMessage({defaultMessage: 'AI Services'})}
+                    subtitle={intl.formatMessage({defaultMessage: 'Configure AI services to power your bots.'})}
+                >
+                    <Services
+                        services={props.value.services ?? []}
+                        bots={props.value.bots ?? []}
+                        onChange={(services: LLMService[]) => {
+                            props.onChange(props.id, {...value, services});
+                            props.setSaveNeeded();
+                        }}
+                    />
+                </Panel>
+                <Panel
+                    title={intl.formatMessage({defaultMessage: 'AI Bots'})}
+                    subtitle={intl.formatMessage({defaultMessage: 'Add your first AI bot to get started.'})}
+                >
+                    <NoBotsPage onAddBotPressed={addFirstBot}/>
+                </Panel>
             </ConfigContainer>
         );
     }
@@ -171,14 +216,32 @@ const Config = (props: Props) => {
         <ConfigContainer>
             <BetaMessage/>
             <Panel
+                title={intl.formatMessage({defaultMessage: 'AI Services'})}
+                subtitle={intl.formatMessage({defaultMessage: 'Configure AI services to power your bots.'})}
+            >
+                <Services
+                    services={props.value.services ?? []}
+                    bots={props.value.bots ?? []}
+                    onChange={(services: LLMService[]) => {
+                        props.onChange(props.id, {...value, services});
+                        props.setSaveNeeded();
+                    }}
+                />
+                <PanelFooterText>
+                    <FormattedMessage defaultMessage='AI services are third-party services. Mattermost is not responsible for service output.'/>
+                </PanelFooterText>
+            </Panel>
+            <Panel
                 title={intl.formatMessage({defaultMessage: 'AI Bots'})}
-                subtitle={intl.formatMessage({defaultMessage: 'Multiple AI services can be configured below.'})}
+                subtitle={intl.formatMessage({defaultMessage: 'Configure multiple AI bots with different personalities and capabilities.'})}
             >
                 <Bots
                     bots={props.value.bots ?? []}
+                    services={props.value.services ?? []}
                     onChange={(bots: LLMBotConfig[]) => {
                         if (value.bots.findIndex((bot) => bot.name === value.defaultBotName) === -1) {
-                            props.onChange(props.id, {...value, bots, defaultBotName: bots[0].name});
+                            const newDefaultBotName = bots.length > 0 ? bots[0].name : '';
+                            props.onChange(props.id, {...value, bots, defaultBotName: newDefaultBotName});
                         } else {
                             props.onChange(props.id, {...value, bots});
                         }
@@ -186,9 +249,6 @@ const Config = (props: Props) => {
                     }}
                     botChangedAvatar={botChangedAvatar}
                 />
-                <PanelFooterText>
-                    <FormattedMessage defaultMessage='AI services are third-party services. Mattermost is not responsible for service output.'/>
-                </PanelFooterText>
             </Panel>
             <Panel
                 title={intl.formatMessage({defaultMessage: 'AI Functions'})}
@@ -217,6 +277,15 @@ const Config = (props: Props) => {
                         value={value.allowedUpstreamHostnames}
                         onChange={(e) => props.onChange(props.id, {...value, allowedUpstreamHostnames: e.target.value})}
                         helptext={intl.formatMessage({defaultMessage: 'Comma separated list of hostnames that LLMs are allowed to contact when using tools. Supports wildcards like *.mydomain.com. For instance to allow JIRA tool use to the Mattermost JIRA instance use mattermost.atlassian.net'})}
+                    />
+                    <BooleanItem
+                        label={<FormattedMessage defaultMessage='Render AI-generated links'/>}
+                        value={Boolean(value.allowUnsafeLinks)}
+                        onChange={(to) => {
+                            props.onChange(props.id, {...value, allowUnsafeLinks: to});
+                            props.setSaveNeeded();
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, AI responses may contain clickable links, including potentially malicious destinations. Enable only if you trust the LLM output and have mitigations for exfiltration risks.'})}
                     />
                 </ItemList>
             </Panel>

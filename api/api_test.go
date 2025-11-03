@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
+	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -33,10 +34,14 @@ type TestEnvironment struct {
 	api     *API
 	mockAPI *plugintest.API
 	bots    *bots.MMBots
+	config  *testConfigImpl
+	client  *pluginapi.Client
 }
 
 // testConfigImpl is a minimal implementation of Config for testing
-type testConfigImpl struct{}
+type testConfigImpl struct {
+	allowUnsafeLinks bool
+}
 
 func (tc *testConfigImpl) GetDefaultBotName() string {
 	return "ai"
@@ -46,10 +51,18 @@ func (tc *testConfigImpl) MCP() mcp.Config {
 	return mcp.Config{}
 }
 
+func (tc *testConfigImpl) AllowUnsafeLinks() bool {
+	return tc.allowUnsafeLinks
+}
+
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct{}
 
 func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
+	return nil
+}
+
+func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
 	return nil
 }
 
@@ -65,6 +78,36 @@ func (e *TestEnvironment) Cleanup(t *testing.T) {
 	if e.mockAPI != nil {
 		e.mockAPI.AssertExpectations(t)
 	}
+}
+
+// CreateBridgeClient creates a bridge client that uses the test API
+func (e *TestEnvironment) CreateBridgeClient() *bridgeclient.Client {
+	// Create a plugin API wrapper that routes to our test API
+	pluginAPI := &testPluginAPI{
+		api: e.api,
+	}
+	return bridgeclient.NewClient(pluginAPI)
+}
+
+// testPluginAPI wraps the test API to implement bridgeclient.PluginAPI
+type testPluginAPI struct {
+	api *API
+}
+
+func (t *testPluginAPI) PluginHTTP(req *http.Request) *http.Response {
+	// Add inter-plugin authentication header
+	req.Header.Set("Mattermost-Plugin-ID", "test-plugin")
+
+	// Strip plugin ID prefix from path (e.g., /mattermost-ai/bridge/... -> /bridge/...)
+	// The real PluginHTTP strips the first path component
+	path := req.URL.Path
+	if idx := strings.Index(path[1:], "/"); idx != -1 {
+		req.URL.Path = path[1+idx:]
+	}
+
+	recorder := httptest.NewRecorder()
+	t.api.ServeHTTP(&plugin.Context{}, recorder, req)
+	return recorder.Result()
 }
 
 // createTestBots creates a test MMBots instance for testing
@@ -84,7 +127,7 @@ func (e *TestEnvironment) setupTestBot(botConfig llm.BotConfig) {
 	}
 
 	// Create the bot instance
-	bot := bots.NewBot(botConfig, mmBot)
+	bot := bots.NewBot(botConfig, llm.ServiceConfig{}, mmBot, nil)
 
 	// Set the bot directly for testing
 	e.bots.SetBotsForTesting([]*bots.Bot{bot})
@@ -102,12 +145,16 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	// Create minimal conversations service for testing
 	conversationsService := &conversations.Conversations{}
 
-	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, &testConfigImpl{}, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{})
+	cfg := &testConfigImpl{}
+
+	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{})
 
 	return &TestEnvironment{
 		api:     api,
 		mockAPI: mockAPI,
 		bots:    testBots,
+		config:  cfg,
+		client:  client,
 	}
 }
 
@@ -315,7 +362,7 @@ func TestEmptyBodyCheckerInApi(t *testing.T) {
 			e.mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()
 			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageSystem).Return(true).Maybe()
 
-			e.bots.SetBotsForTesting([]*bots.Bot{bots.NewBot(llm.BotConfig{Name: "thebot"}, nil)})
+			e.bots.SetBotsForTesting([]*bots.Bot{bots.NewBot(llm.BotConfig{Name: "thebot"}, llm.ServiceConfig{}, nil, nil)})
 
 			request := httptest.NewRequest(http.MethodPost, url, strings.NewReader("non-empty body"))
 			request.Header.Add("Mattermost-User-ID", "userid")
@@ -398,36 +445,51 @@ func TestHandleGetAIBots(t *testing.T) {
 	gin.DefaultWriter = io.Discard
 
 	tests := []struct {
-		name                  string
-		searchService         *search.Search
-		expectedSearchEnabled bool
-		expectedStatus        int
-		envSetup              func(e *TestEnvironment)
+		name                     string
+		searchService            *search.Search
+		expectedSearchEnabled    bool
+		expectedAllowUnsafeLinks bool
+		expectedStatus           int
+		envSetup                 func(e *TestEnvironment)
 	}{
 		{
-			name:                  "search enabled - non-nil service with non-nil embedding search",
-			searchService:         search.New(mocks.NewMockEmbeddingSearch(t), nil, nil, nil, nil),
-			expectedSearchEnabled: true,
-			expectedStatus:        http.StatusOK,
+			name:                     "search enabled - non-nil service with non-nil embedding search",
+			searchService:            search.New(mocks.NewMockEmbeddingSearch(t), nil, nil, nil, nil),
+			expectedSearchEnabled:    true,
+			expectedAllowUnsafeLinks: false,
+			expectedStatus:           http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
 			},
 		},
 		{
-			name:                  "search disabled - non-nil service with nil embedding search",
-			searchService:         search.New(nil, nil, nil, nil, nil),
-			expectedSearchEnabled: false,
-			expectedStatus:        http.StatusOK,
+			name:                     "search disabled - non-nil service with nil embedding search",
+			searchService:            search.New(nil, nil, nil, nil, nil),
+			expectedSearchEnabled:    false,
+			expectedAllowUnsafeLinks: false,
+			expectedStatus:           http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
 			},
 		},
 		{
-			name:                  "no search service - nil service",
-			searchService:         nil,
-			expectedSearchEnabled: false,
-			expectedStatus:        http.StatusOK,
+			name:                     "no search service - nil service",
+			searchService:            nil,
+			expectedSearchEnabled:    false,
+			expectedAllowUnsafeLinks: false,
+			expectedStatus:           http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
+				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+			},
+		},
+		{
+			name:                     "unsafe links enabled via config",
+			searchService:            nil,
+			expectedSearchEnabled:    false,
+			expectedAllowUnsafeLinks: true,
+			expectedStatus:           http.StatusOK,
+			envSetup: func(e *TestEnvironment) {
+				e.config.allowUnsafeLinks = true
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
 			},
 		},
@@ -469,6 +531,7 @@ func TestHandleGetAIBots(t *testing.T) {
 				err := json.NewDecoder(resp.Body).Decode(&response)
 				require.NoError(t, err)
 				require.Equal(t, test.expectedSearchEnabled, response.SearchEnabled, "SearchEnabled field should match expected value")
+				require.Equal(t, test.expectedAllowUnsafeLinks, response.AllowUnsafeLinks, "AllowUnsafeLinks field should match expected value")
 				require.NotEmpty(t, response.Bots, "Should return at least one bot")
 			}
 		})

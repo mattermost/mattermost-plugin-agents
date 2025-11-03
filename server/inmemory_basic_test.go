@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +21,7 @@ func TestInMemoryServerCreation(t *testing.T) {
 		},
 	}
 
-	mcpLogger, err := mcpserver.CreateLoggerWithOptions(false, "")
+	mcpLogger, err := logger.CreateLoggerWithOptions(false, "")
 	require.NoError(t, err)
 
 	server, err := mcpserver.NewInMemoryServer(config, mcpLogger)
@@ -41,7 +42,7 @@ func TestInMemoryServerMultipleUsers(t *testing.T) {
 		},
 	}
 
-	mcpLogger, err := mcpserver.CreateLoggerWithOptions(false, "")
+	mcpLogger, err := logger.CreateLoggerWithOptions(false, "")
 	require.NoError(t, err)
 
 	server, err := mcpserver.NewInMemoryServer(config, mcpLogger)

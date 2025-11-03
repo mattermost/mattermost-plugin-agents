@@ -26,6 +26,7 @@ type MCPToolProvider interface {
 // ConfigProvider provides configuration access
 type ConfigProvider interface {
 	GetEnableLLMTrace() bool
+	GetServiceByID(id string) (llm.ServiceConfig, bool)
 }
 
 // Builder builds contexts for LLM requests
@@ -208,11 +209,11 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 	return func(c *llm.Context) {
 		c.BotName = bot.GetConfig().DisplayName
 		c.BotUsername = bot.GetConfig().Name
-		c.BotModel = bot.GetConfig().Service.DefaultModel
 		c.CustomInstructions = bot.GetConfig().CustomInstructions
 		// Set the bot user ID for AI-generated content tracking
 		if mmbot := bot.GetMMBot(); mmbot != nil {
 			c.BotUserID = mmbot.UserId
 		}
+		c.BotModel = bot.GetService().DefaultModel
 	}
 }

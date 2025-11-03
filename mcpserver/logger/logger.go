@@ -1,18 +1,24 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package mcpserver
+package logger
 
 import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
-// Logger is an alias to types.Logger for convenience
-type Logger = types.Logger
+// Logger is a minimal logging interface that can be satisfied by both
+// standalone (mlog) and embedded (pluginapi) logging implementations
+type Logger interface {
+	Debug(msg string, keyValuePairs ...any)
+	Info(msg string, keyValuePairs ...any)
+	Warn(msg string, keyValuePairs ...any)
+	Error(msg string, keyValuePairs ...any)
+	Flush() error
+}
 
 // standaloneLoggerAdapter adapts mlog.Logger to our minimal Logger interface
 type standaloneLoggerAdapter struct {
@@ -61,8 +67,8 @@ func keyValuePairsToFields(keyValuePairs []any) []mlog.Field {
 	return fields
 }
 
-// createDefaultLogger creates a logger with sensible defaults for the MCP server
-func createDefaultLogger() (Logger, error) {
+// CreateDefaultLogger creates a logger with sensible defaults for the MCP server
+func CreateDefaultLogger() (Logger, error) {
 	// Use the same configuration helper for consistency
 	mlogger, err := CreateMlogLoggerWithOptions(false, "") // No debug, no file logging
 	if err != nil {
