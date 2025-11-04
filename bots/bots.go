@@ -44,12 +44,13 @@ type MMBots struct {
 	config                 Config
 	llmUpstreamHTTPClient  *http.Client
 	tokenLogger            *mlog.Logger
+	metrics                llm.MetricsObserver
 
 	botsLock sync.RWMutex
 	bots     []*Bot
 }
 
-func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client, tokenLogger *mlog.Logger) *MMBots {
+func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client, tokenLogger *mlog.Logger, metrics llm.MetricsObserver) *MMBots {
 	return &MMBots{
 		ensureBotsClusterMutex: mutexPluginAPI,
 		pluginAPI:              pluginAPI,
@@ -57,6 +58,7 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 		config:                 config,
 		llmUpstreamHTTPClient:  llmUpstreamHTTPClient,
 		tokenLogger:            tokenLogger,
+		metrics:                metrics,
 	}
 }
 
@@ -199,7 +201,12 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 
 	// Token Usage Logging
 	if b.tokenLogger != nil && b.config.EnableTokenUsageLogging() {
-		result = llm.NewTokenUsageLoggingWrapper(result, botConfig.Name, b.tokenLogger)
+		result = llm.NewTokenUsageLoggingWrapper(
+			result,
+			botConfig.Name,
+			b.tokenLogger,
+			b.metrics,
+		)
 	}
 
 	// Logging

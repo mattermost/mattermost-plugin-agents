@@ -8,8 +8,8 @@ import (
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
+	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -20,7 +20,7 @@ type MattermostStdioMCPServer struct {
 }
 
 // NewStdioServer creates a new STDIO transport MCP server
-func NewStdioServer(config StdioConfig, logger *mlog.Logger) (*MattermostStdioMCPServer, error) {
+func NewStdioServer(config StdioConfig, logger loggerlib.Logger) (*MattermostStdioMCPServer, error) {
 	if config.MMServerURL == "" {
 		return nil, fmt.Errorf("server URL cannot be empty")
 	}
@@ -30,7 +30,7 @@ func NewStdioServer(config StdioConfig, logger *mlog.Logger) (*MattermostStdioMC
 
 	if logger == nil {
 		var err error
-		logger, err = createDefaultLogger()
+		logger, err = loggerlib.CreateDefaultLogger()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create default logger: %w", err)
 		}
@@ -61,7 +61,7 @@ func NewStdioServer(config StdioConfig, logger *mlog.Logger) (*MattermostStdioMC
 	}
 
 	// Register tools with local access mode
-	mattermostServer.registerTools(types.AccessModeLocal)
+	mattermostServer.registerTools(tools.AccessModeLocal)
 
 	return mattermostServer, nil
 }
@@ -83,7 +83,7 @@ func (s *MattermostMCPServer) serveStdio() error {
 
 	err := s.mcpServer.Run(ctx, transport)
 	if err != nil {
-		s.logger.Error("MCP server stopped with error", mlog.Err(err))
+		s.logger.Error("MCP server stopped with error", "error", err)
 	} else {
 		s.logger.Info("MCP server stopped gracefully")
 	}

@@ -12,7 +12,6 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
 // ReadChannelArgs represents arguments for the read_channel tool
@@ -159,7 +158,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 		// Get user info for the post
 		user, _, err := client.GetUser(ctx, post.UserId, "")
 		if err != nil {
-			p.logger.Warn("failed to get user for post", mlog.String("user_id", post.UserId), mlog.Err(err))
+			p.logger.Warn("failed to get user for post", "user_id", post.UserId, "error", err)
 			result.WriteString(fmt.Sprintf("**Post %d** by Unknown User:\n", i+1))
 		} else {
 			result.WriteString(fmt.Sprintf("**Post %d** by %s:\n", i+1, user.Username))
@@ -367,7 +366,7 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	for i, member := range members {
 		user, _, err := client.GetUser(ctx, member.UserId, "")
 		if err != nil {
-			p.logger.Warn("failed to get user details for member", mlog.String("user_id", member.UserId), mlog.Err(err))
+			p.logger.Warn("failed to get user details for member", "user_id", member.UserId, "error", err)
 			result.WriteString(fmt.Sprintf("%d. User ID: %s (details unavailable)\n", i+1, member.UserId))
 			continue
 		}

@@ -13,7 +13,7 @@ import aiIcon from '../../assets/bot_icon.png';
 
 import manifest from '@/manifest';
 
-import {LLMBotPost} from './components/llmbot_post';
+import {LLMBotPost} from './components/llmbot_post/llmbot_post';
 import PostMenu from './components/post_menu';
 import IconThreadSummarization from './components/assets/icon_thread_summarization';
 import IconReactForMe from './components/assets/icon_react_for_me';
@@ -31,6 +31,7 @@ import SearchButton from './components/search_button';
 import {doSelectPost} from './hooks';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
+import {useBotlist} from './bots';
 
 type WebappStore = Store<GlobalState, Action<Record<string, unknown>>>
 
@@ -54,6 +55,17 @@ const RHSTitle = () => {
             {'Agents'}
         </RHSTitleContainer>
     );
+};
+
+const ChannelHeaderIcon = () => {
+    const {bots} = useBotlist();
+
+    // Only show icon if user has access to at least one bot
+    if (!bots || bots.length === 0) {
+        return null;
+    }
+
+    return <IconAIContainer src={aiIcon}/>;
 };
 
 export default class Plugin {
@@ -152,7 +164,7 @@ export default class Plugin {
 
         registry.registerAdminConsoleCustomSetting('Config', Config);
         if (rhs) {
-            registry.registerChannelHeaderButtonAction(<IconAIContainer src={aiIcon}/>, () => {
+            registry.registerChannelHeaderButtonAction(<ChannelHeaderIcon/>, () => {
                 store.dispatch(rhs.toggleRHSPlugin);
             },
             'Agents',

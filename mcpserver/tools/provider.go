@@ -13,16 +13,15 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // MCPToolContext provides MCP-specific functionality with the authenticated client
 type MCPToolContext struct {
 	Client     *model.Client4
-	AccessMode types.AccessMode
+	AccessMode AccessMode
 }
 
 // MCPToolResolver defines the signature for MCP tool resolvers
@@ -43,15 +42,15 @@ type ToolProvider interface {
 // MattermostToolProvider provides Mattermost tools following the mmtools pattern
 type MattermostToolProvider struct {
 	authProvider        auth.AuthenticationProvider
-	logger              mlog.LoggerIFace
+	logger              logger.Logger
 	mmServerURL         string // External server URL for OAuth redirects
 	mmInternalServerURL string // Internal server URL for API communication
 	devMode             bool
-	accessMode          types.AccessMode
+	accessMode          AccessMode
 }
 
 // NewMattermostToolProvider creates a new tool provider
-func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger mlog.LoggerIFace, mmServerURL, mmInternalServerURL string, devMode bool, accessMode types.AccessMode) *MattermostToolProvider {
+func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, mmServerURL, mmInternalServerURL string, devMode bool, accessMode AccessMode) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	internalURL := mmInternalServerURL
 	if internalURL == "" {
@@ -102,7 +101,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 	// Set the InputSchema from the MCPTool schema
 	if mcpTool.Schema != nil {
 		tool.InputSchema = mcpTool.Schema
-		p.logger.Debug("Registered tool with schema", mlog.String("tool", mcpTool.Name))
+		p.logger.Debug("Registered tool with schema", "tool", mcpTool.Name)
 	} else {
 		// The MCP SDK requires an input schema, so provide a basic empty object schema
 		// This maintains compatibility with tools that don't define schemas
@@ -111,14 +110,14 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 			Properties: make(map[string]*jsonschema.Schema),
 		}
 		tool.InputSchema = emptySchema
-		p.logger.Debug("Registered tool with empty schema (no schema provided)", mlog.String("tool", mcpTool.Name))
+		p.logger.Debug("Registered tool with empty schema (no schema provided)", "tool", mcpTool.Name)
 	}
 
 	handler := func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Create MCP context from the authenticated client
 		mcpContext, err := p.createMCPToolContext(ctx)
 		if err != nil {
-			p.logger.Debug("Failed to create MCP tool context", mlog.Err(err))
+			p.logger.Debug("Failed to create MCP tool context", "error", err)
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
 					&mcp.TextContent{Text: "Error: " + err.Error()},
@@ -146,7 +145,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		// Call the tool resolver
 		result, err := mcpTool.Resolver(mcpContext, argsGetter)
 		if err != nil {
-			p.logger.Debug("Tool resolver failed", mlog.String("tool", mcpTool.Name), mlog.Err(err))
+			p.logger.Debug("Tool resolver failed", "tool", mcpTool.Name, "error", err)
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
 					&mcp.TextContent{Text: "Error: " + err.Error()},

@@ -20,7 +20,7 @@ const defaultNewBot: LLMBotConfig = {
     displayName: '',
     serviceID: '',
     customInstructions: '',
-    enableVision: false,
+    enableVision: true,
     disableTools: false,
     channelAccessLevel: ChannelAccessLevel.All,
     channelIDs: [],

@@ -390,9 +390,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				"message": "",
 			}
 
-			result, err := executeToolWithMCP(t, suite, "dm_self", args)
+			_, err := executeToolWithMCP(t, suite, "dm_self", args)
 			require.Error(t, err, "dm_self with empty message should fail")
-			assert.True(t, result.IsError, "dm_self with empty message should fail")
 		})
 
 		t.Run("MissingMessage", func(t *testing.T) {
@@ -400,9 +399,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				// missing message field
 			}
 
-			result, err := executeToolWithMCP(t, suite, "dm_self", args)
+			_, err := executeToolWithMCP(t, suite, "dm_self", args)
 			require.Error(t, err, "dm_self without message should fail")
-			assert.True(t, result.IsError, "dm_self without message should fail")
 		})
 	})
 }

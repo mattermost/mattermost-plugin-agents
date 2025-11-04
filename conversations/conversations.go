@@ -144,7 +144,7 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 		bot,
 		postingUser,
 		channel,
-		c.contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
+		c.contextBuilder.WithLLMContextTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
 	)
 
 	// Check for auth errors in the tool store

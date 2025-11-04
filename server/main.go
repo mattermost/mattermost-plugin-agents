@@ -85,7 +85,7 @@ func (p *Plugin) OnActivate() error {
 		return fmt.Errorf("failed to create token usage logger: %w", err)
 	}
 
-	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient, tokenLogger)
+	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient, tokenLogger, metricsService)
 	p.configuration.RegisterUpdateListener(func() {
 		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
@@ -147,9 +147,31 @@ func (p *Plugin) OnActivate() error {
 	manifestID := manifest.Id
 	oauthCallbackURL := fmt.Sprintf("%s/plugins/%s/oauth/callback", *siteURL, manifestID)
 
-	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL))
+	// Create embedded MCP server if enabled
+	var embeddedMCPServer mcp.EmbeddedMCPServer
+	if p.configuration.MCP().EmbeddedServer.Enabled {
+		var err error
+		embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
+		if err != nil {
+			pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
+			// Continue without embedded server
+		} else {
+			pluginAPI.Log.Info("Embedded MCP server created successfully")
+		}
+	}
+
+	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL), embeddedMCPServer)
 	p.configuration.RegisterUpdateListener(func() {
-		mcpClientManager.ReInit(p.configuration.MCP())
+		var embeddedServer mcp.EmbeddedMCPServer
+		if p.configuration.MCP().EmbeddedServer.Enabled {
+			var err error
+			embeddedServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
+			if err != nil {
+				pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", err)
+			}
+		}
+
+		mcpClientManager.ReInit(p.configuration.MCP(), embeddedServer)
 	})
 
 	contextBuilder := llmcontext.NewLLMContextBuilder(
@@ -232,6 +254,7 @@ func (p *Plugin) OnActivate() error {
 func (p *Plugin) OnDeactivate() error {
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()
+
 	return nil
 }
 

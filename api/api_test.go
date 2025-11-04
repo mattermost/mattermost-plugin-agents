@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
+	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -34,6 +35,7 @@ type TestEnvironment struct {
 	mockAPI *plugintest.API
 	bots    *bots.MMBots
 	config  *testConfigImpl
+	client  *pluginapi.Client
 }
 
 // testConfigImpl is a minimal implementation of Config for testing
@@ -60,8 +62,16 @@ func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
 	return nil
 }
 
+func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
+	return nil
+}
+
 func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error) {
 	return nil, nil
+}
+
+func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
+	return nil
 }
 
 func (e *TestEnvironment) Cleanup(t *testing.T) {
@@ -70,10 +80,40 @@ func (e *TestEnvironment) Cleanup(t *testing.T) {
 	}
 }
 
+// CreateBridgeClient creates a bridge client that uses the test API
+func (e *TestEnvironment) CreateBridgeClient() *bridgeclient.Client {
+	// Create a plugin API wrapper that routes to our test API
+	pluginAPI := &testPluginAPI{
+		api: e.api,
+	}
+	return bridgeclient.NewClient(pluginAPI)
+}
+
+// testPluginAPI wraps the test API to implement bridgeclient.PluginAPI
+type testPluginAPI struct {
+	api *API
+}
+
+func (t *testPluginAPI) PluginHTTP(req *http.Request) *http.Response {
+	// Add inter-plugin authentication header
+	req.Header.Set("Mattermost-Plugin-ID", "test-plugin")
+
+	// Strip plugin ID prefix from path (e.g., /mattermost-ai/bridge/... -> /bridge/...)
+	// The real PluginHTTP strips the first path component
+	path := req.URL.Path
+	if idx := strings.Index(path[1:], "/"); idx != -1 {
+		req.URL.Path = path[1+idx:]
+	}
+
+	recorder := httptest.NewRecorder()
+	t.api.ServeHTTP(&plugin.Context{}, recorder, req)
+	return recorder.Result()
+}
+
 // createTestBots creates a test MMBots instance for testing
 func createTestBots(mockAPI *plugintest.API, client *pluginapi.Client) *bots.MMBots {
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	testBots := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+	testBots := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
 	return testBots
 }
 
@@ -114,6 +154,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		mockAPI: mockAPI,
 		bots:    testBots,
 		config:  cfg,
+		client:  client,
 	}
 }
 

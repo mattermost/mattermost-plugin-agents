@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
+	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -63,7 +63,7 @@ Authentication is handled via Personal Access Tokens (PAT).`,
 func runServer(cmd *cobra.Command, args []string) error {
 	// Create logger with debug and file logging options
 	// This automatically configures std log redirection
-	logger, err := mcpserver.CreateLoggerWithOptions(debug, logFile)
+	logger, err := loggerlib.CreateLoggerWithOptions(debug, logFile)
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
@@ -93,18 +93,18 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	// Validate transport type
 	if transport != "stdio" && transport != "http" {
-		logger.Error("invalid transport type", mlog.String("transport", transport))
+		logger.Error("invalid transport type", "transport", transport)
 		logger.Flush()
 		return fmt.Errorf("invalid transport type: %s (supported types: 'stdio', 'http')", transport)
 	}
 
 	logger.Debug("starting mattermost mcp server",
-		mlog.String("server_url", mmServerURL),
-		mlog.String("transport", transport),
+		"server_url", mmServerURL,
+		"transport", transport,
 	)
 
 	if devMode {
-		logger.Info("development mode enabled", mlog.Bool("dev_mode", devMode))
+		logger.Info("development mode enabled", "dev_mode", devMode)
 	}
 
 	// Create Mattermost MCP server based on transport type
@@ -138,19 +138,19 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 		mcpServer, err = mcpserver.NewHTTPServer(httpConfig, logger)
 	default:
-		logger.Error("unsupported transport type", mlog.String("transport", transport))
+		logger.Error("unsupported transport type", "transport", transport)
 		logger.Flush()
 		return fmt.Errorf("unsupported transport type: %s", transport)
 	}
 	if err != nil {
-		logger.Error("failed to create MCP server", mlog.Err(err))
+		logger.Error("failed to create MCP server", "error", err)
 		logger.Flush()
 		return fmt.Errorf("failed to create MCP server: %w", err)
 	}
 
 	// Start the MCP server
 	if err := mcpServer.Serve(); err != nil {
-		logger.Error("server error", mlog.Err(err))
+		logger.Error("server error", "error", err)
 		logger.Flush()
 		return fmt.Errorf("server error: %w", err)
 	}

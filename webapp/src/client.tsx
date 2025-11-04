@@ -393,6 +393,23 @@ export async function getMCPTools() {
         url,
     });
 }
+
+export async function clearMCPToolsCache() {
+    const url = `${baseRoute()}/admin/mcp/tools/cache/clear`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
 export async function getChannelInterval(
     channelID: string,
     startTime: number,
