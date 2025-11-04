@@ -48,7 +48,7 @@ func (m *mockToolProvider) GetTools(isDM bool, bot *bots.Bot) []llm.Tool {
 
 type mockMCPClientManager struct{}
 
-func (m *mockMCPClientManager) GetToolsForUser(userID, sessionID string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors) {
 	return []llm.Tool{}, nil
 }
 
@@ -157,7 +157,7 @@ func TestConversationMentionHandling(t *testing.T) {
 
 			bot := bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
 
-			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), "")
+			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost())
 			require.NoError(t, err, "Failed to process user request")
 			require.NotNil(t, textStream, "Expected a non-nil text stream")
 
