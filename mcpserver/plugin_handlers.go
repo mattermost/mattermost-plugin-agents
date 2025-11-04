@@ -9,9 +9,9 @@ import (
 	"net/http"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
+	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -28,14 +28,14 @@ type PluginMCPHandlers struct {
 
 // NewPluginMCPHandlers creates MCP handlers for use within a Mattermost plugin
 // The handlers expect requests to have an Authorization Bearer token injected by the plugin middleware
-func NewPluginMCPHandlers(siteURL string, logger *mlog.Logger) (*PluginMCPHandlers, error) {
+func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHandlers, error) {
 	if siteURL == "" {
 		return nil, fmt.Errorf("site URL cannot be empty")
 	}
 
 	if logger == nil {
 		var err error
-		logger, err = createDefaultLogger()
+		logger, err = loggerlib.CreateDefaultLogger()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create default logger: %w", err)
 		}
@@ -65,7 +65,7 @@ func NewPluginMCPHandlers(siteURL string, logger *mlog.Logger) (*PluginMCPHandle
 		siteURL, // External server URL
 		"",      // Internal server URL (use external)
 		false,   // devMode
-		types.AccessModeRemote,
+		tools.AccessModeRemote,
 	)
 	toolProvider.ProvideTools(mcpServer)
 
