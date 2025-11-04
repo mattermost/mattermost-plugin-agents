@@ -118,12 +118,6 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.Use(a.ginlogger)
 	router.Use(a.metricsMiddleware)
 
-	// Store plugin.Context in gin.Context for use in middleware
-	router.Use(func(gc *gin.Context) {
-		gc.Set("pluginContext", c)
-		gc.Next()
-	})
-
 	interPluginRoute := router.Group("/inter-plugin/v1")
 	interPluginRoute.Use(a.interPluginAuthorizationRequired)
 	interPluginRoute.POST("/simple_completion", a.handleInterPluginSimpleCompletion)
@@ -131,6 +125,12 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	// MCP server endpoints - grouped under /mcp-server/
 	if a.mcpHandlers != nil {
 		mcpServerGroup := router.Group("/mcp-server")
+
+		// Store plugin.Context in gin.Context for MCP endpoints
+		mcpServerGroup.Use(func(gc *gin.Context) {
+			gc.Set("pluginContext", c)
+			gc.Next()
+		})
 
 		// OAuth metadata endpoint - no authentication required
 		mcpServerGroup.GET("/.well-known/oauth-protected-resource", a.handleOAuthResourceMetadata)

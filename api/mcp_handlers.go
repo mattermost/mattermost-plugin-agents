@@ -14,21 +14,37 @@ import (
 
 // handleMCP delegates to the embedded MCP server for the /mcp endpoint
 func (a *API) handleMCP(c *gin.Context) {
+	if !a.config.MCP().EnablePluginServer {
+		c.AbortWithStatus(http.StatusServiceUnavailable)
+		return
+	}
 	a.delegateToMCPServer(c, a.mcpHandlers.MCPHandler)
 }
 
 // handleSSE delegates to the embedded MCP server for the /sse endpoint
 func (a *API) handleSSE(c *gin.Context) {
+	if !a.config.MCP().EnablePluginServer {
+		c.AbortWithStatus(http.StatusServiceUnavailable)
+		return
+	}
 	a.delegateToMCPServer(c, a.mcpHandlers.SSEHandler)
 }
 
 // handleMessage delegates to the embedded MCP server for the /message endpoint
 func (a *API) handleMessage(c *gin.Context) {
+	if !a.config.MCP().EnablePluginServer {
+		c.AbortWithStatus(http.StatusServiceUnavailable)
+		return
+	}
 	a.delegateToMCPServer(c, a.mcpHandlers.MessageHandler)
 }
 
 // handleOAuthResourceMetadata delegates to the embedded MCP server for OAuth metadata
 func (a *API) handleOAuthResourceMetadata(c *gin.Context) {
+	if !a.config.MCP().EnablePluginServer {
+		c.AbortWithStatus(http.StatusServiceUnavailable)
+		return
+	}
 	// OAuth metadata endpoint doesn't require authentication
 	a.mcpHandlers.OAuthMetadataHandler(c.Writer, c.Request)
 }
