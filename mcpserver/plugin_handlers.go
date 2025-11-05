@@ -79,48 +79,10 @@ func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHa
 	// The metadata URL for WWW-Authenticate headers
 	metadataURL := fmt.Sprintf("%s/plugins/mattermost-ai/mcp-server/.well-known/oauth-protected-resource", siteURL)
 
-	handlers := &PluginMCPHandlers{
+	return &PluginMCPHandlers{
 		MCPHandler:           streamableHandler,
 		OAuthMetadataHandler: metadataHandler,
 		siteURL:              siteURL,
 		metadataURL:          metadataURL,
-	}
-
-	// Wrap handler with 401 interceptor to add WWW-Authenticate header
-	handlers.MCPHandler = handlers.wrap401Handler(handlers.MCPHandler)
-
-	return handlers, nil
-}
-
-// wrap401Handler wraps an HTTP handler to intercept 401 responses and add WWW-Authenticate header
-func (h *PluginMCPHandlers) wrap401Handler(handler http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Create a response recorder to capture the status code and check for WWW-Authenticate
-		recorder := &pluginResponseRecorder{
-			ResponseWriter: w,
-			statusCode:     http.StatusOK,
-			metadataURL:    h.metadataURL,
-		}
-
-		// Call the original handler with our recorder
-		handler.ServeHTTP(recorder, r)
-	})
-}
-
-// pluginResponseRecorder captures the HTTP status code and adds WWW-Authenticate on 401
-type pluginResponseRecorder struct {
-	http.ResponseWriter
-	statusCode  int
-	metadataURL string
-}
-
-func (r *pluginResponseRecorder) WriteHeader(statusCode int) {
-	r.statusCode = statusCode
-
-	// If we got a 401, add the WWW-Authenticate header before writing
-	if statusCode == http.StatusUnauthorized && r.Header().Get("WWW-Authenticate") == "" {
-		r.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer resource_metadata="%s"`, r.metadataURL))
-	}
-
-	r.ResponseWriter.WriteHeader(statusCode)
+	}, nil
 }
