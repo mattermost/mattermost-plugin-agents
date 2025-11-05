@@ -240,7 +240,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     // Create a properly initialized config object
     const config: MCPConfig = {
         enabled: mcpConfig?.enabled || false,
-        enablePluginServer: mcpConfig?.enablePluginServer ?? true,
+        enablePluginServer: mcpConfig?.enablePluginServer ?? false,
         servers: Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [],
         embeddedServer: mcpConfig?.embeddedServer || {
             enabled: !mcpConfig?.enabled,
