@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/mattermost/mattermost-plugin-ai/anthropic"
 	"github.com/mattermost/mattermost-plugin-ai/asage"
 	"github.com/mattermost/mattermost-plugin-ai/config"
@@ -106,6 +107,10 @@ func (b *MMBots) EnsureBots() error {
 			// Old format: bot has embedded service (should be migrated)
 			b.pluginAPI.Log.Warn("Bot is using deprecated embedded service configuration", "bot_name", botCfg.Name)
 			service = *botCfg.Service
+			// Generate ID if missing (old embedded services didn't require IDs)
+			if service.ID == "" {
+				service.ID = uuid.New().String()
+			}
 			ok = true
 		default:
 			b.pluginAPI.Log.Error("Bot has neither serviceID nor embedded service", "bot_name", botCfg.Name)
