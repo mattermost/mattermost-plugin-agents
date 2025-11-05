@@ -74,8 +74,8 @@ func (c *BotConfig) IsValid() bool {
 		return false
 	}
 
-	// Must have either a ServiceID (new format) or an embedded Service (old format for migration)
-	if c.ServiceID == "" && (c.Service == nil || c.Service.Type == "") {
+	// Must have a ServiceID
+	if c.ServiceID == "" {
 		return false
 	}
 

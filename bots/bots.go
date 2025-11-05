@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/google/uuid"
 	"github.com/mattermost/mattermost-plugin-ai/anthropic"
 	"github.com/mattermost/mattermost-plugin-ai/asage"
 	"github.com/mattermost/mattermost-plugin-ai/config"
@@ -91,29 +90,10 @@ func (b *MMBots) EnsureBots() error {
 			continue
 		}
 
-		// Get service - either by ID (new format) or from embedded service (old format during migration)
-		var service llm.ServiceConfig
-		var ok bool
-
-		switch {
-		case botCfg.ServiceID != "":
-			// New format: bot references service by ID
-			service, ok = b.config.GetServiceByID(botCfg.ServiceID)
-			if !ok {
-				b.pluginAPI.Log.Error("Bot references non-existent service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID)
-				continue
-			}
-		case botCfg.Service != nil:
-			// Old format: bot has embedded service (should be migrated)
-			b.pluginAPI.Log.Warn("Bot is using deprecated embedded service configuration", "bot_name", botCfg.Name)
-			service = *botCfg.Service
-			// Generate ID if missing (old embedded services didn't require IDs)
-			if service.ID == "" {
-				service.ID = uuid.New().String()
-			}
-			ok = true
-		default:
-			b.pluginAPI.Log.Error("Bot has neither serviceID nor embedded service", "bot_name", botCfg.Name)
+		// Get service by ID
+		service, ok := b.config.GetServiceByID(botCfg.ServiceID)
+		if !ok {
+			b.pluginAPI.Log.Error("Bot references non-existent service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID)
 			continue
 		}
 

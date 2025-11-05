@@ -195,19 +195,18 @@ func migrateServicesToBots(pluginAPI *pluginapi.Client, cfg config.Config) (bool
 // runAllMigrations executes all migrations under a single mutex to prevent race conditions
 // in multi-instance deployments. Persists the updated configuration and marks migrations as
 // complete only after successful save. Returns the final configuration and any errors encountered.
-func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, container *config.Container) (config.Config, bool, error) {
+func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, cfg config.Config) (config.Config, bool, error) {
 	mtx, err := cluster.NewMutex(mutexAPI, "ai_all_migrations")
 	if err != nil {
 		return config.Config{}, false, fmt.Errorf("failed to create migrations mutex: %w", err)
 	}
 	mtx.Lock()
-	defer mtx.Unlock()
 
 	changed := false
-	cfg := *container.Config()
 
 	didMigrateServicesToBots, newCfg, err := migrateServicesToBots(pluginAPI, cfg)
 	if err != nil {
+		mtx.Unlock()
 		return cfg, false, fmt.Errorf("failed to migrate services to bots: %w", err)
 	}
 	if didMigrateServicesToBots {
@@ -220,6 +219,7 @@ func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Clie
 	didMigrateSeparateServicesFromBots := false
 	didMigrateSeparateServicesFromBots, newCfg, migrateErr = migrateSeparateServicesFromBots(pluginAPI, cfg)
 	if migrateErr != nil {
+		mtx.Unlock()
 		return cfg, false, fmt.Errorf("failed to migrate separate services from bots: %w", migrateErr)
 	}
 	if didMigrateSeparateServicesFromBots {
@@ -227,6 +227,10 @@ func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Clie
 		cfg = newCfg
 		pluginAPI.Log.Info("Migration completed: separate services from bots")
 	}
+
+	// Release mutex before saving config to avoid deadlock when SavePluginConfig
+	// triggers OnConfigurationChange which tries to acquire the same mutex
+	mtx.Unlock()
 
 	// If any migrations ran, persist the config
 	if changed {
