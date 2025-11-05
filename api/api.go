@@ -137,7 +137,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	completionRoute.POST("/service/:service/nostream", a.handleServiceCompletionNoStream)
 
 	// MCP server endpoints - grouped under /mcp-server/
-	if a.mcpHandlers != nil {
+	if a.mcpHandlers != nil && a.config.MCP().EnablePluginServer {
 		mcpServerGroup := router.Group("/mcp-server")
 
 		// Store plugin.Context in gin.Context for MCP endpoints
@@ -147,11 +147,15 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 		})
 
 		// OAuth metadata endpoint - no authentication required
-		mcpServerGroup.GET("/.well-known/oauth-protected-resource", a.handleOAuthResourceMetadata)
+		mcpServerGroup.GET("/.well-known/oauth-protected-resource", func(gc *gin.Context) {
+			a.mcpHandlers.OAuthMetadataHandler(gc.Writer, gc.Request)
+		})
 
 		// MCP endpoint with authentication (streamable HTTP only, no SSE)
 		mcpServerGroup.Use(a.mcpAuthMiddleware)
-		mcpServerGroup.Any("/mcp", a.handleMCP)
+		mcpServerGroup.Any("/mcp", func(gc *gin.Context) {
+			a.delegateToMCPHandler(gc, a.mcpHandlers.MCPHandler)
+		})
 	}
 
 	router.Use(a.MattermostAuthorizationRequired)

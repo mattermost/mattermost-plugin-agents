@@ -11,29 +11,10 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 )
 
-// handleMCP delegates to the embedded MCP server for the /mcp endpoint
-func (a *API) handleMCP(c *gin.Context) {
-	if !a.config.MCP().EnablePluginServer {
-		c.AbortWithStatus(http.StatusServiceUnavailable)
-		return
-	}
-	a.delegateToMCPServer(c, a.mcpHandlers.MCPHandler)
-}
-
-// handleOAuthResourceMetadata delegates to the embedded MCP server for OAuth metadata
-func (a *API) handleOAuthResourceMetadata(c *gin.Context) {
-	if !a.config.MCP().EnablePluginServer {
-		c.AbortWithStatus(http.StatusServiceUnavailable)
-		return
-	}
-	// OAuth metadata endpoint doesn't require authentication
-	a.mcpHandlers.OAuthMetadataHandler(c.Writer, c.Request)
-}
-
-// delegateToMCPServer delegates the request to the embedded MCP server
+// delegateToMCPHandler delegates the request to the MCP handler
 // It injects the session ID and token resolver into the request context
 // because the Session provider expects these in context.WithValue
-func (a *API) delegateToMCPServer(c *gin.Context, handler http.Handler) {
+func (a *API) delegateToMCPHandler(c *gin.Context, handler http.Handler) {
 	// Get session ID from middleware (set by mcpAuthMiddleware)
 	sessionIDValue, exists := c.Get("mcpSessionID")
 	if !exists {
