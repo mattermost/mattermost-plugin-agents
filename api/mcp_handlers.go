@@ -5,7 +5,6 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -21,24 +20,6 @@ func (a *API) handleMCP(c *gin.Context) {
 	a.delegateToMCPServer(c, a.mcpHandlers.MCPHandler)
 }
 
-// handleSSE delegates to the embedded MCP server for the /sse endpoint
-func (a *API) handleSSE(c *gin.Context) {
-	if !a.config.MCP().EnablePluginServer {
-		c.AbortWithStatus(http.StatusServiceUnavailable)
-		return
-	}
-	a.delegateToMCPServer(c, a.mcpHandlers.SSEHandler)
-}
-
-// handleMessage delegates to the embedded MCP server for the /message endpoint
-func (a *API) handleMessage(c *gin.Context) {
-	if !a.config.MCP().EnablePluginServer {
-		c.AbortWithStatus(http.StatusServiceUnavailable)
-		return
-	}
-	a.delegateToMCPServer(c, a.mcpHandlers.MessageHandler)
-}
-
 // handleOAuthResourceMetadata delegates to the embedded MCP server for OAuth metadata
 func (a *API) handleOAuthResourceMetadata(c *gin.Context) {
 	if !a.config.MCP().EnablePluginServer {
@@ -50,33 +31,46 @@ func (a *API) handleOAuthResourceMetadata(c *gin.Context) {
 }
 
 // delegateToMCPServer delegates the request to the embedded MCP server
-// It injects the session token into the request context (not as a header)
-// because the OAuth provider expects the token in context.WithValue
+// It injects the session ID and token resolver into the request context
+// because the Session provider expects these in context.WithValue
 func (a *API) delegateToMCPServer(c *gin.Context, handler http.Handler) {
-	// Get token from middleware (set by mcpAuthMiddleware)
-	tokenValue, exists := c.Get("mcpToken")
+	// Get session ID from middleware (set by mcpAuthMiddleware)
+	sessionIDValue, exists := c.Get("mcpSessionID")
 	if !exists {
 		// This should not happen if middleware is properly configured
-		a.pluginAPI.Log.Error("MCP token not found in context - middleware not configured correctly")
+		a.pluginAPI.Log.Error("MCP session ID not found in context - middleware not configured correctly")
 		c.AbortWithStatus(500)
 		return
 	}
 
-	token, ok := tokenValue.(string)
-	if !ok || token == "" {
-		a.pluginAPI.Log.Error("Invalid MCP token type in context")
+	sessionID, ok := sessionIDValue.(string)
+	if !ok || sessionID == "" {
+		a.pluginAPI.Log.Error("Invalid MCP session ID type in context")
 		c.AbortWithStatus(500)
 		return
 	}
 
-	// Clone request and add token to context (NOT as header)
-	// The OAuth provider expects the token in the request context
+	// Get token resolver from middleware
+	resolverValue, exists := c.Get("mcpTokenResolver")
+	if !exists {
+		a.pluginAPI.Log.Error("MCP token resolver not found in context - middleware not configured correctly")
+		c.AbortWithStatus(500)
+		return
+	}
+
+	resolver, ok := resolverValue.(func(string) (string, error))
+	if !ok {
+		a.pluginAPI.Log.Error("Invalid MCP token resolver type in context")
+		c.AbortWithStatus(500)
+		return
+	}
+
+	// Clone request and add session ID + token resolver to context
+	// The Session provider expects both of these in the request context
 	ctx := c.Request.Context()
-	ctx = context.WithValue(ctx, auth.AuthTokenContextKey, token)
+	ctx = context.WithValue(ctx, auth.SessionIDContextKey, sessionID)
+	ctx = context.WithValue(ctx, auth.TokenResolverContextKey, auth.TokenResolver(resolver))
 	r := c.Request.WithContext(ctx)
-
-	// Also set Authorization header for compatibility
-	r.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 
 	// Delegate to the specified MCP handler
 	handler.ServeHTTP(c.Writer, r)

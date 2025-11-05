@@ -19,8 +19,6 @@ import (
 // These handlers are designed to be embedded in a plugin's HTTP router
 type PluginMCPHandlers struct {
 	MCPHandler           http.Handler
-	SSEHandler           http.Handler
-	MessageHandler       http.Handler
 	OAuthMetadataHandler http.HandlerFunc
 	siteURL              string
 	metadataURL          string
@@ -41,11 +39,10 @@ func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHa
 		}
 	}
 
-	// Create OAuth authentication provider (validates Bearer tokens)
-	authProvider := auth.NewOAuthAuthenticationProvider(
+	// Create Session authentication provider (validates session IDs with token resolver)
+	authProvider := auth.NewSessionAuthenticationProvider(
 		siteURL, // External server URL
 		"",      // Internal server URL (use external)
-		siteURL, // OAuth issuer
 		logger,
 	)
 
@@ -69,11 +66,6 @@ func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHa
 	)
 	toolProvider.ProvideTools(mcpServer)
 
-	// Create SSE handler for backwards compatibility
-	sseHandler := mcp.NewSSEHandler(func(req *http.Request) *mcp.Server {
-		return mcpServer
-	}, &mcp.SSEOptions{})
-
 	// Create streamable HTTP handler for modern MCP communication
 	streamableHandler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		return mcpServer
@@ -89,17 +81,13 @@ func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHa
 
 	handlers := &PluginMCPHandlers{
 		MCPHandler:           streamableHandler,
-		SSEHandler:           sseHandler,
-		MessageHandler:       sseHandler, // Message endpoint uses SSE handler
 		OAuthMetadataHandler: metadataHandler,
 		siteURL:              siteURL,
 		metadataURL:          metadataURL,
 	}
 
-	// Wrap handlers with 401 interceptor to add WWW-Authenticate header
+	// Wrap handler with 401 interceptor to add WWW-Authenticate header
 	handlers.MCPHandler = handlers.wrap401Handler(handlers.MCPHandler)
-	handlers.SSEHandler = handlers.wrap401Handler(handlers.SSEHandler)
-	handlers.MessageHandler = handlers.wrap401Handler(handlers.MessageHandler)
 
 	return handlers, nil
 }

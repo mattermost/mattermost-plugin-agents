@@ -8,51 +8,40 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
 // mcpAuthMiddleware handles authentication for MCP endpoints
-// It extracts the session ID from the plugin context and retrieves the session token
+// It creates a dedicated MCP session for the user and passes session ID + token resolver to handlers
 func (a *API) mcpAuthMiddleware(c *gin.Context) {
-	// Extract plugin context
-	pluginCtxValue, exists := c.Get("pluginContext")
-	if !exists {
+	// Get user ID from header (set by Mattermost)
+	userID := c.GetHeader("Mattermost-User-Id")
+	if userID == "" {
 		a.sendMCPUnauthorized(c)
 		return
 	}
 
-	pluginCtx, ok := pluginCtxValue.(*plugin.Context)
-	if !ok || pluginCtx == nil {
-		a.sendMCPUnauthorized(c)
-		return
-	}
-
-	// Check if session ID exists
-	if pluginCtx.SessionId == "" {
-		a.sendMCPUnauthorized(c)
-		return
-	}
-
-	// Get session from plugin API
-	session, err := a.pluginAPI.Session.Get(pluginCtx.SessionId)
+	// Get or create dedicated MCP session for this user
+	mcpSessionID, err := a.mcpClientManager.EnsureMCPSessionID(userID)
 	if err != nil {
-		a.pluginAPI.Log.Debug("Failed to get session for MCP request",
-			"sessionId", pluginCtx.SessionId,
+		a.pluginAPI.Log.Error("Failed to ensure MCP session for user",
+			"userId", userID,
 			"error", err)
-		a.sendMCPUnauthorized(c)
+		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 
-	// Verify session has a token
-	if session.Token == "" {
-		a.pluginAPI.Log.Debug("Session has no token for MCP request",
-			"sessionId", pluginCtx.SessionId)
-		a.sendMCPUnauthorized(c)
-		return
-	}
-
-	// Store token in context for handlers
-	c.Set("mcpToken", session.Token)
+	// Store session ID and token resolver for handlers
+	c.Set("mcpSessionID", mcpSessionID)
+	c.Set("mcpTokenResolver", func(sessionID string) (string, error) {
+		sess, err := a.pluginAPI.Session.Get(sessionID)
+		if err != nil {
+			return "", err
+		}
+		if sess == nil {
+			return "", fmt.Errorf("session not found")
+		}
+		return sess.Token, nil
+	})
 	c.Next()
 }
 

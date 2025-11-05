@@ -48,6 +48,7 @@ type MCPClientManager interface {
 	GetToolsCache() *mcp.ToolsCache
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
+	EnsureMCPSessionID(userID string) (string, error)
 }
 
 // API represents the HTTP API functionality for the plugin
@@ -148,11 +149,9 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 		// OAuth metadata endpoint - no authentication required
 		mcpServerGroup.GET("/.well-known/oauth-protected-resource", a.handleOAuthResourceMetadata)
 
-		// MCP endpoints with authentication
+		// MCP endpoint with authentication (streamable HTTP only, no SSE)
 		mcpServerGroup.Use(a.mcpAuthMiddleware)
 		mcpServerGroup.Any("/mcp", a.handleMCP)
-		mcpServerGroup.Any("/sse", a.handleSSE)
-		mcpServerGroup.Any("/message", a.handleMessage)
 	}
 
 	router.Use(a.MattermostAuthorizationRequired)

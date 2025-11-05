@@ -41,6 +41,12 @@ func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *plugin
 	return manager
 }
 
+// EnsureMCPSessionID ensures there is a valid MCP session for the user
+// This is used by both embedded and HTTP MCP servers to get a dedicated session
+func (m *ClientManager) EnsureMCPSessionID(userID string) (string, error) {
+	return m.ensureEmbeddedSessionID(userID)
+}
+
 // cleanupInactiveClients periodically checks for and closes inactive client connections
 func (m *ClientManager) cleanupInactiveClients() {
 	for {
