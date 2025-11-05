@@ -11,17 +11,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 )
 
-// flushableResponseWriter wraps gin's ResponseWriter to add Flusher support
-// The plugin RPC layer doesn't support http.Flusher, so we provide a no-op implementation
-type flushableResponseWriter struct {
-	http.ResponseWriter
-}
-
-func (f *flushableResponseWriter) Flush() {
-	// No-op: Plugin RPC layer doesn't support flushing
-	// The MCP SDK expects this method to exist for streaming responses
-}
-
 // delegateToMCPHandler delegates the request to the MCP handler
 // It injects the session ID and token resolver into the request context
 // because the Session provider expects these in context.WithValue
@@ -64,10 +53,6 @@ func (a *API) delegateToMCPHandler(c *gin.Context, handler http.Handler) {
 	ctx = context.WithValue(ctx, auth.TokenResolverContextKey, auth.TokenResolver(resolver))
 	r := c.Request.WithContext(ctx)
 
-	// Wrap the response writer to provide Flusher interface
-	// The plugin RPC layer doesn't support flushing, but the MCP SDK requires it
-	wrappedWriter := &flushableResponseWriter{ResponseWriter: c.Writer}
-
 	// Delegate to the specified MCP handler
-	handler.ServeHTTP(wrappedWriter, r)
+	handler.ServeHTTP(c.Writer, r)
 }

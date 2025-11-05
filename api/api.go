@@ -146,12 +146,11 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 			gc.Next()
 		})
 
-		// OAuth metadata endpoint - no authentication required
 		mcpServerGroup.GET("/.well-known/oauth-protected-resource", func(gc *gin.Context) {
 			a.mcpHandlers.OAuthMetadataHandler(gc.Writer, gc.Request)
 		})
 
-		// MCP endpoint with authentication (streamable HTTP only, no SSE)
+		// MCP endpoint with authentication
 		mcpServerGroup.Use(a.mcpAuthMiddleware)
 		mcpServerGroup.Any("/mcp", func(gc *gin.Context) {
 			a.delegateToMCPHandler(gc, a.mcpHandlers.MCPHandler)
