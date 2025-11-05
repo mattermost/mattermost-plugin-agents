@@ -11,7 +11,7 @@ import (
 )
 
 // mcpAuthMiddleware handles authentication for MCP endpoints
-// It creates a dedicated MCP session for the user and passes session ID + token resolver to handlers
+// It extracts and validates the user ID from the Mattermost-User-Id header
 func (a *API) mcpAuthMiddleware(c *gin.Context) {
 	// Get user ID from header (set by Mattermost)
 	userID := c.GetHeader("Mattermost-User-Id")
@@ -20,28 +20,8 @@ func (a *API) mcpAuthMiddleware(c *gin.Context) {
 		return
 	}
 
-	// Get or create dedicated MCP session for this user
-	mcpSessionID, err := a.mcpClientManager.EnsureMCPSessionID(userID)
-	if err != nil {
-		a.pluginAPI.Log.Error("Failed to ensure MCP session for user",
-			"userId", userID,
-			"error", err)
-		c.AbortWithStatus(http.StatusInternalServerError)
-		return
-	}
-
-	// Store session ID and token resolver for handlers
-	c.Set("mcpSessionID", mcpSessionID)
-	c.Set("mcpTokenResolver", func(sessionID string) (string, error) {
-		sess, err := a.pluginAPI.Session.Get(sessionID)
-		if err != nil {
-			return "", err
-		}
-		if sess == nil {
-			return "", fmt.Errorf("session not found")
-		}
-		return sess.Token, nil
-	})
+	// Store user ID for the handler
+	c.Set("userID", userID)
 	c.Next()
 }
 
