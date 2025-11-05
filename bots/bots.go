@@ -90,10 +90,25 @@ func (b *MMBots) EnsureBots() error {
 			continue
 		}
 
-		// Validate service exists
-		service, ok := b.config.GetServiceByID(botCfg.ServiceID)
-		if !ok {
-			b.pluginAPI.Log.Error("Bot references non-existent service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID)
+		// Get service - either by ID (new format) or from embedded service (old format during migration)
+		var service llm.ServiceConfig
+		var ok bool
+
+		switch {
+		case botCfg.ServiceID != "":
+			// New format: bot references service by ID
+			service, ok = b.config.GetServiceByID(botCfg.ServiceID)
+			if !ok {
+				b.pluginAPI.Log.Error("Bot references non-existent service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID)
+				continue
+			}
+		case botCfg.Service != nil:
+			// Old format: bot has embedded service (should be migrated)
+			b.pluginAPI.Log.Warn("Bot is using deprecated embedded service configuration", "bot_name", botCfg.Name)
+			service = *botCfg.Service
+			ok = true
+		default:
+			b.pluginAPI.Log.Error("Bot has neither serviceID nor embedded service", "bot_name", botCfg.Name)
 			continue
 		}
 
