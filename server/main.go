@@ -150,7 +150,6 @@ func (p *Plugin) OnActivate() error {
 	// Create embedded MCP server if enabled
 	var embeddedMCPServer mcp.EmbeddedMCPServer
 	if p.configuration.MCP().EmbeddedServer.Enabled {
-		var err error
 		embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
 		if err != nil {
 			pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
@@ -163,11 +162,11 @@ func (p *Plugin) OnActivate() error {
 	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL), embeddedMCPServer)
 	p.configuration.RegisterUpdateListener(func() {
 		var embeddedServer mcp.EmbeddedMCPServer
+		var embeddedErr error
 		if p.configuration.MCP().EmbeddedServer.Enabled {
-			var err error
-			embeddedServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
-			if err != nil {
-				pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", err)
+			embeddedServer, embeddedErr = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
+			if embeddedErr != nil {
+				pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
 			}
 		}
 
