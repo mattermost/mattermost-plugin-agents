@@ -13,6 +13,7 @@ import (
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
@@ -480,11 +481,21 @@ func (a *Anthropic) CountTokens(text string) int {
 func convertTools(tools []llm.Tool) []anthropicSDK.ToolUnionParam {
 	converted := make([]anthropicSDK.ToolUnionParam, len(tools))
 	for i, tool := range tools {
+		// Convert schema to the format Anthropic expects
+		inputSchema := anthropicSDK.ToolInputSchemaParam{}
+		if schema, ok := tool.Schema.(map[string]interface{}); ok {
+			if props, ok := schema["properties"].(map[string]interface{}); ok {
+				inputSchema.Properties = props
+			}
+		} else if schema, ok := tool.Schema.(*jsonschema.Schema); ok {
+			inputSchema.Properties = schema.Properties
+		}
+
 		converted[i] = anthropicSDK.ToolUnionParam{
 			OfTool: &anthropicSDK.ToolParam{
 				Name:        tool.Name,
 				Description: anthropicSDK.String(tool.Description),
-				InputSchema: anthropicSDK.ToolInputSchemaParam{Properties: tool.Schema.Properties},
+				InputSchema: inputSchema,
 			},
 		}
 	}

@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
 	"github.com/openai/openai-go/v2"
@@ -153,11 +152,28 @@ func modifyCompletionRequestWithRequest(params openai.ChatCompletionNewParams, i
 }
 
 // schemaToFunctionParameters converts a jsonschema.Schema to shared.FunctionParameters
-func schemaToFunctionParameters(schema *jsonschema.Schema) shared.FunctionParameters {
+func schemaToFunctionParameters(schema any) shared.FunctionParameters {
 	// Default schema that satisfies OpenAI's requirements
 	defaultSchema := shared.FunctionParameters{
 		"type":       "object",
 		"properties": map[string]any{},
+	}
+
+	if schema == nil {
+		return defaultSchema
+	}
+
+	// If it's already a map, use it directly
+	if schemaMap, ok := schema.(map[string]interface{}); ok {
+		result := schemaMap
+		// Ensure the result has the required fields for OpenAI
+		if _, hasType := result["type"]; !hasType {
+			result["type"] = "object"
+		}
+		if _, hasProps := result["properties"]; !hasProps {
+			result["properties"] = map[string]any{}
+		}
+		return result
 	}
 
 	// Convert the schema to a map by marshaling and unmarshaling
