@@ -38,8 +38,6 @@ func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHa
 		}
 	}
 
-	logger.Debug("Initializing embedded MCP server handlers testing123")
-
 	// Create Session authentication provider (validates session IDs with token resolver)
 	authProvider := auth.NewSessionAuthenticationProvider(
 		siteURL, // External server URL
