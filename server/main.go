@@ -214,7 +214,6 @@ func (p *Plugin) OnActivate() error {
 	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, nil)
 	if err != nil {
 		pluginAPI.Log.Error("Failed to create MCP handlers", "error", err)
-		// Continue without MCP server - don't fail plugin activation
 	} else {
 		mcpHandlers = handlers
 		pluginAPI.Log.Info("Embedded MCP server handlers initialized successfully")

@@ -4,7 +4,6 @@
 package mcpserver
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -39,6 +38,8 @@ func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHa
 		}
 	}
 
+	logger.Debug("Initializing embedded MCP server handlers testing123")
+
 	// Create Session authentication provider (validates session IDs with token resolver)
 	authProvider := auth.NewSessionAuthenticationProvider(
 		siteURL, // External server URL
@@ -71,10 +72,9 @@ func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHa
 		return mcpServer
 	}, nil)
 
-	// Create OAuth metadata handler
-	metadataHandler := func(w http.ResponseWriter, r *http.Request) {
-		handleOAuthMetadata(w, r, siteURL)
-	}
+	// Create OAuth metadata handler using shared implementation
+	resourceURL := fmt.Sprintf("%s/plugins/mattermost-ai/mcp-server", siteURL)
+	metadataHandler := CreateOAuthMetadataHandler(resourceURL, siteURL, "Mattermost MCP Server")
 
 	// The metadata URL for WWW-Authenticate headers
 	metadataURL := fmt.Sprintf("%s/plugins/mattermost-ai/mcp-server/.well-known/oauth-protected-resource", siteURL)
@@ -123,47 +123,4 @@ func (r *pluginResponseRecorder) WriteHeader(statusCode int) {
 	}
 
 	r.ResponseWriter.WriteHeader(statusCode)
-}
-
-// handleOAuthMetadata serves the OAuth 2.0 Protected Resource Metadata (RFC 9728)
-func handleOAuthMetadata(w http.ResponseWriter, r *http.Request, siteURL string) {
-	// Set CORS headers
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	// The resource URL is the base URL where MCP endpoints are hosted
-	// For plugin-embedded server, this is the plugin mcp-server path
-	resourceURL := fmt.Sprintf("%s/plugins/mattermost-ai/mcp-server", siteURL)
-
-	// Create protected resource metadata per RFC 9728
-	metadata := ProtectedResourceMetadata{
-		Resource: resourceURL, // The protected resource's base URL (plugin path)
-		AuthorizationServers: []string{
-			siteURL, // Mattermost is the authorization server
-		},
-		ScopesSupported: []string{
-			"user",
-		},
-		ResourceName: "Mattermost MCP Server",
-	}
-
-	// Set required headers per RFC 9728
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "public, max-age=3600") // Cache for 1 hour
-
-	// Marshal and write JSON response
-	jsonBytes, err := json.Marshal(metadata)
-	if err != nil {
-		http.Error(w, "Failed to encode metadata", http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(jsonBytes)
 }

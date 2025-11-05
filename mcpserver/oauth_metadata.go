@@ -17,8 +17,15 @@ type ProtectedResourceMetadata struct {
 	ResourceName         string   `json:"resource_name,omitempty"`         // Recommended: Human-readable name
 }
 
-// handleProtectedResourceMetadata handles OAuth 2.0 Protected Resource Metadata requests (RFC 9728)
-func (s *MattermostHTTPMCPServer) handleProtectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
+// CreateOAuthMetadataHandler creates an HTTP handler for OAuth 2.0 Protected Resource Metadata (RFC 9728)
+func CreateOAuthMetadataHandler(resourceURL, authServerURL, resourceName string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		handleOAuthMetadataCommon(w, r, resourceURL, authServerURL, resourceName)
+	}
+}
+
+// handleOAuthMetadataCommon is the shared implementation for OAuth metadata endpoints
+func handleOAuthMetadataCommon(w http.ResponseWriter, r *http.Request, resourceURL, authServerURL, resourceName string) {
 	// Set CORS headers
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -29,17 +36,13 @@ func (s *MattermostHTTPMCPServer) handleProtectedResourceMetadata(w http.Respons
 		return
 	}
 
-	// Return 404 if site-url is not configured to prevent exposing unreachable localhost URLs
-	if s.config.SiteURL == "" {
+	// Return 404 if resource URL is not configured
+	if resourceURL == "" {
 		http.NotFound(w, r)
 		return
 	}
 
-	// Determine the resource URL (this MCP server) - RFC 9728 compliant
-	resourceURL := s.config.SiteURL
-
 	// Ensure resource URL is RFC 9728 compliant (HTTPS, no query/fragment)
-	// Remove any query parameters or fragments as per RFC 9728
 	if u, err := url.Parse(resourceURL); err == nil {
 		u.RawQuery = ""
 		u.Fragment = ""
@@ -48,14 +51,14 @@ func (s *MattermostHTTPMCPServer) handleProtectedResourceMetadata(w http.Respons
 
 	// Create protected resource metadata per RFC 9728
 	metadata := ProtectedResourceMetadata{
-		Resource: resourceURL, // Required: The protected resource's resource identifier URL
+		Resource: resourceURL,
 		AuthorizationServers: []string{
-			s.config.GetMMServerURL(), // Mattermost is the authorization server
+			authServerURL,
 		},
 		ScopesSupported: []string{
 			"user",
 		},
-		ResourceName: "Mattermost MCP Server",
+		ResourceName: resourceName,
 	}
 
 	// Set required headers per RFC 9728
@@ -65,13 +68,18 @@ func (s *MattermostHTTPMCPServer) handleProtectedResourceMetadata(w http.Respons
 	// Marshal and write the JSON response
 	jsonBytes, err := json.Marshal(metadata)
 	if err != nil {
-		s.logger.Error("Failed to marshal OAuth metadata", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(jsonBytes)
+}
 
+// handleProtectedResourceMetadata handles OAuth 2.0 Protected Resource Metadata requests (RFC 9728)
+func (s *MattermostHTTPMCPServer) handleProtectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
+	resourceURL := s.config.SiteURL
+	authServerURL := s.config.GetMMServerURL()
+	handleOAuthMetadataCommon(w, r, resourceURL, authServerURL, "Mattermost MCP Server")
 	s.logger.Debug("Protected resource metadata requested", "remote_addr", r.RemoteAddr)
 }

@@ -74,6 +74,10 @@ func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
 	return nil
 }
 
+func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error) {
+	return "mock-session-id", nil
+}
+
 func (e *TestEnvironment) Cleanup(t *testing.T) {
 	if e.mockAPI != nil {
 		e.mockAPI.AssertExpectations(t)
