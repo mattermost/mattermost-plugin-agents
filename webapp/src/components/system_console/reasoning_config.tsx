@@ -9,6 +9,9 @@ import {ItemLabel, HelpText} from './item';
 import {LLMBotConfig} from './bot';
 import {LLMService} from './service';
 
+const maxReasoningBudget = 8192;
+const minReasoningBudget = 1024;
+
 type ReasoningConfigItemProps = {
     bot: LLMBotConfig
     service: LLMService | undefined
@@ -45,11 +48,11 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
     // Calculate default for help text
     const getDefaultThinkingBudget = () => {
         let defaultBudget = Math.floor(props.maxTokens / 4);
-        if (defaultBudget > 8192) {
-            defaultBudget = 8192;
+        if (defaultBudget > maxReasoningBudget) {
+            defaultBudget = maxReasoningBudget;
         }
-        if (defaultBudget < 1024) {
-            defaultBudget = 1024;
+        if (defaultBudget < minReasoningBudget) {
+            defaultBudget = minReasoningBudget;
         }
         return defaultBudget;
     };
@@ -235,7 +238,7 @@ const ErrorText = styled.div`
     font-size: 12px;
     font-weight: 400;
     line-height: 16px;
-    color: #D24B4E;
+    color: var(--dnd-indicator, #D24B4E);
 `;
 
 const StyledCheckbox = styled.input`
