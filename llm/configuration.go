@@ -69,13 +69,8 @@ type BotConfig struct {
 }
 
 func (c *BotConfig) IsValid() bool {
-	// Basic validation
-	if c.Name == "" || c.DisplayName == "" {
-		return false
-	}
-
-	// Must have a ServiceID
-	if c.ServiceID == "" {
+	// Basic validation - service validation happens separately
+	if c.Name == "" || c.DisplayName == "" || c.ServiceID == "" {
 		return false
 	}
 
