@@ -151,14 +151,19 @@ func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) 
 }
 
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided
-func (m *ClientManager) GetToolsForUser(userID, sessionID string) ([]llm.Tool, *Errors) {
+func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 	// Get or create client for this user (connects to remote servers only)
 	userClient, mcpErrors := m.getClientForUser(userID)
 
-	// Try to connect to embedded server if session ID provided
-	if sessionID != "" {
-		if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(sessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
-			m.log.Debug("Failed to connect to embedded server for user", "userID", userID, "error", embeddedErr)
+	// Connect to embedded server using a dedicated per-user session (stored/created in KV)
+	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
+		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
+		if ensureErr != nil {
+			m.log.Debug("Failed to ensure embedded session for user", "userID", userID, "error", ensureErr)
+		} else if ensuredSessionID != "" {
+			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
+				m.log.Debug("Failed to connect to embedded server for user", "userID", userID, "error", embeddedErr)
+			}
 		}
 	}
 

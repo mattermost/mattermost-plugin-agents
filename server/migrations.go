@@ -29,19 +29,12 @@ type BotMigrationConfig struct {
 }
 
 func migrateSeparateServicesFromBots(pluginAPI *pluginapi.Client, cfg config.Config) (bool, config.Config, error) {
-	migrationDone := false
-	_ = pluginAPI.KV.Get("migrate_separate_services_from_bots_done", &migrationDone)
-	if migrationDone {
-		return false, cfg, nil
-	}
-
-	pluginAPI.Log.Debug("Migrating to separate services from bots")
+	pluginAPI.Log.Debug("Checking if migration to separate services from bots is needed")
 
 	existingConfig := cfg.Clone()
 
 	// If no bots, nothing to migrate
 	if len(existingConfig.Bots) == 0 {
-		_, _ = pluginAPI.KV.Set("migrate_separate_services_from_bots_done", true)
 		return false, cfg, nil
 	}
 
@@ -56,9 +49,10 @@ func migrateSeparateServicesFromBots(pluginAPI *pluginapi.Client, cfg config.Con
 
 	if !needsMigration {
 		pluginAPI.Log.Debug("No migration needed - bots already use service references")
-		_, _ = pluginAPI.KV.Set("migrate_separate_services_from_bots_done", true)
 		return false, cfg, nil
 	}
+
+	pluginAPI.Log.Info("Migrating to separate services from bots")
 
 	// Extract and deduplicate services
 	// Initialize serviceMap with existing services so we can deduplicate against them
@@ -149,20 +143,16 @@ func servicesAreIdentical(a, b llm.ServiceConfig) bool {
 }
 
 func migrateServicesToBots(pluginAPI *pluginapi.Client, cfg config.Config) (bool, config.Config, error) {
-	migrationDone := false
-	_ = pluginAPI.KV.Get("migrate_services_to_bots_done", &migrationDone)
-	if migrationDone {
+	pluginAPI.Log.Debug("Checking if migration from services to bots is needed")
+
+	existingConfig := cfg.Clone()
+
+	// If bots already exist, no migration needed
+	if len(existingConfig.Bots) != 0 {
 		return false, cfg, nil
 	}
 
 	pluginAPI.Log.Debug("Migrating services to bots")
-
-	existingConfig := cfg.Clone()
-
-	if len(existingConfig.Bots) != 0 {
-		_, _ = pluginAPI.KV.Set("migrate_services_to_bots_done", true)
-		return false, cfg, nil
-	}
 
 	oldConfig := BotMigrationConfig{}
 	err := pluginAPI.Configuration.LoadPluginConfiguration(&oldConfig)
@@ -205,19 +195,18 @@ func migrateServicesToBots(pluginAPI *pluginapi.Client, cfg config.Config) (bool
 // runAllMigrations executes all migrations under a single mutex to prevent race conditions
 // in multi-instance deployments. Persists the updated configuration and marks migrations as
 // complete only after successful save. Returns the final configuration and any errors encountered.
-func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, container *config.Container) (config.Config, bool, error) {
+func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, cfg config.Config) (config.Config, bool, error) {
 	mtx, err := cluster.NewMutex(mutexAPI, "ai_all_migrations")
 	if err != nil {
 		return config.Config{}, false, fmt.Errorf("failed to create migrations mutex: %w", err)
 	}
 	mtx.Lock()
-	defer mtx.Unlock()
 
 	changed := false
-	cfg := *container.Config()
 
 	didMigrateServicesToBots, newCfg, err := migrateServicesToBots(pluginAPI, cfg)
 	if err != nil {
+		mtx.Unlock()
 		return cfg, false, fmt.Errorf("failed to migrate services to bots: %w", err)
 	}
 	if didMigrateServicesToBots {
@@ -230,6 +219,7 @@ func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Clie
 	didMigrateSeparateServicesFromBots := false
 	didMigrateSeparateServicesFromBots, newCfg, migrateErr = migrateSeparateServicesFromBots(pluginAPI, cfg)
 	if migrateErr != nil {
+		mtx.Unlock()
 		return cfg, false, fmt.Errorf("failed to migrate separate services from bots: %w", migrateErr)
 	}
 	if didMigrateSeparateServicesFromBots {
@@ -238,7 +228,11 @@ func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Clie
 		pluginAPI.Log.Info("Migration completed: separate services from bots")
 	}
 
-	// If any migrations ran, persist the config and mark them as complete
+	// Release mutex before saving config to avoid deadlock when SavePluginConfig
+	// triggers OnConfigurationChange which tries to acquire the same mutex
+	mtx.Unlock()
+
+	// If any migrations ran, persist the config
 	if changed {
 		// Wrap config in the configuration struct that has the proper nesting
 		wrappedConfig := configuration{Config: cfg}
@@ -255,17 +249,6 @@ func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Clie
 
 		if saveErr := pluginAPI.Configuration.SavePluginConfig(out); saveErr != nil {
 			return cfg, false, fmt.Errorf("failed to save migrated configuration: %w", saveErr)
-		}
-
-		if didMigrateServicesToBots {
-			if _, kvErr := pluginAPI.KV.Set("migrate_services_to_bots_done", true); kvErr != nil {
-				pluginAPI.Log.Error("failed to mark migration as done", "key", "migrate_services_to_bots_done", "error", kvErr)
-			}
-		}
-		if didMigrateSeparateServicesFromBots {
-			if _, kvErr := pluginAPI.KV.Set("migrate_separate_services_from_bots_done", true); kvErr != nil {
-				pluginAPI.Log.Error("failed to mark migration as done", "key", "migrate_separate_services_from_bots_done", "error", kvErr)
-			}
 		}
 
 		pluginAPI.Log.Info("Configuration persisted after migrations")

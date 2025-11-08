@@ -588,3 +588,97 @@ func TestConversationToMessages(t *testing.T) {
 		})
 	}
 }
+
+func TestThinkingBudgetConfiguration(t *testing.T) {
+	tests := []struct {
+		name                 string
+		botConfig            llm.BotConfig
+		maxGeneratedTokens   int
+		expectThinkingConfig bool
+		expectedBudget       int64
+	}{
+		{
+			name: "reasoning enabled with custom thinking budget",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   2048,
+			},
+			maxGeneratedTokens:   8192,
+			expectThinkingConfig: true,
+			expectedBudget:       2048,
+		},
+		{
+			name: "reasoning enabled with default thinking budget (1/4 of max tokens)",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   0, // 0 means use default
+			},
+			maxGeneratedTokens:   8192,
+			expectThinkingConfig: true,
+			expectedBudget:       2048, // 8192 / 4
+		},
+		{
+			name: "reasoning enabled with default thinking budget capped at 8192",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   0,
+			},
+			maxGeneratedTokens:   40000,
+			expectThinkingConfig: true,
+			expectedBudget:       8192, // capped at 8192
+		},
+		{
+			name: "reasoning enabled with minimum thinking budget",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   0,
+			},
+			maxGeneratedTokens:   2048,
+			expectThinkingConfig: true,
+			expectedBudget:       1024, // minimum is 1024
+		},
+		{
+			name: "reasoning disabled",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: false,
+				ThinkingBudget:   2048,
+			},
+			maxGeneratedTokens:   8192,
+			expectThinkingConfig: false,
+			expectedBudget:       0,
+		},
+		{
+			name: "reasoning enabled but thinking budget exceeds max tokens",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   5000,
+			},
+			maxGeneratedTokens:   4096,
+			expectThinkingConfig: false, // Should not set thinking config if budget >= max tokens
+			expectedBudget:       0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create an Anthropic client with the reasoning fields
+			a := &Anthropic{
+				reasoningEnabled: tt.botConfig.ReasoningEnabled,
+				thinkingBudget:   tt.botConfig.ThinkingBudget,
+			}
+
+			// Call the actual function that calculates thinking config
+			thinkingConfig, ok := a.calculateThinkingConfig(tt.maxGeneratedTokens)
+
+			if !tt.expectThinkingConfig {
+				assert.False(t, ok, "Thinking config should not be enabled")
+				return
+			}
+
+			// When thinking is expected, verify it's enabled and has the correct budget
+			assert.True(t, ok, "Thinking config should be enabled")
+			require.NotNil(t, thinkingConfig.OfEnabled, "Thinking config should have OfEnabled set")
+			assert.Equal(t, tt.expectedBudget, thinkingConfig.OfEnabled.BudgetTokens, "Thinking budget should match expected value")
+		})
+	}
+}

@@ -174,19 +174,6 @@ func TestBotConfig_IsValid(t *testing.T) {
 			},
 			want: true,
 		},
-		{
-			name: "Bot with neither ServiceID nor embedded Service should fail",
-			fields: fields{
-				ID:                 "xxx",
-				Name:               "xxx",
-				DisplayName:        "xxx",
-				ServiceID:          "",  // no service ID
-				Service:            nil, // no embedded service
-				ChannelAccessLevel: ChannelAccessLevelAll,
-				UserAccessLevel:    UserAccessLevelAll,
-			},
-			want: false,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

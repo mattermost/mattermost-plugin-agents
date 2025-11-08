@@ -8,22 +8,30 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
+
+// MetricsObserver defines the interface for observing token usage metrics
+type MetricsObserver interface {
+	ObserveTokenUsage(botName, teamID, userID string, inputTokens, outputTokens int)
+}
 
 // TokenUsageLoggingWrapper wraps a LanguageModel to log token usage
 type TokenUsageLoggingWrapper struct {
 	wrapped     LanguageModel
 	botUsername string
 	tokenLogger *mlog.Logger
+	metrics     MetricsObserver
 }
 
 // NewTokenUsageLoggingWrapper creates a new wrapper that logs token usage
-func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, tokenLogger *mlog.Logger) *TokenUsageLoggingWrapper {
+func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, tokenLogger *mlog.Logger, metrics MetricsObserver) *TokenUsageLoggingWrapper {
 	return &TokenUsageLoggingWrapper{
 		wrapped:     wrapped,
 		botUsername: botUsername,
 		tokenLogger: tokenLogger,
+		metrics:     metrics,
 	}
 }
 
@@ -95,6 +103,17 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(request CompletionRequest, opt
 				}
 				if request.Context.Team != nil {
 					teamID = request.Context.Team.Id
+				} else if request.Context.Channel != nil {
+					// For DM and Group channels, use a special identifier
+					// instead of "unknown" to distinguish them in metrics
+					switch request.Context.Channel.Type {
+					case model.ChannelTypeDirect:
+						teamID = "dm"
+					case model.ChannelTypeGroup:
+						teamID = "group"
+					default:
+						teamID = "unknown"
+					}
 				}
 			}
 
@@ -106,6 +125,17 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(request CompletionRequest, opt
 				mlog.Int("output_tokens", usage.OutputTokens),
 				mlog.Int("total_tokens", usage.InputTokens+usage.OutputTokens),
 			)
+
+			// Emit metrics if available (user_id not included in metrics)
+			if w.metrics != nil {
+				w.metrics.ObserveTokenUsage(
+					w.botUsername,
+					teamID,
+					"",
+					int(usage.InputTokens),
+					int(usage.OutputTokens),
+				)
+			}
 		}
 	}()
 
