@@ -202,8 +202,12 @@ func GetRegistrationEndpoint(ctx context.Context, httpClient *http.Client, serve
 		httpClient = http.DefaultClient
 	}
 
-	// Try standard OAuth 2.0 Authorization Server Metadata endpoint first
-	metadataURL := serverURL + "/.well-known/oauth-authorization-server"
+	// Construct the metadata URL according to RFC 8414 Section 3.1
+	// The well-known URI must be inserted between the host and path components
+	metadataURL, err := constructWellKnownURL(serverURL, "oauth-authorization-server")
+	if err != nil {
+		return "", fmt.Errorf("failed to construct metadata URL: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", metadataURL, nil)
 	if err != nil {
@@ -219,7 +223,7 @@ func GetRegistrationEndpoint(ctx context.Context, httpClient *http.Client, serve
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("server metadata request failed with status %d", resp.StatusCode)
+		return "", fmt.Errorf("server metadata request to `%s` failed with status %d", metadataURL, resp.StatusCode)
 	}
 
 	var metadata struct {
