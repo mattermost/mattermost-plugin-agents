@@ -27,11 +27,6 @@ type Context struct {
 	// User that is making the request
 	RequestingUser *model.User
 
-	// Session information for authentication
-	SessionID string
-	// SessionResolver provides secure access to session token when needed
-	SessionResolver func() (string, error)
-
 	// Bot Specific
 	BotName            string
 	BotUsername        string
@@ -63,9 +58,6 @@ func (c Context) String() string {
 	result.WriteString(fmt.Sprintf("Time: %v\nServerName: %v\nCompanyName: %v", c.Time, c.ServerName, c.CompanyName))
 	if c.RequestingUser != nil {
 		result.WriteString(fmt.Sprintf("\nRequestingUser: %v", c.RequestingUser.Username))
-	}
-	if c.SessionID != "" {
-		result.WriteString(fmt.Sprintf("\nSessionID: %v", c.SessionID))
 	}
 	if c.Channel != nil {
 		result.WriteString(fmt.Sprintf("\nChannel: %v", c.Channel.Name))
