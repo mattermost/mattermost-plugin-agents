@@ -33,8 +33,10 @@ func TestMCPToolsIntegration(t *testing.T) {
 	t.Run("CreatePostTool", func(t *testing.T) {
 		t.Run("HappyPath", func(t *testing.T) {
 			args := map[string]interface{}{
-				"channel_id": testData.Channel.Id,
-				"message":    "Hello from MCP integration test!",
+				"channel_id":           testData.Channel.Id,
+				"channel_display_name": testData.Channel.DisplayName,
+				"team_display_name":    testData.Team.DisplayName,
+				"message":              "Hello from MCP integration test!",
 			}
 
 			result, err := executeToolWithMCP(t, suite, "create_post", args)
