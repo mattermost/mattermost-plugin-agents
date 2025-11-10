@@ -351,7 +351,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                                 enabled,
                                             },
                                         })}
-                                        helpText={intl.formatMessage({defaultMessage: 'Enable the built-in Mattermost MCP server that provides tools for accessing channels, users, and posts without external OAuth setup.'})}
+                                        helpText={intl.formatMessage({defaultMessage: 'Enable the built-in Mattermost MCP server that provides AI tools for reading/creating channels, posts, searching content, and managing users and teams. Tools operate with the permissions of the user who invokes them.'})}
                                     />
                                 </ItemList>
                                 <ServersList>

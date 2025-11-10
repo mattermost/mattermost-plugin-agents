@@ -195,6 +195,10 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 		c.BotName = bot.GetConfig().DisplayName
 		c.BotUsername = bot.GetConfig().Name
 		c.CustomInstructions = bot.GetConfig().CustomInstructions
+		// Set the bot user ID for AI-generated content tracking
+		if mmbot := bot.GetMMBot(); mmbot != nil {
+			c.BotUserID = mmbot.UserId
+		}
 		c.BotModel = bot.GetService().DefaultModel
 	}
 }

@@ -47,6 +47,16 @@ type DMSelfArgs struct {
 
 // getPostTools returns all post-related tools
 func (p *MattermostToolProvider) getPostTools() []MCPTool {
+	// Build descriptions conditionally based on access mode
+	attachmentsParam := ""
+	if p.accessMode == AccessModeLocal {
+		attachmentsParam = ", attachments (optional file paths/URLs)"
+	}
+
+	createPostDesc := fmt.Sprintf("Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. Parameters: channel_id (required), message (required), root_id (optional - for replies)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}", attachmentsParam)
+
+	dmSelfDesc := fmt.Sprintf("Send a direct message to yourself. Use when user requests to send something to themselves (e.g., 'send me this', 'DM me that'). Parameters: message (required)%s. Returns confirmation with message ID. Example: {\"message\": \"Reminder: Follow up on project\"}", attachmentsParam)
+
 	return []MCPTool{
 		{
 			Name:        "read_post",
@@ -56,13 +66,13 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 		},
 		{
 			Name:        "create_post",
-			Description: "Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. Parameters: channel_id (required), channel_display_name (required), team_display_name (required), message (required), root_id (optional - for replies), attachments (optional file paths/URLs). Example workflow: 1) get_channel_info(channel_display_name=\"General\") 2) create_post(channel_id=\"h5wqm8kxptbztfgzpaxbsqozah\", channel_display_name=\"General\", team_display_name=\"Engineering\", message=\"Hello team!\")",
+			Description: createPostDesc,
 			Schema:      NewJSONSchemaForAccessMode[CreatePostArgs](string(p.accessMode)),
 			Resolver:    p.toolCreatePost,
 		},
 		{
 			Name:        "dm_self",
-			Description: "Send a direct message to yourself. Use when user requests to send something to themselves (e.g., 'send me this', 'DM me that'). Parameters: message (required), attachments (optional file paths/URLs). Returns confirmation with message ID. Example: {\"message\": \"Reminder: Follow up on project\"}",
+			Description: dmSelfDesc,
 			Schema:      NewJSONSchemaForAccessMode[DMSelfArgs](string(p.accessMode)),
 			Resolver:    p.toolDMSelf,
 		},
@@ -254,6 +264,29 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		FileIds:   fileIDs,
 	}
 
+	// Add AI-generated prop if tracking is enabled
+	if p.trackAIGenerated {
+		var userID string
+
+		// First check if bot user ID was provided via context metadata (from embedded server)
+		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
+			userID = mcpContext.BotUserID
+		} else {
+			// For external servers, fetch the authenticated user's ID
+			if user, _, getMeErr := client.GetMe(ctx, ""); getMeErr == nil && user != nil {
+				userID = user.Id
+			}
+		}
+
+		// Add the prop if we have a valid user ID
+		if userID != "" {
+			if post.Props == nil {
+				post.Props = make(model.StringInterface)
+			}
+			post.Props["ai_generated_by"] = userID
+		}
+	}
+
 	createdPost, _, err := client.CreatePost(ctx, post)
 	if err != nil {
 		return "failed to create post", fmt.Errorf("error creating post: %w", err)
@@ -368,9 +401,31 @@ func (p *MattermostToolProvider) toolDMSelf(mcpContext *MCPToolContext, argsGett
 	}
 
 	// Set props to trigger notifications
-	post.SetProps(map[string]interface{}{
+	props := map[string]interface{}{
 		"from_webhook": "true",
-	})
+	}
+
+	// Add AI-generated prop if tracking is enabled
+	if p.trackAIGenerated {
+		var userID string
+
+		// First check if bot user ID was provided via context metadata (from embedded server)
+		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
+			userID = mcpContext.BotUserID
+		} else {
+			// For external servers, use the current authenticated user's ID
+			// GetMe is already called above, so we have the user
+			userID = user.Id
+		}
+
+		// Add the prop if we have a valid user ID
+		if userID != "" {
+			// Use the string constant as per the Mattermost feature spec
+			props["ai_generated_by"] = userID
+		}
+	}
+
+	post.SetProps(props)
 
 	createdPost, _, err := client.CreatePost(ctx, post)
 	if err != nil {

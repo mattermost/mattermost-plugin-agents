@@ -183,6 +183,44 @@ The plugin configuration is stored in the Mattermost database. To backup:
 1. Ensure your regular Mattermost backup includes plugin configurations
 2. For larger deployments, consider backing up indexed vector data separately
 
+### Configuration format
+
+The plugin uses a service-based architecture stored in the Mattermost database at `PluginSettings.Plugins["mattermost-ai"]`:
+
+- **Services** define LLM provider configurations (API keys, models, endpoints)
+- **Bots** reference services by ID and define agent personalities and access controls
+
+This separation allows multiple bots to share the same LLM service configuration.
+
+**Configuration structure:**
+```json
+{
+  "config": {
+    "services": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "type": "openai",
+        "apiKey": "sk-...",
+        "defaultModel": "gpt-4o"
+      }
+    ],
+    "bots": [
+      {
+        "id": "bot-001",
+        "name": "ai",
+        "displayName": "AI Assistant",
+        "serviceID": "550e8400-e29b-41d4-a716-446655440000",
+        "customInstructions": "You are a helpful assistant."
+      }
+    ]
+  }
+}
+```
+
+**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`
+
+**Legacy format:** Older configurations with embedded service objects within bots are automatically migrated to the current format on plugin startup.
+
 ## Troubleshooting
 
 ### Logging

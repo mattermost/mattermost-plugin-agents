@@ -41,6 +41,8 @@ type Config struct {
 	EmbeddingDimensions int           `json:"embeddingDimensions"`
 	UseResponsesAPI     bool          `json:"useResponsesAPI"`
 	EnabledNativeTools  []string      `json:"enabledNativeTools"`
+	ReasoningEnabled    bool          `json:"reasoningEnabled"`
+	ReasoningEffort     string        `json:"reasoningEffort"`
 }
 
 type OpenAI struct {
@@ -846,15 +848,31 @@ func (s *OpenAI) convertToResponseParams(params openai.ChatCompletionNewParams, 
 	}
 
 	// Add reasoning parameters for models that support it
-	// TODO: Check if the model is reasoning-capable (o1, o1-mini, o3-mini, etc.)
+	// Check if reasoning is enabled for this bot
+	if s.config.ReasoningEnabled {
+		// Determine reasoning effort
+		var effort shared.ReasoningEffort
+		switch s.config.ReasoningEffort {
+		case "minimal":
+			effort = shared.ReasoningEffortMinimal
+		case "low":
+			effort = shared.ReasoningEffortLow
+		case "high":
+			effort = shared.ReasoningEffortHigh
+		case "medium":
+			effort = shared.ReasoningEffortMedium
+		case "":
+			// Empty string defaults to medium effort for clarity
+			effort = shared.ReasoningEffortMedium
+		default:
+			effort = shared.ReasoningEffortMedium
+		}
 
-	result.Reasoning = shared.ReasoningParam{
-		// Set effort level for reasoning
-		// Can be "minimal", "low", "medium", or "high"
-		Effort: shared.ReasoningEffortMedium,
-		// Request a detailed summary of the reasoning
-		// Can be "auto", "concise", or "detailed"
-		Summary: shared.ReasoningSummaryAuto,
+		result.Reasoning = shared.ReasoningParam{
+			Effort: effort,
+			// Can be "auto", "concise", or "detailed"
+			Summary: shared.ReasoningSummaryAuto,
+		}
 	}
 
 	// Convert messages to a simple string input

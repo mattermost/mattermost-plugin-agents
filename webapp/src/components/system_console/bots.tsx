@@ -28,6 +28,9 @@ const defaultNewBot: LLMBotConfig = {
     userIDs: [],
     teamIDs: [],
     enabledNativeTools: [],
+    reasoningEnabled: true,
+    reasoningEffort: 'medium',
+    thinkingBudget: 0,
 };
 
 export const firstNewBot = {

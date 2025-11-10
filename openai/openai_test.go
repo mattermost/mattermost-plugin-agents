@@ -5,6 +5,7 @@ package openai
 
 import (
 	"bytes"
+	"net/http"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -733,4 +734,94 @@ func TestToolBufferElement(t *testing.T) {
 		buffer.args.WriteString(`"test"}`)
 		assert.Equal(t, `{"query":"test"}`, buffer.args.String())
 	})
+}
+
+func TestReasoningEffortConfiguration(t *testing.T) {
+	tests := []struct {
+		name               string
+		reasoningEnabled   bool
+		reasoningEffort    string
+		expectedEffort     shared.ReasoningEffort
+		shouldSetReasoning bool
+	}{
+		{
+			name:               "reasoning enabled with minimal effort",
+			reasoningEnabled:   true,
+			reasoningEffort:    "minimal",
+			expectedEffort:     shared.ReasoningEffortMinimal,
+			shouldSetReasoning: true,
+		},
+		{
+			name:               "reasoning enabled with low effort",
+			reasoningEnabled:   true,
+			reasoningEffort:    "low",
+			expectedEffort:     shared.ReasoningEffortLow,
+			shouldSetReasoning: true,
+		},
+		{
+			name:               "reasoning enabled with medium effort",
+			reasoningEnabled:   true,
+			reasoningEffort:    "medium",
+			expectedEffort:     shared.ReasoningEffortMedium,
+			shouldSetReasoning: true,
+		},
+		{
+			name:               "reasoning enabled with high effort",
+			reasoningEnabled:   true,
+			reasoningEffort:    "high",
+			expectedEffort:     shared.ReasoningEffortHigh,
+			shouldSetReasoning: true,
+		},
+		{
+			name:               "reasoning enabled with default (empty string defaults to medium)",
+			reasoningEnabled:   true,
+			reasoningEffort:    "",
+			expectedEffort:     shared.ReasoningEffortMedium,
+			shouldSetReasoning: true,
+		},
+		{
+			name:               "reasoning enabled with invalid effort (defaults to medium)",
+			reasoningEnabled:   true,
+			reasoningEffort:    "invalid",
+			expectedEffort:     shared.ReasoningEffortMedium,
+			shouldSetReasoning: true,
+		},
+		{
+			name:               "reasoning disabled",
+			reasoningEnabled:   false,
+			reasoningEffort:    "high",
+			shouldSetReasoning: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create an OpenAI instance with the test config
+			oai := New(Config{
+				APIKey:           "test-key",
+				DefaultModel:     "gpt-4o",
+				ReasoningEnabled: tt.reasoningEnabled,
+				ReasoningEffort:  tt.reasoningEffort,
+			}, &http.Client{})
+
+			// Create test params
+			chatParams := openai.ChatCompletionNewParams{
+				Model:    shared.ChatModelGPT4o,
+				Messages: []openai.ChatCompletionMessageParamUnion{},
+			}
+
+			// Call the actual function that handles reasoning configuration
+			result := oai.convertToResponseParams(chatParams, &llm.Context{})
+
+			if !tt.shouldSetReasoning {
+				// When reasoning is disabled, Reasoning should be empty
+				assert.Equal(t, shared.ReasoningParam{}, result.Reasoning, "Reasoning should not be set when disabled")
+				return
+			}
+
+			// When reasoning is enabled, verify the effort is set correctly
+			assert.Equal(t, tt.expectedEffort, result.Reasoning.Effort, "Reasoning effort should match expected value")
+			assert.Equal(t, shared.ReasoningSummaryAuto, result.Reasoning.Summary, "Reasoning summary should be set to auto")
+		})
+	}
 }

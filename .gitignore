@@ -1,5 +1,6 @@
 bin/
 dist/
+mcpserver/bin/
 webapp/src/manifest.ts
 server/manifest.go
 evals.jsonl
@@ -8,6 +9,9 @@ go.work.sum
 *.log
 
 .claude/settings.local.json
+
+# MCP Server file storage
+mcpserver/data/
 
 # Mac
 .DS_Store

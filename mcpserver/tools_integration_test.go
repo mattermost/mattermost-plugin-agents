@@ -344,6 +344,62 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 	})
 
+	t.Run("AddUserToChannelTool", func(t *testing.T) {
+		// Create a new user to add to channel
+		newUser := testhelpers.CreateTestUser(t, client, "channelmember", "channelmember@example.com", "testpassword")
+		testhelpers.AddUserToTeam(t, client, testData.Team.Id, newUser.Id)
+
+		t.Run("HappyPath", func(t *testing.T) {
+			args := map[string]interface{}{
+				"user_id":    newUser.Id,
+				"channel_id": testData.Channel.Id,
+			}
+
+			result, err := executeToolWithMCP(t, suite, "add_user_to_channel", args)
+			require.NoError(t, err, "add_user_to_channel should succeed")
+			assert.NotEmpty(t, result.Content, "add_user_to_channel should return content")
+
+			// Verify the response mentions success
+			if len(result.Content) > 0 {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
+					assert.Contains(t, textContent.Text, "Successfully added user", "Response should indicate success")
+				}
+			}
+
+			// Verify user was actually added to channel
+			members, _, err := client.GetChannelMembers(context.Background(), testData.Channel.Id, 0, 100, "")
+			require.NoError(t, err)
+			found := false
+			for _, member := range members {
+				if member.UserId == newUser.Id {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found, "User should be found in channel members")
+		})
+
+		t.Run("InvalidChannelID", func(t *testing.T) {
+			args := map[string]interface{}{
+				"user_id":    newUser.Id,
+				"channel_id": "invalid-channel-id",
+			}
+
+			_, err := executeToolWithMCP(t, suite, "add_user_to_channel", args)
+			require.Error(t, err, "add_user_to_channel with invalid channel ID should fail")
+		})
+
+		t.Run("InvalidUserID", func(t *testing.T) {
+			args := map[string]interface{}{
+				"user_id":    "invalid-user-id",
+				"channel_id": testData.Channel.Id,
+			}
+
+			_, err := executeToolWithMCP(t, suite, "add_user_to_channel", args)
+			require.Error(t, err, "add_user_to_channel with invalid user ID should fail")
+		})
+	})
+
 	t.Run("DMSelfTool", func(t *testing.T) {
 		t.Run("HappyPath", func(t *testing.T) {
 			args := map[string]interface{}{

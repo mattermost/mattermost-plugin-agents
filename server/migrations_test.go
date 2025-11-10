@@ -20,37 +20,12 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 	tests := []struct {
 		name           string
 		inputConfig    config.Config
-		migrationDone  bool
 		expectMigrated bool
 		expectError    bool
 		validateResult func(t *testing.T, result config.Config)
 	}{
 		{
-			name: "Migration already done - should skip",
-			inputConfig: config.Config{
-				Bots: []llm.BotConfig{
-					{
-						ID:   "bot1",
-						Name: "bot1",
-						Service: &llm.ServiceConfig{
-							Type:   llm.ServiceTypeOpenAI,
-							APIKey: "key1",
-						},
-					},
-				},
-			},
-			migrationDone:  true,
-			expectMigrated: false,
-			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
-				// Config should remain unchanged
-				assert.Len(t, result.Services, 0)
-				assert.Len(t, result.Bots, 1)
-				assert.NotNil(t, result.Bots[0].Service)
-			},
-		},
-		{
-			name: "Services already populated - should skip and mark as done",
+			name: "Services already populated - should skip",
 			inputConfig: config.Config{
 				Services: []llm.ServiceConfig{
 					{
@@ -67,7 +42,6 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 					},
 				},
 			},
-			migrationDone:  false,
 			expectMigrated: false,
 			expectError:    false,
 			validateResult: func(t *testing.T, result config.Config) {
@@ -78,9 +52,8 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			},
 		},
 		{
-			name:           "No bots exist - should skip and mark as done",
+			name:           "No bots exist - should skip",
 			inputConfig:    config.Config{},
-			migrationDone:  false,
 			expectMigrated: false,
 			expectError:    false,
 			validateResult: func(t *testing.T, result config.Config) {
@@ -89,7 +62,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			},
 		},
 		{
-			name: "Bots already have ServiceID - should skip and mark as done",
+			name: "Bots already have ServiceID - should skip",
 			inputConfig: config.Config{
 				Bots: []llm.BotConfig{
 					{
@@ -99,7 +72,6 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 					},
 				},
 			},
-			migrationDone:  false,
 			expectMigrated: false,
 			expectError:    false,
 			validateResult: func(t *testing.T, result config.Config) {
@@ -119,7 +91,6 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 					},
 				},
 			},
-			migrationDone:  false,
 			expectMigrated: false,
 			expectError:    false,
 			validateResult: func(t *testing.T, result config.Config) {
@@ -142,7 +113,6 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 					},
 				},
 			},
-			migrationDone:  false,
 			expectMigrated: true,
 			expectError:    false,
 			validateResult: func(t *testing.T, result config.Config) {
@@ -196,7 +166,6 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 					},
 				},
 			},
-			migrationDone:  false,
 			expectMigrated: true,
 			expectError:    false,
 			validateResult: func(t *testing.T, result config.Config) {
@@ -252,7 +221,6 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 					},
 				},
 			},
-			migrationDone:  false,
 			expectMigrated: true,
 			expectError:    false,
 			validateResult: func(t *testing.T, result config.Config) {
@@ -292,7 +260,6 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 					},
 				},
 			},
-			migrationDone:  false,
 			expectMigrated: true,
 			expectError:    false,
 			validateResult: func(t *testing.T, result config.Config) {
@@ -332,7 +299,6 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 					},
 				},
 			},
-			migrationDone:  false,
 			expectMigrated: true,
 			expectError:    false,
 			validateResult: func(t *testing.T, result config.Config) {
@@ -348,6 +314,139 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 				assert.Nil(t, result.Bots[1].Service)
 			},
 		},
+		{
+			name: "Real-world config: many bots with identical embedded services - should deduplicate",
+			inputConfig: config.Config{
+				Bots: []llm.BotConfig{
+					{
+						ID:          "OpenAI",
+						Name:        "ai",
+						DisplayName: "OpenAI",
+						Service: &llm.ServiceConfig{
+							Type:             llm.ServiceTypeOpenAI,
+							APIKey:           "test-key",
+							DefaultModel:     "gpt-4o",
+							InputTokenLimit:  32768,
+							OutputTokenLimit: 0,
+							SendUserID:       false,
+							UseResponsesAPI:  false,
+						},
+					},
+					{
+						ID:                 "8ji6s8wyutu",
+						Name:               "yoda-ai",
+						DisplayName:        "YodaAI",
+						CustomInstructions: "Respond with wisdom and a calm, nurturing tone...",
+						Service: &llm.ServiceConfig{
+							Type:             llm.ServiceTypeOpenAI,
+							APIKey:           "test-key",
+							DefaultModel:     "gpt-4o",
+							InputTokenLimit:  32768,
+							OutputTokenLimit: 0,
+							SendUserID:       false,
+							UseResponsesAPI:  false,
+						},
+					},
+					{
+						ID:                 "li5ivf2ay4",
+						Name:               "loki",
+						DisplayName:        "Loki",
+						CustomInstructions: "You are Loki. Respond in a cunning manner...",
+						Service: &llm.ServiceConfig{
+							Type:             llm.ServiceTypeOpenAI,
+							APIKey:           "test-key",
+							DefaultModel:     "gpt-4o",
+							InputTokenLimit:  32768,
+							OutputTokenLimit: 0,
+							SendUserID:       false,
+							UseResponsesAPI:  false,
+						},
+					},
+					{
+						ID:                 "matter-ai",
+						Name:               "matter-ai",
+						DisplayName:        "MatterAI",
+						CustomInstructions: "You are a Mattermost LLM...",
+						Service: &llm.ServiceConfig{
+							Type:             llm.ServiceTypeOpenAI,
+							APIKey:           "test-key",
+							DefaultModel:     "gpt-4o",
+							InputTokenLimit:  32768,
+							OutputTokenLimit: 0,
+							SendUserID:       false,
+							UseResponsesAPI:  false,
+						},
+					},
+					{
+						ID:          "anthropic-bot",
+						Name:        "claude",
+						DisplayName: "Claude",
+						Service: &llm.ServiceConfig{
+							Type:             llm.ServiceTypeAnthropic,
+							APIKey:           "anthropic-key",
+							DefaultModel:     "claude-3-5-sonnet-20241022",
+							InputTokenLimit:  100000,
+							OutputTokenLimit: 8192,
+							SendUserID:       false,
+							UseResponsesAPI:  false,
+						},
+					},
+				},
+			},
+			expectMigrated: true,
+			expectError:    false,
+			validateResult: func(t *testing.T, result config.Config) {
+				// Should create only 2 services (OpenAI and Anthropic), deduplicating the 4 identical OpenAI services
+				require.Len(t, result.Services, 2, "Expected 2 services: 1 deduplicated OpenAI + 1 Anthropic")
+
+				// Find the OpenAI and Anthropic services
+				var openAIService, anthropicService *llm.ServiceConfig
+				for i := range result.Services {
+					switch result.Services[i].Type {
+					case llm.ServiceTypeOpenAI:
+						openAIService = &result.Services[i]
+					case llm.ServiceTypeAnthropic:
+						anthropicService = &result.Services[i]
+					}
+				}
+
+				require.NotNil(t, openAIService, "OpenAI service should exist")
+				require.NotNil(t, anthropicService, "Anthropic service should exist")
+
+				assert.Equal(t, "test-key", openAIService.APIKey)
+				assert.Equal(t, "gpt-4o", openAIService.DefaultModel)
+				assert.Equal(t, 32768, openAIService.InputTokenLimit)
+
+				assert.Equal(t, "anthropic-key", anthropicService.APIKey)
+				assert.Equal(t, "claude-3-5-sonnet-20241022", anthropicService.DefaultModel)
+				assert.Equal(t, 100000, anthropicService.InputTokenLimit)
+
+				// All 5 bots should be migrated
+				require.Len(t, result.Bots, 5)
+
+				// First 4 bots should reference the same OpenAI service
+				for i := 0; i < 4; i++ {
+					assert.Equal(t, openAIService.ID, result.Bots[i].ServiceID,
+						"Bot %d (%s) should reference OpenAI service", i, result.Bots[i].Name)
+					assert.Nil(t, result.Bots[i].Service, "Embedded service should be cleared for bot %d", i)
+				}
+
+				// Last bot should reference the Anthropic service
+				assert.Equal(t, anthropicService.ID, result.Bots[4].ServiceID)
+				assert.Nil(t, result.Bots[4].Service)
+
+				// Verify bot names are preserved
+				assert.Equal(t, "ai", result.Bots[0].Name)
+				assert.Equal(t, "yoda-ai", result.Bots[1].Name)
+				assert.Equal(t, "loki", result.Bots[2].Name)
+				assert.Equal(t, "matter-ai", result.Bots[3].Name)
+				assert.Equal(t, "claude", result.Bots[4].Name)
+
+				// Verify custom instructions are preserved
+				assert.Contains(t, result.Bots[1].CustomInstructions, "wisdom")
+				assert.Contains(t, result.Bots[2].CustomInstructions, "Loki")
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -355,27 +454,17 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			// Setup mock API
 			mockAPI := &plugintest.API{}
 
-			// Setup KV store for migration flag
-			// KVGet returns ([]byte, error) - need to return JSON-marshaled bool
-			var migrationBytes []byte
-			if tt.migrationDone {
-				migrationBytes = []byte("true")
-			} else {
-				migrationBytes = []byte("false")
-			}
-			mockAPI.On("KVGet", "migrate_separate_services_from_bots_done").Return(migrationBytes, nil)
-
-			// Mock mutex lock/unlock operations (cluster.Mutex uses KVSetWithOptions for locking)
+			// Mock mutex lock/unlock operations
 			mockAPI.On("KVSetWithOptions", mock.MatchedBy(func(key string) bool {
-				return key == "mutex_migrate_separate_services_from_bots" || key == "migrate_separate_services_from_bots_done"
+				return key == "mutex_migrate_separate_services_from_bots"
 			}), mock.Anything, mock.Anything).Return(true, nil)
 
 			mockAPI.On("KVDelete", "mutex_migrate_separate_services_from_bots").Return(nil)
 
 			// Setup logging - accept variadic arguments for structured logging
-			mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
-			mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
-			mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+			mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+			mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+			mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
 
 			pluginAPI := pluginapi.NewClient(mockAPI, nil)
 
@@ -929,24 +1018,15 @@ func TestMigrateServicesToBots(t *testing.T) {
 		name           string
 		existingBots   []llm.BotConfig
 		oldConfigJSON  string
-		migrationDone  bool
 		expectMigrated bool
 		expectError    bool
 		validateResult func(t *testing.T, result config.Config)
 	}{
 		{
-			name:           "Migration already done - should skip",
-			existingBots:   []llm.BotConfig{},
-			migrationDone:  true,
-			expectMigrated: false,
-			expectError:    false,
-		},
-		{
-			name: "Bots already exist - should skip and mark as done",
+			name: "Bots already exist - should skip",
 			existingBots: []llm.BotConfig{
 				{ID: "bot1", Name: "bot1"},
 			},
-			migrationDone:  false,
 			expectMigrated: false,
 			expectError:    false,
 		},
@@ -967,7 +1047,6 @@ func TestMigrateServicesToBots(t *testing.T) {
 					]
 				}
 			}`,
-			migrationDone:  false,
 			expectMigrated: true,
 			expectError:    false,
 			validateResult: func(t *testing.T, result config.Config) {
@@ -1011,7 +1090,6 @@ func TestMigrateServicesToBots(t *testing.T) {
 					]
 				}
 			}`,
-			migrationDone:  false,
 			expectMigrated: true,
 			expectError:    false,
 			validateResult: func(t *testing.T, result config.Config) {
@@ -1052,7 +1130,6 @@ func TestMigrateServicesToBots(t *testing.T) {
 					]
 				}
 			}`,
-			migrationDone:  false,
 			expectMigrated: true,
 			expectError:    false,
 			validateResult: func(t *testing.T, result config.Config) {
@@ -1073,27 +1150,17 @@ func TestMigrateServicesToBots(t *testing.T) {
 			// Setup mock API
 			mockAPI := &plugintest.API{}
 
-			// Setup KV store for migration flag
-			// KVGet returns ([]byte, error) - need to return JSON-marshaled bool
-			var migrationBytes []byte
-			if tt.migrationDone {
-				migrationBytes = []byte("true")
-			} else {
-				migrationBytes = []byte("false")
-			}
-			mockAPI.On("KVGet", "migrate_services_to_bots_done").Return(migrationBytes, nil)
-
-			// Mock mutex lock/unlock operations (cluster.Mutex uses KVSetWithOptions for locking)
+			// Mock mutex lock/unlock operations
 			mockAPI.On("KVSetWithOptions", mock.MatchedBy(func(key string) bool {
-				return key == "mutex_migrate_services_to_bots" || key == "migrate_services_to_bots_done"
+				return key == "mutex_migrate_services_to_bots"
 			}), mock.Anything, mock.Anything).Return(true, nil)
 
 			mockAPI.On("KVDelete", "mutex_migrate_services_to_bots").Return(nil)
 
 			// Setup logging
-			mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
-			mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
-			mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+			mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+			mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+			mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
 
 			// Mock LoadPluginConfiguration for cases where we need to load old config
 			if tt.oldConfigJSON != "" {

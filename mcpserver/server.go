@@ -7,6 +7,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -16,12 +17,12 @@ type MattermostMCPServer struct {
 	mcpServer    *mcp.Server
 	authProvider auth.AuthenticationProvider
 	logger       loggerlib.Logger
-	config       ServerConfig
+	config       types.ServerConfig
 }
 
 // registerTools registers all tools using the tool provider
 func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode) {
-	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config.GetMMServerURL(), s.config.GetMMInternalServerURL(), s.config.GetDevMode(), accessMode)
+	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode)
 	toolProvider.ProvideTools(s.mcpServer)
 }
 
