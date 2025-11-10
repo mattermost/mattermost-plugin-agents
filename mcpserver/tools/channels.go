@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -313,7 +314,13 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 
 			// Search scope
 			if args.TeamID != "" {
-				notFoundMsg.WriteString(" (searched within specified team)")
+				// Try to get team name for better error message
+				team, _, teamErr := client.GetTeam(ctx, args.TeamID, "")
+				if teamErr == nil {
+					notFoundMsg.WriteString(fmt.Sprintf(" (searched within team '%s', ID: %s)", team.DisplayName, args.TeamID))
+				} else {
+					notFoundMsg.WriteString(fmt.Sprintf(" (searched within team ID: %s)", args.TeamID))
+				}
 			} else {
 				notFoundMsg.WriteString(" (searched across all teams)")
 			}
