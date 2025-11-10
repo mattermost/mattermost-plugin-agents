@@ -273,7 +273,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 		channel, resp, err = client.GetChannel(ctx, args.ChannelID, "")
 		if err != nil {
 			// Check if it's a 404 (not found) - return success with message
-			if resp != nil && resp.StatusCode == 404 {
+			if resp != nil && resp.StatusCode == http.StatusNotFound {
 				return fmt.Sprintf("No channel found with ID '%s'. The channel may have been deleted or you may not have access to it.", args.ChannelID), nil
 			}
 			// Real error (network, auth, etc.)
