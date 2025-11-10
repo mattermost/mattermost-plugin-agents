@@ -100,6 +100,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	// Try to discover OAuth endpoints using RFC 8414/9728
 	authURL := baseURL + "/authorize" // Fallback
 	tokenURL := baseURL + "/token"    // Fallback
+	authServerURL := baseURL          // Fallback - use protected resource as auth server
 
 	// Attempt discovery (best effort, fall back to hardcoded endpoints if it fails)
 	if protectedMetadata, discErr := discoverProtectedResourceMetadata(ctx, baseURL, metadataURL); discErr == nil {
@@ -109,6 +110,8 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 			if authMetadata, authErr := discoverAuthorizationServerMetadata(ctx, authServerIssuer); authErr == nil {
 				authURL = authMetadata.AuthorizationEndpoint
 				tokenURL = authMetadata.TokenEndpoint
+				// Per OAuth best practices, credentials are registered with the authorization server
+				authServerURL = authServerIssuer
 			}
 		}
 	} else {
@@ -117,11 +120,14 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 		if authMetadata, authErr := discoverAuthorizationServerMetadata(ctx, baseURL); authErr == nil {
 			authURL = authMetadata.AuthorizationEndpoint
 			tokenURL = authMetadata.TokenEndpoint
+			// authServerURL already set to baseURL above
 		}
 	}
 
-	// Get client credentials for this server
-	clientCreds, err := m.loadOrCreateClientCredentials(ctx, baseURL)
+	// Get client credentials for the authorization server (not the protected resource)
+	// Per OAuth 2.0 best practices, client credentials are registered with and belong to
+	// the authorization server, not the protected resource
+	clientCreds, err := m.loadOrCreateClientCredentials(ctx, authServerURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client credentials: %w", err)
 	}
