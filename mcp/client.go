@@ -220,21 +220,20 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 
 	httpClient := c.httpClient(headers)
 
-	// Create an SSE transport with the authenticated HTTP client
-	transport := &mcp.SSEClientTransport{
+	// Try new Streamable HTTP transport first (2025-03-26 spec).
+	// This will POST InitializeRequest and detect if the server supports the new transport.
+	session, errStreamable := client.Connect(ctx, &mcp.StreamableClientTransport{
 		Endpoint:   serverConfig.BaseURL,
 		HTTPClient: httpClient,
-	}
-
-	// Try to connect using the OAuth-enabled SSE transport
-	session, errSSEConnect := client.Connect(ctx, transport, nil)
-	if errSSEConnect == nil {
-		// Successfully connected with OAuth
+	}, nil)
+	if errStreamable == nil {
+		// Successfully connected using Streamable HTTP transport
 		return session, nil
 	}
 
+	// Check for OAuth error from Streamable HTTP attempt
 	var mcpAuthErr *mcpUnauthrorized
-	if errors.As(errSSEConnect, &mcpAuthErr) {
+	if errors.As(errStreamable, &mcpAuthErr) {
 		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, mcpAuthErr.MetadataURL())
 		if oauthErr != nil {
 			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
@@ -244,18 +243,29 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 		}
 	}
 
-	// Unauthenticated HTTP
-	session, errUnauthHTTP := client.Connect(ctx, &mcp.StreamableClientTransport{
+	// Fallback to old HTTP+SSE transport for backwards compatibility (2024-11-05 spec)
+	session, errSSE := client.Connect(ctx, &mcp.SSEClientTransport{
 		Endpoint:   serverConfig.BaseURL,
 		HTTPClient: httpClient,
 	}, nil)
-	if errUnauthHTTP == nil {
-		// Successfully connected without authentication
+	if errSSE == nil {
+		// Successfully connected using SSE transport
 		return session, nil
 	}
 
+	// Check for OAuth error from SSE attempt
+	if errors.As(errSSE, &mcpAuthErr) {
+		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, mcpAuthErr.MetadataURL())
+		if oauthErr != nil {
+			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
+		}
+		return nil, &OAuthNeededError{
+			authURL: authURL,
+		}
+	}
+
 	// If we reach here, all connection attempts failed
-	return nil, fmt.Errorf("failed to connect to MCP server %s, SSE: %w, HTTP: %w", c.config.Name, errSSEConnect, errUnauthHTTP)
+	return nil, fmt.Errorf("failed to connect to MCP server %s, Streamable HTTP: %w, SSE: %w", c.config.Name, errStreamable, errSSE)
 }
 
 // Close closes the connection to the MCP server
