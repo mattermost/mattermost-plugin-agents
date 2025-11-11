@@ -54,13 +54,21 @@ func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHa
 		nil, // ServerOptions
 	)
 
+	trackAIGenerated := true
+
+	// Create server config for tool provider
+	config := BaseConfig{
+		MMServerURL:         siteURL,
+		MMInternalServerURL: "",
+		DevMode:             false,
+		TrackAIGenerated:    &trackAIGenerated,
+	}
+
 	// Register tools with remote access mode
 	toolProvider := tools.NewMattermostToolProvider(
 		authProvider,
 		logger,
-		siteURL, // External server URL
-		"",      // Internal server URL (use external)
-		false,   // devMode
+		config,
 		tools.AccessModeRemote,
 	)
 	toolProvider.ProvideTools(mcpServer)
