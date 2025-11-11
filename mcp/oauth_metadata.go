@@ -43,31 +43,32 @@ func discoverProtectedResourceMetadata(ctx context.Context, baseURL, metadataURL
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request for protected resource metadata: %w", err)
+		return nil, fmt.Errorf("failed to create request for protected resource metadata from %s: %w", metadataURL, err)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch protected resource metadata: %w", err)
+		return nil, fmt.Errorf("failed to fetch protected resource metadata from %s: %w", metadataURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch protected resource metadata: HTTP %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to fetch protected resource metadata from %s: HTTP %d: %s", metadataURL, resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read protected resource metadata response: %w", err)
+		return nil, fmt.Errorf("failed to read protected resource metadata response from %s: %w", metadataURL, err)
 	}
 
 	var metadata ProtectedResourceMetadata
 	if err := json.Unmarshal(body, &metadata); err != nil {
-		return nil, fmt.Errorf("failed to parse protected resource metadata JSON: %w", err)
+		return nil, fmt.Errorf("failed to parse protected resource metadata JSON from %s: %w (body: %s)", metadataURL, err, string(body))
 	}
 
 	if len(metadata.AuthorizationServers) == 0 {
-		return nil, fmt.Errorf("no authorization servers found in protected resource metadata")
+		return nil, fmt.Errorf("no authorization servers found in protected resource metadata from %s", metadataURL)
 	}
 
 	return &metadata, nil
@@ -84,38 +85,39 @@ func discoverAuthorizationServerMetadata(ctx context.Context, authServerIssuer s
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request for authorization server metadata: %w", err)
+		return nil, fmt.Errorf("failed to create request for authorization server metadata from %s: %w", metadataURL, err)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch authorization server metadata: %w", err)
+		return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: %w", metadataURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch authorization server metadata: HTTP %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: HTTP %d: %s", metadataURL, resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read authorization server metadata response: %w", err)
+		return nil, fmt.Errorf("failed to read authorization server metadata response from %s: %w", metadataURL, err)
 	}
 
 	var metadata AuthorizationServerMetadata
 	if err := json.Unmarshal(body, &metadata); err != nil {
-		return nil, fmt.Errorf("failed to parse authorization server metadata JSON: %w", err)
+		return nil, fmt.Errorf("failed to parse authorization server metadata JSON from %s: %w (body: %s)", metadataURL, err, string(body))
 	}
 
 	// Validate required fields according to RFC 8414
 	if metadata.Issuer == "" {
-		return nil, fmt.Errorf("missing required 'issuer' field in authorization server metadata")
+		return nil, fmt.Errorf("missing required 'issuer' field in authorization server metadata from %s", metadataURL)
 	}
 	if metadata.AuthorizationEndpoint == "" {
-		return nil, fmt.Errorf("missing required 'authorization_endpoint' field in authorization server metadata")
+		return nil, fmt.Errorf("missing required 'authorization_endpoint' field in authorization server metadata from %s", metadataURL)
 	}
 	if metadata.TokenEndpoint == "" {
-		return nil, fmt.Errorf("missing required 'token_endpoint' field in authorization server metadata")
+		return nil, fmt.Errorf("missing required 'token_endpoint' field in authorization server metadata from %s", metadataURL)
 	}
 
 	// Validate that the issuer matches the expected value
