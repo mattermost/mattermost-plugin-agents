@@ -90,7 +90,7 @@ func (b *MMBots) EnsureBots() error {
 			continue
 		}
 
-		// Validate service exists
+		// Get service by ID
 		service, ok := b.config.GetServiceByID(botCfg.ServiceID)
 		if !ok {
 			b.pluginAPI.Log.Error("Bot references non-existent service", "bot_name", botCfg.Name, "service_id", botCfg.ServiceID)
@@ -177,20 +177,20 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	var result llm.LanguageModel
 	switch serviceConfig.Type {
 	case llm.ServiceTypeOpenAI:
-		result = openai.New(config.OpenAIConfigFromServiceConfig(serviceConfig, botConfig.EnabledNativeTools), b.llmUpstreamHTTPClient)
+		result = openai.New(config.OpenAIConfigFromServiceConfig(serviceConfig, botConfig), b.llmUpstreamHTTPClient)
 	case llm.ServiceTypeOpenAICompatible:
-		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfig(serviceConfig, botConfig.EnabledNativeTools), b.llmUpstreamHTTPClient)
+		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfig(serviceConfig, botConfig), b.llmUpstreamHTTPClient)
 	case llm.ServiceTypeAzure:
-		result = openai.NewAzure(config.OpenAIConfigFromServiceConfig(serviceConfig, botConfig.EnabledNativeTools), b.llmUpstreamHTTPClient)
+		result = openai.NewAzure(config.OpenAIConfigFromServiceConfig(serviceConfig, botConfig), b.llmUpstreamHTTPClient)
 	case llm.ServiceTypeAnthropic:
-		result = anthropic.New(serviceConfig, botConfig.EnabledNativeTools, b.llmUpstreamHTTPClient)
+		result = anthropic.New(serviceConfig, botConfig, b.llmUpstreamHTTPClient)
 	case llm.ServiceTypeASage:
 		result = asage.New(serviceConfig, b.llmUpstreamHTTPClient)
 	case llm.ServiceTypeCohere:
 		// Set the Cohere OpenAI compatibility endpoint
 		cohereCfg := serviceConfig
 		cohereCfg.APIURL = "https://api.cohere.ai/compatibility/v1"
-		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfig(cohereCfg, botConfig.EnabledNativeTools), b.llmUpstreamHTTPClient)
+		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfig(cohereCfg, botConfig), b.llmUpstreamHTTPClient)
 	default:
 		b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
 		return nil, fmt.Errorf("unsupported service type: %s", serviceConfig.Type)
@@ -229,11 +229,11 @@ func (b *MMBots) GetTranscribe() Transcriber {
 	service := bot.service
 	switch service.Type {
 	case llm.ServiceTypeOpenAI:
-		return openai.New(config.OpenAIConfigFromServiceConfig(service, bot.cfg.EnabledNativeTools), b.llmUpstreamHTTPClient)
+		return openai.New(config.OpenAIConfigFromServiceConfig(service, bot.cfg), b.llmUpstreamHTTPClient)
 	case llm.ServiceTypeOpenAICompatible:
-		return openai.NewCompatible(config.OpenAIConfigFromServiceConfig(service, bot.cfg.EnabledNativeTools), b.llmUpstreamHTTPClient)
+		return openai.NewCompatible(config.OpenAIConfigFromServiceConfig(service, bot.cfg), b.llmUpstreamHTTPClient)
 	case llm.ServiceTypeAzure:
-		return openai.NewAzure(config.OpenAIConfigFromServiceConfig(service, bot.cfg.EnabledNativeTools), b.llmUpstreamHTTPClient)
+		return openai.NewAzure(config.OpenAIConfigFromServiceConfig(service, bot.cfg), b.llmUpstreamHTTPClient)
 	default:
 		b.pluginAPI.Log.Error("Unsupported service type for transcript generator",
 			"bot_name", bot.GetMMBot().Username,

@@ -102,8 +102,7 @@ func TestClient_CallTool_ReadChannel(t *testing.T) {
 
 	// Validate output content based on what read_channel tool returns
 	assert.NotEmpty(t, result, "Result should not be empty")
-	assert.Contains(t, result, "Found", "Result should contain 'Found' (part of output format)")
-	assert.Contains(t, result, "posts in channel", "Result should mention posts in channel")
+	assert.Contains(t, result, "Found 2 posts", "Result should show 'Found 2 posts' (system messages for user joining)")
 
 	t.Logf("Tool result:\n%s", result)
 }

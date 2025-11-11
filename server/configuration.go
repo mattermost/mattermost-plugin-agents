@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-ai/config"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 // configuration captures the plugin's external configuration as exposed in the Mattermost server
@@ -43,7 +44,22 @@ func (p *Plugin) OnConfigurationChange() error {
 		return fmt.Errorf("failed to load plugin configuration: %w", err)
 	}
 
-	p.configuration.Update(&configuration.Config)
+	// Run migrations on the newly loaded configuration
+	pluginAPI := pluginapi.NewClient(p.API, p.Driver)
+	potentiallyUpdatedConfig, wasUpdated, err := runAllMigrations(p.API, pluginAPI, configuration.Config)
+	if err != nil {
+		pluginAPI.Log.Error("Failed to run migrations on configuration change", "error", err)
+		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	// Update in-memory representation with the final (potentially migrated) config
+	// The save to disk is already handled by runAllMigrations if changes were made
+	finalConfig := configuration.Config
+	if wasUpdated {
+		finalConfig = potentiallyUpdatedConfig
+		pluginAPI.Log.Info("Configuration migrated in OnConfigurationChange")
+	}
+	p.configuration.Update(&finalConfig)
 
 	return nil
 }

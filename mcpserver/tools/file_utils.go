@@ -16,6 +16,38 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// GetDataDirectoryInternal is the internal function that can be overridden in tests
+var GetDataDirectoryInternal = getDataDirectory
+
+// getDataDirectory returns the path to the MCP server data directory
+func getDataDirectory() (string, error) {
+	execPath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	// More explicit: expect binary in mcpserver/bin, data in mcpserver/data
+	execDir := filepath.Dir(execPath)
+	mcpRoot := filepath.Dir(execDir) // up one level from bin/
+	dataDir := filepath.Join(mcpRoot, "data")
+
+	// Validate the structure to catch deployment issues early
+	if filepath.Base(execDir) != "bin" {
+		return "", fmt.Errorf("executable not in expected 'bin' directory structure")
+	}
+
+	return dataDir, nil
+}
+
+// EnsureDataDirectory creates the data directory if it doesn't exist
+func EnsureDataDirectory() error {
+	dataDir, err := GetDataDirectoryInternal()
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(dataDir, 0700)
+}
+
 // fetchFileDataForLocal fetches file data from a file path or URL (local access only)
 func fetchFileDataForLocal(filespec string, accessMode AccessMode) ([]byte, error) {
 	if filespec == "" {
@@ -48,7 +80,26 @@ func fetchFileDataForLocal(filespec string, accessMode AccessMode) ([]byte, erro
 	}
 
 	cleanPath := filepath.Clean(filespec)
-	file, err := os.Open(cleanPath)
+
+	// Use data directory as base for file operations
+	dataDir, err := GetDataDirectoryInternal()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get data directory: %w", err)
+	}
+
+	// Ensure data directory exists
+	if dirErr := EnsureDataDirectory(); dirErr != nil {
+		return nil, fmt.Errorf("failed to create data directory: %w", dirErr)
+	}
+
+	// Use os.Root for secure path traversal protection
+	root, err := os.OpenRoot(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open data directory root: %w", err)
+	}
+	defer root.Close()
+
+	file, err := root.Open(cleanPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
