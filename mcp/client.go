@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -201,6 +202,38 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 	return c, nil
 }
 
+// extractOAuthMetadataURL attempts to extract the OAuth metadata URL from an error message.
+// This is part of a temporary workaround
+// Returns the metadata URL and true if found, empty string and false otherwise.
+func extractOAuthMetadataURL(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+
+	errMsg := err.Error()
+	// Match the pattern from mcpUnauthrorized.Error():
+	// "OAuth authentication needed for resource at <URL>"
+	const prefix = "OAuth authentication needed for resource at "
+
+	idx := strings.Index(errMsg, prefix)
+	if idx == -1 {
+		return "", false
+	}
+
+	// Extract URL starting after the prefix
+	urlStart := idx + len(prefix)
+	remaining := errMsg[urlStart:]
+
+	// Find the end of the URL (either end of string, or before ": Got error:")
+	urlEnd := len(remaining)
+	if colonIdx := strings.Index(remaining, ":"); colonIdx != -1 {
+		urlEnd = colonIdx
+	}
+
+	metadataURL := strings.TrimSpace(remaining[:urlEnd])
+	return metadataURL, metadataURL != ""
+}
+
 func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (*mcp.ClientSession, error) {
 	// Prepare headers for remote servers
 	headers := make(map[string]string)
@@ -243,6 +276,18 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 		}
 	}
 
+	// Temporary workaround: check for OAuth error by string matching since go-sdk does not preserve error chains with %w
+	// remove when go-sdk is updated to support oauth directly.
+	if metadataURL, ok := extractOAuthMetadataURL(errStreamable); ok {
+		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, metadataURL)
+		if oauthErr != nil {
+			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
+		}
+		return nil, &OAuthNeededError{
+			authURL: authURL,
+		}
+	}
+
 	// Fallback to old HTTP+SSE transport for backwards compatibility (2024-11-05 spec)
 	session, errSSE := client.Connect(ctx, &mcp.SSEClientTransport{
 		Endpoint:   serverConfig.BaseURL,
@@ -256,6 +301,18 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	// Check for OAuth error from SSE attempt
 	if errors.As(errSSE, &mcpAuthErr) {
 		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, mcpAuthErr.MetadataURL())
+		if oauthErr != nil {
+			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
+		}
+		return nil, &OAuthNeededError{
+			authURL: authURL,
+		}
+	}
+
+	// Temporary workaround: check for OAuth error by string matching since go-sdk does not preserve error chains with %w
+	// remove when go-sdk is updated to support oauth directly.
+	if metadataURL, ok := extractOAuthMetadataURL(errSSE); ok {
+		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, metadataURL)
 		if oauthErr != nil {
 			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
 		}
