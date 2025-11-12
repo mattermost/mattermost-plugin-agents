@@ -4,7 +4,7 @@
 import React, {useMemo} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
-import {ChevronDownIcon, ChevronRightIcon, AlertCircleOutlineIcon, CloseCircleOutlineIcon} from '@mattermost/compass-icons/components';
+import {ChevronDownIcon, ChevronRightIcon, CheckIcon, AlertCircleOutlineIcon, CloseCircleOutlineIcon} from '@mattermost/compass-icons/components';
 import {useSelector} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
