@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -109,7 +110,7 @@ func TestConstructWellKnownURL(t *testing.T) {
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error but got none")
-				} else if tt.errorSubstring != "" && !contains(err.Error(), tt.errorSubstring) {
+				} else if tt.errorSubstring != "" && !strings.Contains(err.Error(), tt.errorSubstring) {
 					t.Errorf("Expected error to contain %q, but got: %v", tt.errorSubstring, err)
 				}
 			} else {
@@ -122,18 +123,4 @@ func TestConstructWellKnownURL(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Helper function to check if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsAt(s, substr))
-}
-
-func containsAt(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
