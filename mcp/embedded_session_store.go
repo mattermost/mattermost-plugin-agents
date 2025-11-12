@@ -94,18 +94,17 @@ func (m *ClientManager) createEmbeddedSession(userID string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch user for embedded session: %w", err)
 	}
+	if user.DeleteAt != 0 {
+		return "", fmt.Errorf("cannot create embedded session for deleted user")
+	}
 
 	sessionDuration := m.sessionLengthDuration()
 	expiresAt := time.Now().Add(sessionDuration).UnixMilli()
-	roles := ""
-	if user != nil {
-		roles = user.GetRawRoles()
-	}
 
 	newSession := &model.Session{
-		UserId:    userID,
+		UserId:    user.Id,
 		Props:     map[string]string{"isMCP": "true"},
-		Roles:     roles,
+		Roles:     user.GetRawRoles(),
 		ExpiresAt: expiresAt,
 	}
 	created, err := m.pluginAPI.Session.Create(newSession)
@@ -117,7 +116,7 @@ func (m *ClientManager) createEmbeddedSession(userID string) (string, error) {
 		return "", fmt.Errorf("embedded session creation returned empty result")
 	}
 
-	if err := m.storeEmbeddedSessionID(userID, created.Id); err != nil {
+	if err := m.storeEmbeddedSessionID(user.Id, created.Id); err != nil {
 		return "", err
 	}
 
