@@ -170,7 +170,7 @@ const ResponseLabel = styled.div`
     line-height: 20px;
     color: rgba(var(--center-channel-color-rgb), 0.75);
     padding-top: 8px;
-    padding-left: 13px;
+    padding-left: 24px;
 `;
 
 const ResultContainer = styled.div`
