@@ -1,10 +1,10 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useMemo, useState} from 'react';
+import React, {useMemo} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
-import {ChevronDownIcon, ChevronRightIcon, DotsHorizontalIcon, CheckIcon, AlertCircleOutlineIcon, CloseCircleOutlineIcon, InformationOutlineIcon} from '@mattermost/compass-icons/components';
+import {ChevronDownIcon, ChevronRightIcon, AlertCircleOutlineIcon, CloseCircleOutlineIcon} from '@mattermost/compass-icons/components';
 import {useSelector} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
@@ -15,7 +15,6 @@ import {ToolCall, ToolCallStatus} from './llmbot_post/llmbot_post';
 
 import LoadingSpinner from './assets/loading_spinner';
 import IconCheckCircle from './assets/icon_check_circle';
-import DotMenu, {DropdownMenuItem} from './dot_menu';
 
 // Styled components based on the Figma design
 const ToolCallCard = styled.div`
@@ -141,126 +140,11 @@ const ResponseRejectedIcon = styled(CloseCircleOutlineIcon)`
     height: 16px;
 `;
 
-const DotMenuContainer = styled.div`
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-`;
-
-const MenuGroupTitle = styled.div`
-    padding: 6px 20px;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 16px;
-    letter-spacing: 0.24px;
-    text-transform: uppercase;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    background: var(--center-channel-bg);
-`;
-
-const CheckIconContainer = styled.span`
-    display: inline-flex;
-    align-items: center;
-    margin-left: auto;
-    color: var(--button-bg);
-    flex-shrink: 0;
-`;
-
-const MenuItemLabel = styled.span`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-`;
-
-const InfoIconWrapper = styled.span`
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-`;
-
-const InfoIcon = styled(InformationOutlineIcon)`
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    flex-shrink: 0;
-    cursor: pointer;
-`;
-
-const TooltipContainer = styled.div`
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 1000;
-    pointer-events: none;
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 0.2s ease, visibility 0.2s ease;
-
-    ${InfoIconWrapper}:hover & {
-        opacity: 1;
-        visibility: visible;
-    }
-`;
-
-const TooltipContent = styled.div`
-    background: #1b1d22;
-    border-radius: 4px;
-    box-shadow: 0px 6px 14px 0px rgba(0, 0, 0, 0.12);
-    padding: 6px 12px;
-    font-family: 'Open Sans', sans-serif;
-    font-weight: 400;
-    font-size: 12px;
-    line-height: 16px;
-    color: white;
-    min-width: 240px;
-    max-width: 240px;
-    word-wrap: break-word;
-`;
-
-const TooltipArrow = styled.div`
-    position: absolute;
-    bottom: -4px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 0;
-    height: 0;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 4px solid #1b1d22;
-`;
-
-const PermissionMenuItem = styled(DropdownMenuItem)`
-    display: flex !important;
-    width: 100%;
-    justify-content: space-between;
-    align-items: center;
-    gap: 32px;
-`;
-
 const ButtonContainer = styled.div`
     display: flex;
     gap: 8px;
     margin-top: 8px;
     padding-left: 42px;
-`;
-
-const AcceptAllButton = styled.button`
-    background: var(--button-bg);
-    color: var(--button-color);
-    border: none;
-    padding: 8px 16px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 16px;
-    cursor: pointer;
-
-    &:hover {
-        background: rgba(var(--button-bg-rgb), 0.88);
-    }
-
-    &:active {
-        background: rgba(var(--button-bg-rgb), 0.92);
-    }
 `;
 
 const AcceptButton = styled.button`
@@ -333,10 +217,6 @@ interface ToolCardProps {
     onToggleCollapse: () => void;
     onApprove?: () => void;
     onReject?: () => void;
-    onAcceptAll?: () => void;
-    onPermissionChange?: (permission: 'ask' | 'auto-approve') => void;
-    autoApproved?: boolean;
-    permissionsLoading?: boolean;
 }
 
 const ToolCard: React.FC<ToolCardProps> = ({
@@ -346,21 +226,12 @@ const ToolCard: React.FC<ToolCardProps> = ({
     onToggleCollapse,
     onApprove,
     onReject,
-    onAcceptAll,
-    onPermissionChange,
-    autoApproved,
-    permissionsLoading,
 }) => {
-    const [showTooltip, setShowTooltip] = useState(false);
-
     const isPending = tool.status === ToolCallStatus.Pending;
     const isAccepted = tool.status === ToolCallStatus.Accepted;
     const isSuccess = tool.status === ToolCallStatus.Success;
     const isError = tool.status === ToolCallStatus.Error;
     const isRejected = tool.status === ToolCallStatus.Rejected;
-
-    // When permissions are loading for a pending tool, force collapsed state
-    const effectivelyCollapsed = isCollapsed || (isPending && (permissionsLoading ?? false));
 
     // Convert underscores to spaces and capitalize first letter of each word
     // (e.g., "create_post" -> "Create Post")
@@ -431,86 +302,23 @@ const ToolCard: React.FC<ToolCardProps> = ({
     return (
         <ToolCallCard>
             <ToolCallHeader
-                isCollapsed={effectivelyCollapsed}
+                isCollapsed={isCollapsed}
                 onClick={onToggleCollapse}
             >
                 <StyledChevronIcon>
-                    {effectivelyCollapsed ? <ChevronRightIcon size={16}/> : <ChevronDownIcon size={16}/>}
+                    {isCollapsed ? <ChevronRightIcon size={16}/> : <ChevronDownIcon size={16}/>}
                 </StyledChevronIcon>
                 <StatusIcon>
-                    {isPending && !isProcessing && !permissionsLoading && <SmallSpinner/>}
-                    {isPending && permissionsLoading && <SmallSpinner/>}
+                    {isPending && !isProcessing && <SmallSpinner/>}
                     {(isAccepted || (isPending && isProcessing)) && <SmallSpinner/>}
                     {isSuccess && <SmallSuccessIcon size={16}/>}
                     {isError && <SmallErrorIcon size={16}/>}
                     {isRejected && <SmallRejectedIcon size={16}/>}
                 </StatusIcon>
                 <ToolName>{displayName}</ToolName>
-
-                {!isPending && onPermissionChange && (
-                    <DotMenuContainer
-                        onClick={(e) => {
-                            e.stopPropagation();
-                        }}
-                    >
-                        <DotMenu
-                            icon={<DotsHorizontalIcon size={16}/>}
-                            closeOnClick={true}
-                        >
-                            <MenuGroupTitle>
-                                <FormattedMessage
-                                    id='ai.tool_call.permission.menu_title'
-                                    defaultMessage='On tool request'
-                                />
-                            </MenuGroupTitle>
-                            <PermissionMenuItem
-                                onClick={() => onPermissionChange('auto-approve')}
-                            >
-                                <MenuItemLabel>
-                                    <FormattedMessage
-                                        id='ai.tool_call.permission.auto_approve'
-                                        defaultMessage='Allow everytime'
-                                    />
-                                    <InfoIconWrapper
-                                        onMouseEnter={() => setShowTooltip(true)}
-                                        onMouseLeave={() => setShowTooltip(false)}
-                                    >
-                                        <InfoIcon size={16}/>
-                                        {showTooltip && (
-                                            <TooltipContainer>
-                                                <TooltipContent>
-                                                    {'All allowed commands will be run automatically. Use at your own risk.'}
-                                                </TooltipContent>
-                                                <TooltipArrow/>
-                                            </TooltipContainer>
-                                        )}
-                                    </InfoIconWrapper>
-                                </MenuItemLabel>
-                                {autoApproved && (
-                                    <CheckIconContainer>
-                                        <CheckIcon size={16}/>
-                                    </CheckIconContainer>
-                                )}
-                            </PermissionMenuItem>
-                            <PermissionMenuItem
-                                onClick={() => onPermissionChange('ask')}
-                            >
-                                <FormattedMessage
-                                    id='ai.tool_call.permission.ask'
-                                    defaultMessage='Ask me everytime'
-                                />
-                                {!autoApproved && (
-                                    <CheckIconContainer>
-                                        <CheckIcon size={16}/>
-                                    </CheckIconContainer>
-                                )}
-                            </PermissionMenuItem>
-                        </DotMenu>
-                    </DotMenuContainer>
-                )}
             </ToolCallHeader>
 
-            {!effectivelyCollapsed && (
+            {!isCollapsed && (
                 <>
                     <ToolCallArguments>{renderedArguments}</ToolCallArguments>
 
@@ -540,8 +348,8 @@ const ToolCard: React.FC<ToolCardProps> = ({
                 </>
             )}
 
-            {isPending && !permissionsLoading && (
-                isProcessing || autoApproved ? (
+            {isPending && (
+                isProcessing ? (
                     <StatusContainer>
                         <ProcessingSpinnerContainer>
                             <ProcessingSpinner/>
@@ -553,17 +361,6 @@ const ToolCard: React.FC<ToolCardProps> = ({
                     </StatusContainer>
                 ) : (
                     <ButtonContainer>
-                        {onAcceptAll && (
-                            <AcceptAllButton
-                                onClick={onAcceptAll}
-                                disabled={isProcessing}
-                            >
-                                <FormattedMessage
-                                    id='ai.tool_call.accept_all'
-                                    defaultMessage='Accept all'
-                                />
-                            </AcceptAllButton>
-                        )}
                         <AcceptButton
                             onClick={onApprove}
                             disabled={isProcessing}

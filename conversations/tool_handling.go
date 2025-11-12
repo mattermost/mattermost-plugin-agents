@@ -11,7 +11,6 @@ import (
 	"slices"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -29,12 +28,6 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return err
 	}
 
-	// Get the root post ID for conversation-scoped permissions
-	rootPostID := post.RootId
-	if rootPostID == "" {
-		rootPostID = post.Id
-	}
-
 	toolsJSON := post.GetProp(streaming.ToolCallProp)
 	if toolsJSON == nil {
 		return errors.New("post missing pending tool calls")
@@ -46,13 +39,6 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return errors.New("post pending tool calls not valid JSON")
 	}
 
-	// Load auto-approved tools for this conversation
-	autoApprovedTools, err := mcp.GetAutoApprovedTools(c.mmClient, userID, rootPostID)
-	if err != nil {
-		c.mmClient.LogError("Failed to load auto-approved tools", "error", err)
-		autoApprovedTools = []string{} // Continue with empty list on error
-	}
-
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(
 		bot,
 		user,
@@ -61,31 +47,13 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	)
 
 	for i := range tools {
-		// Mark tools as auto-approved if they match the user's saved preferences
-		// This is used by the UI to display auto-approval status to the user
-		if slices.Contains(autoApprovedTools, tools[i].Name) {
-			tools[i].AutoApproved = true
-		}
-
-		// Check if tool should be executed (either explicitly accepted OR auto-approved)
-		shouldExecute := slices.Contains(acceptedToolIDs, tools[i].ID) || tools[i].AutoApproved
-
-		if shouldExecute {
+		if slices.Contains(acceptedToolIDs, tools[i].ID) {
 			result, resolveErr := llmContext.Tools.ResolveTool(tools[i].Name, func(args any) error {
 				return json.Unmarshal(tools[i].Arguments, args)
 			}, llmContext)
 			if resolveErr != nil {
-				// Check if this is a tool execution error (should show to user)
-				// vs a protocol/network error (should be obfuscated)
-				var toolExecErr *mcp.ToolExecutionError
-				if errors.As(resolveErr, &toolExecErr) {
-					// Tool execution error - show the actual error message
-					tools[i].Result = toolExecErr.Error()
-				} else {
-					c.mmClient.LogError("Tool execution error", "error", resolveErr, "tool", tools[i].Name, "post_id", post.Id)
-					// Protocol/network error
-					tools[i].Result = "Tool call failed"
-				}
+				// Maybe in the future we can return this to the user and have a retry. For now just tell the LLM it failed.
+				tools[i].Result = "Tool call failed"
 				tools[i].Status = llm.ToolCallStatusError
 				continue
 			}
@@ -150,59 +118,4 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	}
 
 	return nil
-}
-
-// HandleAutoApprovedToolCall is a simplified handler for auto-approved tool calls
-// This is called by the streaming service when all tools in a call are auto-approved
-func (c *Conversations) HandleAutoApprovedToolCall(postID string, toolIDs []string) {
-	post, err := c.mmClient.GetPost(postID)
-	if err != nil {
-		c.mmClient.LogError("Failed to get post for auto-approved tool call", "error", err, "post_id", postID)
-		return
-	}
-
-	channel, err := c.mmClient.GetChannel(post.ChannelId)
-	if err != nil {
-		c.mmClient.LogError("Failed to get channel for auto-approved tool call", "error", err, "post_id", postID)
-		return
-	}
-
-	requesterUserID := post.GetProp(streaming.LLMRequesterUserID)
-	if requesterUserID == nil {
-		c.mmClient.LogError("Post missing requester user ID", "post_id", postID)
-		return
-	}
-
-	userID, ok := requesterUserID.(string)
-	if !ok {
-		c.mmClient.LogError("Requester user ID is not a string", "post_id", postID)
-		return
-	}
-
-	// Verify permissions before executing auto-approved tools.
-	// Tool execution can trigger multi-turn conversations (tool results sent back to LLM,
-	// which may request more tools), so permissions could have changed since the conversation started.
-	// Check channel read permission
-	if !c.mmClient.HasPermissionToChannel(userID, channel.Id, model.PermissionReadChannel) {
-		c.mmClient.LogError("User no longer has channel permission for auto-approved tool call", "user_id", userID, "channel_id", channel.Id, "post_id", postID)
-		return
-	}
-
-	// Get bot to check usage restrictions
-	bot := c.bots.GetBotByID(post.UserId)
-	if bot == nil {
-		c.mmClient.LogError("Failed to get bot for auto-approved tool call", "post_id", postID)
-		return
-	}
-
-	// Check bot usage restrictions
-	if err := c.bots.CheckUsageRestrictions(userID, bot, channel); err != nil {
-		c.mmClient.LogError("Bot usage restrictions violated for auto-approved tool call", "error", err, "user_id", userID, "post_id", postID)
-		return
-	}
-
-	// Call HandleToolCall with all tool IDs accepted
-	if err := c.HandleToolCall(userID, post, channel, toolIDs); err != nil {
-		c.mmClient.LogError("Failed to handle auto-approved tool call", "error", err, "post_id", postID)
-	}
 }

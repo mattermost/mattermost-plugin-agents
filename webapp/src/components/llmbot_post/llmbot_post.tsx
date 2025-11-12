@@ -47,15 +47,12 @@ export interface ToolCall {
     arguments: any;
     result?: string;
     status: ToolCallStatus;
-    auto_approved?: boolean;
 }
 
 interface LLMBotPostProps {
     post: any;
     websocketRegister?: (postID: string, listenerID: string, handler: (msg: WebSocketMessage<any>) => void) => void;
     websocketUnregister?: (postID: string, listenerID: string) => void;
-    toolPermissionWebsocketRegister?: (rootPostID: string, listenerID: string, handler: (msg: WebSocketMessage<any>) => void) => void;
-    toolPermissionWebsocketUnregister?: (rootPostID: string, listenerID: string) => void;
 }
 
 const SearchResultsPropKey = 'search_results';
@@ -364,10 +361,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             {toolCalls && toolCalls.length > 0 && (
                 <ToolApprovalSet
                     postID={props.post.id}
-                    rootPostID={props.post.root_id || props.post.id}
                     toolCalls={toolCalls}
-                    websocketRegister={props.toolPermissionWebsocketRegister}
-                    websocketUnregister={props.toolPermissionWebsocketUnregister}
                 />
             )}
             { showPostbackButton &&

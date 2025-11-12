@@ -22,7 +22,7 @@ import (
 type Tool struct {
 	Name        string
 	Description string
-	Schema      *jsonschema.Schema
+	Schema      any
 	Resolver    ToolResolver
 }
 
@@ -46,13 +46,12 @@ const (
 
 // ToolCall represents a tool call. An empty result indicates that the tool has not yet been resolved.
 type ToolCall struct {
-	ID           string          `json:"id"`
-	Name         string          `json:"name"`
-	Description  string          `json:"description"`
-	Arguments    json.RawMessage `json:"arguments"`
-	Result       string          `json:"result"`
-	Status       ToolCallStatus  `json:"status"`
-	AutoApproved bool            `json:"auto_approved,omitempty"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Arguments   json.RawMessage `json:"arguments"`
+	Result      string          `json:"result"`
+	Status      ToolCallStatus  `json:"status"`
 }
 
 type ToolArgumentGetter func(args any) error

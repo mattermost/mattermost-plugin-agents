@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"strings"
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -20,16 +19,6 @@ const (
 	EmbeddedServerName = "Mattermost"
 	EmbeddedClientKey  = "embedded://mattermost"
 )
-
-// ToolExecutionError represents an error returned by the tool itself (IsError=true)
-// as opposed to a protocol/network error. The message should be shown to the user.
-type ToolExecutionError struct {
-	Message string
-}
-
-func (e *ToolExecutionError) Error() string {
-	return e.Message
-}
 
 // EmbeddedMCPServer interface for dependency injection
 type EmbeddedMCPServer interface {
@@ -284,6 +273,11 @@ func (c *Client) Tools() map[string]*mcp.Tool {
 
 // CallTool calls a tool on this MCP server
 func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]any) (string, error) {
+	return c.CallToolWithMetadata(ctx, toolName, args, nil)
+}
+
+// CallToolWithMetadata calls a tool on this MCP server with optional metadata
+func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, error) {
 	if c.session == nil {
 		return "", fmt.Errorf("MCP client not connected")
 	}
@@ -292,6 +286,11 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 	params := &mcp.CallToolParams{
 		Name:      toolName,
 		Arguments: args,
+	}
+
+	// Add metadata if provided
+	if metadata != nil {
+		params.Meta = mcp.Meta(metadata)
 	}
 
 	result, err := c.session.CallTool(ctx, params)
@@ -339,14 +338,6 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 				text += textContent.Text + "\n"
 			}
 		}
-
-		// Check if the result is an error (tool execution failed, not a protocol error)
-		if result.IsError {
-			// Return a special error type that indicates this is a tool execution error
-			// This will be handled differently from protocol errors
-			return "", &ToolExecutionError{Message: strings.TrimSpace(text)}
-		}
-
 		return text, nil
 	}
 

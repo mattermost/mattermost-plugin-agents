@@ -7,16 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 const PostStreamingControlCancel = "cancel"
@@ -28,9 +25,6 @@ const ReasoningSummaryProp = "reasoning_summary"
 const ReasoningSignatureProp = "reasoning_signature"
 const AnnotationsProp = "annotations"
 
-// ToolCallHandler is a callback for handling auto-approved tool calls
-type ToolCallHandler func(postID string, toolIDs []string)
-
 type Service interface {
 	StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error
 	StreamToNewDM(ctx context.Context, botID string, stream *llm.TextStreamResult, userID string, post *model.Post, respondingToPostID string) error
@@ -38,7 +32,6 @@ type Service interface {
 	StopStreaming(postID string)
 	GetStreamingContext(inCtx context.Context, postID string) (context.Context, error)
 	FinishStreaming(postID string)
-	SetToolCallHandler(handler ToolCallHandler)
 }
 
 type postStreamContext struct {
@@ -48,25 +41,18 @@ type postStreamContext struct {
 var ErrAlreadyStreamingToPost = fmt.Errorf("already streaming to post")
 
 type MMPostStreamService struct {
-	contexts        map[string]postStreamContext
-	contextsMutex   sync.Mutex
-	mmClient        mmapi.Client
-	i18n            *i18n.Bundle
-	pluginAPI       *pluginapi.Client
-	toolCallHandler ToolCallHandler
+	contexts      map[string]postStreamContext
+	contextsMutex sync.Mutex
+	mmClient      mmapi.Client
+	i18n          *i18n.Bundle
 }
 
-func NewMMPostStreamService(mmClient mmapi.Client, i18n *i18n.Bundle, pluginAPI *pluginapi.Client) *MMPostStreamService {
+func NewMMPostStreamService(mmClient mmapi.Client, i18n *i18n.Bundle) *MMPostStreamService {
 	return &MMPostStreamService{
-		contexts:  make(map[string]postStreamContext),
-		mmClient:  mmClient,
-		i18n:      i18n,
-		pluginAPI: pluginAPI,
+		contexts: make(map[string]postStreamContext),
+		mmClient: mmClient,
+		i18n:     i18n,
 	}
-}
-
-func (p *MMPostStreamService) SetToolCallHandler(handler ToolCallHandler) {
-	p.toolCallHandler = handler
 }
 
 func (p *MMPostStreamService) StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error {
@@ -327,34 +313,9 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 			case llm.EventTypeToolCalls:
 				// Handle tool call event
 				if toolCalls, ok := event.Value.([]llm.ToolCall); ok {
-					// Get requesting user ID and root post ID for permission checking
-					requesterUserID := post.GetProp(LLMRequesterUserID)
-					rootPostID := post.RootId
-					if rootPostID == "" {
-						rootPostID = post.Id
-					}
-
-					// Load auto-approved tools for this conversation
-					var autoApprovedTools []string
-					if requesterUserID != nil {
-						userID, ok := requesterUserID.(string)
-						if ok {
-							approvedTools, err := mcp.GetAutoApprovedTools(p.mmClient, userID, rootPostID)
-							if err != nil {
-								p.mmClient.LogError("Failed to load auto-approved tools", "error", err)
-							} else {
-								autoApprovedTools = approvedTools
-							}
-						}
-					}
-
-					// Check each tool call and mark auto-approved ones
+					// Ensure all tool calls have Pending status
 					for i := range toolCalls {
 						toolCalls[i].Status = llm.ToolCallStatusPending
-						// Mark if this tool is auto-approved
-						if slices.Contains(autoApprovedTools, toolCalls[i].Name) {
-							toolCalls[i].AutoApproved = true
-						}
 					}
 
 					// Add the tool call as a prop to the post
@@ -378,27 +339,6 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					}, &model.WebsocketBroadcast{
 						ChannelId: post.ChannelId,
 					})
-
-					// Check if all tools are auto-approved and trigger auto-execution
-					allAutoApproved := len(toolCalls) > 0
-					var autoApprovedIDs []string
-					for _, tc := range toolCalls {
-						if tc.AutoApproved {
-							autoApprovedIDs = append(autoApprovedIDs, tc.ID)
-						} else {
-							allAutoApproved = false
-						}
-					}
-
-					// If all tools are auto-approved, trigger execution via callback
-					if allAutoApproved && len(autoApprovedIDs) > 0 {
-						handler := p.toolCallHandler
-						if handler != nil {
-							handler(post.Id, autoApprovedIDs)
-						} else {
-							p.mmClient.LogError("Tool call handler is nil, cannot execute auto-approved tools", "post_id", post.Id)
-						}
-					}
 				}
 				return
 			case llm.EventTypeAnnotations:
