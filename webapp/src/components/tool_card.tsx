@@ -93,50 +93,44 @@ const ProcessingSpinner = styled(LoadingSpinner)`
 `;
 
 const SmallSpinner = styled(LoadingSpinner)`
-    width: 16px;
-    height: 16px;
+    width: 12px;
+    height: 12px;
 `;
 
 const SmallSuccessIcon = styled(CheckIcon)`
     color: var(--online-indicator);
-    min-width: 16px;
-    width: 16px;
-    height: 16px;
+    width: 12px;
+    height: 12px;
 `;
 
 const SmallErrorIcon = styled(AlertCircleOutlineIcon)`
     color: var(--error-text);
-    min-width: 16px;
-    width: 16px;
-    height: 16px;
+    width: 12px;
+    height: 12px;
 `;
 
 const SmallRejectedIcon = styled(CloseCircleOutlineIcon)`
     color: var(--dnd-indicator);
-    min-width: 16px;
-    width: 16px;
-    height: 16px;
+    width: 12px;
+    height: 12px;
 `;
 
 const ResponseSuccessIcon = styled(IconCheckCircle)`
     color: var(--online-indicator);
-    min-width: 16px;
-    width: 16px;
-    height: 16px;
+    width: 12px;
+    height: 12px;
 `;
 
 const ResponseErrorIcon = styled(AlertCircleOutlineIcon)`
     color: var(--error-text);
-    min-width: 16px;
-    width: 16px;
-    height: 16px;
+    width: 12px;
+    height: 12px;
 `;
 
 const ResponseRejectedIcon = styled(CloseCircleOutlineIcon)`
     color: var(--dnd-indicator);
-    min-width: 16px;
-    width: 16px;
-    height: 16px;
+    width: 12px;
+    height: 12px;
 `;
 
 const ButtonContainer = styled.div`
@@ -171,18 +165,17 @@ const ResponseLabel = styled.div`
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 14px;
+    font-size: 11px;
     font-weight: 600;
     line-height: 20px;
     color: rgba(var(--center-channel-color-rgb), 0.75);
     padding-top: 8px;
-    padding-bottom: 4px;
     padding-left: 13px;
 `;
 
 const ResultContainer = styled.div`
     margin: 0;
-    padding-left: 13px;
+    padding-left: 24px;
 
     // Style code blocks rendered by Mattermost
     pre {
