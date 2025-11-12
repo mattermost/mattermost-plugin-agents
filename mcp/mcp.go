@@ -38,6 +38,7 @@ type EmbeddedServerConfig struct {
 // Config contains the configuration for the MCP  servers
 type Config struct {
 	Enabled            bool                 `json:"enabled"`
+	EnablePluginServer bool                 `json:"enablePluginServer"`
 	Servers            []ServerConfig       `json:"servers"`
 	EmbeddedServer     EmbeddedServerConfig `json:"embeddedServer"`
 	IdleTimeoutMinutes int                  `json:"idleTimeoutMinutes"`
@@ -62,19 +63,10 @@ func DiscoverRemoteServerTools(
 	serverTools := client.Tools()
 	tools := make([]ToolInfo, 0, len(serverTools))
 	for _, tool := range serverTools {
-		var inputSchema map[string]interface{}
-		if tool.InputSchema.Properties != nil {
-			inputSchema = map[string]interface{}{
-				"type":       tool.InputSchema.Type,
-				"properties": tool.InputSchema.Properties,
-				"required":   tool.InputSchema.Required,
-			}
-		}
-
 		tools = append(tools, ToolInfo{
 			Name:        tool.Name,
 			Description: tool.Description,
-			InputSchema: inputSchema,
+			InputSchema: tool.InputSchema,
 		})
 	}
 
@@ -107,19 +99,10 @@ func DiscoverEmbeddedServerTools(
 	serverTools := client.Tools()
 	tools := make([]ToolInfo, 0, len(serverTools))
 	for _, tool := range serverTools {
-		var inputSchema map[string]interface{}
-		if tool.InputSchema.Properties != nil {
-			inputSchema = map[string]interface{}{
-				"type":       tool.InputSchema.Type,
-				"properties": tool.InputSchema.Properties,
-				"required":   tool.InputSchema.Required,
-			}
-		}
-
 		tools = append(tools, ToolInfo{
 			Name:        tool.Name,
 			Description: tool.Description,
-			InputSchema: inputSchema,
+			InputSchema: tool.InputSchema,
 		})
 	}
 

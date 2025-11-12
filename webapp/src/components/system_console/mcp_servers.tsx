@@ -25,6 +25,7 @@ export type MCPEmbeddedServerConfig = {
 
 export type MCPConfig = {
     enabled: boolean;
+    enablePluginServer: boolean;
     servers: MCPServerConfig[];
     embeddedServer: MCPEmbeddedServerConfig;
     idleTimeoutMinutes?: number;
@@ -239,6 +240,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     // Create a properly initialized config object
     const config: MCPConfig = {
         enabled: mcpConfig?.enabled || false,
+        enablePluginServer: mcpConfig?.enablePluginServer ?? false,
         servers: Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [],
         embeddedServer: mcpConfig?.embeddedServer || {
             enabled: !mcpConfig?.enabled,
@@ -323,10 +325,16 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                             <>
                                 <ItemList title={intl.formatMessage({defaultMessage: 'MCP Configuration'})}>
                                     <BooleanItem
-                                        label={intl.formatMessage({defaultMessage: 'Enable MCP'})}
+                                        label={intl.formatMessage({defaultMessage: 'Enable MCP Client'})}
                                         value={config.enabled}
                                         onChange={(enabled) => onChange({...config, enabled})}
-                                        helpText={intl.formatMessage({defaultMessage: 'Enable the Model Context Protocol (MCP) integration to access tools from MCP servers.'})}
+                                        helpText={intl.formatMessage({defaultMessage: 'Enable the Model Context Protocol (MCP) client to access tools from MCP servers. MCP tools will be available to your Mattermost AI agents.'})}
+                                    />
+                                    <BooleanItem
+                                        label={intl.formatMessage({defaultMessage: 'Enable Mattermost MCP Server (HTTP)'})}
+                                        value={config.enablePluginServer}
+                                        onChange={(enablePluginServer) => onChange({...config, enablePluginServer})}
+                                        helpText={intl.formatMessage({defaultMessage: 'Enable the Mattermost MCP server over HTTP to allow external MCP clients to access Mattermost channels, users, and posts through the MCP protocol.'})}
                                     />
                                     <TextItem
                                         label={intl.formatMessage({defaultMessage: 'Connection Idle Timeout (minutes)'})}
@@ -351,7 +359,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                                 enabled,
                                             },
                                         })}
-                                        helpText={intl.formatMessage({defaultMessage: 'Enable the built-in Mattermost MCP server that provides tools for accessing channels, users, and posts without external OAuth setup.'})}
+                                        helpText={intl.formatMessage({defaultMessage: 'Enable the built-in Mattermost MCP server that provides AI tools for reading/creating channels, posts, searching content, and managing users and teams. Tools operate with the permissions of the user who invokes them.'})}
                                     />
                                 </ItemList>
                                 <ServersList>
@@ -393,10 +401,16 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
             {!config.enabled && (
                 <ItemList title={intl.formatMessage({defaultMessage: 'MCP Configuration'})}>
                     <BooleanItem
-                        label={intl.formatMessage({defaultMessage: 'Enable MCP'})}
+                        label={intl.formatMessage({defaultMessage: 'Enable MCP Client'})}
                         value={config.enabled}
                         onChange={(enabled) => onChange({...config, enabled})}
-                        helpText={intl.formatMessage({defaultMessage: 'Enable the Model Context Protocol (MCP) integration to access tools from MCP servers.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'Enable the Model Context Protocol (MCP) client to access tools from MCP servers. MCP tools will be available to your Mattermost AI agents.'})}
+                    />
+                    <BooleanItem
+                        label={intl.formatMessage({defaultMessage: 'Enable Mattermost MCP Server (HTTP)'})}
+                        value={config.enablePluginServer}
+                        onChange={(enablePluginServer) => onChange({...config, enablePluginServer})}
+                        helpText={intl.formatMessage({defaultMessage: 'Enable the Mattermost MCP server over HTTP to allow external MCP clients (like Claude Desktop) to access Mattermost channels, users, and posts through the MCP protocol.'})}
                     />
                 </ItemList>
             )}

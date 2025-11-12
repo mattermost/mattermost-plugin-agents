@@ -138,13 +138,13 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 }
 
 // ProcessUserRequest processes a user request to a bot
-func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, sessionID string) (*llm.TextStreamResult, error) {
+func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post) (*llm.TextStreamResult, error) {
 	// Create a context with default tools
 	context := c.contextBuilder.BuildLLMContextUserRequest(
 		bot,
 		postingUser,
 		channel,
-		c.contextBuilder.WithLLMContextTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel), sessionID),
+		c.contextBuilder.WithLLMContextTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
 	)
 
 	// Check for auth errors in the tool store

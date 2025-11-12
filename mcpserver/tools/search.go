@@ -107,6 +107,27 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 		posts = posts[:args.Limit]
 	}
 
+	// Pre-fetch all unique channels and teams to avoid duplicate API calls
+	channelCache := make(map[string]*model.Channel)
+	teamCache := make(map[string]*model.Team)
+
+	for _, post := range posts {
+		if _, exists := channelCache[post.ChannelId]; !exists {
+			channel, _, err := client.GetChannel(ctx, post.ChannelId, "")
+			if err == nil {
+				channelCache[post.ChannelId] = channel
+
+				// Also fetch the team for this channel if not already cached
+				if _, teamExists := teamCache[channel.TeamId]; !teamExists {
+					team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+					if teamErr == nil {
+						teamCache[channel.TeamId] = team
+					}
+				}
+			}
+		}
+	}
+
 	// Format the response
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("Found %d posts matching '%s':\n\n", len(posts), args.Query))
@@ -121,10 +142,13 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 			result.WriteString(fmt.Sprintf("**Result %d** by %s:\n", i+1, user.Username))
 		}
 
-		// Get channel info
-		channel, _, err := client.GetChannel(ctx, post.ChannelId, "")
-		if err == nil {
-			result.WriteString(fmt.Sprintf("Channel: %s\n", channel.DisplayName))
+		// Get channel and team info from cache
+		if channel, exists := channelCache[post.ChannelId]; exists {
+			if team, teamExists := teamCache[channel.TeamId]; teamExists {
+				result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channel.DisplayName, team.DisplayName))
+			} else {
+				result.WriteString(fmt.Sprintf("Channel: %s\n", channel.DisplayName))
+			}
 		}
 
 		result.WriteString(fmt.Sprintf("Post ID: %s\n", post.Id))

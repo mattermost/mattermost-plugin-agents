@@ -204,7 +204,7 @@ func TestEnsureBots(t *testing.T) {
 				bots:     tc.cfgBots,
 				services: tc.cfgServices,
 			}
-			mmBots := New(mockAPI, client, licenseChecker, cfg, &http.Client{}, nil)
+			mmBots := New(mockAPI, client, licenseChecker, cfg, &http.Client{}, nil, nil)
 
 			defer mockAPI.AssertExpectations(t)
 

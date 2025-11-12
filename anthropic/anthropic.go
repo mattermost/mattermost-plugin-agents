@@ -13,6 +13,7 @@ import (
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
@@ -39,9 +40,11 @@ type Anthropic struct {
 	inputTokenLimit    int
 	outputTokenLimit   int
 	enabledNativeTools []string
+	reasoningEnabled   bool
+	thinkingBudget     int
 }
 
-func New(llmService llm.ServiceConfig, enabledNativeTools []string, httpClient *http.Client) *Anthropic {
+func New(llmService llm.ServiceConfig, botConfig llm.BotConfig, httpClient *http.Client) *Anthropic {
 	client := anthropicSDK.NewClient(
 		option.WithAPIKey(llmService.APIKey),
 		option.WithHTTPClient(httpClient),
@@ -52,7 +55,9 @@ func New(llmService llm.ServiceConfig, enabledNativeTools []string, httpClient *
 		defaultModel:       llmService.DefaultModel,
 		inputTokenLimit:    llmService.InputTokenLimit,
 		outputTokenLimit:   llmService.OutputTokenLimit,
-		enabledNativeTools: enabledNativeTools,
+		enabledNativeTools: botConfig.EnabledNativeTools,
+		reasoningEnabled:   botConfig.ReasoningEnabled,
+		thinkingBudget:     botConfig.ThinkingBudget,
 	}
 }
 
@@ -221,24 +226,8 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 	}
 
 	// Enable thinking/reasoning for models that support it
-	// We'll allocate a reasonable budget for thinking tokens (1/4 of max tokens, capped at 8192)
-	thinkingBudget := int64(state.config.MaxGeneratedTokens / 4)
-	if thinkingBudget > 8192 {
-		thinkingBudget = 8192
-	}
-	if thinkingBudget < 1024 {
-		thinkingBudget = 1024
-	}
-
-	// Anthropic requires a minimum thinking budget of 1024 tokens
-	// If the thinking budget is more than the max_tokens, Anthropic will return an error.
-	if thinkingBudget < int64(state.config.MaxGeneratedTokens) {
-		params.Thinking = anthropicSDK.ThinkingConfigParamUnion{
-			OfEnabled: &anthropicSDK.ThinkingConfigEnabledParam{
-				Type:         "enabled",
-				BudgetTokens: thinkingBudget,
-			},
-		}
+	if thinkingConfig, ok := a.calculateThinkingConfig(state.config.MaxGeneratedTokens); ok {
+		params.Thinking = thinkingConfig
 	}
 
 	stream := a.client.Messages.NewStreaming(context.Background(), params)
@@ -480,11 +469,21 @@ func (a *Anthropic) CountTokens(text string) int {
 func convertTools(tools []llm.Tool) []anthropicSDK.ToolUnionParam {
 	converted := make([]anthropicSDK.ToolUnionParam, len(tools))
 	for i, tool := range tools {
+		// Convert schema to the format Anthropic expects
+		inputSchema := anthropicSDK.ToolInputSchemaParam{}
+		if schema, ok := tool.Schema.(map[string]interface{}); ok {
+			if props, ok := schema["properties"].(map[string]interface{}); ok {
+				inputSchema.Properties = props
+			}
+		} else if schema, ok := tool.Schema.(*jsonschema.Schema); ok {
+			inputSchema.Properties = schema.Properties
+		}
+
 		converted[i] = anthropicSDK.ToolUnionParam{
 			OfTool: &anthropicSDK.ToolParam{
 				Name:        tool.Name,
 				Description: anthropicSDK.String(tool.Description),
-				InputSchema: anthropicSDK.ToolInputSchemaParam{Properties: tool.Schema.Properties},
+				InputSchema: inputSchema,
 			},
 		}
 	}
@@ -506,4 +505,46 @@ func (a *Anthropic) isNativeToolEnabled(toolName string) bool {
 		}
 	}
 	return false
+}
+
+// calculateThinkingConfig calculates the thinking configuration based on bot config and max tokens.
+// Returns the thinking config and a boolean indicating whether thinking should be enabled.
+func (a *Anthropic) calculateThinkingConfig(maxGeneratedTokens int) (anthropicSDK.ThinkingConfigParamUnion, bool) {
+	// Check if reasoning is enabled for this bot
+	if !a.reasoningEnabled {
+		return anthropicSDK.ThinkingConfigParamUnion{}, false
+	}
+
+	// Calculate thinking budget
+	var thinkingBudget int64
+	if a.thinkingBudget > 0 {
+		// Use configured budget
+		thinkingBudget = int64(a.thinkingBudget)
+	} else {
+		// Use default: 1/4 of max tokens, capped at 8192
+		thinkingBudget = int64(maxGeneratedTokens / 4)
+		if thinkingBudget > 8192 {
+			thinkingBudget = 8192
+		}
+	}
+
+	// Ensure minimum budget of 1024 tokens
+	if thinkingBudget < 1024 {
+		thinkingBudget = 1024
+	}
+
+	// Anthropic requires a minimum thinking budget of 1024 tokens
+	// If the thinking budget is more than the max_tokens, Anthropic will return an error.
+	if thinkingBudget >= int64(maxGeneratedTokens) {
+		return anthropicSDK.ThinkingConfigParamUnion{}, false
+	}
+
+	config := anthropicSDK.ThinkingConfigParamUnion{
+		OfEnabled: &anthropicSDK.ThinkingConfigEnabledParam{
+			Type:         "enabled",
+			BudgetTokens: thinkingBudget,
+		},
+	}
+
+	return config, true
 }

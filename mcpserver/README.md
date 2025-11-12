@@ -48,6 +48,7 @@ Create a new post in Mattermost.
 - `props` (optional): Post properties
 - `attachments` (optional): Array of file paths or URLs to attach to the post
   - **Note**: File paths only work with Claude Code; Claude Desktop cannot access local files
+  - **File Path Format**: Use relative paths like `document.pdf` or `folder/image.png` (files are accessed from the `mcpserver/data/` directory)
 
 ### `create_channel`
 Create a new channel in Mattermost.
@@ -103,11 +104,13 @@ The following tools are only available when the `-dev` flag is enabled:
 Create a new user account for testing scenarios.
 - **Parameters:** `username`, `email`, `password`, `first_name` (optional), `last_name` (optional), `nickname` (optional), `profile_image` (optional): File path or URL to set as profile image (supports .jpeg, .jpg, .png, .gif)
   - **Note**: File paths only work with Claude Code; Claude Desktop cannot access local files
+  - **File Path Format**: Use relative paths like `avatar.jpg` (files are accessed from the `mcpserver/data/` directory)
 
 #### `create_team`
 Create a new team.
 - **Parameters:** `name`, `display_name`, `type` (O for open, I for invite only), `description` (optional), `team_icon` (optional): File path or URL to set as team icon (supports .jpeg, .jpg, .png, .gif)
   - **Note**: File paths only work with Claude Code; Claude Desktop cannot access local files
+  - **File Path Format**: Use relative paths like `team-logo.png` (files are accessed from the `mcpserver/data/` directory)
 
 #### `add_user_to_team`
 Add a user to a team.
@@ -126,6 +129,7 @@ Create a post as a specific user using username/password login. Simply provide t
   - `root_id` (optional), `props` (optional)
   - `attachments` (optional): Array of file paths or URLs to attach to the post
   - **Note**: File paths only work with Claude Code; Claude Desktop cannot access local files
+  - **File Path Format**: Use relative paths like `document.pdf` or `folder/image.png` (files are accessed from the `mcpserver/data/` directory)
 
 ## Installation and Usage
 
@@ -137,7 +141,8 @@ Create a post as a specific user using username/password login. Simply provide t
    make mcp-server
    
    # Or manually from the project root
-   go build -o bin/mattermost-mcp-server ./mcpserver/cmd/main.go
+   mkdir -p mcpserver/bin
+   go build -o mcpserver/bin/mattermost-mcp-server ./mcpserver/cmd/main.go
    ```
 
 2. **Set up authentication:**
@@ -174,7 +179,7 @@ Create a post as a specific user using username/password login. Simply provide t
 #### Claude Code Integration
 
 ```bash
-claude mcp add mattermost -e MM_SERVER_URL=https://mattermost-url MM_ACCESS_TOKEN=<token> -- /path/to/mattermost-plugin-ai/bin/mattermost-mcp-server --dev --debug
+claude mcp add mattermost -e MM_SERVER_URL=https://mattermost-url MM_ACCESS_TOKEN=<token> -- /path/to/mattermost-plugin-ai/mcpserver/bin/mattermost-mcp-server --dev --debug
 ```
 
 #### Claude Desktop Integration
@@ -189,7 +194,7 @@ To use with Claude Desktop, add the server to your MCP configuration:
 {
   "mcpServers": {
     "mattermost": {
-      "command": "/path/to/mattermost-plugin-ai/bin/mattermost-mcp-server",
+      "command": "/path/to/mattermost-plugin-ai/mcpserver/bin/mattermost-mcp-server",
       "args": ["--debug"],
       "env": {
         "MM_SERVER_URL": "https://your-mattermost.com",
@@ -243,10 +248,44 @@ Development mode (`--dev` flag) enables additional tools for setting up realisti
 
 **Enable development mode:**
 ```bash
-./bin/mattermost-mcp-server --dev --server-url https://your-mattermost.com --token your-admin-pat-token
+./mcpserver/bin/mattermost-mcp-server --dev --server-url https://your-mattermost.com --token your-admin-pat-token
 ```
 
 **Security Note:** Development mode should only be used in development environments with admin-level access tokens, never in production.
+
+## File Operations
+
+The STDIO MCP server supports file attachments and uploads for various tools. Files are managed through a dedicated data directory for security and organization.
+
+### Data Directory
+
+All local file operations use the `mcpserver/data/` directory within your project:
+
+```
+mattermost-plugin-ai/
+├── mcpserver/
+│   ├── bin/
+│   │   └── mattermost-mcp-server  # MCP server binary
+│   ├── data/                      # File storage directory
+│   │   ├── documents/             # Example: organized folders
+│   │   ├── images/
+│   │   └── README.txt             # Example: files
+│   └── ...                        # Source code
+└── bin/                           # Other project binaries
+```
+
+### Supported Tools with File Operations
+
+- **`create_post`**: Attach files to posts using the `attachments` parameter
+- **`create_post_as_user`**: Attach files when posting as specific users  
+- **`create_user`**: Set profile images using the `profile_image` parameter (dev mode)
+- **`create_team`**: Set team icons using the `team_icon` parameter (dev mode)
+
+### File Management
+
+1. **Place files in the data directory**: Copy your files to `mcpserver/data/` or subdirectories within it
+2. **Reference with relative paths**: Use paths relative to the data directory (e.g., `report.pdf` for `mcpserver/data/report.pdf`)
+3. **Organize as needed**: Create subdirectories for better organization (e.g., `documents/`, `images/`)
 
 ### Advanced Configuration: Internal Server URL
 

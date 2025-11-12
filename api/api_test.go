@@ -74,6 +74,10 @@ func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
 	return nil
 }
 
+func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error) {
+	return "mock-session-id", nil
+}
+
 func (e *TestEnvironment) Cleanup(t *testing.T) {
 	if e.mockAPI != nil {
 		e.mockAPI.AssertExpectations(t)
@@ -113,7 +117,7 @@ func (t *testPluginAPI) PluginHTTP(req *http.Request) *http.Response {
 // createTestBots creates a test MMBots instance for testing
 func createTestBots(mockAPI *plugintest.API, client *pluginapi.Client) *bots.MMBots {
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	testBots := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+	testBots := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
 	return testBots
 }
 
@@ -147,7 +151,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 
 	cfg := &testConfigImpl{}
 
-	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{})
+	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil)
 
 	return &TestEnvironment{
 		api:     api,

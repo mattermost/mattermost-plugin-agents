@@ -15,9 +15,9 @@ import (
 
 // ToolInfo represents a tool's metadata for discovery purposes
 type ToolInfo struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	InputSchema map[string]interface{} `json:"inputSchema"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	InputSchema any    `json:"inputSchema"`
 }
 
 // UserClients represents a per-user MCP client with multiple server connections
@@ -175,6 +175,25 @@ func (c *UserClients) GetTools() []llm.Tool {
 	return tools
 }
 
+// prepareToolCallMetadata prepares metadata to be sent with MCP tool calls
+// This is where we inject context-specific information that tools need but shouldn't be in arguments
+func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Context) map[string]any {
+	// Only add metadata if we have a valid context
+	if llmContext == nil {
+		return nil
+	}
+
+	var metadata map[string]any
+
+	// For embedded server, inject Bot UserID for AI-generated content tracking
+	if client.config.Name == EmbeddedClientKey && llmContext.BotUserID != "" {
+		metadata = make(map[string]any)
+		metadata["bot_user_id"] = llmContext.BotUserID
+	}
+
+	return metadata
+}
+
 // createToolResolver creates a resolver function for the given tool
 func (c *UserClients) createToolResolver(client *Client, toolName string) func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 	return func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
@@ -183,6 +202,9 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 			return "", fmt.Errorf("failed to get arguments for tool %s: %w", toolName, err)
 		}
 
-		return client.CallTool(context.Background(), toolName, args)
+		// Prepare metadata for the tool call
+		metadata := c.prepareToolCallMetadata(client, llmContext)
+
+		return client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
 	}
 }
