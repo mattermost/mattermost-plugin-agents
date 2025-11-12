@@ -134,7 +134,7 @@ export const MinimalReasoningContainer = styled.div`
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	margin-bottom: 12px;
+	margin-bottom: 4px;
 	font-size: 14px;
 	color: rgba(var(--center-channel-color-rgb), 0.64);
 	cursor: pointer;

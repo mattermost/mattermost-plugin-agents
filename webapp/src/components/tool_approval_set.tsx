@@ -16,6 +16,7 @@ const ToolCallsContainer = styled.div`
     flex-direction: column;
     gap: 8px;
     margin-bottom: 12px;
+	margin-top: 8px;
 `;
 
 const StatusBar = styled.div`

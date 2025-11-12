@@ -31,14 +31,13 @@ const ToolCallHeader = styled.div<{isCollapsed: boolean}>`
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: ${(props) => (props.isCollapsed ? '0' : '8px')};
     cursor: pointer;
     user-select: none;
 `;
 
 const StyledChevronIcon = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.56);
-    min-width: 16px;
+	width: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -46,14 +45,14 @@ const StyledChevronIcon = styled.div`
 
 const StatusIcon = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.64);
-    min-width: 16px;
+	width: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
 `;
 
 const ToolName = styled.span`
-    font-size: 14px;
+    font-size: 11px;
     font-weight: 400;
     line-height: 20px;
     color: rgba(var(--center-channel-color-rgb), 0.75);
@@ -62,7 +61,7 @@ const ToolName = styled.span`
 
 const ToolCallArguments = styled.div`
     margin: 0;
-    padding-left: 13px;
+    padding-left: 24px;
 
     // Style code blocks rendered by Mattermost
     pre {
@@ -143,35 +142,16 @@ const ResponseRejectedIcon = styled(CloseCircleOutlineIcon)`
 const ButtonContainer = styled.div`
     display: flex;
     gap: 8px;
-    margin-top: 8px;
-    padding-left: 42px;
+    margin-top: 4px;
+    padding-left: 24px;
 `;
 
-const AcceptButton = styled.button`
+const AcceptRejectButton = styled.button`
     background: rgba(var(--button-bg-rgb), 0.08);
     color: var(--button-bg);
     border: none;
-    padding: 8px 16px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 16px;
-    cursor: pointer;
-
-    &:hover {
-        background: rgba(var(--button-bg-rgb), 0.12);
-    }
-
-    &:active {
-        background: rgba(var(--button-bg-rgb), 0.16);
-    }
-`;
-
-const RejectButton = styled.button`
-    background: rgba(var(--button-bg-rgb), 0.08);
-    color: var(--button-bg);
-    border: none;
-    padding: 8px 16px;
+    padding: 4px 10px;
+	height: 24px;
     border-radius: 4px;
     font-size: 12px;
     font-weight: 600;
@@ -361,7 +341,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
                     </StatusContainer>
                 ) : (
                     <ButtonContainer>
-                        <AcceptButton
+                        <AcceptRejectButton
                             onClick={onApprove}
                             disabled={isProcessing}
                         >
@@ -369,8 +349,8 @@ const ToolCard: React.FC<ToolCardProps> = ({
                                 id='ai.tool_call.approve'
                                 defaultMessage='Accept'
                             />
-                        </AcceptButton>
-                        <RejectButton
+                        </AcceptRejectButton>
+                        <AcceptRejectButton
                             onClick={onReject}
                             disabled={isProcessing}
                         >
@@ -378,7 +358,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
                                 id='ai.tool_call.reject'
                                 defaultMessage='Reject'
                             />
-                        </RejectButton>
+                        </AcceptRejectButton>
                     </ButtonContainer>
                 )
             )}
