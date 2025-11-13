@@ -107,6 +107,13 @@ func (m *ClientManager) createEmbeddedSession(userID string) (string, error) {
 		Roles:     user.GetRawRoles(),
 		ExpiresAt: expiresAt,
 	}
+
+	if user.IsGuest() {
+		newSession.AddProp(model.SessionPropIsGuest, "true")
+	} else {
+		newSession.AddProp(model.SessionPropIsGuest, "false")
+	}
+
 	created, err := m.pluginAPI.Session.Create(newSession)
 	if err != nil {
 		return "", fmt.Errorf("failed to create embedded session: %w", err)
