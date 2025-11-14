@@ -42,7 +42,7 @@ func (m *ClientManager) deleteEmbeddedSessionID(userID string) error {
 
 // ensureEmbeddedSessionID ensures there is a valid embedded session for the user
 // It loads from KV, validates via Session.Get, and if missing/invalid, creates a new one
-// The created session is tagged for MCP via DeviceId and Props
+// The created session is tagged for MCP via Props
 func (m *ClientManager) ensureEmbeddedSessionID(userID string) (string, error) {
 	user, err := m.pluginAPI.User.Get(userID)
 	if err != nil {
