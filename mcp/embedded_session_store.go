@@ -44,13 +44,20 @@ func (m *ClientManager) deleteEmbeddedSessionID(userID string) error {
 // It loads from KV, validates via Session.Get, and if missing/invalid, creates a new one
 // The created session is tagged for MCP via DeviceId and Props
 func (m *ClientManager) ensureEmbeddedSessionID(userID string) (string, error) {
-	if sessionID, err := m.tryReuseEmbeddedSession(userID); err != nil {
+	user, err := m.pluginAPI.User.Get(userID)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch user for embedded session: %w", err)
+	}
+	if user.DeleteAt != 0 {
+		return "", fmt.Errorf("cannot create embedded session for deleted user")
+	}
+	if sessionID, err := m.tryReuseEmbeddedSession(user.Id); err != nil {
 		return "", err
 	} else if sessionID != "" {
 		return sessionID, nil
 	}
 
-	return m.createEmbeddedSession(userID)
+	return m.createEmbeddedSession(user)
 }
 
 func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, error) {
@@ -73,9 +80,7 @@ func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, error) {
 		return "", nil
 	}
 
-	const renewalWindow = 24 * time.Hour
-	renewalDeadline := time.Now().Add(renewalWindow).UnixMilli()
-	if sess.ExpiresAt == 0 || sess.ExpiresAt > renewalDeadline {
+	if !sess.IsExpired() {
 		return stored, nil
 	}
 
@@ -89,15 +94,7 @@ func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, error) {
 	return "", nil
 }
 
-func (m *ClientManager) createEmbeddedSession(userID string) (string, error) {
-	user, err := m.pluginAPI.User.Get(userID)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch user for embedded session: %w", err)
-	}
-	if user.DeleteAt != 0 {
-		return "", fmt.Errorf("cannot create embedded session for deleted user")
-	}
-
+func (m *ClientManager) createEmbeddedSession(user *model.User) (string, error) {
 	sessionDuration := m.sessionLengthDuration()
 	expiresAt := time.Now().Add(sessionDuration).UnixMilli()
 
@@ -106,6 +103,10 @@ func (m *ClientManager) createEmbeddedSession(userID string) (string, error) {
 		Props:     map[string]string{"isMCP": "true"},
 		Roles:     user.GetRawRoles(),
 		ExpiresAt: expiresAt,
+	}
+
+	if user.IsBot {
+		newSession.AddProp(model.SessionPropIsBot, model.SessionPropIsBotValue)
 	}
 
 	if user.IsGuest() {
