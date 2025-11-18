@@ -77,16 +77,6 @@ function createTestSuite() {
         });
     });
 
-    // Note: Username changes via configuration don't automatically update the Mattermost bot user account
-    // The bot user is created when the plugin is installed and requires bot recreation to change username
-    test.skip('should update bot username and new username triggers bot mention - KNOWN LIMITATION', async ({ page }) => {
-        // Skipped: changing bot.name in config doesn't update Mattermost bot user account
-    });
-
-    test.skip('should reject old username after username change - KNOWN LIMITATION', async ({ page }) => {
-        // Skipped: changing bot.name in config doesn't update Mattermost bot user account
-    });
-
     test('should display updated display name in bot selector after multiple changes', async ({ page }) => {
         const { aiPlugin } = await setupTestPage(page);
         const botConfig = await createBotConfigHelper(mattermost);
@@ -128,7 +118,7 @@ function createTestSuite() {
         });
     });
 
-    test.skip('should persist display name change across bot interactions - FLAKY', async ({ page }) => {
+    test.skip('should persist display name change across bot interactions', async ({ page }) => {
         const { aiPlugin } = await setupTestPage(page);
         const botConfig = await createBotConfigHelper(mattermost);
 
