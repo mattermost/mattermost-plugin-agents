@@ -4,12 +4,16 @@
 package mmtools
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -521,3 +525,119 @@ func TestWebSearchResetBehavior(t *testing.T) {
 		require.Equal(t, "second question", allResults[1].Query)
 	})
 }
+
+type mockTransport struct {
+	RoundTripFunc func(req *http.Request) (*http.Response, error)
+}
+
+func (m *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return m.RoundTripFunc(req)
+}
+
+func TestWebSearchSourceWhitelist(t *testing.T) {
+	// Setup a service with a mocked HTTP client
+	mockClient := &http.Client{
+		Transport: &mockTransport{
+			RoundTripFunc: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(bytes.NewBufferString("<html><body>Mock Content</body></html>")),
+					Header:     make(http.Header),
+				}, nil
+			},
+		},
+	}
+
+	service := &webSearchService{
+		httpClient: mockClient,
+		logger:     &mockLogger{},
+		cfgGetter: func() *config.Config {
+			return &config.Config{
+				WebSearch: config.WebSearchConfig{
+					Enabled:         true,
+					Provider:        "google",
+					DomainBlacklist: []string{},
+				},
+			}
+		},
+	}
+
+	mockBot := bots.NewBot(
+		llm.BotConfig{Name: "mockbot"},
+		llm.ServiceConfig{Type: "mock"},
+		&model.Bot{Username: "mockbot"},
+		&mockLanguageModel{},
+	)
+
+	t.Run("allows whitelisted URL", func(t *testing.T) {
+		ctx := &llm.Context{
+			Parameters: map[string]interface{}{
+				WebSearchAllowedURLsKey: []string{"https://allowed.com/page"},
+			},
+		}
+
+		argsGetter := func(v any) error {
+			if args, ok := v.(*WebSearchSourceArgs); ok {
+				args.URL = "https://allowed.com/page"
+				return nil
+			}
+			return nil
+		}
+
+		// Should succeed (return content)
+		resp, err := service.resolveSource(mockBot, ctx, argsGetter)
+		require.NoError(t, err)
+		require.Contains(t, resp, "Summarized content")
+	})
+
+	t.Run("rejects url not in whitelist", func(t *testing.T) {
+		ctx := &llm.Context{
+			Parameters: map[string]interface{}{
+				WebSearchAllowedURLsKey: []string{"https://allowed.com/page"},
+			},
+		}
+
+		argsGetter := func(v any) error {
+			if args, ok := v.(*WebSearchSourceArgs); ok {
+				args.URL = "https://evil.com/script"
+				return nil
+			}
+			return nil
+		}
+
+		resp, err := service.resolveSource(mockBot, ctx, argsGetter)
+		require.Error(t, err)
+		require.Equal(t, "url not in whitelist", err.Error())
+		require.Contains(t, resp, "you can only fetch URLs that were returned from web search results")
+	})
+
+	t.Run("rejects when no whitelist exists", func(t *testing.T) {
+		ctx := &llm.Context{
+			Parameters: map[string]interface{}{},
+		}
+
+		argsGetter := func(v any) error {
+			if args, ok := v.(*WebSearchSourceArgs); ok {
+				args.URL = "https://example.com"
+				return nil
+			}
+			return nil
+		}
+
+		resp, err := service.resolveSource(mockBot, ctx, argsGetter)
+		require.Error(t, err)
+		require.Equal(t, "no whitelist in context", err.Error())
+		require.Contains(t, resp, "you can only fetch URLs that were returned from web search results")
+	})
+}
+
+type mockLanguageModel struct{}
+
+func (m *mockLanguageModel) ChatCompletion(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+	return nil, nil
+}
+func (m *mockLanguageModel) ChatCompletionNoStream(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	return "Summarized content", nil
+}
+func (m *mockLanguageModel) CountTokens(text string) int { return 0 }
+func (m *mockLanguageModel) InputTokenLimit() int        { return 1000 }

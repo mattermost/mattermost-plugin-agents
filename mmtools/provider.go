@@ -89,7 +89,7 @@ func (p *MMToolProvider) GetTools(isDM bool, bot *bots.Bot) []llm.Tool {
 				builtInTools = append(builtInTools, *tool)
 			}
 
-			if sourceTool := p.webSearch.SourceTool(); sourceTool != nil {
+			if sourceTool := p.webSearch.SourceTool(bot); sourceTool != nil {
 				builtInTools = append(builtInTools, *sourceTool)
 			}
 		}
