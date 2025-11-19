@@ -13,7 +13,23 @@ export class MattermostPage {
 
     async login(url: string, username: string, password: string) {
         await this.page.addInitScript(() => { localStorage.setItem('__landingPageSeen__', 'true'); });
-        await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        
+        // Retry navigation with exponential backoff for flaky network conditions
+        let lastError: Error | null = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+                break;
+            } catch (error) {
+                lastError = error as Error;
+                if (attempt < 2) {
+                    await this.page.waitForTimeout(1000 * (attempt + 1));
+                }
+            }
+        }
+        if (lastError && !(await this.page.getByText('Log in to your account').isVisible().catch(() => false))) {
+            throw lastError;
+        }
 
         // Increased timeout for parallel test execution and added retry logic
         await this.page.getByText('Log in to your account').waitFor({ timeout: 60000 });

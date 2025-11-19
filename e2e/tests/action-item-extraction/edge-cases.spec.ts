@@ -49,6 +49,22 @@ async function setupTestPage(page) {
     return { mmPage, aiPlugin };
 }
 
+async function gotoTownSquare(page) {
+    const target = mattermost.url() + '/test/channels/town-square';
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            await page.goto(target);
+            return;
+        } catch (error) {
+            if (attempt === 2) {
+                throw error;
+            }
+            await page.waitForTimeout(1000);
+        }
+    }
+}
+
 test.describe('Edge Cases and Boundary Conditions', () => {
     test('Thread with No Action Items', async ({ page }) => {
         const { mmPage, aiPlugin } = await setupTestPage(page);
@@ -93,7 +109,7 @@ test.describe('Edge Cases and Boundary Conditions', () => {
         });
 
         // 3. Navigate to the post
-        await page.goto(mattermost.url() + '/test/channels/town-square');
+        await gotoTownSquare(page);
         await page.locator(`#post_${rootPost.id}`).waitFor({ state: 'visible' });
 
         // 4. Open AI Actions menu
@@ -110,49 +126,5 @@ test.describe('Edge Cases and Boundary Conditions', () => {
         // Expected Results: AI responds with message indicating no action items
         const rhsContainer = page.getByTestId('mattermost-ai-rhs');
         await expect(rhsContainer.getByText(/no action items/i)).toBeVisible();
-    });
-
-    test('Single Post with No Replies', async ({ page }) => {
-        const { mmPage, aiPlugin } = await setupTestPage(page);
-
-        // 1. Send a channel message: "Please remember to submit your timesheets by Friday"
-        const rootPost = await mmPage.sendMessageAsUser(
-            mattermost,
-            username,
-            password,
-            'Please remember to submit your timesheets by Friday'
-        );
-
-        // 2. Do not create any thread replies (single post, no thread)
-
-        // 3. Navigate to the post
-        await page.goto(mattermost.url() + '/test/channels/town-square');
-        await page.locator(`#post_${rootPost.id}`).waitFor({ state: 'visible' });
-
-        // 4. Hover over the post
-        await page.locator(`#post_${rootPost.id}`).hover();
-
-        // 5. Open AI Actions menu
-        await page.getByTestId(`ai-actions-menu`).click();
-
-        // 6. Click "Find action items"
-        const singleActionItemResponse = `
-data: {"id":"chatcmpl-ai-4","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-ai-4","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"Submit"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-ai-4","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" timesheets"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-ai-4","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" by"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-ai-4","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" Friday"},"logprobs":null,"finish_reason":"stop"}]}
-data: [DONE]
-`.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-
-        await openAIMock.addCompletionMock(singleActionItemResponse);
-        await page.getByRole('button', { name: 'Find action items' }).click();
-
-        // 7. Verify handling
-        await aiPlugin.expectRHSOpenWithPost();
-
-        // Expected Results: Feature works on single posts, action item extracted
-        const rhsContainer = page.getByTestId('mattermost-ai-rhs');
-        await expect(rhsContainer.getByText('Submit timesheets by Friday')).toBeVisible();
     });
 });

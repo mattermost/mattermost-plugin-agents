@@ -37,8 +37,30 @@ export class AIPlugin {
     const isRHSVisible = await rhsContainer.isVisible().catch(() => false);
 
     if (!isRHSVisible) {
-      await this.appBarIcon.click();
-      await expect(rhsContainer).toBeVisible({ timeout: 10000 });
+      // Wait for the icon to be in a stable, clickable state
+      // This helps with timing issues where the element is visible but not yet interactive
+      await this.appBarIcon.waitFor({ state: 'visible', timeout: 5000 });
+      await this.page.waitForTimeout(500); // Small delay to ensure the icon is fully rendered
+      
+      // Retry click with error handling for obscured/not clickable elements
+      let clicked = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await this.appBarIcon.click({ timeout: 10000 });
+          clicked = true;
+          break;
+        } catch (error) {
+          if (attempt < 2) {
+            await this.page.waitForTimeout(1000);
+          } else {
+            throw error;
+          }
+        }
+      }
+      
+      if (clicked) {
+        await expect(rhsContainer).toBeVisible({ timeout: 10000 });
+      }
     }
   }
 
