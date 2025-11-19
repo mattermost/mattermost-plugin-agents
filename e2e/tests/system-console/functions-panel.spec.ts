@@ -280,22 +280,36 @@ test.describe.serial('AI Functions Panel', () => {
         const functionsPanel = systemConsole.getFunctionsPanel();
         await functionsPanel.scrollIntoViewIfNeeded();
 
-        // Locate the 'Render AI-generated links' toggle/checkbox
-        const renderLinksToggle = page.getByLabel(/render ai-generated links/i).or(
-            page.locator('text=Render AI-generated links').locator('..').getByRole('checkbox')
-        );
+        // Locate the 'Render AI-generated links' section - it uses radio buttons, not a checkbox
+        // Find by the text and then navigate up to find the container with radio buttons
+        const renderLinksText = page.getByText('Render AI-generated links', { exact: true });
 
-        // Verify the toggle is visible
-        await expect(renderLinksToggle).toBeVisible();
+        // Scroll the section into view if needed
+        await renderLinksText.scrollIntoViewIfNeeded();
 
-        // Verify the toggle is currently OFF (unchecked)
-        await expect(renderLinksToggle).not.toBeChecked();
+        // Verify the text is visible
+        await expect(renderLinksText).toBeVisible();
 
-        // Click on the toggle to enable it
-        await renderLinksToggle.click();
+        // Find the parent that contains the radio buttons by going up in the DOM
+        const renderLinksSection = page.locator(':has(> :text-is("Render AI-generated links")) [type="radio"]').first().locator('..');
 
-        // Verify the toggle changes to ON (checked) state
-        await expect(renderLinksToggle).toBeChecked();
+        // Locate the True and False radio buttons within the functions panel
+        // There are multiple radio groups on the page, so we need to be specific
+        // We'll use a more targeted approach by finding all radios after the "Render AI-generated links" text
+        const allRadios = page.getByRole('radio');
+        const trueRadio = page.locator('text=Render AI-generated links').locator('..').locator('..').getByRole('radio').first();
+        const falseRadio = page.locator('text=Render AI-generated links').locator('..').locator('..').getByRole('radio').nth(1);
+
+        // Verify the False radio is currently checked (OFF state)
+        await expect(falseRadio).toBeChecked();
+        await expect(trueRadio).not.toBeChecked();
+
+        // Click on the True radio to enable it
+        await trueRadio.click();
+
+        // Verify the True radio changes to checked (ON state)
+        await expect(trueRadio).toBeChecked();
+        await expect(falseRadio).not.toBeChecked();
 
         // Click the Save button
         const saveButton = systemConsole.getSaveButton();
@@ -307,29 +321,45 @@ test.describe.serial('AI Functions Panel', () => {
         // Reload the page
         await page.reload();
 
-        // Verify the toggle is still ON after reload
-        const reloadedToggle = page.getByLabel(/render ai-generated links/i).or(
-            page.locator('text=Render AI-generated links').locator('..').getByRole('checkbox')
-        );
-        await expect(reloadedToggle).toBeChecked();
+        // Locate the section again after reload
+        const reloadedText = page.getByText('Render AI-generated links', { exact: true });
+        await reloadedText.scrollIntoViewIfNeeded();
 
-        // Click the toggle again to disable it
-        await reloadedToggle.click();
+        // Locate the radio buttons again
+        const reloadedTrueRadio = page.locator('text=Render AI-generated links').locator('..').locator('..').getByRole('radio').first();
+        const reloadedFalseRadio = page.locator('text=Render AI-generated links').locator('..').locator('..').getByRole('radio').nth(1);
 
-        // Verify the toggle changes to OFF (unchecked) state
-        await expect(reloadedToggle).not.toBeChecked();
+        // Verify the True radio is still checked after reload (ON state)
+        await expect(reloadedTrueRadio).toBeChecked();
+        await expect(reloadedFalseRadio).not.toBeChecked();
+
+        // Click the False radio to disable it
+        await reloadedFalseRadio.click();
+
+        // Verify the False radio changes to checked (OFF state)
+        await expect(reloadedFalseRadio).toBeChecked();
+        await expect(reloadedTrueRadio).not.toBeChecked();
 
         // Click Save button
         await saveButton.click();
 
+        // Wait for save to complete
+        await page.waitForTimeout(1000);
+
         // Reload the page
         await page.reload();
 
-        // Verify the toggle is OFF after reload
-        const finalToggle = page.getByLabel(/render ai-generated links/i).or(
-            page.locator('text=Render AI-generated links').locator('..').getByRole('checkbox')
-        );
-        await expect(finalToggle).not.toBeChecked();
+        // Locate the section one final time
+        const finalText = page.getByText('Render AI-generated links', { exact: true });
+        await finalText.scrollIntoViewIfNeeded();
+
+        // Locate the radio buttons
+        const finalTrueRadio = page.locator('text=Render AI-generated links').locator('..').locator('..').getByRole('radio').first();
+        const finalFalseRadio = page.locator('text=Render AI-generated links').locator('..').locator('..').getByRole('radio').nth(1);
+
+        // Verify the False radio is checked after final reload (OFF state)
+        await expect(finalFalseRadio).toBeChecked();
+        await expect(finalTrueRadio).not.toBeChecked();
 
         await openAIMock.stop();
         await mattermost.stop();

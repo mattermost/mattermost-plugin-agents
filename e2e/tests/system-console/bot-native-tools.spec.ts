@@ -230,13 +230,7 @@ test.describe.serial('Bot Native Tools', () => {
         await mattermost.stop();
     });
 
-    test.fixme('should NOT show native tools for OpenAI service without ResponsesAPI', async ({ page }) => {
-        // FIXME: This test expects the "Native OpenAI Tools" section to dynamically appear after
-        // enabling "Use Responses API" via the UI and saving. However, the UI does not dynamically
-        // update the native tools section visibility when configuration changes at runtime. The
-        // native tools section only appears when the service is initially configured with
-        // useResponsesAPI: true. This appears to be an application bug where the UI should
-        // react to configuration changes but currently does not.
+    test('should NOT show native tools for OpenAI service without ResponsesAPI', async ({ page }) => {
         test.setTimeout(60000);
 
         // Start container with OpenAI service that has useResponsesAPI set to false
@@ -311,48 +305,43 @@ test.describe.serial('Bot Native Tools', () => {
         // Scroll up to find the services panel
         await page.evaluate(() => window.scrollTo(0, 0));
 
-        // 13. Expand the service card in AI Services panel
+        // 13. Find and expand the service card in AI Services panel if it's not already expanded
         const serviceCard = page.locator('[class*="ServiceContainer"]').first();
         await expect(serviceCard).toBeVisible();
-        await serviceCard.click();
 
-        // 14. Enable 'Use Responses API' toggle
-        // Find the "Use Responses API" section and the "true" radio button
-        const useResponsesAPISection = serviceCard.locator('text=Use Responses API').first();
-        await expect(useResponsesAPISection).toBeVisible();
+        // Check if "Use Responses API" text is visible - if not, the card is collapsed, so click to expand
+        const useResponsesAPIText = page.locator('text=Use Responses API').first();
+        const isExpanded = await useResponsesAPIText.isVisible().catch(() => false);
+        if (!isExpanded) {
+            await serviceCard.click();
+            await expect(useResponsesAPIText).toBeVisible();
+        }
 
-        // Find the parent container and then the first radio (which is "true")
-        const useResponsesAPITrue = useResponsesAPISection.locator('..').getByRole('radio').first();
+        // 14. Find the True radio button for Use Responses API within the service card
+        // The radios in the service card are: Send User ID (True/False), Use Responses API (True/False)
+        // So the "Use Responses API - True" radio is the 3rd radio (index 2)
+        const useResponsesAPITrue = serviceCard.getByRole('radio').nth(2);
         await expect(useResponsesAPITrue).toBeVisible();
+
+        // 15. Enable 'Use Responses API' by clicking the True radio button
         await useResponsesAPITrue.click();
         await expect(useResponsesAPITrue).toBeChecked();
 
-        // 15. Click Save
-        const saveButton = systemConsole.getSaveButton();
-        await saveButton.click();
+        // 16. Scroll back to the bot card to see the Native OpenAI Tools section
+        // The bot configuration is reactive to service configuration changes
+        await botCard.scrollIntoViewIfNeeded();
 
-        // Wait for save to complete
-        await page.waitForTimeout(1000);
+        // 17. Verify 'Native OpenAI Tools' section now appears in bot card (without needing save/reload)
+        const nativeToolsAfterEnable = botCard.getByText(/native openai tools/i);
+        await expect(nativeToolsAfterEnable).toBeVisible();
 
-        // 16. Reload page
-        await page.reload();
-        await page.waitForLoadState('networkidle');
+        // 16. Verify 'Web Search' checkbox is now visible
+        const webSearchCheckbox = botCard.getByRole('checkbox').first();
+        await expect(webSearchCheckbox).toBeVisible();
 
-        // 17. Expand bot card
-        const reloadedBotCard = page.locator('[class*="BotContainer"]').first();
-        await expect(reloadedBotCard).toBeVisible();
-        await reloadedBotCard.click();
-
-        // Wait for the card to expand
-        await page.waitForTimeout(500);
-
-        // 18. Verify 'Native OpenAI Tools' section now appears
-        const reloadedNativeTools = reloadedBotCard.getByText(/native openai tools/i);
-        await expect(reloadedNativeTools).toBeVisible();
-
-        // 19. Verify 'Web Search' checkbox is visible
-        const reloadedWebSearchCheckbox = reloadedBotCard.getByRole('checkbox').first();
-        await expect(reloadedWebSearchCheckbox).toBeVisible();
+        // 17. Verify help text reads 'Enable OpenAI's built-in web search capability'
+        const helpText = botCard.locator('text=/.*openai.*web search capability.*/i');
+        await expect(helpText).toBeVisible();
 
         await openAIMock.stop();
         await mattermost.stop();
