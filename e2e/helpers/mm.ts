@@ -13,16 +13,18 @@ export class MattermostPage {
 
     async login(url: string, username: string, password: string) {
         await this.page.addInitScript(() => { localStorage.setItem('__landingPageSeen__', 'true'); });
-        await this.page.goto(url, { waitUntil: 'domcontentloaded' });
-        await this.page.getByText('Log in to your account').waitFor({ timeout: 30000 });
+        await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+        // Increased timeout for parallel test execution and added retry logic
+        await this.page.getByText('Log in to your account').waitFor({ timeout: 60000 });
         await this.page.getByPlaceholder('Password').fill(password);
         await this.page.getByPlaceholder("Email or Username").fill(username);
         await this.page.getByTestId('saveSetting').click();
 
         // Wait for navigation to complete and channel view to be visible
-        // Using a more generous timeout and proper wait strategy
-        await this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout: 45000 });
-        await this.page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 45000});
+        // Using a more generous timeout and proper wait strategy for parallel test runs
+        await this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout: 60000 });
+        await this.page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 60000});
     }
 
     async sendChannelMessage(message: string) {

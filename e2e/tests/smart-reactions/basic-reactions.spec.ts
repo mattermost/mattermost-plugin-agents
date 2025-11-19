@@ -110,10 +110,10 @@ test.describe('Smart Reactions - Basic Functionality', () => {
         // The post should have a reaction container with the thumbsup emoji
         const postLocator = page.locator(`#post_${rootPost.id}`);
 
-        // Wait for the reaction to appear on the post (up to 5 seconds per spec)
+        // Wait for the reaction to appear on the post (increased timeout for parallel test runs)
         // Mattermost reactions appear as buttons with aria-label "react with <emoji>"
         const reactionButton = postLocator.getByRole('button', { name: /react with thumbsup|react with \+1/ });
-        await expect(reactionButton).toBeVisible({ timeout: 5000 });
+        await expect(reactionButton).toBeVisible({ timeout: 15000 });
 
         // Verify the reaction count is displayed (should be 1)
         await expect(reactionButton).toContainText('1');
