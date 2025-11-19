@@ -15,7 +15,7 @@ import {useDispatch, useSelector} from 'react-redux';
 
 import RHSImage from '../assets/rhs_image';
 
-import {createPost, getBotDirectChannel} from '@/client';
+import {createPost, getBotDirectChannel, Client4} from '@/client';
 
 import {AdvancedTextEditor, CreatePost} from '@/mm_webapp';
 
@@ -113,6 +113,17 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
                 try {
                     // This will, as a side effect, create the direct channel for us
                     const newChannelID = await getBotDirectChannel(currentUserId, botId);
+
+                    // Load user profiles into Redux store for AdvancedTextEditor
+                    // This prevents "Cannot read properties of undefined (reading 'username')" error
+                    const currentUser = await Client4.getMe();
+                    const botUser = await Client4.getUser(botId);
+
+                    // Dispatch RECEIVED_PROFILES action to add user profiles to Redux store
+                    dispatch({
+                        type: 'RECEIVED_PROFILES',
+                        data: [currentUser, botUser],
+                    } as any);
 
                     // Update the bots list in Redux with the new channel ID
                     const updatedBots = currentBots.map((bot: LLMBot) => {

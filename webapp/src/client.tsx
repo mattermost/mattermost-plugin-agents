@@ -10,6 +10,9 @@ import manifest from './manifest';
 
 const Client4 = new Client4Class();
 
+// Export Client4 for use in other components
+export {Client4};
+
 export function setSiteURL(siteURL: string) {
     Client4.setUrl(siteURL);
 }
