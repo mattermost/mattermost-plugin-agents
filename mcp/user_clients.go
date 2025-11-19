@@ -15,9 +15,9 @@ import (
 
 // ToolInfo represents a tool's metadata for discovery purposes
 type ToolInfo struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	InputSchema map[string]interface{} `json:"inputSchema"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	InputSchema any    `json:"inputSchema"`
 }
 
 // UserClients represents a per-user MCP client with multiple server connections

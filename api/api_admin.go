@@ -111,9 +111,9 @@ func (a *API) mattermostAdminAuthorizationRequired(c *gin.Context) {
 
 // MCPToolInfo represents a tool from an MCP server for API response
 type MCPToolInfo struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	InputSchema map[string]interface{} `json:"inputSchema"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	InputSchema any    `json:"inputSchema"`
 }
 
 // MCPServerInfo represents a server and its tools for API response

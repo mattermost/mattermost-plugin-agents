@@ -122,7 +122,12 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		Posts:   posts,
 		Context: context,
 	}
-	result, err := bot.LLM().ChatCompletion(completionRequest)
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	var opts []llm.LanguageModelOption
+	if !isDM {
+		opts = append(opts, llm.WithToolsDisabled())
+	}
+	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
 		return nil, err
 	}

@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -69,7 +70,7 @@ func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 		},
 		{
 			Name:        "get_channel_info",
-			Description: "Get information about a channel. Provide ONE parameter: channel_id (fastest), channel_display_name (user-visible), or channel_name (URL name). Optional: team_id to limit search scope. Returns channel metadata including ID, names, type, team, purpose, and member count. Example: {\"channel_display_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}",
+			Description: "Get information about channel(s). Provide ONE parameter: channel_id (fastest, returns single result), channel_display_name (user-visible), or channel_name (URL name). Optional: team_id to limit search scope. If multiple channels match (e.g., 'General' exists in multiple teams), returns ALL matches with team context for disambiguation. Returns channel metadata including ID, names, type, team, purpose, and member count. Example: {\"channel_display_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}",
 			Schema:      llm.NewJSONSchemaFromStruct[GetChannelInfoArgs](),
 			Resolver:    p.toolGetChannelInfo,
 		},
@@ -126,6 +127,18 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 		since = parsedTime.Unix() * 1000 // Convert to milliseconds
 	}
 
+	// Get channel info for context
+	channel, _, err := client.GetChannel(ctx, args.ChannelID, "")
+	if err != nil {
+		return "failed to fetch channel info", fmt.Errorf("error fetching channel: %w", err)
+	}
+
+	// Get team info for context
+	team, _, err := client.GetTeam(ctx, channel.TeamId, "")
+	if err != nil {
+		return "failed to fetch team info", fmt.Errorf("error fetching team: %w", err)
+	}
+
 	// Get posts from the channel
 	posts, _, err := client.GetPostsForChannel(ctx, args.ChannelID, 0, args.Limit, "", false, false)
 	if err != nil {
@@ -146,7 +159,8 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 
 	// Format the response
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d posts in channel:\n\n", len(filteredPosts)))
+	result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channel.DisplayName, team.DisplayName))
+	result.WriteString(fmt.Sprintf("Found %d posts:\n\n", len(filteredPosts)))
 
 	for i, post := range filteredPosts {
 		// Get user info for the post
@@ -237,7 +251,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
 
-	var channel *model.Channel
+	var channels []*model.Channel
 
 	var lastError error
 
@@ -248,44 +262,105 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 		if !model.IsValidId(args.ChannelID) {
 			return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 		}
-		// Direct ID lookup - fastest method
-		channel, _, err = client.GetChannel(ctx, args.ChannelID, "")
+		// Direct ID lookup - fastest method, always returns single result
+		var channel *model.Channel
+		var resp *model.Response
+		channel, resp, err = client.GetChannel(ctx, args.ChannelID, "")
 		if err != nil {
-			return "channel not found by ID", fmt.Errorf("error fetching channel by ID: %w", err)
+			// Check if it's a 404 (not found) - return success with message
+			if resp != nil && resp.StatusCode == http.StatusNotFound {
+				return fmt.Sprintf("No channel found with ID '%s'. The channel may have been deleted or you may not have access to it.", args.ChannelID), nil
+			}
+			// Real error (network, auth, etc.)
+			return "failed to fetch channel", fmt.Errorf("error fetching channel by ID: %w", err)
 		}
+		channels = []*model.Channel{channel}
 	case args.ChannelDisplayName != "" || args.ChannelName != "":
 		// Prioritize display name over name - try display name first if provided
 		if args.ChannelDisplayName != "" {
-			channel, lastError = p.tryFindChannelByDisplayName(ctx, client, args.ChannelDisplayName, args.TeamID)
-			if channel != nil {
-				break // Found it with display name
+			channels, lastError = p.tryFindChannelByDisplayName(ctx, client, args.ChannelDisplayName, args.TeamID)
+			if lastError != nil {
+				// Real API error (not just zero results)
+				return "failed to search for channels", lastError
+			}
+			if len(channels) > 0 {
+				break // Found results with display name
 			}
 		}
 
-		// If display name didn't work (or wasn't provided), try channel name
+		// If display name didn't find anything (or wasn't provided), try channel name
 		if args.ChannelName != "" {
-			channel, err = p.tryFindChannelByName(ctx, client, args.ChannelName, args.TeamID)
+			channels, err = p.tryFindChannelByName(ctx, client, args.ChannelName, args.TeamID)
 			if err != nil {
-				// If we also failed with display name, return combined error message
-				if lastError != nil {
-					return fmt.Sprintf("channel not found by display name '%s' or name '%s'", args.ChannelDisplayName, args.ChannelName),
-						fmt.Errorf("display name error: %v; name error: %v", lastError, err)
-				}
-				return fmt.Sprintf("channel not found by name '%s'", args.ChannelName), err
+				// Real API error
+				return "failed to search for channels", err
 			}
-		} else if lastError != nil {
-			// Only display name was provided and it failed
-			return fmt.Sprintf("channel not found by display name '%s'", args.ChannelDisplayName), lastError
 		}
 
-		if channel == nil {
-			return "no channel found with the provided parameters", fmt.Errorf("channel lookup failed")
+		// At this point, channels could be empty (no results) but that's not an error
+		if len(channels) == 0 {
+			// Build helpful "not found" message with actionable next steps for LLM
+			var notFoundMsg strings.Builder
+
+			// What was searched
+			switch {
+			case args.ChannelDisplayName != "" && args.ChannelName != "":
+				notFoundMsg.WriteString(fmt.Sprintf("No channels found matching display name '%s' or name '%s'.", args.ChannelDisplayName, args.ChannelName))
+			case args.ChannelDisplayName != "":
+				notFoundMsg.WriteString(fmt.Sprintf("No channels found with display name '%s'.", args.ChannelDisplayName))
+			default:
+				notFoundMsg.WriteString(fmt.Sprintf("No channels found with name '%s'.", args.ChannelName))
+			}
+
+			// Search scope
+			if args.TeamID != "" {
+				// Try to get team name for better error message
+				team, _, teamErr := client.GetTeam(ctx, args.TeamID, "")
+				if teamErr == nil {
+					notFoundMsg.WriteString(fmt.Sprintf(" (searched within team '%s', ID: %s)", team.DisplayName, args.TeamID))
+				} else {
+					notFoundMsg.WriteString(fmt.Sprintf(" (searched within team ID: %s)", args.TeamID))
+				}
+			} else {
+				notFoundMsg.WriteString(" (searched across all teams)")
+			}
+
+			notFoundMsg.WriteString("\n\nACTION REQUIRED - Try these alternatives before asking the user:\n")
+
+			if args.ChannelDisplayName != "" {
+				// Tried display name - this is likely a case sensitivity issue
+				notFoundMsg.WriteString("1. Call get_channel_info again with different capitalization (channel_display_name is CASE-SENSITIVE)\n")
+				notFoundMsg.WriteString("2. Call get_channel_info with channel_name parameter instead (NOT case-sensitive)\n")
+			}
+
+			if args.ChannelName != "" && args.ChannelDisplayName == "" {
+				// Tried channel name only - suggest trying display_name
+				notFoundMsg.WriteString("1. Call get_channel_info with channel_display_name parameter instead (try different capitalizations as it's CASE-SENSITIVE)\n")
+			}
+
+			if args.TeamID == "" {
+				stepNum := 2
+				if args.ChannelDisplayName != "" {
+					stepNum = 3
+				}
+				notFoundMsg.WriteString(fmt.Sprintf("%d. If you know the team, call get_channel_info with team_id parameter to narrow the search\n", stepNum))
+			}
+
+			notFoundMsg.WriteString("\nOnly ask the user for help after trying all alternatives above.")
+
+			return notFoundMsg.String(), nil
 		}
 	default:
 		return "either channel_id or channel_name/channel_display_name must be provided", fmt.Errorf("insufficient parameters for channel lookup")
 	}
 
-	// Format the response
+	// If multiple channels found, return all with disambiguation guidance
+	if len(channels) > 1 {
+		return p.formatMultipleChannels(ctx, client, channels)
+	}
+
+	// Single channel found - format as before (backward compatible)
+	channel := channels[0]
 	var result strings.Builder
 	result.WriteString("Channel Information:\n")
 	result.WriteString(fmt.Sprintf("ID: %s\n", channel.Id))
@@ -293,6 +368,13 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	result.WriteString(fmt.Sprintf("Display Name: %s\n", channel.DisplayName))
 	result.WriteString(fmt.Sprintf("Type: %s\n", channel.Type))
 	result.WriteString(fmt.Sprintf("Team ID: %s\n", channel.TeamId))
+
+	// Get team info
+	team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+	if teamErr == nil {
+		result.WriteString(fmt.Sprintf("Team Name: %s\n", team.Name))
+		result.WriteString(fmt.Sprintf("Team Display Name: %s\n", team.DisplayName))
+	}
 
 	if channel.Purpose != "" {
 		result.WriteString(fmt.Sprintf("Purpose: %s\n", channel.Purpose))
@@ -308,6 +390,55 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	if err == nil {
 		result.WriteString(fmt.Sprintf("Member Count: %s\n", strconv.FormatInt(memberCount.MemberCount, 10)))
 	}
+
+	return result.String(), nil
+}
+
+// formatMultipleChannels formats multiple channel results with team context for disambiguation
+func (p *MattermostToolProvider) formatMultipleChannels(ctx context.Context, client *model.Client4, channels []*model.Channel) (string, error) {
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Found %d channels with matching name:\n\n", len(channels)))
+
+	// Cache teams to avoid duplicate fetches
+	teamCache := make(map[string]*model.Team)
+
+	for i, channel := range channels {
+		result.WriteString(fmt.Sprintf("%d. Channel: %s\n", i+1, channel.DisplayName))
+
+		// Get team info from cache or fetch
+		team, exists := teamCache[channel.TeamId]
+		if !exists {
+			fetchedTeam, _, err := client.GetTeam(ctx, channel.TeamId, "")
+			if err == nil {
+				team = fetchedTeam
+				teamCache[channel.TeamId] = team
+				result.WriteString(fmt.Sprintf("   Team: %s (Team ID: %s)\n", team.DisplayName, team.Id))
+			}
+		} else {
+			result.WriteString(fmt.Sprintf("   Team: %s (Team ID: %s)\n", team.DisplayName, team.Id))
+		}
+
+		result.WriteString(fmt.Sprintf("   Channel ID: %s\n", channel.Id))
+		result.WriteString(fmt.Sprintf("   Channel Name: %s\n", channel.Name))
+		result.WriteString(fmt.Sprintf("   Type: %s\n", channel.Type))
+
+		if channel.Purpose != "" {
+			result.WriteString(fmt.Sprintf("   Purpose: %s\n", channel.Purpose))
+		}
+
+		// Get member count
+		memberCount, _, err := client.GetChannelStats(ctx, channel.Id, "", false)
+		if err == nil {
+			result.WriteString(fmt.Sprintf("   Members: %s\n", strconv.FormatInt(memberCount.MemberCount, 10)))
+		}
+
+		result.WriteString("\n")
+	}
+
+	result.WriteString("Multiple channels found. To disambiguate, either:\n")
+	result.WriteString("- Specify which team's channel you need\n")
+	result.WriteString("- Call get_channel_info again with the team_id parameter\n")
+	result.WriteString("- Use the specific channel_id from above in create_post\n")
 
 	return result.String(), nil
 }
@@ -429,10 +560,11 @@ func (p *MattermostToolProvider) toolAddUserToChannel(mcpContext *MCPToolContext
 	return fmt.Sprintf("Successfully added user '%s' to channel '%s'", user.Username, channel.DisplayName), nil
 }
 
-// tryFindChannelByDisplayName attempts to find a channel by display name
-func (p *MattermostToolProvider) tryFindChannelByDisplayName(ctx context.Context, client *model.Client4, displayName, teamID string) (*model.Channel, error) {
+// tryFindChannelByDisplayName attempts to find channels by display name
+// Returns all exact matches when teamID is not provided, or single match when teamID is specified
+func (p *MattermostToolProvider) tryFindChannelByDisplayName(ctx context.Context, client *model.Client4, displayName, teamID string) ([]*model.Channel, error) {
 	if teamID != "" {
-		// Search within specific team
+		// Search within specific team - should only return one result
 		user, _, userErr := client.GetMe(ctx, "")
 		if userErr != nil {
 			return nil, fmt.Errorf("error getting current user: %w", userErr)
@@ -445,11 +577,12 @@ func (p *MattermostToolProvider) tryFindChannelByDisplayName(ctx context.Context
 
 		for _, ch := range channels {
 			if ch.DisplayName == displayName {
-				return ch, nil
+				return []*model.Channel{ch}, nil
 			}
 		}
 
-		return nil, fmt.Errorf("no channel found with display name: %s in team", displayName)
+		// Not found in team - return empty slice with nil error (not a technical failure)
+		return []*model.Channel{}, nil
 	}
 
 	// Search across all teams
@@ -458,11 +591,12 @@ func (p *MattermostToolProvider) tryFindChannelByDisplayName(ctx context.Context
 		return nil, fmt.Errorf("error searching channels: %w", searchErr)
 	}
 
-	// Find exact match by display name
+	// Find ALL exact matches by display name
+	var matches []*model.Channel
 	for _, ch := range channels {
 		if ch.DisplayName == displayName {
 			// Convert ChannelWithTeamData to Channel
-			return &model.Channel{
+			matches = append(matches, &model.Channel{
 				Id:               ch.Id,
 				CreateAt:         ch.CreateAt,
 				UpdateAt:         ch.UpdateAt,
@@ -480,22 +614,29 @@ func (p *MattermostToolProvider) tryFindChannelByDisplayName(ctx context.Context
 				SchemeId:         ch.SchemeId,
 				Props:            ch.Props,
 				GroupConstrained: ch.GroupConstrained,
-			}, nil
+			})
 		}
 	}
 
-	return nil, fmt.Errorf("no channel found with display name: %s across all teams", displayName)
+	// Return empty slice if no matches found (not a technical failure)
+	return matches, nil
 }
 
-// tryFindChannelByName attempts to find a channel by name
-func (p *MattermostToolProvider) tryFindChannelByName(ctx context.Context, client *model.Client4, name, teamID string) (*model.Channel, error) {
+// tryFindChannelByName attempts to find channels by name
+// Returns all exact matches when teamID is not provided, or single match when teamID is specified
+func (p *MattermostToolProvider) tryFindChannelByName(ctx context.Context, client *model.Client4, name, teamID string) ([]*model.Channel, error) {
 	if teamID != "" {
-		// Search within specific team
-		channel, _, err := client.GetChannelByName(ctx, name, teamID, "")
+		// Search within specific team - should only return one result
+		channel, resp, err := client.GetChannelByName(ctx, name, teamID, "")
 		if err != nil {
+			// Check if it's a 404 (not found) - this is not a technical error
+			if resp != nil && resp.StatusCode == 404 {
+				return []*model.Channel{}, nil
+			}
+			// Real error (network, auth, etc.)
 			return nil, fmt.Errorf("error fetching channel by name in team: %w", err)
 		}
-		return channel, nil
+		return []*model.Channel{channel}, nil
 	}
 
 	// Search across all teams
@@ -504,11 +645,12 @@ func (p *MattermostToolProvider) tryFindChannelByName(ctx context.Context, clien
 		return nil, fmt.Errorf("error searching channels: %w", searchErr)
 	}
 
-	// Find exact match by name
+	// Find ALL exact matches by name
+	var matches []*model.Channel
 	for _, ch := range channels {
 		if ch.Name == name {
 			// Convert ChannelWithTeamData to Channel
-			return &model.Channel{
+			matches = append(matches, &model.Channel{
 				Id:               ch.Id,
 				CreateAt:         ch.CreateAt,
 				UpdateAt:         ch.UpdateAt,
@@ -526,9 +668,10 @@ func (p *MattermostToolProvider) tryFindChannelByName(ctx context.Context, clien
 				SchemeId:         ch.SchemeId,
 				Props:            ch.Props,
 				GroupConstrained: ch.GroupConstrained,
-			}, nil
+			})
 		}
 	}
 
-	return nil, fmt.Errorf("no channel found with name: %s across all teams", name)
+	// Return empty slice if no matches found (not a technical failure)
+	return matches, nil
 }

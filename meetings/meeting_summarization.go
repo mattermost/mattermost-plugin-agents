@@ -347,7 +347,7 @@ func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles
 		Context: context,
 	}
 
-	summaryStream, err := bot.LLM().ChatCompletion(completionRequest)
+	summaryStream, err := bot.LLM().ChatCompletion(completionRequest, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, fmt.Errorf("unable to get meeting summary: %w", err)
 	}

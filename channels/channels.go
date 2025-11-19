@@ -91,7 +91,7 @@ func (c *Channels) Interval(
 		Context: context,
 	}
 
-	resultStream, err := c.llm.ChatCompletion(completionRequest)
+	resultStream, err := c.llm.ChatCompletion(completionRequest, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, err
 	}

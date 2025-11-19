@@ -208,7 +208,7 @@ func TestGetRegistrationEndpoint_NotSupported(t *testing.T) {
 
 	_, err := GetRegistrationEndpoint(context.Background(), http.DefaultClient, server.URL)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "server does not support dynamic client registration")
+	assert.Contains(t, err.Error(), "does not support dynamic client registration")
 }
 
 func TestDiscoverAndRegisterClient_Success(t *testing.T) {

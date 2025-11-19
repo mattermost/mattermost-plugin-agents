@@ -15,7 +15,8 @@ const ToolCallsContainer = styled.div`
     display: flex;
     flex-direction: column;
     gap: 8px;
-    margin: 16px 0;
+    margin-bottom: 12px;
+	margin-top: 8px;
 `;
 
 const StatusBar = styled.div`
@@ -44,6 +45,8 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     // Track which tools are currently being processed
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState('');
+
+    // Track collapsed state for each tool
     const [collapsedTools, setCollapsedTools] = useState<string[]>([]);
     const [toolDecisions, setToolDecisions] = useState<ToolDecision>({});
 
@@ -107,18 +110,30 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     // Calculate how many tools are left to decide on
     const undecidedCount = Object.values(toolDecisions).filter((decision) => decision === null).length;
 
+    // Helper to compute if a tool should be collapsed
+    const isToolCollapsed = (tool: ToolCall) => {
+        // Pending tools are expanded by default, others are collapsed
+        const defaultExpanded = tool.status === ToolCallStatus.Pending;
+
+        // Check if user has toggled this tool
+        const isCollapsed = collapsedTools.includes(tool.id);
+
+        // If default is expanded, being in the list means user collapsed it
+        // If default is collapsed, being in the list means user expanded it
+        return defaultExpanded ? isCollapsed : !isCollapsed;
+    };
+
     return (
         <ToolCallsContainer>
             {pendingToolCalls.map((tool) => (
                 <ToolCard
                     key={tool.id}
                     tool={tool}
-                    isCollapsed={collapsedTools.includes(tool.id)}
+                    isCollapsed={isToolCollapsed(tool)}
                     isProcessing={isSubmitting}
                     onToggleCollapse={() => toggleCollapse(tool.id)}
                     onApprove={() => handleToolDecision(tool.id, true)}
                     onReject={() => handleToolDecision(tool.id, false)}
-                    decision={toolDecisions[tool.id]}
                 />
             ))}
 
@@ -126,7 +141,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                 <ToolCard
                     key={tool.id}
                     tool={tool}
-                    isCollapsed={collapsedTools.includes(tool.id)}
+                    isCollapsed={isToolCollapsed(tool)}
                     isProcessing={false}
                     onToggleCollapse={() => toggleCollapse(tool.id)}
                 />

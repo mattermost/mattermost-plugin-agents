@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
 	"github.com/mattermost/mattermost-plugin-ai/meetings"
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
@@ -47,6 +48,7 @@ type MCPClientManager interface {
 	GetToolsCache() *mcp.ToolsCache
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
+	EnsureMCPSessionID(userID string) (string, error)
 }
 
 // API represents the HTTP API functionality for the plugin
@@ -68,6 +70,7 @@ type API struct {
 	streamingService     streaming.Service
 	i18nBundle           *i18n.Bundle
 	mcpClientManager     MCPClientManager
+	mcpHandlers          *mcpserver.PluginMCPHandlers
 }
 
 // New creates a new API instance
@@ -88,6 +91,7 @@ func New(
 	streamingService streaming.Service,
 	i18nBundle *i18n.Bundle,
 	mcpClientManager MCPClientManager,
+	mcpHandlers *mcpserver.PluginMCPHandlers,
 ) *API {
 	return &API{
 		bots:                 bots,
@@ -107,6 +111,7 @@ func New(
 		streamingService:     streamingService,
 		i18nBundle:           i18nBundle,
 		mcpClientManager:     mcpClientManager,
+		mcpHandlers:          mcpHandlers,
 	}
 }
 
@@ -130,6 +135,27 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	completionRoute.POST("/agent/:agent/nostream", a.handleAgentCompletionNoStream)
 	completionRoute.POST("/service/:service", a.handleServiceCompletionStreaming)
 	completionRoute.POST("/service/:service/nostream", a.handleServiceCompletionNoStream)
+
+	// MCP server endpoints - grouped under /mcp-server/
+	if a.mcpHandlers != nil && a.config.MCP().EnablePluginServer {
+		mcpServerGroup := router.Group("/mcp-server")
+
+		// Store plugin.Context in gin.Context for MCP endpoints
+		mcpServerGroup.Use(func(gc *gin.Context) {
+			gc.Set("pluginContext", c)
+			gc.Next()
+		})
+
+		mcpServerGroup.GET("/.well-known/oauth-protected-resource", func(gc *gin.Context) {
+			a.mcpHandlers.OAuthMetadataHandler(gc.Writer, gc.Request)
+		})
+
+		// MCP endpoint with authentication
+		mcpServerGroup.Use(a.mcpAuthMiddleware)
+		mcpServerGroup.Any("/mcp", func(gc *gin.Context) {
+			a.delegateToMCPHandler(gc, a.mcpHandlers.MCPHandler)
+		})
+	}
 
 	router.Use(a.MattermostAuthorizationRequired)
 

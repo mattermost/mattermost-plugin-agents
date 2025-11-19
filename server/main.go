@@ -21,6 +21,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
 	"github.com/mattermost/mattermost-plugin-ai/meetings"
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
@@ -188,7 +189,6 @@ func (p *Plugin) OnActivate() error {
 	// Create embedded MCP server if enabled
 	var embeddedMCPServer mcp.EmbeddedMCPServer
 	if p.configuration.MCP().EmbeddedServer.Enabled {
-		var err error
 		embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
 		if err != nil {
 			pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
@@ -201,11 +201,11 @@ func (p *Plugin) OnActivate() error {
 	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL), embeddedMCPServer)
 	p.configuration.RegisterUpdateListener(func() {
 		var embeddedServer mcp.EmbeddedMCPServer
+		var embeddedErr error
 		if p.configuration.MCP().EmbeddedServer.Enabled {
-			var err error
-			embeddedServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
-			if err != nil {
-				pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", err)
+			embeddedServer, embeddedErr = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
+			if embeddedErr != nil {
+				pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
 			}
 		}
 
@@ -247,6 +247,18 @@ func (p *Plugin) OnActivate() error {
 	// TODO: Refactor to avoid circular dependency
 	conversationsService.SetMeetingsService(meetingsService)
 
+	// Initialize embedded MCP server handlers for plugin endpoints
+	var mcpHandlers *mcpserver.PluginMCPHandlers
+	// Create logger adapter to route MCP handler logs through plugin logging
+	mcpHandlerLogger := NewPluginAPILoggerAdapter(pluginAPI.Log)
+	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, mcpHandlerLogger)
+	if err != nil {
+		pluginAPI.Log.Error("Failed to create MCP handlers", "error", err)
+	} else {
+		mcpHandlers = handlers
+		pluginAPI.Log.Info("Embedded MCP server handlers initialized successfully")
+	}
+
 	apiService := api.New(
 		bots,
 		conversationsService,
@@ -264,6 +276,7 @@ func (p *Plugin) OnActivate() error {
 		streamingService,
 		i18nBundle,
 		mcpClientManager,
+		mcpHandlers,
 	)
 
 	// Keep only what we need

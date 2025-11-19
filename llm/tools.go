@@ -22,7 +22,7 @@ import (
 type Tool struct {
 	Name        string
 	Description string
-	Schema      *jsonschema.Schema
+	Schema      any
 	Resolver    ToolResolver
 }
 
