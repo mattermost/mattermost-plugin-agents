@@ -48,6 +48,7 @@ func New(llmService llm.ServiceConfig, botConfig llm.BotConfig, httpClient *http
 	client := anthropicSDK.NewClient(
 		option.WithAPIKey(llmService.APIKey),
 		option.WithHTTPClient(httpClient),
+		option.WithHeader("anthropic-beta", "structured-outputs-2025-11-13"),
 	)
 
 	return &Anthropic{
@@ -206,7 +207,7 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 
 	// Only add tools if not explicitly disabled
 	if !state.config.ToolsDisabled {
-		params.Tools = convertTools(state.tools)
+		params.Tools = convertTools(state.tools, state.config.StrictToolUse)
 	}
 
 	// Only include system message if it's non-empty
@@ -232,6 +233,14 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 	// Enable thinking/reasoning for models that support it
 	if thinkingConfig, ok := a.calculateThinkingConfig(state.config.MaxGeneratedTokens); ok {
 		params.Thinking = thinkingConfig
+	}
+
+	// Add structured output format if configured
+	if state.config.JSONOutputFormat != nil {
+		params.OutputFormat = anthropicSDK.OutputFormatParam{
+			Type:   "json_schema",
+			Schema: convertJSONSchemaToMap(state.config.JSONOutputFormat),
+		}
 	}
 
 	stream := a.client.Messages.NewStreaming(context.Background(), params)
@@ -469,8 +478,31 @@ func (a *Anthropic) CountTokens(text string) int {
 	return 0
 }
 
+// convertJSONSchemaToMap converts a jsonschema.Schema to a map[string]interface{} for Anthropic API
+func convertJSONSchemaToMap(schema *jsonschema.Schema) map[string]interface{} {
+	result := make(map[string]interface{})
+
+	if schema.Type != "" {
+		result["type"] = schema.Type
+	}
+	if schema.Properties != nil {
+		result["properties"] = schema.Properties
+	}
+	if len(schema.Required) > 0 {
+		result["required"] = schema.Required
+	}
+	if schema.AdditionalProperties != nil {
+		result["additionalProperties"] = schema.AdditionalProperties
+	}
+	if schema.Description != "" {
+		result["description"] = schema.Description
+	}
+
+	return result
+}
+
 // convertTools converts from llm.Tool to anthropicSDK.ToolUnionParam format
-func convertTools(tools []llm.Tool) []anthropicSDK.ToolUnionParam {
+func convertTools(tools []llm.Tool, strictToolUse bool) []anthropicSDK.ToolUnionParam {
 	converted := make([]anthropicSDK.ToolUnionParam, len(tools))
 	for i, tool := range tools {
 		// Convert schema to the format Anthropic expects
@@ -483,12 +515,19 @@ func convertTools(tools []llm.Tool) []anthropicSDK.ToolUnionParam {
 			inputSchema.Properties = schema.Properties
 		}
 
+		toolParam := &anthropicSDK.ToolParam{
+			Name:        tool.Name,
+			Description: anthropicSDK.String(tool.Description),
+			InputSchema: inputSchema,
+		}
+
+		// Enable strict mode for structured outputs if configured
+		if strictToolUse {
+			toolParam.Strict = anthropicSDK.Bool(true)
+		}
+
 		converted[i] = anthropicSDK.ToolUnionParam{
-			OfTool: &anthropicSDK.ToolParam{
-				Name:        tool.Name,
-				Description: anthropicSDK.String(tool.Description),
-				InputSchema: inputSchema,
-			},
+			OfTool: toolParam,
 		}
 	}
 	return converted

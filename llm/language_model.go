@@ -38,6 +38,7 @@ type LanguageModelConfig struct {
 	EnableVision       bool
 	JSONOutputFormat   *jsonschema.Schema
 	ToolsDisabled      bool
+	StrictToolUse      bool
 }
 
 type LanguageModelOption func(*LanguageModelConfig)
@@ -61,6 +62,12 @@ func WithJSONOutput[T any]() LanguageModelOption {
 func WithToolsDisabled() LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.ToolsDisabled = true
+	}
+}
+
+func WithStrictToolUse() LanguageModelOption {
+	return func(cfg *LanguageModelConfig) {
+		cfg.StrictToolUse = true
 	}
 }
 
