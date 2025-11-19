@@ -60,18 +60,23 @@ test.describe('Bot Management UI', () => {
         // Navigate to system console
         await systemConsole.navigateToPluginConfig(mattermost.url());
 
+        // Wait for the page to fully load and any migrations to complete
+        // The "Add an AI Agent" button should be visible when the page is ready
+        const addBotButton = systemConsole.getAddBotButton();
+        await expect(addBotButton).toBeVisible();
+
+        // Wait a bit for any async operations to complete
+        await page.waitForTimeout(1000);
+
         // Count existing bot cards before adding a new one
         const existingBotCards = page.locator('[class*="BotContainer"]');
         const initialBotCount = await existingBotCards.count();
 
         // Click "Add an AI Agent" button - this creates a new collapsed bot card
-        const addBotButton = systemConsole.getAddBotButton();
-        await expect(addBotButton).toBeVisible();
         await addBotButton.click();
-        await page.waitForTimeout(1000);
 
-        // Verify a new bot card was added
-        await expect(existingBotCards).toHaveCount(initialBotCount + 1);
+        // Wait for the new bot card to appear in the DOM
+        await expect(existingBotCards).toHaveCount(initialBotCount + 1, { timeout: 5000 });
 
         // Get the newly added bot card (last one) and click on it to expand the form
         const botCard = page.locator('[class*="BotContainer"]').last();
@@ -79,11 +84,11 @@ test.describe('Bot Management UI', () => {
 
         // Click on the bot card to expand it
         await botCard.click();
-        await page.waitForTimeout(500);
 
-        // Fill in the form fields that are now visible
+        // Wait for the form fields to become visible after expansion
         // Display Name
         const displayNameInput = botCard.getByPlaceholder(/display name/i).or(botCard.getByRole('textbox').first());
+        await expect(displayNameInput).toBeVisible({ timeout: 3000 });
         await displayNameInput.fill('Test Assistant');
 
         // Agent Username
@@ -103,15 +108,18 @@ test.describe('Bot Management UI', () => {
         await expect(saveButton).toBeVisible();
         await saveButton.click();
 
-        // Wait for save to complete
+        // Wait for the save operation to complete
+        // The button might become disabled briefly or a success message might appear
         await page.waitForTimeout(2000);
 
         // Verify bot was saved - reload and check
         await page.reload();
-        await page.waitForTimeout(1000);
+
+        // Wait for the page to load and bots list to be visible
+        const botsListSection = page.locator('[class*="BotsList"]');
+        await expect(botsListSection).toBeVisible({ timeout: 10000 });
 
         // Verify bot appears with configured values in the bots list
-        const botsListSection = page.locator('[class*="BotsList"]');
         await expect(botsListSection.getByText('Test Assistant')).toBeVisible();
 
         // Verify the bot also appears in the default agent dropdown

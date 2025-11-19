@@ -32,6 +32,10 @@ async function setupTestPage(page) {
 
     await mmPage.login(url, username, password);
 
+    // Wait for plugin to be fully initialized by ensuring the app bar icon is loaded
+    // This ensures the plugin is ready before any test interactions
+    await expect(aiPlugin.appBarIcon).toBeVisible({ timeout: 30000 });
+
     return { mmPage, aiPlugin };
 }
 

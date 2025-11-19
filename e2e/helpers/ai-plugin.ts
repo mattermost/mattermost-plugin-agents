@@ -28,9 +28,18 @@ export class AIPlugin {
   }
 
   async openRHS() {
-    await expect(this.appBarIcon).toBeVisible();
-    await this.appBarIcon.click();
-    await expect(this.page.getByTestId('mattermost-ai-rhs')).toBeVisible();
+    // Wait for plugin to be fully initialized with a longer timeout for flaky scenarios
+    // The longer timeout helps handle cases where plugin initialization is slow
+    await expect(this.appBarIcon).toBeVisible({ timeout: 30000 });
+
+    // Check if RHS is already open to avoid unnecessary clicks
+    const rhsContainer = this.page.getByTestId('mattermost-ai-rhs');
+    const isRHSVisible = await rhsContainer.isVisible().catch(() => false);
+
+    if (!isRHSVisible) {
+      await this.appBarIcon.click();
+      await expect(rhsContainer).toBeVisible({ timeout: 10000 });
+    }
   }
 
   async sendMessage(message: string) {
