@@ -72,7 +72,6 @@ test.describe('Error Handling and Resilience', () => {
 
         // Expected Results: User-friendly error message is displayed
         await expect(page.getByText(/error/i)).toBeVisible();
-        // No system crash or blank screen
     });
 
     test.skip('Handle Streaming Interruption', async ({ page }) => {

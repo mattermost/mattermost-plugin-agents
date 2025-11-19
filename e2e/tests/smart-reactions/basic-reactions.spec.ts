@@ -106,11 +106,17 @@ test.describe('Smart Reactions - Basic Functionality', () => {
         // Click "React for me"
         await page.getByRole('button', { name: 'React for me' }).click();
 
-        // Wait a moment for reaction to be applied
-        await page.waitForTimeout(2000);
+        // Wait for the reaction to be applied to the post
+        // The post should have a reaction container with the thumbsup emoji
+        const postLocator = page.locator(`#post_${rootPost.id}`);
 
-        // Verify some UI feedback (exact implementation may vary)
-        // The test passes if no errors occur and the action completes
+        // Wait for the reaction to appear on the post (up to 5 seconds per spec)
+        // Mattermost reactions appear as buttons with aria-label "react with <emoji>"
+        const reactionButton = postLocator.getByRole('button', { name: /react with thumbsup|react with \+1/ });
+        await expect(reactionButton).toBeVisible({ timeout: 5000 });
+
+        // Verify the reaction count is displayed (should be 1)
+        await expect(reactionButton).toContainText('1');
     });
 
     test('Negative message gets appropriate reaction suggestion', async ({ page }) => {

@@ -78,10 +78,7 @@ test.describe('UI and Display Verification', () => {
         // 5. Observe the right-hand sidebar (RHS)
         await aiPlugin.expectRHSOpenWithPost();
 
-        // Expected Results:
-        // - RHS displays header indicating it's an AI conversation
         await expect(page.getByTestId('mattermost-ai-rhs')).toBeVisible();
-        // - Test ID `mattermost-ai-rhs` is present on the RHS container
     });
 
     test('Verify AI Actions Menu Icon and Tooltip', async ({ page }) => {
@@ -105,10 +102,5 @@ test.describe('UI and Display Verification', () => {
         // 4. Observe the AI Actions menu icon
         const aiActionsMenu = page.getByTestId('ai-actions-menu');
         await expect(aiActionsMenu).toBeVisible();
-
-        // Expected Results:
-        // - AI icon is visible
-        // - Test ID `ai-actions-menu` is present
-        // - Icon is positioned in the post menu bar
     });
 });

@@ -1,12 +1,14 @@
 import fs from 'fs';
+import path from 'path';
 
 import MattermostContainer from './mmcontainer';
 
 const RunContainer = async (): Promise<MattermostContainer> => {
   let filename = "";
-  fs.readdirSync("../dist/").forEach(file => {
+  const distPath = path.join(__dirname, "../../dist/");
+  fs.readdirSync(distPath).forEach(file => {
       if (file.endsWith(".tar.gz")) {
-          filename = "../dist/"+file
+          filename = path.join(distPath, file);
       }
   })
   if (filename === "") {

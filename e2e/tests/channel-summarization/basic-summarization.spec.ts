@@ -83,37 +83,4 @@ test.describe('Channel Summarization - Basic Functionality', () => {
         await expect(page.getByText(/Channel Summary/i)).toBeVisible({ timeout: 10000 });
         await expect(page.getByText(/discussed project updates/i)).toBeVisible();
     });
-
-    test.skip('Summarize channel with minimal activity', async ({ page }) => {
-        // Skipped: /summarize-channel command needs investigation - may not be implemented yet
-        const { mmPage, aiPlugin } = await setupTestPage(page);
-
-        // Create just one message
-        await mmPage.sendMessageAsUser(mattermost, username, password, 'Quick status update');
-
-        // Navigate to town-square
-        await page.goto(mattermost.url() + '/test/channels/town-square');
-        await page.waitForLoadState('networkidle');
-
-        // Open RHS
-        await aiPlugin.openRHS();
-
-        const minimalSummaryResponse = `
-data: {"id":"chatcmpl-sum-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-sum-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"Summary"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-sum-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":":"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-sum-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" Minimal"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-sum-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" activity"},"logprobs":null,"finish_reason":"stop"}]}
-data: [DONE]
-`.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-
-        await openAIMock.addCompletionMock(minimalSummaryResponse);
-
-        // Send summarize command
-        await aiPlugin.sendMessage('/summarize-channel');
-
-        // Verify response
-        await expect(page.getByText(/Summary/i)).toBeVisible({ timeout: 10000 });
-        await expect(page.getByText(/Minimal activity/i)).toBeVisible();
-    });
 });

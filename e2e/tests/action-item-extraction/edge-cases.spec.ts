@@ -110,7 +110,6 @@ test.describe('Edge Cases and Boundary Conditions', () => {
         // Expected Results: AI responds with message indicating no action items
         const rhsContainer = page.getByTestId('mattermost-ai-rhs');
         await expect(rhsContainer.getByText(/no action items/i)).toBeVisible();
-        // No error is displayed
     });
 
     test('Single Post with No Replies', async ({ page }) => {
