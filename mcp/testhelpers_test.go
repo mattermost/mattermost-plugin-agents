@@ -387,6 +387,13 @@ func (s *EmbeddedTestSuite) CreateClientManager(t *testing.T, session *model.Ses
 	mockPluginAPI := newMockPluginAPI()
 	mockPluginAPI.addSession(session)
 
+	// Mock GetUser to return the actual user from the session
+	mockPluginAPI.API.On("GetUser", session.UserId).Unset()
+	mockPluginAPI.API.On("GetUser", session.UserId).Return(&model.User{
+		Id:    session.UserId,
+		Roles: "system_user",
+	}, (*model.AppError)(nil))
+
 	// Pre-populate KV with the session ID so ensureEmbeddedSessionID finds it
 	// This simulates the session already being stored for this user
 	// Use Unset first to remove the generic mock, then add specific one
