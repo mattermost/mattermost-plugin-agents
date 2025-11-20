@@ -89,10 +89,13 @@ test.describe('Edge Cases - Input Validation', () => {
 
         // Send message with special characters
         await aiPlugin.sendMessage('Test with émojis 🎉 and symbols: @#$%^&*()');
+
+        // Wait for bot response with increased timeout to handle potential rendering delays
         await aiPlugin.waitForBotResponse(responseTestText);
 
-        // Should handle special characters successfully
-        await expect(page.getByText(responseTestText)).toBeVisible();
+        // Verify the response is visible in the RHS container
+        const rhsContainer = page.getByTestId('mattermost-ai-rhs');
+        await expect(rhsContainer.getByText(responseTestText)).toBeVisible({ timeout: 5000 });
     });
 
     test('Handle rapid message submission', async ({ page }) => {

@@ -81,11 +81,13 @@ test.describe('Advanced Error Scenarios - Network Errors', () => {
 
         await aiPlugin.sendMessage('Test message for rate limiting');
 
-        // Wait for error handling
-        await page.waitForTimeout(2000);
+        // Wait for error message to appear in the RHS
+        // The error should be displayed to the user, so wait for the RHS to stabilize
+        const rhsContainer = page.getByTestId('mattermost-ai-rhs');
+        await expect(rhsContainer).toBeVisible();
 
-        // Should display rate limit message or handle gracefully
-        await expect(page.getByTestId('mattermost-ai-rhs')).toBeVisible();
+        // Ensure the textarea is still available after error (plugin remains functional)
+        await expect(aiPlugin.rhsPostTextarea).toBeVisible({ timeout: 5000 });
     });
 
     test('Handle 401 Unauthorized', async ({ page }) => {
