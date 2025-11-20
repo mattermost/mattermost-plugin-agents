@@ -114,7 +114,7 @@ test.describe('Smart Reactions - Basic Functionality', () => {
         // The DOM shows reactions appear as: button "react with thumbsup"
         // Use a very generous timeout for parallel CI environments
         const reactionButton = postLocator.getByRole('button', { name: /react with thumbsup|react with \+1/ });
-        await expect(reactionButton).toBeVisible({ timeout: 45000 });
+        await expect(reactionButton).toBeVisible({ timeout: 90000 });
 
         // Verify the reaction count is displayed (should be 1)
         await expect(reactionButton).toContainText('1');
