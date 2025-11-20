@@ -51,6 +51,11 @@ test.beforeAll(async () => {
     openAIMock = await RunOpenAIMocks(mattermost.network);
 });
 
+test.beforeEach(async () => {
+    // Reset mocks before each test to prevent cross-contamination
+    await openAIMock.resetMocks();
+});
+
 // Cleanup after all tests
 test.afterAll(async () => {
     await openAIMock.stop();
