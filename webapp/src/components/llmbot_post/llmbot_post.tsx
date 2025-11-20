@@ -9,193 +9,20 @@ import styled from 'styled-components';
 import {WebSocketMessage} from '@mattermost/client';
 import {GlobalState} from '@mattermost/types/store';
 
-import {SendIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
-
 import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
-
 import {useSelectNotAIPost} from '@/hooks';
-
 import {PostMessagePreview} from '@/mm_webapp';
 
-import {SearchSources} from './search_sources';
+import {SearchSources} from '../search_sources';
+import PostText from '../post_text';
+import ToolApprovalSet from '../tool_approval_set';
+import {Annotation} from '../citations/types';
 
-import PostText from './post_text';
-import {Annotation} from './citations/types';
-import IconRegenerate from './assets/icon_regenerate';
-import IconCancel from './assets/icon_cancel';
-import ToolApprovalSet from './tool_approval_set';
+import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
+import {ControlsBarComponent} from './controls_bar';
+import {extractPermalinkData} from './permalink_data';
 
-const SearchResultsPropKey = 'search_results';
-
-const PostBody = styled.div`
-`;
-
-const ControlsBar = styled.div`
-	display: flex;
-	flex-direction: row;
-	justify-content: left;
-	height: 28px;
-	margin-top: 8px;
-	gap: 4px;
-`;
-
-const GenerationButton = styled.button`
-	display: flex;
-	border: none;
-	height: 24px;
-	padding: 4px 10px;
-	align-items: center;
-	justify-content: center;
-	gap: 6px;
-	border-radius: 4px;
-	background: rgba(var(--center-channel-color-rgb), 0.08);
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-
-	font-size: 12px;
-	line-height: 16px;
-	font-weight: 600;
-
-	:hover {
-		background: rgba(var(--center-channel-color-rgb), 0.12);
-        color: rgba(var(--center-channel-color-rgb), 0.72);
-	}
-
-	:active {
-		background: rgba(var(--button-bg-rgb), 0.08);
-	}
-`;
-
-const PostSummaryButton = styled(GenerationButton)`
-	background: var(--button-bg);
-    color: var(--button-color);
-
-	:hover {
-		background: rgba(var(--button-bg-rgb), 0.88);
-		color: var(--button-color);
-	}
-
-	:active {
-		background: rgba(var(--button-bg-rgb), 0.92);
-	}
-`;
-
-const StopGeneratingButton = styled(GenerationButton)`
-`;
-
-const PostSummaryHelpMessage = styled.div`
-	font-size: 14px;
-	font-style: italic;
-	font-weight: 400;
-	line-height: 20px;
-	border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-
-	padding-top: 8px;
-	padding-bottom: 8px;
-	margin-top: 16px;
-`;
-
-const ExpandedReasoningContainer = styled.div`
-	background: rgba(var(--center-channel-color-rgb), 0.02);
-	border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-	border-radius: 8px;
-	margin-bottom: 16px;
-	margin-top: 4px;
-	overflow: hidden;
-`;
-
-const ExpandedReasoningHeader = styled.div`
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	margin-bottom: 12px;
-	font-size: 14px;
-	color: rgba(var(--center-channel-color-rgb), 0.64);
-	cursor: pointer;
-	user-select: none;
-
-	&:hover {
-		color: rgba(var(--center-channel-color-rgb), 0.8);
-	}
-`;
-
-const ExpandedChevron = styled.div`
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
-	transition: transform 0.2s ease;
-	transform: rotate(90deg);
-
-	svg {
-		width: 14px;
-		height: 14px;
-	}
-`;
-
-const LoadingSpinner = styled.div`
-	display: inline-block;
-	width: 14px;
-	height: 14px;
-	border: 2px solid rgba(var(--center-channel-color-rgb), 0.16);
-	border-radius: 50%;
-	border-top-color: rgba(var(--center-channel-color-rgb), 0.64);
-	animation: spin 1s linear infinite;
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-`;
-
-const MinimalReasoningContainer = styled.div`
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	margin-bottom: 12px;
-	font-size: 14px;
-	color: rgba(var(--center-channel-color-rgb), 0.64);
-	cursor: pointer;
-	user-select: none;
-
-	&:hover {
-		color: rgba(var(--center-channel-color-rgb), 0.8);
-	}
-`;
-
-const MinimalExpandIcon = styled.div<{isExpanded: boolean}>`
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
-	transition: transform 0.2s ease;
-	transform: ${(props) => (props.isExpanded ? 'rotate(180deg)' : 'rotate(0)')};
-
-	svg {
-		width: 14px;
-		height: 14px;
-	}
-`;
-
-const ReasoningContent = styled.div<{collapsed: boolean}>`
-	max-height: ${(props) => (props.collapsed ? '0' : '600px')};
-	overflow-y: auto;
-	transition: max-height 0.3s ease-in-out;
-	opacity: ${(props) => (props.collapsed ? '0' : '1')};
-	transition: opacity 0.2s ease-in-out, max-height 0.3s ease-in-out;
-`;
-
-const ReasoningText = styled.div`
-	padding: 16px;
-	font-size: 14px;
-	line-height: 22px;
-	color: rgba(var(--center-channel-color-rgb), 0.8);
-	white-space: pre-wrap;
-	word-break: break-word;
-`;
-
+// Types
 export interface PostUpdateWebsocketMessage {
     post_id: string
     next?: string
@@ -222,47 +49,37 @@ export interface ToolCall {
     status: ToolCallStatus;
 }
 
-interface Props {
+interface LLMBotPostProps {
     post: any;
     websocketRegister?: (postID: string, listenerID: string, handler: (msg: WebSocketMessage<any>) => void) => void;
     websocketUnregister?: (postID: string, listenerID: string) => void;
 }
 
-export const LLMBotPost = (props: Props) => {
+const SearchResultsPropKey = 'search_results';
+
+export const LLMBotPost = (props: LLMBotPostProps) => {
     const selectPost = useSelectNotAIPost();
     const [message, setMessage] = useState(props.post.message);
 
-    // Generating is true while we are reciving new content from the websocket
+    // Generating is true while we are receiving new content from the websocket
     const [generating, setGenerating] = useState(false);
 
-    // Precontent is true when we're waiting for the first content to arrive
-    const [precontent, setPrecontent] = useState(props.post.message === '');
+    // State for tool calls - initialize from persisted tool calls if available
+    const [toolCalls, setToolCalls] = useState<ToolCall[]>(() => {
+        const toolCallsJson = props.post.props?.pending_tool_call;
+        if (toolCallsJson) {
+            try {
+                return JSON.parse(toolCallsJson);
+            } catch (error) {
+                return [];
+            }
+        }
+        return [];
+    });
 
-    // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation
-    // Needs a ref because of the useEffect closure.
-    const [stopped, setStopped] = useState(false);
-    const stoppedRef = useRef(stopped);
-    stoppedRef.current = stopped;
-
-    // Ref for the expanded reasoning header to scroll to
-    const expandedReasoningHeaderRef = useRef<HTMLDivElement>(null);
-
-    // State for tool calls
-    const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
-    const [error, setError] = useState('');
-
-    // State for reasoning summary display
-    // Initialize from persisted reasoning if available
-    const persistedReasoning = props.post.props?.reasoning_summary || '';
-    const [reasoningSummary, setReasoningSummary] = useState(persistedReasoning);
-    const [showReasoning, setShowReasoning] = useState(persistedReasoning !== '');
-    const [isReasoningCollapsed, setIsReasoningCollapsed] = useState(true);
-    const [isReasoningLoading, setIsReasoningLoading] = useState(false);
-
-    // State for annotations/citations
-    // Initialize from persisted annotations if available
-    const persistedAnnotations = props.post.props?.annotations || '';
+    // State for annotations/citations - initialize from persisted annotations if available
     const [annotations, setAnnotations] = useState<Annotation[]>(() => {
+        const persistedAnnotations = props.post.props?.annotations || '';
         if (persistedAnnotations) {
             try {
                 return JSON.parse(persistedAnnotations);
@@ -273,11 +90,33 @@ export const LLMBotPost = (props: Props) => {
         return [];
     });
 
+    // Precontent is true when we're waiting for the first content to arrive
+    // Initialize to true if post is empty AND has no reasoning AND no tool calls AND no annotations (fresh post)
+    const persistedReasoning = props.post.props?.reasoning_summary || '';
+    const [precontent, setPrecontent] = useState(
+        props.post.message === '' &&
+        persistedReasoning === '' &&
+        toolCalls.length === 0 &&
+        annotations.length === 0,
+    );
+
+    // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation
+    // Needs a ref because of the useEffect closure.
+    const [stopped, setStopped] = useState(false);
+    const stoppedRef = useRef(stopped);
+    stoppedRef.current = stopped;
+
+    const [error, setError] = useState('');
+
+    // State for reasoning summary display
+    // Use the same persistedReasoning from above
+    const [reasoningSummary, setReasoningSummary] = useState(persistedReasoning);
+    const [showReasoning, setShowReasoning] = useState(persistedReasoning !== '');
+    const [isReasoningCollapsed, setIsReasoningCollapsed] = useState(true);
+    const [isReasoningLoading, setIsReasoningLoading] = useState(false);
+
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
-
-    // Get tool calls from post props
-    const toolCallsJson = props.post.props?.pending_tool_call;
 
     // Initialize reasoning from persisted data when navigating to different posts
     const previousPostIdRef = useRef(props.post.id);
@@ -299,9 +138,11 @@ export const LLMBotPost = (props: Props) => {
 
             // Initialize annotations from persisted data
             const persistedAnnotations = props.post.props?.annotations || '';
+            let parsedAnnotations: Annotation[] = [];
             if (persistedAnnotations) {
                 try {
-                    setAnnotations(JSON.parse(persistedAnnotations));
+                    parsedAnnotations = JSON.parse(persistedAnnotations);
+                    setAnnotations(parsedAnnotations);
                 } catch (error) {
                     setAnnotations([]);
                 }
@@ -309,19 +150,36 @@ export const LLMBotPost = (props: Props) => {
                 setAnnotations([]);
             }
 
-            // Initialize precontent based on whether post is empty
-            if (props.post.message === '') {
-                setPrecontent(true);
+            // Initialize tool calls from persisted data
+            const toolCallsJson = props.post.props?.pending_tool_call;
+            let parsedToolCalls: ToolCall[] = [];
+            if (toolCallsJson) {
+                try {
+                    parsedToolCalls = JSON.parse(toolCallsJson);
+                    setToolCalls(parsedToolCalls);
+                } catch (error) {
+                    setToolCalls([]);
+                }
             } else {
-                setPrecontent(false);
+                setToolCalls([]);
             }
+
+            // Set precontent if this is a fresh empty post (no content, no reasoning, no tool calls, no annotations)
+            // Otherwise reset to false (historical posts or posts with any content)
+            setPrecontent(
+                props.post.message === '' &&
+                persistedReasoning === '' &&
+                parsedToolCalls.length === 0 &&
+                parsedAnnotations.length === 0,
+            );
 
             previousPostIdRef.current = props.post.id;
         }
-    }, [props.post.id, props.post.props?.reasoning_summary, props.post.props?.annotations]);
+    }, [props.post.id, props.post.props?.reasoning_summary, props.post.props?.annotations, props.post.props?.pending_tool_call, props.post.message]);
 
     // Update tool calls from props when available
     useEffect(() => {
+        const toolCallsJson = props.post.props?.pending_tool_call;
         if (toolCallsJson) {
             try {
                 const parsedToolCalls = JSON.parse(toolCallsJson);
@@ -331,7 +189,7 @@ export const LLMBotPost = (props: Props) => {
                 setError('Error parsing tool calls');
             }
         }
-    }, [toolCallsJson]);
+    }, [props.post.props?.pending_tool_call]);
 
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
@@ -357,8 +215,10 @@ export const LLMBotPost = (props: Props) => {
                     setReasoningSummary(data.reasoning);
                     setShowReasoning(true);
                     setIsReasoningLoading(true);
-                    setGenerating(true);
-                    setPrecontent(false); // Hide "Starting..." when reasoning begins
+
+                    // Explicitly set generating to false to prevent blinking cursor during reasoning
+                    setGenerating(false);
+                    setPrecontent(false); // Clear "Starting..." when reasoning begins
                     return;
                 }
 
@@ -376,6 +236,7 @@ export const LLMBotPost = (props: Props) => {
                     try {
                         const parsedToolCalls = JSON.parse(data.tool_call);
                         setToolCalls(parsedToolCalls);
+                        setPrecontent(false); // Clear "Starting..." when tool calls arrive
                     } catch (error) {
                         // Handle error silently
                         setError('Error parsing tool call data');
@@ -388,6 +249,7 @@ export const LLMBotPost = (props: Props) => {
                     try {
                         const parsedAnnotations = JSON.parse(data.annotations);
                         setAnnotations(parsedAnnotations);
+                        setPrecontent(false); // Clear "Starting..." when annotations arrive
                     } catch (error) {
                         // Handle error silently
                         setError('Error parsing annotation data');
@@ -407,6 +269,7 @@ export const LLMBotPost = (props: Props) => {
                     setIsReasoningLoading(false);
                 } else if (data.control === 'cancel') {
                     setGenerating(false);
+                    setPrecontent(false);
                     setStopped(false);
                     setIsReasoningLoading(false);
                 } else if (data.control === 'start') {
@@ -419,6 +282,10 @@ export const LLMBotPost = (props: Props) => {
                     setShowReasoning(false);
                     setIsReasoningCollapsed(true);
                     setIsReasoningLoading(false);
+
+                    // Clear tool calls and annotations when starting new generation
+                    setToolCalls([]);
+                    setAnnotations([]);
 
                     if (!message) {
                         setMessage('');
@@ -450,6 +317,9 @@ export const LLMBotPost = (props: Props) => {
 
         // Clear annotations/citations when regenerating
         setAnnotations([]);
+
+        // Clear tool calls when regenerating
+        setToolCalls([]);
 
         doRegenerate(props.post.id);
     };
@@ -484,9 +354,12 @@ export const LLMBotPost = (props: Props) => {
         }
     }
 
-    const showRegenerate = !generating && requesterIsCurrentUser && !isNoShowRegen;
-    const showPostbackButton = !generating && requesterIsCurrentUser && isTranscriptionResult;
-    const showStopGeneratingButton = generating && requesterIsCurrentUser;
+    // Consider both generating and reasoning loading states for determining if generation is in progress
+    const isGenerationInProgress = generating || isReasoningLoading;
+
+    const showRegenerate = !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
+    const showPostbackButton = !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
+    const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
     const hasContent = message !== '' || reasoningSummary !== '';
     const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
 
@@ -500,52 +373,13 @@ export const LLMBotPost = (props: Props) => {
                 {permalinkView}
             </>
             }
-            {showReasoning && isReasoningCollapsed && (
-                <MinimalReasoningContainer
-                    onClick={() => {
-                        setIsReasoningCollapsed(false);
-
-                        // Small delay to allow the expansion to start before scrolling
-                        setTimeout(() => {
-                            if (expandedReasoningHeaderRef.current) {
-                                expandedReasoningHeaderRef.current.scrollIntoView({
-                                    behavior: 'smooth',
-                                    block: 'nearest',
-                                    inline: 'nearest',
-                                });
-                            }
-                        }, 50);
-                    }}
-                >
-                    <MinimalExpandIcon isExpanded={false}>
-                        <ChevronRightIcon/>
-                    </MinimalExpandIcon>
-                    {isReasoningLoading && <LoadingSpinner/>}
-                    <span>{'Thinking'}</span>
-                </MinimalReasoningContainer>
-            )}
-            {showReasoning && !isReasoningCollapsed && (
-                <>
-                    <ExpandedReasoningHeader
-                        ref={expandedReasoningHeaderRef}
-                        onClick={() => setIsReasoningCollapsed(true)}
-                    >
-                        <ExpandedChevron>
-                            <ChevronRightIcon/>
-                        </ExpandedChevron>
-                        {isReasoningLoading && <LoadingSpinner/>}
-                        <span>{'Thinking'}</span>
-                    </ExpandedReasoningHeader>
-                    {reasoningSummary && (
-                        <ExpandedReasoningContainer>
-                            <ReasoningContent collapsed={false}>
-                                <ReasoningText>
-                                    {reasoningSummary}
-                                </ReasoningText>
-                            </ReasoningContent>
-                        </ExpandedReasoningContainer>
-                    )}
-                </>
+            {showReasoning && (
+                <ReasoningDisplay
+                    reasoningSummary={reasoningSummary}
+                    isReasoningCollapsed={isReasoningCollapsed}
+                    isReasoningLoading={isReasoningLoading}
+                    onToggleCollapse={setIsReasoningCollapsed}
+                />
             )}
             {precontent && (
                 <MinimalReasoningContainer>
@@ -559,7 +393,7 @@ export const LLMBotPost = (props: Props) => {
                 message={message}
                 channelID={props.post.channel_id}
                 postID={props.post.id}
-                showCursor={generating}
+                showCursor={generating && !precontent}
                 annotations={annotations.length > 0 ? annotations : undefined} // eslint-disable-line no-undefined
             />
             {props.post.props?.[SearchResultsPropKey] && (
@@ -579,56 +413,32 @@ export const LLMBotPost = (props: Props) => {
             </PostSummaryHelpMessage>
             }
             { showControlsBar &&
-            <ControlsBar>
-                { showStopGeneratingButton &&
-                <StopGeneratingButton
-                    data-testid='stop-generating-button'
-                    onClick={stopGenerating}
-                >
-                    <IconCancel/>
-                    <FormattedMessage defaultMessage='Stop Generating'/>
-                </StopGeneratingButton>
-                }
-                {showPostbackButton &&
-                <PostSummaryButton
-                    data-testid='llm-bot-post-summary'
-                    onClick={postSummary}
-                >
-                    <SendIcon/>
-                    <FormattedMessage defaultMessage='Post summary'/>
-                </PostSummaryButton>
-                }
-                { showRegenerate &&
-                <GenerationButton
-                    data-testid='regenerate-button'
-                    onClick={regnerate}
-                >
-                    <IconRegenerate/>
-                    <FormattedMessage defaultMessage='Regenerate'/>
-                </GenerationButton>
-                }
-            </ControlsBar>
+            <ControlsBarComponent
+                showStopGeneratingButton={showStopGeneratingButton}
+                showPostbackButton={showPostbackButton}
+                showRegenerate={showRegenerate}
+                onStopGenerating={stopGenerating}
+                onPostSummary={postSummary}
+                onRegenerate={regnerate}
+            />
             }
         </PostBody>
     );
 };
 
-type PermalinkData = {
-    channel_display_name: string
-    channel_id: string
-    post_id: string
-    team_name: string
-    post: {
-        message: string
-        user_id: string
-    }
-}
+// Styled components
+const PostBody = styled.div`
+`;
 
-function extractPermalinkData(post: any): PermalinkData | null {
-    for (const embed of post?.metadata?.embeds || []) {
-        if (embed.type === 'permalink') {
-            return embed.data;
-        }
-    }
-    return null;
-}
+const PostSummaryHelpMessage = styled.div`
+	font-size: 14px;
+	font-style: italic;
+	font-weight: 400;
+	line-height: 20px;
+	border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+
+	padding-top: 8px;
+	padding-bottom: 8px;
+	margin-top: 16px;
+`;
+

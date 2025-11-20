@@ -121,7 +121,12 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		Posts:   posts,
 		Context: context,
 	}
-	result, err := bot.LLM().ChatCompletion(completionRequest)
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	var opts []llm.LanguageModelOption
+	if !isDM {
+		opts = append(opts, llm.WithToolsDisabled())
+	}
+	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +149,7 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 		bot,
 		postingUser,
 		channel,
-		c.contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
+		c.contextBuilder.WithLLMContextTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
 	)
 
 	// Check for auth errors in the tool store

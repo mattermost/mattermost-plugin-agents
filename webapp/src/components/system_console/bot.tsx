@@ -16,6 +16,7 @@ import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, Ite
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
+import ReasoningConfigItem from './reasoning_config';
 
 export enum ChannelAccessLevel {
     All = 0,
@@ -45,6 +46,9 @@ export type LLMBotConfig = {
     userIDs: string[]
     teamIDs: string[]
     enabledNativeTools?: string[]
+    reasoningEnabled?: boolean
+    reasoningEffort?: string
+    thinkingBudget?: number
 }
 
 // Component for configuring native tools (OpenAI/Anthropic)
@@ -215,12 +219,7 @@ const Bot = (props: Props) => {
                             return (
                                 <>
                                     <BooleanItem
-                                        label={
-                                            <Horizontal>
-                                                <FormattedMessage defaultMessage='Enable Vision'/>
-                                                <Pill><FormattedMessage defaultMessage='BETA'/></Pill>
-                                            </Horizontal>
-                                        }
+                                        label={intl.formatMessage({defaultMessage: 'Enable Vision'})}
                                         value={props.bot.enableVision}
                                         onChange={(to: boolean) => props.onChange({...props.bot, enableVision: to})}
                                         helpText={intl.formatMessage({defaultMessage: 'Enable Vision to allow the bot to process images. Requires a compatible model.'})}
@@ -258,6 +257,12 @@ const Bot = (props: Props) => {
 
                                         return null;
                                     })()}
+                                    <ReasoningConfigItem
+                                        bot={props.bot}
+                                        service={selectedService}
+                                        maxTokens={selectedService?.outputTokenLimit || 4096}
+                                        onChange={props.onChange}
+                                    />
                                 </>
                             );
                         })()}

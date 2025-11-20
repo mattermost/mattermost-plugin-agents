@@ -22,7 +22,7 @@ import IconSparkleCheckmark from './assets/icon_sparkle_checkmark';
 import IconSparkleQuestion from './assets/icon_sparkle_question';
 import DotMenu, {DropdownMenu, DropdownMenuItem} from './dot_menu';
 import IconThreadSummarization from './assets/icon_thread_summarization';
-import {Divider, DropdownChannelBlocked, DropdownInfoOnlyVisibleToYou} from './dropdown_info';
+import {Divider, DropdownInfoOnlyVisibleToYou} from './dropdown_info';
 import {DropdownBotSelector} from './bot_selector';
 
 type Props = {
@@ -32,7 +32,7 @@ type Props = {
 const PostMenu = (props: Props) => {
     const selectPost = useSelectPost();
     const intl = useIntl();
-    const {bots, activeBot, setActiveBot, wasFiltered} = useBotlistForChannel(props.post.channel_id);
+    const {bots, activeBot, setActiveBot} = useBotlistForChannel(props.post.channel_id);
     const post = props.post;
     const isBasicsLicensed = useIsBasicsLicensed();
 
@@ -46,20 +46,7 @@ const PostMenu = (props: Props) => {
     }
 
     if (bots && bots.length === 0) {
-        // Filtered by permissions state
-        if (wasFiltered) {
-            return (
-                <DotMenu
-                    icon={<IconAI/>}
-                    title={intl.formatMessage({defaultMessage: 'AI Actions'})}
-                    dropdownMenu={StyledDropdownMenu}
-                >
-                    <DropdownChannelBlocked/>
-                </DotMenu>
-            );
-        }
-
-        // Unconfigured state
+        // No bots available (either unconfigured or filtered by permissions)
         return null;
     }
 

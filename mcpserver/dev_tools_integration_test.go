@@ -132,30 +132,6 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 		})
 	})
 
-	t.Run("AddUserToChannelTool", func(t *testing.T) {
-		t.Run("HappyPath", func(t *testing.T) {
-			args := map[string]interface{}{
-				"user_id":    testData.User.Id,
-				"channel_id": testData.Channel.Id,
-			}
-
-			result, _ := executeDevToolWithMCP(t, suite, "add_user_to_channel", args)
-			// User might already be in channel, so we just check the call doesn't crash
-			// Don't require no error since user might already be in channel
-			assert.NotNil(t, result, "add_user_to_channel should return a result")
-		})
-
-		t.Run("InvalidChannelID", func(t *testing.T) {
-			args := map[string]interface{}{
-				"user_id":    testData.User.Id,
-				"channel_id": "invalid-channel-id",
-			}
-
-			_, err := executeDevToolWithMCP(t, suite, "add_user_to_channel", args)
-			require.Error(t, err, "add_user_to_channel should fail with invalid channel ID")
-		})
-	})
-
 	t.Run("CreatePostAsUserTool", func(t *testing.T) {
 		// Create a test user with known credentials first
 		userArgs := map[string]interface{}{
@@ -166,18 +142,15 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 		_, err := executeDevToolWithMCP(t, suite, "create_user", userArgs)
 		require.NoError(t, err, "User creation should succeed for post test")
 
-		// Add user to team and channel
+		// Add user to team (using dev tool)
 		addTeamArgs := map[string]interface{}{
 			"user_id": testData.User.Id, // Using existing user for simplicity
 			"team_id": testData.Team.Id,
 		}
 		_, _ = executeDevToolWithMCP(t, suite, "add_user_to_team", addTeamArgs)
 
-		addChannelArgs := map[string]interface{}{
-			"user_id":    testData.User.Id,
-			"channel_id": testData.Channel.Id,
-		}
-		_, _ = executeDevToolWithMCP(t, suite, "add_user_to_channel", addChannelArgs)
+		// Add user to channel (using helper since it's not a dev tool anymore)
+		testhelpers.AddUserToChannel(t, client, testData.Channel.Id, testData.User.Id)
 
 		t.Run("HappyPath", func(t *testing.T) {
 			args := map[string]interface{}{
@@ -219,7 +192,6 @@ func TestDevToolsSecurityGating(t *testing.T) {
 		"create_user",
 		"create_team",
 		"add_user_to_team",
-		"add_user_to_channel",
 		"create_post_as_user",
 	}
 

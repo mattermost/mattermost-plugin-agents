@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
+	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
@@ -22,7 +23,7 @@ type TestSuite struct {
 	container  *mmcontainer.MattermostContainer
 	serverURL  string
 	adminToken string
-	logger     *mlog.Logger
+	logger     loggerlib.Logger
 	mcpServer  interface {
 		Serve() error
 		GetMCPServer() *mcp.Server
@@ -58,7 +59,7 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	adminToken := pat.Token
 
 	// Set up logger for testing
-	logger, err := mlog.NewLogger()
+	mlogger, err := mlog.NewLogger()
 	require.NoError(t, err, "Failed to create logger")
 
 	cfg := make(mlog.LoggerConfiguration)
@@ -70,7 +71,7 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 		Options:       json.RawMessage(`{"out": "stderr"}`),
 		MaxQueueSize:  1000,
 	}
-	err = logger.ConfigureTargets(cfg, nil)
+	err = mlogger.ConfigureTargets(cfg, nil)
 	require.NoError(t, err, "Failed to configure logger")
 
 	return &TestSuite{
@@ -78,7 +79,7 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 		container:  container,
 		serverURL:  serverURL,
 		adminToken: adminToken,
-		logger:     logger,
+		logger:     loggerlib.NewStandaloneLogger(mlogger),
 	}
 }
 

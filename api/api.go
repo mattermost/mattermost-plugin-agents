@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
 	"github.com/mattermost/mattermost-plugin-ai/meetings"
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
@@ -44,7 +45,10 @@ type Config interface {
 
 type MCPClientManager interface {
 	GetOAuthManager() *mcp.OAuthManager
+	GetToolsCache() *mcp.ToolsCache
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
+	GetEmbeddedServer() mcp.EmbeddedMCPServer
+	EnsureMCPSessionID(userID string) (string, error)
 }
 
 // API represents the HTTP API functionality for the plugin
@@ -66,6 +70,7 @@ type API struct {
 	streamingService     streaming.Service
 	i18nBundle           *i18n.Bundle
 	mcpClientManager     MCPClientManager
+	mcpHandlers          *mcpserver.PluginMCPHandlers
 }
 
 // New creates a new API instance
@@ -86,6 +91,7 @@ func New(
 	streamingService streaming.Service,
 	i18nBundle *i18n.Bundle,
 	mcpClientManager MCPClientManager,
+	mcpHandlers *mcpserver.PluginMCPHandlers,
 ) *API {
 	return &API{
 		bots:                 bots,
@@ -105,6 +111,7 @@ func New(
 		streamingService:     streamingService,
 		i18nBundle:           i18nBundle,
 		mcpClientManager:     mcpClientManager,
+		mcpHandlers:          mcpHandlers,
 	}
 }
 
@@ -114,9 +121,41 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.Use(a.ginlogger)
 	router.Use(a.metricsMiddleware)
 
-	interPluginRoute := router.Group("/inter-plugin/v1")
-	interPluginRoute.Use(a.interPluginAuthorizationRequired)
-	interPluginRoute.POST("/simple_completion", a.handleInterPluginSimpleCompletion)
+	// LLM Bridge API v1 routes - inter-plugin only
+	llmBridgeRoute := router.Group("/bridge/v1")
+	llmBridgeRoute.Use(a.interPluginAuthorizationRequired)
+
+	// Discovery endpoints
+	llmBridgeRoute.GET("/agents", a.handleGetAgents)
+	llmBridgeRoute.GET("/services", a.handleGetServices)
+
+	// Completion endpoints
+	completionRoute := llmBridgeRoute.Group("/completion")
+	completionRoute.POST("/agent/:agent", a.handleAgentCompletionStreaming)
+	completionRoute.POST("/agent/:agent/nostream", a.handleAgentCompletionNoStream)
+	completionRoute.POST("/service/:service", a.handleServiceCompletionStreaming)
+	completionRoute.POST("/service/:service/nostream", a.handleServiceCompletionNoStream)
+
+	// MCP server endpoints - grouped under /mcp-server/
+	if a.mcpHandlers != nil && a.config.MCP().EnablePluginServer {
+		mcpServerGroup := router.Group("/mcp-server")
+
+		// Store plugin.Context in gin.Context for MCP endpoints
+		mcpServerGroup.Use(func(gc *gin.Context) {
+			gc.Set("pluginContext", c)
+			gc.Next()
+		})
+
+		mcpServerGroup.GET("/.well-known/oauth-protected-resource", func(gc *gin.Context) {
+			a.mcpHandlers.OAuthMetadataHandler(gc.Writer, gc.Request)
+		})
+
+		// MCP endpoint with authentication
+		mcpServerGroup.Use(a.mcpAuthMiddleware)
+		mcpServerGroup.Any("/mcp", func(gc *gin.Context) {
+			a.delegateToMCPHandler(gc, a.mcpHandlers.MCPHandler)
+		})
+	}
 
 	router.Use(a.MattermostAuthorizationRequired)
 
@@ -148,6 +187,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.GET("/reindex/status", a.handleGetJobStatus)
 	adminRouter.POST("/reindex/cancel", a.handleCancelJob)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
+	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
 
 	searchRouter := botRequiredRouter.Group("/search")
 	// Only returns search results

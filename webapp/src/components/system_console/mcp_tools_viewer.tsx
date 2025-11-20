@@ -6,8 +6,8 @@ import styled from 'styled-components';
 import {RefreshIcon, ChevronDownIcon, ChevronRightIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage} from 'react-intl';
 
-import {TertiaryButton} from '../assets/buttons';
-import {getMCPTools} from '../../client';
+import {TertiaryButton, SecondaryButton} from '../assets/buttons';
+import {getMCPTools, clearMCPToolsCache} from '../../client';
 
 // Type definitions matching the backend API response
 export type MCPToolInfo = {
@@ -136,7 +136,9 @@ const ServerItem = ({server}: {server: MCPServerInfo}) => {
 const MCPToolsViewer = () => {
     const [toolsData, setToolsData] = useState<MCPToolsResponse | null>(null);
     const [loading, setLoading] = useState(false);
+    const [clearing, setClearing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [clearSuccess, setClearSuccess] = useState<string | null>(null);
 
     // Fetch tools data from the API
     const fetchTools = async () => {
@@ -150,6 +152,25 @@ const MCPToolsViewer = () => {
             setError(err instanceof Error ? err.message : 'Failed to fetch MCP tools');
         } finally {
             setLoading(false);
+        }
+    };
+
+    // Clear the MCP tools cache
+    const handleClearCache = async () => {
+        setClearing(true);
+        setError(null);
+        setClearSuccess(null);
+
+        try {
+            const response = await clearMCPToolsCache();
+            setClearSuccess(response.message);
+
+            // Automatically refresh tools after clearing cache
+            await fetchTools();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to clear cache');
+        } finally {
+            setClearing(false);
         }
     };
 
@@ -189,18 +210,32 @@ const MCPToolsViewer = () => {
                         </Summary>
                     )}
                 </HeaderInfo>
-                <RefreshButton
-                    onClick={fetchTools}
-                    disabled={loading}
-                >
-                    <RefreshIcon
-                        size={16}
-                    />
-                    <FormattedMessage defaultMessage='Refresh Tools'/>
-                </RefreshButton>
+                <ButtonGroup>
+                    <SecondaryButton
+                        onClick={handleClearCache}
+                        disabled={clearing || loading}
+                    >
+                        <FormattedMessage defaultMessage='Clear Cache'/>
+                    </SecondaryButton>
+                    <RefreshButton
+                        onClick={fetchTools}
+                        disabled={loading || clearing}
+                    >
+                        <RefreshIcon
+                            size={16}
+                        />
+                        <FormattedMessage defaultMessage='Refresh Tools'/>
+                    </RefreshButton>
+                </ButtonGroup>
             </Header>
 
             <Content>
+                {clearSuccess && (
+                    <SuccessState>
+                        <FormattedMessage defaultMessage='Cache cleared successfully'/>
+                    </SuccessState>
+                )}
+
                 {loading && !toolsData && (
                     <LoadingState>
                         <FormattedMessage defaultMessage='Loading tools...'/>
@@ -277,6 +312,12 @@ const ErrorCount = styled.span`
     color: var(--error-text);
 `;
 
+const ButtonGroup = styled.div`
+    display: flex;
+    gap: 8px;
+    align-items: center;
+`;
+
 const RefreshButton = styled(TertiaryButton)`
     white-space: nowrap;
 
@@ -294,6 +335,18 @@ const Content = styled.div`
     display: flex;
     flex-direction: column;
     gap: 16px;
+`;
+
+const SuccessState = styled.div`
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 16px;
+    color: var(--online-indicator);
+    background-color: rgba(var(--online-indicator-rgb), 0.08);
+    border: 1px solid rgba(var(--online-indicator-rgb), 0.16);
+    border-radius: 4px;
+    font-weight: 600;
 `;
 
 const LoadingState = styled.div`

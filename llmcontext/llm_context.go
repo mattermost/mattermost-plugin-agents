@@ -108,7 +108,10 @@ func (b *Builder) WithLLMContextRequestingUser(user *model.User) llm.ContextOpti
 	}
 }
 
+// WithLLMContextSessionID removed: embedded MCP manages its own session lifecycle
+
 // getToolsStoreForUser returns a tool store for a specific user, including MCP tools
+// Session information is extracted from the llm.Context
 func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, isDM bool, userID string) *llm.ToolStore {
 	// Check for nil bot, which is unexpected
 	if bot == nil {
@@ -135,6 +138,7 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, isDM bool,
 
 	// Add MCP tools if available, enabled, and in a DM
 	if b.mcpToolProvider != nil && isDM {
+		// Get tools from all connected servers
 		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(userID)
 
 		// Add tools from successfully connected servers even if some had errors
@@ -153,16 +157,22 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, isDM bool,
 	return store
 }
 
-// WithLLMContextDefaultTools adds default tools to the LLM context for the requesting user
-func (b *Builder) WithLLMContextDefaultTools(bot *bots.Bot, isDM bool) llm.ContextOption {
+// WithLLMContextTools adds tools to the LLM context the requester can access
+func (b *Builder) WithLLMContextTools(bot *bots.Bot, isDM bool) llm.ContextOption {
 	return func(c *llm.Context) {
 		if c.RequestingUser == nil {
 			b.pluginAPI.Log.Error("Cannot add tools to context: RequestingUser is nil")
 			return
 		}
 
+		// Get tools using session info from llm.Context
 		c.Tools = b.getToolsStoreForUser(c, bot, isDM, c.RequestingUser.Id)
 	}
+}
+
+// WithLLMContextDefaultTools adds default tools to the LLM context for the requesting user
+func (b *Builder) WithLLMContextDefaultTools(bot *bots.Bot, isDM bool) llm.ContextOption {
+	return b.WithLLMContextTools(bot, isDM)
 }
 
 // WithLLMContextNoTools explicitly disables tools for this context session only,
@@ -185,6 +195,10 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 		c.BotName = bot.GetConfig().DisplayName
 		c.BotUsername = bot.GetConfig().Name
 		c.CustomInstructions = bot.GetConfig().CustomInstructions
+		// Set the bot user ID for AI-generated content tracking
+		if mmbot := bot.GetMMBot(); mmbot != nil {
+			c.BotUserID = mmbot.UserId
+		}
 		c.BotModel = bot.GetService().DefaultModel
 	}
 }

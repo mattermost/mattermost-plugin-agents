@@ -38,6 +38,7 @@ type LanguageModelConfig struct {
 	EnableVision       bool
 	JSONOutputFormat   *jsonschema.Schema
 	EnableThinking     bool
+	ToolsDisabled      bool
 }
 
 type LanguageModelOption func(*LanguageModelConfig)
@@ -60,6 +61,12 @@ func WithoutThinking() LanguageModelOption {
 func WithJSONOutput[T any]() LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.JSONOutputFormat = NewJSONSchemaFromStruct[T]()
+	}
+}
+
+func WithToolsDisabled() LanguageModelOption {
+	return func(cfg *LanguageModelConfig) {
+		cfg.ToolsDisabled = true
 	}
 }
 

@@ -10,7 +10,6 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
 // SearchPostsArgs represents arguments for the search_posts tool
@@ -108,27 +107,64 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 		posts = posts[:args.Limit]
 	}
 
+	// Pre-fetch all unique channels and teams to avoid duplicate API calls
+	channelCache := make(map[string]*model.Channel)
+	teamCache := make(map[string]*model.Team)
+
+	for _, post := range posts {
+		if _, exists := channelCache[post.ChannelId]; !exists {
+			channel, _, err := client.GetChannel(ctx, post.ChannelId, "")
+			if err == nil {
+				channelCache[post.ChannelId] = channel
+
+				// Also fetch the team for this channel if not already cached
+				if _, teamExists := teamCache[channel.TeamId]; !teamExists {
+					team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+					if teamErr == nil {
+						teamCache[channel.TeamId] = team
+					}
+				}
+			}
+		}
+	}
+
 	// Format the response
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d posts matching '%s':\n\n", len(posts), args.Query))
+	result.WriteString(fmt.Sprintf("Found %d posts matching '%s':\n", len(posts), args.Query))
+
+	// If channelID was provided, include it once in the header
+	if args.ChannelID != "" {
+		result.WriteString(fmt.Sprintf("Channel ID: %s\n", args.ChannelID))
+	}
+	result.WriteString("\n")
 
 	for i, post := range posts {
 		// Get user info for the post
 		user, _, err := client.GetUser(ctx, post.UserId, "")
 		if err != nil {
-			p.logger.Warn("failed to get user for post", mlog.String("user_id", post.UserId), mlog.Err(err))
+			p.logger.Warn("failed to get user for post", "user_id", post.UserId, "error", err)
 			result.WriteString(fmt.Sprintf("**Result %d** by Unknown User:\n", i+1))
 		} else {
 			result.WriteString(fmt.Sprintf("**Result %d** by %s:\n", i+1, user.Username))
 		}
 
-		// Get channel info
-		channel, _, err := client.GetChannel(ctx, post.ChannelId, "")
-		if err == nil {
-			result.WriteString(fmt.Sprintf("Channel: %s\n", channel.DisplayName))
+		// Get channel and team info from cache
+		if channel, exists := channelCache[post.ChannelId]; exists {
+			if team, teamExists := teamCache[channel.TeamId]; teamExists {
+				result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channel.DisplayName, team.DisplayName))
+			} else {
+				result.WriteString(fmt.Sprintf("Channel: %s\n", channel.DisplayName))
+			}
 		}
 
 		result.WriteString(fmt.Sprintf("Post ID: %s\n", post.Id))
+		// Only include Channel ID per-post if it wasn't provided as a search parameter
+		if args.ChannelID == "" {
+			result.WriteString(fmt.Sprintf("Channel ID: %s\n", post.ChannelId))
+		}
+		if post.RootId != "" {
+			result.WriteString(fmt.Sprintf("Root ID: %s\n", post.RootId))
+		}
 		result.WriteString(fmt.Sprintf("Message: %s\n\n", post.Message))
 	}
 

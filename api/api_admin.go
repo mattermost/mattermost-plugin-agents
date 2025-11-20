@@ -111,9 +111,9 @@ func (a *API) mattermostAdminAuthorizationRequired(c *gin.Context) {
 
 // MCPToolInfo represents a tool from an MCP server for API response
 type MCPToolInfo struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	InputSchema map[string]interface{} `json:"inputSchema"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	InputSchema any    `json:"inputSchema"`
 }
 
 // MCPServerInfo represents a server and its tools for API response
@@ -142,8 +142,8 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 
 	mcpConfig := a.config.MCP()
 
-	// If MCP is not enabled or no servers configured, return empty response
-	if !mcpConfig.Enabled || len(mcpConfig.Servers) == 0 {
+	// If MCP is not enabled, return empty response
+	if !mcpConfig.Enabled {
 		c.JSON(http.StatusOK, MCPToolsResponse{
 			Servers: []MCPServerInfo{},
 		})
@@ -151,10 +151,34 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 	}
 
 	response := MCPToolsResponse{
-		Servers: make([]MCPServerInfo, 0, len(mcpConfig.Servers)),
+		Servers: make([]MCPServerInfo, 0, len(mcpConfig.Servers)+1),
 	}
 
-	// Discover tools from each configured server
+	// Discover tools from embedded server if enabled
+	if mcpConfig.EmbeddedServer.Enabled {
+		embeddedServer := a.mcpClientManager.GetEmbeddedServer()
+		if embeddedServer != nil {
+			serverInfo := MCPServerInfo{
+				Name:  mcp.EmbeddedServerName,
+				URL:   mcp.EmbeddedClientKey,
+				Tools: []MCPToolInfo{},
+				Error: nil,
+			}
+
+			// Try to discover tools from embedded server
+			tools, err := a.discoverEmbeddedServerTools(c.Request.Context(), userID, mcpConfig.EmbeddedServer, embeddedServer)
+			if err != nil {
+				errMsg := err.Error()
+				serverInfo.Error = &errMsg
+			} else {
+				serverInfo.Tools = tools
+			}
+
+			response.Servers = append(response.Servers, serverInfo)
+		}
+	}
+
+	// Discover tools from each configured remote server
 	for _, serverConfig := range mcpConfig.Servers {
 		if !serverConfig.Enabled {
 			continue
@@ -167,7 +191,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		}
 
 		// Try to connect to the server and discover tools
-		tools, err := a.discoverServerTools(c.Request.Context(), userID, serverConfig)
+		tools, err := a.discoverRemoteServerTools(c.Request.Context(), userID, serverConfig)
 		if err != nil {
 			var oauthErr *mcp.OAuthNeededError
 			if errors.As(err, &oauthErr) {
@@ -187,9 +211,9 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// discoverServerTools connects to a single MCP server and discovers its tools
-func (a *API) discoverServerTools(ctx context.Context, requestingAdminID string, serverConfig mcp.ServerConfig) ([]MCPToolInfo, error) {
-	toolInfos, err := mcp.DiscoverServerTools(ctx, requestingAdminID, serverConfig, a.pluginAPI.Log, a.mcpClientManager.GetOAuthManager())
+// discoverRemoteServerTools connects to a single remote MCP server and discovers its tools
+func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serverConfig mcp.ServerConfig) ([]MCPToolInfo, error) {
+	toolInfos, err := mcp.DiscoverRemoteServerTools(ctx, userID, serverConfig, a.pluginAPI.Log, a.mcpClientManager.GetOAuthManager(), a.mcpClientManager.GetToolsCache())
 	if err != nil {
 		return nil, err
 	}
@@ -204,4 +228,57 @@ func (a *API) discoverServerTools(ctx context.Context, requestingAdminID string,
 	}
 
 	return tools, nil
+}
+
+// discoverEmbeddedServerTools connects to the embedded MCP server and discovers its tools
+func (a *API) discoverEmbeddedServerTools(ctx context.Context, requestingAdminID string, embeddedConfig mcp.EmbeddedServerConfig, embeddedServer mcp.EmbeddedMCPServer) ([]MCPToolInfo, error) {
+	// Tool discovery doesn't require authentication - just listing available tools
+	// Pass empty sessionID to create an unauthenticated connection
+	toolInfos, err := mcp.DiscoverEmbeddedServerTools(ctx, requestingAdminID, "", embeddedConfig, embeddedServer, a.pluginAPI.Log, a.pluginAPI)
+	if err != nil {
+		return nil, err
+	}
+
+	tools := make([]MCPToolInfo, 0, len(toolInfos))
+	for _, toolInfo := range toolInfos {
+		tools = append(tools, MCPToolInfo{
+			Name:        toolInfo.Name,
+			Description: toolInfo.Description,
+			InputSchema: toolInfo.InputSchema,
+		})
+	}
+
+	return tools, nil
+}
+
+// ClearMCPToolsCacheResponse represents the response for clearing the cache
+type ClearMCPToolsCacheResponse struct {
+	ClearedServers int    `json:"cleared_servers"`
+	Message        string `json:"message"`
+}
+
+// handleClearMCPToolsCache clears the tools cache for all MCP servers
+func (a *API) handleClearMCPToolsCache(c *gin.Context) {
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	toolsCache := a.mcpClientManager.GetToolsCache()
+	if toolsCache == nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("tools cache not available"))
+		return
+	}
+
+	// Clear all cache entries
+	clearedCount, err := toolsCache.ClearAll()
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to clear cache: %w", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, ClearMCPToolsCacheResponse{
+		ClearedServers: clearedCount,
+		Message:        fmt.Sprintf("Successfully cleared cache for %d servers", clearedCount),
+	})
 }

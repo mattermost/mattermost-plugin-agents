@@ -13,18 +13,49 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// GetDataDirectoryInternal is the internal function that can be overridden in tests
+var GetDataDirectoryInternal = getDataDirectory
+
+// getDataDirectory returns the path to the MCP server data directory
+func getDataDirectory() (string, error) {
+	execPath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	// More explicit: expect binary in mcpserver/bin, data in mcpserver/data
+	execDir := filepath.Dir(execPath)
+	mcpRoot := filepath.Dir(execDir) // up one level from bin/
+	dataDir := filepath.Join(mcpRoot, "data")
+
+	// Validate the structure to catch deployment issues early
+	if filepath.Base(execDir) != "bin" {
+		return "", fmt.Errorf("executable not in expected 'bin' directory structure")
+	}
+
+	return dataDir, nil
+}
+
+// EnsureDataDirectory creates the data directory if it doesn't exist
+func EnsureDataDirectory() error {
+	dataDir, err := GetDataDirectoryInternal()
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(dataDir, 0700)
+}
+
 // fetchFileDataForLocal fetches file data from a file path or URL (local access only)
-func fetchFileDataForLocal(filespec string, accessMode types.AccessMode) ([]byte, error) {
+func fetchFileDataForLocal(filespec string, accessMode AccessMode) ([]byte, error) {
 	if filespec == "" {
 		return nil, fmt.Errorf("empty filespec provided")
 	}
 
 	// URLs are only allowed for local access mode
-	if accessMode != types.AccessModeLocal {
+	if accessMode != AccessModeLocal {
 		return nil, fmt.Errorf("URL access not supported in remote access mode, only local access allows URL access")
 	}
 
@@ -49,7 +80,26 @@ func fetchFileDataForLocal(filespec string, accessMode types.AccessMode) ([]byte
 	}
 
 	cleanPath := filepath.Clean(filespec)
-	file, err := os.Open(cleanPath)
+
+	// Use data directory as base for file operations
+	dataDir, err := GetDataDirectoryInternal()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get data directory: %w", err)
+	}
+
+	// Ensure data directory exists
+	if dirErr := EnsureDataDirectory(); dirErr != nil {
+		return nil, fmt.Errorf("failed to create data directory: %w", dirErr)
+	}
+
+	// Use os.Root for secure path traversal protection
+	root, err := os.OpenRoot(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open data directory root: %w", err)
+	}
+	defer root.Close()
+
+	file, err := root.Open(cleanPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
@@ -69,12 +119,12 @@ func isURL(filespec string) bool {
 }
 
 // extractFileNameForLocal extracts the filename from a filespec (URL or file path, local access only)
-func extractFileNameForLocal(filespec string, accessMode types.AccessMode) string {
+func extractFileNameForLocal(filespec string, accessMode AccessMode) string {
 	if filespec == "" {
 		return ""
 	}
 
-	if accessMode != types.AccessModeLocal {
+	if accessMode != AccessModeLocal {
 		return "url-access-denied"
 	}
 
@@ -114,11 +164,11 @@ func isValidImageFile(filename string) bool {
 }
 
 // uploadFilesForLocal uploads multiple files from URLs or file paths (local access only) and returns their file IDs
-func uploadFilesForLocal(ctx context.Context, client *model.Client4, channelID string, filespecs []string, accessMode types.AccessMode) ([]string, error) {
+func uploadFilesForLocal(ctx context.Context, client *model.Client4, channelID string, filespecs []string, accessMode AccessMode) ([]string, error) {
 	var fileIDs []string
 
 	// Early validation - only local access can upload files
-	if accessMode != types.AccessModeLocal {
+	if accessMode != AccessModeLocal {
 		return nil, fmt.Errorf("file uploads not supported in remote access mode, only local access allows file operations")
 	}
 
@@ -151,12 +201,12 @@ func uploadFilesForLocal(ctx context.Context, client *model.Client4, channelID s
 }
 
 // uploadFilesAndUrlsForLocal uploads files from URLs or file paths (local access only) and returns file IDs and status message
-func uploadFilesAndUrlsForLocal(ctx context.Context, client *model.Client4, channelID string, attachments []string, accessMode types.AccessMode) ([]string, string) {
+func uploadFilesAndUrlsForLocal(ctx context.Context, client *model.Client4, channelID string, attachments []string, accessMode AccessMode) ([]string, string) {
 	var fileIDs []string
 	var attachmentMessage string
 
 	if len(attachments) > 0 {
-		if accessMode != types.AccessModeLocal {
+		if accessMode != AccessModeLocal {
 			attachmentMessage = " (file attachments not supported in remote access mode)"
 			return nil, attachmentMessage
 		}

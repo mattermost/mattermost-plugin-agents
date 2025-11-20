@@ -20,7 +20,7 @@ const defaultNewBot: LLMBotConfig = {
     displayName: '',
     serviceID: '',
     customInstructions: '',
-    enableVision: false,
+    enableVision: true,
     disableTools: false,
     channelAccessLevel: ChannelAccessLevel.All,
     channelIDs: [],
@@ -28,6 +28,9 @@ const defaultNewBot: LLMBotConfig = {
     userIDs: [],
     teamIDs: [],
     enabledNativeTools: [],
+    reasoningEnabled: true,
+    reasoningEffort: 'medium',
+    thinkingBudget: 0,
 };
 
 export const firstNewBot = {
