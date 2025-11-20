@@ -108,8 +108,16 @@ test.describe('Smart Reactions - Basic Functionality', () => {
         // Set up mock for reaction suggestion
         await openAIMock.addCompletionMock(reactionSuggestionResponse);
 
+        // Wait for the request to ensure the click registered
+        const reactionPromise = page.waitForResponse(response =>
+            response.url().includes('/react') && response.status() === 200
+        );
+
         // Click "React for me"
         await page.getByRole('button', { name: 'React for me' }).click();
+
+        // Wait for the backend to acknowledge the command
+        await reactionPromise;
 
         // Wait for the API call to complete and the reaction to be applied
         // Give extra time for the LLM response and reaction application in parallel test runs
@@ -119,7 +127,7 @@ test.describe('Smart Reactions - Basic Functionality', () => {
         // The DOM shows reactions appear as: button "react with thumbsup"
         // Use a very generous timeout for parallel CI environments
         const reactionButton = postLocator.getByRole('button', { name: /react with thumbsup|react with \+1/ });
-        await expect(reactionButton).toBeVisible({ timeout: 90000 });
+        await expect(reactionButton).toBeVisible({ timeout: 30000 });
 
         // Verify the reaction count is displayed (should be 1)
         await expect(reactionButton).toContainText('1');

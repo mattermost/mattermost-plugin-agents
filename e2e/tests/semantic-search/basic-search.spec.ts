@@ -90,6 +90,9 @@ test.describe('Basic Semantic Search Operations', () => {
 
         await aiPlugin.openRHS();
 
+        // Wait for the direct channel to be created and textarea to be ready
+        await expect(aiPlugin.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
+
         // Skip search hint check - search infrastructure may not be fully enabled yet
         // await expect(page.getByText('Agents searches only content you have access to')).toBeVisible();
 
@@ -126,6 +129,9 @@ test.describe('Basic Semantic Search Operations', () => {
         );
 
         await aiPlugin.openRHS();
+
+        // Wait for the direct channel to be created and textarea to be ready
+        await expect(aiPlugin.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
 
         await openAIMock.addCompletionMock(searchResponseWithSources);
         await aiPlugin.sendMessage('project timeline');

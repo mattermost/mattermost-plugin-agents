@@ -20,9 +20,19 @@ test.beforeAll(async () => {
     openAIMock = await RunOpenAIMocks(mattermost.network);
 });
 
-test.beforeEach(async () => {
+test.beforeEach(async ({ page }) => {
     // Reset mocks before each test to prevent cross-contamination
     await openAIMock.resetMocks();
+    
+    // Instantiate helpers directly to avoid setupTestPage overhead if not needed,
+    // or rely on the test itself to setup.
+    // For resetting state, we need a logged in user usually, but since this is beforeEach,
+    // the login happens in setupTestPage which is called inside the test.
+    // We will move the state reset into the test or setupTestPage if needed, 
+    // BUT for pagination tests specifically, we can do it if we have the page context.
+    
+    // Note: Since setupTestPage does login, we can't easily do it in beforeEach without logging in every time.
+    // Instead, we'll modify the tests to call resetState() after setup.
 });
 
 test.afterAll(async () => {
@@ -47,6 +57,7 @@ async function setupTestPage(page) {
 test.describe('Long Conversation Handling - Creating Long Conversations', () => {
     test('Create conversation with 10+ message exchanges', async ({ page }) => {
         const { aiPlugin } = await setupTestPage(page);
+        await aiPlugin.resetState();
 
         await aiPlugin.openRHS();
 
