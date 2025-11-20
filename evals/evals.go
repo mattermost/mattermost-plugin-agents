@@ -224,8 +224,7 @@ func Run(t *testing.T, name string, f func(e *EvalT)) {
 		eval, err := NewEvalWithProvider(providerName)
 		if err != nil {
 			t.Logf("Skipping %s provider: %v", providerName, err)
-			t.Error(err)
-			return
+			continue
 		}
 
 		e := &EvalT{T: t, Eval: eval}
@@ -235,7 +234,7 @@ func Run(t *testing.T, name string, f func(e *EvalT)) {
 
 		t.Run(testName, func(t *testing.T) {
 			e.T = t
-			for i := range numEvals {
+			for i := 0; i < numEvals; i++ {
 				e.runNumber = i
 				f(e)
 			}

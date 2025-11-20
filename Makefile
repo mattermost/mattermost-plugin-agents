@@ -522,3 +522,4 @@ ifneq ($(HAS_WEBAPP),)
 	cd webapp && $(NPM) run fix
 endif
 	@echo License headers have been checked and fixed.
+

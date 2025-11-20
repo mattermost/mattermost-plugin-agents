@@ -7,14 +7,13 @@
 - Run specific Go test: `go test -v ./server/path/to/package -run TestName`
 - Run e2e tests: `make e2e`
 - Run specific e2e test file: `cd e2e && npx playwright test filename.spec.ts --reporter=list`
-- Run prompt evaluations (interactive TUI): `make evals`
 - Run prompt evaluations (CI mode, non-interactive): `make evals-ci`
 - Run prompt evaluations and generate GitHub comment: `make evals-comment`
 - Build evalviewer binary: `make evalviewer`
-- Run evals with specific provider: `LLM_PROVIDER=openai make evals` (options: openai, anthropic, azure, openaicompatible, all)
-- Run evals with specific model: `ANTHROPIC_MODEL=claude-3-opus-20240229 make evals`
-- Run evals with multiple providers: `LLM_PROVIDER=openai,anthropic make evals`
-- Run evals with OpenAI compatible API (e.g., local LLMs): `LLM_PROVIDER=openaicompatible OPENAI_COMPATIBLE_API_URL=http://localhost:8080/v1 OPENAI_COMPATIBLE_MODEL=llama-3 make evals`
+- Run evals with specific provider: `LLM_PROVIDER=openai make evals-ci` (options: openai, anthropic, azure, openaicompatible, all)
+- Run evals with specific model: `ANTHROPIC_MODEL=claude-3-opus-20240229 make evals-ci`
+- Run evals with multiple providers: `LLM_PROVIDER=openai,anthropic make evals-ci`
+- Run evals with OpenAI compatible API (e.g., local LLMs): `LLM_PROVIDER=openaicompatible OPENAI_COMPATIBLE_API_URL=http://localhost:8080/v1 OPENAI_COMPATIBLE_MODEL=llama-3 make evals-ci`
 
 ## Code Style Guidelines
 - Go: Follow Go standard formatting conventions according to goimports
