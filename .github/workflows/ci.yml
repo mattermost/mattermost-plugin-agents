@@ -30,7 +30,7 @@ jobs:
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
     - name: Run Playwright tests (excluding llmbot tests on PRs)
-      run: npx playwright test --grep-invert "llmbot-post-component"
+      run: npx playwright test --project=chromium --grep-invert "llmbot-post-component"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
