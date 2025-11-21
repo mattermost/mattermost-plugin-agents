@@ -80,7 +80,9 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		provider := anthropic.New(llm.ServiceConfig{
 			APIKey:       apiKey,
 			DefaultModel: model,
-		}, []string{}, httpClient)
+		}, llm.BotConfig{
+			ReasoningEnabled: true,
+		}, httpClient)
 		if provider == nil {
 			return nil, errors.New("failed to create Anthropic provider")
 		}
