@@ -296,6 +296,32 @@ The Model Context Protocol (MCP) integration allows Agents to connect to externa
 - **Idle Cleanup**: Inactive client connections are automatically closed after the configured timeout
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation
 
+### Atlassian MCP server authorization
+
+When users connect to the Atlassian MCP server, they may encounter an authorization error requiring an organization admin to authorize your Mattermost domain. This configuration must be completed in Atlassian's admin console.
+
+**To authorize your Mattermost domain:**
+
+1. Navigate to [admin.atlassian.com](https://admin.atlassian.com) and select your organization.
+2. Go to **Apps > AI settings > Rovo MCP server**.
+3. Select **Add domain** and enter your Mattermost domain with the path wildcard: `https://your-instance.mattermost.cloud/**`
+4. Select **Save**.
+
+**Important:** The `/**` path wildcard is required. Example domain patterns:
+- Single instance: `https://your-company.mattermost.cloud/**`
+- All subdomains: `https://*.mattermost.cloud/**`
+- Custom domain: `https://chat.yourcompany.com/**`
+
+After adding the domain, wait 1-2 minutes for changes to propagate before users retry the connection.
+
+**Troubleshooting:**
+- Verify you have Organization Admin permissions (Site Admin is insufficient)
+- Confirm you're configuring the organization that owns the Atlassian site
+- Ensure the domain includes `https://` and the `/**` wildcard
+- Check for typos in the domain
+
+For more information, see [Atlassian's documentation on MCP server settings](https://support.atlassian.com/security-and-access-policies/docs/control-atlassian-rovo-mcp-server-settings/).
+
 > **Note:** The plugin currently doesn't render Markdown links (e.g., JIRA ticket links) in bot responses. URLs are displayed in plain text rather than as clickable Markdown-rendered links. This is not a bug but intended security behavior to prevent potential data exfiltration through links. While this limitation exists, improvements to link handling are being considered for future development. 
 
 ### License requirements
