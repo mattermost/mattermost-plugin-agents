@@ -7,7 +7,7 @@ import {GlobalState} from '@mattermost/types/store';
 import {makeCallsPostButtonClickedHandler} from './calls_button';
 import manifest from './manifest';
 
-type WebappStore = Store<GlobalState, Action<Record<string, unknown>>>
+type WebappStore = Store<GlobalState, Action>
 
 const CallsClickHandler = 'calls_post_button_clicked_handler';
 export const BotsHandler = manifest.id + '_bots';

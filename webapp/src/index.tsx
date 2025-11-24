@@ -33,7 +33,7 @@ import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands
 import SearchHints from './components/search_hints';
 import {useBotlist} from './bots';
 
-type WebappStore = Store<GlobalState, Action<Record<string, unknown>>>
+type WebappStore = Store<GlobalState, Action>
 
 const IconAIContainer = styled.img`
 	border-radius: 50%;
