@@ -995,10 +995,10 @@ func (s *OpenAI) convertToResponseParams(params openai.ChatCompletionNewParams, 
 			if nativeTool == "web_search" {
 				// Add web search as a built-in tool
 				webSearchTool := responses.WebSearchToolParam{
-					Type: responses.WebSearchToolTypeWebSearchPreview,
+					Type: responses.WebSearchToolTypeWebSearch,
 				}
 				tools = append(tools, responses.ToolUnionParam{
-					OfWebSearchPreview: &webSearchTool,
+					OfWebSearch: &webSearchTool,
 				})
 			}
 			// Future native tools can be added here
