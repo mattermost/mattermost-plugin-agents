@@ -808,6 +808,53 @@ func (s *OpenAI) streamResponsesAPIToChannels(params openai.ChatCompletionNewPar
 			}
 			return
 
+		case "response.incomplete":
+			// Response was incomplete (e.g., max tokens reached before completion)
+			// Still need to send any accumulated content and end event
+
+			// If we still have unsent reasoning, send it now
+			if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
+				output <- llm.TextStreamEvent{
+					Type: llm.EventTypeReasoningEnd,
+					Value: llm.ReasoningData{
+						Text: reasoningSummaryBuffer.String(),
+					},
+				}
+			}
+
+			// If we have annotations, send them
+			if len(annotations) > 0 {
+				output <- llm.TextStreamEvent{
+					Type:  llm.EventTypeAnnotations,
+					Value: annotations,
+				}
+			}
+
+			// Emit usage event if available
+			if event.Response.Usage.InputTokens > 0 || event.Response.Usage.OutputTokens > 0 {
+				usage := llm.TokenUsage{
+					InputTokens:  event.Response.Usage.InputTokens,
+					OutputTokens: event.Response.Usage.OutputTokens,
+				}
+				output <- llm.TextStreamEvent{
+					Type:  llm.EventTypeUsage,
+					Value: usage,
+				}
+			}
+
+			// Check if we have tool calls to emit
+			if len(toolsBuffer) > 0 {
+				handleToolCalls()
+				return
+			}
+
+			// Send end event even for incomplete responses
+			output <- llm.TextStreamEvent{
+				Type:  llm.EventTypeEnd,
+				Value: nil,
+			}
+			return
+
 		case "error":
 			// Error event
 			var errorMsg string
@@ -871,8 +918,8 @@ func (s *OpenAI) convertToResponseParams(params openai.ChatCompletionNewParams, 
 	}
 
 	// Add reasoning parameters for models that support it
-	// Check if reasoning is enabled for this bot
-	if s.config.ReasoningEnabled {
+	// Check if reasoning is enabled for this bot and not explicitly disabled for this request
+	if s.config.ReasoningEnabled && !cfg.ReasoningDisabled {
 		// Determine reasoning effort
 		var effort shared.ReasoningEffort
 		switch s.config.ReasoningEffort {

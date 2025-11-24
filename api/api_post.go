@@ -84,10 +84,10 @@ func (a *API) handleReact(c *gin.Context) {
 		return
 	}
 
-	// Add reaction to the post
+	// Add reaction to the post as the requesting user
 	if err := a.pluginAPI.Post.AddReaction(&model.Reaction{
 		EmojiName: emojiName,
-		UserId:    bot.GetMMBot().UserId,
+		UserId:    userID,
 		PostId:    post.Id,
 	}); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to add reaction: %w", err))

@@ -229,9 +229,11 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 		})
 	}
 
-	// Enable thinking/reasoning for models that support it
-	if thinkingConfig, ok := a.calculateThinkingConfig(state.config.MaxGeneratedTokens); ok {
-		params.Thinking = thinkingConfig
+	// Enable thinking/reasoning for models that support it (unless explicitly disabled)
+	if !state.config.ReasoningDisabled {
+		if thinkingConfig, ok := a.calculateThinkingConfig(state.config.MaxGeneratedTokens); ok {
+			params.Thinking = thinkingConfig
+		}
 	}
 
 	stream := a.client.Messages.NewStreaming(context.Background(), params)
