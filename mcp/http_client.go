@@ -24,17 +24,22 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func (c *Client) httpClient(headers map[string]string) *http.Client {
-	// Wrap with discovery-aware transport for 401 handling
-	authenticationTransport := &authenticationTransport{
-		userID:     c.userID,
-		serverName: c.config.Name,
-		manager:    c.oauthManager,
-		serverURL:  c.config.BaseURL,
+	// Create OAuth-aware transport using go-sdk's auth.HTTPTransport
+	transport, err := c.oauthManager.createHTTPTransport(
+		c.userID,
+		c.config.Name,
+		c.config.BaseURL,
+	)
+	if err != nil {
+		// Fallback to default transport if creation fails
+		// This shouldn't happen in normal operation, but provides a safety net
+		c.oauthManager.pluginAPI.LogError("Failed to create HTTP transport", "error", err.Error())
+		transport = http.DefaultTransport
 	}
 
-	// Create HTTP client with discovery-aware transport
+	// Create HTTP client with OAuth-aware transport
 	httpClient := &http.Client{
-		Transport: authenticationTransport,
+		Transport: transport,
 	}
 
 	// Add custom headers to the HTTP client if provided
