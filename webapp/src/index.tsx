@@ -11,8 +11,6 @@ import {GlobalState} from '@mattermost/types/store';
 //@ts-ignore it exists
 import aiIcon from '../../assets/bot_icon.png';
 
-import manifest from '@/manifest';
-
 import {LLMBotPost} from './components/llmbot_post/llmbot_post';
 import PostMenu from './components/post_menu';
 import IconThreadSummarization from './components/assets/icon_thread_summarization';
@@ -32,6 +30,8 @@ import {doSelectPost} from './hooks';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
 import {useBotlist} from './bots';
+
+import manifest from '@/manifest';
 
 type WebappStore = Store<GlobalState, Action<Record<string, unknown>>>
 

@@ -8,8 +8,6 @@ import styled from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
 
-import manifest from '@/manifest';
-
 import {getAIThreads, updateRead} from '@/client';
 
 import {useBotlist} from '@/bots';
@@ -19,6 +17,8 @@ import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
 import ThreadItem from './thread_item';
 import RHSHeader from './rhs_header';
 import RHSNewTab from './rhs_new_tab';
+
+import manifest from '@/manifest';
 
 const ThreadViewer = UnstyledThreadViewer && styled(UnstyledThreadViewer)`
     height: 100%;

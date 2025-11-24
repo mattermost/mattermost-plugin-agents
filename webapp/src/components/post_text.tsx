@@ -9,10 +9,10 @@ import {GlobalState} from '@mattermost/types/store';
 import {Channel} from '@mattermost/types/channels';
 import {Team} from '@mattermost/types/teams';
 
-import manifest from '@/manifest';
-
 import {insertAnnotationMarkers, replaceCitationMarkers} from './citations/citation_processor';
 import {Annotation} from './citations/types';
+
+import manifest from '@/manifest';
 
 export type ChannelNamesMap = {
     [name: string]: {

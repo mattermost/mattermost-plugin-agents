@@ -21,9 +21,10 @@ import {AdvancedTextEditor, CreatePost} from '@/mm_webapp';
 
 import {LLMBot} from '@/bots';
 import {BotsHandler} from '@/redux';
-import manifest from '@/manifest';
 
 import {Button, RHSPaddingContainer, RHSText, RHSTitle} from './common';
+
+import manifest from '@/manifest';
 
 const CreatePostContainer = styled.div`
 	.custom-textarea {
