@@ -75,20 +75,17 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 
 	// If we get a 401, force an actual error so we can handle it. Include the header info in the error
 	if resp.StatusCode == http.StatusUnauthorized {
-		// Parse WWW-Authenticate header for resource metadata URL
-		wwwAuthHeader := resp.Header.Get("WWW-Authenticate")
-		if wwwAuthHeader != "" {
-			metadataURL, parseErr := parseWWWAuthenticateHeader(wwwAuthHeader)
-			if parseErr != nil {
-				return nil, &mcpUnauthrorized{
-					metadataURL: "",
-					err:         fmt.Errorf("failed to parse WWW-Authenticate header: %w", parseErr),
-				}
-			}
-
+		// Parse WWW-Authenticate header for resource metadata URL using go-sdk
+		metadataURL, parseErr := parseWWWAuthenticateHeader(resp.Header.Get("WWW-Authenticate"))
+		if parseErr != nil {
 			return nil, &mcpUnauthrorized{
-				metadataURL: metadataURL,
+				metadataURL: "",
+				err:         fmt.Errorf("failed to parse WWW-Authenticate header: %w", parseErr),
 			}
+		}
+
+		return nil, &mcpUnauthrorized{
+			metadataURL: metadataURL,
 		}
 	}
 

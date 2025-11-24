@@ -5,160 +5,33 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
+
+	"github.com/modelcontextprotocol/go-sdk/oauthex"
 )
 
-// RegistrationRequest represents a client registration request per RFC 7591
-type RegistrationRequest struct {
-	// Required fields
-	RedirectURIs []string `json:"redirect_uris"`
+// RegistrationRequest is an alias to the go-sdk type
+type RegistrationRequest = oauthex.ClientRegistrationMetadata
 
-	// Optional fields commonly used
-	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
-	GrantTypes              []string `json:"grant_types,omitempty"`
-	ResponseTypes           []string `json:"response_types,omitempty"`
-	ClientName              string   `json:"client_name,omitempty"`
-	Scope                   string   `json:"scope,omitempty"`
-	Contacts                []string `json:"contacts,omitempty"`
+// RegistrationResponse is an alias to the go-sdk type
+type RegistrationResponse = oauthex.ClientRegistrationResponse
 
-	// Additional optional fields can be added as needed
-	ClientURI string `json:"client_uri,omitempty"`
-	LogoURI   string `json:"logo_uri,omitempty"`
-	ToSURI    string `json:"tos_uri,omitempty"`
-	PolicyURI string `json:"policy_uri,omitempty"`
-}
-
-// RegistrationResponse represents the server's response per RFC 7591
-type RegistrationResponse struct {
-	// Required fields
-	ClientID string `json:"client_id"`
-
-	// Optional fields
-	ClientSecret          string `json:"client_secret,omitempty"`
-	ClientIDIssuedAt      *int64 `json:"client_id_issued_at,omitempty"`
-	ClientSecretExpiresAt *int64 `json:"client_secret_expires_at,omitempty"`
-
-	// Echo back the registration metadata
-	RedirectURIs            []string `json:"redirect_uris,omitempty"`
-	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
-	GrantTypes              []string `json:"grant_types,omitempty"`
-	ResponseTypes           []string `json:"response_types,omitempty"`
-	ClientName              string   `json:"client_name,omitempty"`
-	Scope                   string   `json:"scope,omitempty"`
-	Contacts                []string `json:"contacts,omitempty"`
-	ClientURI               string   `json:"client_uri,omitempty"`
-	LogoURI                 string   `json:"logo_uri,omitempty"`
-	ToSURI                  string   `json:"tos_uri,omitempty"`
-	PolicyURI               string   `json:"policy_uri,omitempty"`
-}
-
-// RegistrationError represents an error response per RFC 7591
-type RegistrationError struct {
-	ErrorCode        string         `json:"error"`
-	ErrorDescription string         `json:"error_description,omitempty"`
-	HTTPStatusCode   int            `json:"-"`
-	HTTPResponse     *http.Response `json:"-"`
-}
-
-func (e *RegistrationError) Error() string {
-	if e.ErrorDescription != "" {
-		return fmt.Sprintf("registration error (%s): %s", e.ErrorCode, e.ErrorDescription)
-	}
-	return fmt.Sprintf("registration error: %s", e.ErrorCode)
-}
+// RegistrationError is an alias to the go-sdk type
+type RegistrationError = oauthex.ClientRegistrationError
 
 // RegisterClient performs dynamic client registration per RFC 7591
+// using the go-sdk implementation
 func RegisterClient(ctx context.Context, httpClient *http.Client, registrationEndpoint string, request *RegistrationRequest, initialAccessToken string) (*RegistrationResponse, error) {
-	// Validate registration endpoint URL
-	if _, err := url.Parse(registrationEndpoint); err != nil {
-		return nil, fmt.Errorf("invalid registration endpoint URL: %w", err)
-	}
-
-	// Validate required fields per RFC 7591
-	if len(request.RedirectURIs) == 0 {
-		return nil, fmt.Errorf("redirect_uris is required")
-	}
-
-	// Validate redirect URIs
-	for _, uri := range request.RedirectURIs {
-		if _, err := url.Parse(uri); err != nil {
-			return nil, fmt.Errorf("invalid redirect_uri %s: %w", uri, err)
-		}
-	}
-
-	// Marshal request to JSON
-	requestBody, err := json.Marshal(request)
+	// Note: The go-sdk RegisterClient doesn't support initial access tokens in the current signature
+	// If we need that, we'd need to fork or extend the go-sdk implementation
+	response, err := oauthex.RegisterClient(ctx, registrationEndpoint, request, httpClient)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal registration request: %w", err)
+		return nil, fmt.Errorf("failed to register client: %w", err)
 	}
 
-	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", registrationEndpoint, bytes.NewReader(requestBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
-	}
-
-	// Set required headers per RFC 7591
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-
-	// Add initial access token if provided
-	if initialAccessToken != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+initialAccessToken)
-	}
-
-	// Make the request
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make registration request to %s: %w", registrationEndpoint, err)
-	}
-	defer resp.Body.Close()
-
-	// Read response body
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body from %s: %w", registrationEndpoint, err)
-	}
-
-	// Check for success status (RFC 7591 requires 201 Created)
-	if resp.StatusCode == http.StatusCreated {
-		var registrationResp RegistrationResponse
-		if err := json.Unmarshal(responseBody, &registrationResp); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal registration response: %w", err)
-		}
-
-		// Validate required response fields per RFC 7591
-		if registrationResp.ClientID == "" {
-			return nil, fmt.Errorf("server response missing required client_id")
-		}
-
-		return &registrationResp, nil
-	}
-
-	// Handle error response
-	var regError RegistrationError
-	regError.HTTPStatusCode = resp.StatusCode
-	regError.HTTPResponse = resp
-
-	// Try to parse error response per RFC 7591
-	if resp.Header.Get("Content-Type") == "application/json" {
-		if err := json.Unmarshal(responseBody, &regError); err != nil {
-			// If we can't parse the error, create a generic one
-			regError.ErrorCode = "unknown_error"
-			regError.ErrorDescription = fmt.Sprintf("HTTP %d from %s: %s", resp.StatusCode, registrationEndpoint, string(responseBody))
-		}
-	} else {
-		regError.ErrorCode = "unknown_error"
-		regError.ErrorDescription = fmt.Sprintf("HTTP %d from %s: %s", resp.StatusCode, registrationEndpoint, string(responseBody))
-	}
-
-	return nil, &regError
+	return response, nil
 }
 
 // DefaultRegistrationRequest creates a default registration request for MCP clients
@@ -202,41 +75,14 @@ func GetRegistrationEndpoint(ctx context.Context, httpClient *http.Client, serve
 		httpClient = http.DefaultClient
 	}
 
-	// Construct the metadata URL according to RFC 8414 Section 3.1
-	// The well-known URI must be inserted between the host and path components
-	metadataURL, err := constructWellKnownURL(serverURL, "oauth-authorization-server")
+	// Use go-sdk to get auth server metadata which includes the registration endpoint
+	metadata, err := oauthex.GetAuthServerMeta(ctx, serverURL, httpClient)
 	if err != nil {
-		return "", fmt.Errorf("failed to construct metadata URL from server URL %s: %w", serverURL, err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "GET", metadataURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create metadata request for %s: %w", metadataURL, err)
-	}
-
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch server metadata from %s: %w", metadataURL, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("server metadata request to %s failed with HTTP %d: %s", metadataURL, resp.StatusCode, string(body))
-	}
-
-	var metadata struct {
-		RegistrationEndpoint string `json:"registration_endpoint"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
-		return "", fmt.Errorf("failed to decode server metadata from %s: %w", metadataURL, err)
+		return "", fmt.Errorf("failed to fetch server metadata from %s: %w", serverURL, err)
 	}
 
 	if metadata.RegistrationEndpoint == "" {
-		return "", fmt.Errorf("server %s does not support dynamic client registration (no registration_endpoint in metadata from %s)", serverURL, metadataURL)
+		return "", fmt.Errorf("server %s does not support dynamic client registration (no registration_endpoint in metadata)", serverURL)
 	}
 
 	return metadata.RegistrationEndpoint, nil
