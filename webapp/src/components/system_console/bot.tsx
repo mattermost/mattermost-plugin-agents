@@ -210,7 +210,7 @@ const Bot = (props: Props) => {
                         {(() => {
                             const selectedService = props.services.find((s) => s.id === props.bot.serviceID);
                             const supportsVisionAndTools = selectedService &&
-                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere'].includes(selectedService.type);
+                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral'].includes(selectedService.type);
 
                             if (!supportsVisionAndTools) {
                                 return null;

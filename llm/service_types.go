@@ -10,4 +10,5 @@ const (
 	ServiceTypeASage            = "asage"
 	ServiceTypeAnthropic        = "anthropic"
 	ServiceTypeCohere           = "cohere"
+	ServiceTypeMistral          = "mistral"
 )

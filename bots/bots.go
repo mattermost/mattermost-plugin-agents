@@ -191,6 +191,11 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 		cohereCfg := serviceConfig
 		cohereCfg.APIURL = "https://api.cohere.ai/compatibility/v1"
 		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfig(cohereCfg, botConfig), b.llmUpstreamHTTPClient)
+	case llm.ServiceTypeMistral:
+		// Set the Mistral OpenAI compatibility endpoint
+		mistralCfg := serviceConfig
+		mistralCfg.APIURL = "https://api.mistral.ai/v1"
+		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfigWithOptions(mistralCfg, botConfig, true, true), b.llmUpstreamHTTPClient)
 	default:
 		b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
 		return nil, fmt.Errorf("unsupported service type: %s", serviceConfig.Type)

@@ -28,20 +28,22 @@ import (
 )
 
 type Config struct {
-	APIKey              string        `json:"apiKey"`
-	APIURL              string        `json:"apiURL"`
-	OrgID               string        `json:"orgID"`
-	DefaultModel        string        `json:"defaultModel"`
-	InputTokenLimit     int           `json:"inputTokenLimit"`
-	OutputTokenLimit    int           `json:"outputTokenLimit"`
-	StreamingTimeout    time.Duration `json:"streamingTimeout"`
-	SendUserID          bool          `json:"sendUserID"`
-	EmbeddingModel      string        `json:"embeddingModel"`
-	EmbeddingDimensions int           `json:"embeddingDimensions"`
-	UseResponsesAPI     bool          `json:"useResponsesAPI"`
-	EnabledNativeTools  []string      `json:"enabledNativeTools"`
-	ReasoningEnabled    bool          `json:"reasoningEnabled"`
-	ReasoningEffort     string        `json:"reasoningEffort"`
+	APIKey               string        `json:"apiKey"`
+	APIURL               string        `json:"apiURL"`
+	OrgID                string        `json:"orgID"`
+	DefaultModel         string        `json:"defaultModel"`
+	InputTokenLimit      int           `json:"inputTokenLimit"`
+	OutputTokenLimit     int           `json:"outputTokenLimit"`
+	StreamingTimeout     time.Duration `json:"streamingTimeout"`
+	SendUserID           bool          `json:"sendUserID"`
+	EmbeddingModel       string        `json:"embeddingModel"`
+	EmbeddingDimensions  int           `json:"embeddingDimensions"`
+	UseResponsesAPI      bool          `json:"useResponsesAPI"`
+	EnabledNativeTools   []string      `json:"enabledNativeTools"`
+	ReasoningEnabled     bool          `json:"reasoningEnabled"`
+	ReasoningEffort      string        `json:"reasoningEffort"`
+	DisableStreamOptions bool          `json:"disableStreamOptions"` // For OpenAI-compatible APIs that don't support stream_options
+	UseMaxTokens         bool          `json:"useMaxTokens"`         // Use max_tokens instead of max_completion_tokens for compatible APIs
 }
 
 type OpenAI struct {
@@ -1059,7 +1061,12 @@ func (s *OpenAI) completionRequestFromConfig(cfg llm.LanguageModelConfig) openai
 	}
 
 	if cfg.MaxGeneratedTokens > 0 {
-		params.MaxCompletionTokens = openai.Int(int64(cfg.MaxGeneratedTokens))
+		// Use max_tokens for OpenAI-compatible APIs (like Mistral) that don't support max_completion_tokens
+		if s.config.UseMaxTokens {
+			params.MaxTokens = openai.Int(int64(cfg.MaxGeneratedTokens))
+		} else {
+			params.MaxCompletionTokens = openai.Int(int64(cfg.MaxGeneratedTokens))
+		}
 	}
 
 	if cfg.JSONOutputFormat != nil {
@@ -1105,7 +1112,11 @@ func (s *OpenAI) ChatCompletion(request llm.CompletionRequest, opts ...llm.Langu
 	cfg := s.createConfig(opts)
 	params := s.completionRequestFromConfig(cfg)
 	params = modifyCompletionRequestWithRequest(params, request, cfg)
-	params.StreamOptions.IncludeUsage = openai.Bool(true)
+
+	// Only set stream_options for APIs that support it (not OpenAI-compatible APIs like Mistral)
+	if !s.config.DisableStreamOptions {
+		params.StreamOptions.IncludeUsage = openai.Bool(true)
+	}
 
 	if s.config.SendUserID {
 		if request.Context.RequestingUser != nil {

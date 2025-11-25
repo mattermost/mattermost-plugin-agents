@@ -349,6 +349,24 @@ func TestIsValidService(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "Valid Mistral service with API key",
+			service: ServiceConfig{
+				ID:     "service-7",
+				Type:   ServiceTypeMistral,
+				APIKey: "mistral-key",
+			},
+			want: true,
+		},
+		{
+			name: "Mistral service missing API key",
+			service: ServiceConfig{
+				ID:     "service-7",
+				Type:   ServiceTypeMistral,
+				APIKey: "", // bad
+			},
+			want: false,
+		},
+		{
 			name: "Service with empty ID",
 			service: ServiceConfig{
 				ID:     "", // bad
