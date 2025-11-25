@@ -307,6 +307,41 @@ mcp-server:
 	mkdir -p mcpserver/bin
 	$(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) $(GO_BUILD_LDFLAGS) -o bin/mattermost-mcp-server ./mcpserver/cmd/main.go
 
+## Builds the evalviewer binary.
+.PHONY: evalviewer
+evalviewer:
+	@echo Building evalviewer...
+	$(GO) build $(GO_BUILD_FLAGS) -C cmd/evalviewer -o ../../bin/evalviewer .
+
+## Runs evaluations interactively with TUI for packages with evals.
+## Environment variables:
+##   LLM_PROVIDER: openai, anthropic, azure, all, or comma-separated (default: all)
+##   OPENAI_API_KEY: OpenAI API key
+##   OPENAI_MODEL: Model to use for OpenAI (default: gpt-4o)
+##   ANTHROPIC_API_KEY: Anthropic API key
+##   ANTHROPIC_MODEL: Model to use for Anthropic (default: claude-sonnet-4-20250514)
+##   AZURE_OPENAI_API_KEY: Azure OpenAI API key
+##   AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
+##   AZURE_OPENAI_MODEL: Model to use for Azure OpenAI (default: gpt-4o)
+.PHONY: evals
+evals: evalviewer
+	@echo Running evaluations interactively...
+	./bin/evalviewer run -v ./conversations ./threads ./channels ./react
+
+## Runs evaluations in CI mode (non-interactive) for packages with evals.
+## Uses the same environment variables as the evals target.
+.PHONY: evals-ci
+evals-ci: evalviewer
+	@echo Running evaluations in CI mode...
+	./bin/evalviewer check -v ./conversations ./threads ./channels ./react
+
+## Runs evaluations and generates GitHub comment (always succeeds).
+## Uses the same environment variables as the evals target.
+.PHONY: evals-comment
+evals-comment: evalviewer
+	@echo Running evaluations and generating GitHub comment...
+	./bin/evalviewer comment -v ./conversations ./threads ./channels ./react
+
 ## Builds and installs the plugin to a server, updating the webapp automatically when changed.
 .PHONY: watch
 watch: apply server bundle
@@ -487,3 +522,4 @@ ifneq ($(HAS_WEBAPP),)
 	cd webapp && $(NPM) run fix
 endif
 	@echo License headers have been checked and fixed.
+

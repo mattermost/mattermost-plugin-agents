@@ -108,6 +108,11 @@ func (b *MMBots) EnsureBots() error {
 			return fmt.Errorf("duplicate bot name: %s", botCfg.Name)
 		}
 
+		// Use bot's model if specified, otherwise fall back to service's default model
+		if botCfg.Model != "" {
+			service.DefaultModel = botCfg.Model
+		}
+
 		bot := &Bot{cfg: botCfg, service: service}
 		bots = append(bots, bot)
 		aiBotsByUsername[botCfg.Name] = bot

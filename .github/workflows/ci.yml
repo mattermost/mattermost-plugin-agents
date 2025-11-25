@@ -75,6 +75,81 @@ jobs:
         run: |
           make test
 
+  evals:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        provider:
+          - name: openai
+            display_name: OpenAI
+          - name: anthropic
+            display_name: Anthropic
+          - name: azure
+            display_name: Azure OpenAI
+    name: evals-${{ matrix.provider.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v4
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run ${{ matrix.provider.display_name }} evaluations
+        id: run-evals
+        env:
+          LLM_PROVIDER: ${{ matrix.provider.name }}
+          # OpenAI
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o' }}
+          # Anthropic
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514' }}
+          # Azure
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_MODEL || 'gpt-4o' }}
+        run: |
+          # Run evals - evalviewer writes directly to comment.md
+          make evals-comment || true
+
+          # Save provider name for aggregation
+          echo "${{ matrix.provider.display_name }}" > provider_name.txt
+
+      - name: Upload evaluation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ matrix.provider.name }}
+          path: |
+            evals.jsonl
+            comment.md
+            provider_name.txt
+          retention-days: 30
+
+  evals-comment:
+    runs-on: ubuntu-latest
+    needs: evals
+    if: always() && github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all evaluation results
+        uses: actions/download-artifact@v4
+        with:
+          path: eval-results
+
+      - name: Aggregate results and post comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const script = require('./.github/scripts/aggregate-eval-results.js');
+            await script.aggregateAndPostResults(github, context);
+
   lint:
     runs-on: ubuntu-latest
     steps:
