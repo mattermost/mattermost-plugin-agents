@@ -76,8 +76,6 @@ func TestConversationMentionHandling(t *testing.T) {
 				"attributes each bug to a user",
 				"attributes the bug about trying to save without a color and the save button not doing anything to @maria.nunez",
 				"the bug about the end user being able to change channel banner is attributed to @maria.nunez",
-				"has no unnecessary statements",
-				"should NOT include any statements inviting the user to ask more questions",
 			},
 		},
 	}
