@@ -88,6 +88,8 @@ jobs:
             display_name: Anthropic
           - name: azure
             display_name: Azure OpenAI
+          - name: mistral
+            display_name: Mistral
     name: evals-${{ matrix.provider.name }}
     steps:
       - uses: actions/checkout@v4
@@ -111,6 +113,9 @@ jobs:
           AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
           AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
           AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_MODEL || 'gpt-4o' }}
+          # Mistral
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL || 'mistral-large-latest' }}
         run: |
           # Run evals - evalviewer writes directly to comment.md
           make evals-comment || true

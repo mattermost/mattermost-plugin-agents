@@ -146,6 +146,34 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		}
 		return provider, nil
 
+	case "mistral":
+		apiKey := os.Getenv("MISTRAL_API_KEY")
+		if apiKey == "" {
+			return nil, errors.New("MISTRAL_API_KEY environment variable is not set")
+		}
+
+		model := modelOverride
+		if model == "" {
+			model = os.Getenv("MISTRAL_MODEL")
+			if model == "" {
+				model = "mistral-large-latest"
+			}
+		}
+
+		// Mistral uses an OpenAI-compatible API
+		provider := openai.NewCompatible(openai.Config{
+			APIKey:               apiKey,
+			APIURL:               "https://api.mistral.ai/v1",
+			DefaultModel:         model,
+			StreamingTimeout:     timeout,
+			DisableStreamOptions: true,
+			UseMaxTokens:         true,
+		}, httpClient)
+		if provider == nil {
+			return nil, errors.New("failed to create Mistral provider")
+		}
+		return provider, nil
+
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", providerName)
 	}
@@ -255,7 +283,7 @@ func getProvidersToTest() []string {
 
 	// Handle "all" case
 	if providerEnv == "all" {
-		return []string{"openai", "anthropic", "azure"}
+		return []string{"openai", "anthropic", "azure", "mistral"}
 	}
 
 	// Handle comma-separated list
