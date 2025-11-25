@@ -810,27 +810,9 @@ func (s *OpenAI) streamResponsesAPIToChannels(params openai.ChatCompletionNewPar
 
 		case "response.incomplete":
 			// Response was incomplete (e.g., max tokens reached before completion)
-			// Still need to send any accumulated content and end event
+			// Emit usage event for tracking, then return an error
 
-			// If we still have unsent reasoning, send it now
-			if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
-				output <- llm.TextStreamEvent{
-					Type: llm.EventTypeReasoningEnd,
-					Value: llm.ReasoningData{
-						Text: reasoningSummaryBuffer.String(),
-					},
-				}
-			}
-
-			// If we have annotations, send them
-			if len(annotations) > 0 {
-				output <- llm.TextStreamEvent{
-					Type:  llm.EventTypeAnnotations,
-					Value: annotations,
-				}
-			}
-
-			// Emit usage event if available
+			// Emit usage event if available (usage counts regardless of completion)
 			if event.Response.Usage.InputTokens > 0 || event.Response.Usage.OutputTokens > 0 {
 				usage := llm.TokenUsage{
 					InputTokens:  event.Response.Usage.InputTokens,
@@ -842,16 +824,10 @@ func (s *OpenAI) streamResponsesAPIToChannels(params openai.ChatCompletionNewPar
 				}
 			}
 
-			// Check if we have tool calls to emit
-			if len(toolsBuffer) > 0 {
-				handleToolCalls()
-				return
-			}
-
-			// Send end event even for incomplete responses
+			// Return an error so the user knows the response was truncated
 			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeEnd,
-				Value: nil,
+				Type:  llm.EventTypeError,
+				Value: errors.New("response incomplete: max tokens reached before completion"),
 			}
 			return
 
