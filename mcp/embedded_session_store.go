@@ -42,15 +42,22 @@ func (m *ClientManager) deleteEmbeddedSessionID(userID string) error {
 
 // ensureEmbeddedSessionID ensures there is a valid embedded session for the user
 // It loads from KV, validates via Session.Get, and if missing/invalid, creates a new one
-// The created session is tagged for MCP via DeviceId and Props
+// The created session is tagged for MCP via Props
 func (m *ClientManager) ensureEmbeddedSessionID(userID string) (string, error) {
-	if sessionID, err := m.tryReuseEmbeddedSession(userID); err != nil {
+	user, err := m.pluginAPI.User.Get(userID)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch user for embedded session: %w", err)
+	}
+	if user.DeleteAt != 0 {
+		return "", fmt.Errorf("cannot create embedded session for deleted user")
+	}
+	if sessionID, err := m.tryReuseEmbeddedSession(user.Id); err != nil {
 		return "", err
 	} else if sessionID != "" {
 		return sessionID, nil
 	}
 
-	return m.createEmbeddedSession(userID)
+	return m.createEmbeddedSession(user)
 }
 
 func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, error) {
@@ -73,9 +80,7 @@ func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, error) {
 		return "", nil
 	}
 
-	const renewalWindow = 24 * time.Hour
-	renewalDeadline := time.Now().Add(renewalWindow).UnixMilli()
-	if sess.ExpiresAt == 0 || sess.ExpiresAt > renewalDeadline {
+	if !sess.IsExpired() {
 		return stored, nil
 	}
 
@@ -89,25 +94,27 @@ func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, error) {
 	return "", nil
 }
 
-func (m *ClientManager) createEmbeddedSession(userID string) (string, error) {
-	user, err := m.pluginAPI.User.Get(userID)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch user for embedded session: %w", err)
-	}
-
+func (m *ClientManager) createEmbeddedSession(user *model.User) (string, error) {
 	sessionDuration := m.sessionLengthDuration()
 	expiresAt := time.Now().Add(sessionDuration).UnixMilli()
-	roles := ""
-	if user != nil {
-		roles = user.GetRawRoles()
-	}
 
 	newSession := &model.Session{
-		UserId:    userID,
+		UserId:    user.Id,
 		Props:     map[string]string{"isMCP": "true"},
-		Roles:     roles,
+		Roles:     user.GetRawRoles(),
 		ExpiresAt: expiresAt,
 	}
+
+	if user.IsBot {
+		newSession.AddProp(model.SessionPropIsBot, model.SessionPropIsBotValue)
+	}
+
+	if user.IsGuest() {
+		newSession.AddProp(model.SessionPropIsGuest, "true")
+	} else {
+		newSession.AddProp(model.SessionPropIsGuest, "false")
+	}
+
 	created, err := m.pluginAPI.Session.Create(newSession)
 	if err != nil {
 		return "", fmt.Errorf("failed to create embedded session: %w", err)
@@ -117,7 +124,7 @@ func (m *ClientManager) createEmbeddedSession(userID string) (string, error) {
 		return "", fmt.Errorf("embedded session creation returned empty result")
 	}
 
-	if err := m.storeEmbeddedSessionID(userID, created.Id); err != nil {
+	if err := m.storeEmbeddedSessionID(user.Id, created.Id); err != nil {
 		return "", err
 	}
 

@@ -169,7 +169,7 @@ func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID stri
 		Context: context,
 	}
 
-	conversationTitle, err := bot.LLM().ChatCompletionNoStream(titleRequest, llm.WithMaxGeneratedTokens(25))
+	conversationTitle, err := bot.LLM().ChatCompletionNoStream(titleRequest, llm.WithMaxGeneratedTokens(25), llm.WithoutThinking())
 	if err != nil {
 		return fmt.Errorf("failed to get title: %w", err)
 	}

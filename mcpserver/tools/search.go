@@ -130,7 +130,13 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 
 	// Format the response
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d posts matching '%s':\n\n", len(posts), args.Query))
+	result.WriteString(fmt.Sprintf("Found %d posts matching '%s':\n", len(posts), args.Query))
+
+	// If channelID was provided, include it once in the header
+	if args.ChannelID != "" {
+		result.WriteString(fmt.Sprintf("Channel ID: %s\n", args.ChannelID))
+	}
+	result.WriteString("\n")
 
 	for i, post := range posts {
 		// Get user info for the post
@@ -152,6 +158,13 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 		}
 
 		result.WriteString(fmt.Sprintf("Post ID: %s\n", post.Id))
+		// Only include Channel ID per-post if it wasn't provided as a search parameter
+		if args.ChannelID == "" {
+			result.WriteString(fmt.Sprintf("Channel ID: %s\n", post.ChannelId))
+		}
+		if post.RootId != "" {
+			result.WriteString(fmt.Sprintf("Root ID: %s\n", post.RootId))
+		}
 		result.WriteString(fmt.Sprintf("Message: %s\n\n", post.Message))
 	}
 
