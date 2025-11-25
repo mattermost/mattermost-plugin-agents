@@ -216,17 +216,7 @@ func (c *Conversations) existingConversationToLLMPosts(bot *bots.Bot, conversati
 			return nil, fmt.Errorf("missing analysis type")
 		}
 
-		promptName := analysisType
-		switch analysisType {
-		case "summarize_thread":
-			promptName = prompts.PromptSummarizeThreadSystem
-		case "action_items":
-			promptName = prompts.PromptFindActionItemsSystem
-		case "open_questions":
-			promptName = prompts.PromptFindOpenQuestionsSystem
-		}
-
-		posts, err := threads.New(bot.LLM(), c.prompts, c.mmClient).FollowUpAnalyze(originalThreadID, context, promptName)
+		posts, err := threads.New(bot.LLM(), c.prompts, c.mmClient).FollowUpAnalyze(originalThreadID, context, analysisType)
 		if err != nil {
 			return nil, err
 		}
