@@ -37,6 +37,7 @@ export type LLMBotConfig = {
     name: string
     displayName: string
     serviceID: string
+    model: string
     customInstructions: string
     enableVision: boolean
     disableTools: boolean
@@ -200,6 +201,13 @@ const Bot = (props: Props) => {
                                 </SelectionItemOption>
                             ))}
                         </SelectionItem>
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Model'})}
+                            helptext={intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Leave empty to use the service default.'})}
+                            placeholder={intl.formatMessage({defaultMessage: 'Leave empty to use service default'})}
+                            value={props.bot.model}
+                            onChange={(e) => props.onChange({...props.bot, model: e.target.value})}
+                        />
                         <TextItem
                             label={intl.formatMessage({defaultMessage: 'Custom instructions'})}
                             placeholder={intl.formatMessage({defaultMessage: 'How would you like the AI to respond?'})}

@@ -50,6 +50,10 @@ type BotConfig struct {
 	CustomInstructions string `json:"customInstructions"`
 	ServiceID          string `json:"serviceID"`
 
+	// Model is the optional model override for this bot.
+	// If not specified, the service's DefaultModel will be used.
+	Model string `json:"model"`
+
 	// Service is deprecated and kept only for backwards compatibility during migration.
 	Service *ServiceConfig `json:"service,omitempty"`
 

@@ -53,6 +53,7 @@ func WithMaxGeneratedTokens(maxGeneratedTokens int) LanguageModelOption {
 		cfg.MaxGeneratedTokens = maxGeneratedTokens
 	}
 }
+
 func WithJSONOutput[T any]() LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.JSONOutputFormat = NewJSONSchemaFromStruct[T]()

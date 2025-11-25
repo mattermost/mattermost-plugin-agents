@@ -19,6 +19,7 @@ const defaultNewBot: LLMBotConfig = {
     name: '',
     displayName: '',
     serviceID: '',
+    model: '',
     customInstructions: '',
     enableVision: true,
     disableTools: false,
