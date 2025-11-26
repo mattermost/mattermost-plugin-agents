@@ -94,6 +94,7 @@ export type ComboboxItemProps = {
     options: ComboboxOption[]
     placeholder?: string
     helptext?: string
+    isClearable?: boolean
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
 };
 
@@ -181,7 +182,7 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                     options={selectOptions}
                     placeholder={props.placeholder || props.label}
                     styles={selectStyles}
-                    isClearable={true}
+                    isClearable={props.isClearable !== undefined ? props.isClearable : true}
                     formatCreateLabel={(inputValue: string) => `Use custom model: ${inputValue}`}
                 />
                 {props.helptext &&
