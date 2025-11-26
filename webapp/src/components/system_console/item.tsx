@@ -148,6 +148,15 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
         indicatorSeparator: () => ({
             display: 'none',
         }),
+        clearIndicator: (base) => ({
+            ...base,
+            padding: '4px',
+            color: 'rgba(var(--center-channel-color-rgb), 0.56)',
+            cursor: 'pointer',
+            '&:hover': {
+                color: 'rgba(var(--center-channel-color-rgb), 0.72)',
+            },
+        }),
         dropdownIndicator: (base) => ({
             ...base,
             padding: '4px',
@@ -172,7 +181,7 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                     options={selectOptions}
                     placeholder={props.placeholder || props.label}
                     styles={selectStyles}
-                    isClearable={false}
+                    isClearable={true}
                     formatCreateLabel={(inputValue: string) => `Use custom model: ${inputValue}`}
                 />
                 {props.helptext &&
