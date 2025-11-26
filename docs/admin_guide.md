@@ -302,7 +302,7 @@ When users connect to the Atlassian MCP server, they may encounter an authorizat
 
 **To authorize your Mattermost domain:**
 
-1. Navigate to [admin.atlassian.com](https://admin.atlassian.com) and select your organization.
+1. Go to [admin.atlassian.com](https://admin.atlassian.com) and select your organization.
 2. Go to **Apps > AI settings > Rovo MCP server**.
 3. Select **Add domain** and enter your Mattermost domain with the path wildcard: `https://your-instance.mattermost.cloud/**`
 4. Select **Save**.
