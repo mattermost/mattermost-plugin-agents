@@ -12,12 +12,13 @@ import {DangerPill, Pill} from '../pill';
 
 import {ButtonIcon} from '../assets/buttons';
 
+import {fetchModels} from '../../client';
+
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
 import ReasoningConfigItem from './reasoning_config';
-import {fetchModels} from '../../client';
 
 export enum ChannelAccessLevel {
     All = 0,
@@ -157,9 +158,9 @@ const Bot = (props: Props) => {
 
         // For openaicompatible, API key is optional if there's an API URL
         // For other types, API key is required
-        const hasRequiredCredentials = selectedService.type === 'openaicompatible'
-            ? (selectedService.apiKey || selectedService.apiURL)
-            : selectedService.apiKey;
+        const hasRequiredCredentials = selectedService.type === 'openaicompatible' ?
+            (selectedService.apiKey || selectedService.apiURL) :
+            selectedService.apiKey;
 
         if (!hasRequiredCredentials) {
             setAvailableModels([]);
@@ -176,11 +177,10 @@ const Bot = (props: Props) => {
                     selectedService.type,
                     selectedService.apiKey,
                     selectedService.apiURL || '',
-                    selectedService.orgId || ''
+                    selectedService.orgId || '',
                 );
                 setAvailableModels(data);
             } catch (error) {
-                console.error('Failed to fetch models:', error);
                 setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check the service configuration.'}));
                 setAvailableModels([]);
             } finally {
@@ -274,13 +274,15 @@ const Bot = (props: Props) => {
                         ) : (
                             <TextItem
                                 label={intl.formatMessage({defaultMessage: 'Model'})}
-                                helptext={
-                                    supportsModelFetching && loadingModels ?
-                                        intl.formatMessage({defaultMessage: 'Loading models...'}) :
-                                        supportsModelFetching && modelsFetchError ?
-                                            modelsFetchError :
-                                            intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Leave empty to use the service default.'})
-                                }
+                                helptext={(() => {
+                                    if (supportsModelFetching && loadingModels) {
+                                        return intl.formatMessage({defaultMessage: 'Loading models...'});
+                                    }
+                                    if (supportsModelFetching && modelsFetchError) {
+                                        return modelsFetchError;
+                                    }
+                                    return intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Leave empty to use the service default.'});
+                                })()}
                                 placeholder={intl.formatMessage({defaultMessage: 'Leave empty to use service default'})}
                                 value={props.bot.model}
                                 onChange={(e) => props.onChange({...props.bot, model: e.target.value})}

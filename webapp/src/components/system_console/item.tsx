@@ -182,7 +182,7 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                     options={selectOptions}
                     placeholder={props.placeholder || props.label}
                     styles={selectStyles}
-                    isClearable={props.isClearable !== undefined ? props.isClearable : true}
+                    isClearable={props.isClearable ?? true}
                     formatCreateLabel={(inputValue: string) => `Use custom model: ${inputValue}`}
                 />
                 {props.helptext &&
