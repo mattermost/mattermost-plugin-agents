@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useState, useEffect} from 'react';
 import styled from 'styled-components';
 import {useIntl} from 'react-intl';
 
@@ -11,7 +11,9 @@ import IconAI from '../assets/icon_ai';
 
 import {ButtonIcon} from '../assets/buttons';
 
-import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from './item';
+import {fetchModels} from '../../client';
+
+import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ComboboxItem} from './item';
 
 export type LLMService = {
     id: string
@@ -42,6 +44,11 @@ function serviceTypeToDisplayName(serviceType: string): string {
     return mapServiceTypeToDisplayName.get(serviceType) || serviceType;
 }
 
+type ModelInfo = {
+    id: string
+    displayName: string
+}
+
 type ServiceFieldsProps = {
     service: LLMService
     onChange: (service: LLMService) => void
@@ -54,6 +61,48 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     const isCohere = type === 'cohere';
     const isMistral = type === 'mistral';
 
+    const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+    const [loadingModels, setLoadingModels] = useState(false);
+    const [modelsFetchError, setModelsFetchError] = useState<string>('');
+
+    // Determine if we should support model fetching for this service type
+    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible';
+
+    // Fetch models when API key or URL changes for supported service types
+    useEffect(() => {
+        // For openaicompatible, API key is optional if there's an API URL
+        // For other types, API key is required
+        const hasRequiredCredentials = type === 'openaicompatible' ? (props.service.apiKey || props.service.apiURL) : props.service.apiKey;
+
+        if (!supportsModelFetching || !hasRequiredCredentials) {
+            setAvailableModels([]);
+            setModelsFetchError('');
+            return;
+        }
+
+        const loadModels = async () => {
+            setLoadingModels(true);
+            setModelsFetchError('');
+
+            try {
+                const data: ModelInfo[] = await fetchModels(
+                    type,
+                    props.service.apiKey,
+                    props.service.apiURL || '',
+                    props.service.orgId || '',
+                );
+                setAvailableModels(data);
+            } catch (error) {
+                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check your API key and API URL.'}));
+                setAvailableModels([]);
+            } finally {
+                setLoadingModels(false);
+            }
+        };
+
+        loadModels();
+    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, supportsModelFetching, intl]);
+
     const getDefaultOutputTokenLimit = () => {
         switch (type) {
         case 'anthropic':
@@ -62,6 +111,15 @@ const ServiceFields = (props: ServiceFieldsProps) => {
             return '0';
         }
     };
+
+    let loadModelsHelpText = '';
+    if (supportsModelFetching) {
+        if (loadingModels) {
+            loadModelsHelpText = intl.formatMessage({defaultMessage: 'Loading models...'});
+        } else if (modelsFetchError) {
+            loadModelsHelpText = modelsFetchError;
+        }
+    }
 
     return (
         <>
@@ -121,11 +179,24 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     )}
                 </>
             )}
-            <TextItem
-                label={intl.formatMessage({defaultMessage: 'Default model'})}
-                value={props.service.defaultModel}
-                onChange={(e) => props.onChange({...props.service, defaultModel: e.target.value})}
-            />
+            {supportsModelFetching && availableModels.length > 0 ? (
+                <ComboboxItem
+                    label={intl.formatMessage({defaultMessage: 'Default model'})}
+                    value={props.service.defaultModel}
+                    options={availableModels}
+                    placeholder={intl.formatMessage({defaultMessage: 'Select a model or enter custom model name'})}
+                    onChange={(e) => props.onChange({...props.service, defaultModel: e.target.value})}
+                    helptext={intl.formatMessage({defaultMessage: 'Select from the list or type a custom model name'})}
+                    isClearable={false}
+                />
+            ) : (
+                <TextItem
+                    label={intl.formatMessage({defaultMessage: 'Default model'})}
+                    value={props.service.defaultModel}
+                    onChange={(e) => props.onChange({...props.service, defaultModel: e.target.value})}
+                    helptext={loadModelsHelpText}
+                />
+            )}
             <TextItem
                 label={intl.formatMessage({defaultMessage: 'Input token limit'})}
                 type='number'

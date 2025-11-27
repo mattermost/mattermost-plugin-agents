@@ -37,8 +37,8 @@ type LanguageModelConfig struct {
 	MaxGeneratedTokens int
 	EnableVision       bool
 	JSONOutputFormat   *jsonschema.Schema
-	EnableThinking     bool
 	ToolsDisabled      bool
+	ReasoningDisabled  bool
 }
 
 type LanguageModelOption func(*LanguageModelConfig)
@@ -53,11 +53,7 @@ func WithMaxGeneratedTokens(maxGeneratedTokens int) LanguageModelOption {
 		cfg.MaxGeneratedTokens = maxGeneratedTokens
 	}
 }
-func WithoutThinking() LanguageModelOption {
-	return func(cfg *LanguageModelConfig) {
-		cfg.EnableThinking = false
-	}
-}
+
 func WithJSONOutput[T any]() LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.JSONOutputFormat = NewJSONSchemaFromStruct[T]()
@@ -67,6 +63,12 @@ func WithJSONOutput[T any]() LanguageModelOption {
 func WithToolsDisabled() LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.ToolsDisabled = true
+	}
+}
+
+func WithReasoningDisabled() LanguageModelOption {
+	return func(cfg *LanguageModelConfig) {
+		cfg.ReasoningDisabled = true
 	}
 }
 

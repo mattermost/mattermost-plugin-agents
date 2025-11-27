@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useState, useEffect} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
@@ -12,7 +12,9 @@ import {DangerPill, Pill} from '../pill';
 
 import {ButtonIcon} from '../assets/buttons';
 
-import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText} from './item';
+import {fetchModels} from '../../client';
+
+import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
@@ -122,13 +124,72 @@ type Props = {
     changedAvatar: (image: File) => void
 }
 
+type ModelInfo = {
+    id: string
+    displayName: string
+}
+
 const Bot = (props: Props) => {
     const [open, setOpen] = useState(false);
     const intl = useIntl();
+    const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+    const [loadingModels, setLoadingModels] = useState(false);
+    const [modelsFetchError, setModelsFetchError] = useState<string>('');
 
     const missingUsername = !props.bot.name || props.bot.name.trim() === '';
     const invalidUsername = props.bot.name !== '' && (!(/^[a-z0-9.\-_]+$/).test(props.bot.name) || !(/[a-z]/).test(props.bot.name.charAt(0)));
     const missingService = !props.bot.serviceID || !props.services.find((s) => s.id === props.bot.serviceID);
+
+    // Find the selected service
+    const selectedService = props.services.find((s) => s.id === props.bot.serviceID);
+    const supportsModelFetching = selectedService &&
+        (selectedService.type === 'anthropic' ||
+         selectedService.type === 'openai' ||
+         selectedService.type === 'azure' ||
+         selectedService.type === 'openaicompatible');
+
+    // Fetch models when the service changes
+    useEffect(() => {
+        if (!supportsModelFetching || !selectedService) {
+            setAvailableModels([]);
+            setModelsFetchError('');
+            return;
+        }
+
+        // For openaicompatible, API key is optional if there's an API URL
+        // For other types, API key is required
+        const hasRequiredCredentials = selectedService.type === 'openaicompatible' ?
+            (selectedService.apiKey || selectedService.apiURL) :
+            selectedService.apiKey;
+
+        if (!hasRequiredCredentials) {
+            setAvailableModels([]);
+            setModelsFetchError('');
+            return;
+        }
+
+        const loadModels = async () => {
+            setLoadingModels(true);
+            setModelsFetchError('');
+
+            try {
+                const data: ModelInfo[] = await fetchModels(
+                    selectedService.type,
+                    selectedService.apiKey,
+                    selectedService.apiURL || '',
+                    selectedService.orgId || '',
+                );
+                setAvailableModels(data);
+            } catch (error) {
+                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check the service configuration.'}));
+                setAvailableModels([]);
+            } finally {
+                setLoadingModels(false);
+            }
+        };
+
+        loadModels();
+    }, [selectedService?.id, selectedService?.type, selectedService?.apiKey, selectedService?.apiURL, selectedService?.orgId, supportsModelFetching, intl]);
 
     return (
         <BotContainer>
@@ -201,13 +262,32 @@ const Bot = (props: Props) => {
                                 </SelectionItemOption>
                             ))}
                         </SelectionItem>
-                        <TextItem
-                            label={intl.formatMessage({defaultMessage: 'Model'})}
-                            helptext={intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Leave empty to use the service default.'})}
-                            placeholder={intl.formatMessage({defaultMessage: 'Leave empty to use service default'})}
-                            value={props.bot.model}
-                            onChange={(e) => props.onChange({...props.bot, model: e.target.value})}
-                        />
+                        {supportsModelFetching && availableModels.length > 0 ? (
+                            <ComboboxItem
+                                label={intl.formatMessage({defaultMessage: 'Model'})}
+                                value={props.bot.model}
+                                options={availableModels}
+                                placeholder={intl.formatMessage({defaultMessage: 'Use service default'})}
+                                onChange={(e) => props.onChange({...props.bot, model: e.target.value})}
+                                helptext={intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Select from the list or type a custom model name.'})}
+                            />
+                        ) : (
+                            <TextItem
+                                label={intl.formatMessage({defaultMessage: 'Model'})}
+                                helptext={(() => {
+                                    if (supportsModelFetching && loadingModels) {
+                                        return intl.formatMessage({defaultMessage: 'Loading models...'});
+                                    }
+                                    if (supportsModelFetching && modelsFetchError) {
+                                        return modelsFetchError;
+                                    }
+                                    return intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Leave empty to use the service default.'});
+                                })()}
+                                placeholder={intl.formatMessage({defaultMessage: 'Leave empty to use service default'})}
+                                value={props.bot.model}
+                                onChange={(e) => props.onChange({...props.bot, model: e.target.value})}
+                            />
+                        )}
                         <TextItem
                             label={intl.formatMessage({defaultMessage: 'Custom instructions'})}
                             placeholder={intl.formatMessage({defaultMessage: 'How would you like the AI to respond?'})}
