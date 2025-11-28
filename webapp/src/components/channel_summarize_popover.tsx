@@ -5,11 +5,13 @@ import React, {useState, useRef, useEffect} from 'react';
 import styled, {css} from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
+import {ChevronDownIcon, SendIcon} from '@mattermost/compass-icons/components';
+
 import {LLMBot} from '@/bots';
+
 import {BotDropdown, BotSelectorContainer} from './bot_selector';
 import IconAI from './assets/icon_ai';
 import {GrayPill} from './pill';
-import {ChevronDownIcon, SendIcon} from '@mattermost/compass-icons/components';
 import {SummarizeDateRangeModal} from './summarize_date_range_modal';
 
 const PopoverContainer = styled.div`
@@ -54,7 +56,7 @@ const AIInputWrapper = styled.div<AIInputProps>`
     `}
 
     &:hover {
-        border-color: ${({isFocused, hasValue}) => (isFocused || hasValue) ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.24)'};
+        border-color: ${({isFocused, hasValue}) => ((isFocused || hasValue) ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.24)')};
     }
 `;
 
@@ -90,9 +92,9 @@ const TrailingIconWrapper = styled.div<{isActive: boolean}>`
     justify-content: center;
     width: 16px;
     height: 16px;
-    color: ${({isActive}) => isActive ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.32)'};
+    color: ${({isActive}) => (isActive ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.32)')};
     flex-shrink: 0;
-    cursor: ${({isActive}) => isActive ? 'pointer' : 'default'};
+    cursor: ${({isActive}) => (isActive ? 'pointer' : 'default')};
 `;
 
 const Divider = styled.div`
@@ -233,13 +235,13 @@ export const ChannelSummarizePopover = ({bots, activeBot, setActiveBot, channelN
                         onClick={handleInputClick}
                     >
                         <IconWrapper>
-                            <IconAI />
+                            <IconAI/>
                         </IconWrapper>
                         <FormattedMessage defaultMessage='Ask Agents about this channel…'>
                             {(placeholder) => (
                                 <StyledInput
                                     ref={inputRef}
-                                    type="text"
+                                    type='text'
                                     placeholder={placeholder as unknown as string}
                                     value={inputValue}
                                     onChange={(e) => setInputValue(e.target.value)}
@@ -256,26 +258,26 @@ export const ChannelSummarizePopover = ({bots, activeBot, setActiveBot, channelN
                                 handleInputSubmit();
                             }}
                         >
-                            <SendIcon size={16} />
+                            <SendIcon size={16}/>
                         </TrailingIconWrapper>
                     </AIInputWrapper>
                 </InputContainer>
-                <Divider />
+                <Divider/>
                 <MenuList>
                     <MenuItem onClick={handleSummarizeUnreads}>
-                        <FormattedMessage defaultMessage='Summarize unreads' />
+                        <FormattedMessage defaultMessage='Summarize unreads'/>
                     </MenuItem>
                     <MenuItem onClick={() => handleSummarizeDays(7)}>
-                        <FormattedMessage defaultMessage='Summarize last 7 days' />
+                        <FormattedMessage defaultMessage='Summarize last 7 days'/>
                     </MenuItem>
                     <MenuItem onClick={() => handleSummarizeDays(14)}>
-                        <FormattedMessage defaultMessage='Summarize last 14 days' />
+                        <FormattedMessage defaultMessage='Summarize last 14 days'/>
                     </MenuItem>
                     <MenuItem onClick={handleDateRangeSelect}>
-                        <FormattedMessage defaultMessage='Select date range to summarize' />
+                        <FormattedMessage defaultMessage='Select date range to summarize'/>
                     </MenuItem>
                 </MenuList>
-                <Divider />
+                <Divider/>
                 <BotSelectorWrapper>
                     <BotDropdown
                         bots={bots}
@@ -285,11 +287,11 @@ export const ChannelSummarizePopover = ({bots, activeBot, setActiveBot, channelN
                     >
                         <>
                             <SelectMessage>
-                                <FormattedMessage defaultMessage='GENERATE WITH:' />
+                                <FormattedMessage defaultMessage='GENERATE WITH:'/>
                             </SelectMessage>
                             <BotPill>
                                 {activeBot?.displayName}
-                                <ChevronDownIcon size={12} />
+                                <ChevronDownIcon size={12}/>
                             </BotPill>
                         </>
                     </BotDropdown>

@@ -11,9 +11,10 @@ import {OverlayTrigger, Tooltip, Overlay} from 'react-bootstrap';
 import {doChannelAnalysis} from '@/client';
 import {openRHS} from '@/redux_actions';
 
+import {useBotlist} from '@/bots';
+
 import IconAI from './assets/icon_ai';
 import {ChannelSummarizePopover} from './channel_summarize_popover';
-import {useBotlist} from '@/bots';
 
 interface ButtonContainerProps {
     isActive: boolean;
@@ -105,8 +106,13 @@ const AskChannelButton = () => {
     const currentChannelId = useSelector((state: GlobalState) => state.entities.channels.currentChannelId);
     const currentChannel = useSelector((state: GlobalState) => state.entities.channels.channels[currentChannelId]);
     const lastViewedAt = useSelector((state: GlobalState) => state.entities.channels.myMembers[currentChannelId]?.last_viewed_at || 0);
+    const [initialLastViewedAt, setInitialLastViewedAt] = useState(lastViewedAt);
+
+    useEffect(() => {
+        setInitialLastViewedAt(lastViewedAt);
+    }, [currentChannelId]);
+
     const channelName = currentChannel?.display_name || 'Current Channel';
-    const team = useSelector((state: GlobalState) => state.entities.teams.teams[state.entities.teams.currentTeamId]);
 
     const handleSummarize = async (options: any) => {
         if (!activeBot) {
@@ -168,7 +174,7 @@ const AskChannelButton = () => {
                         onClick={handleToggle}
                         isActive={showPopover}
                     >
-                        <IconAI />
+                        <IconAI/>
                     </ButtonContainer>
                 </OverlayTrigger>
             ) : (
@@ -177,7 +183,7 @@ const AskChannelButton = () => {
                     onClick={handleToggle}
                     isActive={showPopover}
                 >
-                    <IconAI />
+                    <IconAI/>
                 </ButtonContainer>
             )}
             <Overlay
@@ -194,7 +200,7 @@ const AskChannelButton = () => {
                         setActiveBot={setActiveBot}
                         channelName={channelName}
                         onSummarize={handleSummarize}
-                        lastViewedAt={lastViewedAt}
+                        lastViewedAt={initialLastViewedAt}
                     />
                 </PopoverWrapper>
             </Overlay>

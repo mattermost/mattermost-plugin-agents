@@ -215,7 +215,7 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
                 <ModalHeader>
                     <HeaderContent>
                         <ModalTitle>
-                            <FormattedMessage defaultMessage='Summarize channel' />
+                            <FormattedMessage defaultMessage='Summarize channel'/>
                         </ModalTitle>
                         {channelName && (
                             <ModalSubtitle>
@@ -224,30 +224,30 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
                         )}
                     </HeaderContent>
                     <CloseButton onClick={onClose}>
-                        <IconCancel />
+                        <IconCancel/>
                     </CloseButton>
                 </ModalHeader>
                 <ModalBody>
                     <Description>
-                        <FormattedMessage defaultMessage='Select a date range to summarize messages in this channel.' />
+                        <FormattedMessage defaultMessage='Select a date range to summarize messages in this channel.'/>
                     </Description>
                     <DateInputsContainer>
                         <DateInputGroup>
                             <DateLabel>
-                                <FormattedMessage defaultMessage='Start date' />
+                                <FormattedMessage defaultMessage='Start date'/>
                             </DateLabel>
                             <DateInput
-                                type="date"
+                                type='date'
                                 value={startDate}
                                 onChange={(e) => setStartDate(e.target.value)}
                             />
                         </DateInputGroup>
                         <DateInputGroup>
                             <DateLabel>
-                                <FormattedMessage defaultMessage='End date' />
+                                <FormattedMessage defaultMessage='End date'/>
                             </DateLabel>
                             <DateInput
-                                type="date"
+                                type='date'
                                 value={endDate}
                                 onChange={(e) => setEndDate(e.target.value)}
                             />
@@ -256,10 +256,10 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
                 </ModalBody>
                 <ModalFooter>
                     <CancelButton onClick={onClose}>
-                        <FormattedMessage defaultMessage='Cancel' />
+                        <FormattedMessage defaultMessage='Cancel'/>
                     </CancelButton>
                     <SummarizeButton onClick={handleSummarize}>
-                        <FormattedMessage defaultMessage='Summarize' />
+                        <FormattedMessage defaultMessage='Summarize'/>
                     </SummarizeButton>
                 </ModalFooter>
             </ModalContainer>
