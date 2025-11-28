@@ -6,6 +6,7 @@ package api
 import (
 	stdcontext "context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"errors"
@@ -21,11 +22,8 @@ import (
 )
 
 const (
-	TitleThreadSummary     = "Thread Summary"
-	TitleSummarizeUnreads  = "Summarize Unreads"
-	TitleSummarizeChannel  = "Summarize Channel"
-	TitleFindActionItems   = "Find Action Items"
-	TitleFindOpenQuestions = "Find Open Questions"
+	TitleSummarizeUnreads = "Summarize Unreads"
+	TitleSummarizeChannel = "Summarize Channel"
 )
 
 func (a *API) channelAuthorizationRequired(c *gin.Context) {
@@ -49,6 +47,95 @@ func (a *API) channelAuthorizationRequired(c *gin.Context) {
 		c.AbortWithError(http.StatusForbidden, err)
 		return
 	}
+}
+
+func (a *API) handleChannelAnalysis(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+	bot := c.MustGet(ContextBotKey).(*bots.Bot)
+
+	if !a.licenseChecker.IsBasicsLicensed() {
+		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	var data struct {
+		AnalysisType string `json:"analysis_type" binding:"required"`
+		Since        string `json:"since"`
+		Until        string `json:"until"`
+		Days         int    `json:"days"`
+		Prompt       string `json:"prompt"`
+	}
+	if bindErr := c.ShouldBindJSON(&data); bindErr != nil {
+		c.AbortWithError(http.StatusBadRequest, bindErr)
+		return
+	}
+
+	// Get the user to build context
+	user, err := a.pluginAPI.User.Get(userID)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to get user: %w", err))
+		return
+	}
+
+	// Build LLM context with default tools enabled
+	// We forcefully enable tools here by passing isDM=true, as channel analysis is a user-initiated
+	// private interaction where tools should be available regardless of channel type.
+	llmContext := a.contextBuilder.BuildLLMContextUserRequest(
+		bot,
+		user,
+		channel,
+		a.contextBuilder.WithLLMContextDefaultTools(bot, true),
+	)
+
+	// Create channels analyzer
+	// We need to initialize Channels service. Since it's not in API struct, we initialize it here.
+	// Ideally, it should be initialized in API constructor and passed as a dependency.
+	// For now, let's create it.
+	analyzer := channels.New(bot.LLM(), a.prompts, a.mmClient, a.dbClient)
+
+	// Prepare analysis data for the prompt
+	analysisData := map[string]any{
+		"AnalysisType": data.AnalysisType,
+		"Since":        data.Since,
+		"Until":        data.Until,
+		"Days":         data.Days,
+		"Prompt":       data.Prompt,
+	}
+
+	analysisStream, err := analyzer.AnalyzeChannel(llmContext, channel.Id, analysisData)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to analyze channel: %w", err))
+		return
+	}
+
+	// Create analysis post
+	siteURL := a.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
+	analysisPost := a.makeAnalysisPost(user.Locale, "", data.AnalysisType, *siteURL)
+	// Using empty postId since it's channel analysis, or maybe we should post to channel?
+	// The requirement says "opens the RHS panel... similar to summarize thread".
+	// Thread summary streams to DM.
+	// We should probably stream to DM as well.
+	// `makeAnalysisPost` takes rootID. For channel summary, maybe we don't have a rootID?
+	// `StreamToNewDM` creates a new post in DM.
+
+	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), bot.GetMMBot().UserId, analysisStream, user.Id, analysisPost, ""); err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+
+	// Save title if applicable, though we don't have a thread ID here really.
+	// We might skip saving title for now or associate it with the new DM post?
+	// The `StreamToNewDM` returns the new post. But `StreamToNewDM` signature:
+	// func (s *Service) StreamToNewDM(ctx context.Context, botUserID string, stream *llm.TextStreamResult, userID string, post *model.Post, rootID string) error
+	// It updates `post.Id` after creation.
+
+	a.conversationsService.SaveTitleAsync(analysisPost.Id, TitleSummarizeChannel)
+
+	c.JSON(http.StatusOK, map[string]string{
+		"postid":    analysisPost.Id,
+		"channelid": analysisPost.ChannelId,
+	})
 }
 
 func (a *API) handleInterval(c *gin.Context) {

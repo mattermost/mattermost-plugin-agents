@@ -324,104 +324,309 @@ func (s *OpenAI) streamResultToChannels(params openai.ChatCompletionNewParams, l
 	if s.config.UseResponsesAPI {
 		s.streamResponsesAPIToChannels(params, llmContext, cfg, output)
 	} else {
-		s.streamCompletionsAPIToChannels(params, llmContext, output)
+		s.streamCompletionsAPIToChannels(params, llmContext, cfg, output)
 	}
 }
 
 // streamCompletionsAPIToChannels uses the original Completions API for streaming
-func (s *OpenAI) streamCompletionsAPIToChannels(params openai.ChatCompletionNewParams, llmContext *llm.Context, output chan<- llm.TextStreamEvent) {
-	ctx, cancel := context.WithCancelCause(context.Background())
-	defer cancel(nil)
+func (s *OpenAI) streamCompletionsAPIToChannels(initialParams openai.ChatCompletionNewParams, llmContext *llm.Context, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
+	params := initialParams
 
-	// watchdog to cancel if the streaming stalls
-	watchdog := make(chan struct{})
-	go func() {
-		timer := time.NewTimer(s.config.StreamingTimeout)
-		defer timer.Stop()
-		for {
-			select {
-			case <-timer.C:
-				cancel(ErrStreamingTimeout)
+	for {
+		ctx, cancel := context.WithCancelCause(context.Background())
+		// We can't defer cancel() here inside the loop easily without leaking or cancelling too early if we break.
+		// So we handle it manually.
+
+		// watchdog to cancel if the streaming stalls
+		watchdog := make(chan struct{})
+		watchdogDone := make(chan struct{})
+		go func() {
+			defer close(watchdogDone)
+			timer := time.NewTimer(s.config.StreamingTimeout)
+			defer timer.Stop()
+			for {
+				select {
+				case <-timer.C:
+					cancel(ErrStreamingTimeout)
+					return
+				case <-ctx.Done():
+					return
+				case <-watchdog:
+					if !timer.Stop() {
+						<-timer.C
+					}
+					timer.Reset(s.config.StreamingTimeout)
+				}
+			}
+		}()
+
+		stream := s.client.Chat.Completions.NewStreaming(ctx, params)
+
+		// Buffering in the case of tool use
+		var toolsBuffer map[int]*ToolBufferElement
+		shouldContinue := false
+
+		for stream.Next() {
+			chunk := stream.Current()
+
+			// Ping the watchdog when we receive a response
+			watchdog <- struct{}{}
+
+			// Check for usage data and emit usage event if available
+			if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+				usage := llm.TokenUsage{
+					InputTokens:  chunk.Usage.PromptTokens,
+					OutputTokens: chunk.Usage.CompletionTokens,
+				}
+				output <- llm.TextStreamEvent{
+					Type:  llm.EventTypeUsage,
+					Value: usage,
+				}
+			}
+
+			if len(chunk.Choices) == 0 {
+				continue
+			}
+
+			choice := chunk.Choices[0]
+			delta := choice.Delta
+
+			// Handle tool calls
+			if len(delta.ToolCalls) > 0 {
+				if toolsBuffer == nil {
+					toolsBuffer = make(map[int]*ToolBufferElement)
+				}
+				for _, toolCall := range delta.ToolCalls {
+					toolIndex := int(toolCall.Index)
+					if toolsBuffer[toolIndex] == nil {
+						toolsBuffer[toolIndex] = &ToolBufferElement{}
+					}
+
+					if toolCall.ID != "" {
+						toolsBuffer[toolIndex].id.WriteString(toolCall.ID)
+					}
+					if toolCall.Function.Name != "" {
+						toolsBuffer[toolIndex].name.WriteString(toolCall.Function.Name)
+					}
+					if toolCall.Function.Arguments != "" {
+						toolsBuffer[toolIndex].args.WriteString(toolCall.Function.Arguments)
+					}
+				}
+			}
+
+			if delta.Content != "" {
+				output <- llm.TextStreamEvent{
+					Type:  llm.EventTypeText,
+					Value: delta.Content,
+				}
+			}
+
+			// Check finishing conditions
+			switch choice.FinishReason {
+			case "stop":
+				// Continue processing to get usage data, but don't send more text
+				// The EventTypeEnd will be sent when we run out of chunks
+				continue
+			case "tool_calls":
+				// Verify OpenAI functions are not recursing too deep.
+				numFunctionCalls := 0
+				for i := len(params.Messages) - 1; i >= 0; i-- {
+					// Check if it's a tool message
+					if params.Messages[i].OfTool != nil {
+						numFunctionCalls++
+					} else {
+						break
+					}
+				}
+				if numFunctionCalls > MaxFunctionCalls {
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeError,
+						Value: errors.New("too many function calls"),
+					}
+					stream.Close()
+					cancel(nil)
+					<-watchdogDone
+					return
+				}
+
+				// Transfer the buffered tools into tool calls
+				pendingToolCalls := make([]llm.ToolCall, 0, len(toolsBuffer))
+				for _, tool := range toolsBuffer {
+					pendingToolCalls = append(pendingToolCalls, llm.ToolCall{
+						ID:          tool.id.String(),
+						Name:        tool.name.String(),
+						Description: "", // OpenAI doesn't provide description in the response
+						Arguments:   []byte(tool.args.String()),
+					})
+				}
+
+				// Check for AutoRun
+				shouldAutoRun := false
+				if len(cfg.AutoRunTools) > 0 && len(pendingToolCalls) > 0 {
+					shouldAutoRun = true
+					for _, tc := range pendingToolCalls {
+						if _, ok := cfg.AutoRunTools[tc.Name]; !ok {
+							shouldAutoRun = false
+							break
+						}
+					}
+				}
+
+				if shouldAutoRun {
+					// Add assistant message with tool calls to history
+					toolCallsParam := make([]openai.ChatCompletionMessageToolCallUnionParam, len(pendingToolCalls))
+					for i, tc := range pendingToolCalls {
+						toolCallsParam[i] = openai.ChatCompletionMessageToolCallUnionParam{
+							OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+								ID: tc.ID,
+								Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+									Name:      tc.Name,
+									Arguments: string(tc.Arguments),
+								},
+							},
+						}
+					}
+					params.Messages = append(params.Messages, openai.ChatCompletionMessageParamUnion{
+						OfAssistant: &openai.ChatCompletionAssistantMessageParam{
+							ToolCalls: toolCallsParam,
+						},
+					})
+
+					// Execute tools
+					for _, tc := range pendingToolCalls {
+						overrides := cfg.AutoRunTools[tc.Name]
+						getter := func(args any) error { return json.Unmarshal(tc.Arguments, args) }
+						if len(overrides) > 0 {
+							getter = llm.MergeArguments(getter, overrides)
+						}
+
+						result, err := llmContext.Tools.ResolveTool(tc.Name, getter, llmContext)
+						if err != nil {
+							// If error, we can just put error in result
+							result = fmt.Sprintf("Error executing tool: %v", err)
+						}
+
+						// Add tool result to history
+						params.Messages = append(params.Messages, openai.ToolMessage(result, tc.ID))
+					}
+
+					shouldContinue = true
+					// Stop processing this stream
+				} else {
+					// Manual approval needed
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeToolCalls,
+						Value: pendingToolCalls,
+					}
+				}
+
+				// We are done with this stream either way (recurse or return)
+				stream.Close()
+				cancel(nil)
+				<-watchdogDone
+
+				if shouldContinue {
+					break // Break stream loop to continue outer loop
+				}
 				return
-			case <-ctx.Done():
+
+			case "":
+				// Not done yet, keep going
+			default:
+				// Unknown finish reason, end the stream
+				stream.Close()
+				cancel(nil)
+				<-watchdogDone
 				return
-			case <-watchdog:
-				if !timer.Stop() {
-					<-timer.C
-				}
-				timer.Reset(s.config.StreamingTimeout)
+			}
+
+			if shouldContinue {
+				break
 			}
 		}
-	}()
 
-	stream := s.client.Chat.Completions.NewStreaming(ctx, params)
-	defer stream.Close()
-
-	// Buffering in the case of tool use
-	var toolsBuffer map[int]*ToolBufferElement
-
-	for stream.Next() {
-		chunk := stream.Current()
-
-		// Ping the watchdog when we receive a response
-		watchdog <- struct{}{}
-
-		// Check for usage data and emit usage event if available
-		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
-			usage := llm.TokenUsage{
-				InputTokens:  chunk.Usage.PromptTokens,
-				OutputTokens: chunk.Usage.CompletionTokens,
+		if !shouldContinue {
+			if err := stream.Err(); err != nil {
+				if ctxErr := context.Cause(ctx); ctxErr != nil {
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeError,
+						Value: ctxErr,
+					}
+				} else {
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeError,
+						Value: err,
+					}
+				}
 			}
+
+			stream.Close()
+			cancel(nil)
+			<-watchdogDone
+
 			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeUsage,
-				Value: usage,
+				Type:  llm.EventTypeEnd,
+				Value: nil,
 			}
+			return
 		}
 
-		if len(chunk.Choices) == 0 {
-			continue
-		}
+		// Loop continues with updated params
+	}
+}
 
-		choice := chunk.Choices[0]
-		delta := choice.Delta
+// streamResponsesAPIToChannels uses the new Responses API for streaming
+func (s *OpenAI) streamResponsesAPIToChannels(initialParams openai.ChatCompletionNewParams, llmContext *llm.Context, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
+	params := initialParams
 
-		// Handle tool calls
-		if len(delta.ToolCalls) > 0 {
-			if toolsBuffer == nil {
-				toolsBuffer = make(map[int]*ToolBufferElement)
+	for {
+		ctx, cancel := context.WithCancelCause(context.Background())
+		// Manual cancellation handling
+
+		// watchdog to cancel if the streaming stalls
+		watchdog := make(chan struct{})
+		watchdogDone := make(chan struct{})
+		go func() {
+			defer close(watchdogDone)
+			timer := time.NewTimer(s.config.StreamingTimeout)
+			defer timer.Stop()
+			for {
+				select {
+				case <-timer.C:
+					cancel(ErrStreamingTimeout)
+					return
+				case <-ctx.Done():
+					return
+				case <-watchdog:
+					if !timer.Stop() {
+						<-timer.C
+					}
+					timer.Reset(s.config.StreamingTimeout)
+				}
 			}
-			for _, toolCall := range delta.ToolCalls {
-				toolIndex := int(toolCall.Index)
-				if toolsBuffer[toolIndex] == nil {
-					toolsBuffer[toolIndex] = &ToolBufferElement{}
-				}
+		}()
 
-				if toolCall.ID != "" {
-					toolsBuffer[toolIndex].id.WriteString(toolCall.ID)
-				}
-				if toolCall.Function.Name != "" {
-					toolsBuffer[toolIndex].name.WriteString(toolCall.Function.Name)
-				}
-				if toolCall.Function.Arguments != "" {
-					toolsBuffer[toolIndex].args.WriteString(toolCall.Function.Arguments)
-				}
-			}
-		}
+		// Convert ChatCompletionNewParams to ResponseNewParams
+		responseParams := s.convertToResponseParams(params, llmContext, cfg)
 
-		if delta.Content != "" {
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeText,
-				Value: delta.Content,
-			}
-		}
+		// Create a streaming request
+		stream := s.client.Responses.NewStreaming(ctx, responseParams)
 
-		// Check finishing conditions
-		switch choice.FinishReason {
-		case "stop":
-			// Continue processing to get usage data, but don't send more text
-			// The EventTypeEnd will be sent when we run out of chunks
-			continue
-		case "tool_calls":
+		// Buffering in the case of tool use
+		var toolsBuffer map[int]*ToolBufferElement
+		var currentToolIndex int
+		var reasoningSummaryBuffer strings.Builder
+		var reasoningComplete bool // Track if we've sent the complete reasoning
+		shouldContinue := false
+
+		// Track annotations/citations
+		var annotations []llm.Annotation
+
+		// Track full message text to clean citations at the end
+		var fullMessageText strings.Builder
+
+		// Define handleToolCalls as a closure to access local variables
+		handleToolCalls := func() {
 			// Verify OpenAI functions are not recursing too deep.
 			numFunctionCalls := 0
 			for i := len(params.Messages) - 1; i >= 0; i-- {
@@ -443,11 +648,24 @@ func (s *OpenAI) streamCompletionsAPIToChannels(params openai.ChatCompletionNewP
 			// Transfer the buffered tools into tool calls
 			pendingToolCalls := make([]llm.ToolCall, 0, len(toolsBuffer))
 			for _, tool := range toolsBuffer {
+				if tool == nil {
+					continue
+				}
+
+				id := tool.id.String()
+				name := tool.name.String()
+				args := tool.args.String()
+
+				// Skip if we don't have required information
+				if name == "" {
+					continue
+				}
+
 				pendingToolCalls = append(pendingToolCalls, llm.ToolCall{
-					ID:          tool.id.String(),
-					Name:        tool.name.String(),
+					ID:          id,
+					Name:        name,
 					Description: "", // OpenAI doesn't provide description in the response
-					Arguments:   []byte(tool.args.String()),
+					Arguments:   []byte(args),
 				})
 			}
 
@@ -455,250 +673,195 @@ func (s *OpenAI) streamCompletionsAPIToChannels(params openai.ChatCompletionNewP
 				Type:  llm.EventTypeToolCalls,
 				Value: pendingToolCalls,
 			}
-			return
-		case "":
-		// Not done yet, keep going
-		default:
-			// Unknown finish reason, end the stream
-			return
-		}
-	}
-
-	if err := stream.Err(); err != nil {
-		if ctxErr := context.Cause(ctx); ctxErr != nil {
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeError,
-				Value: ctxErr,
-			}
-		} else {
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeError,
-				Value: err,
-			}
-		}
-	}
-
-	output <- llm.TextStreamEvent{
-		Type:  llm.EventTypeEnd,
-		Value: nil,
-	}
-}
-
-// streamResponsesAPIToChannels uses the new Responses API for streaming
-func (s *OpenAI) streamResponsesAPIToChannels(params openai.ChatCompletionNewParams, llmContext *llm.Context, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
-	ctx, cancel := context.WithCancelCause(context.Background())
-	defer cancel(nil)
-
-	// watchdog to cancel if the streaming stalls
-	watchdog := make(chan struct{})
-	go func() {
-		timer := time.NewTimer(s.config.StreamingTimeout)
-		defer timer.Stop()
-		for {
-			select {
-			case <-timer.C:
-				cancel(ErrStreamingTimeout)
-				return
-			case <-ctx.Done():
-				return
-			case <-watchdog:
-				if !timer.Stop() {
-					<-timer.C
-				}
-				timer.Reset(s.config.StreamingTimeout)
-			}
-		}
-	}()
-
-	// Convert ChatCompletionNewParams to ResponseNewParams
-	responseParams := s.convertToResponseParams(params, llmContext, cfg)
-
-	// Create a streaming request
-	stream := s.client.Responses.NewStreaming(ctx, responseParams)
-	defer stream.Close()
-
-	// Buffering in the case of tool use
-	var toolsBuffer map[int]*ToolBufferElement
-	var currentToolIndex int
-	var reasoningSummaryBuffer strings.Builder
-	var reasoningComplete bool // Track if we've sent the complete reasoning
-
-	// Track annotations/citations
-	var annotations []llm.Annotation
-
-	// Track full message text to clean citations at the end
-	var fullMessageText strings.Builder
-
-	// Define handleToolCalls as a closure to access local variables
-	handleToolCalls := func() {
-		// Verify OpenAI functions are not recursing too deep.
-		numFunctionCalls := 0
-		for i := len(params.Messages) - 1; i >= 0; i-- {
-			// Check if it's a tool message
-			if params.Messages[i].OfTool != nil {
-				numFunctionCalls++
-			} else {
-				break
-			}
-		}
-		if numFunctionCalls > MaxFunctionCalls {
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeError,
-				Value: errors.New("too many function calls"),
-			}
-			return
 		}
 
-		// Transfer the buffered tools into tool calls
-		pendingToolCalls := make([]llm.ToolCall, 0, len(toolsBuffer))
-		for _, tool := range toolsBuffer {
-			if tool == nil {
+		for stream.Next() {
+			event := stream.Current()
+
+			// Ping the watchdog when we receive a response
+			watchdog <- struct{}{}
+
+			// Process event types
+
+			// Handle different event types based on the Type field
+			switch event.Type {
+			case "response.created", "response.in_progress":
+				// Initial response events - these don't contain content yet
+				// Just continue processing
 				continue
-			}
 
-			id := tool.id.String()
-			name := tool.name.String()
-			args := tool.args.String()
-
-			// Skip if we don't have required information
-			if name == "" {
-				continue
-			}
-
-			pendingToolCalls = append(pendingToolCalls, llm.ToolCall{
-				ID:          id,
-				Name:        name,
-				Description: "", // OpenAI doesn't provide description in the response
-				Arguments:   []byte(args),
-			})
-		}
-
-		output <- llm.TextStreamEvent{
-			Type:  llm.EventTypeToolCalls,
-			Value: pendingToolCalls,
-		}
-	}
-
-	for stream.Next() {
-		event := stream.Current()
-
-		// Ping the watchdog when we receive a response
-		watchdog <- struct{}{}
-
-		// Process event types
-
-		// Handle different event types based on the Type field
-		switch event.Type {
-		case "response.created", "response.in_progress":
-			// Initial response events - these don't contain content yet
-			// Just continue processing
-			continue
-
-		case "response.output_text.delta":
-			// Text content delta - the text is in the Delta field
-			if event.Delta != "" {
-				// If we haven't sent the complete reasoning yet, send it now
-				if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
-					output <- llm.TextStreamEvent{
-						Type: llm.EventTypeReasoningEnd,
-						Value: llm.ReasoningData{
-							Text: reasoningSummaryBuffer.String(),
-						},
+			case "response.output_text.delta":
+				// Text content delta - the text is in the Delta field
+				if event.Delta != "" {
+					// If we haven't sent the complete reasoning yet, send it now
+					if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
+						output <- llm.TextStreamEvent{
+							Type: llm.EventTypeReasoningEnd,
+							Value: llm.ReasoningData{
+								Text: reasoningSummaryBuffer.String(),
+							},
+						}
+						reasoningComplete = true
 					}
-					reasoningComplete = true
+					// Accumulate full text for citation cleaning
+					fullMessageText.WriteString(event.Delta)
+					// Stream the text as-is (citations will be cleaned at the end)
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeText,
+						Value: event.Delta,
+					}
 				}
-				// Accumulate full text for citation cleaning
-				fullMessageText.WriteString(event.Delta)
-				// Stream the text as-is (citations will be cleaned at the end)
-				output <- llm.TextStreamEvent{
-					Type:  llm.EventTypeText,
-					Value: event.Delta,
-				}
-			}
 
-		case "response.content_part.added":
-			// Content part started - nothing to do yet
+			case "response.content_part.added":
+				// Content part started - nothing to do yet
 
-		case "response.content_part.done":
-			// Content part completed - extract annotations if present
-			// Check if we have a Part and if it's output text
-			if event.Part.Type == "output_text" {
-				// Check if annotations exist
-				if len(event.Part.Annotations) > 0 {
-					// Extract URL citations from the completed content part
-					for _, ann := range event.Part.Annotations {
-						if ann.Type == "url_citation" {
-							// OpenAI provides StartIndex and EndIndex directly as absolute positions
-							annotations = append(annotations, llm.Annotation{
-								Type:       llm.AnnotationTypeURLCitation,
-								StartIndex: int(ann.StartIndex),
-								EndIndex:   int(ann.EndIndex),
-								URL:        ann.URL,
-								Title:      ann.Title,
-								Index:      len(annotations) + 1, // 1-based index for display
-							})
+			case "response.content_part.done":
+				// Content part completed - extract annotations if present
+				// Check if we have a Part and if it's output text
+				if event.Part.Type == "output_text" {
+					// Check if annotations exist
+					if len(event.Part.Annotations) > 0 {
+						// Extract URL citations from the completed content part
+						for _, ann := range event.Part.Annotations {
+							if ann.Type == "url_citation" {
+								// OpenAI provides StartIndex and EndIndex directly as absolute positions
+								annotations = append(annotations, llm.Annotation{
+									Type:       llm.AnnotationTypeURLCitation,
+									StartIndex: int(ann.StartIndex),
+									EndIndex:   int(ann.EndIndex),
+									URL:        ann.URL,
+									Title:      ann.Title,
+									Index:      len(annotations) + 1, // 1-based index for display
+								})
+							}
 						}
 					}
 				}
-			}
 
-		case "response.function_call_arguments.delta":
-			// Function call arguments delta - arguments are in the Delta field
-			// We need to determine the index from the event
-			idx := currentToolIndex
-			if event.OutputIndex > 0 {
-				idx = int(event.OutputIndex)
-			}
-			if toolsBuffer == nil {
-				toolsBuffer = make(map[int]*ToolBufferElement)
-			}
-			if toolsBuffer[idx] == nil {
-				toolsBuffer[idx] = &ToolBufferElement{}
-			}
-			if event.Delta != "" {
-				toolsBuffer[idx].args.WriteString(event.Delta)
-			}
-			// Update current index for future events
-			currentToolIndex = idx
-
-		case "response.output_item.added":
-			// A new output item was added (could be text, function call, etc.)
-			// The Item field contains the output item
-			if event.Item.Type == "function_call" {
+			case "response.function_call_arguments.delta":
+				// Function call arguments delta - arguments are in the Delta field
+				// We need to determine the index from the event
+				idx := currentToolIndex
+				if event.OutputIndex > 0 {
+					idx = int(event.OutputIndex)
+				}
 				if toolsBuffer == nil {
 					toolsBuffer = make(map[int]*ToolBufferElement)
 				}
-				currentToolIndex = int(event.OutputIndex)
-				if toolsBuffer[currentToolIndex] == nil {
-					toolsBuffer[currentToolIndex] = &ToolBufferElement{}
+				if toolsBuffer[idx] == nil {
+					toolsBuffer[idx] = &ToolBufferElement{}
 				}
-				// The ID might be in CallID field for function calls
-				if event.Item.CallID != "" {
-					toolsBuffer[currentToolIndex].id.WriteString(event.Item.CallID)
-				} else if event.Item.ID != "" {
-					toolsBuffer[currentToolIndex].id.WriteString(event.Item.ID)
+				if event.Delta != "" {
+					toolsBuffer[idx].args.WriteString(event.Delta)
 				}
-				// Capture function name from the Item
-				if event.Item.Name != "" {
-					toolsBuffer[currentToolIndex].name.WriteString(event.Item.Name)
-				}
-			}
+				// Update current index for future events
+				currentToolIndex = idx
 
-		case "response.function_call_arguments.done":
-			// Function call arguments completed
-			// Arguments have been accumulated in the buffer
-			// Check if we have the complete arguments in the event
-			if event.Arguments != "" {
-				// Sometimes the complete arguments come in this event
-				if toolsBuffer[currentToolIndex] != nil && toolsBuffer[currentToolIndex].args.Len() == 0 {
-					toolsBuffer[currentToolIndex].args.WriteString(event.Arguments)
+			case "response.output_item.added":
+				// A new output item was added (could be text, function call, etc.)
+				// The Item field contains the output item
+				if event.Item.Type == "function_call" {
+					if toolsBuffer == nil {
+						toolsBuffer = make(map[int]*ToolBufferElement)
+					}
+					currentToolIndex = int(event.OutputIndex)
+					if toolsBuffer[currentToolIndex] == nil {
+						toolsBuffer[currentToolIndex] = &ToolBufferElement{}
+					}
+					// The ID might be in CallID field for function calls
+					if event.Item.CallID != "" {
+						toolsBuffer[currentToolIndex].id.WriteString(event.Item.CallID)
+					} else if event.Item.ID != "" {
+						toolsBuffer[currentToolIndex].id.WriteString(event.Item.ID)
+					}
+					// Capture function name from the Item
+					if event.Item.Name != "" {
+						toolsBuffer[currentToolIndex].name.WriteString(event.Item.Name)
+					}
 				}
-			}
 
-		case "response.output_item.done":
-			// Output item completed - check if it's a function call
-			if event.Item.Type == "function_call" {
-				// If we haven't sent the complete reasoning yet and this is a tool call, send reasoning first
+			case "response.function_call_arguments.done":
+				// Function call arguments completed
+				// Arguments have been accumulated in the buffer
+				// Check if we have the complete arguments in the event
+				if event.Arguments != "" {
+					// Sometimes the complete arguments come in this event
+					if toolsBuffer[currentToolIndex] != nil && toolsBuffer[currentToolIndex].args.Len() == 0 {
+						toolsBuffer[currentToolIndex].args.WriteString(event.Arguments)
+					}
+				}
+
+			case "response.output_item.done":
+				// Output item completed - check if it's a function call
+				if event.Item.Type == "function_call" {
+					// If we haven't sent the complete reasoning yet and this is a tool call, send reasoning first
+					if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
+						output <- llm.TextStreamEvent{
+							Type: llm.EventTypeReasoningEnd,
+							Value: llm.ReasoningData{
+								Text: reasoningSummaryBuffer.String(),
+							},
+						}
+						reasoningComplete = true
+					}
+					// Make sure we have the function details
+					if event.Item.Name != "" && toolsBuffer[currentToolIndex] != nil {
+						// Update the name if it wasn't set before
+						if toolsBuffer[currentToolIndex].name.Len() == 0 {
+							toolsBuffer[currentToolIndex].name.WriteString(event.Item.Name)
+						}
+					}
+					if event.Item.CallID != "" && toolsBuffer[currentToolIndex] != nil {
+						// Update the ID if it wasn't set before
+						if toolsBuffer[currentToolIndex].id.Len() == 0 {
+							toolsBuffer[currentToolIndex].id.WriteString(event.Item.CallID)
+						}
+					}
+				}
+
+			case "response.reasoning_summary_text.delta":
+				// Reasoning summary text delta
+				if event.Delta != "" {
+					reasoningSummaryBuffer.WriteString(event.Delta)
+					// Send reasoning summary chunks as they arrive
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeReasoning,
+						Value: event.Delta,
+					}
+				}
+
+			case "response.reasoning_summary_part.added":
+				// A new reasoning part is starting
+
+			case "response.reasoning_summary_text.done":
+				// A reasoning part's text is complete, but there may be more parts
+				// Don't send EventTypeReasoningEnd yet - there may be more parts
+
+			case "response.reasoning_summary_part.done":
+				// A reasoning part is done, but there may be more parts
+				// Continue accumulating, don't send end event yet
+
+			case "response.output_text.done":
+				// Text output completed - check if we have accumulated annotations to send
+				if len(annotations) > 0 {
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeAnnotations,
+						Value: annotations,
+					}
+					// Clear annotations after sending to avoid duplicates
+					annotations = nil
+				}
+
+			case "response.web_search_call.searching", "response.web_search_call.in_progress", "response.web_search_call.completed":
+				// Handle web search events
+				// Web search results are typically handled as part of the response text
+				// The model will incorporate the search results into its response
+				continue
+
+			case "response.completed":
+				// Response fully completed
+
+				// If we still have unsent reasoning (edge case: no output text), send it now
 				if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
 					output <- llm.TextStreamEvent{
 						Type: llm.EventTypeReasoningEnd,
@@ -706,139 +869,195 @@ func (s *OpenAI) streamResponsesAPIToChannels(params openai.ChatCompletionNewPar
 							Text: reasoningSummaryBuffer.String(),
 						},
 					}
-					reasoningComplete = true
 				}
-				// Make sure we have the function details
-				if event.Item.Name != "" && toolsBuffer[currentToolIndex] != nil {
-					// Update the name if it wasn't set before
-					if toolsBuffer[currentToolIndex].name.Len() == 0 {
-						toolsBuffer[currentToolIndex].name.WriteString(event.Item.Name)
+
+				// If we have annotations (from API or extracted from text), send them now
+				if len(annotations) > 0 {
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeAnnotations,
+						Value: annotations,
 					}
 				}
-				if event.Item.CallID != "" && toolsBuffer[currentToolIndex] != nil {
-					// Update the ID if it wasn't set before
-					if toolsBuffer[currentToolIndex].id.Len() == 0 {
-						toolsBuffer[currentToolIndex].id.WriteString(event.Item.CallID)
+
+				// Emit usage event if available
+				if event.Response.Usage.InputTokens > 0 || event.Response.Usage.OutputTokens > 0 {
+					usage := llm.TokenUsage{
+						InputTokens:  event.Response.Usage.InputTokens,
+						OutputTokens: event.Response.Usage.OutputTokens,
+					}
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeUsage,
+						Value: usage,
 					}
 				}
-			}
 
-		case "response.reasoning_summary_text.delta":
-			// Reasoning summary text delta
-			if event.Delta != "" {
-				reasoningSummaryBuffer.WriteString(event.Delta)
-				// Send reasoning summary chunks as they arrive
+				// Check if we have tool calls to emit
+				if len(toolsBuffer) > 0 {
+					// Transfer the buffered tools into tool calls
+					pendingToolCalls := make([]llm.ToolCall, 0, len(toolsBuffer))
+					for _, tool := range toolsBuffer {
+						if tool == nil {
+							continue
+						}
+						id := tool.id.String()
+						name := tool.name.String()
+						args := tool.args.String()
+						if name == "" {
+							continue
+						}
+						pendingToolCalls = append(pendingToolCalls, llm.ToolCall{
+							ID:          id,
+							Name:        name,
+							Description: "",
+							Arguments:   []byte(args),
+						})
+					}
+
+					// Check for AutoRun
+					shouldAutoRun := false
+					if len(cfg.AutoRunTools) > 0 && len(pendingToolCalls) > 0 {
+						shouldAutoRun = true
+						for _, tc := range pendingToolCalls {
+							if _, ok := cfg.AutoRunTools[tc.Name]; !ok {
+								shouldAutoRun = false
+								break
+							}
+						}
+					}
+
+					if shouldAutoRun {
+						// Check recursion depth (function calls)
+						numFunctionCalls := 0
+						for i := len(params.Messages) - 1; i >= 0; i-- {
+							if params.Messages[i].OfTool != nil {
+								numFunctionCalls++
+							} else {
+								break
+							}
+						}
+						if numFunctionCalls > MaxFunctionCalls {
+							output <- llm.TextStreamEvent{
+								Type:  llm.EventTypeError,
+								Value: errors.New("too many function calls"),
+							}
+							// Cleanup and return
+							stream.Close()
+							cancel(nil)
+							<-watchdogDone
+							return
+						}
+
+						// Add assistant message with tool calls
+						toolCallsParam := make([]openai.ChatCompletionMessageToolCallUnionParam, len(pendingToolCalls))
+						for i, tc := range pendingToolCalls {
+							toolCallsParam[i] = openai.ChatCompletionMessageToolCallUnionParam{
+								OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+									ID: tc.ID,
+									Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+										Name:      tc.Name,
+										Arguments: string(tc.Arguments),
+									},
+								},
+							}
+						}
+						params.Messages = append(params.Messages, openai.ChatCompletionMessageParamUnion{
+							OfAssistant: &openai.ChatCompletionAssistantMessageParam{
+								ToolCalls: toolCallsParam,
+							},
+						})
+
+						// Execute tools
+						for _, tc := range pendingToolCalls {
+							overrides := cfg.AutoRunTools[tc.Name]
+							getter := func(args any) error { return json.Unmarshal(tc.Arguments, args) }
+							if len(overrides) > 0 {
+								getter = llm.MergeArguments(getter, overrides)
+							}
+
+							result, err := llmContext.Tools.ResolveTool(tc.Name, getter, llmContext)
+							if err != nil {
+								result = fmt.Sprintf("Error executing tool: %v", err)
+							}
+
+							// Add tool result to history
+							params.Messages = append(params.Messages, openai.ToolMessage(result, tc.ID))
+						}
+
+						shouldContinue = true
+					} else {
+						// Manual approval
+						handleToolCalls()
+					}
+
+					stream.Close()
+					cancel(nil)
+					<-watchdogDone
+
+					if shouldContinue {
+						break
+					}
+					return
+				}
+
+				// Otherwise, emit end event
 				output <- llm.TextStreamEvent{
-					Type:  llm.EventTypeReasoning,
-					Value: event.Delta,
+					Type:  llm.EventTypeEnd,
+					Value: nil,
 				}
-			}
 
-		case "response.reasoning_summary_part.added":
-			// A new reasoning part is starting
-
-		case "response.reasoning_summary_text.done":
-			// A reasoning part's text is complete, but there may be more parts
-			// Don't send EventTypeReasoningEnd yet - there may be more parts
-
-		case "response.reasoning_summary_part.done":
-			// A reasoning part is done, but there may be more parts
-			// Continue accumulating, don't send end event yet
-
-		case "response.output_text.done":
-			// Text output completed - check if we have accumulated annotations to send
-			if len(annotations) > 0 {
-				output <- llm.TextStreamEvent{
-					Type:  llm.EventTypeAnnotations,
-					Value: annotations,
-				}
-				// Clear annotations after sending to avoid duplicates
-				annotations = nil
-			}
-
-		case "response.web_search_call.searching", "response.web_search_call.in_progress", "response.web_search_call.completed":
-			// Handle web search events
-			// Web search results are typically handled as part of the response text
-			// The model will incorporate the search results into its response
-			continue
-
-		case "response.completed":
-			// Response fully completed
-
-			// If we still have unsent reasoning (edge case: no output text), send it now
-			if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
-				output <- llm.TextStreamEvent{
-					Type: llm.EventTypeReasoningEnd,
-					Value: llm.ReasoningData{
-						Text: reasoningSummaryBuffer.String(),
-					},
-				}
-			}
-
-			// If we have annotations (from API or extracted from text), send them now
-			if len(annotations) > 0 {
-				output <- llm.TextStreamEvent{
-					Type:  llm.EventTypeAnnotations,
-					Value: annotations,
-				}
-			}
-
-			// Emit usage event if available
-			if event.Response.Usage.InputTokens > 0 || event.Response.Usage.OutputTokens > 0 {
-				usage := llm.TokenUsage{
-					InputTokens:  event.Response.Usage.InputTokens,
-					OutputTokens: event.Response.Usage.OutputTokens,
-				}
-				output <- llm.TextStreamEvent{
-					Type:  llm.EventTypeUsage,
-					Value: usage,
-				}
-			}
-
-			// Check if we have tool calls to emit
-			if len(toolsBuffer) > 0 {
-				handleToolCalls()
+				stream.Close()
+				cancel(nil)
+				<-watchdogDone
 				return
+
+			case "error":
+				// Error event
+				var errorMsg string
+				if event.Message != "" {
+					errorMsg = event.Message
+				} else {
+					errorMsg = "Unknown error from Responses API"
+				}
+				output <- llm.TextStreamEvent{
+					Type:  llm.EventTypeError,
+					Value: errors.New(errorMsg),
+				}
+				stream.Close()
+				cancel(nil)
+				<-watchdogDone
+				return
+
+			default:
+				// Unhandled event types are ignored
 			}
 
-			// Otherwise, emit end event
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeEnd,
-				Value: nil,
-			}
-			return
-
-		case "error":
-			// Error event
-			var errorMsg string
-			if event.Message != "" {
-				errorMsg = event.Message
-			} else {
-				errorMsg = "Unknown error from Responses API"
-			}
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeError,
-				Value: errors.New(errorMsg),
-			}
-			return
-
-		default:
-			// Unhandled event types are ignored
-		}
-	}
-
-	if err := stream.Err(); err != nil {
-		if ctxErr := context.Cause(ctx); ctxErr != nil {
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeError,
-				Value: ctxErr,
-			}
-		} else {
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeError,
-				Value: err,
+			if shouldContinue {
+				break
 			}
 		}
+
+		if !shouldContinue {
+			if err := stream.Err(); err != nil {
+				if ctxErr := context.Cause(ctx); ctxErr != nil {
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeError,
+						Value: ctxErr,
+					}
+				} else {
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeError,
+						Value: err,
+					}
+				}
+			}
+
+			stream.Close()
+			cancel(nil)
+			<-watchdogDone
+			return
+		}
+
+		// Loop continues with updated params
 	}
 }
 

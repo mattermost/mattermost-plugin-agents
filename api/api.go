@@ -179,6 +179,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 	channelRouter := botRequiredRouter.Group("/channel/:channelid")
 	channelRouter.Use(a.channelAuthorizationRequired)
+	channelRouter.POST("/analyze", a.handleChannelAnalysis)
 	channelRouter.POST("/interval", a.handleInterval)
 
 	adminRouter := router.Group("/admin")

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -55,6 +57,90 @@ type ToolCall struct {
 }
 
 type ToolArgumentGetter func(args any) error
+
+// MergeArguments creates a new ToolArgumentGetter that merges overrides into the original arguments.
+func MergeArguments(originalGetter ToolArgumentGetter, overrides map[string]interface{}) ToolArgumentGetter {
+	return func(args any) error {
+		if err := originalGetter(args); err != nil {
+			return err
+		}
+
+		if len(overrides) == 0 {
+			return nil
+		}
+
+		val := reflect.ValueOf(args)
+		if val.Kind() != reflect.Ptr || val.IsNil() {
+			return fmt.Errorf("args must be a non-nil pointer")
+		}
+
+		elem := val.Elem()
+
+		// Handle map[string]interface{} or similar maps
+		if elem.Kind() == reflect.Map {
+			if elem.IsNil() {
+				// Should have been initialized by originalGetter usually, but if not:
+				elem.Set(reflect.MakeMap(elem.Type()))
+			}
+			for k, v := range overrides {
+				// We need to ensure the value type is compatible, but for map[string]interface{} it's fine.
+				elem.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
+			}
+			return nil
+		}
+
+		// Handle Struct
+		if elem.Kind() == reflect.Struct {
+			for k, v := range overrides {
+				// Try to find field by name or json tag
+				field := findField(elem, k)
+				if field.IsValid() && field.CanSet() {
+					valToSet := reflect.ValueOf(v)
+					// Simple type conversion
+					if valToSet.Type().ConvertibleTo(field.Type()) {
+						field.Set(valToSet.Convert(field.Type()))
+					} else {
+						// Fallback for common JSON number cases (float64 to int)
+						if valToSet.Kind() == reflect.Float64 {
+							switch field.Kind() {
+							case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+								field.SetInt(int64(valToSet.Float()))
+							case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+								field.SetUint(uint64(valToSet.Float()))
+							}
+						}
+					}
+				}
+			}
+			return nil
+		}
+
+		return nil
+	}
+}
+
+func findField(val reflect.Value, name string) reflect.Value {
+	typ := val.Type()
+	// First try exact match on field name
+	if f := val.FieldByName(name); f.IsValid() {
+		return f
+	}
+
+	// Try json tag
+	for i := 0; i < val.NumField(); i++ {
+		field := typ.Field(i)
+		tag := field.Tag.Get("json")
+		if tag == "" {
+			continue
+		}
+		// Handle "name,omitempty"
+		parts := strings.Split(tag, ",")
+		if parts[0] == name {
+			return val.Field(i)
+		}
+	}
+	return reflect.Value{}
+}
 
 // ToolAuthError represents an authentication error that occurred during tool creation
 type ToolAuthError struct {

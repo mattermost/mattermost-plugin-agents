@@ -4,6 +4,7 @@
 package channels
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/mattermost/mattermost-plugin-ai/format"
@@ -32,6 +33,63 @@ func New(
 		client:   client,
 		dbClient: dbClient,
 	}
+}
+
+// AnalyzeChannel uses MCP tools to analyze channel activity based on user request
+func (c *Channels) AnalyzeChannel(
+	context *llm.Context,
+	channelID string,
+	analysisData map[string]any,
+) (*llm.TextStreamResult, error) {
+	// Inject analysis data into context for the prompt
+	context.Parameters = map[string]any{
+		"Channel": map[string]string{
+			"Id":          channelID,
+			"DisplayName": context.Channel.DisplayName,
+		},
+		"Analysis": analysisData,
+	}
+
+	systemPrompt, err := c.prompts.Format(prompts.PromptSummarizeChannelSystem, context)
+	if err != nil {
+		return nil, fmt.Errorf("failed to format system prompt: %w", err)
+	}
+
+	// We can use a simple user prompt to trigger the agent
+	userPrompt := "Please summarize the channel activity as requested."
+
+	completionRequest := llm.CompletionRequest{
+		Posts: []llm.Post{
+			{
+				Role:    llm.PostRoleSystem,
+				Message: systemPrompt,
+			},
+			{
+				Role:    llm.PostRoleUser,
+				Message: userPrompt,
+			},
+		},
+		Context: context,
+	}
+
+	// Define auto-run tools with hardcoded parameters
+	autoRunTools := map[string]map[string]interface{}{
+		"read_channel": {
+			"channel_id": channelID,
+		},
+		"get_channel_info": {
+			"channel_id": channelID,
+		},
+	}
+
+	// Tools are enabled by default in the context if configured correctly in API handler
+	// We do NOT disable tools here.
+	resultStream, err := c.llm.ChatCompletion(completionRequest, llm.WithAutoRunTools(autoRunTools))
+	if err != nil {
+		return nil, err
+	}
+
+	return resultStream, nil
 }
 
 func (c *Channels) Interval(

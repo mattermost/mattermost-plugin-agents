@@ -20,6 +20,7 @@ const (
 	PromptStandardPersonalityWithoutLocale = "standard_personality_without_locale"
 	PromptSummarizeChannelRangeSystem      = "summarize_channel_range_system"
 	PromptSummarizeChannelSinceSystem      = "summarize_channel_since_system"
+	PromptSummarizeChannelSystem           = "summarize_channel_system"
 	PromptSummarizeChunkSystem             = "summarize_chunk_system"
 	PromptSummarizeThreadSystem            = "summarize_thread_system"
 	PromptThreadUser                       = "thread_user"

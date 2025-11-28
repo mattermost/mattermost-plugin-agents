@@ -39,6 +39,7 @@ type LanguageModelConfig struct {
 	JSONOutputFormat   *jsonschema.Schema
 	EnableThinking     bool
 	ToolsDisabled      bool
+	AutoRunTools       map[string]map[string]interface{}
 }
 
 type LanguageModelOption func(*LanguageModelConfig)
@@ -67,6 +68,12 @@ func WithJSONOutput[T any]() LanguageModelOption {
 func WithToolsDisabled() LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.ToolsDisabled = true
+	}
+}
+
+func WithAutoRunTools(tools map[string]map[string]interface{}) LanguageModelOption {
+	return func(cfg *LanguageModelConfig) {
+		cfg.AutoRunTools = tools
 	}
 }
 
