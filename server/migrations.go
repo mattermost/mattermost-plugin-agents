@@ -290,20 +290,6 @@ func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Clie
 		mtx.Unlock()
 
 		if saveErr := pluginAPI.Configuration.SavePluginConfig(out); saveErr != nil {
-			// Revert KV keys if save failed, so we retry next time
-			mtx.Lock()
-			if migratedServicesToBots {
-				if err := pluginAPI.KV.Delete(MigrationKeyServicesToBots); err != nil {
-					pluginAPI.Log.Warn("Failed to revert services to bots migration KV key", "error", err)
-				}
-			}
-			if migratedSeparateServicesFromBots {
-				if err := pluginAPI.KV.Delete(MigrationKeySeparateServicesFromBots); err != nil {
-					pluginAPI.Log.Warn("Failed to revert separate services from bots migration KV key", "error", err)
-				}
-			}
-			mtx.Unlock()
-
 			return cfg, false, fmt.Errorf("failed to save migrated configuration: %w", saveErr)
 		}
 
