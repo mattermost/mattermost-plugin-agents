@@ -14,6 +14,11 @@ import (
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 )
 
+const (
+	MigrationKeyServicesToBots           = "migration_services_to_bots_2"
+	MigrationKeySeparateServicesFromBots = "migration_separate_services_from_bots"
+)
+
 type BotMigrationConfig struct {
 	Config struct {
 		Services []struct {
@@ -41,7 +46,16 @@ func migrateSeparateServicesFromBots(pluginAPI *pluginapi.Client, cfg config.Con
 	// Check if migration is needed - if any bot has embedded service
 	needsMigration := false
 	for _, bot := range existingConfig.Bots {
+		pluginAPI.Log.Debug("Checking bot for migration",
+			"botID", bot.ID,
+			"hasService", bot.Service != nil,
+			"serviceID", bot.ServiceID,
+		)
 		if bot.Service != nil && bot.Service.Type != "" && bot.ServiceID == "" {
+			pluginAPI.Log.Debug("Bot needs migration",
+				"botID", bot.ID,
+				"serviceType", bot.Service.Type,
+			)
 			needsMigration = true
 			break
 		}
@@ -143,12 +157,16 @@ func servicesAreIdentical(a, b llm.ServiceConfig) bool {
 }
 
 func migrateServicesToBots(pluginAPI *pluginapi.Client, cfg config.Config) (bool, config.Config, error) {
-	pluginAPI.Log.Debug("Checking if migration from services to bots is needed")
+	pluginAPI.Log.Debug("Checking if migration from services to bots is needed",
+		"numBots", len(cfg.Bots),
+		"numServices", len(cfg.Services),
+	)
 
 	existingConfig := cfg.Clone()
 
 	// If bots already exist, no migration needed
 	if len(existingConfig.Bots) != 0 {
+		pluginAPI.Log.Debug("Bots already exist, skipping services to bots migration")
 		return false, cfg, nil
 	}
 
@@ -204,54 +222,94 @@ func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Clie
 
 	changed := false
 
-	didMigrateServicesToBots, newCfg, err := migrateServicesToBots(pluginAPI, cfg)
-	if err != nil {
-		mtx.Unlock()
-		return cfg, false, fmt.Errorf("failed to migrate services to bots: %w", err)
-	}
-	if didMigrateServicesToBots {
-		changed = true
-		cfg = newCfg
-		pluginAPI.Log.Info("Migration completed: services to bots")
+	var kvVal []byte
+
+	// Check Migration 1: Services to Bots
+	migratedServicesToBots := false
+	if err := pluginAPI.KV.Get(MigrationKeyServicesToBots, &kvVal); err != nil || kvVal == nil {
+		didMigrateServicesToBots, newCfg, migrateErr := migrateServicesToBots(pluginAPI, cfg)
+		if migrateErr != nil {
+			mtx.Unlock()
+			return cfg, false, fmt.Errorf("failed to migrate services to bots: %w", migrateErr)
+		}
+		if didMigrateServicesToBots {
+			changed = true
+			migratedServicesToBots = true
+			cfg = newCfg
+			pluginAPI.Log.Info("Migration completed: services to bots")
+		}
 	}
 
-	var migrateErr error
-	didMigrateSeparateServicesFromBots := false
-	didMigrateSeparateServicesFromBots, newCfg, migrateErr = migrateSeparateServicesFromBots(pluginAPI, cfg)
-	if migrateErr != nil {
-		mtx.Unlock()
-		return cfg, false, fmt.Errorf("failed to migrate separate services from bots: %w", migrateErr)
-	}
-	if didMigrateSeparateServicesFromBots {
-		changed = true
-		cfg = newCfg
-		pluginAPI.Log.Info("Migration completed: separate services from bots")
+	// Check Migration 2: Separate Services from Bots
+	migratedSeparateServicesFromBots := false
+	if err := pluginAPI.KV.Get(MigrationKeySeparateServicesFromBots, &kvVal); err != nil || kvVal == nil {
+		didMigrateSeparateServicesFromBots, newCfg, migrateErr := migrateSeparateServicesFromBots(pluginAPI, cfg)
+		if migrateErr != nil {
+			mtx.Unlock()
+			return cfg, false, fmt.Errorf("failed to migrate separate services from bots: %w", migrateErr)
+		}
+		if didMigrateSeparateServicesFromBots {
+			changed = true
+			migratedSeparateServicesFromBots = true
+			cfg = newCfg
+			pluginAPI.Log.Info("Migration completed: separate services from bots")
+		}
 	}
 
-	// Release mutex before saving config to avoid deadlock when SavePluginConfig
-	// triggers OnConfigurationChange which tries to acquire the same mutex
-	mtx.Unlock()
-
-	// If any migrations ran, persist the config
 	if changed {
-		// Wrap config in the configuration struct that has the proper nesting
+		// Prepare config to save before unlocking
 		wrappedConfig := configuration{Config: cfg}
 
 		// Convert config to map[string]any for plugin API
 		out := map[string]any{}
 		marshalBytes, marshalErr := json.Marshal(wrappedConfig)
 		if marshalErr != nil {
+			mtx.Unlock()
 			return cfg, false, fmt.Errorf("failed to marshal migrated configuration: %w", marshalErr)
 		}
 		if unmarshalErr := json.Unmarshal(marshalBytes, &out); unmarshalErr != nil {
+			mtx.Unlock()
 			return cfg, false, fmt.Errorf("failed to unmarshal migrated configuration: %w", unmarshalErr)
 		}
 
+		// Mark migrations as completed in KV store BEFORE unlocking to prevent race conditions.
+		// If the save fails later, we will revert these keys.
+		if migratedServicesToBots {
+			if _, err := pluginAPI.KV.Set(MigrationKeyServicesToBots, []byte("true")); err != nil {
+				pluginAPI.Log.Warn("Failed to mark services to bots migration as completed in KV store", "error", err)
+			}
+		}
+		if migratedSeparateServicesFromBots {
+			if _, err := pluginAPI.KV.Set(MigrationKeySeparateServicesFromBots, []byte("true")); err != nil {
+				pluginAPI.Log.Warn("Failed to mark separate services from bots migration as completed in KV store", "error", err)
+			}
+		}
+
+		// Release mutex before saving config to avoid deadlock when SavePluginConfig
+		// triggers OnConfigurationChange which tries to acquire the same mutex
+		mtx.Unlock()
+
 		if saveErr := pluginAPI.Configuration.SavePluginConfig(out); saveErr != nil {
+			// Revert KV keys if save failed, so we retry next time
+			mtx.Lock()
+			if migratedServicesToBots {
+				if err := pluginAPI.KV.Delete(MigrationKeyServicesToBots); err != nil {
+					pluginAPI.Log.Warn("Failed to revert services to bots migration KV key", "error", err)
+				}
+			}
+			if migratedSeparateServicesFromBots {
+				if err := pluginAPI.KV.Delete(MigrationKeySeparateServicesFromBots); err != nil {
+					pluginAPI.Log.Warn("Failed to revert separate services from bots migration KV key", "error", err)
+				}
+			}
+			mtx.Unlock()
+
 			return cfg, false, fmt.Errorf("failed to save migrated configuration: %w", saveErr)
 		}
 
 		pluginAPI.Log.Info("Configuration persisted after migrations")
+	} else {
+		mtx.Unlock()
 	}
 
 	return cfg, changed, nil

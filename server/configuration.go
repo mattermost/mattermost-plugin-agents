@@ -37,6 +37,9 @@ func (c *configuration) Clone() *configuration {
 }
 
 // OnConfigurationChange is invoked when configuration changes may have been made.
+// NOTE: In the Mattermost plugin lifecycle, OnConfigurationChange is called BEFORE OnActivate.
+// This is important because migrations run here will have completed before OnActivate executes,
+// ensuring the plugin initializes with the migrated configuration.
 func (p *Plugin) OnConfigurationChange() error {
 	var configuration = new(configuration)
 	// Load the public configuration fields from the Mattermost server configuration.
@@ -54,12 +57,10 @@ func (p *Plugin) OnConfigurationChange() error {
 
 	// Update in-memory representation with the final (potentially migrated) config
 	// The save to disk is already handled by runAllMigrations if changes were made
-	finalConfig := configuration.Config
 	if wasUpdated {
-		finalConfig = potentiallyUpdatedConfig
-		pluginAPI.Log.Info("Configuration migrated in OnConfigurationChange")
+		pluginAPI.Log.Debug("Configuration migrated in OnConfigurationChange")
 	}
-	p.configuration.Update(&finalConfig)
+	p.configuration.Update(&potentiallyUpdatedConfig)
 
 	return nil
 }
