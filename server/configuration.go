@@ -51,6 +51,10 @@ func (p *Plugin) OnConfigurationChange() error {
 	pluginAPI := pluginapi.NewClient(p.API, p.Driver)
 	potentiallyUpdatedConfig, wasUpdated, err := runAllMigrations(p.API, pluginAPI, configuration.Config)
 	if err != nil {
+		// Update in-memory config even on migration failure to prevent nil pointer panics
+		// in OnActivate. The plugin will still fail to activate due to the returned error,
+		// but it will fail gracefully rather than crashing.
+		p.configuration.Update(&configuration.Config)
 		pluginAPI.Log.Error("Failed to run migrations on configuration change", "error", err)
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
