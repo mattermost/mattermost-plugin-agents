@@ -1031,6 +1031,18 @@ func TestMigrateServicesToBots(t *testing.T) {
 			expectError:    false,
 		},
 		{
+			name:           "No bots and no old services - should skip",
+			existingBots:   []llm.BotConfig{},
+			oldConfigJSON:  `{"config": {"services": []}}`,
+			expectMigrated: false,
+			expectError:    false,
+			validateResult: func(t *testing.T, result config.Config) {
+				// Config should remain unchanged (empty)
+				assert.Empty(t, result.Services)
+				assert.Empty(t, result.Bots)
+			},
+		},
+		{
 			name:         "Single old service - should create service and bot with standard name",
 			existingBots: []llm.BotConfig{},
 			oldConfigJSON: `{
