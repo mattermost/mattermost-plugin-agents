@@ -192,9 +192,9 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		// AWS credentials are picked up from environment via standard AWS SDK chain:
 		// AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (and optionally AWS_SESSION_TOKEN)
 		serviceConfig := llm.ServiceConfig{
-			DefaultModel:     model,
-			Region:           region,
-			AWSAccessKeyID:   os.Getenv("AWS_ACCESS_KEY_ID"),
+			DefaultModel:       model,
+			Region:             region,
+			AWSAccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
 			AWSSecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
 		}
 
