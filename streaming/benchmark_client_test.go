@@ -5,7 +5,7 @@ package streaming
 
 import "github.com/mattermost/mattermost/server/public/model"
 
-// benchmarkClient implements StreamingClient for benchmarks with zero overhead.
+// benchmarkClient implements Client for benchmarks with zero overhead.
 type benchmarkClient struct{}
 
 func (c *benchmarkClient) PublishWebSocketEvent(_ string, _ map[string]interface{}, _ *model.WebsocketBroadcast) {

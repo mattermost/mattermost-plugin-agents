@@ -15,8 +15,8 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// StreamingClient defines the minimal client interface needed for streaming operations.
-type StreamingClient interface {
+// Client defines the minimal client interface needed for streaming operations.
+type Client interface {
 	PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast)
 	UpdatePost(post *model.Post) error
 	CreatePost(post *model.Post) error
@@ -55,11 +55,11 @@ var ErrAlreadyStreamingToPost = fmt.Errorf("already streaming to post")
 type MMPostStreamService struct {
 	contexts      map[string]postStreamContext
 	contextsMutex sync.Mutex
-	mmClient      StreamingClient
+	mmClient      Client
 	i18n          *i18n.Bundle
 }
 
-func NewMMPostStreamService(mmClient StreamingClient, i18n *i18n.Bundle) *MMPostStreamService {
+func NewMMPostStreamService(mmClient Client, i18n *i18n.Bundle) *MMPostStreamService {
 	return &MMPostStreamService{
 		contexts: make(map[string]postStreamContext),
 		mmClient: mmClient,
