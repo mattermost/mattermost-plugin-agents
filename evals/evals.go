@@ -185,7 +185,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		if model == "" {
 			model = os.Getenv("AWS_BEDROCK_MODEL")
 			if model == "" {
-				model = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+				model = "global.anthropic.claude-sonnet-4-20250514-v1:0"
 			}
 		}
 
