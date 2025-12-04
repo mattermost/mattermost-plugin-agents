@@ -46,10 +46,10 @@ type Bedrock struct {
 	region           string
 }
 
-func New(llmService llm.ServiceConfig, awsRegion string, httpClient *http.Client) (*Bedrock, error) {
+func New(llmService llm.ServiceConfig, httpClient *http.Client) (*Bedrock, error) {
 	// Prepare config options
 	configOpts := []func(*config.LoadOptions) error{
-		config.WithRegion(awsRegion),
+		config.WithRegion(llmService.Region),
 		config.WithHTTPClient(httpClient),
 	}
 
@@ -110,7 +110,7 @@ func New(llmService llm.ServiceConfig, awsRegion string, httpClient *http.Client
 		defaultModel:     llmService.DefaultModel,
 		inputTokenLimit:  llmService.InputTokenLimit,
 		outputTokenLimit: llmService.OutputTokenLimit,
-		region:           awsRegion,
+		region:           llmService.Region,
 	}, nil
 }
 
@@ -532,19 +532,8 @@ func (b *Bedrock) InputTokenLimit() int {
 	if b.inputTokenLimit > 0 {
 		return b.inputTokenLimit
 	}
-
-	// Return model-specific defaults
-	model := b.defaultModel
-	switch {
-	case strings.Contains(model, "claude-3-5"):
-		return 200000
-	case strings.Contains(model, "claude-3"):
-		return 200000
-	case strings.Contains(model, "titan-text-express"):
-		return 8000
-	case strings.Contains(model, "titan-text-lite"):
-		return 4000
-	default:
-		return 100000 // Conservative default
-	}
+	// Return a conservative default. Users should configure inputTokenLimit
+	// in the service config for their specific model.
+	// See: https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html
+	return 200000
 }

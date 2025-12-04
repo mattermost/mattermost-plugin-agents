@@ -4,6 +4,7 @@
 package bedrock
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -94,6 +95,65 @@ func TestConversationToMessages(t *testing.T) {
 
 		assert.Equal(t, types.ConversationRoleUser, messages[0].Role)
 		require.Len(t, messages[0].Content, 2)
+	})
+
+	t.Run("user message with image", func(t *testing.T) {
+		imageData := []byte("fake png data")
+		posts := []llm.Post{
+			{
+				Role:    llm.PostRoleUser,
+				Message: "What's in this image?",
+				Files: []llm.File{
+					{
+						MimeType: "image/png",
+						Reader:   strings.NewReader(string(imageData)),
+					},
+				},
+			},
+		}
+
+		system, messages := conversationToMessages(posts)
+
+		require.Len(t, system, 0)
+		require.Len(t, messages, 1)
+		assert.Equal(t, types.ConversationRoleUser, messages[0].Role)
+		require.Len(t, messages[0].Content, 2) // text + image
+
+		// Check text content
+		textBlock, ok := messages[0].Content[0].(*types.ContentBlockMemberText)
+		require.True(t, ok)
+		assert.Equal(t, "What's in this image?", textBlock.Value)
+
+		// Check image content
+		imageBlock, ok := messages[0].Content[1].(*types.ContentBlockMemberImage)
+		require.True(t, ok)
+		assert.Equal(t, types.ImageFormatPng, imageBlock.Value.Format)
+	})
+
+	t.Run("user message with unsupported image type", func(t *testing.T) {
+		posts := []llm.Post{
+			{
+				Role:    llm.PostRoleUser,
+				Message: "Check this file",
+				Files: []llm.File{
+					{
+						MimeType: "image/bmp",
+						Reader:   strings.NewReader("fake bmp data"),
+					},
+				},
+			},
+		}
+
+		system, messages := conversationToMessages(posts)
+
+		require.Len(t, system, 0)
+		require.Len(t, messages, 1)
+		require.Len(t, messages[0].Content, 2) // text + unsupported message
+
+		// Second block should be text indicating unsupported type
+		textBlock, ok := messages[0].Content[1].(*types.ContentBlockMemberText)
+		require.True(t, ok)
+		assert.Contains(t, textBlock.Value, "Unsupported image type")
 	})
 
 	t.Run("tool use in assistant message", func(t *testing.T) {
@@ -207,78 +267,31 @@ func TestConvertTools(t *testing.T) {
 }
 
 func TestGetDefaultConfig(t *testing.T) {
-	t.Run("with custom output token limit", func(t *testing.T) {
-		b := &Bedrock{
-			defaultModel:     "anthropic.claude-3-5-sonnet-20241022-v2:0",
-			outputTokenLimit: 4096,
-		}
+	b := &Bedrock{defaultModel: "test-model", outputTokenLimit: 4096}
+	config := b.GetDefaultConfig()
+	assert.Equal(t, "test-model", config.Model)
+	assert.Equal(t, 4096, config.MaxGeneratedTokens)
 
-		config := b.GetDefaultConfig()
-
-		assert.Equal(t, "anthropic.claude-3-5-sonnet-20241022-v2:0", config.Model)
-		assert.Equal(t, 4096, config.MaxGeneratedTokens)
-	})
-
-	t.Run("with default output token limit", func(t *testing.T) {
-		b := &Bedrock{
-			defaultModel:     "anthropic.claude-3-5-sonnet-20241022-v2:0",
-			outputTokenLimit: 0,
-		}
-
-		config := b.GetDefaultConfig()
-
-		assert.Equal(t, "anthropic.claude-3-5-sonnet-20241022-v2:0", config.Model)
-		assert.Equal(t, DefaultMaxTokens, config.MaxGeneratedTokens)
-	})
+	b2 := &Bedrock{defaultModel: "test-model", outputTokenLimit: 0}
+	config2 := b2.GetDefaultConfig()
+	assert.Equal(t, DefaultMaxTokens, config2.MaxGeneratedTokens)
 }
 
 func TestInputTokenLimit(t *testing.T) {
-	tests := []struct {
-		name            string
-		defaultModel    string
-		inputTokenLimit int
-		expectedLimit   int
-	}{
-		{"custom limit", "anthropic.claude-3-5-sonnet-20241022-v2:0", 150000, 150000},
-		{"claude 3.5", "anthropic.claude-3-5-sonnet-20241022-v2:0", 0, 200000},
-		{"claude 3", "anthropic.claude-3-opus-20240229-v1:0", 0, 200000},
-		{"titan express", "amazon.titan-text-express-v1", 0, 8000},
-		{"titan lite", "amazon.titan-text-lite-v1", 0, 4000},
-		{"unknown model", "unknown.model", 0, 100000},
-	}
+	// Custom limit takes precedence
+	b := &Bedrock{inputTokenLimit: 150000}
+	assert.Equal(t, 150000, b.InputTokenLimit())
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := &Bedrock{
-				defaultModel:    tt.defaultModel,
-				inputTokenLimit: tt.inputTokenLimit,
-			}
-
-			limit := b.InputTokenLimit()
-			assert.Equal(t, tt.expectedLimit, limit)
-		})
-	}
+	// Default limit when not configured
+	b2 := &Bedrock{inputTokenLimit: 0}
+	assert.Equal(t, 200000, b2.InputTokenLimit())
 }
 
 func TestCountTokens(t *testing.T) {
 	b := &Bedrock{}
 
-	tests := []struct {
-		name     string
-		text     string
-		minCount int
-		maxCount int
-	}{
-		{"empty string", "", 0, 0},
-		{"short text", "Hello world", 1, 5},
-		{"longer text", "This is a longer piece of text with more words", 8, 15},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			count := b.CountTokens(tt.text)
-			assert.GreaterOrEqual(t, count, tt.minCount)
-			assert.LessOrEqual(t, count, tt.maxCount)
-		})
-	}
+	// CountTokens uses: (len(text)/4.0 + len(Fields)/0.75) / 2.0
+	assert.Equal(t, 0, b.CountTokens(""))
+	assert.Equal(t, 2, b.CountTokens("Hello world"))
+	assert.Equal(t, 12, b.CountTokens("This is a longer piece of text with more words"))
 }

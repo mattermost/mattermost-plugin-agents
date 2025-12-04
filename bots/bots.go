@@ -179,7 +179,7 @@ func (b *MMBots) EnsureBots() error {
 }
 
 func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (llm.LanguageModel, error) {
-	// Create the correc@t model
+	// Create the correct model
 	var result llm.LanguageModel
 	switch serviceConfig.Type {
 	case llm.ServiceTypeOpenAI:
@@ -191,11 +191,9 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	case llm.ServiceTypeAnthropic:
 		result = anthropic.New(serviceConfig, botConfig, b.llmUpstreamHTTPClient)
 	case llm.ServiceTypeBedrock:
-		// For Bedrock, Region contains the AWS region
 		var err error
-		result, err = bedrock.New(serviceConfig, serviceConfig.Region, b.llmUpstreamHTTPClient)
+		result, err = bedrock.New(serviceConfig, b.llmUpstreamHTTPClient)
 		if err != nil {
-			b.pluginAPI.Log.Error("Failed to create Bedrock client", "error", err, "bot_name", botConfig.Name)
 			return nil, fmt.Errorf("failed to create Bedrock client: %w", err)
 		}
 	case llm.ServiceTypeASage:

@@ -163,24 +163,7 @@ Then in Mattermost:
 | **AWS Access Key ID** | No | IAM user access key ID for long-term credentials. Takes precedence over API Key if both are set. Can also be set via `AWS_ACCESS_KEY_ID` environment variable. |
 | **AWS Secret Access Key** | No | IAM user secret access key. Required if AWS Access Key ID is provided. Can also be set via `AWS_SECRET_ACCESS_KEY` environment variable. |
 | **API Key** | No | Bedrock console API key (base64 encoded, format: `ABSKQm...`). If IAM credentials above are set, they take precedence. Can also use environment variables or IAM roles. |
-| **Default Model** | Yes | The Bedrock model ID to use by default (see Available Models below) |
-
-### Available Models
-
-Bedrock provides access to multiple model families. Common model IDs include:
-
-#### Claude (Anthropic)
-- `anthropic.claude-3-5-sonnet-20241022-v2:0` - Claude 3.5 Sonnet v2 (Latest)
-- `anthropic.claude-3-5-sonnet-20240620-v1:0` - Claude 3.5 Sonnet
-- `anthropic.claude-3-opus-20240229-v1:0` - Claude 3 Opus
-- `anthropic.claude-3-sonnet-20240229-v1:0` - Claude 3 Sonnet
-- `anthropic.claude-3-haiku-20240307-v1:0` - Claude 3 Haiku
-
-#### Amazon Titan
-- `amazon.titan-text-express-v1` - Titan Text Express
-- `amazon.titan-text-lite-v1` - Titan Text Lite
-
-Model availability varies by AWS region. Check the [AWS Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-regions.html) for the most current information.
+| **Default Model** | Yes | The Bedrock model ID to use (e.g., `anthropic.claude-3-5-sonnet-20241022-v2:0`). See the [AWS Bedrock model IDs documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list of available models and their IDs. Model availability varies by AWS region. |
 
 ### IAM Policy Example
 
