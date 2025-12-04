@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -22,6 +23,7 @@ import (
 type MCPToolContext struct {
 	Client     *model.Client4
 	AccessMode AccessMode
+	BotUserID  string // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
 }
 
 // MCPToolResolver defines the signature for MCP tool resolvers
@@ -47,23 +49,26 @@ type MattermostToolProvider struct {
 	mmInternalServerURL string // Internal server URL for API communication
 	devMode             bool
 	accessMode          AccessMode
+	trackAIGenerated    bool // Whether to add ai_generated_by props to posts
 }
 
 // NewMattermostToolProvider creates a new tool provider
-func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, mmServerURL, mmInternalServerURL string, devMode bool, accessMode AccessMode) *MattermostToolProvider {
+// Now accepts a ServerConfig interface to avoid circular dependencies
+func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config types.ServerConfig, accessMode AccessMode) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
-	internalURL := mmInternalServerURL
+	internalURL := config.GetMMInternalServerURL()
 	if internalURL == "" {
-		internalURL = mmServerURL
+		internalURL = config.GetMMServerURL()
 	}
 
 	return &MattermostToolProvider{
 		authProvider:        authProvider,
 		logger:              logger,
-		mmServerURL:         mmServerURL,
+		mmServerURL:         config.GetMMServerURL(),
 		mmInternalServerURL: internalURL,
-		devMode:             devMode,
+		devMode:             config.GetDevMode(),
 		accessMode:          accessMode,
+		trackAIGenerated:    config.GetTrackAIGenerated(),
 	}
 }
 
@@ -82,7 +87,6 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 		mcpTools = append(mcpTools, p.getDevUserTools()...)
 		mcpTools = append(mcpTools, p.getDevPostTools()...)
 		mcpTools = append(mcpTools, p.getDevTeamTools()...)
-		mcpTools = append(mcpTools, p.getDevChannelTools()...)
 	}
 
 	for _, mcpTool := range mcpTools {
@@ -114,8 +118,8 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 	}
 
 	handler := func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Create MCP context from the authenticated client
-		mcpContext, err := p.createMCPToolContext(ctx)
+		// Create MCP context from the authenticated client, passing along any metadata
+		mcpContext, err := p.createMCPToolContext(ctx, req.Params.Meta)
 		if err != nil {
 			p.logger.Debug("Failed to create MCP tool context", "error", err)
 			return &mcp.CallToolResult{
@@ -167,17 +171,27 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 	server.AddTool(tool, handler)
 }
 
-// createMCPToolContext creates an MCPToolContext from the Go context and authenticated client
-func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context) (*MCPToolContext, error) {
+// createMCPToolContext creates an MCPToolContext from the Go context, authenticated client, and request metadata
+func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metadata mcp.Meta) (*MCPToolContext, error) {
 	client, err := p.authProvider.GetAuthenticatedMattermostClient(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return &MCPToolContext{
+	mcpContext := &MCPToolContext{
 		Client:     client,
 		AccessMode: p.accessMode,
-	}, nil
+	}
+
+	// Extract bot_user_id from metadata if present (for embedded servers)
+	// Only do this when tracking is enabled
+	if p.trackAIGenerated && metadata != nil {
+		if botUserID, ok := metadata["bot_user_id"].(string); ok {
+			mcpContext.BotUserID = botUserID
+		}
+	}
+
+	return mcpContext, nil
 }
 
 // NewJSONSchemaForAccessMode creates a JSONSchema from a Go struct, filtering fields based on access mode

@@ -90,8 +90,8 @@ func (t *TextStreamResult) ReadAll() (string, error) {
 			return result, nil
 		case EventTypeToolCalls:
 			return result, fmt.Errorf("Tool calls are not supported for read all")
-		case EventTypeAnnotations:
-			// Annotations are ignored in ReadAll, continue reading text
+		case EventTypeAnnotations, EventTypeReasoning, EventTypeReasoningEnd, EventTypeUsage:
+			// These event types are ignored in ReadAll, continue reading text
 			continue
 		}
 	}

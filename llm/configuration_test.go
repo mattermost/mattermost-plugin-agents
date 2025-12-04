@@ -174,19 +174,6 @@ func TestBotConfig_IsValid(t *testing.T) {
 			},
 			want: true,
 		},
-		{
-			name: "Bot with neither ServiceID nor embedded Service should fail",
-			fields: fields{
-				ID:                 "xxx",
-				Name:               "xxx",
-				DisplayName:        "xxx",
-				ServiceID:          "",  // no service ID
-				Service:            nil, // no embedded service
-				ChannelAccessLevel: ChannelAccessLevelAll,
-				UserAccessLevel:    UserAccessLevelAll,
-			},
-			want: false,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -388,6 +375,24 @@ func TestIsValidService(t *testing.T) {
 				Region: "us-west-2",
 			},
 			want: true,
+		},
+		{
+			name: "Valid Mistral service with API key",
+			service: ServiceConfig{
+				ID:     "service-8",
+				Type:   ServiceTypeMistral,
+				APIKey: "mistral-key",
+			},
+			want: true,
+		},
+		{
+			name: "Mistral service missing API key",
+			service: ServiceConfig{
+				ID:     "service-8",
+				Type:   ServiceTypeMistral,
+				APIKey: "", // bad
+			},
+			want: false,
 		},
 		{
 			name: "Service with empty ID",

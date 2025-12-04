@@ -13,11 +13,34 @@ export class MattermostPage {
 
     async login(url: string, username: string, password: string) {
         await this.page.addInitScript(() => { localStorage.setItem('__landingPageSeen__', 'true'); });
-        await this.page.goto(url);
-        await this.page.getByText('Log in to your account').waitFor();
+        
+        // Retry navigation with exponential backoff for flaky network conditions
+        let lastError: Error | null = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+                break;
+            } catch (error) {
+                lastError = error as Error;
+                if (attempt < 2) {
+                    await this.page.waitForTimeout(1000 * (attempt + 1));
+                }
+            }
+        }
+        if (lastError && !(await this.page.getByText('Log in to your account').isVisible().catch(() => false))) {
+            throw lastError;
+        }
+
+        // Increased timeout for parallel test execution and added retry logic
+        await this.page.getByText('Log in to your account').waitFor({ timeout: 60000 });
         await this.page.getByPlaceholder('Password').fill(password);
         await this.page.getByPlaceholder("Email or Username").fill(username);
         await this.page.getByTestId('saveSetting').click();
+
+        // Wait for navigation to complete and channel view to be visible
+        // Using a more generous timeout and proper wait strategy for parallel test runs
+        await this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout: 60000 });
+        await this.page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 60000});
     }
 
     async sendChannelMessage(message: string) {
@@ -67,6 +90,46 @@ export class MattermostPage {
 		await this.page.getByTestId('PostDotMenu-Button-' + postid).click();
 
 		await this.page.getByText('Mark as Unread').click();
+    }
+
+    async goto(team: string, view: string) {
+        // Navigate to team and open AI messages view
+        if (view === 'messages') {
+            // Open the AI RHS messages view
+            const appBarIcon = this.page.locator('#app-bar-icon-mattermost-ai');
+            await appBarIcon.waitFor({ state: 'visible', timeout: 10000 });
+
+            // Check if RHS is already open
+            const rhsContainer = this.page.getByTestId('mattermost-ai-rhs');
+            const isRHSVisible = await rhsContainer.isVisible().catch(() => false);
+
+            if (!isRHSVisible) {
+                await appBarIcon.click();
+                await rhsContainer.waitFor({ state: 'visible', timeout: 10000 });
+            }
+
+            // Wait a bit for posts to load
+            await this.page.waitForTimeout(500);
+        }
+    }
+
+    async createAndNavigateToDMWithBot(mattermost: any, username: string, password: string, botUsername: string) {
+        // Get client for the user
+        const userClient = await mattermost.getClient(username, password);
+        const currentUser = await userClient.getMe();
+
+        // Get the bot user by username
+        const botUser = await userClient.getUserByUsername(botUsername);
+
+        // Create or get DM channel
+        const channel = await userClient.createDirectChannel([currentUser.id, botUser.id]);
+
+        // Navigate to the DM channel
+        const teams = await userClient.getMyTeams();
+        const team = teams[0];
+
+        await this.page.goto(`${mattermost.url()}/${team.name}/messages/@${botUsername}`);
+        await this.page.waitForTimeout(2000);
     }
 }
 

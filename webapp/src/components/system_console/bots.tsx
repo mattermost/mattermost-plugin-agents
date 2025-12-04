@@ -19,6 +19,7 @@ const defaultNewBot: LLMBotConfig = {
     name: '',
     displayName: '',
     serviceID: '',
+    model: '',
     customInstructions: '',
     enableVision: true,
     disableTools: false,
@@ -28,6 +29,9 @@ const defaultNewBot: LLMBotConfig = {
     userIDs: [],
     teamIDs: [],
     enabledNativeTools: [],
+    reasoningEnabled: true,
+    reasoningEffort: 'medium',
+    thinkingBudget: 0,
 };
 
 export const firstNewBot = {

@@ -52,7 +52,7 @@ func (t *Threads) Analyze(postIDToAnalyze string, context *llm.Context, promptNa
 		Posts:   posts,
 		Context: context,
 	}
-	analysisStream, err := t.llm.ChatCompletion(completionReqest)
+	analysisStream, err := t.llm.ChatCompletion(completionReqest, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, err
 	}

@@ -148,7 +148,7 @@ func DeepCopyJSON[T any](src T) (T, error) {
 	return dst, err
 }
 
-func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig, enabledNativeTools []string) openai.Config {
+func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) openai.Config {
 	streamingTimeout := time.Second * 30
 	if serviceConfig.StreamingTimeoutSeconds > 0 {
 		streamingTimeout = time.Duration(serviceConfig.StreamingTimeoutSeconds) * time.Second
@@ -164,6 +164,18 @@ func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig, enabledNativ
 		StreamingTimeout:   streamingTimeout,
 		SendUserID:         serviceConfig.SendUserID,
 		UseResponsesAPI:    serviceConfig.UseResponsesAPI,
-		EnabledNativeTools: enabledNativeTools,
+		EnabledNativeTools: botConfig.EnabledNativeTools,
+		ReasoningEnabled:   botConfig.ReasoningEnabled,
+		ReasoningEffort:    botConfig.ReasoningEffort,
 	}
+}
+
+// OpenAIConfigFromServiceConfigWithOptions creates an OpenAI config with additional options for OpenAI-compatible APIs
+func OpenAIConfigFromServiceConfigWithOptions(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, disableStreamOptions bool, useMaxTokens bool) openai.Config {
+	cfg := OpenAIConfigFromServiceConfig(serviceConfig, botConfig)
+	cfg.DisableStreamOptions = disableStreamOptions
+	cfg.UseMaxTokens = useMaxTokens
+	// OpenAI-compatible APIs typically don't support the 'user' parameter
+	cfg.SendUserID = false
+	return cfg
 }

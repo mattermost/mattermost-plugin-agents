@@ -55,6 +55,10 @@ type BotConfig struct {
 	CustomInstructions string `json:"customInstructions"`
 	ServiceID          string `json:"serviceID"`
 
+	// Model is the optional model override for this bot.
+	// If not specified, the service's DefaultModel will be used.
+	Model string `json:"model"`
+
 	// Service is deprecated and kept only for backwards compatibility during migration.
 	Service *ServiceConfig `json:"service,omitempty"`
 
@@ -71,6 +75,22 @@ type BotConfig struct {
 	// For OpenAI: ["web_search", "file_search", "code_interpreter"] (only works when UseResponsesAPI is true)
 	// For Anthropic: ["web_search"]
 	EnabledNativeTools []string `json:"enabledNativeTools"`
+
+	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot
+	// Applicable to OpenAI (with ResponsesAPI) and Anthropic
+	ReasoningEnabled bool `json:"reasoningEnabled"`
+
+	// ReasoningEffort determines the reasoning effort level for OpenAI models
+	// Valid values: "minimal", "low", "medium", "high"
+	// Only applicable to OpenAI with ResponsesAPI enabled
+	// Default: "medium"
+	ReasoningEffort string `json:"reasoningEffort"`
+
+	// ThinkingBudget determines the token budget for Anthropic thinking
+	// Must be at least 1024 and cannot exceed the OutputTokenLimit
+	// Only applicable to Anthropic
+	// Default: 1/4 of OutputTokenLimit, capped at 8192
+	ThinkingBudget int `json:"thinkingBudget"`
 }
 
 func (c *BotConfig) IsValid() bool {
@@ -115,6 +135,8 @@ func IsValidService(service ServiceConfig) bool {
 		// Bedrock requires AWS region
 		// API key is optional as AWS credentials can come from environment/IAM role
 		return service.Region != ""
+	case ServiceTypeMistral:
+		return service.APIKey != ""
 	default:
 		return false
 	}
