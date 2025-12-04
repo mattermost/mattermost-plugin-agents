@@ -12,9 +12,21 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
+
+// StreamingClient defines the minimal client interface needed for streaming operations.
+type StreamingClient interface {
+	PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast)
+	UpdatePost(post *model.Post) error
+	CreatePost(post *model.Post) error
+	DM(senderID, receiverID string, post *model.Post) error
+	GetUser(userID string) (*model.User, error)
+	GetChannel(channelID string) (*model.Channel, error)
+	GetConfig() *model.Config
+	LogError(msg string, keyValuePairs ...interface{})
+	LogDebug(msg string, keyValuePairs ...interface{})
+}
 
 const PostStreamingControlCancel = "cancel"
 const PostStreamingControlEnd = "end"
@@ -43,11 +55,11 @@ var ErrAlreadyStreamingToPost = fmt.Errorf("already streaming to post")
 type MMPostStreamService struct {
 	contexts      map[string]postStreamContext
 	contextsMutex sync.Mutex
-	mmClient      mmapi.Client
+	mmClient      StreamingClient
 	i18n          *i18n.Bundle
 }
 
-func NewMMPostStreamService(mmClient mmapi.Client, i18n *i18n.Bundle) *MMPostStreamService {
+func NewMMPostStreamService(mmClient StreamingClient, i18n *i18n.Bundle) *MMPostStreamService {
 	return &MMPostStreamService{
 		contexts: make(map[string]postStreamContext),
 		mmClient: mmClient,
