@@ -28,7 +28,6 @@ type StreamGenerator struct {
 // Generate creates a new TextStreamResult with synthetic events.
 // The stream is generated in a goroutine and returned immediately.
 func (g *StreamGenerator) Generate() *TextStreamResult {
-	// Use buffered channel to prevent blocking the producer
 	bufferSize := (g.TotalTextSize / max(g.ChunkSize, 1)) + 10
 	stream := make(chan TextStreamEvent, bufferSize)
 
@@ -37,7 +36,7 @@ func (g *StreamGenerator) Generate() *TextStreamResult {
 
 		// Generate reasoning events first if enabled
 		if g.IncludeReasoning {
-			reasoningText := generateBenchText(g.TotalTextSize / 2)
+			reasoningText := GenerateBenchText(g.TotalTextSize / 2)
 			for i := 0; i < len(reasoningText); i += g.ChunkSize {
 				end := min(i+g.ChunkSize, len(reasoningText))
 				stream <- TextStreamEvent{
@@ -55,7 +54,7 @@ func (g *StreamGenerator) Generate() *TextStreamResult {
 		}
 
 		// Generate text events
-		text := generateBenchText(g.TotalTextSize)
+		text := GenerateBenchText(g.TotalTextSize)
 		for i := 0; i < len(text); i += g.ChunkSize {
 			end := min(i+g.ChunkSize, len(text))
 			stream <- TextStreamEvent{
@@ -124,9 +123,9 @@ func (g *StreamGenerator) Generate() *TextStreamResult {
 	}
 }
 
-// generateBenchText creates a string of the specified size using a repeating pattern.
+// GenerateBenchText creates a string of the specified size using a repeating pattern.
 // Uses a realistic text pattern rather than random bytes.
-func generateBenchText(size int) string {
+func GenerateBenchText(size int) string {
 	if size <= 0 {
 		return ""
 	}
@@ -144,15 +143,17 @@ func generateBenchText(size int) string {
 	return sb.String()
 }
 
-// BenchmarkStreamScenario defines a benchmark test scenario
-type BenchmarkStreamScenario struct {
+// BenchmarkScenario defines a benchmark test scenario
+type BenchmarkScenario struct {
 	Name      string
 	Generator StreamGenerator
 }
 
-// StandardBenchmarkScenarios returns common scenarios for stream benchmarks
-func StandardBenchmarkScenarios() []BenchmarkStreamScenario {
-	return []BenchmarkStreamScenario{
+// BenchmarkScenarios returns common scenarios for stream benchmarks.
+// This combines size-based scenarios with event-type scenarios.
+func BenchmarkScenarios() []BenchmarkScenario {
+	return []BenchmarkScenario{
+		// Size-based scenarios
 		{
 			Name: "small_100_tokens",
 			Generator: StreamGenerator{
@@ -181,19 +182,7 @@ func StandardBenchmarkScenarios() []BenchmarkStreamScenario {
 				ChunkSize:     500,
 			},
 		},
-	}
-}
-
-// MixedEventScenarios returns scenarios with various event types
-func MixedEventScenarios() []BenchmarkStreamScenario {
-	return []BenchmarkStreamScenario{
-		{
-			Name: "text_only",
-			Generator: StreamGenerator{
-				TotalTextSize: 4000,
-				ChunkSize:     100,
-			},
-		},
+		// Event-type scenarios
 		{
 			Name: "with_reasoning",
 			Generator: StreamGenerator{
