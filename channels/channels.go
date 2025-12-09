@@ -42,10 +42,22 @@ func (c *Channels) AnalyzeChannel(
 	analysisData map[string]any,
 ) (*llm.TextStreamResult, error) {
 	// Inject analysis data into context for the prompt
+	displayName := context.Channel.DisplayName
+	if displayName == "" {
+		switch context.Channel.Type {
+		case model.ChannelTypeDirect:
+			displayName = "Direct Message"
+		case model.ChannelTypeGroup:
+			displayName = "Group Message"
+		default:
+			displayName = context.Channel.Id
+		}
+	}
+
 	context.Parameters = map[string]any{
 		"Channel": map[string]string{
 			"Id":          channelID,
-			"DisplayName": context.Channel.DisplayName,
+			"DisplayName": displayName,
 		},
 		"Analysis": analysisData,
 	}
