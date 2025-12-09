@@ -71,8 +71,11 @@ const PopoverWrapper = React.forwardRef((props: any, ref: any) => {
         positionTop,
         positionLeft,
         children,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         arrowOffsetLeft,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         arrowOffsetTop,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         placement,
         ...rest
     } = props;
@@ -164,7 +167,15 @@ const AskChannelButton = () => {
 
     return (
         <>
-            {!showPopover ? (
+            {showPopover ? (
+                <ButtonContainer
+                    ref={target}
+                    onClick={handleToggle}
+                    isActive={showPopover}
+                >
+                    <IconAI/>
+                </ButtonContainer>
+            ) : (
                 <OverlayTrigger
                     placement='bottom'
                     overlay={tooltip}
@@ -177,14 +188,6 @@ const AskChannelButton = () => {
                         <IconAI/>
                     </ButtonContainer>
                 </OverlayTrigger>
-            ) : (
-                <ButtonContainer
-                    ref={target}
-                    onClick={handleToggle}
-                    isActive={showPopover}
-                >
-                    <IconAI/>
-                </ButtonContainer>
             )}
             <Overlay
                 target={() => target.current}

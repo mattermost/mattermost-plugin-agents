@@ -152,13 +152,18 @@ func migrateServicesToBots(pluginAPI *pluginapi.Client, cfg config.Config) (bool
 		return false, cfg, nil
 	}
 
-	pluginAPI.Log.Debug("Migrating services to bots")
-
 	oldConfig := BotMigrationConfig{}
 	err := pluginAPI.Configuration.LoadPluginConfiguration(&oldConfig)
 	if err != nil {
 		return false, cfg, fmt.Errorf("failed to load plugin configuration for migration: %w", err)
 	}
+
+	// If there are no old services to migrate either, nothing to do
+	if len(oldConfig.Config.Services) == 0 {
+		return false, cfg, nil
+	}
+
+	pluginAPI.Log.Debug("Migrating services to bots")
 
 	// Create services first
 	existingConfig.Services = make([]llm.ServiceConfig, 0, len(oldConfig.Config.Services))

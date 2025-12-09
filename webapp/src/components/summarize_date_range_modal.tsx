@@ -192,12 +192,12 @@ interface Props {
 }
 
 export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName}: Props) => {
+    const [startDate, setStartDate] = React.useState('');
+    const [endDate, setEndDate] = React.useState('');
+
     if (!show) {
         return null;
     }
-
-    const [startDate, setStartDate] = React.useState('');
-    const [endDate, setEndDate] = React.useState('');
 
     const handleSummarize = () => {
         onSummarize(startDate, endDate);

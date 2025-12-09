@@ -84,7 +84,7 @@ func (c *Channels) AnalyzeChannel(
 
 	// Tools are enabled by default in the context if configured correctly in API handler
 	// We do NOT disable tools here.
-	resultStream, err := c.llm.ChatCompletion(completionRequest, llm.WithAutoRunTools(autoRunTools), llm.WithoutThinking())
+	resultStream, err := c.llm.ChatCompletion(completionRequest, llm.WithAutoRunTools(autoRunTools), llm.WithReasoningDisabled())
 	if err != nil {
 		return nil, err
 	}
@@ -115,9 +115,9 @@ func (c *Channels) Interval(
 		return nil, err
 	}
 
-	// Remove deleted posts
+	// Remove deleted posts and system posts (like join/leave messages)
 	threadData.Posts = slices.DeleteFunc(threadData.Posts, func(post *model.Post) bool {
-		return post.DeleteAt != 0
+		return post.DeleteAt != 0 || post.Type != ""
 	})
 
 	formattedThread := format.ThreadData(threadData)

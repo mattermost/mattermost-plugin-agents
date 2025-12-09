@@ -151,18 +151,19 @@ export default class MattermostContainer {
                 "MM_SERVICESETTINGS_ENABLETESTING":   "true",
 				"MM_PLUGINSETTINGS_AUTOMATICPREPACKAGEDPLUGINS": "false",
         };
+        this.plugins = [];
+        this.configFile = [];
         this.email = defaultEmail;
         this.username = defaultUsername;
         this.password = defaultPassword;
         this.teamName = defaultTeamName;
         this.teamDisplayName = defaultTeamDisplayName;
-        this.plugins = [];
-        this.configFile = [];
     }
 
     start = async (): Promise<MattermostContainer> => {
         this.network = await new Network().start()
-        this.pgContainer = await new PostgreSqlContainer("docker.io/postgres:15.2-alpine")
+        // Use pgvector image to enable semantic search functionality
+        this.pgContainer = await new PostgreSqlContainer("pgvector/pgvector:pg15")
             .withExposedPorts(5432)
             .withDatabase("mattermost_test")
             .withUsername("user")
@@ -171,6 +172,19 @@ export default class MattermostContainer {
             .withWaitStrategy(Wait.forLogMessage("database system is ready to accept connections"))
             .withNetworkAliases("db")
             .start()
+
+        // Enable pgvector extension in the database
+        try {
+            // Wait a bit for database to be fully ready
+            await new Promise(resolve => setTimeout(resolve, 2000))
+            const dbClient = await this.db()
+            await dbClient.query('CREATE EXTENSION IF NOT EXISTS vector;')
+            await dbClient.end()
+            console.log("✓ pgvector extension enabled successfully")
+        } catch (error) {
+            console.log("Note: Could not enable pgvector extension:", error.message)
+            console.log("Semantic search features may not be available")
+        }
 
         this.container = await new GenericContainer(defaultMattermostImage)
             .withEnvironment(this.envs)
@@ -194,13 +208,28 @@ export default class MattermostContainer {
                     this.logStream.write(data + '\n');
 
                     // Still maintain special console logging for AI plugin
+                    // SECURITY: Sanitize sensitive data before logging
                     if (data.includes('"plugin_id":"mattermost-ai"')) {
-                        console.log(data);
+                        // Remove API keys and sensitive tokens from logs
+                        let sanitized = data
+                            .replace(/"apiKey":"[^"]+"/g, '"apiKey":"[REDACTED]"')
+                            .replace(/"api_key":"[^"]+"/g, '"api_key":"[REDACTED]"')
+                            .replace(/Authorization:\s*Bearer\s+\S+/gi, 'Authorization: Bearer [REDACTED]')
+                            .replace(/sk-[a-zA-Z0-9]{20,}/g, '[REDACTED_API_KEY]')
+                            .replace(/sk-ant-[a-zA-Z0-9_-]{95,}/g, '[REDACTED_ANTHROPIC_KEY]');
+                        console.log(sanitized);
                     }
                 });
             })
             .start()
 
+
+        // Install ffmpeg for transcription features
+        try {
+            await this.container.exec(["sh", "-c", "apt-get update && apt-get install -y ffmpeg"])
+        } catch (error) {
+            console.log("Note: Could not install ffmpeg (container may not support apt-get)")
+        }
 
         await this.setSiteURL()
         await this.createAdmin(this.email, this.username, this.password)

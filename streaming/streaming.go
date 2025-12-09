@@ -12,9 +12,21 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
+
+// Client defines the minimal client interface needed for streaming operations.
+type Client interface {
+	PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast)
+	UpdatePost(post *model.Post) error
+	CreatePost(post *model.Post) error
+	DM(senderID, receiverID string, post *model.Post) error
+	GetUser(userID string) (*model.User, error)
+	GetChannel(channelID string) (*model.Channel, error)
+	GetConfig() *model.Config
+	LogError(msg string, keyValuePairs ...interface{})
+	LogDebug(msg string, keyValuePairs ...interface{})
+}
 
 const PostStreamingControlCancel = "cancel"
 const PostStreamingControlEnd = "end"
@@ -43,11 +55,11 @@ var ErrAlreadyStreamingToPost = fmt.Errorf("already streaming to post")
 type MMPostStreamService struct {
 	contexts      map[string]postStreamContext
 	contextsMutex sync.Mutex
-	mmClient      mmapi.Client
+	mmClient      Client
 	i18n          *i18n.Bundle
 }
 
-func NewMMPostStreamService(mmClient mmapi.Client, i18n *i18n.Bundle) *MMPostStreamService {
+func NewMMPostStreamService(mmClient Client, i18n *i18n.Bundle) *MMPostStreamService {
 	return &MMPostStreamService{
 		contexts: make(map[string]postStreamContext),
 		mmClient: mmClient,
@@ -139,42 +151,34 @@ func (p *MMPostStreamService) StreamToNewDM(ctx context.Context, botID string, s
 	return nil
 }
 
-func (p *MMPostStreamService) sendPostStreamingUpdateEvent(post *model.Post, message string) {
+func (p *MMPostStreamService) sendPostStreamingUpdateEventWithBroadcast(post *model.Post, message string, broadcast *model.WebsocketBroadcast) {
 	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
 		"post_id": post.Id,
 		"next":    message,
-	}, &model.WebsocketBroadcast{
-		ChannelId: post.ChannelId,
-	})
+	}, broadcast)
 }
 
-func (p *MMPostStreamService) sendPostStreamingControlEvent(post *model.Post, control string) {
+func (p *MMPostStreamService) sendPostStreamingControlEventWithBroadcast(post *model.Post, control string, broadcast *model.WebsocketBroadcast) {
 	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
 		"post_id": post.Id,
 		"control": control,
-	}, &model.WebsocketBroadcast{
-		ChannelId: post.ChannelId,
-	})
+	}, broadcast)
 }
 
-func (p *MMPostStreamService) sendPostStreamingReasoningEvent(post *model.Post, reasoning string, control string) {
+func (p *MMPostStreamService) sendPostStreamingReasoningEventWithBroadcast(post *model.Post, reasoning string, control string, broadcast *model.WebsocketBroadcast) {
 	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
 		"post_id":   post.Id,
 		"control":   control,
 		"reasoning": reasoning,
-	}, &model.WebsocketBroadcast{
-		ChannelId: post.ChannelId,
-	})
+	}, broadcast)
 }
 
-func (p *MMPostStreamService) sendPostStreamingAnnotationsEvent(post *model.Post, annotations string) {
+func (p *MMPostStreamService) sendPostStreamingAnnotationsEventWithBroadcast(post *model.Post, annotations string, broadcast *model.WebsocketBroadcast) {
 	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
 		"post_id":     post.Id,
 		"control":     "annotations",
 		"annotations": annotations,
-	}, &model.WebsocketBroadcast{
-		ChannelId: post.ChannelId,
-	})
+	}, broadcast)
 }
 
 func (p *MMPostStreamService) StopStreaming(postID string) {
@@ -216,12 +220,14 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 // StreamToPost streams the result of a TextStreamResult to a post.
 // it will internally handle logging needs and updating the post.
 func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string) {
-	T := i18n.LocalizerFunc(p.i18n, userLocale)
-	p.sendPostStreamingControlEvent(post, PostStreamingControlStart)
+	broadcast := &model.WebsocketBroadcast{ChannelId: post.ChannelId}
+	p.sendPostStreamingControlEventWithBroadcast(post, PostStreamingControlStart, broadcast)
 	defer func() {
-		p.sendPostStreamingControlEvent(post, PostStreamingControlEnd)
+		p.sendPostStreamingControlEventWithBroadcast(post, PostStreamingControlEnd, broadcast)
 	}()
 
+	var messageBuilder strings.Builder
+	messageBuilder.Grow(4096) // Pre-allocate for typical response size
 	var reasoningBuffer strings.Builder
 
 	for {
@@ -231,15 +237,17 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 			case llm.EventTypeText:
 				// Handle text event
 				if textChunk, ok := event.Value.(string); ok {
-					post.Message += textChunk
-					p.sendPostStreamingUpdateEvent(post, post.Message)
+					messageBuilder.WriteString(textChunk)
+					post.Message = messageBuilder.String()
+					p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 				}
 			case llm.EventTypeEnd:
 				// Stream has closed cleanly
 				if strings.TrimSpace(post.Message) == "" {
 					p.mmClient.LogError("LLM closed stream with no result")
+					T := i18n.LocalizerFunc(p.i18n, userLocale)
 					post.Message = T("agents.stream_to_post_llm_not_return", "Sorry! The LLM did not return a result.")
-					p.sendPostStreamingUpdateEvent(post, post.Message)
+					p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 				}
 
 				// Inline citations have already been cleaned in EventTypeAnnotations handler
@@ -271,6 +279,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					post.Message += "\n\n"
 				}
 				p.mmClient.LogError("Streaming result to post failed partway", "error", err)
+				T := i18n.LocalizerFunc(p.i18n, userLocale)
 				post.Message = T("agents.stream_to_post_access_llm_error", "Sorry! An error occurred while accessing the LLM. See server logs for details.")
 
 				// Persist any accumulated reasoning before erroring out
@@ -283,20 +292,20 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					p.mmClient.LogError("Error recovering from streaming error", "error", err)
 					return
 				}
-				p.sendPostStreamingUpdateEvent(post, post.Message)
+				p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 				return
 			case llm.EventTypeReasoning:
 				// Handle reasoning summary chunk - accumulate and stream
 				if reasoningChunk, ok := event.Value.(string); ok {
 					reasoningBuffer.WriteString(reasoningChunk)
 					// Send reasoning event with accumulated text so far
-					p.sendPostStreamingReasoningEvent(post, reasoningBuffer.String(), "reasoning_summary")
+					p.sendPostStreamingReasoningEventWithBroadcast(post, reasoningBuffer.String(), "reasoning_summary", broadcast)
 				}
 			case llm.EventTypeReasoningEnd:
 				// Reasoning summary completed - stream final and persist
 				if reasoningData, ok := event.Value.(llm.ReasoningData); ok {
 					// Send final reasoning event (only text goes to frontend)
-					p.sendPostStreamingReasoningEvent(post, reasoningData.Text, "reasoning_summary_done")
+					p.sendPostStreamingReasoningEventWithBroadcast(post, reasoningData.Text, "reasoning_summary_done", broadcast)
 
 					// Persist reasoning summary and signature to post props
 					// This will be saved when the post is updated at the end of the stream
@@ -336,9 +345,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 						"post_id":   post.Id,
 						"control":   "tool_call",
 						"tool_call": string(toolCallJSON),
-					}, &model.WebsocketBroadcast{
-						ChannelId: post.ChannelId,
-					})
+					}, broadcast)
 				}
 				return
 			case llm.EventTypeAnnotations:
@@ -349,7 +356,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					} else {
 						post.AddProp(AnnotationsProp, string(annotationsJSON))
 						p.mmClient.LogDebug("Added annotations to post props", "post_id", post.Id, "count", len(annotations))
-						p.sendPostStreamingAnnotationsEvent(post, string(annotationsJSON))
+						p.sendPostStreamingAnnotationsEventWithBroadcast(post, string(annotationsJSON), broadcast)
 					}
 				}
 			}
@@ -364,7 +371,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 				p.mmClient.LogError("Error updating post on stop signaled", "error", err)
 				return
 			}
-			p.sendPostStreamingControlEvent(post, PostStreamingControlCancel)
+			p.sendPostStreamingControlEventWithBroadcast(post, PostStreamingControlCancel, broadcast)
 			return
 		}
 	}

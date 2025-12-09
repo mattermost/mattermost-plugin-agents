@@ -15,7 +15,6 @@ import (
 	"github.com/gin-gonic/gin/render"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/channels"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -79,13 +78,11 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	}
 
 	// Build LLM context with default tools enabled
-	// We forcefully enable tools here by passing isDM=true, as channel analysis is a user-initiated
-	// private interaction where tools should be available regardless of channel type.
 	llmContext := a.contextBuilder.BuildLLMContextUserRequest(
 		bot,
 		user,
 		channel,
-		a.contextBuilder.WithLLMContextDefaultTools(bot, true),
+		a.contextBuilder.WithLLMContextDefaultTools(bot),
 	)
 
 	// Create channels analyzer
@@ -188,7 +185,7 @@ func (a *API) handleInterval(c *gin.Context) {
 		bot,
 		user,
 		channel,
-		a.contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
+		a.contextBuilder.WithLLMContextDefaultTools(bot),
 	)
 
 	// Map preset prompt to prompt type and title

@@ -14,6 +14,7 @@ import (
 const (
 	ProviderTypeOpenAI           = "openai"
 	ProviderTypeOpenAICompatible = "openai-compatible"
+	ProviderTypeMock             = "mock"
 )
 
 // Vector store types

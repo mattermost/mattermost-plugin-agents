@@ -54,7 +54,9 @@ func (r *React) Resolve(message string, context *llm.Context) (string, error) {
 	}
 
 	// Get emoji from LLM
-	emojiName, err := r.llm.ChatCompletionNoStream(completionRequest, llm.WithMaxGeneratedTokens(25))
+	// Note: Using 1000 tokens to accommodate OpenAI Responses API overhead
+	// which can consume tokens for internal processing before generating output
+	emojiName, err := r.llm.ChatCompletionNoStream(completionRequest, llm.WithMaxGeneratedTokens(500), llm.WithReasoningDisabled(), llm.WithToolsDisabled())
 	if err != nil {
 		return "", fmt.Errorf("failed to get emoji from LLM: %w", err)
 	}

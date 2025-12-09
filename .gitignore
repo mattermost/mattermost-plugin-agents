@@ -31,3 +31,9 @@ mcpserver/data/
 
 # Emacs/Vi
 *~
+
+.mcp.json
+
+node_modules/
+
+specs/

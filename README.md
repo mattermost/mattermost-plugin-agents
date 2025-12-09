@@ -103,6 +103,26 @@ make deploy
 - Run `make evals` to run prompt evaluations interactively (with TUI)
 - Run `make evals-ci` to run prompt evaluations in CI mode (non-interactive)
 
+### Benchmark Tests
+
+The streaming code has benchmark tests to measure performance and detect regressions:
+
+```bash
+# Run all streaming benchmarks
+go test -bench=. -benchmem ./llm/... ./streaming/...
+
+# Run specific benchmark
+go test -bench=BenchmarkStreamToPost -benchmem ./streaming/...
+
+# Run with CPU profiling
+go test -bench=BenchmarkReadAll -cpuprofile=cpu.prof ./llm/...
+```
+
+Benchmarks cover:
+- `ReadAll()` stream consumption with varying response sizes
+- `TokenUsageLoggingWrapper` interception overhead
+- `StreamToPost()` full processing pipeline with WebSocket events
+
 ### Multi-Provider Evaluation Support
 
 The evaluation system supports testing with multiple LLM providers: OpenAI, Anthropic, and Azure OpenAI. By default, evaluations run against all providers, but you can target specific ones:

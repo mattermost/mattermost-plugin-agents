@@ -14,7 +14,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/react"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost-plugin-ai/threads"
@@ -89,10 +88,10 @@ func (a *API) handleReact(c *gin.Context) {
 		return
 	}
 
-	// Add reaction to the post
+	// Add reaction to the post as the requesting user
 	if err := a.pluginAPI.Post.AddReaction(&model.Reaction{
 		EmojiName: emojiName,
-		UserId:    bot.GetMMBot().UserId,
+		UserId:    userID,
 		PostId:    post.Id,
 	}); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to add reaction: %w", err))
@@ -144,7 +143,7 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 		bot,
 		user,
 		channel,
-		a.contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
+		a.contextBuilder.WithLLMContextDefaultTools(bot),
 	)
 
 	// Create thread analyzer

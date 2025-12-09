@@ -171,8 +171,7 @@ func conversationToMessages(posts []llm.Post) (string, []anthropicSDK.MessagePar
 
 func (a *Anthropic) GetDefaultConfig() llm.LanguageModelConfig {
 	config := llm.LanguageModelConfig{
-		Model:          a.defaultModel,
-		EnableThinking: true,
+		Model: a.defaultModel,
 	}
 	if a.outputTokenLimit == 0 {
 		config.MaxGeneratedTokens = DefaultMaxTokens
@@ -234,8 +233,8 @@ func (a *Anthropic) streamChatWithTools(initialState messageState) {
 			})
 		}
 
-		// Enable thinking/reasoning for models that support it
-		if state.config.EnableThinking {
+		// Enable thinking/reasoning for models that support it (unless explicitly disabled)
+		if !state.config.ReasoningDisabled {
 			if thinkingConfig, ok := a.calculateThinkingConfig(state.config.MaxGeneratedTokens); ok {
 				params.Thinking = thinkingConfig
 			}
@@ -358,15 +357,16 @@ func (a *Anthropic) streamChatWithTools(initialState messageState) {
 				// Update messages with assistant response
 				assistantContent := make([]anthropicSDK.ContentBlockParamUnion, len(message.Content))
 				for i, block := range message.Content {
-					if block.Type == "text" {
+					switch block.Type {
+					case "text":
 						if textBlock, ok := block.AsAny().(anthropicSDK.TextBlock); ok {
 							assistantContent[i] = anthropicSDK.NewTextBlock(textBlock.Text)
 						}
-					} else if block.Type == "tool_use" {
+					case "tool_use":
 						if toolBlock, ok := block.AsAny().(anthropicSDK.ToolUseBlock); ok {
 							assistantContent[i] = anthropicSDK.NewToolUseBlock(toolBlock.ID, toolBlock.Input, toolBlock.Name)
 						}
-					} else if block.Type == "thinking" {
+					case "thinking":
 						if thinkingBlock, ok := block.AsAny().(anthropicSDK.ThinkingBlock); ok {
 							assistantContent[i] = anthropicSDK.NewThinkingBlock(thinkingBlock.Signature, thinkingBlock.Thinking)
 						}
@@ -629,4 +629,33 @@ func (a *Anthropic) calculateThinkingConfig(maxGeneratedTokens int) (anthropicSD
 	}
 
 	return config, true
+}
+
+// FetchModels retrieves the list of available models from the Anthropic API
+func FetchModels(apiKey string, httpClient *http.Client) ([]llm.ModelInfo, error) {
+	client := anthropicSDK.NewClient(
+		option.WithAPIKey(apiKey),
+		option.WithHTTPClient(httpClient),
+	)
+
+	// Use AutoPaging to automatically handle pagination
+	autoPager := client.Models.ListAutoPaging(context.Background(), anthropicSDK.ModelListParams{})
+
+	var models []llm.ModelInfo
+
+	// Iterate through all pages
+	for autoPager.Next() {
+		model := autoPager.Current()
+		models = append(models, llm.ModelInfo{
+			ID:          model.ID,
+			DisplayName: model.DisplayName,
+		})
+	}
+
+	// Check if there was an error during iteration
+	if err := autoPager.Err(); err != nil {
+		return nil, err
+	}
+
+	return models, nil
 }

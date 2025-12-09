@@ -99,15 +99,13 @@ func MergeArguments(originalGetter ToolArgumentGetter, overrides map[string]inte
 					// Simple type conversion
 					if valToSet.Type().ConvertibleTo(field.Type()) {
 						field.Set(valToSet.Convert(field.Type()))
-					} else {
+					} else if valToSet.Kind() == reflect.Float64 {
 						// Fallback for common JSON number cases (float64 to int)
-						if valToSet.Kind() == reflect.Float64 {
-							switch field.Kind() {
-							case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-								field.SetInt(int64(valToSet.Float()))
-							case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-								field.SetUint(uint64(valToSet.Float()))
-							}
+						switch field.Kind() {
+						case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+							field.SetInt(int64(valToSet.Float()))
+						case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+							field.SetUint(uint64(valToSet.Float()))
 						}
 					}
 				}
@@ -210,6 +208,23 @@ func (s *ToolStore) GetTools() []Tool {
 	result := make([]Tool, 0, len(s.tools))
 	for _, tool := range s.tools {
 		result = append(result, tool)
+	}
+	return result
+}
+
+// GetToolsInfo returns basic information (name and description) about all tools in the store.
+// This is useful for informing LLMs about tools that are available in other contexts
+// (e.g., DM-only tools when in a channel).
+func (s *ToolStore) GetToolsInfo() []ToolInfo {
+	if s == nil || len(s.tools) == 0 {
+		return nil
+	}
+	result := make([]ToolInfo, 0, len(s.tools))
+	for _, tool := range s.tools {
+		result = append(result, ToolInfo{
+			Name:        tool.Name,
+			Description: tool.Description,
+		})
 	}
 	return result
 }
