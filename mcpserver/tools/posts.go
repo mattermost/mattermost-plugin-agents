@@ -45,6 +45,14 @@ type DMSelfArgs struct {
 	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the message"`
 }
 
+// DMToAnotherArgs represents arguments for the dm_to_another tool
+type DMToAnotherArgs struct {
+	UserID      string   `json:"user_id,omitempty" jsonschema:"Target user ID (use this OR username),minLength=26,maxLength=26"`
+	Username    string   `json:"username,omitempty" jsonschema:"Target username (use this OR user_id),minLength=1,maxLength=64"`
+	Message     string   `json:"message" jsonschema:"The message content to send,minLength=1"`
+	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the message"`
+}
+
 // getPostTools returns all post-related tools
 func (p *MattermostToolProvider) getPostTools() []MCPTool {
 	// Build descriptions conditionally based on access mode
@@ -56,6 +64,8 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 	createPostDesc := fmt.Sprintf("Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. Parameters: channel_id (required), message (required), root_id (optional - for replies)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}", attachmentsParam)
 
 	dmSelfDesc := fmt.Sprintf("Send a direct message to yourself. Use when user requests to send something to themselves (e.g., 'send me this', 'DM me that'). Parameters: message (required)%s. Returns confirmation with message ID. Example: {\"message\": \"Reminder: Follow up on project\"}", attachmentsParam)
+
+	dmToAnotherDesc := fmt.Sprintf("Send a direct message to another user. Parameters: user_id OR username (one required), message (required)%s. Use search_users first if you don't know the user's ID. Example: {\"username\": \"john.doe\", \"message\": \"Hello!\"}", attachmentsParam)
 
 	return []MCPTool{
 		{
@@ -75,6 +85,12 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 			Description: dmSelfDesc,
 			Schema:      NewJSONSchemaForAccessMode[DMSelfArgs](string(p.accessMode)),
 			Resolver:    p.toolDMSelf,
+		},
+		{
+			Name:        "dm_to_another",
+			Description: dmToAnotherDesc,
+			Schema:      NewJSONSchemaForAccessMode[DMToAnotherArgs](string(p.accessMode)),
+			Resolver:    p.toolDMToAnother,
 		},
 	}
 }
@@ -452,4 +468,99 @@ func (p *MattermostToolProvider) toolDMSelf(mcpContext *MCPToolContext, argsGett
 	}
 
 	return fmt.Sprintf("Successfully sent DM to yourself with ID: %s%s", createdPost.Id, attachmentMessage), nil
+}
+
+// toolDMToAnother implements the dm_to_another tool
+func (p *MattermostToolProvider) toolDMToAnother(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+	var args DMToAnotherArgs
+	err := argsGetter(&args)
+	if err != nil {
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool dm_to_another: %w", err)
+	}
+
+	// Validate required fields
+	if args.Message == "" {
+		return "message is required", fmt.Errorf("message cannot be empty")
+	}
+	if args.UserID == "" && args.Username == "" {
+		return "either user_id or username is required", fmt.Errorf("must provide user_id or username")
+	}
+
+	// Get client from context
+	if mcpContext.Client == nil {
+		return "client not available", fmt.Errorf("client not available in context")
+	}
+	client := mcpContext.Client
+	ctx := context.Background()
+
+	// Get current user information
+	currentUser, _, err := client.GetMe(ctx, "")
+	if err != nil {
+		return "failed to get current user", fmt.Errorf("error getting current user: %w", err)
+	}
+
+	// Find target user by ID or username
+	var targetUser *model.User
+	if args.UserID != "" {
+		if !model.IsValidId(args.UserID) {
+			return "invalid user_id format", fmt.Errorf("user_id must be a valid ID")
+		}
+		targetUser, _, err = client.GetUser(ctx, args.UserID, "")
+		if err != nil {
+			return "failed to find target user", fmt.Errorf("error getting user by ID: %w", err)
+		}
+	} else {
+		targetUser, _, err = client.GetUserByUsername(ctx, args.Username, "")
+		if err != nil {
+			return "failed to find target user", fmt.Errorf("error getting user by username '%s': %w", args.Username, err)
+		}
+	}
+
+	// Create or get direct channel with target user
+	dmChannel, _, err := client.CreateDirectChannel(ctx, currentUser.Id, targetUser.Id)
+	if err != nil {
+		return "failed to create DM channel", fmt.Errorf("error creating direct channel: %w", err)
+	}
+
+	// Upload files if specified
+	fileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, dmChannel.Id, args.Attachments, mcpContext.AccessMode)
+
+	// Create the post in the DM channel
+	post := &model.Post{
+		ChannelId: dmChannel.Id,
+		Message:   args.Message,
+		FileIds:   fileIDs,
+	}
+
+	// Set props to trigger notifications
+	props := map[string]interface{}{
+		"from_webhook": "true",
+	}
+
+	// Add AI-generated prop if tracking is enabled
+	if p.trackAIGenerated {
+		var userID string
+
+		// First check if bot user ID was provided via context metadata (from embedded server)
+		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
+			userID = mcpContext.BotUserID
+		} else {
+			// For external servers, use the current authenticated user's ID
+			userID = currentUser.Id
+		}
+
+		// Add the prop if we have a valid user ID
+		if userID != "" {
+			props["ai_generated_by"] = userID
+		}
+	}
+
+	post.SetProps(props)
+
+	createdPost, _, err := client.CreatePost(ctx, post)
+	if err != nil {
+		return "failed to create DM post", fmt.Errorf("error creating DM post: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully sent DM to %s with ID: %s%s", targetUser.Username, createdPost.Id, attachmentMessage), nil
 }
