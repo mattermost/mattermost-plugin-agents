@@ -693,16 +693,9 @@ func (s *OpenAI) streamResponsesAPIToChannels(initialParams openai.ChatCompletio
 			case "response.output_text.delta":
 				// Text content delta - the text is in the Delta field
 				if event.Delta != "" {
-					// If we haven't sent the complete reasoning yet, send it now
-					if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
-						output <- llm.TextStreamEvent{
-							Type: llm.EventTypeReasoningEnd,
-							Value: llm.ReasoningData{
-								Text: reasoningSummaryBuffer.String(),
-							},
-						}
-						reasoningComplete = true
-					}
+					// NOTE: We do NOT send EventTypeReasoningEnd here.
+					// We wait until response.completed to send it, so we can check
+					// if we're auto-running tools (in which case we shouldn't send it yet).
 					// Accumulate full text for citation cleaning
 					fullMessageText.WriteString(event.Delta)
 					// Stream the text as-is (citations will be cleaned at the end)
@@ -794,16 +787,9 @@ func (s *OpenAI) streamResponsesAPIToChannels(initialParams openai.ChatCompletio
 			case "response.output_item.done":
 				// Output item completed - check if it's a function call
 				if event.Item.Type == "function_call" {
-					// If we haven't sent the complete reasoning yet and this is a tool call, send reasoning first
-					if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
-						output <- llm.TextStreamEvent{
-							Type: llm.EventTypeReasoningEnd,
-							Value: llm.ReasoningData{
-								Text: reasoningSummaryBuffer.String(),
-							},
-						}
-						reasoningComplete = true
-					}
+					// NOTE: We do NOT send EventTypeReasoningEnd here.
+					// We wait until response.completed to send it, so we can check
+					// if we're auto-running tools (in which case we shouldn't send it yet).
 					// Make sure we have the function details
 					if event.Item.Name != "" && toolsBuffer[currentToolIndex] != nil {
 						// Update the name if it wasn't set before
@@ -861,13 +847,15 @@ func (s *OpenAI) streamResponsesAPIToChannels(initialParams openai.ChatCompletio
 			case "response.completed":
 				// Response fully completed
 
-				// If we still have unsent reasoning (edge case: no output text), send it now
-				if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
-					output <- llm.TextStreamEvent{
-						Type: llm.EventTypeReasoningEnd,
-						Value: llm.ReasoningData{
-							Text: reasoningSummaryBuffer.String(),
-						},
+				// Helper to send reasoning end event (only when generation is truly complete)
+				sendReasoningEndIfNeeded := func() {
+					if !reasoningComplete && reasoningSummaryBuffer.Len() > 0 {
+						output <- llm.TextStreamEvent{
+							Type: llm.EventTypeReasoningEnd,
+							Value: llm.ReasoningData{
+								Text: reasoningSummaryBuffer.String(),
+							},
+						}
 					}
 				}
 
@@ -985,7 +973,8 @@ func (s *OpenAI) streamResponsesAPIToChannels(initialParams openai.ChatCompletio
 
 						shouldContinue = true
 					} else {
-						// Manual approval
+						// Manual approval - generation is pausing, send reasoning end
+						sendReasoningEndIfNeeded()
 						handleToolCalls()
 					}
 
@@ -999,7 +988,8 @@ func (s *OpenAI) streamResponsesAPIToChannels(initialParams openai.ChatCompletio
 					return
 				}
 
-				// Otherwise, emit end event
+				// Otherwise, emit end event - generation is complete
+				sendReasoningEndIfNeeded()
 				output <- llm.TextStreamEvent{
 					Type:  llm.EventTypeEnd,
 					Value: nil,
@@ -1154,12 +1144,25 @@ func (s *OpenAI) convertToResponseParams(params openai.ChatCompletionNewParams, 
 			if msg.OfAssistant.Content.OfString.Valid() {
 				inputBuilder.WriteString(msg.OfAssistant.Content.OfString.Value)
 			}
+			// FIX: Include tool call information so the model knows what tools were called
+			// This is critical for the Responses API path - without this, the model sees
+			// tool results but doesn't know which tool produced them, causing repeated calls
+			if len(msg.OfAssistant.ToolCalls) > 0 {
+				for _, tc := range msg.OfAssistant.ToolCalls {
+					if tc.OfFunction != nil {
+						inputBuilder.WriteString(fmt.Sprintf("\n[Called tool: %s (id: %s) with arguments: %s]",
+							tc.OfFunction.Function.Name,
+							tc.OfFunction.ID,
+							tc.OfFunction.Function.Arguments))
+					}
+				}
+			}
 		case msg.OfTool != nil:
-			// Add tool results to input
+			// Add tool results to input with the tool call ID for correlation
 			if inputBuilder.Len() > 0 {
-				inputBuilder.WriteString("\n\nTool Result: ")
+				inputBuilder.WriteString(fmt.Sprintf("\n\n[Tool Result for call id: %s]\n", msg.OfTool.ToolCallID))
 			} else {
-				inputBuilder.WriteString("Tool Result: ")
+				inputBuilder.WriteString(fmt.Sprintf("[Tool Result for call id: %s]\n", msg.OfTool.ToolCallID))
 			}
 			// Handle string content from union
 			if msg.OfTool.Content.OfString.Valid() {

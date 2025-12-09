@@ -84,7 +84,7 @@ func (c *Channels) AnalyzeChannel(
 
 	// Tools are enabled by default in the context if configured correctly in API handler
 	// We do NOT disable tools here.
-	resultStream, err := c.llm.ChatCompletion(completionRequest, llm.WithAutoRunTools(autoRunTools))
+	resultStream, err := c.llm.ChatCompletion(completionRequest, llm.WithAutoRunTools(autoRunTools), llm.WithoutThinking())
 	if err != nil {
 		return nil, err
 	}

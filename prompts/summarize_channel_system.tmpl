@@ -20,8 +20,11 @@ Additional instructions from user: "{{.Parameters.Analysis.Prompt}}"
 
 Step 1: Fetch posts from the channel using the available tools (e.g., retrieve posts for channel). Ensure you fetch enough posts to cover the requested time range or context.
 Step 2: Analyze the fetched posts.
-Step 3: Provide a concise summary of the conversation. Use markdown. Highlight key topics, decisions, and action items. Mention users with @username.
+Step 3: Provide a concise summary of the conversation. Use markdown. Highlight key topics, decisions, and action items. Mention users with @username. When providing a summary, you MUST following the following citation format:
+{{template "citation_format.tmpl" .}}
 
-If there are no posts in the requested range, state that clearly.
+**IMPORTANT**: There MAY NOT be any posts in the requested range. If there are no posts in the requested range, state that clearly. YOU MUST TRUST THE RESPONSE "no posts found in the specified timeframe"
+**IMPORTANT**: There MAY be LIMITED POSTS in the requested range. If there are limited posts in the requested range, state that, and summarize WHAT YOU WERE GIVEN.
 
 DO NOT narrate the tasks (or tool calls) you are performing while you are summarizing the channel.
+Avoid the use of emojis in your summary unless they are absolutely necessary to convey the meaning of the post.
