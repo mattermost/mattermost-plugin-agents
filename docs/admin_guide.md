@@ -343,7 +343,7 @@ The MCP server provides the following tools to AI agents and external clients:
 
 #### For AI Agents
 
-The embedded MCP server provides Mattermost AI agents with direct access to Mattermost functionality:
+To set up an embedded MCP server providing Mattermost AI agents with direct access to Mattermost functionality:
 
 1. Navigate to **System Console > Plugins > Agents > MCP Servers**
 2. Set **Enable Embedded Server** to **True**
