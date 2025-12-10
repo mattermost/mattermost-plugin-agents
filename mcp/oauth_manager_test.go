@@ -57,8 +57,8 @@ func TestBuildClientCredentialsKey(t *testing.T) {
 			key2 := buildClientCredentialsKey(tt.otherURL)
 
 			// Keys should always start with the prefix
-			require.Contains(t, key1, "mcp_oauth_client_v1")
-			require.Contains(t, key2, "mcp_oauth_client_v1")
+			require.Contains(t, key1, "mcp_oauth_client_v2")
+			require.Contains(t, key2, "mcp_oauth_client_v2")
 
 			// Keys should be consistent for same URL
 			if tt.wantSame {

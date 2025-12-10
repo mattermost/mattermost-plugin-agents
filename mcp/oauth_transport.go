@@ -19,21 +19,21 @@ type authenticationTransport struct {
 	manager    *OAuthManager
 }
 
-type mcpUnauthrorized struct {
+type mcpUnauthorized struct {
 	metadataURL string
 	err         error
 }
 
-func (e *mcpUnauthrorized) Error() string {
+func (e *mcpUnauthorized) Error() string {
 	if e.err != nil {
 		return fmt.Sprintf("OAuth authentication needed for resource at %s: Got error: %v", e.metadataURL, e.err)
 	}
 	return fmt.Sprintf("OAuth authentication needed for resource at %s", e.metadataURL)
 }
-func (e *mcpUnauthrorized) MetadataURL() string {
+func (e *mcpUnauthorized) MetadataURL() string {
 	return e.metadataURL
 }
-func (e *mcpUnauthrorized) Unwrap() error {
+func (e *mcpUnauthorized) Unwrap() error {
 	return e.err
 }
 
@@ -80,7 +80,7 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 				t.manager.pluginAPI.LogWarn("Failed to delete stale token", "error", delErr)
 			}
 			// Return error that will trigger re-authentication
-			return nil, &mcpUnauthrorized{
+			return nil, &mcpUnauthorized{
 				metadataURL: "",
 				err:         fmt.Errorf("token refresh failed (credentials may have changed), re-authentication required: %w", err),
 			}
@@ -95,13 +95,13 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 		if wwwAuthHeader != "" {
 			metadataURL, parseErr := parseWWWAuthenticateHeader(wwwAuthHeader)
 			if parseErr != nil {
-				return nil, &mcpUnauthrorized{
+				return nil, &mcpUnauthorized{
 					metadataURL: "",
 					err:         fmt.Errorf("failed to parse WWW-Authenticate header: %w", parseErr),
 				}
 			}
 
-			return nil, &mcpUnauthrorized{
+			return nil, &mcpUnauthorized{
 				metadataURL: metadataURL,
 			}
 		}

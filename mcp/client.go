@@ -265,7 +265,7 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	}
 
 	// Check for OAuth error from Streamable HTTP attempt
-	var mcpAuthErr *mcpUnauthrorized
+	var mcpAuthErr *mcpUnauthorized
 	if errors.As(errStreamable, &mcpAuthErr) {
 		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, mcpAuthErr.MetadataURL())
 		if oauthErr != nil {
