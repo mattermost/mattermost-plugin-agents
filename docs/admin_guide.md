@@ -317,7 +317,7 @@ With the Mattermost MCP Server, you can:
 
 - **Automated Channel Summaries**: Ask your AI agent to summarize activity across channels, catching up on discussions while you were away
 - **Cross-Channel Updates**: Have your agent post status updates to multiple channels simultaneously, keeping distributed teams synchronized
-- **Intelligent Search**: Search across your entire Mattermost workspace from any MCP-enabled client to find relevant discussions, decisions, or information
+- **Search Intelligently**: Search across your entire Mattermost workspace from any MCP-enabled client to find relevant discussions, decisions, or information.
 - **Coordinate Teams**: Get lists of channel or team members to quickly identify who to contact or mention.
 - **Automate Workflows**: Use external MCP clients to automate routine tasks like posting stand-up updates, creating project channels, or notifying teams of important events.
 - **Access Context-Aware Assistance**: AI agents can read conversation threads to understand context before responding or taking action.
