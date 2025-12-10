@@ -15,7 +15,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/evals"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/roles"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -133,7 +132,7 @@ func executeToolsAndGetFinalResponse(t *testing.T, toolCalls []llm.ToolCall, pos
 		bot,
 		threadData.RequestingUser(),
 		threadData.Channel,
-		contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, threadData.Channel)),
+		contextBuilder.WithLLMContextDefaultTools(bot),
 	)
 
 	// Execute all tools automatically (approve all for evaluation)

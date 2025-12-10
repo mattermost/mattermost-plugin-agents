@@ -170,7 +170,7 @@ func SetupPMBotServices(t *testing.T, threadData *evals.ThreadExport, mmClient *
 	mockAPI := &plugintest.API{}
 	client := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
 
 	prompts, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err, "Failed to load prompts")
@@ -240,7 +240,7 @@ func CreateStandardPMBotConfig(modelName, botID string) llm.BotConfig {
 		// CustomInstructions intentionally omitted - PM bots use template system via PM conversation handler
 		EnableVision: false,
 		DisableTools: false,
-		Service: llm.ServiceConfig{
+		Service: &llm.ServiceConfig{
 			DefaultModel: modelName,
 		},
 	}
@@ -250,8 +250,10 @@ func CreateStandardPMBotConfig(modelName, botID string) llm.BotConfig {
 func CreatePMBot(modelName, botID string) *bots.Bot {
 	return bots.NewBot(
 		CreateStandardPMBotConfig(modelName, botID),
+		llm.ServiceConfig{},
 		&model.Bot{
 			UserId: botID,
 		},
+		nil,
 	)
 }

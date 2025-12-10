@@ -12,7 +12,6 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
 // GetTeamInfoArgs represents arguments for the get_team_info tool
@@ -213,7 +212,7 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 	for i, member := range members {
 		user, _, err := client.GetUser(ctx, member.UserId, "")
 		if err != nil {
-			p.logger.Warn("failed to get user details for member", mlog.String("user_id", member.UserId), mlog.Err(err))
+			p.logger.Warn("failed to get user details for member", "user_id", member.UserId, "error", err)
 			result.WriteString(fmt.Sprintf("%d. User ID: %s (details unavailable)\n", i+1, member.UserId))
 			continue
 		}

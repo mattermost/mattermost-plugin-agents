@@ -10,6 +10,7 @@ The Mattermost Agents plugin currently supports these LLM providers:
 - OpenAI
 - Anthropic
 - Cohere
+- Mistral
 - Azure OpenAI
 
 ## General Configuration Concepts
@@ -82,6 +83,19 @@ Obtain a [Cohere API key](https://dashboard.cohere.com/api-keys), then select **
 |---------|----------|-------------|
 | **API Key** | Yes | Your Cohere API key |
 | **Default Model** | Yes | The model to use by default (see [Cohere's model documentation](https://docs.cohere.com/docs/models)) |
+
+## Mistral
+
+### Authentication
+
+Obtain a [Mistral API key](https://console.mistral.ai/api-keys/), then select **Mistral** in the **Service** dropdown and enter your API key. Specify a model name in the **Default Model** field that corresponds with the model's label in the API.
+
+### Configuration Options
+
+| Setting | Required | Description |
+|---------|----------|-------------|
+| **API Key** | Yes | Your Mistral API key |
+| **Default Model** | Yes | The model to use by default (see [Mistral's model documentation](https://docs.mistral.ai/getting-started/models/)) |
 
 ## Azure OpenAI
 

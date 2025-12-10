@@ -243,7 +243,7 @@ func (ba *BotAdapter) executeToolsAndGetFinalResponse(ctx context.Context, toolC
 		ba.bot,
 		ba.threadData.RequestingUser(),
 		ba.threadData.Channel,
-		ba.contextBuilder.WithLLMContextDefaultTools(ba.bot, mmapi.IsDMWith(ba.bot.GetMMBot().UserId, ba.threadData.Channel)),
+		ba.contextBuilder.WithLLMContextDefaultTools(ba.bot),
 	)
 
 	// Execute all tools automatically (approve all for evaluation)

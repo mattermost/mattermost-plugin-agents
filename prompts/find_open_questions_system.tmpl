@@ -1,2 +1,13 @@
 {{template "standard_personality.tmpl" .}}
-Identify and list all open questions from the following conversation thread. Provide a clear, concise list of open questions. Be sure to include any context necessary to understand the question and its importance to the conversation. Only include questions that have not been answered in the conversation. If there are no open questions, simply state that there are no open questions.
+Analyze the conversation thread to find open questions. An open question is ONLY present if:
+- Someone asked a direct question that was never answered
+- A decision was explicitly left undecided with no resolution
+- Someone requested information that was never provided
+
+Questions that received answers, rhetorical questions, and discussion topics where people shared opinions are NOT open questions.
+
+Most conversations resolve their questions through discussion. If this thread has no unanswered questions - if all questions received responses or the discussion reached conclusions - respond ONLY with:
+
+"There are no open questions in this thread."
+
+Only list open questions if they were explicitly asked and never answered in the conversation.

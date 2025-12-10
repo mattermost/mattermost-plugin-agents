@@ -109,6 +109,15 @@ func (c *Conversations) RegisterIntent(intent Intent) {
 
 // ProcessUserRequestWithContext is an internal helper that uses an existing context to process a message
 func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context) (*llm.TextStreamResult, error) {
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	var disabledToolsInfo []llm.ToolInfo
+	if !isDM && context != nil && context.Tools != nil {
+		disabledToolsInfo = context.Tools.GetToolsInfo()
+	}
+	if context != nil {
+		context.DisabledToolsInfo = disabledToolsInfo
+	}
+
 	var posts []llm.Post
 
 	// Check if there's a registered processor for this bot type
@@ -171,7 +180,12 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		Posts:   posts,
 		Context: context,
 	}
-	result, err := bot.LLM().ChatCompletion(completionRequest)
+	var opts []llm.LanguageModelOption
+	if !isDM {
+		// In non-DM channels, disable tools for security but provide info about DM-only tools
+		opts = append(opts, llm.WithToolsDisabled())
+	}
+	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -189,12 +203,13 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 
 // ProcessUserRequest processes a user request to a bot
 func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post) (*llm.TextStreamResult, error) {
-	// Create a context with default tools
+	// Create a context with tools for LLM awareness
+	// Security restriction is enforced later via WithToolsDisabled based on channel type
 	context := c.contextBuilder.BuildLLMContextUserRequest(
 		bot,
 		postingUser,
 		channel,
-		c.contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
+		c.contextBuilder.WithLLMContextTools(bot),
 	)
 
 	// Check for auth errors in the tool store
@@ -214,7 +229,7 @@ func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID stri
 		Context: context,
 	}
 
-	conversationTitle, err := bot.LLM().ChatCompletionNoStream(titleRequest, llm.WithMaxGeneratedTokens(25))
+	conversationTitle, err := bot.LLM().ChatCompletionNoStream(titleRequest, llm.WithMaxGeneratedTokens(25), llm.WithReasoningDisabled())
 	if err != nil {
 		return fmt.Errorf("failed to get title: %w", err)
 	}
@@ -427,11 +442,29 @@ func (c *Conversations) PostToAIPost(bot *bots.Bot, post *model.Post) llm.Post {
 		}
 	}
 
+	// Check for reasoning/thinking content
+	reasoning := ""
+	if reasoningProp := post.GetProp(streaming.ReasoningSummaryProp); reasoningProp != nil {
+		if reasoningStr, ok := reasoningProp.(string); ok {
+			reasoning = reasoningStr
+		}
+	}
+
+	// Check for reasoning signature (opaque verification field)
+	reasoningSignature := ""
+	if signatureProp := post.GetProp(streaming.ReasoningSignatureProp); signatureProp != nil {
+		if signatureStr, ok := signatureProp.(string); ok {
+			reasoningSignature = signatureStr
+		}
+	}
+
 	return llm.Post{
-		Role:    role,
-		Message: message,
-		Files:   filesForUpstream,
-		ToolUse: tools,
+		Role:               role,
+		Message:            message,
+		Files:              filesForUpstream,
+		ToolUse:            tools,
+		Reasoning:          reasoning,
+		ReasoningSignature: reasoningSignature,
 	}
 }
 

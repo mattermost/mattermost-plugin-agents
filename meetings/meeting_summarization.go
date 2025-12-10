@@ -17,7 +17,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/chunking"
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
@@ -196,7 +195,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			bot,
 			requestingUser,
 			channel,
-			s.contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
+			s.contextBuilder.WithLLMContextDefaultTools(bot),
 		)
 		summaryStream, err := s.SummarizeTranscription(bot, text, requestContext)
 		if err != nil {
@@ -257,7 +256,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			bot,
 			requestingUser,
 			channel,
-			s.contextBuilder.WithLLMContextDefaultTools(bot, channel.Type == model.ChannelTypeDirect),
+			s.contextBuilder.WithLLMContextDefaultTools(bot),
 		)
 		summaryStream, err := s.SummarizeTranscription(bot, transcription, llmContext)
 		if err != nil {
@@ -347,7 +346,7 @@ func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles
 		Context: context,
 	}
 
-	summaryStream, err := bot.LLM().ChatCompletion(completionRequest)
+	summaryStream, err := bot.LLM().ChatCompletion(completionRequest, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, fmt.Errorf("unable to get meeting summary: %w", err)
 	}

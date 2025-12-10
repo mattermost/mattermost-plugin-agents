@@ -10,9 +10,33 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// testLogger is a simple no-op logger for testing
+type testLogger struct {
+	t *testing.T
+}
+
+func (l *testLogger) Debug(msg string, keyValuePairs ...any) {
+	// Could use l.t.Log if we wanted to see debug output during tests
+}
+
+func (l *testLogger) Info(msg string, keyValuePairs ...any) {
+	// Could use l.t.Log if we wanted to see info output during tests
+}
+
+func (l *testLogger) Warn(msg string, keyValuePairs ...any) {
+	// Could use l.t.Log if we wanted to see warnings during tests
+}
+
+func (l *testLogger) Error(msg string, keyValuePairs ...any) {
+	l.t.Logf("ERROR: %s %v", msg, keyValuePairs)
+}
+
+func (l *testLogger) Flush() error {
+	return nil
+}
 
 // TestSchemaArgs is a test struct for schema conversion testing
 type TestSchemaArgs struct {
@@ -38,7 +62,7 @@ func TestRegisterDynamicTool_WithSchema(t *testing.T) {
 
 	// Create a provider
 	provider := &MattermostToolProvider{
-		logger: mlog.CreateTestLogger(t),
+		logger: &testLogger{t: t},
 	}
 
 	// Create a test tool with schema
@@ -70,7 +94,7 @@ func TestRegisterDynamicTool_WithoutSchema(t *testing.T) {
 
 	// Create a provider
 	provider := &MattermostToolProvider{
-		logger: mlog.CreateTestLogger(t),
+		logger: &testLogger{t: t},
 	}
 
 	// Create a test tool without schema

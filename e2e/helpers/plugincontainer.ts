@@ -1,13 +1,14 @@
-import {test, expect } from '@playwright/test';
 import fs from 'fs';
+import path from 'path';
 
 import MattermostContainer from './mmcontainer';
 
 const RunContainer = async (): Promise<MattermostContainer> => {
   let filename = "";
-  fs.readdirSync("../dist/").forEach(file => {
+  const distPath = path.join(__dirname, "../../dist/");
+  fs.readdirSync(distPath).forEach(file => {
       if (file.endsWith(".tar.gz")) {
-          filename = "../dist/"+file
+          filename = path.join(distPath, file);
       }
   })
   if (filename === "") {
@@ -20,30 +21,59 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 		  "enableLLMTrace": true,
 		  "enableUserRestrictions": false,
 		  "defaultBotName": "mock",
+		  "services": [
+			  {
+				  "id": "mock-service",
+				  "name": "Mock Service",
+				  "type": "openaicompatible",
+				  "apiKey": "mock",
+				  "apiURL": "http://openai:8080",
+			  },
+			  {
+				  "id": "second-service",
+				  "name": "Second Service",
+				  "type": "openaicompatible",
+				  "apiKey": "ohno",
+				  "apiURL": "http://openai:8080/second",
+			  },
+		  ],
 		  "bots": [
 			  {
 				  "id": "y6fcxh0xc",
 				  "name": "mock",
 				  "displayName": "Mock Bot",
 				  "customInstructions": "",
-				  "service": {
-					  "type": "openaicompatible",
-					  "apiKey": "mock",
-					  "apiURL": "http://openai:8080",
-				  },
+				  "serviceID": "mock-service",
 			  },
 			  {
 				  "id": "oawiejfoj",
 				  "name": "second",
 				  "displayName": "Second Bot",
 				  "customInstructions": "",
-				  "service": {
-					  "type": "openaicompatible",
-					  "apiKey": "ohno",
-					  "apiURL": "http://openai:8080/second",
-				  },
+				  "serviceID": "second-service",
 			  },
 		  ],
+		  "embeddingSearchConfig": {
+			  "type": "composite",
+			  "dimensions": 512,
+			  "vectorStore": {
+				  "type": "pgvector",
+				  "parameters": {
+					  "dimensions": 512
+				  }
+			  },
+			  "embeddingProvider": {
+				  "type": "mock",
+				  "parameters": {}
+			  },
+			  "parameters": {},
+			  "chunkingOptions": {
+				  "chunkSize": 500,
+				  "chunkOverlap": 100,
+				  "minChunkSize": 0.75,
+				  "chunkingStrategy": "sentences"
+			  }
+		  }
 	  }
   }
   const mattermost = await new MattermostContainer()

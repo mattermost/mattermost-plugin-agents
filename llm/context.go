@@ -11,6 +11,13 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// ToolInfo represents basic information about a tool without its full implementation.
+// Used to inform LLMs about tools that are unavailable in the current context.
+type ToolInfo struct {
+	Name        string
+	Description string
+}
+
 // Context represents the data necessary to build the context of the LLM.
 // For consumers none of the fields can be assumed to be present.
 type Context struct {
@@ -30,11 +37,13 @@ type Context struct {
 	// Bot Specific
 	BotName            string
 	BotUsername        string
+	BotUserID          string
 	BotModel           string
 	CustomInstructions string
 
-	Tools      *ToolStore
-	Parameters map[string]interface{}
+	Tools             *ToolStore
+	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
+	Parameters        map[string]interface{}
 }
 
 // ContextOption defines a function that configures a Context

@@ -77,7 +77,7 @@ func TestPMBotModelComparison(t *testing.T) {
 	mmClient.On("GetBundlePath").Return("", nil).Maybe()
 
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
 	prompts, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err, "Failed to load prompts")
 
@@ -340,9 +340,11 @@ func runModelComparison(
 								// Create PM bot with specific model
 								bot := bots.NewBot(
 									CreateStandardPMBotConfig(modelName, "pmbotid"),
+									llm.ServiceConfig{},
 									&model.Bot{
 										UserId: "pmbotid",
 									},
+									nil,
 								)
 
 								// Set LLM

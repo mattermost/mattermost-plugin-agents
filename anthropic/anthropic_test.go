@@ -5,13 +5,302 @@ package anthropic
 
 import (
 	"bytes"
+	"encoding/json"
 	"testing"
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
+
+// Helper function to create a test message from JSON
+func createMessageFromJSON(t *testing.T, jsonStr string) anthropicSDK.Message {
+	var msg anthropicSDK.Message
+	err := json.Unmarshal([]byte(jsonStr), &msg)
+	require.NoError(t, err)
+	return msg
+}
+
+func TestExtractAnnotations(t *testing.T) {
+	tests := []struct {
+		name        string
+		messageJSON string
+		wantResults []llm.Annotation
+	}{
+		{
+			name: "no citations",
+			messageJSON: `{
+				"id": "msg_test1",
+				"type": "message",
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "This is a simple message without citations"
+					}
+				],
+				"model": "claude-3-5-sonnet-20241022",
+				"stop_reason": "end_turn",
+				"usage": {"input_tokens": 10, "output_tokens": 20}
+			}`,
+			wantResults: nil,
+		},
+		{
+			name: "single text block with one citation",
+			messageJSON: `{
+				"id": "msg_test2",
+				"type": "message",
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "According to research, AI is advancing rapidly.",
+						"citations": [
+							{
+								"type": "web_search_result_location",
+								"url": "https://example.com/ai-research",
+								"title": "AI Research Paper",
+								"cited_text": "AI is advancing rapidly"
+							}
+						]
+					}
+				],
+				"model": "claude-3-5-sonnet-20241022",
+				"stop_reason": "end_turn",
+				"usage": {"input_tokens": 10, "output_tokens": 20}
+			}`,
+			wantResults: []llm.Annotation{
+				{
+					Type:       llm.AnnotationTypeURLCitation,
+					StartIndex: 0,
+					EndIndex:   47,
+					URL:        "https://example.com/ai-research",
+					Title:      "AI Research Paper",
+					CitedText:  "AI is advancing rapidly",
+					Index:      1,
+				},
+			},
+		},
+		{
+			name: "multiple text blocks with citations",
+			messageJSON: `{
+				"id": "msg_test3",
+				"type": "message",
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "First paragraph with citation.",
+						"citations": [
+							{
+								"type": "web_search_result_location",
+								"url": "https://example.com/source1",
+								"title": "Source 1",
+								"cited_text": "citation"
+							}
+						]
+					},
+					{
+						"type": "text",
+						"text": "Second paragraph with another citation.",
+						"citations": [
+							{
+								"type": "web_search_result_location",
+								"url": "https://example.com/source2",
+								"title": "Source 2",
+								"cited_text": "another citation"
+							}
+						]
+					}
+				],
+				"model": "claude-3-5-sonnet-20241022",
+				"stop_reason": "end_turn",
+				"usage": {"input_tokens": 10, "output_tokens": 20}
+			}`,
+			wantResults: []llm.Annotation{
+				{
+					Type:       llm.AnnotationTypeURLCitation,
+					StartIndex: 0,
+					EndIndex:   30,
+					URL:        "https://example.com/source1",
+					Title:      "Source 1",
+					CitedText:  "citation",
+					Index:      1,
+				},
+				{
+					Type:       llm.AnnotationTypeURLCitation,
+					StartIndex: 30,
+					EndIndex:   69,
+					URL:        "https://example.com/source2",
+					Title:      "Source 2",
+					CitedText:  "another citation",
+					Index:      2,
+				},
+			},
+		},
+		{
+			name: "multiple citations in one text block",
+			messageJSON: `{
+				"id": "msg_test4",
+				"type": "message",
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "This text has multiple sources cited.",
+						"citations": [
+							{
+								"type": "web_search_result_location",
+								"url": "https://example.com/source1",
+								"title": "First Source",
+								"cited_text": "multiple sources"
+							},
+							{
+								"type": "web_search_result_location",
+								"url": "https://example.com/source2",
+								"title": "Second Source",
+								"cited_text": "cited"
+							}
+						]
+					}
+				],
+				"model": "claude-3-5-sonnet-20241022",
+				"stop_reason": "end_turn",
+				"usage": {"input_tokens": 10, "output_tokens": 20}
+			}`,
+			wantResults: []llm.Annotation{
+				{
+					Type:       llm.AnnotationTypeURLCitation,
+					StartIndex: 0,
+					EndIndex:   37,
+					URL:        "https://example.com/source1",
+					Title:      "First Source",
+					CitedText:  "multiple sources",
+					Index:      1,
+				},
+				{
+					Type:       llm.AnnotationTypeURLCitation,
+					StartIndex: 0,
+					EndIndex:   37,
+					URL:        "https://example.com/source2",
+					Title:      "Second Source",
+					CitedText:  "cited",
+					Index:      2,
+				},
+			},
+		},
+		{
+			name: "text blocks without citations mixed with text blocks with citations",
+			messageJSON: `{
+				"id": "msg_test5",
+				"type": "message",
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "Introductory text without citation."
+					},
+					{
+						"type": "text",
+						"text": "Text with citation.",
+						"citations": [
+							{
+								"type": "web_search_result_location",
+								"url": "https://example.com/cited",
+								"title": "Cited Source",
+								"cited_text": "citation"
+							}
+						]
+					},
+					{
+						"type": "text",
+						"text": "Concluding text without citation."
+					}
+				],
+				"model": "claude-3-5-sonnet-20241022",
+				"stop_reason": "end_turn",
+				"usage": {"input_tokens": 10, "output_tokens": 20}
+			}`,
+			wantResults: []llm.Annotation{
+				{
+					Type:       llm.AnnotationTypeURLCitation,
+					StartIndex: 35,
+					EndIndex:   54,
+					URL:        "https://example.com/cited",
+					Title:      "Cited Source",
+					CitedText:  "citation",
+					Index:      1,
+				},
+			},
+		},
+		{
+			name: "empty message",
+			messageJSON: `{
+				"id": "msg_test6",
+				"type": "message",
+				"role": "assistant",
+				"content": [],
+				"model": "claude-3-5-sonnet-20241022",
+				"stop_reason": "end_turn",
+				"usage": {"input_tokens": 10, "output_tokens": 20}
+			}`,
+			wantResults: nil,
+		},
+		{
+			name: "non-text content blocks should be ignored",
+			messageJSON: `{
+				"id": "msg_test7",
+				"type": "message",
+				"role": "assistant",
+				"content": [
+					{
+						"type": "tool_use",
+						"id": "tool_123",
+						"name": "some_tool",
+						"input": {}
+					},
+					{
+						"type": "text",
+						"text": "Text after tool use.",
+						"citations": [
+							{
+								"type": "web_search_result_location",
+								"url": "https://example.com/after-tool",
+								"title": "After Tool Source",
+								"cited_text": "tool use"
+							}
+						]
+					}
+				],
+				"model": "claude-3-5-sonnet-20241022",
+				"stop_reason": "end_turn",
+				"usage": {"input_tokens": 10, "output_tokens": 20}
+			}`,
+			wantResults: []llm.Annotation{
+				{
+					Type:       llm.AnnotationTypeURLCitation,
+					StartIndex: 0,
+					EndIndex:   20,
+					URL:        "https://example.com/after-tool",
+					Title:      "After Tool Source",
+					CitedText:  "tool use",
+					Index:      1,
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			message := createMessageFromJSON(t, tt.messageJSON)
+			a := &Anthropic{}
+			got := a.extractAnnotations(message)
+			assert.Equal(t, tt.wantResults, got)
+		})
+	}
+}
 
 func TestConversationToMessages(t *testing.T) {
 	tests := []struct {
@@ -229,6 +518,66 @@ func TestConversationToMessages(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "bot message with tool use and reasoning",
+			conversation: []llm.Post{
+				{Role: llm.PostRoleUser, Message: "What's the weather?"},
+				{
+					Role:               llm.PostRoleBot,
+					Message:            "Let me check that for you.",
+					Reasoning:          "I need to use the weather tool to get current weather information for the user's location.",
+					ReasoningSignature: "test_signature_abc123",
+					ToolUse: []llm.ToolCall{
+						{
+							ID:        "call_123",
+							Name:      "get_weather",
+							Arguments: json.RawMessage(`{"location": "New York"}`),
+							Result:    "Sunny, 72°F",
+							Status:    llm.ToolCallStatusSuccess,
+						},
+					},
+				},
+			},
+			wantSystem: "",
+			wantMessages: []anthropicSDK.MessageParam{
+				{
+					Role: anthropicSDK.MessageParamRoleUser,
+					Content: []anthropicSDK.ContentBlockParamUnion{
+						anthropicSDK.NewTextBlock("What's the weather?"),
+					},
+				},
+				{
+					Role: anthropicSDK.MessageParamRoleAssistant,
+					Content: []anthropicSDK.ContentBlockParamUnion{
+						// Thinking block should come first with signature
+						anthropicSDK.NewThinkingBlock("test_signature_abc123", "I need to use the weather tool to get current weather information for the user's location."),
+						anthropicSDK.NewTextBlock("Let me check that for you."),
+						anthropicSDK.NewToolUseBlock("call_123", json.RawMessage(`{"location": "New York"}`), "get_weather"),
+					},
+				},
+				{
+					Role: anthropicSDK.MessageParamRoleUser,
+					Content: []anthropicSDK.ContentBlockParamUnion{
+						anthropicSDK.NewToolResultBlock("call_123", "Sunny, 72°F", false),
+					},
+				},
+			},
+		},
+		{
+			name: "conversation without system message",
+			conversation: []llm.Post{
+				{Role: llm.PostRoleUser, Message: "Generate a title for this: Hello world"},
+			},
+			wantSystem: "",
+			wantMessages: []anthropicSDK.MessageParam{
+				{
+					Role: anthropicSDK.MessageParamRoleUser,
+					Content: []anthropicSDK.ContentBlockParamUnion{
+						anthropicSDK.NewTextBlock("Generate a title for this: Hello world"),
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -236,6 +585,100 @@ func TestConversationToMessages(t *testing.T) {
 			gotSystem, gotMessages := conversationToMessages(tt.conversation)
 			assert.Equal(t, tt.wantSystem, gotSystem)
 			assert.Equal(t, tt.wantMessages, gotMessages)
+		})
+	}
+}
+
+func TestThinkingBudgetConfiguration(t *testing.T) {
+	tests := []struct {
+		name                 string
+		botConfig            llm.BotConfig
+		maxGeneratedTokens   int
+		expectThinkingConfig bool
+		expectedBudget       int64
+	}{
+		{
+			name: "reasoning enabled with custom thinking budget",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   2048,
+			},
+			maxGeneratedTokens:   8192,
+			expectThinkingConfig: true,
+			expectedBudget:       2048,
+		},
+		{
+			name: "reasoning enabled with default thinking budget (1/4 of max tokens)",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   0, // 0 means use default
+			},
+			maxGeneratedTokens:   8192,
+			expectThinkingConfig: true,
+			expectedBudget:       2048, // 8192 / 4
+		},
+		{
+			name: "reasoning enabled with default thinking budget capped at 8192",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   0,
+			},
+			maxGeneratedTokens:   40000,
+			expectThinkingConfig: true,
+			expectedBudget:       8192, // capped at 8192
+		},
+		{
+			name: "reasoning enabled with minimum thinking budget",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   0,
+			},
+			maxGeneratedTokens:   2048,
+			expectThinkingConfig: true,
+			expectedBudget:       1024, // minimum is 1024
+		},
+		{
+			name: "reasoning disabled",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: false,
+				ThinkingBudget:   2048,
+			},
+			maxGeneratedTokens:   8192,
+			expectThinkingConfig: false,
+			expectedBudget:       0,
+		},
+		{
+			name: "reasoning enabled but thinking budget exceeds max tokens",
+			botConfig: llm.BotConfig{
+				ReasoningEnabled: true,
+				ThinkingBudget:   5000,
+			},
+			maxGeneratedTokens:   4096,
+			expectThinkingConfig: false, // Should not set thinking config if budget >= max tokens
+			expectedBudget:       0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create an Anthropic client with the reasoning fields
+			a := &Anthropic{
+				reasoningEnabled: tt.botConfig.ReasoningEnabled,
+				thinkingBudget:   tt.botConfig.ThinkingBudget,
+			}
+
+			// Call the actual function that calculates thinking config
+			thinkingConfig, ok := a.calculateThinkingConfig(tt.maxGeneratedTokens)
+
+			if !tt.expectThinkingConfig {
+				assert.False(t, ok, "Thinking config should not be enabled")
+				return
+			}
+
+			// When thinking is expected, verify it's enabled and has the correct budget
+			assert.True(t, ok, "Thinking config should be enabled")
+			require.NotNil(t, thinkingConfig.OfEnabled, "Thinking config should have OfEnabled set")
+			assert.Equal(t, tt.expectedBudget, thinkingConfig.OfEnabled.BudgetTokens, "Thinking budget should match expected value")
 		})
 	}
 }

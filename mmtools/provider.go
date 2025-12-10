@@ -144,6 +144,47 @@ func (p *MMToolProvider) GetTools(isDM bool, bot *bots.Bot) []llm.Tool {
 		}
 	}
 
+	// Add search tool if search service is available and enabled
+	if p.search.Enabled() {
+		builtInTools = append(builtInTools, llm.Tool{
+			Name:        "SearchServer",
+			Description: "Search the Mattermost chat server the user is on for messages using semantic search. Use this tool whenever the user asks a question and you don't have the context to answer or you think your response would be more accurate with knowledge from the Mattermost server",
+			Schema:      llm.NewJSONSchemaFromStruct[SearchServerArgs](),
+			Resolver:    p.toolSearchServer,
+		})
+	}
+
+	// Add user lookup tool if pluginAPI is available
+	if p.pluginAPI != nil {
+		builtInTools = append(builtInTools, llm.Tool{
+			Name:        "LookupMattermostUser",
+			Description: "Lookup a Mattermost user by their username. Available information includes: username, full name, email, nickname, position, locale, timezone, last activity, and status.",
+			Schema:      llm.NewJSONSchemaFromStruct[LookupMattermostUserArgs](),
+			Resolver:    p.toolResolveLookupMattermostUser,
+		})
+
+		// Add GitHub tool if plugin is available
+		status, err := p.pluginAPI.GetPluginStatus("github")
+		if err == nil && status != nil && status.State == model.PluginStateRunning {
+			builtInTools = append(builtInTools, llm.Tool{
+				Name:        "GetGithubIssue",
+				Description: "Retrieve a single GitHub issue by owner, repo, and issue number.",
+				Schema:      llm.NewJSONSchemaFromStruct[GetGithubIssueArgs](),
+				Resolver:    p.toolGetGithubIssue,
+			})
+		}
+	}
+
+	// Add Jira tool if httpClient is available
+	if p.httpClient != nil {
+		builtInTools = append(builtInTools, llm.Tool{
+			Name:        "GetJiraIssue",
+			Description: "Retrieve a single Jira issue by issue key.",
+			Schema:      llm.NewJSONSchemaFromStruct[GetJiraIssueArgs](),
+			Resolver:    p.toolGetJiraIssue,
+		})
+	}
+
 	return builtInTools
 }
 

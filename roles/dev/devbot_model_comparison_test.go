@@ -77,7 +77,7 @@ func TestDevBotModelComparison(t *testing.T) {
 	mmClient.On("GetBundlePath").Return("", nil).Maybe()
 
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
 	prompts, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err, "Failed to load prompts")
 

@@ -28,6 +28,8 @@ type Metrics interface {
 	IncrementHTTPErrors()
 
 	GetMetricsForAIService(llmName string) *llmMetrics
+
+	ObserveTokenUsage(botName, teamID, userID string, inputTokens, outputTokens int)
 }
 
 type InstanceInfo struct {
@@ -49,6 +51,9 @@ type metrics struct {
 	httpErrorsTotal   prometheus.Counter
 
 	llmRequestsTotal *prometheus.CounterVec
+
+	llmInputTokensTotal  *prometheus.CounterVec
+	llmOutputTokensTotal *prometheus.CounterVec
 }
 
 // NewMetrics Factory method to create a new metrics collector.
@@ -129,6 +134,24 @@ func NewMetrics(info InstanceInfo) Metrics {
 	}, []string{"llm_name"})
 	m.registry.MustRegister(m.llmRequestsTotal)
 
+	m.llmInputTokensTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace:   MetricsNamespace,
+		Subsystem:   MetricsSubsystemLLM,
+		Name:        "input_tokens_total",
+		Help:        "The total number of input tokens consumed by LLM requests.",
+		ConstLabels: additionalLabels,
+	}, []string{"bot_name", "team_id"})
+	m.registry.MustRegister(m.llmInputTokensTotal)
+
+	m.llmOutputTokensTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace:   MetricsNamespace,
+		Subsystem:   MetricsSubsystemLLM,
+		Name:        "output_tokens_total",
+		Help:        "The total number of output tokens consumed by LLM requests.",
+		ConstLabels: additionalLabels,
+	}, []string{"bot_name", "team_id"})
+	m.registry.MustRegister(m.llmOutputTokensTotal)
+
 	return m
 }
 
@@ -175,5 +198,32 @@ type llmMetrics struct {
 func (m *llmMetrics) IncrementLLMRequests() {
 	if m != nil {
 		m.llmRequestsTotal.With(prometheus.Labels{}).Inc()
+	}
+}
+
+func (m *metrics) ObserveTokenUsage(botName, teamID, userID string, inputTokens, outputTokens int) {
+	if m == nil {
+		return
+	}
+
+	// userID parameter is ignored - kept for interface compatibility with logs
+	// Use "unknown" for missing dimensions to allow aggregation
+	if teamID == "" {
+		teamID = "unknown"
+	}
+	if botName == "" {
+		botName = "unknown"
+	}
+
+	labels := prometheus.Labels{
+		"bot_name": botName,
+		"team_id":  teamID,
+	}
+
+	if inputTokens > 0 {
+		m.llmInputTokensTotal.With(labels).Add(float64(inputTokens))
+	}
+	if outputTokens > 0 {
+		m.llmOutputTokensTotal.With(labels).Add(float64(outputTokens))
 	}
 }

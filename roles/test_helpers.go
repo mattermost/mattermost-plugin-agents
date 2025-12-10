@@ -30,6 +30,10 @@ func (m *MockConfigProvider) GetEnableLLMTrace() bool {
 	return false
 }
 
+func (m *MockConfigProvider) GetServiceByID(id string) (llm.ServiceConfig, bool) {
+	return llm.ServiceConfig{}, false
+}
+
 // TestLogger provides a unified logging interface for tests that mirrors pluginAPI's logging
 // Shared across all bot evaluation tests (PM, Dev, etc.)
 type TestLogger struct {

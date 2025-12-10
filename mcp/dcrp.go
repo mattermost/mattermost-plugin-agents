@@ -116,14 +116,14 @@ func RegisterClient(ctx context.Context, httpClient *http.Client, registrationEn
 	// Make the request
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to make registration request: %w", err)
+		return nil, fmt.Errorf("failed to make registration request to %s: %w", registrationEndpoint, err)
 	}
 	defer resp.Body.Close()
 
 	// Read response body
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, fmt.Errorf("failed to read response body from %s: %w", registrationEndpoint, err)
 	}
 
 	// Check for success status (RFC 7591 requires 201 Created)
@@ -151,11 +151,11 @@ func RegisterClient(ctx context.Context, httpClient *http.Client, registrationEn
 		if err := json.Unmarshal(responseBody, &regError); err != nil {
 			// If we can't parse the error, create a generic one
 			regError.ErrorCode = "unknown_error"
-			regError.ErrorDescription = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(responseBody))
+			regError.ErrorDescription = fmt.Sprintf("HTTP %d from %s: %s", resp.StatusCode, registrationEndpoint, string(responseBody))
 		}
 	} else {
 		regError.ErrorCode = "unknown_error"
-		regError.ErrorDescription = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(responseBody))
+		regError.ErrorDescription = fmt.Sprintf("HTTP %d from %s: %s", resp.StatusCode, registrationEndpoint, string(responseBody))
 	}
 
 	return nil, &regError
@@ -181,7 +181,7 @@ func DiscoverAndRegisterClient(ctx context.Context, httpClient *http.Client, ser
 	// Discover registration endpoint
 	registrationEndpoint, err := GetRegistrationEndpoint(ctx, httpClient, serverURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to discover registration endpoint: %w", err)
+		return nil, fmt.Errorf("failed to discover registration endpoint for server %s: %w", serverURL, err)
 	}
 
 	// Create registration request
@@ -190,7 +190,7 @@ func DiscoverAndRegisterClient(ctx context.Context, httpClient *http.Client, ser
 	// Perform registration
 	response, err := RegisterClient(ctx, httpClient, registrationEndpoint, request, initialAccessToken)
 	if err != nil {
-		return nil, fmt.Errorf("failed to register OAuth client: %w", err)
+		return nil, fmt.Errorf("failed to register OAuth client with server %s (registration endpoint: %s): %w", serverURL, registrationEndpoint, err)
 	}
 
 	return response, nil
@@ -202,24 +202,29 @@ func GetRegistrationEndpoint(ctx context.Context, httpClient *http.Client, serve
 		httpClient = http.DefaultClient
 	}
 
-	// Try standard OAuth 2.0 Authorization Server Metadata endpoint first
-	metadataURL := serverURL + "/.well-known/oauth-authorization-server"
+	// Construct the metadata URL according to RFC 8414 Section 3.1
+	// The well-known URI must be inserted between the host and path components
+	metadataURL, err := constructWellKnownURL(serverURL, "oauth-authorization-server")
+	if err != nil {
+		return "", fmt.Errorf("failed to construct metadata URL from server URL %s: %w", serverURL, err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", metadataURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create metadata request: %w", err)
+		return "", fmt.Errorf("failed to create metadata request for %s: %w", metadataURL, err)
 	}
 
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch server metadata: %w", err)
+		return "", fmt.Errorf("failed to fetch server metadata from %s: %w", metadataURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("server metadata request failed with status %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("server metadata request to %s failed with HTTP %d: %s", metadataURL, resp.StatusCode, string(body))
 	}
 
 	var metadata struct {
@@ -227,11 +232,11 @@ func GetRegistrationEndpoint(ctx context.Context, httpClient *http.Client, serve
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
-		return "", fmt.Errorf("failed to decode server metadata: %w", err)
+		return "", fmt.Errorf("failed to decode server metadata from %s: %w", metadataURL, err)
 	}
 
 	if metadata.RegistrationEndpoint == "" {
-		return "", fmt.Errorf("server does not support dynamic client registration")
+		return "", fmt.Errorf("server %s does not support dynamic client registration (no registration_endpoint in metadata from %s)", serverURL, metadataURL)
 	}
 
 	return metadata.RegistrationEndpoint, nil

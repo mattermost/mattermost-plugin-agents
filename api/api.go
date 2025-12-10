@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-ai/anthropic"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
@@ -20,9 +21,11 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
 	"github.com/mattermost/mattermost-plugin-ai/meetings"
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
+	"github.com/mattermost/mattermost-plugin-ai/openai"
 	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -39,32 +42,38 @@ const (
 type Config interface {
 	GetDefaultBotName() string
 	MCP() mcp.Config
+	AllowUnsafeLinks() bool
 }
 
 type MCPClientManager interface {
 	GetOAuthManager() *mcp.OAuthManager
+	GetToolsCache() *mcp.ToolsCache
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
+	GetEmbeddedServer() mcp.EmbeddedMCPServer
+	EnsureMCPSessionID(userID string) (string, error)
 }
 
 // API represents the HTTP API functionality for the plugin
 type API struct {
-	bots                 *bots.MMBots
-	conversationsService *conversations.Conversations
-	meetingsService      *meetings.Service
-	indexerService       *indexer.Indexer
-	searchService        *search.Search
-	pluginAPI            *pluginapi.Client
-	metricsService       metrics.Metrics
-	metricsHandler       http.Handler
-	contextBuilder       *llmcontext.Builder
-	prompts              *llm.Prompts
-	config               Config
-	mmClient             mmapi.Client
-	dbClient             *mmapi.DBClient
-	licenseChecker       *enterprise.LicenseChecker
-	streamingService     streaming.Service
-	i18nBundle           *i18n.Bundle
-	mcpClientManager     MCPClientManager
+	bots                  *bots.MMBots
+	conversationsService  *conversations.Conversations
+	meetingsService       *meetings.Service
+	indexerService        *indexer.Indexer
+	searchService         *search.Search
+	pluginAPI             *pluginapi.Client
+	metricsService        metrics.Metrics
+	metricsHandler        http.Handler
+	contextBuilder        *llmcontext.Builder
+	prompts               *llm.Prompts
+	config                Config
+	mmClient              mmapi.Client
+	dbClient              *mmapi.DBClient
+	licenseChecker        *enterprise.LicenseChecker
+	streamingService      streaming.Service
+	i18nBundle            *i18n.Bundle
+	mcpClientManager      MCPClientManager
+	mcpHandlers           *mcpserver.PluginMCPHandlers
+	llmUpstreamHTTPClient *http.Client
 }
 
 // New creates a new API instance
@@ -85,25 +94,29 @@ func New(
 	streamingService streaming.Service,
 	i18nBundle *i18n.Bundle,
 	mcpClientManager MCPClientManager,
+	mcpHandlers *mcpserver.PluginMCPHandlers,
+	llmUpstreamHTTPClient *http.Client,
 ) *API {
 	return &API{
-		bots:                 bots,
-		conversationsService: conversationsService,
-		meetingsService:      meetingsService,
-		indexerService:       indexerService,
-		searchService:        searchService,
-		pluginAPI:            pluginAPI,
-		metricsService:       metricsService,
-		metricsHandler:       metrics.NewMetricsHandler(metricsService),
-		contextBuilder:       llmContextBuilder,
-		prompts:              prompts,
-		config:               config,
-		mmClient:             mmClient,
-		dbClient:             dbClient,
-		licenseChecker:       licenseChecker,
-		streamingService:     streamingService,
-		i18nBundle:           i18nBundle,
-		mcpClientManager:     mcpClientManager,
+		bots:                  bots,
+		conversationsService:  conversationsService,
+		meetingsService:       meetingsService,
+		indexerService:        indexerService,
+		searchService:         searchService,
+		pluginAPI:             pluginAPI,
+		metricsService:        metricsService,
+		metricsHandler:        metrics.NewMetricsHandler(metricsService),
+		contextBuilder:        llmContextBuilder,
+		prompts:               prompts,
+		config:                config,
+		mmClient:              mmClient,
+		dbClient:              dbClient,
+		licenseChecker:        licenseChecker,
+		streamingService:      streamingService,
+		i18nBundle:            i18nBundle,
+		mcpClientManager:      mcpClientManager,
+		mcpHandlers:           mcpHandlers,
+		llmUpstreamHTTPClient: llmUpstreamHTTPClient,
 	}
 }
 
@@ -113,9 +126,41 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.Use(a.ginlogger)
 	router.Use(a.metricsMiddleware)
 
-	interPluginRoute := router.Group("/inter-plugin/v1")
-	interPluginRoute.Use(a.interPluginAuthorizationRequired)
-	interPluginRoute.POST("/simple_completion", a.handleInterPluginSimpleCompletion)
+	// LLM Bridge API v1 routes - inter-plugin only
+	llmBridgeRoute := router.Group("/bridge/v1")
+	llmBridgeRoute.Use(a.interPluginAuthorizationRequired)
+
+	// Discovery endpoints
+	llmBridgeRoute.GET("/agents", a.handleGetAgents)
+	llmBridgeRoute.GET("/services", a.handleGetServices)
+
+	// Completion endpoints
+	completionRoute := llmBridgeRoute.Group("/completion")
+	completionRoute.POST("/agent/:agent", a.handleAgentCompletionStreaming)
+	completionRoute.POST("/agent/:agent/nostream", a.handleAgentCompletionNoStream)
+	completionRoute.POST("/service/:service", a.handleServiceCompletionStreaming)
+	completionRoute.POST("/service/:service/nostream", a.handleServiceCompletionNoStream)
+
+	// MCP server endpoints - grouped under /mcp-server/
+	if a.mcpHandlers != nil && a.config.MCP().EnablePluginServer {
+		mcpServerGroup := router.Group("/mcp-server")
+
+		// Store plugin.Context in gin.Context for MCP endpoints
+		mcpServerGroup.Use(func(gc *gin.Context) {
+			gc.Set("pluginContext", c)
+			gc.Next()
+		})
+
+		mcpServerGroup.GET("/.well-known/oauth-protected-resource", func(gc *gin.Context) {
+			a.mcpHandlers.OAuthMetadataHandler(gc.Writer, gc.Request)
+		})
+
+		// MCP endpoint with authentication
+		mcpServerGroup.Use(a.mcpAuthMiddleware)
+		mcpServerGroup.Any("/mcp", func(gc *gin.Context) {
+			a.delegateToMCPHandler(gc, a.mcpHandlers.MCPHandler)
+		})
+	}
 
 	router.Use(a.MattermostAuthorizationRequired)
 
@@ -147,6 +192,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.GET("/reindex/status", a.handleGetJobStatus)
 	adminRouter.POST("/reindex/cancel", a.handleCancelJob)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
+	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
+	adminRouter.POST("/models/fetch", a.handleFetchModels)
 
 	searchRouter := botRequiredRouter.Group("/search")
 	// Only returns search results
@@ -249,8 +296,9 @@ type AIBotInfo struct {
 }
 
 type AIBotsResponse struct {
-	Bots          []AIBotInfo `json:"bots"`
-	SearchEnabled bool        `json:"searchEnabled"`
+	Bots             []AIBotInfo `json:"bots"`
+	SearchEnabled    bool        `json:"searchEnabled"`
+	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
 }
 
 // getAIBotsForUser returns all AI bots available to a user
@@ -307,7 +355,60 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 	searchEnabled := a.searchService.Enabled()
 
 	c.JSON(http.StatusOK, AIBotsResponse{
-		Bots:          bots,
-		SearchEnabled: searchEnabled,
+		Bots:             bots,
+		SearchEnabled:    searchEnabled,
+		AllowUnsafeLinks: a.config.AllowUnsafeLinks(),
 	})
+}
+
+type FetchModelsRequest struct {
+	ServiceType string `json:"serviceType"`
+	APIKey      string `json:"apiKey"`
+	APIURL      string `json:"apiURL"`
+	OrgID       string `json:"orgID"`
+}
+
+func (a *API) handleFetchModels(c *gin.Context) {
+	var req FetchModelsRequest
+	if err := c.BindJSON(&req); err != nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	if req.ServiceType == "" {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("serviceType is required"))
+		return
+	}
+
+	// API key is required for most services, but optional for openaicompatible (some don't require auth)
+	if req.APIKey == "" && req.ServiceType != "openaicompatible" {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey is required"))
+		return
+	}
+
+	// For openaicompatible, require at least an API URL if no API key
+	if req.ServiceType == "openaicompatible" && req.APIKey == "" && req.APIURL == "" {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiURL is required for openaicompatible when apiKey is not provided"))
+		return
+	}
+
+	var models []llm.ModelInfo
+	var err error
+
+	switch req.ServiceType {
+	case "anthropic":
+		models, err = anthropic.FetchModels(req.APIKey, a.llmUpstreamHTTPClient)
+	case "openai", "azure", "openaicompatible":
+		models, err = openai.FetchModels(req.APIKey, req.APIURL, req.OrgID, a.llmUpstreamHTTPClient)
+	default:
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("model fetching not supported for service type: %s", req.ServiceType))
+		return
+	}
+
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, models)
 }

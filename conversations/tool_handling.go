@@ -43,7 +43,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		bot,
 		user,
 		channel,
-		c.contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
+		c.contextBuilder.WithLLMContextDefaultTools(bot),
 	)
 
 	for i := range tools {

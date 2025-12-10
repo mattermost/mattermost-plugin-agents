@@ -66,6 +66,8 @@ func TestMMToolProvider_PMToolsWithCommonDataSourcesOnly(t *testing.T) {
 				Name:        "pmbot",
 				DisplayName: "PM Assistant",
 			},
+			llm.ServiceConfig{},
+			nil,
 			nil,
 		)
 
@@ -125,6 +127,8 @@ func TestMMToolProvider_PMToolsWithCommonDataSourcesOnly(t *testing.T) {
 				Name:        "pmbot",
 				DisplayName: "PM Assistant",
 			},
+			llm.ServiceConfig{},
+			nil,
 			nil,
 		)
 
@@ -174,6 +178,8 @@ func TestMMToolProvider_PMToolsWithCommonDataSourcesOnly(t *testing.T) {
 				Name:        "pmbot",
 				DisplayName: "PM Assistant",
 			},
+			llm.ServiceConfig{},
+			nil,
 			nil,
 		)
 

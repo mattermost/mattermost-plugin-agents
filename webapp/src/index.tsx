@@ -13,13 +13,14 @@ import aiIcon from '../../assets/bot_icon.png';
 
 import manifest from '@/manifest';
 
-import {LLMBotPost} from './components/llmbot_post';
+import {LLMBotPost} from './components/llmbot_post/llmbot_post';
 import PostMenu from './components/post_menu';
 import IconThreadSummarization from './components/assets/icon_thread_summarization';
 import IconReactForMe from './components/assets/icon_react_for_me';
 import RHS from './components/rhs/rhs';
 import Config from './components/system_console/config';
-import {doReaction, doRunSearch, doThreadAnalysis, getAIDirectChannel} from './client';
+import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis, getAIDirectChannel} from './client';
+
 import {setOpenRHSAction} from './redux_actions';
 import PostEventListener from './websocket';
 import {BotsHandler, setupRedux} from './redux';
@@ -30,6 +31,7 @@ import SearchButton from './components/search_button';
 import {doSelectPost} from './hooks';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
+import {useBotlist} from './bots';
 
 type WebappStore = Store<GlobalState, Action<Record<string, unknown>>>
 
@@ -55,6 +57,17 @@ const RHSTitle = () => {
     );
 };
 
+const ChannelHeaderIcon = () => {
+    const {bots} = useBotlist();
+
+    // Only show icon if user has access to at least one bot
+    if (!bots || bots.length === 0) {
+        return null;
+    }
+
+    return <IconAIContainer src={aiIcon}/>;
+};
+
 export default class Plugin {
     postEventListener: PostEventListener = new PostEventListener();
     private store: WebappStore | null = null;
@@ -64,6 +77,14 @@ export default class Plugin {
     public async initialize(registry: any, store: WebappStore) {
         setupRedux(registry, store);
         this.store = store;
+
+        let siteURL = store.getState().entities.general.config.SiteURL;
+
+        // Site URL should always be set by this point if the workspace is to be properly functional, but fall back to the window.location.origin just in case
+        if (!siteURL) {
+            siteURL = window.location.origin;
+        }
+        setSiteURL(siteURL);
 
         registry.registerDesktopNotificationHook(this.blockFastBotNotifications.bind(this));
 
@@ -143,7 +164,7 @@ export default class Plugin {
 
         registry.registerAdminConsoleCustomSetting('Config', Config);
         if (rhs) {
-            registry.registerChannelHeaderButtonAction(<IconAIContainer src={aiIcon}/>, () => {
+            registry.registerChannelHeaderButtonAction(<ChannelHeaderIcon/>, () => {
                 store.dispatch(rhs.toggleRHSPlugin);
             },
             'Agents',

@@ -146,7 +146,7 @@ func SetupDevBotServices(t *testing.T, threadData *evals.ThreadExport, mmClient 
 	mockAPI := &plugintest.API{}
 	client := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
 
 	prompts, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err, "Failed to load prompts")
@@ -214,7 +214,7 @@ func CreateStandardDevBotConfig(modelName, botID string) llm.BotConfig {
 		DisplayName:  "Dev Assistant",
 		EnableVision: false,
 		DisableTools: false,
-		Service: llm.ServiceConfig{
+		Service: &llm.ServiceConfig{
 			DefaultModel: modelName,
 		},
 	}
@@ -224,8 +224,10 @@ func CreateStandardDevBotConfig(modelName, botID string) llm.BotConfig {
 func CreateDevBot(modelName, botID string) *bots.Bot {
 	return bots.NewBot(
 		CreateStandardDevBotConfig(modelName, botID),
+		llm.ServiceConfig{},
 		&model.Bot{
 			UserId: botID,
 		},
+		nil,
 	)
 }

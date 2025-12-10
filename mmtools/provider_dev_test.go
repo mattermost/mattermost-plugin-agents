@@ -63,6 +63,8 @@ func TestMMToolProvider_DevToolsWithCommonDataSourcesOnly(t *testing.T) {
 				Name:        "devbot",
 				DisplayName: "Dev Assistant",
 			},
+			llm.ServiceConfig{},
+			nil,
 			nil,
 		)
 
@@ -115,6 +117,8 @@ func TestMMToolProvider_DevToolsWithCommonDataSourcesOnly(t *testing.T) {
 				Name:        "devbot",
 				DisplayName: "Dev Assistant",
 			},
+			llm.ServiceConfig{},
+			nil,
 			nil,
 		)
 
@@ -176,6 +180,8 @@ func TestMMToolProvider_DevToolsWithCommonDataSourcesOnly(t *testing.T) {
 				Name:        "devbot",
 				DisplayName: "Dev Assistant",
 			},
+			llm.ServiceConfig{},
+			nil,
 			nil,
 		)
 

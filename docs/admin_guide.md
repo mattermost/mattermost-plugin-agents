@@ -53,7 +53,7 @@ Select **Add an Agent** to create a new Agent, then configure the agent settings
 | **Display Name** | User-facing name shown in Mattermost |
 | **Agent Username** | The mattermost username for the agent. @ mentions to the agent will use this name |
 | **Agent Avatar** | Custom image for the agent |
-| **Service** | LLM provider for this agent (OpenAI, Anthropic, Cohere, Azure OpenAI, OpenAI-compatible) |
+| **Service** | LLM provider for this agent (OpenAI, Anthropic, Cohere, Mistral, Azure OpenAI, OpenAI-compatible) |
 | **Send User ID** | Whether to send Mattermost user IDs to the LLM provider |
 | **Default Model** | Specific model to use from your chosen provider |
 | **Input Token Limit** | Maximum tokens allowed in input (model-dependent) |
@@ -63,6 +63,24 @@ Select **Add an Agent** to create a new Agent, then configure the agent settings
 | **Enable Vision** | Enable Vision to allow the agent to process images. Requires a compatible model. |
 | **Enable Tools** | By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools. |
 | **Access Control** | Set which teams, channels, and users can access this agent |
+
+#### LLM Specific Settings
+
+Some LLMs have additional configuration that can enable rich features, like Web Search. 
+
+##### OpenAI, OpenAI Compatible
+
+| Setting | Description |
+|---------|-------------|
+| **Use Responses API** | OpenAI has introduced a new Responses API to the OpenAI API specification. This API allows for richer tool integration like reasoning, and native tool support like Web Search. |
+| **Enable Web Search** | Enabling web search will allow your Agent to leverage OpenAI's (or compatible) native web search tool, enabling Agents to respond with information more recent than the model's cutoff date. Responses API must be enabled in order to configure this setting. |
+
+##### Anthropic
+
+| Setting | Description |
+|---------|-------------|
+| **Enable Web Search** | Enabling web search will allow your Agent to leverage Anthropic's native web search tool, enabling Agents to respond with information more recent than the model's cutoff date.
+
 
 Select **Save** to create the agent.
 
@@ -75,6 +93,7 @@ For each LLM provider you want to use, you'll need to configure authentication. 
 | **OpenAI** | API Key | Organization ID |
 | **Anthropic** | API Key | |
 | **Cohere** | API Key | |
+| **Mistral** | API Key | |
 | **Azure OpenAI** | API Key, Resource Name, Deployment ID | |
 
 See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html) for detailed provider-specific configuration.
@@ -165,6 +184,44 @@ The plugin configuration is stored in the Mattermost database. To backup:
 1. Ensure your regular Mattermost backup includes plugin configurations
 2. For larger deployments, consider backing up indexed vector data separately
 
+### Configuration format
+
+The plugin uses a service-based architecture stored in the Mattermost database at `PluginSettings.Plugins["mattermost-ai"]`:
+
+- **Services** define LLM provider configurations (API keys, models, endpoints)
+- **Bots** reference services by ID and define agent personalities and access controls
+
+This separation allows multiple bots to share the same LLM service configuration.
+
+**Configuration structure:**
+```json
+{
+  "config": {
+    "services": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "type": "openai",
+        "apiKey": "sk-...",
+        "defaultModel": "gpt-4o"
+      }
+    ],
+    "bots": [
+      {
+        "id": "bot-001",
+        "name": "ai",
+        "displayName": "AI Assistant",
+        "serviceID": "550e8400-e29b-41d4-a716-446655440000",
+        "customInstructions": "You are a helpful assistant."
+      }
+    ]
+  }
+}
+```
+
+**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`
+
+**Legacy format:** Older configurations with embedded service objects within bots are automatically migrated to the current format on plugin startup.
+
 ## Troubleshooting
 
 ### Logging
@@ -239,6 +296,32 @@ The Model Context Protocol (MCP) integration allows Agents to connect to externa
 - **Connection Management**: The system automatically manages user connections to MCP servers
 - **Idle Cleanup**: Inactive client connections are automatically closed after the configured timeout
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation
+
+### Atlassian MCP server authorization
+
+When users connect to the Atlassian MCP server, they may encounter an authorization error requiring an organization admin to authorize your Mattermost domain. This configuration must be completed in Atlassian's admin console.
+
+**To authorize your Mattermost domain:**
+
+1. Go to [admin.atlassian.com](https://admin.atlassian.com) and select your organization.
+2. Go to **Apps > AI settings > Rovo MCP server**.
+3. Select **Add domain** and enter your Mattermost domain with the path wildcard: `https://your-instance.mattermost.cloud/**`
+4. Select **Save**.
+
+**Important:** The `/**` path wildcard is required. Example domain patterns:
+- Single instance: `https://your-company.mattermost.cloud/**`
+- All subdomains: `https://*.mattermost.cloud/**`
+- Custom domain: `https://chat.yourcompany.com/**`
+
+After adding the domain, wait 1-2 minutes for changes to propagate before users retry the connection.
+
+**Troubleshooting:**
+- Verify you have Organization Admin permissions (Site Admin is insufficient)
+- Confirm you're configuring the organization that owns the Atlassian site
+- Ensure the domain includes `https://` and the `/**` wildcard
+- Check for typos in the domain
+
+For more information, see [Atlassian's documentation on MCP server settings](https://support.atlassian.com/security-and-access-policies/docs/control-atlassian-rovo-mcp-server-settings/).
 
 > **Note:** The plugin currently doesn't render Markdown links (e.g., JIRA ticket links) in bot responses. URLs are displayed in plain text rather than as clickable Markdown-rendered links. This is not a bug but intended security behavior to prevent potential data exfiltration through links. While this limitation exists, improvements to link handling are being considered for future development. 
 

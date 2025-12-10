@@ -55,12 +55,15 @@ func CreateLLMProvider(modelName string, streamingTimeout time.Duration, tempera
 
 	// Route to appropriate provider based on model name
 	if strings.HasPrefix(strings.ToLower(modelName), "claude-") {
-		config := llm.ServiceConfig{
+		serviceConfig := llm.ServiceConfig{
 			APIKey:       os.Getenv("ANTHROPIC_API_KEY"),
 			DefaultModel: modelName,
 			Type:         "anthropic",
 		}
-		return anthropic.New(config, httpClient, *DisableThinkingFlag)
+		botConfig := llm.BotConfig{
+			ReasoningEnabled: !*DisableThinkingFlag,
+		}
+		return anthropic.New(serviceConfig, botConfig, httpClient)
 	}
 
 	// Special handling for mattermodel (local Ollama models)
