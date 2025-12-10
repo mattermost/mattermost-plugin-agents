@@ -311,7 +311,7 @@ The Mattermost MCP Server provides:
 - **Flexible Deployment**: Available as an embedded server for Mattermost AI agents or as an HTTP server for external MCP clients
 - **Rich Toolset**: Comprehensive tools for reading, searching, and creating content
 
-**Use Cases:**
+**Use Cases**
 
 With the Mattermost MCP Server, you can:
 
