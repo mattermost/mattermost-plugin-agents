@@ -319,7 +319,6 @@ const Config = (props: Props) => {
                 title={
                     <Horizontal>
                         <FormattedMessage defaultMessage='Model Context Protocol (MCP)'/>
-                        <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
                     </Horizontal>
                 }
                 subtitle={intl.formatMessage({defaultMessage: 'Configure MCP servers to enable AI tools.'})}
