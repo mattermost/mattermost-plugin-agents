@@ -320,7 +320,7 @@ With the Mattermost MCP Server, you can:
 - **Intelligent Search**: Search across your entire Mattermost workspace from any MCP-enabled client to find relevant discussions, decisions, or information
 - **Team Coordination**: Get lists of channel or team members, helping you quickly identify who to contact or mention
 - **Workflow Automation**: Use external MCP clients to automate routine tasks like posting standup updates, creating project channels, or notifying teams of important events
-- **Context-Aware Assistance**: AI agents can read conversation threads to understand context before responding or taking action
+- **Access Context-Aware Assistance**: AI agents can read conversation threads to understand context before responding or taking action.
 
 ### Available Tools
 
