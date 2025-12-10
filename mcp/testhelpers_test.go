@@ -6,8 +6,10 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -18,6 +20,101 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// Shared container state for test reuse
+var (
+	sharedSuite     *EmbeddedTestSuite
+	sharedSuiteOnce sync.Once
+	sharedSuiteMu   sync.Mutex
+)
+
+// TestMain handles shared container lifecycle for all tests in the package
+func TestMain(m *testing.M) {
+	code := m.Run()
+
+	// Cleanup shared container after all tests
+	sharedSuiteMu.Lock()
+	if sharedSuite != nil && sharedSuite.container != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := sharedSuite.container.Terminate(ctx); err != nil {
+			fmt.Printf("Failed to terminate shared container: %v\n", err)
+		}
+		cancel()
+	}
+	sharedSuiteMu.Unlock()
+
+	os.Exit(code)
+}
+
+// GetSharedTestSuite returns a shared container instance, initializing it on first use.
+// This dramatically speeds up tests by reusing a single container across all tests.
+// Each test should still create its own users/channels/posts for isolation.
+func GetSharedTestSuite(t *testing.T) *EmbeddedTestSuite {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+
+	sharedSuiteOnce.Do(func() {
+		sharedSuite = setupSharedSuite(t)
+	})
+
+	sharedSuiteMu.Lock()
+	defer sharedSuiteMu.Unlock()
+
+	if sharedSuite == nil {
+		t.Fatal("Failed to initialize shared test suite")
+	}
+
+	// Return a copy with the current test's *testing.T for logging
+	return &EmbeddedTestSuite{
+		t:           t,
+		container:   sharedSuite.container,
+		serverURL:   sharedSuite.serverURL,
+		adminClient: sharedSuite.adminClient,
+	}
+}
+
+// setupSharedSuite initializes the shared Mattermost container
+func setupSharedSuite(t *testing.T) *EmbeddedTestSuite {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// Create config with required settings
+	cfg := &model.Config{}
+	cfg.SetDefaults()
+	cfg.TeamSettings.EnableOpenServer = model.NewPointer(true)
+	cfg.TeamSettings.EnableUserCreation = model.NewPointer(true)
+
+	// Start Mattermost container with config at creation time
+	container, err := mmcontainer.RunContainer(ctx,
+		mmcontainer.WithLicense(""),
+		mmcontainer.WithConfig(cfg),
+	)
+	if err != nil {
+		t.Fatalf("Failed to start shared Mattermost container: %v", err)
+	}
+
+	// Get connection details
+	serverURL, err := container.URL(ctx)
+	if err != nil {
+		_ = container.Terminate(ctx)
+		t.Fatalf("Failed to get server URL: %v", err)
+	}
+
+	// Get admin client
+	adminClient, err := container.GetAdminClient(ctx)
+	if err != nil {
+		_ = container.Terminate(ctx)
+		t.Fatalf("Failed to get admin client: %v", err)
+	}
+
+	return &EmbeddedTestSuite{
+		t:           t,
+		container:   container,
+		serverURL:   serverURL,
+		adminClient: adminClient,
+	}
+}
 
 // EmbeddedTestSuite provides infrastructure for testing the embedded MCP server
 type EmbeddedTestSuite struct {
@@ -30,23 +127,24 @@ type EmbeddedTestSuite struct {
 }
 
 // SetupEmbeddedTestSuite initializes a test environment with a real Mattermost container
-// and an embedded MCP server
+// and an embedded MCP server. Prefer GetSharedTestSuite() for most tests to improve speed.
+// Use this only for tests that truly need an isolated container.
 func SetupEmbeddedTestSuite(t *testing.T) *EmbeddedTestSuite {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 
-	// Start Mattermost container
+	// Create config with required settings upfront (avoids extra HTTP calls)
+	cfg := &model.Config{}
+	cfg.SetDefaults()
+	cfg.TeamSettings.EnableOpenServer = model.NewPointer(true)
+	cfg.TeamSettings.EnableUserCreation = model.NewPointer(true)
+
+	// Start Mattermost container with config at creation time
 	container, err := mmcontainer.RunContainer(ctx,
 		mmcontainer.WithLicense(""),
+		mmcontainer.WithConfig(cfg),
 	)
 	require.NoError(t, err, "Failed to start Mattermost container")
-
-	// Enable open server to allow test user signups
-	err = container.SetConfig(ctx, "TeamSettings.EnableOpenServer", "true")
-	require.NoError(t, err, "Failed to enable open server")
-
-	// Enable user creation
-	err = container.SetConfig(ctx, "TeamSettings.EnableUserCreation", "true")
-	require.NoError(t, err, "Failed to enable user creation")
 
 	// Get connection details
 	serverURL, err := container.URL(ctx)
@@ -101,8 +199,9 @@ func (s *EmbeddedTestSuite) TearDown() {
 func (s *EmbeddedTestSuite) CreateUserAndSession(t *testing.T) (*model.User, *model.Session) {
 	ctx := context.Background()
 
-	// Create a unique user
-	username := fmt.Sprintf("testuser_%d", model.GetMillis())
+	// Create a unique user using UUID to avoid collisions in parallel tests
+	uniqueID := model.NewId()[:8]
+	username := fmt.Sprintf("testuser_%s", uniqueID)
 	email := fmt.Sprintf("%s@test.com", username)
 
 	user := &model.User{
@@ -125,7 +224,7 @@ func (s *EmbeddedTestSuite) CreateUserAndSession(t *testing.T) (*model.User, *mo
 	} else {
 		// Create a new team
 		team := &model.Team{
-			Name:        fmt.Sprintf("testteam_%d", model.GetMillis()),
+			Name:        fmt.Sprintf("testteam_%s", model.NewId()[:8]),
 			DisplayName: "Test Team",
 			Type:        model.TeamOpen,
 		}
@@ -176,7 +275,7 @@ func (s *EmbeddedTestSuite) CreateUserAndSession(t *testing.T) (*model.User, *mo
 func (s *EmbeddedTestSuite) CreateChannel(t *testing.T, teamID, userID string) *model.Channel {
 	ctx := context.Background()
 
-	channelName := fmt.Sprintf("testchannel_%d", model.GetMillis())
+	channelName := fmt.Sprintf("testchannel_%s", model.NewId()[:8])
 	channel := &model.Channel{
 		TeamId:      teamID,
 		Name:        channelName,
