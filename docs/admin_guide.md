@@ -348,16 +348,16 @@ The Mattermost MCP Server provides:
 - **Flexible Deployment**: Available as an embedded server for Mattermost AI agents or as an HTTP server for external MCP clients
 - **Rich Toolset**: Comprehensive tools for reading, searching, and creating content
 
-**Use Cases:**
+**Use Cases**
 
 With the Mattermost MCP Server, you can:
 
-- **Automated Channel Summaries**: Ask your AI agent to summarize activity across channels, catching up on discussions while you were away
-- **Cross-Channel Updates**: Have your agent post status updates to multiple channels simultaneously, keeping distributed teams synchronized
-- **Intelligent Search**: Search across your entire Mattermost workspace from any MCP-enabled client to find relevant discussions, decisions, or information
-- **Team Coordination**: Get lists of channel or team members, helping you quickly identify who to contact or mention
-- **Workflow Automation**: Use external MCP clients to automate routine tasks like posting standup updates, creating project channels, or notifying teams of important events
-- **Context-Aware Assistance**: AI agents can read conversation threads to understand context before responding or taking action
+- **Automate Channel Summaries**: Ask your AI agent to summarize activity across channels, catching up on discussions while you were away.
+- **Share Updates Across Channels**: Have your agent post status updates to multiple channels simultaneously, keeping distributed teams synchronized.
+- **Search Intelligently**: Search across your entire Mattermost workspace from any MCP-enabled client to find relevant discussions, decisions, or information.
+- **Coordinate Teams**: Get lists of channel or team members to quickly identify who to contact or mention.
+- **Automate Workflows**: Use external MCP clients to automate routine tasks like posting stand-up updates, creating project channels, or notifying teams of important events.
+- **Access Context-Aware Assistance**: AI agents can read conversation threads to understand context before responding or taking action.
 
 ### Available Tools
 
@@ -380,17 +380,17 @@ The MCP server provides the following tools to AI agents and external clients:
 
 #### For AI Agents
 
-The embedded MCP server provides Mattermost AI agents with direct access to Mattermost functionality:
+To set up an embedded MCP server providing Mattermost AI agents with direct access to Mattermost functionality:
 
-1. Navigate to **System Console > Plugins > Agents > MCP Servers**
-2. Set **Enable Embedded Server** to **True**
-3. When enabled, all configured agents can access Mattermost tools
+1. Go to **System Console > Plugins > Agents > MCP Servers**.
+2. Set **Enable Embedded Server** to **True**.
+3. When enabled, all configured agents can access Mattermost tools.
 
 Agents will automatically use these tools when appropriate to complete user requests.
 
 #### For External Clients
 
-Enable external MCP clients (such as Claude web, Claude Code, or other MCP-compatible applications) to interact with your Mattermost instance.
+You can enable external MCP clients, such as Claude web, Claude Code, or other MCP-compatible applications, to interact with your Mattermost instance.
 
 **Requirements:**
 - Mattermost Server v11.2 or later
@@ -398,11 +398,11 @@ Enable external MCP clients (such as Claude web, Claude Code, or other MCP-compa
 
 **Note:** The server uses streamable HTTP transport and does not support traditional Server-Sent Events (SSE) transport. External clients must use the streamable HTTP transport available at the `/mcp` endpoint.
 
-**Enabling:**
+To enable an external MCP client:
 
-1. Navigate to **System Console > Plugins > Agents > MCP Servers**
-2. Set **Enable Mattermost MCP Server (HTTP)** to **True**
-3. The MCP server will be available at: `https://your-mattermost-server/plugins/mattermost-ai/mcp-server/mcp`
+1. Go to **System Console > Plugins > Agents > MCP Servers**
+2. Set **Enable Mattermost MCP Server (HTTP)** to **True**.
+The MCP server will be available at: `https://your-mattermost-server/plugins/mattermost-ai/mcp-server/mcp`
 
 **Authentication:**
 
@@ -413,10 +413,10 @@ The MCP server supports OAuth 2.0 authentication with both manual and automatic 
 **Prerequisites:**
 - Enable OAuth 2.0 service provider in **System Console > Integrations > Integration Management**:
   - Set **Enable OAuth 2.0 Service Provider** to **True**
-  - For automatic client registration, set **Enable OAuth 2.0 Dynamic Client Registration** to **True** (Note: DCR is an unprotected endpoint - see the [OAuth 2.0 documentation](https://developers.mattermost.com/integrate/apps/authentication/oauth2/) for security considerations)
+  - For automatic client registration, set **Enable OAuth 2.0 Dynamic Client Registration** to **True** (Note: DCR is an unprotected endpoint, meaning it is publicly accessible and does not require authentication—anyone can register OAuth clients if this feature is enabled. See the [OAuth 2.0 documentation](https://developers.mattermost.com/integrate/apps/authentication/oauth2/) for security considerations.)
 
 **Client Registration Methods:**
-- **Dynamic Client Registration (DCR/RFC 7591)**: External clients can automatically register and obtain credentials without manual setup
+- **Dynamic Client Registration (DCR/RFC 7591)**: External clients can automatically register and obtain credentials without manual setup.
 - **Manual Registration**: Create OAuth applications through **Product menu > Integrations > OAuth 2.0 Applications**. See the [OAuth 2.0 documentation](https://developers.mattermost.com/integrate/apps/authentication/oauth2/) for details.
 
 **Additional Details:**
@@ -428,10 +428,10 @@ The MCP server supports OAuth 2.0 authentication with both manual and automatic 
 
 *Personal Access Tokens*
 
-You can authenticate using Mattermost Personal Access Tokens:
+You can authenticate using Mattermost Personal Access Tokens (PAT):
 
-1. Create a Personal Access Token in Mattermost (**User Settings > Security > Personal Access Tokens**)
-2. Configure your MCP client to use Bearer token authentication with the PAT 
+1. Create a Personal Access Token in Mattermost (**User Settings > Security > Personal Access Tokens**).
+2. Configure your MCP client to use Bearer token authentication with the PAT.
 
 ### License requirements
 
