@@ -6,6 +6,7 @@ package mcp
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"golang.org/x/oauth2"
 )
@@ -70,6 +71,20 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 	reqBodyClosed = true
 	resp, err := transport.RoundTrip(req)
 	if err != nil {
+		// Check if this is an OAuth token refresh failure (invalid_grant)
+		// This happens when client credentials changed (e.g., v1 -> v2 migration)
+		// and the old token was issued for different credentials
+		if strings.Contains(err.Error(), "invalid_grant") {
+			// Clear the stale token - it's no longer valid with current credentials
+			if delErr := t.manager.deleteToken(t.userID, t.serverName); delErr != nil {
+				t.manager.pluginAPI.LogWarn("Failed to delete stale token", "error", delErr)
+			}
+			// Return error that will trigger re-authentication
+			return nil, &mcpUnauthrorized{
+				metadataURL: "",
+				err:         fmt.Errorf("token refresh failed (credentials may have changed), re-authentication required: %w", err),
+			}
+		}
 		return nil, fmt.Errorf("authenticationTransport round trip failed: %w", err)
 	}
 
