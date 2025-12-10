@@ -811,7 +811,10 @@ func TestReasoningEffortConfiguration(t *testing.T) {
 			}
 
 			// Call the actual function that handles reasoning configuration
-			result := oai.convertToResponseParams(chatParams, &llm.Context{})
+			result := oai.convertToResponseParams(chatParams, &llm.Context{}, llm.LanguageModelConfig{
+				Model:              "gpt-4o",
+				MaxGeneratedTokens: 8192,
+			})
 
 			if !tt.shouldSetReasoning {
 				// When reasoning is disabled, Reasoning should be empty

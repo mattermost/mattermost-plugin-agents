@@ -53,7 +53,7 @@ Select **Add an Agent** to create a new Agent, then configure the agent settings
 | **Display Name** | User-facing name shown in Mattermost |
 | **Agent Username** | The mattermost username for the agent. @ mentions to the agent will use this name |
 | **Agent Avatar** | Custom image for the agent |
-| **Service** | LLM provider for this agent (OpenAI, Anthropic, Cohere, Azure OpenAI, OpenAI-compatible) |
+| **Service** | LLM provider for this agent (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Azure OpenAI, OpenAI-compatible) |
 | **Send User ID** | Whether to send Mattermost user IDs to the LLM provider |
 | **Default Model** | Specific model to use from your chosen provider |
 | **Input Token Limit** | Maximum tokens allowed in input (model-dependent) |
@@ -81,6 +81,15 @@ Some LLMs have additional configuration that can enable rich features, like Web 
 |---------|-------------|
 | **Enable Web Search** | Enabling web search will allow your Agent to leverage Anthropic's native web search tool, enabling Agents to respond with information more recent than the model's cutoff date.
 
+##### AWS Bedrock
+
+| Setting | Description |
+|---------|-------------|
+| **AWS Region** | The AWS region where your Bedrock service is available (e.g., us-east-1, us-west-2). |
+| **API Key** | Optional. AWS credentials can be provided via API Key field or through IAM roles, environment variables, or instance profiles. |
+
+AWS Bedrock provides access to multiple foundation models including Claude (Anthropic), Amazon Titan, and other models available through AWS. Authentication can be configured using AWS credentials in the API Key field, or by using IAM roles when running Mattermost on AWS infrastructure.
+
 
 Select **Save** to create the agent.
 
@@ -92,7 +101,9 @@ For each LLM provider you want to use, you'll need to configure authentication. 
 |----------|----------|----------|
 | **OpenAI** | API Key | Organization ID |
 | **Anthropic** | API Key | |
+| **AWS Bedrock** | AWS Region | API Key (can use IAM role) |
 | **Cohere** | API Key | |
+| **Mistral** | API Key | |
 | **Azure OpenAI** | API Key, Resource Name, Deployment ID | |
 
 See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html) for detailed provider-specific configuration.
@@ -217,7 +228,7 @@ This separation allows multiple bots to share the same LLM service configuration
 }
 ```
 
-**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`
+**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`
 
 **Legacy format:** Older configurations with embedded service objects within bots are automatically migrated to the current format on plugin startup.
 
@@ -296,7 +307,33 @@ The Model Context Protocol (MCP) integration allows Agents to connect to externa
 - **Idle Cleanup**: Inactive client connections are automatically closed after the configured timeout
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation
 
-> **Note:** The plugin currently doesn't render Markdown links (e.g., JIRA ticket links) in bot responses. URLs are displayed in plain text rather than as clickable Markdown-rendered links. This is not a bug but intended security behavior to prevent potential data exfiltration through links. While this limitation exists, improvements to link handling are being considered for future development.
+### Atlassian MCP server authorization
+
+When users connect to the Atlassian MCP server, they may encounter an authorization error requiring an organization admin to authorize your Mattermost domain. This configuration must be completed in Atlassian's admin console.
+
+**To authorize your Mattermost domain:**
+
+1. Go to [admin.atlassian.com](https://admin.atlassian.com) and select your organization.
+2. Go to **Apps > AI settings > Rovo MCP server**.
+3. Select **Add domain** and enter your Mattermost domain with the path wildcard: `https://your-instance.mattermost.cloud/**`
+4. Select **Save**.
+
+**Important:** The `/**` path wildcard is required. Example domain patterns:
+- Single instance: `https://your-company.mattermost.cloud/**`
+- All subdomains: `https://*.mattermost.cloud/**`
+- Custom domain: `https://chat.yourcompany.com/**`
+
+After adding the domain, wait 1-2 minutes for changes to propagate before users retry the connection.
+
+**Troubleshooting:**
+- Verify you have Organization Admin permissions (Site Admin is insufficient)
+- Confirm you're configuring the organization that owns the Atlassian site
+- Ensure the domain includes `https://` and the `/**` wildcard
+- Check for typos in the domain
+
+For more information, see [Atlassian's documentation on MCP server settings](https://support.atlassian.com/security-and-access-policies/docs/control-atlassian-rovo-mcp-server-settings/).
+
+> **Note:** The plugin currently doesn't render Markdown links (e.g., JIRA ticket links) in bot responses. URLs are displayed in plain text rather than as clickable Markdown-rendered links. This is not a bug but intended security behavior to prevent potential data exfiltration through links. While this limitation exists, improvements to link handling are being considered for future development. 
 
 ## Mattermost MCP Server
 

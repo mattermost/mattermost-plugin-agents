@@ -49,6 +49,8 @@ func newEmbeddingProvider(config embeddings.UpstreamConfig, dimensions int, http
 		}
 		openaiConfig.EmbeddingDimensions = dimensions
 		return openai.NewEmbeddings(openaiConfig, httpClient), nil
+	case embeddings.ProviderTypeMock:
+		return embeddings.NewMockEmbeddingProvider(dimensions), nil
 	}
 
 	return nil, fmt.Errorf("unsupported embedding provider type: %s", config.Type)

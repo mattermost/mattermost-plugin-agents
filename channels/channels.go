@@ -57,9 +57,9 @@ func (c *Channels) Interval(
 		return nil, err
 	}
 
-	// Remove deleted posts
+	// Remove deleted posts and system posts (like join/leave messages)
 	threadData.Posts = slices.DeleteFunc(threadData.Posts, func(post *model.Post) bool {
-		return post.DeleteAt != 0
+		return post.DeleteAt != 0 || post.Type != ""
 	})
 
 	formattedThread := format.ThreadData(threadData)
@@ -91,7 +91,7 @@ func (c *Channels) Interval(
 		Context: context,
 	}
 
-	resultStream, err := c.llm.ChatCompletion(completionRequest)
+	resultStream, err := c.llm.ChatCompletion(completionRequest, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, err
 	}

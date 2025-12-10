@@ -64,32 +64,22 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Generating is true while we are receiving new content from the websocket
     const [generating, setGenerating] = useState(false);
 
-    // Precontent is true when we're waiting for the first content to arrive
-    // Initialize to true if post is empty AND has no reasoning (fresh post), false otherwise (historical post)
-    const persistedReasoning = props.post.props?.reasoning_summary || '';
-    const [precontent, setPrecontent] = useState(props.post.message === '' && persistedReasoning === '');
+    // State for tool calls - initialize from persisted tool calls if available
+    const [toolCalls, setToolCalls] = useState<ToolCall[]>(() => {
+        const toolCallsJson = props.post.props?.pending_tool_call;
+        if (toolCallsJson) {
+            try {
+                return JSON.parse(toolCallsJson);
+            } catch (error) {
+                return [];
+            }
+        }
+        return [];
+    });
 
-    // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation
-    // Needs a ref because of the useEffect closure.
-    const [stopped, setStopped] = useState(false);
-    const stoppedRef = useRef(stopped);
-    stoppedRef.current = stopped;
-
-    // State for tool calls
-    const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
-    const [error, setError] = useState('');
-
-    // State for reasoning summary display
-    // Use the same persistedReasoning from above
-    const [reasoningSummary, setReasoningSummary] = useState(persistedReasoning);
-    const [showReasoning, setShowReasoning] = useState(persistedReasoning !== '');
-    const [isReasoningCollapsed, setIsReasoningCollapsed] = useState(true);
-    const [isReasoningLoading, setIsReasoningLoading] = useState(false);
-
-    // State for annotations/citations
-    // Initialize from persisted annotations if available
-    const persistedAnnotations = props.post.props?.annotations || '';
+    // State for annotations/citations - initialize from persisted annotations if available
     const [annotations, setAnnotations] = useState<Annotation[]>(() => {
+        const persistedAnnotations = props.post.props?.annotations || '';
         if (persistedAnnotations) {
             try {
                 return JSON.parse(persistedAnnotations);
@@ -100,11 +90,33 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         return [];
     });
 
+    // Precontent is true when we're waiting for the first content to arrive
+    // Initialize to true if post is empty AND has no reasoning AND no tool calls AND no annotations (fresh post)
+    const persistedReasoning = props.post.props?.reasoning_summary || '';
+    const [precontent, setPrecontent] = useState(
+        props.post.message === '' &&
+        persistedReasoning === '' &&
+        toolCalls.length === 0 &&
+        annotations.length === 0,
+    );
+
+    // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation
+    // Needs a ref because of the useEffect closure.
+    const [stopped, setStopped] = useState(false);
+    const stoppedRef = useRef(stopped);
+    stoppedRef.current = stopped;
+
+    const [error, setError] = useState('');
+
+    // State for reasoning summary display
+    // Use the same persistedReasoning from above
+    const [reasoningSummary, setReasoningSummary] = useState(persistedReasoning);
+    const [showReasoning, setShowReasoning] = useState(persistedReasoning !== '');
+    const [isReasoningCollapsed, setIsReasoningCollapsed] = useState(true);
+    const [isReasoningLoading, setIsReasoningLoading] = useState(false);
+
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
-
-    // Get tool calls from post props
-    const toolCallsJson = props.post.props?.pending_tool_call;
 
     // Initialize reasoning from persisted data when navigating to different posts
     const previousPostIdRef = useRef(props.post.id);
@@ -126,9 +138,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
             // Initialize annotations from persisted data
             const persistedAnnotations = props.post.props?.annotations || '';
+            let parsedAnnotations: Annotation[] = [];
             if (persistedAnnotations) {
                 try {
-                    setAnnotations(JSON.parse(persistedAnnotations));
+                    parsedAnnotations = JSON.parse(persistedAnnotations);
+                    setAnnotations(parsedAnnotations);
                 } catch (error) {
                     setAnnotations([]);
                 }
@@ -136,16 +150,36 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setAnnotations([]);
             }
 
-            // Set precontent if this is a fresh empty post (no content and no reasoning)
-            // Otherwise reset to false (historical posts)
-            setPrecontent(props.post.message === '' && persistedReasoning === '');
+            // Initialize tool calls from persisted data
+            const toolCallsJson = props.post.props?.pending_tool_call;
+            let parsedToolCalls: ToolCall[] = [];
+            if (toolCallsJson) {
+                try {
+                    parsedToolCalls = JSON.parse(toolCallsJson);
+                    setToolCalls(parsedToolCalls);
+                } catch (error) {
+                    setToolCalls([]);
+                }
+            } else {
+                setToolCalls([]);
+            }
+
+            // Set precontent if this is a fresh empty post (no content, no reasoning, no tool calls, no annotations)
+            // Otherwise reset to false (historical posts or posts with any content)
+            setPrecontent(
+                props.post.message === '' &&
+                persistedReasoning === '' &&
+                parsedToolCalls.length === 0 &&
+                parsedAnnotations.length === 0,
+            );
 
             previousPostIdRef.current = props.post.id;
         }
-    }, [props.post.id, props.post.props?.reasoning_summary, props.post.props?.annotations, props.post.message]);
+    }, [props.post.id, props.post.props?.reasoning_summary, props.post.props?.annotations, props.post.props?.pending_tool_call, props.post.message]);
 
     // Update tool calls from props when available
     useEffect(() => {
+        const toolCallsJson = props.post.props?.pending_tool_call;
         if (toolCallsJson) {
             try {
                 const parsedToolCalls = JSON.parse(toolCallsJson);
@@ -155,7 +189,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setError('Error parsing tool calls');
             }
         }
-    }, [toolCallsJson]);
+    }, [props.post.props?.pending_tool_call]);
 
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
@@ -202,6 +236,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     try {
                         const parsedToolCalls = JSON.parse(data.tool_call);
                         setToolCalls(parsedToolCalls);
+                        setPrecontent(false); // Clear "Starting..." when tool calls arrive
                     } catch (error) {
                         // Handle error silently
                         setError('Error parsing tool call data');
@@ -214,6 +249,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     try {
                         const parsedAnnotations = JSON.parse(data.annotations);
                         setAnnotations(parsedAnnotations);
+                        setPrecontent(false); // Clear "Starting..." when annotations arrive
                     } catch (error) {
                         // Handle error silently
                         setError('Error parsing annotation data');
@@ -247,6 +283,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     setIsReasoningCollapsed(true);
                     setIsReasoningLoading(false);
 
+                    // Clear tool calls and annotations when starting new generation
+                    setToolCalls([]);
+                    setAnnotations([]);
+
                     if (!message) {
                         setMessage('');
                     }
@@ -277,6 +317,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
         // Clear annotations/citations when regenerating
         setAnnotations([]);
+
+        // Clear tool calls when regenerating
+        setToolCalls([]);
 
         doRegenerate(props.post.id);
     };

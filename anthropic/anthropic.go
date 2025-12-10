@@ -202,7 +202,11 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 		Model:     anthropicSDK.Model(state.config.Model),
 		MaxTokens: int64(state.config.MaxGeneratedTokens),
 		Messages:  state.messages,
-		Tools:     convertTools(state.tools),
+	}
+
+	// Only add tools if not explicitly disabled
+	if !state.config.ToolsDisabled {
+		params.Tools = convertTools(state.tools)
 	}
 
 	// Only include system message if it's non-empty
@@ -213,8 +217,8 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 		}}
 	}
 
-	// Add native tools if enabled
-	if a.isNativeToolEnabled("web_search") {
+	// Add native tools if not explicitly disabled
+	if !state.config.ToolsDisabled && a.isNativeToolEnabled("web_search") {
 		// Add web search as a native tool
 		webSearchTool := anthropicSDK.WebSearchTool20250305Param{
 			Name: "web_search",
@@ -225,9 +229,11 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 		})
 	}
 
-	// Enable thinking/reasoning for models that support it
-	if thinkingConfig, ok := a.calculateThinkingConfig(state.config.MaxGeneratedTokens); ok {
-		params.Thinking = thinkingConfig
+	// Enable thinking/reasoning for models that support it (unless explicitly disabled)
+	if !state.config.ReasoningDisabled {
+		if thinkingConfig, ok := a.calculateThinkingConfig(state.config.MaxGeneratedTokens); ok {
+			params.Thinking = thinkingConfig
+		}
 	}
 
 	stream := a.client.Messages.NewStreaming(context.Background(), params)
@@ -547,4 +553,33 @@ func (a *Anthropic) calculateThinkingConfig(maxGeneratedTokens int) (anthropicSD
 	}
 
 	return config, true
+}
+
+// FetchModels retrieves the list of available models from the Anthropic API
+func FetchModels(apiKey string, httpClient *http.Client) ([]llm.ModelInfo, error) {
+	client := anthropicSDK.NewClient(
+		option.WithAPIKey(apiKey),
+		option.WithHTTPClient(httpClient),
+	)
+
+	// Use AutoPaging to automatically handle pagination
+	autoPager := client.Models.ListAutoPaging(context.Background(), anthropicSDK.ModelListParams{})
+
+	var models []llm.ModelInfo
+
+	// Iterate through all pages
+	for autoPager.Next() {
+		model := autoPager.Current()
+		models = append(models, llm.ModelInfo{
+			ID:          model.ID,
+			DisplayName: model.DisplayName,
+		})
+	}
+
+	// Check if there was an error during iteration
+	if err := autoPager.Err(); err != nil {
+		return nil, err
+	}
+
+	return models, nil
 }

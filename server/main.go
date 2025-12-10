@@ -240,6 +240,7 @@ func (p *Plugin) OnActivate() error {
 		i18nBundle,
 		mcpClientManager,
 		mcpHandlers,
+		llmUpstreamHTTPClient,
 	)
 
 	// Keep only what we need

@@ -170,8 +170,27 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 	// Format the response
 	var result strings.Builder
 	if channelName != "" && teamName != "" {
-		result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n\n", channelName, teamName))
+		result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channelName, teamName))
 	}
+
+	// Add Channel ID and Root ID to header
+	if len(posts) > 0 {
+		result.WriteString(fmt.Sprintf("Channel ID: %s\n", posts[0].ChannelId))
+
+		// Find any post with a non-empty RootId - all replies share the same RootId
+		var rootID string
+		for _, post := range posts {
+			if post.RootId != "" {
+				rootID = post.RootId
+				break
+			}
+		}
+
+		if rootID != "" {
+			result.WriteString(fmt.Sprintf("Root ID: %s\n", rootID))
+		}
+	}
+	result.WriteString("\n")
 
 	if args.IncludeThread && len(posts) > 1 {
 		result.WriteString(fmt.Sprintf("Thread with %d posts:\n\n", len(posts)))

@@ -128,6 +128,23 @@ func (s *ToolStore) GetTools() []Tool {
 	return result
 }
 
+// GetToolsInfo returns basic information (name and description) about all tools in the store.
+// This is useful for informing LLMs about tools that are available in other contexts
+// (e.g., DM-only tools when in a channel).
+func (s *ToolStore) GetToolsInfo() []ToolInfo {
+	if s == nil || len(s.tools) == 0 {
+		return nil
+	}
+	result := make([]ToolInfo, 0, len(s.tools))
+	for _, tool := range s.tools {
+		result = append(result, ToolInfo{
+			Name:        tool.Name,
+			Description: tool.Description,
+		})
+	}
+	return result
+}
+
 func (s *ToolStore) TraceUnknown(name string, argsGetter ToolArgumentGetter) {
 	if s.log != nil && s.doTrace {
 		args := ""

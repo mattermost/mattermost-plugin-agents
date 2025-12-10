@@ -70,7 +70,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			bot,
 			user,
 			channel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
+			c.contextBuilder.WithLLMContextDefaultTools(bot),
 		)
 
 		analyzer := threads.New(bot.LLM(), c.prompts, c.mmClient)
@@ -119,7 +119,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			bot,
 			user,
 			originalFileChannel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot, originalFileChannel.Type == model.ChannelTypeDirect),
+			c.contextBuilder.WithLLMContextDefaultTools(bot),
 		)
 		var summaryErr error
 		result, summaryErr = c.meetingsService.SummarizeTranscription(bot, transcription, context)
@@ -152,7 +152,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			bot,
 			user,
 			channel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
+			c.contextBuilder.WithLLMContextDefaultTools(bot),
 		)
 		var summaryErr error
 		result, summaryErr = c.meetingsService.SummarizeTranscription(bot, transcription, context)
@@ -172,15 +172,17 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			return fmt.Errorf("could not get post being responded to: %w", getErr)
 		}
 
-		// Create a context with the tool call callback already set
+		// Create a context with tools for LLM awareness
+		// Security restriction is enforced inside ProcessUserRequestWithContext via WithToolsDisabled based on channel type
 		contextWithCallback := c.contextBuilder.BuildLLMContextUserRequest(
 			bot,
 			user,
 			channel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
+			c.contextBuilder.WithLLMContextDefaultTools(bot),
 		)
 
 		// Process the user request with the context that has the callback
+		// Note: ProcessUserRequestWithContext internally checks if this is a DM and applies WithToolsDisabled() if not
 		var processErr error
 		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback)
 		if processErr != nil {

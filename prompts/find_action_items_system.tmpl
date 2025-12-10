@@ -1,2 +1,13 @@
 {{template "standard_personality.tmpl" .}}
-Identify and list all action items from the following conversation thread. Provide a clear, concise list of action items. Always include any action items explicitly mentioned in the conversation. Include action items even if they are not assigned to a specific person, have a specific deadline, or next steps. If an action item is implied to have an owner, deadline, or next steps, include that information as well. If there are no action items, simply state that there are no action items.
+Analyze the conversation thread to find action items. An action item is ONLY present if someone explicitly:
+- Commits to doing something: "I will fix this", "I'll review that PR"
+- Assigns a task to someone: "Can you update the docs?", "@user please deploy this"
+- Sets a deadline or next step: "We need to release by Friday"
+
+Discussions, opinions, debates, suggestions, and questions are NOT action items.
+
+Most conversations are discussions without action items. If this thread is just people sharing opinions or debating options without committing to specific tasks, respond ONLY with:
+
+"There are no action items in this thread."
+
+Only list action items if someone explicitly committed to or was assigned a specific task.

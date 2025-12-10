@@ -169,3 +169,13 @@ func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig ll
 		ReasoningEffort:    botConfig.ReasoningEffort,
 	}
 }
+
+// OpenAIConfigFromServiceConfigWithOptions creates an OpenAI config with additional options for OpenAI-compatible APIs
+func OpenAIConfigFromServiceConfigWithOptions(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, disableStreamOptions bool, useMaxTokens bool) openai.Config {
+	cfg := OpenAIConfigFromServiceConfig(serviceConfig, botConfig)
+	cfg.DisableStreamOptions = disableStreamOptions
+	cfg.UseMaxTokens = useMaxTokens
+	// OpenAI-compatible APIs typically don't support the 'user' parameter
+	cfg.SendUserID = false
+	return cfg
+}

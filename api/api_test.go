@@ -30,6 +30,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Test ID constants (26-char alphanumeric to match Mattermost ID format)
+const (
+	testBotUserID      = "abcdefghijklmnopqrstuvwxyz"
+	testUserID         = "user12345678901234567890ab"
+	testChannelID      = "chan12345678901234567890ab"
+	testOtherUserID    = "othe12345678901234567890ab"
+	testNonexistentBot = "none12345678901234567890ab"
+)
+
 type TestEnvironment struct {
 	api     *API
 	mockAPI *plugintest.API
@@ -125,7 +134,7 @@ func createTestBots(mockAPI *plugintest.API, client *pluginapi.Client) *bots.MMB
 func (e *TestEnvironment) setupTestBot(botConfig llm.BotConfig) {
 	// Create a mock bot user
 	mmBot := &model.Bot{
-		UserId:      "bot-user-id",
+		UserId:      testBotUserID,
 		Username:    botConfig.Name,
 		DisplayName: botConfig.DisplayName,
 	}
@@ -151,7 +160,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 
 	cfg := &testConfigImpl{}
 
-	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil)
+	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil)
 
 	return &TestEnvironment{
 		api:     api,
