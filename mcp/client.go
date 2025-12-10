@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"strings"
 	"time"
 
@@ -41,6 +42,7 @@ type Client struct {
 	userID         string
 	log            pluginapi.LogService
 	oauthManager   *OAuthManager
+	httpClient     *http.Client
 	embeddedClient *EmbeddedServerClient // for reconnection (nil for remote servers)
 	sessionID      string                // session ID for embedded server reconnection
 }
@@ -138,7 +140,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 }
 
 // NewClient creates a new MCP client for the given server and user and connects to the specified MCP server
-func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, toolsCache *ToolsCache) (*Client, error) {
+func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) (*Client, error) {
 	c := &Client{
 		session:      nil,
 		config:       serverConfig,
@@ -146,6 +148,7 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 		userID:       userID,
 		log:          log,
 		oauthManager: oauthManager,
+		httpClient:   httpClient,
 	}
 
 	session, err := c.createSession(ctx, serverConfig)
@@ -251,7 +254,7 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 		&mcp.ClientOptions{},
 	)
 
-	httpClient := c.httpClient(headers)
+	httpClient := c.httpClientForMCP(headers)
 
 	// Try new Streamable HTTP transport first (2025-03-26 spec).
 	// This will POST InitializeRequest and detect if the server supports the new transport.

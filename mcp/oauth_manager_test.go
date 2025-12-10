@@ -17,7 +17,8 @@ import (
 // setupTestOAuthManager creates a test OAuth manager with mocked dependencies
 func setupTestOAuthManager(t *testing.T) (*OAuthManager, *mocks.MockClient) {
 	mockClient := mocks.NewMockClient(t)
-	manager := NewOAuthManager(mockClient, "http://test.com/callback")
+	// Pass nil for httpClient in tests - tests that need HTTP functionality should mock it
+	manager := NewOAuthManager(mockClient, "http://test.com/callback", nil)
 
 	return manager, mockClient
 }
