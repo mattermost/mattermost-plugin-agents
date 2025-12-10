@@ -337,7 +337,7 @@ For more information, see [Atlassian's documentation on MCP server settings](htt
 
 ## Mattermost MCP Server
 
-The Mattermost MCP Server enables AI agents and external applications to interact with your Mattermost instance through the Model Context Protocol (MCP). This standardized protocol allows AI assistants to read messages, search content, create posts, and manage channels and teams programmatically.
+The Mattermost MCP Server enables AI agents and external applications to interact with your Mattermost instance through the Model Context Protocol (MCP). This [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature is a standardized protocol that allows AI assistants to read messages, search content, create posts, and manage channels and teams programmatically. 
 
 ### Overview
 
