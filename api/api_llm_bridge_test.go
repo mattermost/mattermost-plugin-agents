@@ -35,7 +35,7 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 	}{
 		{
 			name:  "successful completion",
-			agent: "bot-user-id",
+			agent: testBotUserID,
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Hello"},
@@ -49,7 +49,7 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 		},
 		{
 			name:  "multiple posts with different roles",
-			agent: "bot-user-id",
+			agent: testBotUserID,
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "system", Message: "You are helpful"},
@@ -64,7 +64,7 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 		},
 		{
 			name:  "LLM returns error",
-			agent: "bot-user-id",
+			agent: testBotUserID,
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Hello"},
@@ -76,7 +76,7 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 		},
 		{
 			name:  "empty posts array",
-			agent: "bot-user-id",
+			agent: testBotUserID,
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{},
 			},
@@ -86,7 +86,7 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 		},
 		{
 			name:  "bot not found",
-			agent: "nonexistent-bot-id",
+			agent: testNonexistentBot,
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Hello"},
@@ -98,7 +98,7 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 		},
 		{
 			name:  "bot role alias works",
-			agent: "bot-user-id",
+			agent: testBotUserID,
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "bot", Message: "I'm a bot"},
@@ -113,7 +113,7 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 		},
 		{
 			name:  "invalid role",
-			agent: "bot-user-id",
+			agent: testBotUserID,
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "invalid", Message: "test"},
@@ -184,7 +184,7 @@ func TestBridgeClientAgentCompletionStream(t *testing.T) {
 	}{
 		{
 			name:  "successful streaming",
-			agent: "bot-user-id",
+			agent: testBotUserID,
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Count to 3"},
@@ -219,7 +219,7 @@ func TestBridgeClientAgentCompletionStream(t *testing.T) {
 		},
 		{
 			name:  "streaming with error event",
-			agent: "bot-user-id",
+			agent: testBotUserID,
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Hello"},
@@ -242,7 +242,7 @@ func TestBridgeClientAgentCompletionStream(t *testing.T) {
 		},
 		{
 			name:  "bot not found",
-			agent: "nonexistent-bot-id",
+			agent: testNonexistentBot,
 			request: bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Hello"},
@@ -536,7 +536,7 @@ func TestBridgeClientPermissions(t *testing.T) {
 		},
 		{
 			name:      "UserID only with allowed user - succeeds",
-			userID:    "user-123",
+			userID:    testUserID,
 			channelID: "",
 			botConfig: llm.BotConfig{
 				UserAccessLevel: llm.UserAccessLevelAll,
@@ -546,11 +546,11 @@ func TestBridgeClientPermissions(t *testing.T) {
 		},
 		{
 			name:      "UserID only with blocked user - returns error",
-			userID:    "user-123",
+			userID:    testUserID,
 			channelID: "",
 			botConfig: llm.BotConfig{
 				UserAccessLevel: llm.UserAccessLevelBlock,
-				UserIDs:         []string{"user-123"},
+				UserIDs:         []string{testUserID},
 			},
 			envSetup:    func(e *TestEnvironment) {},
 			expectError: true,
@@ -558,15 +558,15 @@ func TestBridgeClientPermissions(t *testing.T) {
 		},
 		{
 			name:      "UserID + ChannelID with allowed user and channel - succeeds",
-			userID:    "user-123",
-			channelID: "channel-123",
+			userID:    testUserID,
+			channelID: testChannelID,
 			botConfig: llm.BotConfig{
 				UserAccessLevel:    llm.UserAccessLevelAll,
 				ChannelAccessLevel: llm.ChannelAccessLevelAll,
 			},
 			envSetup: func(e *TestEnvironment) {
-				e.mockAPI.On("GetChannel", "channel-123").Return(&model.Channel{
-					Id:     "channel-123",
+				e.mockAPI.On("GetChannel", testChannelID).Return(&model.Channel{
+					Id:     testChannelID,
 					Type:   model.ChannelTypeOpen,
 					TeamId: "team-123",
 				}, nil).Once()
@@ -575,16 +575,16 @@ func TestBridgeClientPermissions(t *testing.T) {
 		},
 		{
 			name:      "UserID + ChannelID with blocked channel - returns error",
-			userID:    "user-123",
-			channelID: "channel-123",
+			userID:    testUserID,
+			channelID: testChannelID,
 			botConfig: llm.BotConfig{
 				UserAccessLevel:    llm.UserAccessLevelAll,
 				ChannelAccessLevel: llm.ChannelAccessLevelBlock,
-				ChannelIDs:         []string{"channel-123"},
+				ChannelIDs:         []string{testChannelID},
 			},
 			envSetup: func(e *TestEnvironment) {
-				e.mockAPI.On("GetChannel", "channel-123").Return(&model.Channel{
-					Id:     "channel-123",
+				e.mockAPI.On("GetChannel", testChannelID).Return(&model.Channel{
+					Id:     testChannelID,
 					Type:   model.ChannelTypeOpen,
 					TeamId: "team-123",
 				}, nil).Once()
@@ -594,15 +594,15 @@ func TestBridgeClientPermissions(t *testing.T) {
 		},
 		{
 			name:      "UserID + ChannelID with blocked user - returns error",
-			userID:    "user-123",
-			channelID: "channel-123",
+			userID:    testUserID,
+			channelID: testChannelID,
 			botConfig: llm.BotConfig{
 				UserAccessLevel: llm.UserAccessLevelBlock,
-				UserIDs:         []string{"user-123"},
+				UserIDs:         []string{testUserID},
 			},
 			envSetup: func(e *TestEnvironment) {
-				e.mockAPI.On("GetChannel", "channel-123").Return(&model.Channel{
-					Id:     "channel-123",
+				e.mockAPI.On("GetChannel", testChannelID).Return(&model.Channel{
+					Id:     testChannelID,
 					Type:   model.ChannelTypeOpen,
 					TeamId: "team-123",
 				}, nil).Once()
@@ -645,7 +645,7 @@ func TestBridgeClientPermissions(t *testing.T) {
 
 			// Create bridge client and make request
 			client := e.CreateBridgeClient()
-			_, err := client.AgentCompletion("bot-user-id", request)
+			_, err := client.AgentCompletion(testBotUserID, request)
 
 			if tc.expectError {
 				require.Error(t, err)
@@ -702,7 +702,7 @@ func TestBridgeGetBots(t *testing.T) {
 		},
 		{
 			name:   "get filtered bots with user_id",
-			userID: "user-123",
+			userID: testUserID,
 			botConfigs: []llm.BotConfig{
 				{
 					Name:            "bot1",
@@ -715,7 +715,7 @@ func TestBridgeGetBots(t *testing.T) {
 					DisplayName:     "Bot Two",
 					ServiceID:       "service2",
 					UserAccessLevel: llm.UserAccessLevelAllow,
-					UserIDs:         []string{"other-user"},
+					UserIDs:         []string{testOtherUserID},
 				},
 			},
 			expectBots: 1,
@@ -744,7 +744,7 @@ func TestBridgeGetBots(t *testing.T) {
 			allBots := make([]*bots.Bot, 0, len(tc.botConfigs))
 			for i, config := range tc.botConfigs {
 				mmBot := &model.Bot{
-					UserId:      fmt.Sprintf("bot-user-id-%d", i),
+					UserId:      fmt.Sprintf("%s%02d", testBotUserID[:24], i),
 					Username:    config.Name,
 					DisplayName: config.DisplayName,
 				}
@@ -833,7 +833,7 @@ func TestBridgeGetServices(t *testing.T) {
 		},
 		{
 			name:   "filter services by user permissions",
-			userID: "user-123",
+			userID: testUserID,
 			botConfigs: []llm.BotConfig{
 				{
 					Name:            "bot1",
@@ -846,7 +846,7 @@ func TestBridgeGetServices(t *testing.T) {
 					DisplayName:     "Bot Two",
 					ServiceID:       "service2",
 					UserAccessLevel: llm.UserAccessLevelAllow,
-					UserIDs:         []string{"other-user"},
+					UserIDs:         []string{testOtherUserID},
 				},
 			},
 			expectServices: 1,
@@ -875,7 +875,7 @@ func TestBridgeGetServices(t *testing.T) {
 			allBots := make([]*bots.Bot, 0, len(tc.botConfigs))
 			for i, config := range tc.botConfigs {
 				mmBot := &model.Bot{
-					UserId:      fmt.Sprintf("bot-user-id-%d", i),
+					UserId:      fmt.Sprintf("%s%02d", testBotUserID[:24], i),
 					Username:    config.Name,
 					DisplayName: config.DisplayName,
 				}
