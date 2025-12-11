@@ -6,7 +6,6 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {setUserProfilePictureByUsername} from '@/client';
-import {Pill} from '../../components/pill';
 
 import Panel, {PanelFooterText} from './panel';
 import Bots, {firstNewBot} from './bots';
