@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -26,15 +27,17 @@ type UserClients struct {
 	userID       string
 	log          pluginapi.LogService
 	oauthManager *OAuthManager
+	httpClient   *http.Client
 	toolsCache   *ToolsCache
 }
 
-func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, toolsCache *ToolsCache) *UserClients {
+func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
 	return &UserClients{
 		log:          log,
 		clients:      make(map[string]*Client),
 		userID:       userID,
 		oauthManager: oauthManager,
+		httpClient:   httpClient,
 		toolsCache:   toolsCache,
 	}
 }
@@ -107,7 +110,7 @@ func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embed
 
 // connectToServer establishes a connection to a single server
 func (c *UserClients) connectToServer(ctx context.Context, serverID string, serverConfig ServerConfig) error {
-	serverClient, err := NewClient(ctx, c.userID, serverConfig, c.log, c.oauthManager, c.toolsCache)
+	serverClient, err := NewClient(ctx, c.userID, serverConfig, c.log, c.oauthManager, c.httpClient, c.toolsCache)
 	if err != nil {
 		return err
 	}

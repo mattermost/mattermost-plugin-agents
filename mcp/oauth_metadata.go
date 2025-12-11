@@ -30,7 +30,7 @@ type AuthorizationServerMetadata struct {
 }
 
 // discoverProtectedResourceMetadata fetches the OAuth 2.0 Protected Resource Metadata (RFC 9728)
-func discoverProtectedResourceMetadata(ctx context.Context, baseURL, metadataURL string) (*ProtectedResourceMetadata, error) {
+func discoverProtectedResourceMetadata(ctx context.Context, httpClient *http.Client, baseURL, metadataURL string) (*ProtectedResourceMetadata, error) {
 	if metadataURL == "" {
 		// The metadata URL is not provided, use the default well-known endpoint
 		// Construct according to RFC 9728 Section 3.1
@@ -46,7 +46,7 @@ func discoverProtectedResourceMetadata(ctx context.Context, baseURL, metadataURL
 		return nil, fmt.Errorf("failed to create request for protected resource metadata from %s: %w", metadataURL, err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch protected resource metadata from %s: %w", metadataURL, err)
 	}
@@ -75,7 +75,7 @@ func discoverProtectedResourceMetadata(ctx context.Context, baseURL, metadataURL
 }
 
 // discoverAuthorizationServerMetadata fetches the OAuth 2.0 Authorization Server Metadata (RFC 8414)
-func discoverAuthorizationServerMetadata(ctx context.Context, authServerIssuer string) (*AuthorizationServerMetadata, error) {
+func discoverAuthorizationServerMetadata(ctx context.Context, httpClient *http.Client, authServerIssuer string) (*AuthorizationServerMetadata, error) {
 	// Construct the well-known metadata URL according to RFC 8414 Section 3.1
 	// The well-known URI must be inserted between the host and path components
 	metadataURL, err := constructWellKnownURL(authServerIssuer, "oauth-authorization-server")
@@ -88,7 +88,7 @@ func discoverAuthorizationServerMetadata(ctx context.Context, authServerIssuer s
 		return nil, fmt.Errorf("failed to create request for authorization server metadata from %s: %w", metadataURL, err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch authorization server metadata from %s: %w", metadataURL, err)
 	}

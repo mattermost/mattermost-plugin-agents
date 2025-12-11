@@ -1,13 +1,14 @@
-import {test, expect } from '@playwright/test';
 import fs from 'fs';
+import path from 'path';
 
 import MattermostContainer from './mmcontainer';
 
 const RunContainer = async (): Promise<MattermostContainer> => {
   let filename = "";
-  fs.readdirSync("../dist/").forEach(file => {
+  const distPath = path.join(__dirname, "../../dist/");
+  fs.readdirSync(distPath).forEach(file => {
       if (file.endsWith(".tar.gz")) {
-          filename = "../dist/"+file
+          filename = path.join(distPath, file);
       }
   })
   if (filename === "") {
@@ -52,6 +53,27 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 				  "serviceID": "second-service",
 			  },
 		  ],
+		  "embeddingSearchConfig": {
+			  "type": "composite",
+			  "dimensions": 512,
+			  "vectorStore": {
+				  "type": "pgvector",
+				  "parameters": {
+					  "dimensions": 512
+				  }
+			  },
+			  "embeddingProvider": {
+				  "type": "mock",
+				  "parameters": {}
+			  },
+			  "parameters": {},
+			  "chunkingOptions": {
+				  "chunkSize": 500,
+				  "chunkOverlap": 100,
+				  "minChunkSize": 0.75,
+				  "chunkingStrategy": "sentences"
+			  }
+		  }
 	  }
   }
   const mattermost = await new MattermostContainer()

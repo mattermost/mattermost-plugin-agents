@@ -161,7 +161,7 @@ func (p *Plugin) OnActivate() error {
 		}
 	}
 
-	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL), embeddedMCPServer)
+	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient), embeddedMCPServer, untrustedHTTPClient)
 	p.configuration.RegisterUpdateListener(func() {
 		var embeddedServer mcp.EmbeddedMCPServer
 		var embeddedErr error
@@ -240,6 +240,7 @@ func (p *Plugin) OnActivate() error {
 		i18nBundle,
 		mcpClientManager,
 		mcpHandlers,
+		llmUpstreamHTTPClient,
 	)
 
 	// Keep only what we need

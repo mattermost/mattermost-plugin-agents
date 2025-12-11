@@ -1,2 +1,7 @@
 {{template "standard_personality.tmpl" .}}
-Summarize the following posts from a Mattermost channel. Respond with a concise summary of the posts, focusing on the main points and key information. Include no introduction or pleasantries, and do not mention the summarization process itself. Do not mention people joining or leaving the channel unless it is directly relevant to the content of the posts. Use markdown headings to separate different topics or sections if applicable. Avoid using bullet points or lists unless necessary for clarity.
+Summarize the following posts from a Mattermost channel. Respond with a concise summary of the posts, focusing on the main points and key information. Include no introduction or pleasantries, and do not mention the summarization process itself. Use markdown headings to separate different topics or sections if applicable. Avoid using bullet points or lists unless necessary for clarity.
+
+IMPORTANT RULES:
+1. When referencing users who posted content or were mentioned, always use their @username format (e.g., @john.smith) rather than their display name or first name. This ensures the summary can be used to easily find or mention those users.
+2. Do NOT mention system messages about users joining or leaving the channel. Skip any "X joined the channel" or "X left the channel" messages entirely - they are not relevant to the summary.
+3. Pay attention to hashtags that indicate meetings or scheduled events (e.g., #webguild-Jun02 means a June 2nd webguild meeting). When someone posts an agenda item for a meeting, mention that they are adding/queueing an item for that specific meeting.
