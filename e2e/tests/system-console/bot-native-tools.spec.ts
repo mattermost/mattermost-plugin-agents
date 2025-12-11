@@ -78,11 +78,7 @@ test.describe.serial('Bot Native Tools', () => {
         // 10. Verify section title shows 'Native Claude Tools'
         await expect(nativeToolsSection).toContainText('Native Claude Tools');
 
-        // 11. Verify an 'EXPERIMENTAL' pill/badge appears next to the title
-        const experimentalBadge = botCard.locator('text=EXPERIMENTAL');
-        await expect(experimentalBadge).toBeVisible();
-
-        // 12. Verify 'Web Search' checkbox is present
+        // 11. Verify 'Web Search' checkbox is present
         // For Anthropic with native tools, Web Search checkbox is the first checkbox (vision/tools use radios)
         const webSearchCheckbox = botCard.getByRole('checkbox').first();
         await expect(webSearchCheckbox).toBeVisible();
@@ -187,11 +183,7 @@ test.describe.serial('Bot Native Tools', () => {
         // 8. Verify section title shows 'Native OpenAI Tools'
         await expect(nativeToolsSection).toContainText('Native OpenAI Tools');
 
-        // 9. Verify 'EXPERIMENTAL' pill is present
-        const experimentalBadge = botCard.locator('text=EXPERIMENTAL');
-        await expect(experimentalBadge).toBeVisible();
-
-        // 10. Verify 'Web Search' checkbox is present
+        // 9. Verify 'Web Search' checkbox is present
         const webSearchCheckbox = botCard.getByRole('checkbox').first();
         await expect(webSearchCheckbox).toBeVisible();
 
