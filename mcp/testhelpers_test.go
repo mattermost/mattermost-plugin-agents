@@ -419,8 +419,8 @@ func (s *EmbeddedTestSuite) CreateClientManager(t *testing.T, session *model.Ses
 		IdleTimeoutMinutes: 30,
 	}
 
-	// Create ClientManager
-	manager := NewClientManager(config, pluginAPIClient.Log, pluginAPIClient, nil, wrapper)
+	// Create ClientManager with nil httpClient for tests (no remote requests in these tests)
+	manager := NewClientManager(config, pluginAPIClient.Log, pluginAPIClient, nil, wrapper, nil)
 	require.NotNil(t, manager, "ClientManager should not be nil")
 
 	return manager

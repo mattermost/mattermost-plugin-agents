@@ -322,9 +322,10 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 			case llm.EventTypeToolCalls:
 				// Handle tool call event
 				if toolCalls, ok := event.Value.([]llm.ToolCall); ok {
-					// Ensure all tool calls have Pending status
+					// Ensure all tool calls have Pending status and sanitize arguments
 					for i := range toolCalls {
 						toolCalls[i].Status = llm.ToolCallStatusPending
+						toolCalls[i].SanitizeArguments()
 					}
 
 					// Add the tool call as a prop to the post

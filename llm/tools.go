@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -52,6 +54,67 @@ type ToolCall struct {
 	Arguments   json.RawMessage `json:"arguments"`
 	Result      string          `json:"result"`
 	Status      ToolCallStatus  `json:"status"`
+}
+
+// SanitizeNonPrintableChars replaces non-printable Unicode characters with their
+// escaped representation [U+XXXX] to prevent text spoofing attacks such as
+// bidirectional text attacks that can make URLs appear to point to different domains.
+// Uses [U+XXXX] format instead of \uXXXX to avoid JSON parsers converting it back.
+// Allows newline, tab, and carriage return for JSON formatting.
+// Also escapes variation selectors and other default ignorable code points which
+// are technically "printable" but render invisibly and can be used for spoofing.
+func SanitizeNonPrintableChars(s string) string {
+	// Quick scan: check if any character needs escaping.
+	// This avoids allocation for the common case of clean strings.
+	needsEscape := false
+	for _, r := range s {
+		if !isSafeRune(r) {
+			needsEscape = true
+			break
+		}
+	}
+	if !needsEscape {
+		return s
+	}
+
+	var result strings.Builder
+	result.Grow(len(s))
+
+	for _, r := range s {
+		if isSafeRune(r) {
+			result.WriteRune(r)
+		} else {
+			fmt.Fprintf(&result, "[U+%04X]", r)
+		}
+	}
+	return result.String()
+}
+
+// isSafeRune reports whether a rune can pass through without escaping.
+func isSafeRune(r rune) bool {
+	// Fast path: printable ASCII characters (space through tilde)
+	if r >= 0x20 && r <= 0x7E {
+		return true
+	}
+	// Allow formatting control characters needed for JSON
+	if r == '\n' || r == '\t' || r == '\r' {
+		return true
+	}
+	// For non-ASCII, check if printable and not in a problematic category
+	if r > 0x7E {
+		return unicode.IsPrint(r) &&
+			!unicode.Is(unicode.Variation_Selector, r) &&
+			!unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r)
+	}
+	return false
+}
+
+// SanitizeArguments sanitizes the Arguments field to prevent
+// bidirectional text and other Unicode spoofing attacks.
+func (tc *ToolCall) SanitizeArguments() {
+	if len(tc.Arguments) > 0 {
+		tc.Arguments = json.RawMessage(SanitizeNonPrintableChars(string(tc.Arguments)))
+	}
 }
 
 type ToolArgumentGetter func(args any) error

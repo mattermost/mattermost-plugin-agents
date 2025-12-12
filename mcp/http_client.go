@@ -23,19 +23,19 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(req)
 }
 
-func (c *Client) httpClient(headers map[string]string) *http.Client {
+func (c *Client) httpClientForMCP(headers map[string]string) *http.Client {
 	// Wrap with discovery-aware transport for 401 handling
 	authenticationTransport := &authenticationTransport{
 		userID:     c.userID,
 		serverName: c.config.Name,
 		manager:    c.oauthManager,
 		serverURL:  c.config.BaseURL,
+		base:       c.httpClient.Transport,
 	}
 
 	// Create HTTP client with discovery-aware transport
-	httpClient := &http.Client{
-		Transport: authenticationTransport,
-	}
+	httpClient := *c.httpClient
+	httpClient.Transport = authenticationTransport
 
 	// Add custom headers to the HTTP client if provided
 	if len(headers) > 0 {
@@ -45,5 +45,5 @@ func (c *Client) httpClient(headers map[string]string) *http.Client {
 		}
 	}
 
-	return httpClient
+	return &httpClient
 }
