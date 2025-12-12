@@ -87,8 +87,7 @@ func botConfigsEqual(a, b []llm.BotConfig) bool {
 		// Compare all fields that affect bot setup
 		if aCfg.Name != cfg.Name ||
 			aCfg.DisplayName != cfg.DisplayName ||
-			aCfg.ServiceID != cfg.ServiceID ||
-			aCfg.Model != cfg.Model {
+			aCfg.ServiceID != cfg.ServiceID {
 			return false
 		}
 	}
