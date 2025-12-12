@@ -227,9 +227,9 @@ func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Clie
 	// This handles the race condition where another node might have finished migration
 	// while we were waiting for the lock.
 	latestConfigWrap := new(configuration)
-	if err := pluginAPI.Configuration.LoadPluginConfiguration(latestConfigWrap); err != nil {
+	if lErr := pluginAPI.Configuration.LoadPluginConfiguration(latestConfigWrap); lErr != nil {
 		mtx.Unlock()
-		return cfg, false, fmt.Errorf("failed to reload configuration inside lock: %w", err)
+		return cfg, false, fmt.Errorf("failed to reload configuration inside lock: %w", lErr)
 	}
 	cfg = latestConfigWrap.Config
 
