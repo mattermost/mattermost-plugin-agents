@@ -35,11 +35,12 @@ type Context struct {
 	RequestingUser *model.User
 
 	// Bot Specific
-	BotName            string
-	BotUsername        string
-	BotUserID          string
-	BotModel           string
-	CustomInstructions string
+	BotName                  string
+	BotUsername              string
+	BotUserID                string
+	BotModel                 string
+	CustomInstructions       string
+	ImageGenerationServiceID string // Optional service ID for image generation
 
 	Tools             *ToolStore
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)

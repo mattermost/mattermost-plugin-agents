@@ -21,9 +21,10 @@ import (
 
 // MCPToolContext provides MCP-specific functionality with the authenticated client
 type MCPToolContext struct {
-	Client     *model.Client4
-	AccessMode AccessMode
-	BotUserID  string // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
+	Client                   *model.Client4
+	AccessMode               AccessMode
+	BotUserID                string // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
+	ImageGenerationServiceID string // Optional service ID for image generation (from bot config)
 }
 
 // MCPToolResolver defines the signature for MCP tool resolvers
@@ -45,8 +46,9 @@ type ToolProvider interface {
 type MattermostToolProvider struct {
 	authProvider        auth.AuthenticationProvider
 	logger              logger.Logger
-	mmServerURL         string // External server URL for OAuth redirects
-	mmInternalServerURL string // Internal server URL for API communication
+	config              types.ServerConfig // Full config for accessing services
+	mmServerURL         string             // External server URL for OAuth redirects
+	mmInternalServerURL string             // Internal server URL for API communication
 	devMode             bool
 	accessMode          AccessMode
 	trackAIGenerated    bool // Whether to add ai_generated_by props to posts
@@ -64,6 +66,7 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 	return &MattermostToolProvider{
 		authProvider:        authProvider,
 		logger:              logger,
+		config:              config,
 		mmServerURL:         config.GetMMServerURL(),
 		mmInternalServerURL: internalURL,
 		devMode:             config.GetDevMode(),
@@ -189,6 +192,13 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	if p.trackAIGenerated && metadata != nil {
 		if botUserID, ok := metadata["bot_user_id"].(string); ok {
 			mcpContext.BotUserID = botUserID
+		}
+	}
+
+	// Extract image_generation_service_id from metadata if present (for embedded servers)
+	if metadata != nil {
+		if imageServiceID, ok := metadata["image_generation_service_id"].(string); ok {
+			mcpContext.ImageGenerationServiceID = imageServiceID
 		}
 	}
 

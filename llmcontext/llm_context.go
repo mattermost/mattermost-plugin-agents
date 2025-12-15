@@ -206,5 +206,7 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 			c.BotUserID = mmbot.UserId
 		}
 		c.BotModel = bot.GetService().DefaultModel
+		// Set the image generation service ID if configured
+		c.ImageGenerationServiceID = bot.GetConfig().ImageGenerationServiceID
 	}
 }

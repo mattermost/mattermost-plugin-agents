@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"image/png"
-	"os"
 
 	"github.com/mattermost/mattermost-plugin-ai/gemini"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -18,8 +17,8 @@ import (
 
 // GenerateImageArgs represents arguments for the generate_image tool
 type GenerateImageArgs struct {
-	Prompt   string `json:"prompt" jsonschema:"The text description of the image to generate,minLength=1"`
-	Provider string `json:"provider,omitempty" jsonschema:"Image generation provider to use: 'openai' or 'gemini' (default: gemini)"`
+	Prompt    string `json:"prompt" jsonschema:"The text description of the image to generate,minLength=1"`
+	ServiceID string `json:"service_id,omitempty" jsonschema:"Optional service ID to use for image generation. If not specified, uses the bot's configured image generation service or main service."`
 }
 
 // getImageGenerationTools returns image generation tools
@@ -33,7 +32,7 @@ func (p *MattermostToolProvider) getImageGenerationTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name:        "generate_image",
-			Description: "Generate an image from a text prompt using AI. The generated image will be uploaded to Mattermost and can be attached to posts. Parameters: prompt (required - detailed description of the image to generate), provider (optional - 'openai' for DALL-E or 'gemini' for Gemini image generation, defaults to 'gemini'). Returns the file ID of the generated image that can be used in attachments. Example: {\"prompt\": \"A serene mountain landscape at sunset with a lake in the foreground\", \"provider\": \"gemini\"}",
+			Description: "Generate an image from a text prompt using AI. The generated image will be uploaded to Mattermost and can be attached to posts. Parameters: prompt (required - detailed description of the image to generate), service_id (optional - specific service ID to use, otherwise uses bot's configured image generation service). Supports OpenAI (DALL-E), Gemini (Imagen), and other configured image generation services. Returns the file ID of the generated image that can be used in attachments. Example: {\"prompt\": \"A serene mountain landscape at sunset with a lake in the foreground\"}",
 			Schema:      NewJSONSchemaForAccessMode[GenerateImageArgs](string(p.accessMode)),
 			Resolver:    p.toolGenerateImage,
 		},
@@ -51,25 +50,32 @@ func (p *MattermostToolProvider) toolGenerateImage(mcpContext *MCPToolContext, a
 	ctx := context.Background()
 	client := mcpContext.Client
 
-	// Default to gemini if no provider specified
-	provider := args.Provider
-	if provider == "" {
-		provider = "gemini"
+	// Determine which service to use for image generation
+	// Priority: 1) explicit service_id in args, 2) bot's image generation service, 3) error
+	serviceID := args.ServiceID
+	if serviceID == "" {
+		serviceID = mcpContext.ImageGenerationServiceID
+	}
+	if serviceID == "" {
+		return "", fmt.Errorf("no image generation service configured. Please specify a service_id or configure an image generation service for this bot")
 	}
 
-	// Generate the image using the specified provider
+	// Look up the service configuration
+	serviceConfig, found := p.config.GetServiceByID(serviceID)
+	if !found {
+		return "", fmt.Errorf("service with ID '%s' not found in configuration", serviceID)
+	}
+
+	// Generate the image using the appropriate service based on type
 	var imageGenerator llm.ImageGenerator
 	var closeFunc func() error
+	var serviceName string
 
-	switch provider {
-	case "gemini":
-		apiKey := os.Getenv("GEMINI_API_KEY")
-		if apiKey == "" {
-			return "", fmt.Errorf("GEMINI_API_KEY environment variable not set")
-		}
-
+	switch serviceConfig.Type {
+	case llm.ServiceTypeGemini:
+		serviceName = "Gemini"
 		geminiClient, err := gemini.New(gemini.Config{
-			APIKey:               apiKey,
+			APIKey:               serviceConfig.APIKey,
 			ImageGenerationModel: "gemini-2.5-flash-image",
 		})
 		if err != nil {
@@ -78,21 +84,30 @@ func (p *MattermostToolProvider) toolGenerateImage(mcpContext *MCPToolContext, a
 		imageGenerator = geminiClient
 		closeFunc = geminiClient.Close
 
-	case "openai":
-		apiKey := os.Getenv("OPENAI_API_KEY")
-		if apiKey == "" {
-			return "", fmt.Errorf("OPENAI_API_KEY environment variable not set")
+	case llm.ServiceTypeOpenAI, llm.ServiceTypeAzure, llm.ServiceTypeOpenAICompatible:
+		serviceName = "OpenAI"
+		// Create OpenAI client for image generation
+		openaiConfig := openai.Config{
+			APIKey:       serviceConfig.APIKey,
+			APIURL:       serviceConfig.APIURL,
+			OrgID:        serviceConfig.OrgID,
+			DefaultModel: serviceConfig.DefaultModel,
 		}
 
-		// Create OpenAI client for image generation
-		// Note: This uses the existing OpenAI implementation
-		openaiClient := openai.New(openai.Config{
-			APIKey: apiKey,
-		}, nil)
+		var openaiClient *openai.OpenAI
+		switch serviceConfig.Type {
+		case llm.ServiceTypeAzure:
+			openaiClient = openai.NewAzure(openaiConfig, nil)
+		case llm.ServiceTypeOpenAICompatible:
+			openaiClient = openai.NewCompatible(openaiConfig, nil)
+		default:
+			openaiClient = openai.New(openaiConfig, nil)
+		}
 		imageGenerator = openaiClient
 
 	default:
-		return "", fmt.Errorf("unsupported image generation provider: %s (supported: 'openai', 'gemini')", provider)
+		return "", fmt.Errorf("service type '%s' does not support image generation. Supported types: %s, %s, %s, %s",
+			serviceConfig.Type, llm.ServiceTypeGemini, llm.ServiceTypeOpenAI, llm.ServiceTypeAzure, llm.ServiceTypeOpenAICompatible)
 	}
 
 	// Close client if needed
@@ -101,10 +116,10 @@ func (p *MattermostToolProvider) toolGenerateImage(mcpContext *MCPToolContext, a
 	}
 
 	// Generate the image
-	p.logger.Debug("Generating image with provider", "provider", provider, "prompt", args.Prompt)
+	p.logger.Debug("Generating image", "service", serviceName, "serviceID", serviceID, "prompt", args.Prompt)
 	img, err := imageGenerator.GenerateImage(args.Prompt)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate image: %w", err)
+		return "", fmt.Errorf("failed to generate image with %s: %w", serviceName, err)
 	}
 
 	// Convert image to PNG bytes
@@ -115,9 +130,7 @@ func (p *MattermostToolProvider) toolGenerateImage(mcpContext *MCPToolContext, a
 	}
 
 	// Upload the image to Mattermost
-	// We'll create a temporary channel ID - in practice, this might need to be smarter
-	// For now, we'll just upload to the "system" and return the file ID
-	fileUploadResponse, _, err := client.UploadFileAsRequestBody(ctx, buf.Bytes(), "", fmt.Sprintf("generated_image_%s.png", provider))
+	fileUploadResponse, _, err := client.UploadFileAsRequestBody(ctx, buf.Bytes(), "", fmt.Sprintf("ai_generated_%s.png", serviceConfig.Name))
 	if err != nil {
 		return "", fmt.Errorf("failed to upload generated image: %w", err)
 	}
@@ -129,7 +142,7 @@ func (p *MattermostToolProvider) toolGenerateImage(mcpContext *MCPToolContext, a
 	fileID := fileUploadResponse.FileInfos[0].Id
 	fileURL := fmt.Sprintf("%s/files/%s", p.mmServerURL, fileID)
 
-	p.logger.Debug("Image generated and uploaded successfully", "fileID", fileID, "provider", provider)
+	p.logger.Debug("Image generated and uploaded successfully", "fileID", fileID, "service", serviceName)
 
-	return fmt.Sprintf("Image generated successfully using %s! File ID: %s, URL: %s\n\nYou can now attach this image to a post by including the file ID in the 'attachments' parameter when creating a post.", provider, fileID, fileURL), nil
+	return fmt.Sprintf("Image generated successfully using %s (%s)!\n\nFile ID: %s\nURL: %s\n\nYou can attach this image to a post by including the file ID in the 'attachments' parameter when creating a post.", serviceName, serviceConfig.Name, fileID, fileURL), nil
 }

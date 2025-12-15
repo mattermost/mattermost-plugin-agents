@@ -52,6 +52,7 @@ export type LLMBotConfig = {
     reasoningEnabled?: boolean
     reasoningEffort?: string
     thinkingBudget?: number
+    imageGenerationServiceID?: string
 }
 
 // Component for configuring native tools (OpenAI/Anthropic)
@@ -143,7 +144,8 @@ const Bot = (props: Props) => {
         (selectedService.type === 'anthropic' ||
          selectedService.type === 'openai' ||
          selectedService.type === 'azure' ||
-         selectedService.type === 'openaicompatible');
+         selectedService.type === 'openaicompatible' ||
+         selectedService.type === 'gemini');
 
     // Fetch models when the service changes
     useEffect(() => {
@@ -315,6 +317,22 @@ const Bot = (props: Props) => {
                                         onChange={(to: boolean) => props.onChange({...props.bot, disableTools: !to})}
                                         helpText={intl.formatMessage({defaultMessage: 'By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools.'})}
                                     />
+                                    <SelectionItem
+                                        label={intl.formatMessage({defaultMessage: 'Image Generation Service'})}
+                                        value={props.bot.imageGenerationServiceID || ''}
+                                        onChange={(e) => props.onChange({...props.bot, imageGenerationServiceID: e.target.value || undefined})}
+                                        helptext={intl.formatMessage({defaultMessage: 'Optional: Select a service to use for AI image generation. If not specified, the bot\'s main service will be used if it supports image generation (OpenAI, Gemini).'})}
+                                    >
+                                        <option value=''>{intl.formatMessage({defaultMessage: 'Use main service (if supported)'})}</option>
+                                        {props.services.filter((s) => s.type === 'openai' || s.type === 'gemini' || s.type === 'azure' || s.type === 'openaicompatible').map((service) => (
+                                            <option
+                                                key={service.id}
+                                                value={service.id}
+                                            >
+                                                {service.name || service.type}
+                                            </option>
+                                        ))}
+                                    </SelectionItem>
                                     {(() => {
                                         // Show native tools for Anthropic or OpenAI-based services with ResponsesAPI enabled
                                         const isAnthropic = selectedService.type === 'anthropic';

@@ -189,9 +189,17 @@ func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Co
 	var metadata map[string]any
 
 	// For embedded server, inject Bot UserID for AI-generated content tracking
-	if client.config.Name == EmbeddedClientKey && llmContext.BotUserID != "" {
-		metadata = make(map[string]any)
-		metadata["bot_user_id"] = llmContext.BotUserID
+	// and image generation service ID for image generation tools
+	if client.config.Name == EmbeddedClientKey {
+		if llmContext.BotUserID != "" || llmContext.ImageGenerationServiceID != "" {
+			metadata = make(map[string]any)
+			if llmContext.BotUserID != "" {
+				metadata["bot_user_id"] = llmContext.BotUserID
+			}
+			if llmContext.ImageGenerationServiceID != "" {
+				metadata["image_generation_service_id"] = llmContext.ImageGenerationServiceID
+			}
+		}
 	}
 
 	return metadata

@@ -41,6 +41,7 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['bedrock', 'AWS Bedrock'],
     ['cohere', 'Cohere'],
     ['mistral', 'Mistral'],
+    ['gemini', 'Google Gemini'],
     ['asage', 'asksage (Experimental)'],
 ]);
 
@@ -70,7 +71,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
 
     // Determine if we should support model fetching for this service type
-    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible';
+    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini';
 
     // Fetch models when API key or URL changes for supported service types
     useEffect(() => {
