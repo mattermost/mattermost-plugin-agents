@@ -91,6 +91,10 @@ type BotConfig struct {
 	// Only applicable to Anthropic
 	// Default: 1/4 of OutputTokenLimit, capped at 8192
 	ThinkingBudget int `json:"thinkingBudget"`
+
+	// ImageGenerationServiceID determines which service to use for image generation
+	// If not specified, the bot's main service will be used if it supports image generation
+	ImageGenerationServiceID string `json:"imageGenerationServiceID,omitempty"`
 }
 
 func (c *BotConfig) IsValid() bool {
@@ -136,6 +140,8 @@ func IsValidService(service ServiceConfig) bool {
 		// API key is optional as AWS credentials can come from environment/IAM role
 		return service.Region != ""
 	case ServiceTypeMistral:
+		return service.APIKey != ""
+	case ServiceTypeGemini:
 		return service.APIKey != ""
 	default:
 		return false

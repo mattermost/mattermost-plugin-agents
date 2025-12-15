@@ -12,4 +12,5 @@ const (
 	ServiceTypeCohere           = "cohere"
 	ServiceTypeBedrock          = "bedrock"
 	ServiceTypeMistral          = "mistral"
+	ServiceTypeGemini           = "gemini"
 )

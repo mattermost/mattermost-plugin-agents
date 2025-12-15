@@ -81,6 +81,7 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	mcpTools = append(mcpTools, p.getChannelTools()...)
 	mcpTools = append(mcpTools, p.getTeamTools()...)
 	mcpTools = append(mcpTools, p.getSearchTools()...)
+	mcpTools = append(mcpTools, p.getImageGenerationTools()...)
 
 	// Add dev tools if dev mode is enabled
 	if p.devMode {
