@@ -188,16 +188,29 @@ func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Co
 
 	var metadata map[string]any
 
-	// For embedded server, inject Bot UserID for AI-generated content tracking
-	// and image generation service ID for image generation tools
+	// For embedded server, inject Bot UserID for AI-generated content tracking,
+	// image generation service ID for image generation tools,
+	// and conversation context (channel and responding to post)
 	if client.config.Name == EmbeddedClientKey {
-		if llmContext.BotUserID != "" || llmContext.ImageGenerationServiceID != "" {
+		needsMetadata := llmContext.BotUserID != "" ||
+			llmContext.ImageGenerationServiceID != "" ||
+			(llmContext.Channel != nil && llmContext.Channel.Id != "")
+
+		if needsMetadata {
 			metadata = make(map[string]any)
 			if llmContext.BotUserID != "" {
 				metadata["bot_user_id"] = llmContext.BotUserID
 			}
 			if llmContext.ImageGenerationServiceID != "" {
 				metadata["image_generation_service_id"] = llmContext.ImageGenerationServiceID
+			}
+			// Add conversation context for tools that need to know where the conversation is happening
+			if llmContext.Channel != nil && llmContext.Channel.Id != "" {
+				metadata["channel_id"] = llmContext.Channel.Id
+			}
+			// Add the post being responded to (if any) for context
+			if len(llmContext.Thread) > 0 && llmContext.Thread[0].ID != "" {
+				metadata["responding_to_post_id"] = llmContext.Thread[0].ID
 			}
 		}
 	}

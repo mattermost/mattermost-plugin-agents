@@ -130,7 +130,9 @@ func (p *MattermostToolProvider) toolGenerateImage(mcpContext *MCPToolContext, a
 	}
 
 	// Upload the image to Mattermost
-	fileUploadResponse, _, err := client.UploadFileAsRequestBody(ctx, buf.Bytes(), "", fmt.Sprintf("ai_generated_%s.png", serviceConfig.Name))
+	// If we have a channel context, upload to that channel for easier attachment
+	channelID := mcpContext.ChannelID
+	fileUploadResponse, _, err := client.UploadFileAsRequestBody(ctx, buf.Bytes(), channelID, fmt.Sprintf("ai_generated_%s.png", serviceConfig.Name))
 	if err != nil {
 		return "", fmt.Errorf("failed to upload generated image: %w", err)
 	}
@@ -142,7 +144,17 @@ func (p *MattermostToolProvider) toolGenerateImage(mcpContext *MCPToolContext, a
 	fileID := fileUploadResponse.FileInfos[0].Id
 	fileURL := fmt.Sprintf("%s/files/%s", p.mmServerURL, fileID)
 
-	p.logger.Debug("Image generated and uploaded successfully", "fileID", fileID, "service", serviceName)
+	p.logger.Debug("Image generated and uploaded successfully", "fileID", fileID, "service", serviceName, "channelID", channelID)
 
-	return fmt.Sprintf("Image generated successfully using %s (%s)!\n\nFile ID: %s\nURL: %s\n\nYou can attach this image to a post by including the file ID in the 'attachments' parameter when creating a post.", serviceName, serviceConfig.Name, fileID, fileURL), nil
+	// Build response message
+	response := fmt.Sprintf("Image generated successfully using %s (%s)!\n\nFile ID: %s\nURL: %s", serviceName, serviceConfig.Name, fileID, fileURL)
+
+	// If we have conversation context, let the bot know it can attach this to its response
+	if channelID != "" {
+		response += "\n\nThe image has been uploaded to the current channel and is ready to be attached to your response. You can include it by adding the file ID to your message."
+	} else {
+		response += "\n\nYou can attach this image to a post by including the file ID in the 'attachments' parameter when creating a post."
+	}
+
+	return response, nil
 }

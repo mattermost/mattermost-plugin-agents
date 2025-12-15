@@ -25,6 +25,8 @@ type MCPToolContext struct {
 	AccessMode               AccessMode
 	BotUserID                string // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
 	ImageGenerationServiceID string // Optional service ID for image generation (from bot config)
+	ChannelID                string // Channel ID where the conversation is happening
+	RespondingToPostID       string // Post ID that the bot is responding to
 }
 
 // MCPToolResolver defines the signature for MCP tool resolvers
@@ -199,6 +201,16 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	if metadata != nil {
 		if imageServiceID, ok := metadata["image_generation_service_id"].(string); ok {
 			mcpContext.ImageGenerationServiceID = imageServiceID
+		}
+	}
+
+	// Extract conversation context from metadata (channel and post being responded to)
+	if metadata != nil {
+		if channelID, ok := metadata["channel_id"].(string); ok {
+			mcpContext.ChannelID = channelID
+		}
+		if respondingToPostID, ok := metadata["responding_to_post_id"].(string); ok {
+			mcpContext.RespondingToPostID = respondingToPostID
 		}
 	}
 
