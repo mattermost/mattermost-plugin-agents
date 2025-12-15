@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-ai/config"
-	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // configuration captures the plugin's external configuration as exposed in the Mattermost server
@@ -44,22 +44,31 @@ func (p *Plugin) OnConfigurationChange() error {
 		return fmt.Errorf("failed to load plugin configuration: %w", err)
 	}
 
-	// Run migrations on the newly loaded configuration
-	pluginAPI := pluginapi.NewClient(p.API, p.Driver)
-	potentiallyUpdatedConfig, wasUpdated, err := runAllMigrations(p.API, pluginAPI, configuration.Config)
-	if err != nil {
-		pluginAPI.Log.Error("Failed to run migrations on configuration change", "error", err)
-		return fmt.Errorf("failed to run migrations: %w", err)
-	}
-
-	// Update in-memory representation with the final (potentially migrated) config
-	// The save to disk is already handled by runAllMigrations if changes were made
-	finalConfig := configuration.Config
-	if wasUpdated {
-		finalConfig = potentiallyUpdatedConfig
-		pluginAPI.Log.Info("Configuration migrated in OnConfigurationChange")
-	}
-	p.configuration.Update(&finalConfig)
+	p.configuration.Update(&configuration.Config)
 
 	return nil
+}
+
+// ConfigurationWillBeSaved is invoked before the configuration is saved to the database.
+func (p *Plugin) ConfigurationWillBeSaved(newCfg *model.Config) (*model.Config, error) {
+	if newCfg == nil || newCfg.PluginSettings.Plugins == nil {
+		return newCfg, nil
+	}
+
+	pluginSettings, ok := newCfg.PluginSettings.Plugins["mattermost-ai"]
+	if !ok {
+		return newCfg, nil
+	}
+
+	migratedSettings, changed, err := MigratePluginConfig(pluginSettings)
+	if err != nil {
+		return nil, fmt.Errorf("failed to migrate plugin configuration: %w", err)
+	}
+
+	if changed {
+		newCfg.PluginSettings.Plugins["mattermost-ai"] = migratedSettings
+		p.API.LogInfo("Configuration migrated in ConfigurationWillBeSaved")
+	}
+
+	return newCfg, nil
 }
