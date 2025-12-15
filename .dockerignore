@@ -1,0 +1,32 @@
+# Build artifacts
+dist/
+server/dist/
+bin/
+*.tar.gz
+
+# Frontend (not needed for MCP server)
+webapp/
+webapp/node_modules/
+
+# E2E tests
+e2e/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Documentation (except mcpserver README)
+*.md
+!mcpserver/README.md
+
+# CI/CD
+.github/
+
+# Build tools
+build/bin/

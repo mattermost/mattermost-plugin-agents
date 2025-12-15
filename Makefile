@@ -307,6 +307,12 @@ mcp-server:
 	mkdir -p mcpserver/bin
 	$(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) $(GO_BUILD_LDFLAGS) -o bin/mattermost-mcp-server ./mcpserver/cmd/main.go
 
+## Builds the MCP server Docker image locally.
+.PHONY: mcp-server-docker
+mcp-server-docker:
+	@echo Building MCP server Docker image...
+	docker build -t mattermost-mcp-server -f mcpserver/Dockerfile .
+
 ## Builds the evalviewer binary.
 .PHONY: evalviewer
 evalviewer:
