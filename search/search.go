@@ -49,6 +49,14 @@ type RAGResult struct {
 	Score       float32 `json:"score"`
 }
 
+// Options configures a search operation
+type Options struct {
+	Limit     int
+	TeamID    string
+	ChannelID string
+	UserID    string
+}
+
 type Search struct {
 	embeddings.EmbeddingSearch
 	mmclient         mmapi.Client
@@ -78,8 +86,8 @@ func (s *Search) Enabled() bool {
 	return s != nil && s.EmbeddingSearch != nil
 }
 
-// convertToRAGResults converts embeddings.EmbeddingSearchResult to RAGResult with enriched metadata
-func (s *Search) convertToRAGResults(searchResults []embeddings.SearchResult) []RAGResult {
+// enrichResults converts raw search results to RAGResults with channel/user metadata.
+func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGResult {
 	var ragResults []RAGResult
 	for _, result := range searchResults {
 		// Get channel name
@@ -134,8 +142,62 @@ func (s *Search) convertToRAGResults(searchResults []embeddings.SearchResult) []
 	return ragResults
 }
 
+// executeSearch performs the embedding search and enriches results with metadata.
+// This is the core search operation without any LLM concerns.
+func (s *Search) executeSearch(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
+	if query == "" {
+		return nil, fmt.Errorf("query cannot be empty")
+	}
+
+	limit := opts.Limit
+	if limit == 0 {
+		limit = 5
+	}
+
+	searchResults, err := s.Search(ctx, query, embeddings.SearchOptions{
+		Limit:     limit,
+		TeamID:    opts.TeamID,
+		ChannelID: opts.ChannelID,
+		UserID:    opts.UserID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search failed: %w", err)
+	}
+
+	return s.enrichResults(searchResults), nil
+}
+
+// buildPrompt creates an LLM completion request for answering a search query.
+func (s *Search) buildPrompt(query string, results []RAGResult) (llm.CompletionRequest, error) {
+	promptCtx := llm.NewContext()
+	promptCtx.Parameters = map[string]interface{}{
+		"Query":   query,
+		"Results": results,
+	}
+
+	systemMessage, err := s.prompts.Format("search_system", promptCtx)
+	if err != nil {
+		return llm.CompletionRequest{}, fmt.Errorf("failed to format prompt: %w", err)
+	}
+
+	return llm.CompletionRequest{
+		Posts: []llm.Post{
+			{
+				Role:    llm.PostRoleSystem,
+				Message: systemMessage,
+			},
+			{
+				Role:    llm.PostRoleUser,
+				Message: query,
+			},
+		},
+		Context: promptCtx,
+	}, nil
+}
+
 // RunSearch initiates a search and sends results to a DM
 func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (map[string]string, error) {
+	// Validate early (before creating posts)
 	if !s.Enabled() {
 		return nil, fmt.Errorf("search functionality is not configured")
 	}
@@ -155,115 +217,7 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 	}
 
 	// Start processing the search asynchronously
-	go func(query, teamID, channelID string, maxResults int) {
-		// Create response post as a reply
-		responsePost := &model.Post{
-			RootId: questionPost.Id,
-		}
-		responsePost.AddProp(streaming.NoRegen, "true")
-
-		if err := s.botDMNonResponse(bot.GetMMBot().UserId, userID, responsePost); err != nil {
-			// Not much point in retrying if this failed. (very unlikely beyond dev)
-			s.mmclient.LogError("Error creating bot DM", "error", err)
-			return
-		}
-
-		// Setup error handling to update the post on error
-		var processingError error
-		defer func() {
-			if processingError != nil {
-				responsePost.Message = "I encountered an error while searching. Please try again later. See server logs for details."
-				if err := s.mmclient.UpdatePost(responsePost); err != nil {
-					s.mmclient.LogError("Error updating post on error", "error", err)
-				}
-			}
-		}()
-
-		// Perform search
-		if maxResults == 0 {
-			maxResults = 5
-		}
-
-		searchResults, err := s.Search(context.Background(), query, embeddings.SearchOptions{
-			Limit:     maxResults,
-			TeamID:    teamID,
-			ChannelID: channelID,
-			UserID:    userID,
-		})
-		if err != nil {
-			s.mmclient.LogError("Error performing search", "error", err)
-			processingError = err
-			return
-		}
-
-		ragResults := s.convertToRAGResults(searchResults)
-		if len(ragResults) == 0 {
-			responsePost.Message = "I couldn't find any relevant messages for your query. Please try a different search term."
-			if updateErr := s.mmclient.UpdatePost(responsePost); updateErr != nil {
-				s.mmclient.LogError("Error updating post on error", "error", updateErr)
-			}
-			return
-		}
-
-		// Create context for generating answer
-		promptCtx := llm.NewContext()
-		promptCtx.Parameters = map[string]interface{}{
-			"Query":   query,
-			"Results": ragResults,
-		}
-
-		systemMessage, err := s.prompts.Format("search_system", promptCtx)
-		if err != nil {
-			s.mmclient.LogError("Error formatting system message", "error", err)
-			processingError = err
-			return
-		}
-
-		prompt := llm.CompletionRequest{
-			Posts: []llm.Post{
-				{
-					Role:    llm.PostRoleSystem,
-					Message: systemMessage,
-				},
-				{
-					Role:    llm.PostRoleUser,
-					Message: query,
-				},
-			},
-			Context: promptCtx,
-		}
-
-		resultStream, err := bot.LLM().ChatCompletion(prompt)
-		if err != nil {
-			s.mmclient.LogError("Error generating answer", "error", err)
-			processingError = err
-			return
-		}
-
-		resultsJSON, err := json.Marshal(ragResults)
-		if err != nil {
-			s.mmclient.LogError("Error marshaling results", "error", err)
-			processingError = err
-			return
-		}
-
-		// Update post to add sources
-		responsePost.AddProp(SearchResultsProp, string(resultsJSON))
-		if updateErr := s.mmclient.UpdatePost(responsePost); updateErr != nil {
-			s.mmclient.LogError("Error updating post for search results", "error", updateErr)
-			processingError = updateErr
-			return
-		}
-
-		streamContext, err := s.streamingService.GetStreamingContext(context.Background(), responsePost.Id)
-		if err != nil {
-			s.mmclient.LogError("Error getting post streaming context", "error", err)
-			processingError = err
-			return
-		}
-		defer s.streamingService.FinishStreaming(responsePost.Id)
-		s.streamingService.StreamToPost(streamContext, resultStream, responsePost, "")
-	}(query, teamID, channelID, maxResults)
+	go s.processSearch(bot, userID, query, teamID, channelID, maxResults, questionPost)
 
 	return map[string]string{
 		"postid":    questionPost.Id,
@@ -271,58 +225,112 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 	}, nil
 }
 
-// SearchQuery performs a search and returns results immediately
-func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (Response, error) {
-	if !s.Enabled() {
-		return Response{}, fmt.Errorf("search functionality is not configured")
+// processSearch handles the async portion of RunSearch
+func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID string, maxResults int, questionPost *model.Post) {
+	// Create response post as a reply
+	responsePost := &model.Post{
+		RootId: questionPost.Id,
+	}
+	responsePost.AddProp(streaming.NoRegen, "true")
+
+	if err := s.botDMNonResponse(bot.GetMMBot().UserId, userID, responsePost); err != nil {
+		s.mmclient.LogError("Error creating bot DM", "error", err)
+		return
 	}
 
-	if maxResults == 0 {
-		maxResults = 5
-	}
+	// Setup error handling to update the post on error
+	var processingError error
+	defer func() {
+		if processingError != nil {
+			responsePost.Message = "I encountered an error while searching. Please try again later. See server logs for details."
+			if err := s.mmclient.UpdatePost(responsePost); err != nil {
+				s.mmclient.LogError("Error updating post on error", "error", err)
+			}
+		}
+	}()
 
-	// Search for relevant posts using embeddings
-	searchResults, err := s.Search(ctx, query, embeddings.SearchOptions{
+	// Execute search
+	results, err := s.executeSearch(context.Background(), query, Options{
 		Limit:     maxResults,
 		TeamID:    teamID,
 		ChannelID: channelID,
 		UserID:    userID,
 	})
 	if err != nil {
-		return Response{}, fmt.Errorf("search failed: %w", err)
+		s.mmclient.LogError("Error executing search", "error", err)
+		processingError = err
+		return
 	}
 
-	ragResults := s.convertToRAGResults(searchResults)
-	if len(ragResults) == 0 {
+	if len(results) == 0 {
+		responsePost.Message = "I couldn't find any relevant messages for your query. Please try a different search term."
+		if updateErr := s.mmclient.UpdatePost(responsePost); updateErr != nil {
+			s.mmclient.LogError("Error updating post on error", "error", updateErr)
+		}
+		return
+	}
+
+	prompt, err := s.buildPrompt(query, results)
+	if err != nil {
+		s.mmclient.LogError("Error building prompt", "error", err)
+		processingError = err
+		return
+	}
+
+	resultStream, err := bot.LLM().ChatCompletion(prompt)
+	if err != nil {
+		s.mmclient.LogError("Error generating answer", "error", err)
+		processingError = err
+		return
+	}
+
+	resultsJSON, err := json.Marshal(results)
+	if err != nil {
+		s.mmclient.LogError("Error marshaling results", "error", err)
+		processingError = err
+		return
+	}
+
+	// Update post to add sources
+	responsePost.AddProp(SearchResultsProp, string(resultsJSON))
+	if updateErr := s.mmclient.UpdatePost(responsePost); updateErr != nil {
+		s.mmclient.LogError("Error updating post for search results", "error", updateErr)
+		processingError = updateErr
+		return
+	}
+
+	streamContext, err := s.streamingService.GetStreamingContext(context.Background(), responsePost.Id)
+	if err != nil {
+		s.mmclient.LogError("Error getting post streaming context", "error", err)
+		processingError = err
+		return
+	}
+	defer s.streamingService.FinishStreaming(responsePost.Id)
+	s.streamingService.StreamToPost(streamContext, resultStream, responsePost, "")
+}
+
+// SearchQuery performs a search and returns results immediately
+func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (Response, error) {
+	results, err := s.executeSearch(ctx, query, Options{
+		Limit:     maxResults,
+		TeamID:    teamID,
+		ChannelID: channelID,
+		UserID:    userID,
+	})
+	if err != nil {
+		return Response{}, err
+	}
+
+	if len(results) == 0 {
 		return Response{
 			Answer:  "I couldn't find any relevant messages for your query. Please try a different search term.",
 			Results: []RAGResult{},
 		}, nil
 	}
 
-	promptCtx := llm.NewContext()
-	promptCtx.Parameters = map[string]interface{}{
-		"Query":   query,
-		"Results": ragResults,
-	}
-
-	systemMessage, err := s.prompts.Format("search_system", promptCtx)
+	prompt, err := s.buildPrompt(query, results)
 	if err != nil {
-		return Response{}, fmt.Errorf("failed to format system message: %w", err)
-	}
-
-	prompt := llm.CompletionRequest{
-		Posts: []llm.Post{
-			{
-				Role:    llm.PostRoleSystem,
-				Message: systemMessage,
-			},
-			{
-				Role:    llm.PostRoleUser,
-				Message: query,
-			},
-		},
-		Context: promptCtx,
+		return Response{}, err
 	}
 
 	answer, err := bot.LLM().ChatCompletionNoStream(prompt)
@@ -332,7 +340,7 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 
 	return Response{
 		Answer:  answer,
-		Results: ragResults,
+		Results: results,
 	}, nil
 }
 
