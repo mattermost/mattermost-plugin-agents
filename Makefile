@@ -26,6 +26,12 @@ default: all
 # Verify environment, and define PLUGIN_ID, PLUGIN_VERSION, HAS_SERVER and HAS_WEBAPP as needed.
 include build/setup.mk
 
+# The public/ directory contains the bridgeclient Go module for external consumption,
+# not HTTP assets. Override HAS_PUBLIC to prevent bundling these files.
+# TODO: Move bridgeclient to a top-level client/ directory for a cleaner import path.
+HAS_PUBLIC :=
+$(info Note: public/ directory contains Go modules, not HTTP assets - skipping bundle)
+
 BUNDLE_NAME ?= $(PLUGIN_ID)-$(PLUGIN_VERSION).tar.gz
 
 # Include custom makefile, if present
