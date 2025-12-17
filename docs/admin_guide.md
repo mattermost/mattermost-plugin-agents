@@ -42,71 +42,69 @@ If you have an Enterprise, or Enterprise Advanced license, upload it to unlock a
 
 For general settings, you can toggle to enable or disable the plugin system-wide, enable debug logging for troubleshooting (use only when needed), enable token usage logging for tracking LLM interactions, and configure the hostname allowlist for API calls.
 
+### Service configuration
+
+Configure an LLM provider (Service) for your Agents integration. Services manage the connection to the LLM provider, including authentication and model defaults. You can create multiple services for different providers or configurations, and share them across multiple agents.
+
+Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
+
+| Setting | Description |
+|---------|-------------|
+| **Name** | Internal name for this service configuration |
+| **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Azure OpenAI, OpenAI-compatible) |
+| **API Key** | Your provider's API key (requirements vary by provider) |
+| **Default Model** | Default model to use for this service |
+| **Input Token Limit** | Maximum tokens allowed in input |
+| **Output Token Limit** | Maximum tokens allowed in output |
+| **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
+| **Send User ID** | Whether to send Mattermost user IDs to the LLM provider |
+| **Use Responses API** | (OpenAI/Compatible only) Enable OpenAI's Responses API for richer tool integration |
+
+#### Provider Specific Settings
+
+Each provider has specific configuration requirements:
+
+| Provider | Required Settings | Optional Settings |
+|----------|-------------------|-------------------|
+| **OpenAI** | API Key | Organization ID, API URL (for compatible services) |
+| **Anthropic** | API Key | |
+| **AWS Bedrock** | AWS Region | API Key (can use IAM role), Access/Secret Keys |
+| **Cohere** | API Key | |
+| **Mistral** | API Key | |
+| **Azure OpenAI** | API Key, API URL | |
+
+For AWS Bedrock, authentication can be configured using AWS credentials in the API Key/Secret fields, or by using IAM roles when running Mattermost on AWS infrastructure.
+
+See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html) for detailed provider-specific configuration.
+
 ### Agent configuration
 
-Configure an LLM for your Agents integration by going to **System Console > Plugins > Agents** and selecting **Add an Agent**. The plugin supports creating multiple Agents with different configurations. See [license requirements](#license-requirements) for details on features that require a license.
+Create an Agent (Bot) that uses a configured Service. Multiple Agents can use the same Service configuration. See [license requirements](#license-requirements) for details on features that require a license.
 
-Select **Add an Agent** to create a new Agent, then configure the agent settings:
+Navigate to **System Console > Plugins > Agents** and select **Add an Agent**.
 
 | Setting | Description |
 |---------|-------------|
 | **Display Name** | User-facing name shown in Mattermost |
 | **Agent Username** | The mattermost username for the agent. @ mentions to the agent will use this name |
 | **Agent Avatar** | Custom image for the agent |
-| **Service** | LLM provider for this agent (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Azure OpenAI, OpenAI-compatible) |
-| **Send User ID** | Whether to send Mattermost user IDs to the LLM provider |
-| **Default Model** | Specific model to use from your chosen provider |
-| **Input Token Limit** | Maximum tokens allowed in input (model-dependent) |
-| **Output Token Limit** | Maximum tokens allowed in output (model-dependent) |
-| **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
+| **Service** | Select a configured Service from the dropdown |
+| **Model** | (Optional) Override the service's default model for this agent |
 | **Custom Instructions** | Custom instructions that define the agent's personality and capabilities |
-| **Enable Vision** | Enable Vision to allow the agent to process images. Requires a compatible model. |
+| **Enable Vision** | Enable Vision to allow the agent to process images. Requires a compatible model and service. |
 | **Enable Tools** | By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools. |
 | **Access Control** | Set which teams, channels, and users can access this agent |
 
-#### LLM Specific Settings
+#### LLM Specific Agent Settings
 
-Some LLMs have additional configuration that can enable rich features, like Web Search. 
-
-##### OpenAI, OpenAI Compatible
+Some capabilities are available depending on the selected Service and its configuration:
 
 | Setting | Description |
 |---------|-------------|
-| **Use Responses API** | OpenAI has introduced a new Responses API to the OpenAI API specification. This API allows for richer tool integration like reasoning, and native tool support like Web Search. |
-| **Enable Web Search** | Enabling web search will allow your Agent to leverage OpenAI's (or compatible) native web search tool, enabling Agents to respond with information more recent than the model's cutoff date. Responses API must be enabled in order to configure this setting. |
-
-##### Anthropic
-
-| Setting | Description |
-|---------|-------------|
-| **Enable Web Search** | Enabling web search will allow your Agent to leverage Anthropic's native web search tool, enabling Agents to respond with information more recent than the model's cutoff date.
-
-##### AWS Bedrock
-
-| Setting | Description |
-|---------|-------------|
-| **AWS Region** | The AWS region where your Bedrock service is available (e.g., us-east-1, us-west-2). |
-| **API Key** | Optional. AWS credentials can be provided via API Key field or through IAM roles, environment variables, or instance profiles. |
-
-AWS Bedrock provides access to multiple foundation models including Claude (Anthropic), Amazon Titan, and other models available through AWS. Authentication can be configured using AWS credentials in the API Key field, or by using IAM roles when running Mattermost on AWS infrastructure.
-
+| **Enable Web Search** | Available for OpenAI (with Responses API enabled on the Service) and Anthropic. Allows the Agent to leverage the provider's native web search tool to respond with recent information. |
+| **Reasoning Enabled** | Available for OpenAI (with Responses API) and Anthropic. Enables "thinking" or reasoning capabilities for complex tasks. |
 
 Select **Save** to create the agent.
-
-### Provider configuration
-
-For each LLM provider you want to use, you'll need to configure authentication. The basic requirements are:
-
-| Provider | Required | Optional |
-|----------|----------|----------|
-| **OpenAI** | API Key | Organization ID |
-| **Anthropic** | API Key | |
-| **AWS Bedrock** | AWS Region | API Key (can use IAM role) |
-| **Cohere** | API Key | |
-| **Mistral** | API Key | |
-| **Azure OpenAI** | API Key, Resource Name, Deployment ID | |
-
-See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html) for detailed provider-specific configuration.
 
 ### Custom instructions
 
@@ -210,6 +208,7 @@ This separation allows multiple bots to share the same LLM service configuration
     "services": [
       {
         "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": "OpenAI Service",
         "type": "openai",
         "apiKey": "sk-...",
         "defaultModel": "gpt-4o"
@@ -353,4 +352,3 @@ The following table outlines which features require a license:
 | AI Actions menu (thread summarization) | Entry, Enterprise, and Enterprise Advanced |
 | Channel summarization (unread messages) | Entry, Enterprise, and Enterprise Advanced |
 | Recorded meeting transcripts and summarization | Entry, Enterprise, and Enterprise Advanced |
-
