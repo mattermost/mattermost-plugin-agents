@@ -53,6 +53,12 @@ type AddUserToChannelArgs struct {
 	ChannelID string `json:"channel_id" jsonschema:"ID of the channel to add user to"`
 }
 
+// GetDMChannelArgs represents arguments for the get_dm_channel tool
+type GetDMChannelArgs struct {
+	UserID   string `json:"user_id,omitempty" jsonschema:"The user ID to get DM channel with (use this OR username),minLength=26,maxLength=26"`
+	Username string `json:"username,omitempty" jsonschema:"The username to get DM channel with (use this OR user_id),minLength=1,maxLength=64"`
+}
+
 // getChannelTools returns all channel-related tools
 func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 	return []MCPTool{
@@ -85,6 +91,12 @@ func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 			Description: "Add a user to a channel. Parameters: user_id (required), channel_id (required). Returns confirmation message.",
 			Schema:      llm.NewJSONSchemaFromStruct[AddUserToChannelArgs](),
 			Resolver:    p.toolAddUserToChannel,
+		},
+		{
+			Name:        "get_dm_channel",
+			Description: "Get or create a direct message (DM) channel with another user. Parameters: user_id OR username (one required). Returns the DM channel ID and metadata. Use this to find the channel_id for reading DM conversations. Example: {\"username\": \"john.doe\"} or {\"user_id\": \"abc123def456\"}",
+			Schema:      llm.NewJSONSchemaFromStruct[GetDMChannelArgs](),
+			Resolver:    p.toolGetDMChannel,
 		},
 	}
 }
@@ -133,10 +145,23 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 		return "failed to fetch channel info", fmt.Errorf("error fetching channel: %w", err)
 	}
 
-	// Get team info for context
-	team, _, err := client.GetTeam(ctx, channel.TeamId, "")
-	if err != nil {
-		return "failed to fetch team info", fmt.Errorf("error fetching team: %w", err)
+	// Get team info for context (skip for DM/Group channels which have no team)
+	var teamDisplayName string
+	if channel.TeamId != "" {
+		team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+		if teamErr != nil {
+			return "failed to fetch team info", fmt.Errorf("error fetching team: %w", teamErr)
+		}
+		teamDisplayName = team.DisplayName
+	} else {
+		// For DM channels, show the channel type instead
+		if channel.Type == model.ChannelTypeDirect {
+			teamDisplayName = "Direct Message"
+		} else if channel.Type == model.ChannelTypeGroup {
+			teamDisplayName = "Group Message"
+		} else {
+			teamDisplayName = "N/A"
+		}
 	}
 
 	// Get posts from the channel
@@ -159,7 +184,12 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 
 	// Format the response
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channel.DisplayName, team.DisplayName))
+	// For DM channels, show participants instead of channel name
+	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+		result.WriteString(fmt.Sprintf("Conversation (%s)\n", teamDisplayName))
+	} else {
+		result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channel.DisplayName, teamDisplayName))
+	}
 	result.WriteString(fmt.Sprintf("Found %d posts:\n\n", len(filteredPosts)))
 
 	for i, post := range filteredPosts {
@@ -674,4 +704,98 @@ func (p *MattermostToolProvider) tryFindChannelByName(ctx context.Context, clien
 
 	// Return empty slice if no matches found (not a technical failure)
 	return matches, nil
+}
+
+// toolGetDMChannel implements the get_dm_channel tool
+func (p *MattermostToolProvider) toolGetDMChannel(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+	var args GetDMChannelArgs
+	err := argsGetter(&args)
+	if err != nil {
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool get_dm_channel: %w", err)
+	}
+
+	// Validate that at least one parameter is provided
+	if args.UserID == "" && args.Username == "" {
+		return "either user_id or username must be provided", fmt.Errorf("insufficient parameters for DM channel lookup")
+	}
+
+	// Get client from context
+	if mcpContext.Client == nil {
+		return "client not available", fmt.Errorf("client not available in context")
+	}
+	client := mcpContext.Client
+	ctx := context.Background()
+
+	var targetUserID string
+
+	// If username is provided, look up the user ID
+	if args.Username != "" {
+		users, _, err := client.SearchUsers(ctx, &model.UserSearch{
+			Term:  args.Username,
+			Limit: 10,
+		})
+		if err != nil {
+			return "failed to search for user", fmt.Errorf("error searching for user: %w", err)
+		}
+
+		// Find exact match
+		var foundUser *model.User
+		for _, user := range users {
+			if user.Username == args.Username {
+				foundUser = user
+				break
+			}
+		}
+
+		if foundUser == nil {
+			return fmt.Sprintf("user '%s' not found", args.Username), nil
+		}
+		targetUserID = foundUser.Id
+	} else {
+		// Validate user ID format
+		if !model.IsValidId(args.UserID) {
+			return "invalid user_id format", fmt.Errorf("user_id must be a valid ID")
+		}
+		targetUserID = args.UserID
+	}
+
+	// Get current user
+	currentUser, _, err := client.GetMe(ctx, "")
+	if err != nil {
+		return "failed to get current user", fmt.Errorf("error getting current user: %w", err)
+	}
+
+	// Create or get the DM channel
+	channel, _, err := client.CreateDirectChannel(ctx, currentUser.Id, targetUserID)
+	if err != nil {
+		return "failed to create/get DM channel", fmt.Errorf("error creating DM channel: %w", err)
+	}
+
+	// Get the other user's info for display
+	otherUser, _, userErr := client.GetUser(ctx, targetUserID, "")
+
+	var result strings.Builder
+	result.WriteString("Direct Message Channel:\n")
+	result.WriteString(fmt.Sprintf("Channel ID: %s\n", channel.Id))
+
+	if userErr == nil {
+		result.WriteString(fmt.Sprintf("With User: %s", otherUser.Username))
+		if otherUser.FirstName != "" || otherUser.LastName != "" {
+			result.WriteString(fmt.Sprintf(" (%s %s)", otherUser.FirstName, otherUser.LastName))
+		}
+		result.WriteString("\n")
+		result.WriteString(fmt.Sprintf("User ID: %s\n", otherUser.Id))
+	}
+
+	result.WriteString(fmt.Sprintf("Channel Type: %s\n", channel.Type))
+	result.WriteString(fmt.Sprintf("Total Messages: %d\n", channel.TotalMsgCount))
+	result.WriteString(fmt.Sprintf("Created: %s\n", time.Unix(channel.CreateAt/1000, 0).Format("2006-01-02 15:04:05")))
+
+	if channel.LastPostAt > 0 {
+		result.WriteString(fmt.Sprintf("Last Activity: %s\n", time.Unix(channel.LastPostAt/1000, 0).Format("2006-01-02 15:04:05")))
+	}
+
+	result.WriteString("\nYou can now use read_channel with this channel_id to read the conversation.")
+
+	return result.String(), nil
 }
