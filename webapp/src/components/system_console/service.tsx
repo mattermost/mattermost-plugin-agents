@@ -28,6 +28,9 @@ export type LLMService = {
     sendUserId: boolean
     outputTokenLimit: number
     useResponsesAPI: boolean
+    region: string
+    awsAccessKeyID: string
+    awsSecretAccessKey: string
 }
 
 const mapServiceTypeToDisplayName = new Map<string, string>([
@@ -35,6 +38,7 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['openaicompatible', 'OpenAI Compatible'],
     ['azure', 'Azure'],
     ['anthropic', 'Anthropic'],
+    ['bedrock', 'AWS Bedrock'],
     ['cohere', 'Cohere'],
     ['mistral', 'Mistral'],
     ['asage', 'asksage (Experimental)'],
@@ -107,6 +111,8 @@ const ServiceFields = (props: ServiceFieldsProps) => {
         switch (type) {
         case 'anthropic':
             return '8192';
+        case 'bedrock':
+            return '8192';
         default:
             return '0';
         }
@@ -135,6 +141,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
             >
                 <SelectionItemOption value='openai'>{'OpenAI'}</SelectionItemOption>
                 <SelectionItemOption value='anthropic'>{'Anthropic'}</SelectionItemOption>
+                <SelectionItemOption value='bedrock'>{'AWS Bedrock'}</SelectionItemOption>
                 <SelectionItemOption value='openaicompatible'>{'OpenAI Compatible'}</SelectionItemOption>
                 <SelectionItemOption value='azure'>{'Azure'}</SelectionItemOption>
                 <SelectionItemOption value='cohere'>{'Cohere'}</SelectionItemOption>
@@ -148,11 +155,42 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
                 />
             )}
+            {type === 'bedrock' && (
+                <>
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'AWS Region'})}
+                        value={props.service.region}
+                        onChange={(e) => props.onChange({...props.service, region: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'AWS region where Bedrock is available (e.g., us-east-1, us-west-2)'})}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'Custom Endpoint URL (Optional)'})}
+                        value={props.service.apiURL}
+                        onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'Optional custom endpoint for VPC endpoints or proxies (e.g., https://bedrock-runtime.vpce-xxx.us-east-1.vpce.amazonaws.com)'})}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'AWS Access Key ID (Optional)'})}
+                        value={props.service.awsAccessKeyID}
+                        onChange={(e) => props.onChange({...props.service, awsAccessKeyID: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'IAM user access key ID. If set, these credentials take precedence over API Key. Can also be set via AWS_ACCESS_KEY_ID environment variable. System console takes precedence over environment variables.'})}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'AWS Secret Access Key (Optional)'})}
+                        type='password'
+                        value={props.service.awsSecretAccessKey}
+                        onChange={(e) => props.onChange({...props.service, awsSecretAccessKey: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'IAM user secret access key. Required if AWS Access Key ID is provided. Can also be set via AWS_SECRET_ACCESS_KEY environment variable. System console takes precedence over environment variables.'})}
+                    />
+                </>
+            )}
             <TextItem
                 label={intl.formatMessage({defaultMessage: 'API Key'})}
                 type='password'
                 value={props.service.apiKey}
                 onChange={(e) => props.onChange({...props.service, apiKey: e.target.value})}
+                // eslint-disable-next-line no-undefined
+                helptext={type === 'bedrock' ? intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'}) : undefined}
             />
             {isOpenAIType && (
                 <>

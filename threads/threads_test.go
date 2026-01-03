@@ -165,6 +165,13 @@ func TestThreadsSummarizeFromExportedData(t *testing.T) {
 				"contains the usernames involved as @mentions if referenced",
 			},
 		},
+		{
+			filename: "eval_announcement.json",
+			rubrics: []string{
+				"mentions the successful release of v2.5.0",
+				"contains the usernames involved as @mentions if referenced",
+			},
+		},
 	}
 
 	for _, config := range evalConfigs {
@@ -194,7 +201,13 @@ func TestThreadsActionItemsFromExportedData(t *testing.T) {
 		{
 			filename: "eval_timed_dnd.json",
 			rubrics: []string{
-				"identifies there are no action items in the thread",
+				"does not list any committed action items with specific owners and deadlines",
+			},
+		},
+		{
+			filename: "eval_announcement.json",
+			rubrics: []string{
+				"does not list any committed action items with specific owners and deadlines",
 			},
 		},
 	}
@@ -226,7 +239,13 @@ func TestThreadsOpenQuestionsFromExportedData(t *testing.T) {
 		{
 			filename: "eval_timed_dnd.json",
 			rubrics: []string{
-				"identifies that there are no open questions in the thread",
+				"does not list any questions that went completely unanswered",
+			},
+		},
+		{
+			filename: "eval_announcement.json",
+			rubrics: []string{
+				"does not list any questions that went completely unanswered",
 			},
 		},
 	}

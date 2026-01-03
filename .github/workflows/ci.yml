@@ -114,6 +114,8 @@ jobs:
             display_name: Azure OpenAI
           - name: mistral
             display_name: Mistral
+          - name: bedrock
+            display_name: AWS Bedrock
     name: evals-${{ matrix.provider.name }}
     steps:
       - uses: actions/checkout@v4
@@ -140,6 +142,11 @@ jobs:
           # Mistral
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL || 'mistral-large-latest' }}
+          # AWS Bedrock
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_SECRET }}
+          AWS_BEDROCK_REGION: ${{ vars.AWS_BEDROCK_REGION || 'us-east-1' }}
+          AWS_BEDROCK_MODEL: ${{ vars.AWS_BEDROCK_MODEL || 'global.anthropic.claude-sonnet-4-20250514-v1:0' }}
         run: |
           # Run evals - evalviewer writes directly to comment.md
           make evals-comment || true

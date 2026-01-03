@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-ai/anthropic"
+	"github.com/mattermost/mattermost-plugin-ai/bedrock"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/openai"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
@@ -49,7 +50,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		if model == "" {
 			model = os.Getenv("OPENAI_MODEL")
 			if model == "" {
-				model = "gpt-4o"
+				model = "gpt-5"
 			}
 		}
 
@@ -73,7 +74,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		if model == "" {
 			model = os.Getenv("ANTHROPIC_MODEL")
 			if model == "" {
-				model = "claude-sonnet-4-20250514"
+				model = "claude-sonnet-4-5-20250929"
 			}
 		}
 
@@ -103,7 +104,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		if model == "" {
 			model = os.Getenv("AZURE_OPENAI_MODEL")
 			if model == "" {
-				model = "gpt-4o"
+				model = "gpt-5"
 			}
 		}
 
@@ -171,6 +172,35 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		}, httpClient)
 		if provider == nil {
 			return nil, errors.New("failed to create Mistral provider")
+		}
+		return provider, nil
+
+	case "bedrock":
+		region := os.Getenv("AWS_BEDROCK_REGION")
+		if region == "" {
+			return nil, errors.New("AWS_BEDROCK_REGION environment variable is not set")
+		}
+
+		model := modelOverride
+		if model == "" {
+			model = os.Getenv("AWS_BEDROCK_MODEL")
+			if model == "" {
+				model = "global.anthropic.claude-sonnet-4-20250514-v1:0"
+			}
+		}
+
+		// AWS credentials are picked up from environment via standard AWS SDK chain:
+		// AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (and optionally AWS_SESSION_TOKEN)
+		serviceConfig := llm.ServiceConfig{
+			DefaultModel:       model,
+			Region:             region,
+			AWSAccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
+			AWSSecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+		}
+
+		provider, err := bedrock.New(serviceConfig, httpClient)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Bedrock provider: %w", err)
 		}
 		return provider, nil
 
@@ -283,7 +313,7 @@ func getProvidersToTest() []string {
 
 	// Handle "all" case
 	if providerEnv == "all" {
-		return []string{"openai", "anthropic", "azure", "mistral"}
+		return []string{"openai", "anthropic", "azure", "mistral", "bedrock"}
 	}
 
 	// Handle comma-separated list

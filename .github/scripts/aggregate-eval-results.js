@@ -10,7 +10,7 @@ async function aggregateAndPostResults(github, context) {
     let combinedComment = '## 🤖 LLM Evaluation Results\n\n';
 
     const resultsDir = 'eval-results';
-    const providers = ['eval-results-openai', 'eval-results-anthropic', 'eval-results-azure', 'eval-results-mistral'];
+    const providers = ['eval-results-openai', 'eval-results-anthropic', 'eval-results-azure', 'eval-results-mistral', 'eval-results-bedrock'];
 
     let hasAnyResults = false;
 

@@ -349,9 +349,37 @@ func TestIsValidService(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "Valid Mistral service with API key",
+			name: "Valid Bedrock service with region",
 			service: ServiceConfig{
 				ID:     "service-7",
+				Type:   ServiceTypeBedrock,
+				Region: "us-east-1", // AWS region
+			},
+			want: true,
+		},
+		{
+			name: "Bedrock service missing region",
+			service: ServiceConfig{
+				ID:     "service-7",
+				Type:   ServiceTypeBedrock,
+				Region: "", // bad - region required
+			},
+			want: false,
+		},
+		{
+			name: "Bedrock service does not require API key",
+			service: ServiceConfig{
+				ID:     "service-7",
+				Type:   ServiceTypeBedrock,
+				APIKey: "", // not required - can use IAM role
+				Region: "us-west-2",
+			},
+			want: true,
+		},
+		{
+			name: "Valid Mistral service with API key",
+			service: ServiceConfig{
+				ID:     "service-8",
 				Type:   ServiceTypeMistral,
 				APIKey: "mistral-key",
 			},
@@ -360,7 +388,7 @@ func TestIsValidService(t *testing.T) {
 		{
 			name: "Mistral service missing API key",
 			service: ServiceConfig{
-				ID:     "service-7",
+				ID:     "service-8",
 				Type:   ServiceTypeMistral,
 				APIKey: "", // bad
 			},

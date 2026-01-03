@@ -8,7 +8,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {TrashCanOutlineIcon, ChevronDownIcon, AlertOutlineIcon, ChevronUpIcon} from '@mattermost/compass-icons/components';
 
 import IconAI from '../assets/icon_ai';
-import {DangerPill, Pill} from '../pill';
+import {DangerPill} from '../pill';
 
 import {ButtonIcon} from '../assets/buttons';
 
@@ -92,10 +92,7 @@ const NativeToolsItem = (props: NativeToolsItemProps) => {
     return (
         <>
             <ItemLabel>
-                <Horizontal>
-                    {titleMessage}
-                    <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
-                </Horizontal>
+                {titleMessage}
             </ItemLabel>
             <div>
                 {availableNativeTools.map((tool) => (
@@ -425,13 +422,6 @@ const HeaderContainer = styled.div`
 	padding: 12px 16px 12px 20px;
 	border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
 	cursor: pointer;
-`;
-
-const Horizontal = styled.div`
-	display: flex;
-	flex-direction: row;
-	align-items: center;
-	gap: 8px;
 `;
 
 const NativeToolContainer = styled.div`

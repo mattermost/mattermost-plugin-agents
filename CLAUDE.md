@@ -12,6 +12,7 @@
 - Run evals with specific model: `ANTHROPIC_MODEL=claude-3-opus-20240229 make evals-ci`
 - Run evals with multiple providers: `LLM_PROVIDER=openai,anthropic make evals-ci`
 - Run evals with OpenAI compatible API (e.g., local LLMs): `LLM_PROVIDER=openaicompatible OPENAI_COMPATIBLE_API_URL=http://localhost:8080/v1 OPENAI_COMPATIBLE_MODEL=llama-3 make evals-ci`
+- Run streaming benchmarks: `go test -bench=. -benchmem ./llm/... ./streaming/...`
 
 ## Code Style Guidelines
 - Go: Follow Go standard formatting conventions according to goimports

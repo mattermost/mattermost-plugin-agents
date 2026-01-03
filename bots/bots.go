@@ -11,6 +11,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/anthropic"
 	"github.com/mattermost/mattermost-plugin-ai/asage"
+	"github.com/mattermost/mattermost-plugin-ai/bedrock"
 	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -48,6 +49,10 @@ type MMBots struct {
 
 	botsLock sync.RWMutex
 	bots     []*Bot
+
+	// lastEnsuredBotCfgs stores the bot configs that were last successfully ensured
+	// This is used for optimistic checking to avoid unnecessary cluster mutex acquisition
+	lastEnsuredBotCfgs []llm.BotConfig
 }
 
 func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client, tokenLogger *mlog.Logger, metrics llm.MetricsObserver) *MMBots {
@@ -62,13 +67,69 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 	}
 }
 
+// botConfigsEqual compares two bot config slices for equality
+// This is used for optimistic checking to avoid unnecessary cluster mutex acquisition
+func botConfigsEqual(a, b []llm.BotConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	// Build a map of bot configs by ID for efficient comparison
+	aMap := make(map[string]llm.BotConfig, len(a))
+	for _, cfg := range a {
+		aMap[cfg.ID] = cfg
+	}
+
+	for _, cfg := range b {
+		aCfg, ok := aMap[cfg.ID]
+		if !ok {
+			return false
+		}
+		// Compare all fields that affect bot setup
+		if aCfg.Name != cfg.Name ||
+			aCfg.DisplayName != cfg.DisplayName ||
+			aCfg.ServiceID != cfg.ServiceID ||
+			aCfg.Model != cfg.Model {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (b *MMBots) EnsureBots() error {
+	// Optimistic check: if bot configuration hasn't changed since last ensure,
+	// skip the expensive cluster mutex acquisition. This prevents HA timeout issues
+	// when multiple nodes all try to acquire the mutex simultaneously on config changes.
+	currentBotCfgs := b.config.GetBots()
+	b.botsLock.RLock()
+	botsAlreadyInitialized := len(b.bots) > 0
+	lastCfgs := b.lastEnsuredBotCfgs
+	b.botsLock.RUnlock()
+
+	if botsAlreadyInitialized && botConfigsEqual(lastCfgs, currentBotCfgs) {
+		b.pluginAPI.Log.Debug("EnsureBots: skipping - bot configuration unchanged")
+		return nil
+	}
+
 	mtx, err := cluster.NewMutex(b.ensureBotsClusterMutex, "ai_ensure_bots")
 	if err != nil {
 		return fmt.Errorf("failed to create mutex: %w", err)
 	}
 	mtx.Lock()
 	defer mtx.Unlock()
+
+	// Re-check after acquiring lock - another node may have already handled this
+	currentBotCfgs = b.config.GetBots()
+	b.botsLock.RLock()
+	botsAlreadyInitialized = len(b.bots) > 0
+	lastCfgs = b.lastEnsuredBotCfgs
+	b.botsLock.RUnlock()
+
+	if botsAlreadyInitialized && botConfigsEqual(lastCfgs, currentBotCfgs) {
+		b.pluginAPI.Log.Debug("EnsureBots: skipping after lock - bot configuration unchanged")
+		return nil
+	}
 
 	previousMMBots, err := b.pluginAPI.Bot.List(0, 1000, pluginapi.BotOwner("mattermost-ai"), pluginapi.BotIncludeDeleted())
 	if err != nil {
@@ -172,6 +233,9 @@ func (b *MMBots) EnsureBots() error {
 
 	b.botsLock.Lock()
 	b.bots = bots
+	// Store the successfully ensured bot configs for optimistic checking
+	b.lastEnsuredBotCfgs = make([]llm.BotConfig, len(currentBotCfgs))
+	copy(b.lastEnsuredBotCfgs, currentBotCfgs)
 	b.botsLock.Unlock()
 
 	return nil
@@ -189,6 +253,12 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 		result = openai.NewAzure(config.OpenAIConfigFromServiceConfig(serviceConfig, botConfig), b.llmUpstreamHTTPClient)
 	case llm.ServiceTypeAnthropic:
 		result = anthropic.New(serviceConfig, botConfig, b.llmUpstreamHTTPClient)
+	case llm.ServiceTypeBedrock:
+		var err error
+		result, err = bedrock.New(serviceConfig, b.llmUpstreamHTTPClient)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Bedrock client: %w", err)
+		}
 	case llm.ServiceTypeASage:
 		result = asage.New(serviceConfig, b.llmUpstreamHTTPClient)
 	case llm.ServiceTypeCohere:
