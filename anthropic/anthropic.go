@@ -229,9 +229,11 @@ func (a *Anthropic) streamChatWithTools(state messageState) {
 		})
 	}
 
-	// Enable thinking/reasoning for models that support it
-	if thinkingConfig, ok := a.calculateThinkingConfig(state.config.MaxGeneratedTokens); ok {
-		params.Thinking = thinkingConfig
+	// Enable thinking/reasoning for models that support it (unless explicitly disabled)
+	if !state.config.ReasoningDisabled {
+		if thinkingConfig, ok := a.calculateThinkingConfig(state.config.MaxGeneratedTokens); ok {
+			params.Thinking = thinkingConfig
+		}
 	}
 
 	stream := a.client.Messages.NewStreaming(context.Background(), params)
@@ -551,4 +553,33 @@ func (a *Anthropic) calculateThinkingConfig(maxGeneratedTokens int) (anthropicSD
 	}
 
 	return config, true
+}
+
+// FetchModels retrieves the list of available models from the Anthropic API
+func FetchModels(apiKey string, httpClient *http.Client) ([]llm.ModelInfo, error) {
+	client := anthropicSDK.NewClient(
+		option.WithAPIKey(apiKey),
+		option.WithHTTPClient(httpClient),
+	)
+
+	// Use AutoPaging to automatically handle pagination
+	autoPager := client.Models.ListAutoPaging(context.Background(), anthropicSDK.ModelListParams{})
+
+	var models []llm.ModelInfo
+
+	// Iterate through all pages
+	for autoPager.Next() {
+		model := autoPager.Current()
+		models = append(models, llm.ModelInfo{
+			ID:          model.ID,
+			DisplayName: model.DisplayName,
+		})
+	}
+
+	// Check if there was an error during iteration
+	if err := autoPager.Err(); err != nil {
+		return nil, err
+	}
+
+	return models, nil
 }

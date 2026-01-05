@@ -70,7 +70,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			bot,
 			user,
 			channel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
+			c.contextBuilder.WithLLMContextDefaultTools(bot),
 		)
 
 		analyzer := threads.New(bot.LLM(), c.prompts, c.mmClient)
@@ -119,7 +119,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			bot,
 			user,
 			originalFileChannel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot, originalFileChannel.Type == model.ChannelTypeDirect),
+			c.contextBuilder.WithLLMContextDefaultTools(bot),
 		)
 		var summaryErr error
 		result, summaryErr = c.meetingsService.SummarizeTranscription(bot, transcription, context)
@@ -152,7 +152,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			bot,
 			user,
 			channel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)),
+			c.contextBuilder.WithLLMContextDefaultTools(bot),
 		)
 		var summaryErr error
 		result, summaryErr = c.meetingsService.SummarizeTranscription(bot, transcription, context)
@@ -177,7 +177,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		webSearchParams := c.extractWebSearchContext(respondingToPost)
 
 		var contextOpts []llm.ContextOption
-		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextDefaultTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)))
+		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextDefaultTools(bot))
 		if len(webSearchParams) > 0 {
 			contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 		}
@@ -191,6 +191,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		)
 
 		// Process the user request with the context that has the callback
+		// Note: ProcessUserRequestWithContext internally checks if this is a DM and applies WithToolsDisabled() if not
 		var processErr error
 		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback)
 		if processErr != nil {

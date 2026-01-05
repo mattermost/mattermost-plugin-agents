@@ -132,13 +132,11 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return errors.New("post pending tool calls not valid JSON")
 	}
 
-	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
-
 	// Extract web search context from conversation history to preserve citations
 	webSearchParams := c.extractWebSearchContext(post)
 
 	var contextOpts []llm.ContextOption
-	contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextDefaultTools(bot, isDM))
+	contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextDefaultTools(bot))
 	if len(webSearchParams) > 0 {
 		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}

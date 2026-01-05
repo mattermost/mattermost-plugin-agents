@@ -6,7 +6,6 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {setUserProfilePictureByUsername} from '@/client';
-import {Pill} from '../../components/pill';
 
 import Panel, {PanelFooterText} from './panel';
 import Bots, {firstNewBot} from './bots';
@@ -339,7 +338,6 @@ const Config = (props: Props) => {
                 title={
                     <Horizontal>
                         <FormattedMessage defaultMessage='Model Context Protocol (MCP)'/>
-                        <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
                     </Horizontal>
                 }
                 subtitle={intl.formatMessage({defaultMessage: 'Configure MCP servers to enable AI tools.'})}

@@ -19,11 +19,11 @@ func buildSessionKey(userID, state string) string {
 }
 
 func buildClientCredentialsKey(serverURL string) string {
-	oauthClientKeyPrefixprefix := "mcp_oauth_client_v1"
+	oauthClientKeyPrefix := "mcp_oauth_client_v2"
 	// Create a hash of the server URL to use as a consistent key
 	hash := sha256.Sum256([]byte(serverURL))
-	urlHash := hex.EncodeToString(hash[:])[:16] // Use first 16 chars of hash
-	return fmt.Sprintf("%s_%s", oauthClientKeyPrefixprefix, urlHash)
+	urlHash := hex.EncodeToString(hash[:])
+	return fmt.Sprintf("%s_%s", oauthClientKeyPrefix, urlHash)
 }
 
 func buildTokenKey(userID, serverID string) string {
@@ -60,6 +60,14 @@ func (m *OAuthManager) storeToken(userID, serverID string, token *oauth2.Token) 
 	return nil
 }
 
+func (m *OAuthManager) deleteToken(userID, serverID string) error {
+	tokenKey := buildTokenKey(userID, serverID)
+	if err := m.pluginAPI.KVDelete(tokenKey); err != nil {
+		return fmt.Errorf("failed to delete token from KV store: %w", err)
+	}
+	return nil
+}
+
 type ClientCredentials struct {
 	ClientID     string    `json:"clientID"`
 	ClientSecret string    `json:"clientSecret"`
@@ -79,6 +87,11 @@ func (m *OAuthManager) loadClientCredentials(serverURL string) (*ClientCredentia
 	if creds.ClientID == "" || creds.ClientSecret == "" {
 		// If no credentials are found, return nil to indicate no credentials exist
 		return nil, nil
+	}
+
+	// Verify URL matches
+	if creds.ServerURL != serverURL {
+		return nil, fmt.Errorf("server URL mismatch in stored credentials (possible hash collision)")
 	}
 
 	return &creds, nil

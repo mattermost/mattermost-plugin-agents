@@ -22,31 +22,21 @@ func TestMMToolProvider_GetTools(t *testing.T) {
 	tests := []struct {
 		name                      string
 		searchService             *search.Search
-		isDM                      bool
 		expectedSearchToolPresent bool
 	}{
 		{
-			name:                      "search tool available - search enabled in DM",
+			name:                      "search tool available - search enabled",
 			searchService:             search.New(mocks.NewMockEmbeddingSearch(t), nil, nil, nil, nil),
-			isDM:                      true,
 			expectedSearchToolPresent: true,
 		},
 		{
-			name:                      "search tool not available - search disabled in DM",
+			name:                      "search tool not available - search disabled",
 			searchService:             search.New(nil, nil, nil, nil, nil),
-			isDM:                      true,
 			expectedSearchToolPresent: false,
 		},
 		{
-			name:                      "search tool not available - no search service in DM",
+			name:                      "search tool not available - no search service",
 			searchService:             nil,
-			isDM:                      true,
-			expectedSearchToolPresent: false,
-		},
-		{
-			name:                      "search tool not available - not in DM (channel context)",
-			searchService:             search.New(mocks.NewMockEmbeddingSearch(t), nil, nil, nil, nil),
-			isDM:                      false,
 			expectedSearchToolPresent: false,
 		},
 	}
@@ -59,8 +49,9 @@ func TestMMToolProvider_GetTools(t *testing.T) {
 			// Create a mock bot
 			bot := &bots.Bot{}
 
-			// Get tools
-			tools := provider.GetTools(test.isDM, bot)
+			// Get tools - tools are always returned regardless of channel type
+			// Security filtering happens at execution time via WithToolsDisabled()
+			tools := provider.GetTools(bot)
 
 			// Check if SearchServer tool is present
 			searchToolFound := false

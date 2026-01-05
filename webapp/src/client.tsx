@@ -410,6 +410,30 @@ export async function clearMCPToolsCache() {
         url,
     });
 }
+
+export async function fetchModels(serviceType: string, apiKey: string, apiURL: string, orgID: string) {
+    const url = `${baseRoute()}/admin/models/fetch`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({
+            serviceType,
+            apiKey,
+            apiURL,
+            orgID,
+        }),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function getChannelInterval(
     channelID: string,
     startTime: number,

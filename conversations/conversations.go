@@ -88,6 +88,15 @@ func (c *Conversations) SetMeetingsService(meetingsService MeetingsService) {
 
 // ProcessUserRequestWithContext is an internal helper that uses an existing context to process a message
 func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context) (*llm.TextStreamResult, error) {
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	var disabledToolsInfo []llm.ToolInfo
+	if !isDM && context != nil && context.Tools != nil {
+		disabledToolsInfo = context.Tools.GetToolsInfo()
+	}
+	if context != nil {
+		context.DisabledToolsInfo = disabledToolsInfo
+	}
+
 	var posts []llm.Post
 	if post.RootId == "" {
 		// A new conversation
@@ -122,9 +131,9 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		Posts:   posts,
 		Context: context,
 	}
-	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 	var opts []llm.LanguageModelOption
 	if !isDM {
+		// In non-DM channels, disable tools for security but provide info about DM-only tools
 		opts = append(opts, llm.WithToolsDisabled())
 	}
 	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
@@ -157,7 +166,7 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 	webSearchParams := c.extractWebSearchContext(post)
 
 	var contextOpts []llm.ContextOption
-	contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextTools(bot, mmapi.IsDMWith(bot.GetMMBot().UserId, channel)))
+	contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextTools(bot))
 	if len(webSearchParams) > 0 {
 		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
@@ -202,7 +211,7 @@ func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID stri
 		Context: context,
 	}
 
-	conversationTitle, err := bot.LLM().ChatCompletionNoStream(titleRequest, llm.WithMaxGeneratedTokens(25))
+	conversationTitle, err := bot.LLM().ChatCompletionNoStream(titleRequest, llm.WithMaxGeneratedTokens(25), llm.WithReasoningDisabled())
 	if err != nil {
 		return fmt.Errorf("failed to get title: %w", err)
 	}

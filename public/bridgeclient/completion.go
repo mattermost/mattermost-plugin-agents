@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -18,6 +19,9 @@ import (
 // AgentCompletion makes a non-streaming completion request to a specific agent by Bot ID.
 // The agent parameter should be the Mattermost Bot User ID (an immutable identifier).
 func (c *Client) AgentCompletion(agent string, request CompletionRequest) (string, error) {
+	if err := ValidateID(agent); err != nil {
+		return "", fmt.Errorf("invalid agent ID: %w", err)
+	}
 	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s/nostream", aiPluginID, agent)
 	return c.doCompletionRequest(url, request)
 }
@@ -25,14 +29,20 @@ func (c *Client) AgentCompletion(agent string, request CompletionRequest) (strin
 // ServiceCompletion makes a non-streaming completion request to a specific service.
 // The service parameter can be either a service ID or name (e.g., "openai", "anthropic").
 func (c *Client) ServiceCompletion(service string, request CompletionRequest) (string, error) {
-	url := fmt.Sprintf("/%s/bridge/v1/completion/service/%s/nostream", aiPluginID, service)
-	return c.doCompletionRequest(url, request)
+	if service == "" {
+		return "", fmt.Errorf("service cannot be empty")
+	}
+	requestURL := fmt.Sprintf("/%s/bridge/v1/completion/service/%s/nostream", aiPluginID, url.PathEscape(service))
+	return c.doCompletionRequest(requestURL, request)
 }
 
 // AgentCompletionStream makes a streaming completion request to a specific agent by Bot ID.
 // The agent parameter should be the Mattermost Bot User ID (an immutable identifier).
 // Returns a TextStreamResult with a Stream channel for processing events.
 func (c *Client) AgentCompletionStream(agent string, request CompletionRequest) (*llm.TextStreamResult, error) {
+	if err := ValidateID(agent); err != nil {
+		return nil, fmt.Errorf("invalid agent ID: %w", err)
+	}
 	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", aiPluginID, agent)
 	return c.doStreamingRequest(url, request)
 }
@@ -41,8 +51,11 @@ func (c *Client) AgentCompletionStream(agent string, request CompletionRequest) 
 // The service parameter can be either a service ID or name (e.g., "openai", "anthropic").
 // Returns a TextStreamResult with a Stream channel for processing events.
 func (c *Client) ServiceCompletionStream(service string, request CompletionRequest) (*llm.TextStreamResult, error) {
-	url := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", aiPluginID, service)
-	return c.doStreamingRequest(url, request)
+	if service == "" {
+		return nil, fmt.Errorf("service cannot be empty")
+	}
+	requestURL := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", aiPluginID, url.PathEscape(service))
+	return c.doStreamingRequest(requestURL, request)
 }
 
 // doCompletionRequest performs a non-streaming completion request

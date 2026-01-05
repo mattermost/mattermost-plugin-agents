@@ -29,8 +29,8 @@ jobs:
       run: npm ci
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
-    - name: Run Playwright tests
-      run: npx playwright test
+    - name: Run Playwright tests (excluding llmbot tests on PRs)
+      run: npx playwright test --project=chromium --grep-invert "llmbot-post-component"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -43,6 +43,30 @@ jobs:
         name: server-logs
         path: ./e2e/logs/server-logs.log
         retention-days: 30
+
+  e2e-llmbot-real-apis:
+    timeout-minutes: 180
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./e2e
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 18
+    - name: Build
+      run: make dist
+      working-directory: ./
+    - name: Install dependencies
+      run: npm ci
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+    - name: Run LLMBot tests with real APIs
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: npx playwright test tests/llmbot-post-component --project=chromium --reporter=list
 
   plugin-tests:
     runs-on: ubuntu-latest
@@ -75,6 +99,93 @@ jobs:
         run: |
           make test
 
+  evals:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        provider:
+          - name: openai
+            display_name: OpenAI
+          - name: anthropic
+            display_name: Anthropic
+          - name: azure
+            display_name: Azure OpenAI
+          - name: mistral
+            display_name: Mistral
+          - name: bedrock
+            display_name: AWS Bedrock
+    name: evals-${{ matrix.provider.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v4
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run ${{ matrix.provider.display_name }} evaluations
+        id: run-evals
+        env:
+          LLM_PROVIDER: ${{ matrix.provider.name }}
+          # OpenAI
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o' }}
+          # Anthropic
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514' }}
+          # Azure
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_MODEL || 'gpt-4o' }}
+          # Mistral
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL || 'mistral-large-latest' }}
+          # AWS Bedrock
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_SECRET }}
+          AWS_BEDROCK_REGION: ${{ vars.AWS_BEDROCK_REGION || 'us-east-1' }}
+          AWS_BEDROCK_MODEL: ${{ vars.AWS_BEDROCK_MODEL || 'global.anthropic.claude-sonnet-4-20250514-v1:0' }}
+        run: |
+          # Run evals - evalviewer writes directly to comment.md
+          make evals-comment || true
+
+          # Save provider name for aggregation
+          echo "${{ matrix.provider.display_name }}" > provider_name.txt
+
+      - name: Upload evaluation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ matrix.provider.name }}
+          path: |
+            evals.jsonl
+            comment.md
+            provider_name.txt
+          retention-days: 30
+
+  evals-comment:
+    runs-on: ubuntu-latest
+    needs: evals
+    if: always() && github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all evaluation results
+        uses: actions/download-artifact@v4
+        with:
+          path: eval-results
+
+      - name: Aggregate results and post comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const script = require('./.github/scripts/aggregate-eval-results.js');
+            await script.aggregateAndPostResults(github, context);
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -94,7 +205,7 @@ jobs:
           fetch-depth: 0
       - uses: mattermost/actions/plugin-ci/setup@main
         with:
-          golang-ci-lint-version: "v1.54.2"
+          golangci-lint-version: "v1.54.2"
           golang-version: "1.24"
       - uses: mattermost/actions/plugin-ci/build@main
 

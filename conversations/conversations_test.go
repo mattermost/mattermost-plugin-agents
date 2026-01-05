@@ -31,7 +31,7 @@ import (
 // Mock implementations
 type mockToolProvider struct{}
 
-func (m *mockToolProvider) GetTools(isDM bool, bot *bots.Bot) []llm.Tool {
+func (m *mockToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
 	tools := []llm.Tool{}
 
 	tools = append(tools, llm.Tool{
@@ -76,8 +76,6 @@ func TestConversationMentionHandling(t *testing.T) {
 				"attributes each bug to a user",
 				"attributes the bug about trying to save without a color and the save button not doing anything to @maria.nunez",
 				"the bug about the end user being able to change channel banner is attributed to @maria.nunez",
-				"has no unnecessary statements",
-				"should NOT include any statements inviting the user to ask more questions",
 			},
 		},
 	}

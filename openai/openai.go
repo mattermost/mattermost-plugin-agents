@@ -28,20 +28,22 @@ import (
 )
 
 type Config struct {
-	APIKey              string        `json:"apiKey"`
-	APIURL              string        `json:"apiURL"`
-	OrgID               string        `json:"orgID"`
-	DefaultModel        string        `json:"defaultModel"`
-	InputTokenLimit     int           `json:"inputTokenLimit"`
-	OutputTokenLimit    int           `json:"outputTokenLimit"`
-	StreamingTimeout    time.Duration `json:"streamingTimeout"`
-	SendUserID          bool          `json:"sendUserID"`
-	EmbeddingModel      string        `json:"embeddingModel"`
-	EmbeddingDimensions int           `json:"embeddingDimensions"`
-	UseResponsesAPI     bool          `json:"useResponsesAPI"`
-	EnabledNativeTools  []string      `json:"enabledNativeTools"`
-	ReasoningEnabled    bool          `json:"reasoningEnabled"`
-	ReasoningEffort     string        `json:"reasoningEffort"`
+	APIKey               string        `json:"apiKey"`
+	APIURL               string        `json:"apiURL"`
+	OrgID                string        `json:"orgID"`
+	DefaultModel         string        `json:"defaultModel"`
+	InputTokenLimit      int           `json:"inputTokenLimit"`
+	OutputTokenLimit     int           `json:"outputTokenLimit"`
+	StreamingTimeout     time.Duration `json:"streamingTimeout"`
+	SendUserID           bool          `json:"sendUserID"`
+	EmbeddingModel       string        `json:"embeddingModel"`
+	EmbeddingDimensions  int           `json:"embeddingDimensions"`
+	UseResponsesAPI      bool          `json:"useResponsesAPI"`
+	EnabledNativeTools   []string      `json:"enabledNativeTools"`
+	ReasoningEnabled     bool          `json:"reasoningEnabled"`
+	ReasoningEffort      string        `json:"reasoningEffort"`
+	DisableStreamOptions bool          `json:"disableStreamOptions"` // For OpenAI-compatible APIs that don't support stream_options
+	UseMaxTokens         bool          `json:"useMaxTokens"`         // Use max_tokens instead of max_completion_tokens for compatible APIs
 }
 
 type OpenAI struct {
@@ -151,6 +153,7 @@ func modifyCompletionRequestWithRequest(params openai.ChatCompletionNewParams, i
 	if !cfg.ToolsDisabled && internalRequest.Context.Tools != nil {
 		params.Tools = toolsToOpenAITools(internalRequest.Context.Tools.GetTools())
 	}
+
 	return params
 }
 
@@ -809,6 +812,29 @@ func (s *OpenAI) streamResponsesAPIToChannels(params openai.ChatCompletionNewPar
 			}
 			return
 
+		case "response.incomplete":
+			// Response was incomplete (e.g., max tokens reached before completion)
+			// Emit usage event for tracking, then return an error
+
+			// Emit usage event if available (usage counts regardless of completion)
+			if event.Response.Usage.InputTokens > 0 || event.Response.Usage.OutputTokens > 0 {
+				usage := llm.TokenUsage{
+					InputTokens:  event.Response.Usage.InputTokens,
+					OutputTokens: event.Response.Usage.OutputTokens,
+				}
+				output <- llm.TextStreamEvent{
+					Type:  llm.EventTypeUsage,
+					Value: usage,
+				}
+			}
+
+			// Return an error so the user knows the response was truncated
+			output <- llm.TextStreamEvent{
+				Type:  llm.EventTypeError,
+				Value: errors.New("response incomplete: max tokens reached before completion"),
+			}
+			return
+
 		case "error":
 			// Error event
 			var errorMsg string
@@ -872,8 +898,8 @@ func (s *OpenAI) convertToResponseParams(params openai.ChatCompletionNewParams, 
 	}
 
 	// Add reasoning parameters for models that support it
-	// Check if reasoning is enabled for this bot
-	if s.config.ReasoningEnabled {
+	// Check if reasoning is enabled for this bot and not explicitly disabled for this request
+	if s.config.ReasoningEnabled && !cfg.ReasoningDisabled {
 		// Determine reasoning effort
 		var effort shared.ReasoningEffort
 		switch s.config.ReasoningEffort {
@@ -1060,7 +1086,12 @@ func (s *OpenAI) completionRequestFromConfig(cfg llm.LanguageModelConfig) openai
 	}
 
 	if cfg.MaxGeneratedTokens > 0 {
-		params.MaxCompletionTokens = openai.Int(int64(cfg.MaxGeneratedTokens))
+		// Use max_tokens for OpenAI-compatible APIs (like Mistral) that don't support max_completion_tokens
+		if s.config.UseMaxTokens {
+			params.MaxTokens = openai.Int(int64(cfg.MaxGeneratedTokens))
+		} else {
+			params.MaxCompletionTokens = openai.Int(int64(cfg.MaxGeneratedTokens))
+		}
 	}
 
 	if cfg.JSONOutputFormat != nil {
@@ -1106,7 +1137,11 @@ func (s *OpenAI) ChatCompletion(request llm.CompletionRequest, opts ...llm.Langu
 	cfg := s.createConfig(opts)
 	params := s.completionRequestFromConfig(cfg)
 	params = modifyCompletionRequestWithRequest(params, request, cfg)
-	params.StreamOptions.IncludeUsage = openai.Bool(true)
+
+	// Only set stream_options for APIs that support it (not OpenAI-compatible APIs like Mistral)
+	if !s.config.DisableStreamOptions {
+		params.StreamOptions.IncludeUsage = openai.Bool(true)
+	}
 
 	if s.config.SendUserID {
 		if request.Context.RequestingUser != nil {
@@ -1296,4 +1331,45 @@ func getEmbeddingModelConstant(model string) openai.EmbeddingModel {
 
 func (s *OpenAI) Dimensions() int {
 	return s.config.EmbeddingDimensions
+}
+
+// FetchModels retrieves the list of available models from the OpenAI API
+func FetchModels(apiKey string, apiURL string, orgID string, httpClient *http.Client) ([]llm.ModelInfo, error) {
+	opts := []option.RequestOption{
+		option.WithAPIKey(apiKey),
+		option.WithHTTPClient(httpClient),
+	}
+
+	// Add base URL if provided (for OpenAI Compatible services)
+	if apiURL != "" {
+		opts = append(opts, option.WithBaseURL(strings.TrimSuffix(apiURL, "/")))
+	}
+
+	// Add organization ID if provided
+	if orgID != "" {
+		opts = append(opts, option.WithOrganization(orgID))
+	}
+
+	client := openai.NewClient(opts...)
+
+	// Use AutoPaging to automatically handle pagination
+	autoPager := client.Models.ListAutoPaging(context.Background())
+
+	var models []llm.ModelInfo
+
+	// Iterate through all pages
+	for autoPager.Next() {
+		model := autoPager.Current()
+		models = append(models, llm.ModelInfo{
+			ID:          model.ID,
+			DisplayName: model.ID, // OpenAI doesn't have separate display names
+		})
+	}
+
+	// Check if there was an error during iteration
+	if err := autoPager.Err(); err != nil {
+		return nil, err
+	}
+
+	return models, nil
 }

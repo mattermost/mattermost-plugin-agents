@@ -13,12 +13,15 @@ import (
 // GetAgents retrieves all available agents from the bridge API.
 // If userID is provided, only agents accessible to that user are returned.
 func (c *Client) GetAgents(userID string) ([]BridgeAgentInfo, error) {
-	url := fmt.Sprintf("/%s/bridge/v1/agents", aiPluginID)
+	requestURL := fmt.Sprintf("/%s/bridge/v1/agents", aiPluginID)
 	if userID != "" {
-		url = fmt.Sprintf("%s?user_id=%s", url, userID)
+		if err := ValidateID(userID); err != nil {
+			return nil, fmt.Errorf("invalid user ID: %w", err)
+		}
+		requestURL = fmt.Sprintf("%s?user_id=%s", requestURL, userID)
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", requestURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -53,12 +56,15 @@ func (c *Client) GetAgents(userID string) ([]BridgeAgentInfo, error) {
 // GetServices retrieves all available services from the bridge API.
 // If userID is provided, only services accessible to that user (via their permitted bots) are returned.
 func (c *Client) GetServices(userID string) ([]BridgeServiceInfo, error) {
-	url := fmt.Sprintf("/%s/bridge/v1/services", aiPluginID)
+	requestURL := fmt.Sprintf("/%s/bridge/v1/services", aiPluginID)
 	if userID != "" {
-		url = fmt.Sprintf("%s?user_id=%s", url, userID)
+		if err := ValidateID(userID); err != nil {
+			return nil, fmt.Errorf("invalid user ID: %w", err)
+		}
+		requestURL = fmt.Sprintf("%s?user_id=%s", requestURL, userID)
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", requestURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

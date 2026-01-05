@@ -334,7 +334,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                         label={intl.formatMessage({defaultMessage: 'Enable Mattermost MCP Server (HTTP)'})}
                                         value={config.enablePluginServer}
                                         onChange={(enablePluginServer) => onChange({...config, enablePluginServer})}
-                                        helpText={intl.formatMessage({defaultMessage: 'Enable the Mattermost MCP server over HTTP to allow external MCP clients to access Mattermost channels, users, and posts through the MCP protocol.'})}
+                                        helpText={intl.formatMessage({defaultMessage: 'Enable the Mattermost MCP server over HTTP to allow external MCP clients to access Mattermost channels, users, and posts through the MCP protocol. Note: Streaming support requires Mattermost v11.2+.'})}
                                     />
                                     <TextItem
                                         label={intl.formatMessage({defaultMessage: 'Connection Idle Timeout (minutes)'})}
@@ -410,7 +410,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                         label={intl.formatMessage({defaultMessage: 'Enable Mattermost MCP Server (HTTP)'})}
                         value={config.enablePluginServer}
                         onChange={(enablePluginServer) => onChange({...config, enablePluginServer})}
-                        helpText={intl.formatMessage({defaultMessage: 'Enable the Mattermost MCP server over HTTP to allow external MCP clients (like Claude Desktop) to access Mattermost channels, users, and posts through the MCP protocol.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'Enable the Mattermost MCP server over HTTP to allow external MCP clients (like Claude Desktop) to access Mattermost channels, users, and posts through the MCP protocol. Note: Streaming support requires Mattermost v11.2+.'})}
                     />
                 </ItemList>
             )}

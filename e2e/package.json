@@ -15,10 +15,12 @@
   "devDependencies": {
     "@mattermost/client": "10.0.0",
     "@mattermost/types": "10.0.0",
-    "@playwright/test": "1.49.1",
+    "@playwright/mcp": "^0.0.46",
+    "@playwright/test": "^1.57.0-alpha-2025-11-07",
     "@testcontainers/postgresql": "10.16.0",
     "@types/node": "22.10.5",
     "pg": "8.13.1",
+    "playwright": "^1.57.0-alpha-2025-11-07",
     "testcontainers": "10.28.0"
   }
 }
