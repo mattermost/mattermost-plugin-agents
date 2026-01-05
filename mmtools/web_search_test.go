@@ -17,44 +17,44 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIsBlacklisted(t *testing.T) {
-	t.Run("returns false for empty blacklist", func(t *testing.T) {
-		result := isBlacklisted("https://example.com/page", []string{})
+func TestIsDenylisted(t *testing.T) {
+	t.Run("returns false for empty denylist", func(t *testing.T) {
+		result := isDenylisted("https://example.com/page", []string{})
 		require.False(t, result)
 	})
 
 	t.Run("returns true for exact domain match", func(t *testing.T) {
-		blacklist := []string{"example.com", "blocked.org"}
-		require.True(t, isBlacklisted("https://example.com/page", blacklist))
-		require.True(t, isBlacklisted("https://blocked.org/something", blacklist))
+		denylist := []string{"example.com", "blocked.org"}
+		require.True(t, isDenylisted("https://example.com/page", denylist))
+		require.True(t, isDenylisted("https://blocked.org/something", denylist))
 	})
 
 	t.Run("returns true for subdomain match", func(t *testing.T) {
-		blacklist := []string{"example.com"}
-		require.True(t, isBlacklisted("https://www.example.com/page", blacklist))
-		require.True(t, isBlacklisted("https://sub.domain.example.com/page", blacklist))
+		denylist := []string{"example.com"}
+		require.True(t, isDenylisted("https://www.example.com/page", denylist))
+		require.True(t, isDenylisted("https://sub.domain.example.com/page", denylist))
 	})
 
 	t.Run("returns false for non-matching domains", func(t *testing.T) {
-		blacklist := []string{"example.com"}
-		require.False(t, isBlacklisted("https://different.com/page", blacklist))
-		require.False(t, isBlacklisted("https://examplecom.net/page", blacklist))
+		denylist := []string{"example.com"}
+		require.False(t, isDenylisted("https://different.com/page", denylist))
+		require.False(t, isDenylisted("https://examplecom.net/page", denylist))
 	})
 
 	t.Run("handles case insensitivity", func(t *testing.T) {
-		blacklist := []string{"Example.COM"}
-		require.True(t, isBlacklisted("https://example.com/page", blacklist))
-		require.True(t, isBlacklisted("https://EXAMPLE.COM/page", blacklist))
+		denylist := []string{"Example.COM"}
+		require.True(t, isDenylisted("https://example.com/page", denylist))
+		require.True(t, isDenylisted("https://EXAMPLE.COM/page", denylist))
 	})
 
-	t.Run("handles whitespace in blacklist", func(t *testing.T) {
-		blacklist := []string{"  example.com  ", "blocked.org"}
-		require.True(t, isBlacklisted("https://example.com/page", blacklist))
+	t.Run("handles whitespace in denylist", func(t *testing.T) {
+		denylist := []string{"  example.com  ", "blocked.org"}
+		require.True(t, isDenylisted("https://example.com/page", denylist))
 	})
 
 	t.Run("handles invalid URLs gracefully", func(t *testing.T) {
-		blacklist := []string{"example.com"}
-		require.False(t, isBlacklisted("not a valid url", blacklist))
+		denylist := []string{"example.com"}
+		require.False(t, isDenylisted("not a valid url", denylist))
 	})
 }
 
@@ -556,7 +556,7 @@ func TestWebSearchSourceWhitelist(t *testing.T) {
 				WebSearch: config.WebSearchConfig{
 					Enabled:         true,
 					Provider:        "google",
-					DomainBlacklist: []string{},
+					DomainDenylist: []string{},
 				},
 			}
 		},

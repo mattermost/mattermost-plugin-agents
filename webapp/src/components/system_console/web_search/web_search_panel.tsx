@@ -25,7 +25,7 @@ export type WebSearchConfig = {
     provider: string;
     google: WebSearchGoogleConfig;
     brave: WebSearchBraveConfig;
-    domainBlacklist: string[];
+    domainDenylist: string[];
 };
 
 type Props = {
@@ -39,7 +39,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
     // Provide defaults for missing config objects
     const google = value.google || {apiKey: '', searchEngineId: '', resultLimit: 5, apiURL: ''};
     const brave = value.brave || {apiKey: '', resultLimit: 5, apiURL: ''};
-    const domainBlacklist = value.domainBlacklist || [];
+    const domainDenylist = value.domainDenylist || [];
 
     const handleUpdate = (patch: Partial<WebSearchConfig>) => {
         onChange({...value, ...patch});
@@ -115,7 +115,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                             type='password'
                             value={brave.apiKey}
                             onChange={(e) => handleBraveUpdate({apiKey: e.target.value})}
-                            helptext={intl.formatMessage({defaultMessage: 'Brave Search API Key. Requires a Pro AI plan subscription.'})}
+                            helptext={intl.formatMessage({defaultMessage: 'Brave Search API Key. Ensure you subscribe to Brave\'s Pro AI plan when using this feature. Using Brave\'s regular Search API (non-AI tier) violates Brave\'s Terms of Service and may result in account suspension.'})}
                             disabled={!value.enabled}
                         />
                         <TextItem
@@ -138,11 +138,11 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                     </>
                 )}
                 <TextItem
-                    label={intl.formatMessage({defaultMessage: 'Domain Blacklist (optional)'})}
-                    value={domainBlacklist.join(', ')}
+                    label={intl.formatMessage({defaultMessage: 'Domain Denylist (optional)'})}
+                    value={domainDenylist.join(', ')}
                     onChange={(e) => {
                         const domains = e.target.value.split(',').map((d) => d.trim()).filter((d) => d !== '');
-                        handleUpdate({domainBlacklist: domains});
+                        handleUpdate({domainDenylist: domains});
                     }}
                     helptext={intl.formatMessage({defaultMessage: 'Comma-separated list of domains to exclude from search results (e.g., example.com, spam-site.org). Results from these domains will be filtered out and the LLM will never see them.'})}
                     disabled={!value.enabled}

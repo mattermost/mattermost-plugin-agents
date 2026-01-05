@@ -130,16 +130,6 @@ For configuration details on native web search with supported providers, see the
 
 Mattermost supports two web search providers, each with varying capabilities:
 
-##### Google Custom Search
-
-Google Custom Search provides access to Google's search index but has several important limitations:
-
-- **Not a first-party integration**: Mattermost uses Google's Custom Search API, which doesn't provide the same quality of results as searching directly on google.com
-- **Relies on web scraping**: After receiving search results, Mattermost must scrape web pages to extract content for the agent. Many websites block automated scraping or return limited content to bots
-- **Rate limits**: Google Custom Search has strict daily quota limits
-
-Due to these limitations, Google Custom Search may not always provide optimal results for agent queries.
-
 ##### Brave Search (Recommended)
 
 Brave Search offers a superior experience for AI-powered search:
@@ -150,6 +140,16 @@ Brave Search offers a superior experience for AI-powered search:
 
 **Important**: Administrators must ensure they subscribe to Brave's **Pro AI plan** when using this feature. Using Brave's regular Search API (non-AI tier) violates Brave's Terms of Service and may result in account suspension. The Pro AI plan is specifically licensed for AI/LLM use cases.
 
+##### Google Custom Search
+
+Google Custom Search provides access to Google's search index but has several important limitations:
+
+- **Not a first-party integration**: Mattermost uses Google's Custom Search API, which doesn't provide the same quality of results as searching directly on google.com
+- **Relies on web scraping**: After receiving search results, Mattermost must scrape web pages to extract content for the agent. Many websites block automated scraping or return limited content to bots
+- **Rate limits**: Google Custom Search has strict daily quota limits
+
+Due to these limitations, Google Custom Search may not always provide optimal results for agent queries.
+
 #### Configuration
 
 To enable built-in web search:
@@ -158,23 +158,6 @@ To enable built-in web search:
 2. Set **Enable Web Search** to **True**
 3. Select your preferred provider from the **Provider** dropdown
 4. Configure provider-specific settings
-
-##### Google Custom Search configuration
-
-| Setting | Description | Required |
-|---------|-------------|----------|
-| **Google API Key** | Your Google Custom Search API key | Yes |
-| **Search Engine ID** | Custom search engine identifier (cx parameter) | Yes |
-| **Result Limit** | Maximum number of results to return (1-10) | No (default: 5) |
-| **API URL** | Override the default Google endpoint if needed | No |
-
-To obtain Google Custom Search credentials:
-
-1. Create a project in [Google Cloud Console](https://console.cloud.google.com)
-2. Enable the Custom Search API
-3. Create API credentials (API key)
-4. Set up a custom search engine at [Google Programmable Search Engine](https://programmablesearchengine.google.com)
-5. Note the Search Engine ID (cx parameter)
 
 ##### Brave Search configuration
 
@@ -193,18 +176,35 @@ To obtain a Brave Search API key:
 
 **Warning**: Ensure you subscribe to the Pro AI plan. Using other Brave Search plans for AI/LLM integrations violates their Terms of Service.
 
+##### Google Custom Search configuration
+
+| Setting | Description | Required |
+|---------|-------------|----------|
+| **Google API Key** | Your Google Custom Search API key | Yes |
+| **Search Engine ID** | Custom search engine identifier (cx parameter) | Yes |
+| **Result Limit** | Maximum number of results to return (1-10) | No (default: 5) |
+| **API URL** | Override the default Google endpoint if needed | No |
+
+To obtain Google Custom Search credentials:
+
+1. Create a project in [Google Cloud Console](https://console.cloud.google.com)
+2. Enable the Custom Search API
+3. Create API credentials (API key)
+4. Set up a custom search engine at [Google Programmable Search Engine](https://programmablesearchengine.google.com)
+5. Note the Search Engine ID (cx parameter)
+
 ##### Shared configuration
 
 | Setting | Description |
 |---------|-------------|
-| **Domain Blacklist** | Comma-separated list of domains to exclude from all search results (e.g., `example.com, spam-site.org`). Results from these domains are filtered out before being sent to the agent. |
+| **Domain Denylist** | Comma-separated list of domains to exclude from all search results (e.g., `example.com, spam-site.org`). Results from these domains are filtered out before being sent to the agent. |
 
 #### Usage and limitations
 
 - Agents are limited to **3 web searches per conversation** to manage API costs and prevent LLMs from looping indefinitely
 - Agents cannot repeat the same search query within a conversation
 - Search results include clickable citations that link back to source websites
-- Domain blacklisting applies to all providers and is enforced for _web page fetching only_. 
+- Domain denylisting applies to all providers and is enforced for _web page fetching only_. 
 
 ### Embed search configuration
 

@@ -74,7 +74,10 @@ func (b *BraveProvider) Search(ctx context.Context, query string, limit int) (*S
 
 	client := b.httpClient
 	if client == nil {
-		client = http.DefaultClient
+		if b.logger != nil {
+			b.logger.Error("web search http client is not configured")
+		}
+		return nil, fmt.Errorf("web search http client is not configured")
 	}
 
 	resp, err := client.Do(req)

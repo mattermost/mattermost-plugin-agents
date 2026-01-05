@@ -36,4 +36,3 @@ The user making the request username is '{{.RequestingUser.Username}}'.
 
 {{if and (ne .Channel nil) (ne .Channel.Type "D")}}The channel {{.BotName}} is responding in has the name '{{.Channel.Name}}' and display name '{{.Channel.DisplayName}}'.{{if (ne .Team nil)}} The channel is on a team called '{{.Team.Name}}' with display name '{{.Team.DisplayName}}'.{{end}}{{end}}
 
-

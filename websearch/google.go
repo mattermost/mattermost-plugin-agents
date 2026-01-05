@@ -67,7 +67,10 @@ func (g *GoogleProvider) Search(ctx context.Context, query string, limit int) (*
 
 	client := g.httpClient
 	if client == nil {
-		client = http.DefaultClient
+		if g.logger != nil {
+			g.logger.Error("web search http client is not configured")
+		}
+		return nil, fmt.Errorf("web search http client is not configured")
 	}
 
 	resp, err := client.Do(req)

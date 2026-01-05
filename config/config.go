@@ -34,7 +34,7 @@ type WebSearchConfig struct {
 	Provider        string                `json:"provider"`
 	Google          WebSearchGoogleConfig `json:"google"`
 	Brave           WebSearchBraveConfig  `json:"brave"`
-	DomainBlacklist []string              `json:"domainBlacklist"`
+	DomainDenylist []string              `json:"domainDenylist"`
 }
 
 type WebSearchGoogleConfig struct {

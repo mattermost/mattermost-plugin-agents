@@ -108,12 +108,12 @@ const defaultConfig = {
     webSearch: {
         enabled: false,
         provider: 'google',
+        domainDenylist: [],
         google: {
             apiKey: '',
             searchEngineId: '',
             resultLimit: 5,
             apiURL: '',
-            domainBlacklist: [],
         },
     },
 };

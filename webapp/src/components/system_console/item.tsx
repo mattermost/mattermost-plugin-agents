@@ -44,6 +44,7 @@ export const TextItem = (props: TextItemProps) => {
                     step={props.step}
                     min={props.min}
                     max={props.max}
+                    disabled={props.disabled}
                 />
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
@@ -71,6 +72,7 @@ export const SelectionItem = (props: SelectionItemProps) => {
                     as='select'
                     value={props.value}
                     onChange={props.onChange}
+                    disabled={props.disabled}
                 >
                     {props.children}
                 </StyledInput>

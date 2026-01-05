@@ -525,7 +525,6 @@ func (s *OpenAI) streamResponsesAPIToChannels(params openai.ChatCompletionNewPar
 	var currentToolIndex int
 	var reasoningSummaryBuffer strings.Builder
 	var reasoningComplete bool // Track if we've sent the complete reasoning
-	// var citationAcc = newCitationAccumulator()
 
 	// Track annotations/citations
 	var annotations []llm.Annotation
