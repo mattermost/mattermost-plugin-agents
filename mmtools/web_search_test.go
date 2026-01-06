@@ -554,8 +554,8 @@ func TestWebSearchSourceWhitelist(t *testing.T) {
 		cfgGetter: func() *config.Config {
 			return &config.Config{
 				WebSearch: config.WebSearchConfig{
-					Enabled:         true,
-					Provider:        "google",
+					Enabled:        true,
+					Provider:       "google",
 					DomainDenylist: []string{},
 				},
 			}
