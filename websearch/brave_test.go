@@ -183,4 +183,15 @@ func TestBraveProvider(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("configures polling interval and timeout correctly", func(t *testing.T) {
+		provider := NewBraveProvider("test-key", "", 20, 500, http.DefaultClient, &mockLogger{})
+		require.Equal(t, 20, int(provider.pollTimeout.Seconds()))
+		require.Equal(t, 500, int(provider.pollInterval.Milliseconds()))
+
+		// Default fallback
+		providerDefault := NewBraveProvider("test-key", "", 0, 0, http.DefaultClient, &mockLogger{})
+		require.Equal(t, 10, int(providerDefault.pollTimeout.Seconds()))
+		require.Equal(t, 250, int(providerDefault.pollInterval.Milliseconds()))
+	})
 }
