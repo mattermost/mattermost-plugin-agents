@@ -1027,18 +1027,6 @@ func (s *OpenAI) convertToResponseParams(params openai.ChatCompletionNewParams, 
 					OfWebSearchPreview: &webSearchTool,
 				})
 			}
-			// Future native tools can be added here
-			// else if nativeTool == "file_search" {
-			//     fileSearchTool := responses.FileSearchToolParam{...}
-			//     tools = append(tools, responses.ToolUnionParam{
-			//         OfFileSearch: &fileSearchTool,
-			//     })
-			// } else if nativeTool == "code_interpreter" {
-			//     codeInterpreterTool := responses.ToolCodeInterpreterParam{...}
-			//     tools = append(tools, responses.ToolUnionParam{
-			//         OfCodeInterpreter: &codeInterpreterTool,
-			//     })
-			// }
 		}
 	}
 

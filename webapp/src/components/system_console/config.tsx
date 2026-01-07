@@ -115,6 +115,11 @@ const defaultConfig = {
             resultLimit: 5,
             apiURL: '',
         },
+        brave: {
+            apiKey: '',
+            resultLimit: 5,
+            apiURL: '',
+        },
     },
 };
 

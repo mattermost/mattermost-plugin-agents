@@ -33,12 +33,15 @@ type Props = {
     onChange: (config: WebSearchConfig) => void;
 };
 
+const DEFAULT_GOOGLE_CONFIG = {apiKey: '', searchEngineId: '', resultLimit: 5, apiURL: ''};
+const DEFAULT_BRAVE_CONFIG = {apiKey: '', resultLimit: 5, apiURL: ''};
+
 const WebSearchPanel = ({value, onChange}: Props) => {
     const intl = useIntl();
 
     // Provide defaults for missing config objects
-    const google = value.google || {apiKey: '', searchEngineId: '', resultLimit: 5, apiURL: ''};
-    const brave = value.brave || {apiKey: '', resultLimit: 5, apiURL: ''};
+    const google = value.google || DEFAULT_GOOGLE_CONFIG;
+    const brave = value.brave || DEFAULT_BRAVE_CONFIG;
     const domainDenylist = value.domainDenylist || [];
 
     const handleUpdate = (patch: Partial<WebSearchConfig>) => {
@@ -115,7 +118,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                             type='password'
                             value={brave.apiKey}
                             onChange={(e) => handleBraveUpdate({apiKey: e.target.value})}
-                            helptext={intl.formatMessage({defaultMessage: 'Brave Search API Key. Ensure you subscribe to Brave\'s Pro AI plan when using this feature. Using Brave\'s regular Search API (non-AI tier) violates Brave\'s Terms of Service and may result in account suspension.'})}
+                            helptext={intl.formatMessage({defaultMessage: "Brave Search API Key. Ensure you subscribe to Brave's Pro AI plan when using this feature. Using Brave's regular Search API (non-AI tier) violates Brave's Terms of Service and may result in account suspension."})}
                             disabled={!value.enabled}
                         />
                         <TextItem
