@@ -18,11 +18,12 @@ Only consider posts from the last {{.Parameters.Analysis.Days}} days.
 Additional instructions from user: "{{.Parameters.Analysis.Prompt}}"
 {{end}}
 
-Step 1: Fetch posts from the channel using the available tools (e.g., retrieve posts for channel). Ensure you fetch enough posts to cover the requested time range or context.
+Step 1: **MANDATORY BEFORE DOING ANYTHING ELSE** Fetch posts from the channel using the read_channel tool. Ensure you provide fetch limits of appropriate size to cover the requested time range or context. This step will provide you with not just posts, but also channel context that will remove ambiguity in the request.
 Step 2: Analyze the fetched posts.
 Step 3: Provide a concise summary of the conversation. Use markdown. Highlight key topics, decisions, and action items. Mention users with @username. When providing a summary, you MUST following the following citation format:
 {{template "citation_format.tmpl" .}}
 
+**IMPORTANT**: You should ONLY need to use the read_channel tool, with the parameters you have been provided with above.
 **IMPORTANT**: There MAY NOT be any posts in the requested range. If there are no posts in the requested range, state that clearly. YOU MUST TRUST THE RESPONSE "no posts found in the specified timeframe"
 **IMPORTANT**: There MAY be LIMITED POSTS in the requested range. If there are limited posts in the requested range, state that, and summarize WHAT YOU WERE GIVEN.
 

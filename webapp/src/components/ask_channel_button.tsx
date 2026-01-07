@@ -107,6 +107,7 @@ const AskChannelButton = () => {
     const {bots, activeBot, setActiveBot} = useBotlist();
 
     const currentChannelId = useSelector((state: GlobalState) => state.entities.channels.currentChannelId);
+    const currentTeamId = useSelector((state: GlobalState) => state.entities.teams.currentTeamId);
     const currentChannel = useSelector((state: GlobalState) => state.entities.channels.channels[currentChannelId]);
     const lastViewedAt = useSelector((state: GlobalState) => state.entities.channels.myMembers[currentChannelId]?.last_viewed_at || 0);
     const [initialLastViewedAt, setInitialLastViewedAt] = useState(lastViewedAt);
@@ -127,7 +128,10 @@ const AskChannelButton = () => {
         // Open RHS
         dispatch(openRHS());
 
-        const result = await doChannelAnalysis(currentChannelId, 'summarize_channel', activeBot.username, options);
+        const result = await doChannelAnalysis(currentChannelId, 'summarize_channel', activeBot.username, {
+            ...options,
+            team_id: currentTeamId,
+        });
         dispatch({type: 'SELECT_AI_POST', postId: result.postid});
     };
 

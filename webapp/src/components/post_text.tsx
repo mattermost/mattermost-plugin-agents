@@ -81,8 +81,6 @@ const PostText = (props: Props) => {
         unsafeLinks: !allowUnsafeLinks,
         minimumHashtagLength: 1000000000,
         siteURL,
-        inlineEntities: true,
-        inlineEntityTypes: ['POST', 'CHANNEL', 'TEAM'],
     };
 
     const messageHtmlToComponentOptions = {
@@ -90,8 +88,6 @@ const PostText = (props: Props) => {
         latex: false,
         inlinelatex: false,
         postId: props.postID,
-        inlineEntities: true,
-        inlineEntityTypes: ['POST', 'CHANNEL', 'TEAM'],
     };
 
     // Process message with annotations if they exist
