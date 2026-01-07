@@ -85,8 +85,8 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 
 	// If the channel is a DM/GM and we have a team ID from the client, use it for context
 	if (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) && data.TeamID != "" {
-		team, err := a.pluginAPI.Team.Get(data.TeamID)
-		if err == nil && team != nil {
+		team, teamErr := a.pluginAPI.Team.Get(data.TeamID)
+		if teamErr == nil && team != nil {
 			opts = append(opts, func(c *llm.Context) {
 				c.Team = team
 			})

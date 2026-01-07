@@ -157,9 +157,9 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 			teamDisplayName = "No Team"
 		}
 	} else {
-		team, _, err := client.GetTeam(ctx, channel.TeamId, "")
-		if err != nil {
-			return "failed to fetch team info", fmt.Errorf("error fetching team: %w", err)
+		team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+		if teamErr != nil {
+			return "failed to fetch team info", fmt.Errorf("error fetching team: %w", teamErr)
 		}
 		teamDisplayName = team.DisplayName
 	}

@@ -6,7 +6,6 @@ package anthropic
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -189,6 +188,212 @@ func (a *Anthropic) createConfig(opts []llm.LanguageModelOption) llm.LanguageMod
 	return cfg
 }
 
+// streamResult holds the accumulated result from processing a stream
+type streamResult struct {
+	message          anthropicSDK.Message
+	pendingToolCalls []llm.ToolCall
+	err              error
+}
+
+// buildAPIParams constructs the Anthropic API parameters from the current state
+func (a *Anthropic) buildAPIParams(state *messageState) anthropicSDK.MessageNewParams {
+	params := anthropicSDK.MessageNewParams{
+		Model:     anthropicSDK.Model(state.config.Model),
+		MaxTokens: int64(state.config.MaxGeneratedTokens),
+		Messages:  state.messages,
+	}
+
+	// Only add tools if not explicitly disabled
+	if !state.config.ToolsDisabled {
+		params.Tools = convertTools(state.tools)
+	}
+
+	// Only include system message if it's non-empty
+	if state.system != "" {
+		params.System = []anthropicSDK.TextBlockParam{{
+			Text: state.system,
+		}}
+	}
+
+	// Add native tools if not explicitly disabled
+	if !state.config.ToolsDisabled && a.isNativeToolEnabled("web_search") {
+		webSearchTool := anthropicSDK.WebSearchTool20250305Param{
+			Name: "web_search",
+			Type: "web_search_20250305",
+		}
+		params.Tools = append(params.Tools, anthropicSDK.ToolUnionParam{
+			OfWebSearchTool20250305: &webSearchTool,
+		})
+	}
+
+	// Enable thinking/reasoning for models that support it (unless explicitly disabled)
+	if !state.config.ReasoningDisabled {
+		if thinkingConfig, ok := a.calculateThinkingConfig(state.config.MaxGeneratedTokens); ok {
+			params.Thinking = thinkingConfig
+		}
+	}
+
+	return params
+}
+
+// processStream handles the streaming loop and returns the accumulated result
+func (a *Anthropic) processStream(state *messageState, params anthropicSDK.MessageNewParams) streamResult {
+	stream := a.client.Messages.NewStreaming(context.Background(), params)
+
+	message := anthropicSDK.Message{}
+	var thinkingBuffer strings.Builder
+	var signatureBuffer strings.Builder
+	var currentBlockIsThinking bool
+
+	for stream.Next() {
+		event := stream.Current()
+		if err := message.Accumulate(event); err != nil {
+			return streamResult{err: fmt.Errorf("error accumulating message: %w", err)}
+		}
+
+		a.handleStreamEvent(state, event, &thinkingBuffer, &signatureBuffer, &currentBlockIsThinking)
+	}
+
+	if err := stream.Err(); err != nil {
+		return streamResult{err: fmt.Errorf("error from anthropic stream: %w", err)}
+	}
+
+	// Flush any remaining thinking content
+	if thinkingBuffer.Len() > 0 {
+		state.output <- llm.TextStreamEvent{
+			Type: llm.EventTypeReasoningEnd,
+			Value: llm.ReasoningData{
+				Text:      thinkingBuffer.String(),
+				Signature: signatureBuffer.String(),
+			},
+		}
+	}
+
+	// Extract pending tool calls from the message
+	pendingToolCalls := extractToolCalls(message)
+
+	return streamResult{
+		message:          message,
+		pendingToolCalls: pendingToolCalls,
+	}
+}
+
+// handleStreamEvent processes individual stream events and emits appropriate output events
+func (a *Anthropic) handleStreamEvent(
+	state *messageState,
+	event anthropicSDK.MessageStreamEventUnion,
+	thinkingBuffer, signatureBuffer *strings.Builder,
+	currentBlockIsThinking *bool,
+) {
+	switch eventVariant := event.AsAny().(type) { //nolint:gocritic
+	case anthropicSDK.ContentBlockStartEvent:
+		*currentBlockIsThinking = eventVariant.ContentBlock.Type == "thinking"
+
+	case anthropicSDK.ContentBlockDeltaEvent:
+		switch deltaVariant := eventVariant.Delta.AsAny().(type) { //nolint:gocritic
+		case anthropicSDK.TextDelta:
+			state.output <- llm.TextStreamEvent{
+				Type:  llm.EventTypeText,
+				Value: deltaVariant.Text,
+			}
+		case anthropicSDK.ThinkingDelta:
+			thinkingBuffer.WriteString(deltaVariant.Thinking)
+			state.output <- llm.TextStreamEvent{
+				Type:  llm.EventTypeReasoning,
+				Value: deltaVariant.Thinking,
+			}
+		case anthropicSDK.SignatureDelta:
+			signatureBuffer.WriteString(deltaVariant.Signature)
+		}
+
+	case anthropicSDK.ContentBlockStopEvent:
+		if *currentBlockIsThinking && thinkingBuffer.Len() > 0 {
+			state.output <- llm.TextStreamEvent{
+				Type: llm.EventTypeReasoningEnd,
+				Value: llm.ReasoningData{
+					Text:      thinkingBuffer.String(),
+					Signature: signatureBuffer.String(),
+				},
+			}
+			thinkingBuffer.Reset()
+			signatureBuffer.Reset()
+			*currentBlockIsThinking = false
+		}
+	}
+}
+
+// extractToolCalls extracts tool call information from the message content
+func extractToolCalls(message anthropicSDK.Message) []llm.ToolCall {
+	toolCalls := make([]llm.ToolCall, 0, len(message.Content))
+	for _, block := range message.Content {
+		if block.Type == "tool_use" {
+			toolCalls = append(toolCalls, llm.ToolCall{
+				ID:        block.ID,
+				Name:      block.Name,
+				Arguments: block.Input,
+			})
+		}
+	}
+	return toolCalls
+}
+
+// buildAssistantMessage converts the message content blocks to MessageParam format
+func buildAssistantMessage(message anthropicSDK.Message) anthropicSDK.MessageParam {
+	assistantContent := make([]anthropicSDK.ContentBlockParamUnion, 0, len(message.Content))
+	for _, block := range message.Content {
+		switch block.Type {
+		case "text":
+			if textBlock, ok := block.AsAny().(anthropicSDK.TextBlock); ok {
+				assistantContent = append(assistantContent, anthropicSDK.NewTextBlock(textBlock.Text))
+			}
+		case "tool_use":
+			if toolBlock, ok := block.AsAny().(anthropicSDK.ToolUseBlock); ok {
+				assistantContent = append(assistantContent, anthropicSDK.NewToolUseBlock(toolBlock.ID, toolBlock.Input, toolBlock.Name))
+			}
+		case "thinking":
+			if thinkingBlock, ok := block.AsAny().(anthropicSDK.ThinkingBlock); ok {
+				assistantContent = append(assistantContent, anthropicSDK.NewThinkingBlock(thinkingBlock.Signature, thinkingBlock.Thinking))
+			}
+		}
+	}
+	return anthropicSDK.MessageParam{
+		Role:    anthropicSDK.MessageParamRoleAssistant,
+		Content: assistantContent,
+	}
+}
+
+// buildToolResultsMessage creates a user message containing tool execution results
+func buildToolResultsMessage(results []llm.AutoRunResult) anthropicSDK.MessageParam {
+	toolResults := make([]anthropicSDK.ContentBlockParamUnion, 0, len(results))
+	for _, result := range results {
+		toolResults = append(toolResults, anthropicSDK.NewToolResultBlock(result.ToolCallID, result.Result, result.IsError))
+	}
+	return anthropicSDK.MessageParam{
+		Role:    anthropicSDK.MessageParamRoleUser,
+		Content: toolResults,
+	}
+}
+
+// emitPostStreamEvents sends annotations and usage events after stream processing
+func (a *Anthropic) emitPostStreamEvents(state *messageState, message anthropicSDK.Message) {
+	// Extract and emit annotations/citations
+	if annotations := a.extractAnnotations(message); len(annotations) > 0 {
+		state.output <- llm.TextStreamEvent{
+			Type:  llm.EventTypeAnnotations,
+			Value: annotations,
+		}
+	}
+
+	// Emit token usage data
+	state.output <- llm.TextStreamEvent{
+		Type: llm.EventTypeUsage,
+		Value: llm.TokenUsage{
+			InputTokens:  message.Usage.InputTokens,
+			OutputTokens: message.Usage.OutputTokens,
+		},
+	}
+}
+
 func (a *Anthropic) streamChatWithTools(initialState messageState) {
 	state := initialState
 
@@ -201,239 +406,44 @@ func (a *Anthropic) streamChatWithTools(initialState messageState) {
 			return
 		}
 
-		// Set up parameters for the Anthropic API
-		params := anthropicSDK.MessageNewParams{
-			Model:     anthropicSDK.Model(state.config.Model),
-			MaxTokens: int64(state.config.MaxGeneratedTokens),
-			Messages:  state.messages,
-		}
+		params := a.buildAPIParams(&state)
+		result := a.processStream(&state, params)
 
-		// Only add tools if not explicitly disabled
-		if !state.config.ToolsDisabled {
-			params.Tools = convertTools(state.tools)
-		}
-
-		// Only include system message if it's non-empty
-		// Anthropic requires text content blocks to be non-empty
-		if state.system != "" {
-			params.System = []anthropicSDK.TextBlockParam{{
-				Text: state.system,
-			}}
-		}
-
-		// Add native tools if not explicitly disabled
-		if !state.config.ToolsDisabled && a.isNativeToolEnabled("web_search") {
-			// Add web search as a native tool
-			webSearchTool := anthropicSDK.WebSearchTool20250305Param{
-				Name: "web_search",
-				Type: "web_search_20250305",
-			}
-			params.Tools = append(params.Tools, anthropicSDK.ToolUnionParam{
-				OfWebSearchTool20250305: &webSearchTool,
-			})
-		}
-
-		// Enable thinking/reasoning for models that support it (unless explicitly disabled)
-		if !state.config.ReasoningDisabled {
-			if thinkingConfig, ok := a.calculateThinkingConfig(state.config.MaxGeneratedTokens); ok {
-				params.Thinking = thinkingConfig
-			}
-		}
-
-		stream := a.client.Messages.NewStreaming(context.Background(), params)
-
-		message := anthropicSDK.Message{}
-		var thinkingBuffer strings.Builder
-		var signatureBuffer strings.Builder
-		var currentBlockIsThinking bool
-
-		shouldContinue := false
-
-		for stream.Next() {
-			event := stream.Current()
-			if err := message.Accumulate(event); err != nil {
-				state.output <- llm.TextStreamEvent{
-					Type:  llm.EventTypeError,
-					Value: fmt.Errorf("error accumulating message: %w", err),
-				}
-				return
-			}
-
-			// Stream text and thinking content immediately
-			switch eventVariant := event.AsAny().(type) { //nolint:gocritic
-			case anthropicSDK.ContentBlockStartEvent:
-				// Check what type of content block is starting
-				if eventVariant.ContentBlock.Type == "thinking" {
-					currentBlockIsThinking = true
-				} else {
-					currentBlockIsThinking = false
-				}
-
-			case anthropicSDK.ContentBlockDeltaEvent:
-				switch deltaVariant := eventVariant.Delta.AsAny().(type) { //nolint:gocritic
-				case anthropicSDK.TextDelta:
-					state.output <- llm.TextStreamEvent{
-						Type:  llm.EventTypeText,
-						Value: deltaVariant.Text,
-					}
-				case anthropicSDK.ThinkingDelta:
-					// Accumulate thinking text
-					thinkingBuffer.WriteString(deltaVariant.Thinking)
-					// Stream thinking chunks as they arrive
-					state.output <- llm.TextStreamEvent{
-						Type:  llm.EventTypeReasoning,
-						Value: deltaVariant.Thinking,
-					}
-				case anthropicSDK.SignatureDelta:
-					// Accumulate signature (opaque verification field)
-					signatureBuffer.WriteString(deltaVariant.Signature)
-				}
-
-			case anthropicSDK.ContentBlockStopEvent:
-				// Check if this is the end of a thinking block
-				if currentBlockIsThinking && thinkingBuffer.Len() > 0 {
-					// Send the complete thinking/reasoning for this block with signature
-					state.output <- llm.TextStreamEvent{
-						Type: llm.EventTypeReasoningEnd,
-						Value: llm.ReasoningData{
-							Text:      thinkingBuffer.String(),
-							Signature: signatureBuffer.String(),
-						},
-					}
-					// Reset the buffers for the next potential thinking block
-					thinkingBuffer.Reset()
-					signatureBuffer.Reset()
-					currentBlockIsThinking = false
-				}
-			}
-		}
-
-		if err := stream.Err(); err != nil {
+		if result.err != nil {
 			state.output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: fmt.Errorf("error from anthropic stream: %w", err),
+				Value: result.err,
 			}
 			return
 		}
 
-		// If we have any unsent thinking (edge case), send it now before processing tool calls
-		if thinkingBuffer.Len() > 0 {
-			state.output <- llm.TextStreamEvent{
-				Type: llm.EventTypeReasoningEnd,
-				Value: llm.ReasoningData{
-					Text:      thinkingBuffer.String(),
-					Signature: signatureBuffer.String(),
-				},
-			}
-		}
+		// Handle tool calls if present
+		if len(result.pendingToolCalls) > 0 {
+			if llm.ShouldAutoRunTools(result.pendingToolCalls, state.config.AutoRunTools) {
+				// Auto-run tools: execute and continue the loop
+				state.messages = append(state.messages, buildAssistantMessage(result.message))
 
-		// Check for tool usage in the message
-		pendingToolCalls := make([]llm.ToolCall, 0, len(message.Content))
-		for _, block := range message.Content {
-			if block.Type == "tool_use" {
-				pendingToolCalls = append(pendingToolCalls, llm.ToolCall{
-					ID:          block.ID,
-					Name:        block.Name,
-					Description: "",
-					Arguments:   block.Input,
-				})
-			}
-		}
+				toolResults := llm.ExecuteAutoRunTools(
+					result.pendingToolCalls,
+					state.config.AutoRunTools,
+					state.resolver,
+					state.context,
+				)
+				state.messages = append(state.messages, buildToolResultsMessage(toolResults))
 
-		// If tools were used, check for AutoRun
-		if len(pendingToolCalls) > 0 {
-			shouldAutoRun := false
-			if len(state.config.AutoRunTools) > 0 {
-				shouldAutoRun = true
-				for _, tc := range pendingToolCalls {
-					if _, ok := state.config.AutoRunTools[tc.Name]; !ok {
-						shouldAutoRun = false
-						break
-					}
-				}
-			}
-
-			if shouldAutoRun {
-				// Update messages with assistant response
-				assistantContent := make([]anthropicSDK.ContentBlockParamUnion, len(message.Content))
-				for i, block := range message.Content {
-					switch block.Type {
-					case "text":
-						if textBlock, ok := block.AsAny().(anthropicSDK.TextBlock); ok {
-							assistantContent[i] = anthropicSDK.NewTextBlock(textBlock.Text)
-						}
-					case "tool_use":
-						if toolBlock, ok := block.AsAny().(anthropicSDK.ToolUseBlock); ok {
-							assistantContent[i] = anthropicSDK.NewToolUseBlock(toolBlock.ID, toolBlock.Input, toolBlock.Name)
-						}
-					case "thinking":
-						if thinkingBlock, ok := block.AsAny().(anthropicSDK.ThinkingBlock); ok {
-							assistantContent[i] = anthropicSDK.NewThinkingBlock(thinkingBlock.Signature, thinkingBlock.Thinking)
-						}
-					}
-				}
-
-				state.messages = append(state.messages, anthropicSDK.MessageParam{
-					Role:    anthropicSDK.MessageParamRoleAssistant,
-					Content: assistantContent,
-				})
-
-				// Execute tools and append results
-				var toolResults []anthropicSDK.ContentBlockParamUnion
-
-				for _, tc := range pendingToolCalls {
-					overrides := state.config.AutoRunTools[tc.Name]
-					getter := func(args any) error { return json.Unmarshal(tc.Arguments, args) }
-					if len(overrides) > 0 {
-						getter = llm.MergeArguments(getter, overrides)
-					}
-
-					result, err := state.resolver(tc.Name, getter, state.context)
-					isError := err != nil
-					if err != nil {
-						result = fmt.Sprintf("Error executing tool: %v", err)
-					}
-
-					toolResults = append(toolResults, anthropicSDK.NewToolResultBlock(tc.ID, result, isError))
-				}
-
-				state.messages = append(state.messages, anthropicSDK.MessageParam{
-					Role:    anthropicSDK.MessageParamRoleUser,
-					Content: toolResults,
-				})
-
+				a.emitPostStreamEvents(&state, result.message)
 				state.depth++
-				shouldContinue = true
-			} else {
-				state.output <- llm.TextStreamEvent{
-					Type:  llm.EventTypeToolCalls,
-					Value: pendingToolCalls,
-				}
+				continue
 			}
-		}
 
-		// Extract annotations/citations from the message content
-		annotations := a.extractAnnotations(message)
-		if len(annotations) > 0 {
+			// Manual approval needed - emit tool calls event
 			state.output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeAnnotations,
-				Value: annotations,
+				Type:  llm.EventTypeToolCalls,
+				Value: result.pendingToolCalls,
 			}
 		}
 
-		// Extract and send token usage data
-		usage := llm.TokenUsage{
-			InputTokens:  message.Usage.InputTokens,
-			OutputTokens: message.Usage.OutputTokens,
-		}
-		state.output <- llm.TextStreamEvent{
-			Type:  llm.EventTypeUsage,
-			Value: usage,
-		}
-
-		if shouldContinue {
-			continue
-		}
+		a.emitPostStreamEvents(&state, result.message)
 
 		// Send end event
 		state.output <- llm.TextStreamEvent{

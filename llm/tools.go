@@ -147,6 +147,63 @@ type ToolAuthError struct {
 	Error      error  `json:"error"`
 }
 
+// AutoRunResult represents the result of executing an auto-run tool
+type AutoRunResult struct {
+	ToolCallID string
+	ToolName   string
+	Result     string
+	IsError    bool
+}
+
+// ShouldAutoRunTools checks if all pending tool calls are configured for auto-run.
+// Returns true only if AutoRunTools is configured and ALL tool calls are in the auto-run list.
+func ShouldAutoRunTools(pendingToolCalls []ToolCall, autoRunTools map[string]map[string]interface{}) bool {
+	if len(autoRunTools) == 0 || len(pendingToolCalls) == 0 {
+		return false
+	}
+
+	for _, tc := range pendingToolCalls {
+		if _, ok := autoRunTools[tc.Name]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// ExecuteAutoRunTools executes the given tool calls using the provided resolver,
+// merging any configured argument overrides. Returns the results for each tool call.
+func ExecuteAutoRunTools(
+	pendingToolCalls []ToolCall,
+	autoRunTools map[string]map[string]interface{},
+	resolver func(name string, argsGetter ToolArgumentGetter, context *Context) (string, error),
+	context *Context,
+) []AutoRunResult {
+	results := make([]AutoRunResult, 0, len(pendingToolCalls))
+
+	for _, tc := range pendingToolCalls {
+		overrides := autoRunTools[tc.Name]
+		getter := func(args any) error { return json.Unmarshal(tc.Arguments, args) }
+		if len(overrides) > 0 {
+			getter = MergeArguments(getter, overrides)
+		}
+
+		result, err := resolver(tc.Name, getter, context)
+		isError := err != nil
+		if err != nil {
+			result = fmt.Sprintf("Error executing tool: %v", err)
+		}
+
+		results = append(results, AutoRunResult{
+			ToolCallID: tc.ID,
+			ToolName:   tc.Name,
+			Result:     result,
+			IsError:    isError,
+		})
+	}
+
+	return results
+}
+
 type ToolStore struct {
 	tools      map[string]Tool
 	log        TraceLog
