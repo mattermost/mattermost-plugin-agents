@@ -101,6 +101,43 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		opts...,
 	)
 
+	// Validate that required tools are available for channel analysis
+	// The read_channel tool is essential for this feature
+	if llmContext.Tools == nil {
+		a.pluginAPI.Log.Error("Channel analysis failed: no tools available in context",
+			"userID", userID,
+			"channelID", channel.Id)
+		c.AbortWithError(http.StatusInternalServerError, errors.New("channel analysis requires MCP tools which are not available - check embedded server configuration"))
+		return
+	}
+
+	// Check if read_channel tool is available
+	availableTools := llmContext.Tools.GetTools()
+	hasReadChannel := false
+	var toolNames []string
+	for _, tool := range availableTools {
+		toolNames = append(toolNames, tool.Name)
+		if tool.Name == "read_channel" {
+			hasReadChannel = true
+		}
+	}
+
+	a.pluginAPI.Log.Debug("Channel analysis tools check",
+		"userID", userID,
+		"channelID", channel.Id,
+		"availableTools", toolNames,
+		"hasReadChannel", hasReadChannel,
+		"totalTools", len(availableTools))
+
+	if !hasReadChannel {
+		a.pluginAPI.Log.Error("Channel analysis failed: read_channel tool not available",
+			"userID", userID,
+			"channelID", channel.Id,
+			"availableTools", toolNames)
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("channel analysis requires read_channel tool which is not available (found %d tools: %v) - ensure embedded MCP server is enabled and working", len(availableTools), toolNames))
+		return
+	}
+
 	// Create channels analyzer
 	// We need to initialize Channels service. Since it's not in API struct, we initialize it here.
 	// Ideally, it should be initialized in API constructor and passed as a dependency.

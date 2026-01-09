@@ -252,6 +252,7 @@ export const ChannelSummarizePopover = ({bots, activeBot, setActiveBot, channelN
                             )}
                         </FormattedMessage>
                         <TrailingIconWrapper
+                            data-testid='send-custom-prompt-button'
                             isActive={inputValue.length > 0}
                             onClick={(e) => {
                                 e.stopPropagation();

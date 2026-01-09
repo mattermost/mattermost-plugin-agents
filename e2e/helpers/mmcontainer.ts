@@ -8,7 +8,7 @@ const defaultUsername        = "admin";
 const defaultPassword        = "admin";
 const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
-const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:latest";
+const defaultMattermostImage = "mattermostdevelopment/mattermost-enterprise-edition:d6f9aec";
 
 // MattermostContainer represents the mattermost container type used in the module
 export default class MattermostContainer {
@@ -161,6 +161,10 @@ export default class MattermostContainer {
     }
 
     start = async (): Promise<MattermostContainer> => {
+        const isCustomImage = !!process.env.MM_IMAGE;
+        console.log(`\n🚀 Starting Mattermost container`);
+        console.log(`   Image: ${defaultMattermostImage}${isCustomImage ? ' (custom via MM_IMAGE)' : ' (default)'}`);
+
         this.network = await new Network().start()
         // Use pgvector image to enable semantic search functionality
         this.pgContainer = await new PostgreSqlContainer("pgvector/pgvector:pg15")
