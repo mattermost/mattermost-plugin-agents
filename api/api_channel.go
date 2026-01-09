@@ -122,13 +122,6 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		}
 	}
 
-	a.pluginAPI.Log.Debug("Channel analysis tools check",
-		"userID", userID,
-		"channelID", channel.Id,
-		"availableTools", toolNames,
-		"hasReadChannel", hasReadChannel,
-		"totalTools", len(availableTools))
-
 	if !hasReadChannel {
 		a.pluginAPI.Log.Error("Channel analysis failed: read_channel tool not available",
 			"userID", userID,
