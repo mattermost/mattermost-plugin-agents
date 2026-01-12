@@ -15,12 +15,7 @@ import (
 
 // TestEmbeddedServer_InvalidSession tests that invalid session IDs are properly rejected
 func TestEmbeddedServer_InvalidSession(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	user, _ := suite.CreateUserAndSession(t)
@@ -44,12 +39,7 @@ func TestEmbeddedServer_InvalidSession(t *testing.T) {
 
 // TestEmbeddedServer_MissingSessionToken tests that missing/empty session tokens are rejected at connection time
 func TestEmbeddedServer_MissingSessionToken(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	user, session := suite.CreateUserAndSession(t)
@@ -76,12 +66,7 @@ func TestEmbeddedServer_MissingSessionToken(t *testing.T) {
 
 // TestEmbeddedServer_MultipleConnectionsPerUser tests that a user can have multiple concurrent connections
 func TestEmbeddedServer_MultipleConnectionsPerUser(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	ctx := context.Background()
@@ -114,12 +99,7 @@ func TestEmbeddedServer_MultipleConnectionsPerUser(t *testing.T) {
 // TestEmbeddedServer_SessionLifecycle tests the full lifecycle of a session connection
 // including auto-reconnect behavior
 func TestEmbeddedServer_SessionLifecycle(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	ctx := context.Background()
@@ -157,12 +137,7 @@ func TestEmbeddedServer_SessionLifecycle(t *testing.T) {
 
 // TestEmbeddedServer_TokenResolverCalledAsNeeded tests that the token resolver is called appropriately
 func TestEmbeddedServer_TokenResolverCalledAsNeeded(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	ctx := context.Background()

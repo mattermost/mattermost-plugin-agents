@@ -198,10 +198,6 @@ func DiscoverAndRegisterClient(ctx context.Context, httpClient *http.Client, ser
 
 // GetRegistrationEndpoint discovers the registration endpoint from server metadata
 func GetRegistrationEndpoint(ctx context.Context, httpClient *http.Client, serverURL string) (string, error) {
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-
 	// Construct the metadata URL according to RFC 8414 Section 3.1
 	// The well-known URI must be inserted between the host and path components
 	metadataURL, err := constructWellKnownURL(serverURL, "oauth-authorization-server")

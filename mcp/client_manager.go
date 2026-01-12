@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"time"
 
@@ -24,17 +25,19 @@ type ClientManager struct {
 	closeChan      chan struct{}
 	clientTimeout  time.Duration
 	oauthManager   *OAuthManager
+	httpClient     *http.Client
 	embeddedClient *EmbeddedServerClient // Helper for embedded server (nil if disabled)
 	toolsCache     *ToolsCache
 }
 
 // NewClientManager creates a new MCP client manager
 // embeddedServer can be nil if embedded server is not available
-func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *pluginapi.Client, oauthManager *OAuthManager, embeddedServer EmbeddedMCPServer) *ClientManager {
+func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *pluginapi.Client, oauthManager *OAuthManager, embeddedServer EmbeddedMCPServer, httpClient *http.Client) *ClientManager {
 	manager := &ClientManager{
 		log:          log,
 		pluginAPI:    pluginAPI,
 		oauthManager: oauthManager,
+		httpClient:   httpClient,
 		toolsCache:   NewToolsCache(&pluginAPI.KV, &log),
 	}
 	manager.ReInit(config, embeddedServer)
@@ -131,7 +134,7 @@ func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClients, *
 		return client, nil
 	}
 
-	userClients := NewUserClients(userID, m.log, m.oauthManager, m.toolsCache)
+	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
 
 	// Let user client connect to remote servers only
 	mcpErrors := userClients.ConnectToRemoteServers(m.config.Servers)
@@ -209,4 +212,9 @@ func (m *ClientManager) GetEmbeddedServer() EmbeddedMCPServer {
 		return nil
 	}
 	return m.embeddedClient.server
+}
+
+// GetHTTPClient returns the HTTP client for upstream requests
+func (m *ClientManager) GetHTTPClient() *http.Client {
+	return m.httpClient
 }

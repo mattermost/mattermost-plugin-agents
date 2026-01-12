@@ -46,12 +46,14 @@ func generateState() (string, error) {
 type OAuthManager struct {
 	pluginAPI   mmapi.Client
 	callbackURL string
+	httpClient  *http.Client
 }
 
-func NewOAuthManager(pluginAPI mmapi.Client, callbackURL string) *OAuthManager {
+func NewOAuthManager(pluginAPI mmapi.Client, callbackURL string, httpClient *http.Client) *OAuthManager {
 	return &OAuthManager{
 		pluginAPI:   pluginAPI,
 		callbackURL: callbackURL,
+		httpClient:  httpClient,
 	}
 }
 
@@ -68,7 +70,7 @@ func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, server
 	}
 
 	// Perform complete client registration flow
-	response, err := DiscoverAndRegisterClient(ctx, http.DefaultClient, serverURL, m.callbackURL, clientID, "")
+	response, err := DiscoverAndRegisterClient(ctx, m.httpClient, serverURL, m.callbackURL, clientID, "")
 	if err != nil {
 		return nil, err
 	}
@@ -103,11 +105,11 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	authServerURL := baseURL          // Fallback - use protected resource as auth server
 
 	// Attempt discovery (best effort, fall back to hardcoded endpoints if it fails)
-	if protectedMetadata, discErr := discoverProtectedResourceMetadata(ctx, baseURL, metadataURL); discErr == nil {
+	if protectedMetadata, discErr := discoverProtectedResourceMetadata(ctx, m.httpClient, baseURL, metadataURL); discErr == nil {
 		if len(protectedMetadata.AuthorizationServers) > 0 {
 			// Use first authorization server
 			authServerIssuer := protectedMetadata.AuthorizationServers[0]
-			if authMetadata, authErr := discoverAuthorizationServerMetadata(ctx, authServerIssuer); authErr == nil {
+			if authMetadata, authErr := discoverAuthorizationServerMetadata(ctx, m.httpClient, authServerIssuer); authErr == nil {
 				authURL = authMetadata.AuthorizationEndpoint
 				tokenURL = authMetadata.TokenEndpoint
 				// Per OAuth best practices, credentials are registered with the authorization server
@@ -117,7 +119,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	} else {
 		// If protected resource metadata fails, assume the resource server is the authorization server
 		// and try the authorization server metadata endpoint directly (existing MCP server behavior)
-		if authMetadata, authErr := discoverAuthorizationServerMetadata(ctx, baseURL); authErr == nil {
+		if authMetadata, authErr := discoverAuthorizationServerMetadata(ctx, m.httpClient, baseURL); authErr == nil {
 			authURL = authMetadata.AuthorizationEndpoint
 			tokenURL = authMetadata.TokenEndpoint
 			// authServerURL already set to baseURL above
@@ -202,7 +204,8 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 	}
 
 	// Exchange code for token with PKCE
-	token, err := oauthConfig.Exchange(ctx, code,
+	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, m.httpClient)
+	token, err := oauthConfig.Exchange(ctxWithClient, code,
 		oauth2.VerifierOption(session.CodeVerifier))
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange code for token: %w", err)
