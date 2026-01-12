@@ -8,7 +8,7 @@ const defaultUsername        = "admin";
 const defaultPassword        = "admin";
 const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
-const defaultMattermostImage = "mattermostdevelopment/mattermost-enterprise-edition:d6f9aec";
+const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:latest";
 
 // MattermostContainer represents the mattermost container type used in the module
 export default class MattermostContainer {
@@ -161,9 +161,13 @@ export default class MattermostContainer {
     }
 
     start = async (): Promise<MattermostContainer> => {
+        let image = defaultMattermostImage;
         const isCustomImage = !!process.env.MM_IMAGE;
+        if (isCustomImage) {
+            image = process.env.MM_IMAGE;
+        }
         console.log(`\n🚀 Starting Mattermost container`);
-        console.log(`   Image: ${defaultMattermostImage}${isCustomImage ? ' (custom via MM_IMAGE)' : ' (default)'}`);
+        console.log(`   Image: ${image}${isCustomImage ? ' (custom via MM_IMAGE)' : ' (default)'}`);
 
         this.network = await new Network().start()
         // Use pgvector image to enable semantic search functionality
@@ -190,7 +194,7 @@ export default class MattermostContainer {
             console.log("Semantic search features may not be available")
         }
 
-        this.container = await new GenericContainer(defaultMattermostImage)
+        this.container = await new GenericContainer(image)
             .withEnvironment(this.envs)
             .withExposedPorts(8065)
             .withNetwork(this.network)
