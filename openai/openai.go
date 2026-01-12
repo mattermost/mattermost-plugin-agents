@@ -609,6 +609,17 @@ type responsesStreamState struct {
 	fullMessageText        strings.Builder
 }
 
+// ensureToolBuffer initializes the tools buffer if needed and returns the element at the given index
+func (s *responsesStreamState) ensureToolBuffer(idx int) *ToolBufferElement {
+	if s.toolsBuffer == nil {
+		s.toolsBuffer = make(map[int]*ToolBufferElement)
+	}
+	if s.toolsBuffer[idx] == nil {
+		s.toolsBuffer[idx] = &ToolBufferElement{}
+	}
+	return s.toolsBuffer[idx]
+}
+
 // streamResponsesAPIToChannels uses the new Responses API for streaming
 func (s *OpenAI) streamResponsesAPIToChannels(initialParams openai.ChatCompletionNewParams, llmContext *llm.Context, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
 	params := initialParams
@@ -682,17 +693,15 @@ func (s *OpenAI) handleResponsesEvent(
 	output chan<- llm.TextStreamEvent,
 ) responsesAction {
 	switch event.Type {
-	case "response.created", "response.in_progress":
+	// No-action events
+	case "response.created", "response.in_progress",
+		"response.web_search_call.searching", "response.web_search_call.in_progress", "response.web_search_call.completed",
+		"response.content_part.added", "response.reasoning_summary_part.added",
+		"response.reasoning_summary_text.done", "response.reasoning_summary_part.done":
 		return responsesActionContinue
 
 	case "response.output_text.delta":
-		if event.Delta != "" {
-			state.fullMessageText.WriteString(event.Delta)
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeText,
-				Value: event.Delta,
-			}
-		}
+		s.handleTextDelta(event, state, output)
 
 	case "response.content_part.done":
 		s.extractAnnotationsFromPart(event, state)
@@ -704,35 +713,16 @@ func (s *OpenAI) handleResponsesEvent(
 		s.handleOutputItemAdded(event, state)
 
 	case "response.function_call_arguments.done":
-		if event.Arguments != "" && state.toolsBuffer[state.currentToolIndex] != nil {
-			if state.toolsBuffer[state.currentToolIndex].args.Len() == 0 {
-				state.toolsBuffer[state.currentToolIndex].args.WriteString(event.Arguments)
-			}
-		}
+		s.handleFunctionCallDone(event, state)
 
 	case "response.output_item.done":
 		s.handleOutputItemDone(event, state)
 
 	case "response.reasoning_summary_text.delta":
-		if event.Delta != "" {
-			state.reasoningSummaryBuffer.WriteString(event.Delta)
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeReasoning,
-				Value: event.Delta,
-			}
-		}
+		s.handleReasoningDelta(event, state, output)
 
 	case "response.output_text.done":
-		if len(state.annotations) > 0 {
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeAnnotations,
-				Value: state.annotations,
-			}
-			state.annotations = nil
-		}
-
-	case "response.web_search_call.searching", "response.web_search_call.in_progress", "response.web_search_call.completed":
-		return responsesActionContinue
+		s.emitAnnotationsIfPresent(state, output)
 
 	case "response.completed":
 		return s.handleResponseCompleted(event, state, params, cfg, llmContext, output)
@@ -746,19 +736,8 @@ func (s *OpenAI) handleResponsesEvent(
 		return responsesActionReturn
 
 	case "error":
-		errorMsg := "Unknown error from Responses API"
-		if event.Message != "" {
-			errorMsg = event.Message
-		}
-		output <- llm.TextStreamEvent{
-			Type:  llm.EventTypeError,
-			Value: errors.New(errorMsg),
-		}
+		s.handleResponseError(event, output)
 		return responsesActionReturn
-
-	case "response.content_part.added", "response.reasoning_summary_part.added",
-		"response.reasoning_summary_text.done", "response.reasoning_summary_part.done":
-		// These events don't require action
 	}
 
 	return responsesActionNone
@@ -841,14 +820,9 @@ func (s *OpenAI) bufferResponsesToolArgs(event responses.ResponseStreamEventUnio
 		idx = int(event.OutputIndex)
 	}
 
-	if state.toolsBuffer == nil {
-		state.toolsBuffer = make(map[int]*ToolBufferElement)
-	}
-	if state.toolsBuffer[idx] == nil {
-		state.toolsBuffer[idx] = &ToolBufferElement{}
-	}
+	toolBuffer := state.ensureToolBuffer(idx)
 	if event.Delta != "" {
-		state.toolsBuffer[idx].args.WriteString(event.Delta)
+		toolBuffer.args.WriteString(event.Delta)
 	}
 	state.currentToolIndex = idx
 }
@@ -859,21 +833,16 @@ func (s *OpenAI) handleOutputItemAdded(event responses.ResponseStreamEventUnion,
 		return
 	}
 
-	if state.toolsBuffer == nil {
-		state.toolsBuffer = make(map[int]*ToolBufferElement)
-	}
 	state.currentToolIndex = int(event.OutputIndex)
-	if state.toolsBuffer[state.currentToolIndex] == nil {
-		state.toolsBuffer[state.currentToolIndex] = &ToolBufferElement{}
-	}
+	toolBuffer := state.ensureToolBuffer(state.currentToolIndex)
 
 	if event.Item.CallID != "" {
-		state.toolsBuffer[state.currentToolIndex].id.WriteString(event.Item.CallID)
+		toolBuffer.id.WriteString(event.Item.CallID)
 	} else if event.Item.ID != "" {
-		state.toolsBuffer[state.currentToolIndex].id.WriteString(event.Item.ID)
+		toolBuffer.id.WriteString(event.Item.ID)
 	}
 	if event.Item.Name != "" {
-		state.toolsBuffer[state.currentToolIndex].name.WriteString(event.Item.Name)
+		toolBuffer.name.WriteString(event.Item.Name)
 	}
 }
 
@@ -888,6 +857,64 @@ func (s *OpenAI) handleOutputItemDone(event responses.ResponseStreamEventUnion, 
 	}
 	if event.Item.CallID != "" && state.toolsBuffer[state.currentToolIndex].id.Len() == 0 {
 		state.toolsBuffer[state.currentToolIndex].id.WriteString(event.Item.CallID)
+	}
+}
+
+// handleTextDelta handles text output deltas
+func (s *OpenAI) handleTextDelta(event responses.ResponseStreamEventUnion, state *responsesStreamState, output chan<- llm.TextStreamEvent) {
+	if event.Delta == "" {
+		return
+	}
+	state.fullMessageText.WriteString(event.Delta)
+	output <- llm.TextStreamEvent{
+		Type:  llm.EventTypeText,
+		Value: event.Delta,
+	}
+}
+
+// handleReasoningDelta handles reasoning summary text deltas
+func (s *OpenAI) handleReasoningDelta(event responses.ResponseStreamEventUnion, state *responsesStreamState, output chan<- llm.TextStreamEvent) {
+	if event.Delta == "" {
+		return
+	}
+	state.reasoningSummaryBuffer.WriteString(event.Delta)
+	output <- llm.TextStreamEvent{
+		Type:  llm.EventTypeReasoning,
+		Value: event.Delta,
+	}
+}
+
+// handleFunctionCallDone handles completed function call arguments
+func (s *OpenAI) handleFunctionCallDone(event responses.ResponseStreamEventUnion, state *responsesStreamState) {
+	if event.Arguments == "" || state.toolsBuffer[state.currentToolIndex] == nil {
+		return
+	}
+	if state.toolsBuffer[state.currentToolIndex].args.Len() == 0 {
+		state.toolsBuffer[state.currentToolIndex].args.WriteString(event.Arguments)
+	}
+}
+
+// emitAnnotationsIfPresent sends accumulated annotations to the output channel
+func (s *OpenAI) emitAnnotationsIfPresent(state *responsesStreamState, output chan<- llm.TextStreamEvent) {
+	if len(state.annotations) == 0 {
+		return
+	}
+	output <- llm.TextStreamEvent{
+		Type:  llm.EventTypeAnnotations,
+		Value: state.annotations,
+	}
+	state.annotations = nil
+}
+
+// handleResponseError handles error events from the Responses API
+func (s *OpenAI) handleResponseError(event responses.ResponseStreamEventUnion, output chan<- llm.TextStreamEvent) {
+	errorMsg := "Unknown error from Responses API"
+	if event.Message != "" {
+		errorMsg = event.Message
+	}
+	output <- llm.TextStreamEvent{
+		Type:  llm.EventTypeError,
+		Value: errors.New(errorMsg),
 	}
 }
 
@@ -926,201 +953,129 @@ func (s *OpenAI) handleResponsesStreamEnd(ctx context.Context, stream *ssestream
 }
 
 // convertToResponseParams converts ChatCompletionNewParams to ResponseNewParams
-// This is a simplified conversion that handles the basic use cases
 func (s *OpenAI) convertToResponseParams(params openai.ChatCompletionNewParams, llmContext *llm.Context, cfg llm.LanguageModelConfig) responses.ResponseNewParams {
-	result := responses.ResponseNewParams{}
+	result := responses.ResponseNewParams{
+		Model: params.Model,
+	}
 
-	// Convert model - directly assign as it's the same type
-	result.Model = params.Model
-
-	// Convert max tokens if set
 	if params.MaxCompletionTokens.Valid() {
 		result.MaxOutputTokens = param.NewOpt(params.MaxCompletionTokens.Value)
 	}
-
-	// Convert temperature if set
 	if params.Temperature.Valid() {
 		result.Temperature = param.NewOpt(params.Temperature.Value)
 	}
-
-	// Convert top_p if set
 	if params.TopP.Valid() {
 		result.TopP = param.NewOpt(params.TopP.Value)
 	}
-
-	// Convert user to safety identifier if enabled
 	if params.User.Valid() && s.config.SendUserID {
 		result.SafetyIdentifier = param.NewOpt(params.User.Value)
 	}
-
-	// Add reasoning parameters for models that support it
-	// Check if reasoning is enabled for this bot and not explicitly disabled for this request
 	if s.config.ReasoningEnabled && !cfg.ReasoningDisabled {
-		// Determine reasoning effort
-		var effort shared.ReasoningEffort
-		switch s.config.ReasoningEffort {
-		case "minimal":
-			effort = shared.ReasoningEffortMinimal
-		case "low":
-			effort = shared.ReasoningEffortLow
-		case "high":
-			effort = shared.ReasoningEffortHigh
-		case "medium":
-			effort = shared.ReasoningEffortMedium
-		case "":
-			// Empty string defaults to medium effort for clarity
-			effort = shared.ReasoningEffortMedium
-		default:
-			effort = shared.ReasoningEffortMedium
-		}
-
 		result.Reasoning = shared.ReasoningParam{
-			Effort: effort,
-			// Can be "auto", "concise", or "detailed"
+			Effort:  getReasoningEffort(s.config.ReasoningEffort),
 			Summary: shared.ReasoningSummaryAuto,
 		}
 	}
 
-	// Convert messages to a simple string input
-	// The Responses API uses a different format for input, so we simplify here
+	// Convert messages to string input format for the Responses API
 	var inputBuilder strings.Builder
 	var systemInstructions string
 
-	// Process messages and convert to input format
 	for _, msg := range params.Messages {
 		switch {
 		case msg.OfSystem != nil:
-			// Extract system message for instructions
-			// System content is a union - check if it has a string value
 			if msg.OfSystem.Content.OfString.Valid() {
 				systemInstructions = msg.OfSystem.Content.OfString.Value
 			}
 		case msg.OfUser != nil:
-			// Add user messages to input
-			if inputBuilder.Len() > 0 {
-				inputBuilder.WriteString("\n\nUser: ")
-			} else {
-				inputBuilder.WriteString("User: ")
-			}
-			// Handle string content from union
+			s.appendRolePrefix(&inputBuilder, "User")
 			if msg.OfUser.Content.OfString.Valid() {
 				inputBuilder.WriteString(msg.OfUser.Content.OfString.Value)
 			}
-			// Note: Array content handling would require more complex conversion
 		case msg.OfAssistant != nil:
-			// Add assistant messages to input
-			if inputBuilder.Len() > 0 {
-				inputBuilder.WriteString("\n\nAssistant: ")
-			} else {
-				inputBuilder.WriteString("Assistant: ")
-			}
-			// Handle string content from union
+			s.appendRolePrefix(&inputBuilder, "Assistant")
 			if msg.OfAssistant.Content.OfString.Valid() {
 				inputBuilder.WriteString(msg.OfAssistant.Content.OfString.Value)
 			}
-			// FIX: Include tool call information so the model knows what tools were called
-			// This is critical for the Responses API path - without this, the model sees
-			// tool results but doesn't know which tool produced them, causing repeated calls
-			if len(msg.OfAssistant.ToolCalls) > 0 {
-				for _, tc := range msg.OfAssistant.ToolCalls {
-					if tc.OfFunction != nil {
-						inputBuilder.WriteString(fmt.Sprintf("\n[Called tool: %s (id: %s) with arguments: %s]",
-							tc.OfFunction.Function.Name,
-							tc.OfFunction.ID,
-							tc.OfFunction.Function.Arguments))
-					}
+			// Include tool call info so the model correlates results with their calls
+			for _, tc := range msg.OfAssistant.ToolCalls {
+				if tc.OfFunction != nil {
+					inputBuilder.WriteString(fmt.Sprintf("\n[Called tool: %s (id: %s) with arguments: %s]",
+						tc.OfFunction.Function.Name,
+						tc.OfFunction.ID,
+						tc.OfFunction.Function.Arguments))
 				}
 			}
 		case msg.OfTool != nil:
-			// Add tool results to input with the tool call ID for correlation
-			if inputBuilder.Len() > 0 {
-				inputBuilder.WriteString(fmt.Sprintf("\n\n[Tool Result for call id: %s]\n", msg.OfTool.ToolCallID))
-			} else {
-				inputBuilder.WriteString(fmt.Sprintf("[Tool Result for call id: %s]\n", msg.OfTool.ToolCallID))
-			}
-			// Handle string content from union
+			s.appendRolePrefix(&inputBuilder, fmt.Sprintf("[Tool Result for call id: %s]", msg.OfTool.ToolCallID))
 			if msg.OfTool.Content.OfString.Valid() {
 				inputBuilder.WriteString(msg.OfTool.Content.OfString.Value)
 			}
 		}
 	}
 
-	// Set instructions from system message
 	if systemInstructions != "" {
 		result.Instructions = param.NewOpt(systemInstructions)
 	}
-
-	// Set input as a simple string
 	if inputBuilder.Len() > 0 {
 		result.Input = responses.ResponseNewParamsInputUnion{
 			OfString: param.NewOpt(inputBuilder.String()),
 		}
 	}
 
-	// Convert tools
-	tools := []responses.ToolUnionParam{}
-
-	// Add function tools if present
-	if len(params.Tools) > 0 {
-		for _, tool := range params.Tools {
-			// Check if this is a function tool
-			if tool.OfFunction != nil {
-				// tool.OfFunction is the function definition itself
-				functionTool := responses.FunctionToolParam{
-					Name: tool.OfFunction.Function.Name,
-				}
-
-				if tool.OfFunction.Function.Description.Valid() {
-					functionTool.Description = param.NewOpt(tool.OfFunction.Function.Description.Value)
-				}
-
-				if tool.OfFunction.Function.Parameters != nil {
-					functionTool.Parameters = tool.OfFunction.Function.Parameters
-				}
-
-				tools = append(tools, responses.ToolUnionParam{
-					OfFunction: &functionTool,
-				})
-			}
-		}
-	}
-
-	// Add native tools if not explicitly disabled
-	if !cfg.ToolsDisabled && len(s.config.EnabledNativeTools) > 0 {
-		for _, nativeTool := range s.config.EnabledNativeTools {
-			if nativeTool == "web_search" {
-				// Add web search as a built-in tool
-				webSearchTool := responses.WebSearchToolParam{
-					Type: responses.WebSearchToolTypeWebSearchPreview,
-				}
-				tools = append(tools, responses.ToolUnionParam{
-					OfWebSearchPreview: &webSearchTool,
-				})
-			}
-			// Future native tools can be added here
-			// else if nativeTool == "file_search" {
-			//     fileSearchTool := responses.FileSearchToolParam{...}
-			//     tools = append(tools, responses.ToolUnionParam{
-			//         OfFileSearch: &fileSearchTool,
-			//     })
-			// } else if nativeTool == "code_interpreter" {
-			//     codeInterpreterTool := responses.ToolCodeInterpreterParam{...}
-			//     tools = append(tools, responses.ToolUnionParam{
-			//         OfCodeInterpreter: &codeInterpreterTool,
-			//     })
-			// }
-		}
-	}
-
+	tools := s.convertTools(params.Tools, cfg)
 	if len(tools) > 0 {
 		result.Tools = tools
 	}
 
-	// Note: Tool choice and response format conversions are omitted for simplicity
-	// These would require more complex mapping between the two API formats
-	// For now, tool choice is defaulted to "auto" (as it was with completions) and response format is not enforcing a json mode, which was also the case with completions.
-
 	return result
+}
+
+// appendRolePrefix adds a role prefix to the input builder with appropriate spacing
+func (s *OpenAI) appendRolePrefix(builder *strings.Builder, role string) {
+	if builder.Len() > 0 {
+		builder.WriteString("\n\n")
+	}
+	builder.WriteString(role)
+	builder.WriteString(": ")
+}
+
+// convertTools converts completion tools and native tools to Responses API format
+func (s *OpenAI) convertTools(completionTools []openai.ChatCompletionToolUnionParam, cfg llm.LanguageModelConfig) []responses.ToolUnionParam {
+	var tools []responses.ToolUnionParam
+
+	for _, tool := range completionTools {
+		if tool.OfFunction == nil {
+			continue
+		}
+		functionTool := responses.FunctionToolParam{
+			Name: tool.OfFunction.Function.Name,
+		}
+		if tool.OfFunction.Function.Description.Valid() {
+			functionTool.Description = param.NewOpt(tool.OfFunction.Function.Description.Value)
+		}
+		if tool.OfFunction.Function.Parameters != nil {
+			functionTool.Parameters = tool.OfFunction.Function.Parameters
+		}
+		tools = append(tools, responses.ToolUnionParam{
+			OfFunction: &functionTool,
+		})
+	}
+
+	// Add native tools if enabled
+	if !cfg.ToolsDisabled {
+		for _, nativeTool := range s.config.EnabledNativeTools {
+			if nativeTool == "web_search" {
+				tools = append(tools, responses.ToolUnionParam{
+					OfWebSearchPreview: &responses.WebSearchToolParam{
+						Type: responses.WebSearchToolTypeWebSearchPreview,
+					},
+				})
+			}
+		}
+	}
+
+	return tools
 }
 
 func (s *OpenAI) streamResult(params openai.ChatCompletionNewParams, llmContext *llm.Context, cfg llm.LanguageModelConfig) (*llm.TextStreamResult, error) {
@@ -1176,6 +1131,22 @@ func (s *OpenAI) completionRequestFromConfig(cfg llm.LanguageModelConfig) openai
 	}
 
 	return params
+}
+
+// reasoningEffortMap maps string effort levels to SDK constants
+var reasoningEffortMap = map[string]shared.ReasoningEffort{
+	"minimal": shared.ReasoningEffortMinimal,
+	"low":     shared.ReasoningEffortLow,
+	"medium":  shared.ReasoningEffortMedium,
+	"high":    shared.ReasoningEffortHigh,
+}
+
+// getReasoningEffort converts a string effort level to the SDK constant, defaulting to medium
+func getReasoningEffort(effort string) shared.ReasoningEffort {
+	if e, ok := reasoningEffortMap[effort]; ok {
+		return e
+	}
+	return shared.ReasoningEffortMedium
 }
 
 // getModelConstant converts string model names to the SDK's model constants
