@@ -29,8 +29,8 @@ jobs:
       run: npm ci
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
-    - name: Run Playwright tests (excluding llmbot tests on PRs)
-      run: npx playwright test --project=chromium --grep-invert "llmbot-post-component"
+    - name: Run Playwright tests (excluding real API tests)
+      run: npx playwright test --project=chromium --grep-invert "llmbot-post-component|Real API"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -66,7 +66,7 @@ jobs:
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      run: npx playwright test tests/llmbot-post-component --project=chromium --reporter=list
+      run: npx playwright test tests/llmbot-post-component tests/channel-analysis/backend-verification/real-api.spec.ts --project=chromium --reporter=list
 
   plugin-tests:
     runs-on: ubuntu-latest
