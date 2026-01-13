@@ -6,6 +6,7 @@ require (
 	github.com/Masterminds/squirrel v1.5.4
 	github.com/andygrunwald/go-jira v1.16.0
 	github.com/anthropics/anthropic-sdk-go v1.4.0
+	github.com/maximhq/bifrost/core v1.0.10
 	github.com/asticode/go-astisub v0.34.0
 	github.com/aws/aws-sdk-go-v2 v1.39.5
 	github.com/aws/aws-sdk-go-v2/config v1.31.16
