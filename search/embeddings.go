@@ -9,6 +9,8 @@ import (
 	"net/http"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/mattermost/mattermost-plugin-ai/bifrost"
 	"github.com/mattermost/mattermost-plugin-ai/chunking"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
@@ -32,9 +34,35 @@ func newVectorStore(db *sqlx.DB, config embeddings.UpstreamConfig, dimensions in
 	return nil, fmt.Errorf("unsupported vector store type: %s", config.Type)
 }
 
+// BifrostEmbeddingConfig holds configuration for Bifrost-based embeddings
+type BifrostEmbeddingConfig struct {
+	Provider string `json:"provider"` // e.g., "openai", "anthropic", "cohere"
+	APIKey   string `json:"apiKey"`
+	APIURL   string `json:"apiUrl,omitempty"`
+	Model    string `json:"model"` // e.g., "text-embedding-3-small"
+}
+
 // newEmbeddingProvider creates a new embedding provider based on the provided configuration
 func newEmbeddingProvider(config embeddings.UpstreamConfig, dimensions int, httpClient *http.Client) (embeddings.EmbeddingProvider, error) {
 	switch config.Type {
+	case embeddings.ProviderTypeBifrost:
+		var bifrostConfig BifrostEmbeddingConfig
+		if err := json.Unmarshal(config.Parameters, &bifrostConfig); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal Bifrost config: %w", err)
+		}
+
+		provider, err := mapEmbeddingProvider(bifrostConfig.Provider)
+		if err != nil {
+			return nil, err
+		}
+
+		return bifrost.NewEmbeddingProvider(bifrost.EmbeddingConfig{
+			Provider:   provider,
+			APIKey:     bifrostConfig.APIKey,
+			APIURL:     bifrostConfig.APIURL,
+			Model:      bifrostConfig.Model,
+			Dimensions: dimensions,
+		})
 	case embeddings.ProviderTypeOpenAICompatible:
 		compatibleConfig := openai.Config{}
 		if err := json.Unmarshal(config.Parameters, &compatibleConfig); err != nil {
@@ -54,6 +82,22 @@ func newEmbeddingProvider(config embeddings.UpstreamConfig, dimensions int, http
 	}
 
 	return nil, fmt.Errorf("unsupported embedding provider type: %s", config.Type)
+}
+
+// mapEmbeddingProvider maps provider string to Bifrost ModelProvider
+func mapEmbeddingProvider(provider string) (schemas.ModelProvider, error) {
+	switch provider {
+	case "openai":
+		return schemas.OpenAI, nil
+	case "azure":
+		return schemas.Azure, nil
+	case "cohere":
+		return schemas.Cohere, nil
+	case "bedrock":
+		return schemas.Bedrock, nil
+	default:
+		return "", fmt.Errorf("unsupported embedding provider: %s", provider)
+	}
 }
 
 // InitEmbeddingsSearch creates and initializes the embedding search system
