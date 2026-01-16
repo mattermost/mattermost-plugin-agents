@@ -311,19 +311,17 @@ func ExecuteAutoRunTools(
 	results := make([]AutoRunResult, 0, len(pendingToolCalls))
 
 	for _, tc := range pendingToolCalls {
-		// Capture tc in the closure to avoid issues with loop variable
-		toolCall := tc
-		getter := func(args any) error { return json.Unmarshal(toolCall.Arguments, args) }
+		getter := func(args any) error { return json.Unmarshal(tc.Arguments, args) }
 
-		result, err := resolver(toolCall.Name, getter, context)
+		result, err := resolver(tc.Name, getter, context)
 		isError := err != nil
 		if err != nil {
 			result = fmt.Sprintf("Error executing tool: %v", err)
 		}
 
 		results = append(results, AutoRunResult{
-			ToolCallID: toolCall.ID,
-			ToolName:   toolCall.Name,
+			ToolCallID: tc.ID,
+			ToolName:   tc.Name,
 			Result:     result,
 			IsError:    isError,
 		})
