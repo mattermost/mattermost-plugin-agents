@@ -407,7 +407,6 @@ func (a *Anthropic) streamChatWithTools(initialState messageState) {
 
 			toolResults := llm.ExecuteAutoRunTools(
 				result.pendingToolCalls,
-				state.config.AutoRunTools,
 				state.resolver,
 				state.context,
 			)
