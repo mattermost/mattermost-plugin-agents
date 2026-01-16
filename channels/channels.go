@@ -70,6 +70,24 @@ func (c *Channels) AnalyzeChannel(
 	// We can use a simple user prompt to trigger the agent
 	userPrompt := "Please summarize the channel activity as requested."
 
+	// Get tools and bind channel_id so it cannot be manipulated by the LLM
+	readChannel := context.Tools.GetTool("read_channel")
+	if readChannel == nil {
+		return nil, fmt.Errorf("read_channel tool not available")
+	}
+	boundReadChannel := readChannel.WithBoundParams(map[string]interface{}{"channel_id": channelID})
+
+	getChannelInfo := context.Tools.GetTool("get_channel_info")
+	if getChannelInfo == nil {
+		return nil, fmt.Errorf("get_channel_info tool not available")
+	}
+	boundGetChannelInfo := getChannelInfo.WithBoundParams(map[string]interface{}{"channel_id": channelID})
+
+	// Create scoped tool store with bound tools
+	scopedTools := llm.NewToolStore(nil, false)
+	scopedTools.AddTools([]llm.Tool{boundReadChannel, boundGetChannelInfo})
+	context.Tools = scopedTools
+
 	completionRequest := llm.CompletionRequest{
 		Posts: []llm.Post{
 			{
@@ -84,19 +102,10 @@ func (c *Channels) AnalyzeChannel(
 		Context: context,
 	}
 
-	// Define auto-run tools with hardcoded parameters
-	autoRunTools := map[string]map[string]interface{}{
-		"read_channel": {
-			"channel_id": channelID,
-		},
-		"get_channel_info": {
-			"channel_id": channelID,
-		},
-	}
-
-	// Tools are enabled by default in the context if configured correctly in API handler
-	// We do NOT disable tools here.
-	resultStream, err := c.llm.ChatCompletion(completionRequest, llm.WithAutoRunTools(autoRunTools), llm.WithReasoningDisabled())
+	// Auto-run the bound tools
+	resultStream, err := c.llm.ChatCompletion(completionRequest,
+		llm.WithAutoRunTools([]string{"read_channel", "get_channel_info"}),
+		llm.WithReasoningDisabled())
 	if err != nil {
 		return nil, err
 	}
