@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-ai/httpexternal"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
 	"github.com/openai/openai-go/v2"
@@ -552,7 +553,6 @@ func (s *OpenAI) streamResponsesAPIToChannels(params openai.ChatCompletionNewPar
 			}
 			return
 		}
-	}
 
 		// Transfer the buffered tools into tool calls
 		pendingToolCalls := make([]llm.ToolCall, 0, len(toolsBuffer))
