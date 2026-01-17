@@ -28,6 +28,7 @@ const defaultNewService: LLMService = {
     region: '',
     awsAccessKeyID: '',
     awsSecretAccessKey: '',
+    customHeaders: {},
 };
 
 export const firstNewService = {
