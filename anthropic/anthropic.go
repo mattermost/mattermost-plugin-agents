@@ -34,6 +34,7 @@ type messageState struct {
 	resolver func(name string, argsGetter llm.ToolArgumentGetter, context *llm.Context) (string, error)
 	context  *llm.Context
 }
+
 type Anthropic struct {
 	client             anthropicSDK.Client
 	defaultModel       string

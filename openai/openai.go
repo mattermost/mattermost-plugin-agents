@@ -365,6 +365,7 @@ func (s *OpenAI) streamCompletionsAPIToChannels(params openai.ChatCompletionNewP
 
 	// Buffering in the case of tool use
 	var toolsBuffer map[int]*ToolBufferElement
+
 	for stream.Next() {
 		chunk := stream.Current()
 
