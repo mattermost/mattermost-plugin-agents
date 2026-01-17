@@ -64,7 +64,6 @@ func NewAzure(config Config, httpClient *http.Client) *OpenAI {
 	opts := []option.RequestOption{
 		azure.WithEndpoint(strings.TrimSuffix(config.APIURL, "/"), "2025-04-01-preview"),
 		azure.WithAPIKey(config.APIKey),
-		
 		option.WithHTTPClient(httpexternal.WrapHTTPClientWithCustomHeaders(httpClient, config.CustomHeaders)),
 	}
 
