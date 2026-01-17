@@ -52,7 +52,6 @@ export type LLMBotConfig = {
     reasoningEnabled?: boolean
     reasoningEffort?: string
     thinkingBudget?: number
-    customHeaders?: {[key: string]: string}
 }
 
 // Component for configuring native tools (OpenAI/Anthropic)
