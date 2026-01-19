@@ -48,6 +48,28 @@ export class SystemConsoleHelper {
     }
 
     /**
+     * Wait for the AI Agents panel to be fully loaded
+     * This ensures the bots list or "no bots" message is visible
+     */
+    async waitForBotsPanel(): Promise<void> {
+        // Wait for either the bots list or the "no bots" message to appear
+        // This indicates the panel has finished loading its content
+        const botsPanel = this.page.locator('text=AI Agents').first();
+        await botsPanel.waitFor({ state: 'visible', timeout: 15000 });
+
+        // Wait for either bot containers OR the add bot button to appear
+        // This ensures the panel content has rendered
+        const botContainers = this.page.locator('[class*="BotContainer"]');
+        const addBotButton = this.getAddBotButton();
+
+        // Wait for one of these to be visible (either existing bots or add button)
+        await Promise.race([
+            botContainers.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {}),
+            addBotButton.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {})
+        ]);
+    }
+
+    /**
      * Get the Save button
      */
     getSaveButton(): Locator {
