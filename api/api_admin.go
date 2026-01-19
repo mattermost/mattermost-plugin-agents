@@ -14,18 +14,32 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// ReindexRequest represents the request body for reindexing
+type ReindexRequest struct {
+	ClearIndex *bool `json:"clearIndex"`
+}
+
 // handleReindexPosts starts a background job to reindex all posts
 func (a *API) handleReindexPosts(c *gin.Context) {
-	if err := a.enforceEmptyBody(c); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err)
-		return
-	}
 	if a.indexerService == nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
 		return
 	}
 
-	jobStatus, err := a.indexerService.StartReindexJob()
+	// Parse request body (optional)
+	var req ReindexRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// If body is empty or invalid, use defaults
+		req.ClearIndex = nil
+	}
+
+	// Default to clearIndex=true for backward compatibility
+	clearIndex := true
+	if req.ClearIndex != nil {
+		clearIndex = *req.ClearIndex
+	}
+
+	jobStatus, err := a.indexerService.StartReindexJob(clearIndex)
 	if err != nil {
 		switch err.Error() {
 		case "job already running":
@@ -98,6 +112,71 @@ func (a *API) handleCancelJob(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, jobStatus)
+}
+
+// handleCatchUpIndex starts a catch-up indexing job
+func (a *API) handleCatchUpIndex(c *gin.Context) {
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if a.indexerService == nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
+		return
+	}
+
+	jobStatus, err := a.indexerService.StartCatchUpJob()
+	if err != nil {
+		switch err.Error() {
+		case "job already running":
+			c.JSON(http.StatusConflict, jobStatus)
+			return
+		case "no previous index found, run a full reindex first":
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		default:
+			c.AbortWithError(http.StatusInternalServerError, err)
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, jobStatus)
+}
+
+// handleIndexHealthCheck performs a health check on the search index
+func (a *API) handleIndexHealthCheck(c *gin.Context) {
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if a.indexerService == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "search functionality is not configured"})
+		return
+	}
+
+	result, err := a.indexerService.CheckIndexHealth(c.Request.Context())
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// handleGetModelCompatibility checks if the current model configuration is compatible with the indexed data
+func (a *API) handleGetModelCompatibility(c *gin.Context) {
+	if a.indexerService == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "search functionality is not configured"})
+		return
+	}
+
+	// Get current embedding config
+	cfg := a.config.EmbeddingSearchConfig()
+
+	result := a.indexerService.CheckModelCompatibility(cfg.Dimensions, "")
+	c.JSON(http.StatusOK, result)
 }
 
 func (a *API) mattermostAdminAuthorizationRequired(c *gin.Context) {

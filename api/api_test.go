@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
+	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -62,6 +63,10 @@ func (tc *testConfigImpl) MCP() mcp.Config {
 
 func (tc *testConfigImpl) AllowUnsafeLinks() bool {
 	return tc.allowUnsafeLinks
+}
+
+func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
+	return embeddings.EmbeddingSearchConfig{}
 }
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
@@ -366,7 +371,6 @@ func TestEmptyBodyCheckerInApi(t *testing.T) {
 		"summarize transcription": "/post/postid/summarize_transcription?botUsername=thebot",
 		"regen":                   "/post/postid/regenerate",
 		"postback summary":        "/post/postid/postback_summary",
-		"reindex":                 "/admin/reindex",
 		"cancel":                  "/admin/reindex/cancel",
 	} {
 		t.Run(urlName, func(t *testing.T) {

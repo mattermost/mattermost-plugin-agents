@@ -30,9 +30,29 @@ export interface JobStatusType {
     completed_at?: string;
     processed_rows: number;
     total_rows: number;
+    resumable?: boolean;
+    error_count?: number;
+    node_id?: string;
 }
 
 export interface StatusMessageType {
     success?: boolean;
     message?: string;
+}
+
+// Match the server's HealthCheckResult struct
+export interface HealthCheckResultType {
+    db_post_count: number;
+    indexed_post_count: number;
+    missing_posts: number;
+    status: string; // 'healthy' | 'needs_reindex' | 'mismatch' | 'error'
+    checked_at: string;
+    error?: string;
+}
+
+// Match the server's ModelCompatibility struct
+export interface ModelCompatibilityType {
+    compatible: boolean;
+    needs_reindex: boolean;
+    reason?: string;
 }

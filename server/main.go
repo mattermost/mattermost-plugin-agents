@@ -157,7 +157,18 @@ func (p *Plugin) OnActivate() error {
 		// Continue without search functionality
 	}
 
-	indexerService := indexer.New(embeddingsSearch, mmClient, bots, dbClient.DB)
+	indexerService := indexer.New(embeddingsSearch, mmClient, bots, dbClient.DB, p.API)
+
+	// Check model compatibility and disable search if model has changed
+	if embeddingsSearch != nil {
+		embeddingsCfg := p.configuration.EmbeddingSearchConfig()
+		compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.Dimensions, "")
+		if !compatibility.Compatible {
+			pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
+				"reason", compatibility.Reason)
+			embeddingsSearch = nil // Disable search
+		}
+	}
 
 	searchService := search.New(
 		embeddingsSearch,

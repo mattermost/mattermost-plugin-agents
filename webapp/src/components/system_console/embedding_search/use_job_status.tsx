@@ -4,9 +4,9 @@
 import {useState, useEffect, useCallback} from 'react';
 import {useIntl} from 'react-intl';
 
-import {doReindexPosts, getReindexStatus, cancelReindex} from '../../../client';
+import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkIndexHealth, getModelCompatibility} from '../../../client';
 
-import {JobStatusType, StatusMessageType} from './types';
+import {JobStatusType, StatusMessageType, HealthCheckResultType, ModelCompatibilityType} from './types';
 
 export const useJobStatus = () => {
     const intl = useIntl();
@@ -14,6 +14,9 @@ export const useJobStatus = () => {
     const [statusMessage, setStatusMessage] = useState<StatusMessageType>({});
     const [polling, setPolling] = useState(false);
     const [showReindexConfirmation, setShowReindexConfirmation] = useState(false);
+    const [healthCheckResult, setHealthCheckResult] = useState<HealthCheckResultType | null>(null);
+    const [healthCheckLoading, setHealthCheckLoading] = useState(false);
+    const [modelCompatibility, setModelCompatibility] = useState<ModelCompatibilityType | null>(null);
 
     // Function to fetch job status
     const fetchJobStatus = useCallback(async () => {
@@ -70,10 +73,21 @@ export const useJobStatus = () => {
         return function noop() { /* No cleanup needed */ };
     }, [polling, fetchJobStatus]);
 
+    // Function to fetch model compatibility
+    const fetchModelCompatibility = useCallback(async () => {
+        try {
+            const result = await getModelCompatibility();
+            setModelCompatibility(result);
+        } catch (error) {
+            // Silently fail - model compatibility is optional info
+        }
+    }, []);
+
     // Check status on component mount
     useEffect(() => {
         fetchJobStatus();
-    }, [fetchJobStatus]);
+        fetchModelCompatibility();
+    }, [fetchJobStatus, fetchModelCompatibility]);
 
     const handleReindexClick = () => {
         setShowReindexConfirmation(true);
@@ -84,7 +98,7 @@ export const useJobStatus = () => {
         setStatusMessage({});
 
         try {
-            const response = await doReindexPosts();
+            const response = await doReindexPosts(true);
             setJobStatus(response);
             setPolling(true);
         } catch (error) {
@@ -116,14 +130,51 @@ export const useJobStatus = () => {
         }
     };
 
+    const handleCatchUpClick = async () => {
+        setStatusMessage({});
+
+        try {
+            const response = await catchUpIndex();
+            setJobStatus(response);
+            setPolling(true);
+        } catch (error) {
+            setStatusMessage({
+                success: false,
+                message: intl.formatMessage({defaultMessage: 'Failed to start catch-up indexing. Make sure a full reindex has been completed first.'}),
+            });
+        }
+    };
+
+    const handleHealthCheck = async () => {
+        setHealthCheckLoading(true);
+        setHealthCheckResult(null);
+
+        try {
+            const result = await checkIndexHealth();
+            setHealthCheckResult(result);
+        } catch (error) {
+            setStatusMessage({
+                success: false,
+                message: intl.formatMessage({defaultMessage: 'Failed to check index health.'}),
+            });
+        } finally {
+            setHealthCheckLoading(false);
+        }
+    };
+
     return {
         jobStatus,
         statusMessage,
         polling,
         showReindexConfirmation,
+        healthCheckResult,
+        healthCheckLoading,
+        modelCompatibility,
         handleReindexClick,
         handleConfirmReindex,
         handleCancelReindex,
         handleCancelJob,
+        handleCatchUpClick,
+        handleHealthCheck,
     };
 };
