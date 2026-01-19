@@ -416,7 +416,6 @@ func (s *OpenAI) handleAutoRunTools(
 	// Execute tools and add results
 	results := llm.ExecuteAutoRunTools(
 		pendingToolCalls,
-		cfg.AutoRunTools,
 		llmContext.Tools.ResolveTool,
 		llmContext,
 	)

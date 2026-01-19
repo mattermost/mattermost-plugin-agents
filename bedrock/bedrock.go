@@ -503,7 +503,6 @@ func (b *Bedrock) streamChatWithTools(initialState messageState) {
 
 				toolResults := llm.ExecuteAutoRunTools(
 					pendingToolCalls,
-					state.config.AutoRunTools,
 					state.resolver,
 					state.context,
 				)
