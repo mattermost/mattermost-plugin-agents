@@ -87,12 +87,12 @@ test.describe.serial('Bot Validation Badges', () => {
         await page.waitForTimeout(1000);
 
         // 10. Enter a valid username 'testbot' in the 'Agent Username' field
-        const usernameField = botCard.getByRole('textbox', { name: /agent username/i });
+        const usernameField = botCard.getByRole('textbox', { name: /(bot|agent) username/i });
         await usernameField.waitFor({ state: 'visible', timeout: 10000 });
         await usernameField.fill('testbot');
 
         // 11. Click outside the card to collapse it
-        await page.locator('text=AI Agents').first().click();
+        await systemConsole.getBotsPanel().click();
 
         // 12. Verify the 'No Username' badge is no longer visible in the header
         await expect(noUsernameBadge).not.toBeVisible();
@@ -102,7 +102,7 @@ test.describe.serial('Bot Validation Badges', () => {
         await usernameField.clear();
 
         // 14. Verify the 'No Username' badge reappears
-        await page.locator('text=AI Agents').first().click();
+        await systemConsole.getBotsPanel().click();
         await expect(noUsernameBadge).toBeVisible();
 
         await openAIMock.stop();
@@ -168,7 +168,7 @@ test.describe.serial('Bot Validation Badges', () => {
         await page.waitForTimeout(1000);
 
         // 9. Verify the 'Agent Username' field contains 'test bot'
-        const usernameField = botCard.getByRole('textbox', { name: /agent username/i });
+        const usernameField = botCard.getByRole('textbox', { name: /(bot|agent) username/i });
         await usernameField.waitFor({ state: 'visible', timeout: 10000 });
         await expect(usernameField).toHaveValue('test bot');
 
@@ -176,7 +176,7 @@ test.describe.serial('Bot Validation Badges', () => {
         await usernameField.fill('testbot');
 
         // 11. Collapse card
-        await page.locator('text=AI Agents').first().click();
+        await systemConsole.getBotsPanel().click();
 
         // 12. Verify 'Invalid Username' badge is gone
         await expect(invalidUsernameBadge).not.toBeVisible();
@@ -188,7 +188,7 @@ test.describe.serial('Bot Validation Badges', () => {
         await usernameField.fill('Test Bot');
 
         // 15. Verify badge reappears after losing focus on field
-        await page.locator('text=AI Agents').first().click();
+        await systemConsole.getBotsPanel().click();
         await expect(invalidUsernameBadge).toBeVisible();
 
         await openAIMock.stop();
@@ -250,7 +250,7 @@ test.describe.serial('Bot Validation Badges', () => {
         await page.waitForTimeout(1000);
 
         // 8. Verify the username field contains '1testbot'
-        const usernameField = botCard.getByRole('textbox', { name: /agent username/i });
+        const usernameField = botCard.getByRole('textbox', { name: /(bot|agent) username/i });
         await usernameField.waitFor({ state: 'visible', timeout: 10000 });
         await expect(usernameField).toHaveValue('1testbot');
 
@@ -258,7 +258,7 @@ test.describe.serial('Bot Validation Badges', () => {
         await usernameField.fill('testbot1');
 
         // 10. Collapse card
-        await page.locator('text=AI Agents').first().click();
+        await systemConsole.getBotsPanel().click();
 
         // 11. Verify badge disappears
         await expect(invalidUsernameBadge).not.toBeVisible();
@@ -322,12 +322,12 @@ test.describe.serial('Bot Validation Badges', () => {
         await page.waitForTimeout(1000);
 
         // 8. Change username to 'testbot' (all lowercase)
-        const usernameField = botCard.getByRole('textbox', { name: /agent username/i });
+        const usernameField = botCard.getByRole('textbox', { name: /(bot|agent) username/i });
         await usernameField.waitFor({ state: 'visible', timeout: 10000 });
         await usernameField.fill('testbot');
 
         // 9. Verify badge disappears
-        await page.locator('text=AI Agents').first().click();
+        await systemConsole.getBotsPanel().click();
         await expect(invalidUsernameBadge).not.toBeVisible();
 
         // 10. Change username to 'TESTBOT' (all uppercase)
@@ -335,7 +335,7 @@ test.describe.serial('Bot Validation Badges', () => {
         await usernameField.fill('TESTBOT');
 
         // 11. Verify badge reappears
-        await page.locator('text=AI Agents').first().click();
+        await systemConsole.getBotsPanel().click();
         await expect(invalidUsernameBadge).toBeVisible();
 
         await openAIMock.stop();
@@ -411,7 +411,7 @@ test.describe.serial('Bot Validation Badges', () => {
         await serviceDropdown.selectOption({ label: 'Test Service' });
 
         // 12. Collapse card
-        await page.locator('text=AI Agents').first().click();
+        await systemConsole.getBotsPanel().click();
 
         // 13. Verify 'No Service Selected' badge is gone
         await expect(noServiceBadge).not.toBeVisible();
@@ -423,7 +423,7 @@ test.describe.serial('Bot Validation Badges', () => {
         await serviceDropdown.selectOption({ value: '' });
 
         // 16. Verify badge reappears
-        await page.locator('text=AI Agents').first().click();
+        await systemConsole.getBotsPanel().click();
         await expect(noServiceBadge).toBeVisible();
 
         await openAIMock.stop();
@@ -494,12 +494,12 @@ test.describe.serial('Bot Validation Badges', () => {
         await page.waitForTimeout(1000);
 
         // 10. Add valid username 'testbot'
-        const usernameField = botCard.getByRole('textbox', { name: /agent username/i });
+        const usernameField = botCard.getByRole('textbox', { name: /(bot|agent) username/i });
         await usernameField.waitFor({ state: 'visible', timeout: 10000 });
         await usernameField.fill('testbot');
 
         // 11. Verify 'No Username' badge disappears but 'No Service Selected' remains
-        await page.locator('text=AI Agents').first().click();
+        await systemConsole.getBotsPanel().click();
         await expect(noUsernameBadge).not.toBeVisible();
         await expect(noServiceBadge).toBeVisible();
 
@@ -511,7 +511,7 @@ test.describe.serial('Bot Validation Badges', () => {
         await serviceDropdown.selectOption({ label: 'Test Service' });
 
         // 13. Verify both badges are now gone
-        await page.locator('text=AI Agents').first().click();
+        await systemConsole.getBotsPanel().click();
         await expect(noServiceBadge).not.toBeVisible();
         await expect(noUsernameBadge).not.toBeVisible();
 
@@ -520,7 +520,7 @@ test.describe.serial('Bot Validation Badges', () => {
         await usernameField.clear();
 
         // 15. Verify only 'No Username' badge reappears
-        await page.locator('text=AI Agents').first().click();
+        await systemConsole.getBotsPanel().click();
         await expect(noUsernameBadge).toBeVisible();
         await expect(noServiceBadge).not.toBeVisible();
 

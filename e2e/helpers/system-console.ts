@@ -44,7 +44,7 @@ export class SystemConsoleHelper {
      * Get the "Add Bot" button on the no bots page
      */
     getAddBotButton(): Locator {
-        return this.page.getByRole('button', { name: /add.*ai.*agent/i });
+        return this.page.getByRole('button', { name: /add.*ai.*(agent|bot)/i });
     }
 
     /**
@@ -54,7 +54,7 @@ export class SystemConsoleHelper {
     async waitForBotsPanel(): Promise<void> {
         // Wait for either the bots list or the "no bots" message to appear
         // This indicates the panel has finished loading its content
-        const botsPanel = this.page.locator('text=AI Agents').first();
+        const botsPanel = this.getBotsPanel();
         await botsPanel.waitFor({ state: 'visible', timeout: 15000 });
 
         // Wait for either bot containers OR the add bot button to appear
@@ -63,10 +63,7 @@ export class SystemConsoleHelper {
         const addBotButton = this.getAddBotButton();
 
         // Wait for one of these to be visible (either existing bots or add button)
-        await Promise.race([
-            botContainers.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {}),
-            addBotButton.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {})
-        ]);
+        await botContainers.first().or(addBotButton).waitFor({ state: 'visible', timeout: 15000 });
     }
 
     /**
@@ -94,7 +91,7 @@ export class SystemConsoleHelper {
      * Get the no bots message
      */
     getNoBotsMessage(): Locator {
-        return this.page.locator('text=/no.*ai.*bots/i');
+        return this.page.locator('text=/no.*ai.*(bots|agents)/i');
     }
 
     /**
@@ -108,7 +105,7 @@ export class SystemConsoleHelper {
      * Get AI Bots panel
      */
     getBotsPanel(): Locator {
-        return this.page.getByText('AI Bots').first();
+        return this.page.getByText(/AI (Bots|Agents)/i).first();
     }
 
     /**
