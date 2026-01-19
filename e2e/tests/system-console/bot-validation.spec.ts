@@ -82,9 +82,12 @@ test.describe.serial('Bot Validation Badges', () => {
         // 9. Click on the bot card to expand it
         await botCard.click();
 
+        // Wait for the card to fully expand and form fields to render
+        await page.waitForTimeout(500);
+
         // 10. Enter a valid username 'testbot' in the 'Agent Username' field
         const usernameField = botCard.getByRole('textbox', { name: /agent username/i });
-        await expect(usernameField).toBeVisible();
+        await expect(usernameField).toBeVisible({ timeout: 5000 });
         await usernameField.fill('testbot');
 
         // 11. Click outside the card to collapse it
@@ -160,8 +163,12 @@ test.describe.serial('Bot Validation Badges', () => {
         // 8. Expand bot card
         await botCard.click();
 
+        // Wait for the card to fully expand and form fields to render
+        await page.waitForTimeout(500);
+
         // 9. Verify the 'Agent Username' field contains 'test bot'
         const usernameField = botCard.getByRole('textbox', { name: /agent username/i });
+        await expect(usernameField).toBeVisible({ timeout: 5000 });
         await expect(usernameField).toHaveValue('test bot');
 
         // 10. Change username to 'testbot' (no space, all lowercase)
@@ -238,8 +245,12 @@ test.describe.serial('Bot Validation Badges', () => {
         // 7. Expand bot card
         await botCard.click();
 
+        // Wait for the card to fully expand and form fields to render
+        await page.waitForTimeout(500);
+
         // 8. Verify the username field contains '1testbot'
         const usernameField = botCard.getByRole('textbox', { name: /agent username/i });
+        await expect(usernameField).toBeVisible({ timeout: 5000 });
         await expect(usernameField).toHaveValue('1testbot');
 
         // 9. Change username to 'testbot1' (starts with letter)
@@ -306,8 +317,12 @@ test.describe.serial('Bot Validation Badges', () => {
         // 7. Expand bot card
         await botCard.click();
 
+        // Wait for the card to fully expand and form fields to render
+        await page.waitForTimeout(500);
+
         // 8. Change username to 'testbot' (all lowercase)
         const usernameField = botCard.getByRole('textbox', { name: /agent username/i });
+        await expect(usernameField).toBeVisible({ timeout: 5000 });
         await usernameField.fill('testbot');
 
         // 9. Verify badge disappears
@@ -381,12 +396,15 @@ test.describe.serial('Bot Validation Badges', () => {
         // 8. Expand bot card
         await botCard.click();
 
+        // Wait for the card to fully expand and form fields to render
+        await page.waitForTimeout(500);
+
         // 9. Locate 'AI Service' dropdown
         // 10. Verify dropdown shows 'Select a service' placeholder
         const serviceDropdown = botCard.getByLabel(/ai service/i).or(
             botCard.locator('text=AI Service').locator('..').locator('select')
         );
-        await expect(serviceDropdown).toBeVisible();
+        await expect(serviceDropdown).toBeVisible({ timeout: 5000 });
 
         // 11. Select the available service from dropdown
         await serviceDropdown.selectOption({ label: 'Test Service' });
@@ -471,8 +489,12 @@ test.describe.serial('Bot Validation Badges', () => {
         // 9. Expand bot card
         await botCard.click();
 
+        // Wait for the card to fully expand and form fields to render
+        await page.waitForTimeout(500);
+
         // 10. Add valid username 'testbot'
         const usernameField = botCard.getByRole('textbox', { name: /agent username/i });
+        await expect(usernameField).toBeVisible({ timeout: 5000 });
         await usernameField.fill('testbot');
 
         // 11. Verify 'No Username' badge disappears but 'No Service Selected' remains

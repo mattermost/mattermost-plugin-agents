@@ -27,6 +27,10 @@ export class SystemConsoleHelper {
             await viewInBrowserButton.click();
             await this.page.waitForLoadState('networkidle');
         }
+
+        // Wait for the plugin configuration UI to fully render
+        // The beta message is always present and indicates the React components have loaded
+        await this.page.waitForSelector('text=To report a bug or to provide feedback', { timeout: 15000 });
     }
 
     /**
