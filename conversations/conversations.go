@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
+	"github.com/mattermost/mattermost-plugin-ai/mmtools"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
@@ -140,6 +141,13 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		return nil, err
 	}
 
+	// Decorate the stream with web search annotations if available
+	webSearchData := mmtools.ConsumeWebSearchContexts(context)
+	c.mmClient.LogDebug("Checking for web search data in ProcessUserRequestWithContext", "has_data", len(webSearchData) > 0, "num_contexts", len(webSearchData))
+	if len(webSearchData) > 0 {
+		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
+	}
+
 	go func() {
 		request := "Write a short title for the following request. Include only the title and nothing else, no quotations. Request:\n" + post.Message
 		if err := c.GenerateTitle(bot, request, post.Id, context); err != nil {
@@ -153,24 +161,48 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 
 // ProcessUserRequest processes a user request to a bot
 func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post) (*llm.TextStreamResult, error) {
-	// Create a context with tools for LLM awareness
-	// Security restriction is enforced later via WithToolsDisabled based on channel type
-	context := c.contextBuilder.BuildLLMContextUserRequest(
+	// Extract web search context from conversation history to preserve citations
+	// This ensures citations from previous searches work in follow-up messages
+	webSearchParams := c.extractWebSearchContext(post)
+
+	var contextOpts []llm.ContextOption
+	contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextTools(bot))
+	if len(webSearchParams) > 0 {
+		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
+	}
+
+	// Create a context with default tools and preserved web search context
+	llmContext := c.contextBuilder.BuildLLMContextUserRequest(
 		bot,
 		postingUser,
 		channel,
-		c.contextBuilder.WithLLMContextTools(bot),
+		contextOpts...,
 	)
 
+	// If web search context wasn't found, initialize fresh tracking
+	if llmContext.Parameters == nil {
+		llmContext.Parameters = make(map[string]interface{})
+	}
+	if _, hasCount := llmContext.Parameters[mmtools.WebSearchCountKey]; !hasCount {
+		llmContext.Parameters[mmtools.WebSearchCountKey] = 0
+	}
+	if _, hasQueries := llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey]; !hasQueries {
+		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
+	}
+
 	// Check for auth errors in the tool store
-	if context.Tools != nil {
-		authErrors := context.Tools.GetAuthErrors()
+	if llmContext.Tools != nil {
+		authErrors := llmContext.Tools.GetAuthErrors()
 		if len(authErrors) > 0 {
-			c.sendOAuthNotifications(bot, postingUser.Id, channel.Id, post.Id, authErrors)
+			rootID := post.RootId
+			if rootID == "" {
+				rootID = post.Id
+			}
+			c.sendOAuthNotifications(bot, postingUser.Id, channel.Id, rootID, authErrors)
 		}
 	}
 
-	return c.ProcessUserRequestWithContext(bot, postingUser, channel, post, context)
+	return c.ProcessUserRequestWithContext(bot, postingUser, channel, post, llmContext)
 }
 
 func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID string, context *llm.Context) error {

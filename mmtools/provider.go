@@ -5,6 +5,7 @@ package mmtools
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -23,14 +24,16 @@ type MMToolProvider struct {
 	pluginAPI  mmapi.Client
 	search     *search.Search
 	httpClient *http.Client
+	webSearch  WebSearchService
 }
 
 // NewMMToolProvider creates a new tool provider
-func NewMMToolProvider(pluginAPI mmapi.Client, search *search.Search, httpClient *http.Client) *MMToolProvider {
+func NewMMToolProvider(pluginAPI mmapi.Client, search *search.Search, httpClient *http.Client, webSearch WebSearchService) *MMToolProvider {
 	return &MMToolProvider{
 		pluginAPI:  pluginAPI,
 		search:     search,
 		httpClient: httpClient,
+		webSearch:  webSearch,
 	}
 }
 
@@ -69,6 +72,17 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
 				Resolver:    p.toolGetGithubIssue,
 			})
 		}
+
+		if p.webSearch != nil && !hasNativeWebSearch(bot) {
+			tool := p.webSearch.Tool()
+			if tool != nil {
+				builtInTools = append(builtInTools, *tool)
+			}
+
+			if sourceTool := p.webSearch.SourceTool(bot); sourceTool != nil {
+				builtInTools = append(builtInTools, *sourceTool)
+			}
+		}
 	}
 
 	// Add Jira tool if httpClient is available
@@ -82,4 +96,18 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
 	}
 
 	return builtInTools
+}
+
+func hasNativeWebSearch(bot *bots.Bot) bool {
+	if bot == nil {
+		return false
+	}
+
+	for _, tool := range bot.GetConfig().EnabledNativeTools {
+		if strings.EqualFold(tool, "web_search") {
+			return true
+		}
+	}
+
+	return false
 }

@@ -18,6 +18,7 @@ import NoServicesPage from './no_services_page';
 import EmbeddingSearchPanel from './embedding_search/embedding_search_panel';
 import {EmbeddingSearchConfig} from './embedding_search/types';
 import MCPServers, {MCPConfig} from './mcp_servers';
+import WebSearchPanel, {WebSearchConfig as WebSearchSettings} from './web_search/web_search_panel';
 
 type Config = {
     services: LLMService[],
@@ -30,7 +31,8 @@ type Config = {
     allowedUpstreamHostnames: string,
     allowUnsafeLinks: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
-    mcp: MCPConfig
+    mcp: MCPConfig,
+    webSearch: WebSearchSettings,
 }
 
 type Props = {
@@ -102,6 +104,22 @@ const defaultConfig = {
         enabled: false,
         servers: {},
         idleTimeout: 30,
+    },
+    webSearch: {
+        enabled: false,
+        provider: 'google',
+        domainDenylist: [],
+        google: {
+            apiKey: '',
+            searchEngineId: '',
+            resultLimit: 5,
+            apiURL: '',
+        },
+        brave: {
+            apiKey: '',
+            resultLimit: 5,
+            apiURL: '',
+        },
     },
 };
 
@@ -311,6 +329,13 @@ const Config = (props: Props) => {
                 value={value.embeddingSearchConfig || defaultConfig.embeddingSearchConfig}
                 onChange={(config) => {
                     props.onChange(props.id, {...value, embeddingSearchConfig: config});
+                    props.setSaveNeeded();
+                }}
+            />
+            <WebSearchPanel
+                value={value.webSearch || defaultConfig.webSearch}
+                onChange={(config) => {
+                    props.onChange(props.id, {...value, webSearch: config});
                     props.setSaveNeeded();
                 }}
             />

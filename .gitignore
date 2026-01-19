@@ -37,3 +37,5 @@ mcpserver/data/
 node_modules/
 
 specs/
+
+.cursor/

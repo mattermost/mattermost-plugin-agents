@@ -112,6 +112,100 @@ Text input in the custom instructions field is included in the prompt for every 
 
 For example, you could list your organization's specific acronyms so the agent knows your vernacular and users can ask for definitions. Or you could give it specialized instructions like adopting a specific personality or following a certain workflow. By customizing the instructions for each individual agent, you can create a more tailored AI experience for your specific needs.
 
+### Built-in web search configuration
+
+The built-in web search tool allows agents to retrieve current information from the internet when answering user questions. This feature is designed for deployments using LLM models that don't provide their own native web search capabilities.
+
+#### When to use built-in web search
+
+Built-in web search is intended for LLM models that lack native web search functionality. If your chosen model already provides native web search (such as OpenAI with the Responses API or Anthropic's native search tool), it's strongly recommended to use the provider's native implementation instead. Native web search tools typically offer:
+
+- Better integration with the model
+- More reliable search results
+- Optimized performance
+
+For configuration details on native web search with supported providers, see the [LLM Specific Settings](#llm-specific-settings) section above.
+
+#### Provider comparison
+
+Mattermost supports two web search providers, each with varying capabilities:
+
+##### Brave Search (Recommended)
+
+Brave Search offers a superior experience for AI-powered search:
+
+- **Purpose-built for AI**: Brave's Search API is specifically designed and optimized for LLM integrations
+- **Better content extraction**: Returns pre-processed, LLM-ready summaries with citations
+- **Fewer tool calls**: Often provides complete answers without requiring follow-up web page fetches or scraping
+
+**Important**: Administrators must ensure they subscribe to Brave's **Pro AI plan** when using this feature. Using Brave's regular Search API (non-AI tier) violates Brave's Terms of Service and may result in account suspension. The Pro AI plan is specifically licensed for AI/LLM use cases.
+
+##### Google Custom Search
+
+Google Custom Search provides access to Google's search index but has several important limitations:
+
+- **Not a first-party integration**: Mattermost uses Google's Custom Search API, which doesn't provide the same quality of results as searching directly on google.com
+- **Relies on web scraping**: After receiving search results, Mattermost must scrape web pages to extract content for the agent. Many websites block automated scraping or return limited content to bots
+- **Rate limits**: Google Custom Search has strict daily quota limits
+
+Due to these limitations, Google Custom Search may not always provide optimal results for agent queries.
+
+#### Configuration
+
+To enable built-in web search:
+
+1. Navigate to **System Console > Plugins > Agents > Web Search**
+2. Set **Enable Web Search** to **True**
+3. Select your preferred provider from the **Provider** dropdown
+4. Configure provider-specific settings
+
+##### Brave Search configuration
+
+| Setting | Description | Required |
+|---------|-------------|----------|
+| **Brave API Key** | Your Brave Search API key (Pro AI plan) | Yes |
+| **Result Limit** | Maximum number of results to return (1-10) | No (default: 5) |
+| **API URL** | Override the default Brave endpoint if needed | No |
+
+To obtain a Brave Search API key:
+
+1. Visit [Brave Search API](https://brave.com/search/api/)
+2. Sign up for an account
+3. **Subscribe to the Pro AI plan** (required for LLM usage)
+4. Generate an API key from your dashboard
+
+**Warning**: Ensure you subscribe to the Pro AI plan. Using other Brave Search plans for AI/LLM integrations violates their Terms of Service.
+
+##### Google Custom Search configuration
+
+| Setting | Description | Required |
+|---------|-------------|----------|
+| **Google API Key** | Your Google Custom Search API key | Yes |
+| **Search Engine ID** | Custom search engine identifier (cx parameter) | Yes |
+| **Result Limit** | Maximum number of results to return (1-10) | No (default: 5) |
+| **API URL** | Override the default Google endpoint if needed | No |
+
+To obtain Google Custom Search credentials:
+
+1. Create a project in [Google Cloud Console](https://console.cloud.google.com)
+2. Enable the Custom Search API
+3. Create API credentials (API key)
+4. Set up a custom search engine at [Google Programmable Search Engine](https://programmablesearchengine.google.com)
+5. Note the Search Engine ID (cx parameter)
+
+##### Shared configuration
+
+| Setting | Description |
+|---------|-------------|
+| **Domain Denylist** | Comma-separated list of domains to exclude from all search results (e.g., `example.com, spam-site.org`). Results from these domains are filtered out before being sent to the agent. |
+
+#### Usage and limitations
+
+- Agents are limited to **3 web searches per conversation** to manage API costs and prevent LLMs from looping indefinitely
+- Agents cannot repeat the same search query within a conversation
+- Search results include clickable citations that link back to source websites
+- Domain denylisting applies to all providers and is enforced for _web page fetching only_. 
+
 ### Embed search configuration
 
 To enable semantic search capabilities, you'll need to enable the `pgvector` extension in your PostgreSQL database, then configure embeddings provider settings including the provider (OpenAI, etc.), model for embeddings, and dimensions that match your chosen embedding model. Embedding search requires a license (see [license requirements](#license-requirements)) and is available as an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature. Performance may vary with large datasets.

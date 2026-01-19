@@ -26,6 +26,30 @@ type Config struct {
 	AllowUnsafeLinks         bool                             `json:"allowUnsafeLinks"`
 	EmbeddingSearchConfig    embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                      mcp.Config                       `json:"mcp"`
+	WebSearch                WebSearchConfig                  `json:"webSearch"`
+}
+
+type WebSearchConfig struct {
+	Enabled        bool                  `json:"enabled"`
+	Provider       string                `json:"provider"`
+	Google         WebSearchGoogleConfig `json:"google"`
+	Brave          WebSearchBraveConfig  `json:"brave"`
+	DomainDenylist []string              `json:"domainDenylist"`
+}
+
+type WebSearchGoogleConfig struct {
+	APIKey         string `json:"apiKey"`
+	SearchEngineID string `json:"searchEngineId"`
+	ResultLimit    int    `json:"resultLimit"`
+	APIURL         string `json:"apiURL"`
+}
+
+type WebSearchBraveConfig struct {
+	APIKey       string `json:"apiKey"`
+	APIURL       string `json:"apiURL"`
+	ResultLimit  int    `json:"resultLimit"`
+	PollTimeout  int    `json:"pollTimeout"`
+	PollInterval int    `json:"pollInterval"`
 }
 
 func (c *Config) Clone() *Config {

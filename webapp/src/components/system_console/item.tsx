@@ -25,7 +25,8 @@ export type TextItemProps = {
     step?: string,
     min?: string,
     max?: string,
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => void,
+    disabled?: boolean,
 };
 
 export const TextItem = (props: TextItemProps) => {
@@ -43,6 +44,7 @@ export const TextItem = (props: TextItemProps) => {
                     step={props.step}
                     min={props.min}
                     max={props.max}
+                    disabled={props.disabled}
                 />
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
@@ -58,6 +60,7 @@ export type SelectionItemProps = {
     onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void
     children: React.ReactNode
     helptext?: string
+    disabled?: boolean
 };
 
 export const SelectionItem = (props: SelectionItemProps) => {
@@ -69,6 +72,7 @@ export const SelectionItem = (props: SelectionItemProps) => {
                     as='select'
                     value={props.value}
                     onChange={props.onChange}
+                    disabled={props.disabled}
                 >
                     {props.children}
                 </StyledInput>

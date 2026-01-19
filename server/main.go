@@ -52,6 +52,38 @@ type Plugin struct {
 	mcpClientManager     *mcp.ClientManager
 }
 
+type pluginLogger struct {
+	service *pluginapi.LogService
+}
+
+func (l *pluginLogger) Debug(message string, keyValuePairs ...any) {
+	if l == nil || l.service == nil {
+		return
+	}
+	l.service.Debug(message, keyValuePairs...)
+}
+
+func (l *pluginLogger) Info(message string, keyValuePairs ...any) {
+	if l == nil || l.service == nil {
+		return
+	}
+	l.service.Info(message, keyValuePairs...)
+}
+
+func (l *pluginLogger) Warn(message string, keyValuePairs ...any) {
+	if l == nil || l.service == nil {
+		return
+	}
+	l.service.Warn(message, keyValuePairs...)
+}
+
+func (l *pluginLogger) Error(message string, keyValuePairs ...any) {
+	if l == nil || l.service == nil {
+		return
+	}
+	l.service.Error(message, keyValuePairs...)
+}
+
 func (p *Plugin) OnActivate() error {
 	pluginAPI := pluginapi.NewClient(p.API, p.Driver)
 	mmClient := mmapi.NewClient(pluginAPI)
@@ -135,10 +167,15 @@ func (p *Plugin) OnActivate() error {
 		licenseChecker,
 	)
 
+	webSearchService := mmtools.NewWebSearchService(func() *config.Config {
+		return p.configuration.Config()
+	}, &pluginLogger{service: &pluginAPI.Log}, untrustedHTTPClient)
+
 	toolProvider := mmtools.NewMMToolProvider(
 		mmClient,
 		searchService,
 		untrustedHTTPClient,
+		webSearchService,
 	)
 
 	// Build redirect URI
