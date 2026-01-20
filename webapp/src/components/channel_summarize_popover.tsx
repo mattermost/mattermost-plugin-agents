@@ -237,7 +237,7 @@ export const ChannelSummarizePopover = ({bots, activeBot, setActiveBot, channelN
                         <IconWrapper>
                             <IconAI/>
                         </IconWrapper>
-                        <FormattedMessage defaultMessage='Ask Agents about this channel…'>
+                        <FormattedMessage defaultMessage='Ask Agents about this channel...'>
                             {(placeholder) => (
                                 <StyledInput
                                     ref={inputRef}
