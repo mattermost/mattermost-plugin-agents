@@ -306,8 +306,15 @@ func (t *toolUseData) getInputJSON() string {
 
 // extractToolCallsFromBlocks converts tool use blocks into ToolCalls
 func extractToolCallsFromBlocks(toolBlocks map[int]*toolUseData) []llm.ToolCall {
+	keys := make([]int, 0, len(toolBlocks))
+	for k := range toolBlocks {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+
 	toolCalls := make([]llm.ToolCall, 0, len(toolBlocks))
-	for _, toolBlock := range toolBlocks {
+	for _, k := range keys {
+		toolBlock := toolBlocks[k]
 		toolCalls = append(toolCalls, llm.ToolCall{
 			ID:        toolBlock.id,
 			Name:      toolBlock.name,

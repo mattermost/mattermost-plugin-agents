@@ -154,6 +154,10 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 
 	// Create analysis post
 	siteURL := a.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
+	if siteURL == nil || *siteURL == "" {
+		c.AbortWithError(http.StatusInternalServerError, errors.New("site URL not configured"))
+		return
+	}
 	analysisPost := a.makeAnalysisPost(user.Locale, "", data.AnalysisType, *siteURL)
 	// Using empty postId since it's channel analysis, or maybe we should post to channel?
 	// The requirement says "opens the RHS panel... similar to summarize thread".
