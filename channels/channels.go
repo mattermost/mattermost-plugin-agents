@@ -73,13 +73,13 @@ func (c *Channels) AnalyzeChannel(
 	// Get tools and bind channel_id so it cannot be manipulated by the LLM
 	readChannel := context.Tools.GetTool("read_channel")
 	if readChannel == nil {
-		return nil, fmt.Errorf("read_channel tool not available")
+		return nil, fmt.Errorf("read_channel tool not available - ensure MCP embedded server is enabled and running")
 	}
 	boundReadChannel := readChannel.WithBoundParams(map[string]interface{}{"channel_id": channelID})
 
 	getChannelInfo := context.Tools.GetTool("get_channel_info")
 	if getChannelInfo == nil {
-		return nil, fmt.Errorf("get_channel_info tool not available")
+		return nil, fmt.Errorf("get_channel_info tool not available - ensure MCP embedded server is enabled and running")
 	}
 	boundGetChannelInfo := getChannelInfo.WithBoundParams(map[string]interface{}{"channel_id": channelID})
 
