@@ -111,7 +111,7 @@ func injectBoundParams(args any, params map[string]interface{}) error {
 
 	val := reflect.ValueOf(args)
 	if val.Kind() != reflect.Ptr || val.IsNil() {
-		return fmt.Errorf("args must be a non-nil pointer")
+		return fmt.Errorf("args must be a non-nil pointer, got %T", args)
 	}
 
 	elem := val.Elem()
