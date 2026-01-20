@@ -1,4 +1,4 @@
-import { Page, Locator } from '@playwright/test';
+import { Page, Locator, expect } from '@playwright/test';
 
 /**
  * SystemConsoleHelper - Page object for System Console AI Plugin configuration
@@ -63,7 +63,14 @@ export class SystemConsoleHelper {
         const addBotButton = this.getAddBotButton();
 
         // Wait for one of these to be visible (either existing bots or add button)
-        await botContainers.first().or(addBotButton).waitFor({ state: 'visible', timeout: 15000 });
+        await expect.poll(async () => {
+            const hasBot = await botContainers.first().isVisible().catch(() => false);
+            if (hasBot) {
+                return true;
+            }
+
+            return addBotButton.isVisible().catch(() => false);
+        }, { timeout: 15000 }).toBe(true);
     }
 
     /**
