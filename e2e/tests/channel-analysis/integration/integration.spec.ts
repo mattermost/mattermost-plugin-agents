@@ -125,7 +125,7 @@ class IntegrationHelper {
         await expect(popover).toBeVisible();
 
         // Verify key elements are present
-        await expect(this.page.getByPlaceholder('Ask Agents about this channel…')).toBeVisible();
+        await expect(this.page.getByPlaceholder(/Ask Agents about this channel/)).toBeVisible();
         await expect(this.page.getByText('Summarize unreads')).toBeVisible();
         await expect(this.page.getByText('GENERATE WITH:')).toBeVisible();
     }
