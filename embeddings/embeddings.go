@@ -114,3 +114,23 @@ type EmbeddingSearchConfig struct {
 	Dimensions        int              `json:"dimensions"`
 	ChunkingOptions   chunking.Options `json:"chunkingOptions"`
 }
+
+// GetProviderType returns the embedding provider type
+func (c *EmbeddingSearchConfig) GetProviderType() string {
+	return c.EmbeddingProvider.Type
+}
+
+// GetModelName extracts the model name from the embedding provider parameters
+func (c *EmbeddingSearchConfig) GetModelName() string {
+	if c.EmbeddingProvider.Parameters == nil {
+		return ""
+	}
+
+	var params struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(c.EmbeddingProvider.Parameters, &params); err != nil {
+		return ""
+	}
+	return params.Model
+}

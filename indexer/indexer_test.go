@@ -8,15 +8,19 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	embeddingsmocks "github.com/mattermost/mattermost-plugin-ai/embeddings/mocks"
+	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -961,5 +965,558 @@ func TestCountIndexedPosts(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), count) // Should count unique post_ids, not total rows
+	})
+}
+
+func TestSetConfigGetter(t *testing.T) {
+	t.Run("getModelInfoFromConfig returns nil when no getter set", func(t *testing.T) {
+		indexer := New(nil, nil, nil, nil, nil)
+
+		result := indexer.getModelInfoFromConfig()
+		assert.Nil(t, result)
+	})
+
+	t.Run("getModelInfoFromConfig returns correct ModelInfo from config", func(t *testing.T) {
+		indexer := New(nil, nil, nil, nil, nil)
+
+		// Set a config getter with full config
+		indexer.SetConfigGetter(func() embeddings.EmbeddingSearchConfig {
+			return embeddings.EmbeddingSearchConfig{
+				Dimensions: 1536,
+				EmbeddingProvider: embeddings.UpstreamConfig{
+					Type:       embeddings.ProviderTypeOpenAI,
+					Parameters: []byte(`{"model": "text-embedding-3-small"}`),
+				},
+			}
+		})
+
+		result := indexer.getModelInfoFromConfig()
+
+		require.NotNil(t, result)
+		assert.Equal(t, embeddings.ProviderTypeOpenAI, result.ProviderType)
+		assert.Equal(t, "text-embedding-3-small", result.ModelName)
+		assert.Equal(t, 1536, result.Dimensions)
+	})
+}
+
+func TestIncrementalStats(t *testing.T) {
+	t.Run("GetIncrementalStats returns empty stats when not found", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		mockClient.On("KVGet", IncrementalStatsKey, mock.AnythingOfType("*indexer.IncrementalStats")).
+			Return(errors.New("not found"))
+
+		indexer := New(nil, mockClient, nil, nil, nil)
+		stats, err := indexer.GetIncrementalStats()
+
+		require.NoError(t, err)
+		assert.Equal(t, IncrementalStats{}, stats)
+	})
+
+	t.Run("GetIncrementalStats returns stored stats", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		expectedStats := IncrementalStats{
+			TotalIndexed: 100,
+			ErrorCount:   5,
+			LastError:    "test error",
+		}
+
+		mockClient.On("KVGet", IncrementalStatsKey, mock.AnythingOfType("*indexer.IncrementalStats")).
+			Run(func(args mock.Arguments) {
+				stats := args.Get(1).(*IncrementalStats)
+				*stats = expectedStats
+			}).
+			Return(nil)
+
+		indexer := New(nil, mockClient, nil, nil, nil)
+		stats, err := indexer.GetIncrementalStats()
+
+		require.NoError(t, err)
+		assert.Equal(t, expectedStats.TotalIndexed, stats.TotalIndexed)
+		assert.Equal(t, expectedStats.ErrorCount, stats.ErrorCount)
+		assert.Equal(t, expectedStats.LastError, stats.LastError)
+	})
+
+	t.Run("ResetIncrementalStats clears stats", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		mockClient.On("KVDelete", IncrementalStatsKey).Return(nil)
+
+		indexer := New(nil, mockClient, nil, nil, nil)
+		err := indexer.ResetIncrementalStats()
+
+		require.NoError(t, err)
+	})
+
+	t.Run("updateIncrementalStats increments total_indexed on success", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		// First call: KVGet returns existing stats
+		mockClient.On("KVGet", IncrementalStatsKey, mock.AnythingOfType("*indexer.IncrementalStats")).
+			Run(func(args mock.Arguments) {
+				stats := args.Get(1).(*IncrementalStats)
+				stats.TotalIndexed = 10
+			}).
+			Return(nil)
+
+		// KVSet should save updated stats
+		mockClient.On("KVSet", IncrementalStatsKey, mock.MatchedBy(func(v interface{}) bool {
+			stats := v.(IncrementalStats)
+			return stats.TotalIndexed == 11 && !stats.LastIndexedAt.IsZero()
+		})).Return(nil)
+
+		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer.updateIncrementalStats(nil) // nil error = success
+	})
+
+	t.Run("updateIncrementalStats increments error_count on failure", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		// KVGet returns existing stats
+		mockClient.On("KVGet", IncrementalStatsKey, mock.AnythingOfType("*indexer.IncrementalStats")).
+			Run(func(args mock.Arguments) {
+				stats := args.Get(1).(*IncrementalStats)
+				stats.ErrorCount = 5
+			}).
+			Return(nil)
+
+		// KVSet should save updated stats with incremented error count
+		mockClient.On("KVSet", IncrementalStatsKey, mock.MatchedBy(func(v interface{}) bool {
+			stats := v.(IncrementalStats)
+			return stats.ErrorCount == 6 && stats.LastError == "test indexing error"
+		})).Return(nil)
+
+		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer.updateIncrementalStats(errors.New("test indexing error"))
+	})
+
+	t.Run("updateIncrementalStats stores last error message and timestamp", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		mockClient.On("KVGet", IncrementalStatsKey, mock.AnythingOfType("*indexer.IncrementalStats")).
+			Return(errors.New("not found"))
+
+		mockClient.On("KVSet", IncrementalStatsKey, mock.MatchedBy(func(v interface{}) bool {
+			stats := v.(IncrementalStats)
+			return stats.LastError == "connection timeout" &&
+				!stats.LastErrorAt.IsZero() &&
+				stats.ErrorCount == 1
+		})).Return(nil)
+
+		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer.updateIncrementalStats(errors.New("connection timeout"))
+	})
+}
+
+func TestStoreWithRetryIncremental(t *testing.T) {
+	t.Run("success on first attempt", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+
+		docs := []embeddings.PostDocument{
+			{PostID: "post1", Content: "test"},
+		}
+
+		mockSearch.On("Store", mock.Anything, docs).Return(nil)
+
+		indexer := New(mockSearch, mockClient, nil, nil, nil)
+		err := indexer.storeWithRetryIncremental(context.Background(), docs)
+
+		require.NoError(t, err)
+	})
+
+	t.Run("success after retry", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+
+		docs := []embeddings.PostDocument{
+			{PostID: "post1", Content: "test"},
+		}
+
+		// Fail on first attempt, succeed on second
+		callCount := 0
+		mockSearch.On("Store", mock.Anything, docs).
+			Run(func(args mock.Arguments) {
+				callCount++
+			}).
+			Return(func(ctx context.Context, d []embeddings.PostDocument) error {
+				if callCount == 1 {
+					return errors.New("temporary error")
+				}
+				return nil
+			})
+
+		mockClient.On("LogWarn", "Incremental embedding store failed, retrying", mock.Anything).Return()
+
+		indexer := New(mockSearch, mockClient, nil, nil, nil)
+		err := indexer.storeWithRetryIncremental(context.Background(), docs)
+
+		require.NoError(t, err)
+		assert.Equal(t, 2, callCount)
+	})
+
+	t.Run("failure after max retries", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+
+		docs := []embeddings.PostDocument{
+			{PostID: "post1", Content: "test"},
+		}
+
+		// Always fail
+		mockSearch.On("Store", mock.Anything, docs).Return(errors.New("persistent error"))
+		mockClient.On("LogWarn", "Incremental embedding store failed, retrying", mock.Anything).Return()
+
+		indexer := New(mockSearch, mockClient, nil, nil, nil)
+		err := indexer.storeWithRetryIncremental(context.Background(), docs)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "persistent error")
+	})
+}
+
+func TestIsJobStale(t *testing.T) {
+	t.Run("returns false when no job exists", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Return(errors.New("not found"))
+
+		indexer := New(nil, mockClient, nil, nil, nil)
+		isStale, jobStatus, err := indexer.IsJobStale()
+
+		require.NoError(t, err)
+		assert.False(t, isStale)
+		assert.Nil(t, jobStatus)
+	})
+
+	t.Run("returns false for completed job", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusCompleted
+			}).
+			Return(nil)
+
+		indexer := New(nil, mockClient, nil, nil, nil)
+		isStale, jobStatus, err := indexer.IsJobStale()
+
+		require.NoError(t, err)
+		assert.False(t, isStale)
+		assert.NotNil(t, jobStatus)
+		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
+	})
+
+	t.Run("returns false for failed job", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusFailed
+			}).
+			Return(nil)
+
+		indexer := New(nil, mockClient, nil, nil, nil)
+		isStale, _, err := indexer.IsJobStale()
+
+		require.NoError(t, err)
+		assert.False(t, isStale)
+	})
+
+	t.Run("returns false for canceled job", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusCanceled
+			}).
+			Return(nil)
+
+		indexer := New(nil, mockClient, nil, nil, nil)
+		isStale, _, err := indexer.IsJobStale()
+
+		require.NoError(t, err)
+		assert.False(t, isStale)
+	})
+
+	t.Run("returns false for running job within threshold", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		recentTime := time.Now().Add(-5 * time.Minute)
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusRunning
+				status.LastUpdatedAt = recentTime
+				status.NodeID = "node-1"
+			}).
+			Return(nil)
+
+		indexer := New(nil, mockClient, nil, nil, nil)
+		isStale, jobStatus, err := indexer.IsJobStale()
+
+		require.NoError(t, err)
+		assert.False(t, isStale)
+		assert.Equal(t, JobStatusRunning, jobStatus.Status)
+	})
+
+	t.Run("returns true for running job beyond threshold", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		oldTime := time.Now().Add(-45 * time.Minute)
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusRunning
+				status.LastUpdatedAt = oldTime
+				status.NodeID = "node-1"
+			}).
+			Return(nil)
+
+		indexer := New(nil, mockClient, nil, nil, nil)
+		isStale, jobStatus, err := indexer.IsJobStale()
+
+		require.NoError(t, err)
+		assert.True(t, isStale)
+		assert.Equal(t, JobStatusRunning, jobStatus.Status)
+	})
+
+	t.Run("uses StartedAt as fallback when LastUpdatedAt is zero", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		oldStartTime := time.Now().Add(-45 * time.Minute)
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusRunning
+				status.StartedAt = oldStartTime
+				// LastUpdatedAt is zero value
+				status.NodeID = "node-1"
+			}).
+			Return(nil)
+
+		indexer := New(nil, mockClient, nil, nil, nil)
+		isStale, _, err := indexer.IsJobStale()
+
+		require.NoError(t, err)
+		assert.True(t, isStale)
+	})
+}
+
+func TestResetStaleJob(t *testing.T) {
+	t.Run("returns error when no job exists", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+		mockMutexAPI := &plugintest.API{}
+
+		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Return(errors.New("not found"))
+
+		indexer := New(nil, mockClient, nil, nil, mockMutexAPI)
+		_, err := indexer.ResetStaleJob()
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no job found")
+	})
+
+	t.Run("returns error when job is not stale", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+		mockMutexAPI := &plugintest.API{}
+
+		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+		recentTime := time.Now().Add(-5 * time.Minute)
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusRunning
+				status.LastUpdatedAt = recentTime
+				status.NodeID = "node-1"
+			}).
+			Return(nil)
+
+		indexer := New(nil, mockClient, nil, nil, mockMutexAPI)
+		_, err := indexer.ResetStaleJob()
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "job is not stale")
+	})
+
+	t.Run("marks stale job as failed with descriptive error message", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+		mockMutexAPI := &plugintest.API{}
+
+		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+		oldTime := time.Now().Add(-45 * time.Minute)
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusRunning
+				status.LastUpdatedAt = oldTime
+				status.NodeID = "node-1"
+			}).
+			Return(nil)
+
+		mockClient.On("KVSet", ReindexJobKey, mock.MatchedBy(func(v interface{}) bool {
+			status := v.(*JobStatus)
+			return status.Status == JobStatusFailed &&
+				strings.Contains(status.Error, "Job stale") &&
+				strings.Contains(status.Error, "node-1") &&
+				!status.CompletedAt.IsZero()
+		})).Return(nil)
+
+		indexer := New(nil, mockClient, nil, nil, mockMutexAPI)
+		jobStatus, err := indexer.ResetStaleJob()
+
+		require.NoError(t, err)
+		assert.Equal(t, JobStatusFailed, jobStatus.Status)
+		assert.Contains(t, jobStatus.Error, "Job stale")
+		assert.Contains(t, jobStatus.Error, "node-1")
+	})
+}
+
+func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
+	t.Run("excludes posts from bot users when bots configured", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockBots := &bots.MMBots{}
+
+		// Setup bots with user IDs
+		testBot := bots.NewBot(
+			llm.BotConfig{Name: "testbot"},
+			llm.ServiceConfig{},
+			&model.Bot{UserId: "bot-user-id"},
+			nil,
+		)
+		mockBots.SetBotsForTesting([]*bots.Bot{testBot})
+
+		now := model.GetMillis()
+
+		// Add 5 posts from regular users
+		for i := 0; i < 5; i++ {
+			postID := fmt.Sprintf("user-post%d", i)
+			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type) VALUES ($1, $2, 0, $3, '')",
+				postID, now+int64(i), fmt.Sprintf("User message %d", i))
+			require.NoError(t, err)
+		}
+
+		// Add table with UserId column for this test
+		_, err := db.Exec("ALTER TABLE Posts ADD COLUMN UserId TEXT DEFAULT ''")
+		require.NoError(t, err)
+
+		// Update the user posts to have regular user IDs
+		for i := 0; i < 5; i++ {
+			postID := fmt.Sprintf("user-post%d", i)
+			_, err := db.Exec("UPDATE Posts SET UserId = 'regular-user-id' WHERE Id = $1", postID)
+			require.NoError(t, err)
+		}
+
+		// Add 3 posts from the bot user (should be excluded)
+		for i := 0; i < 3; i++ {
+			postID := fmt.Sprintf("bot-post%d", i)
+			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, UserId) VALUES ($1, $2, 0, $3, '', 'bot-user-id')",
+				postID, now+int64(100+i), fmt.Sprintf("Bot message %d", i))
+			require.NoError(t, err)
+		}
+
+		// Add 5 indexed posts (matching the user posts)
+		for i := 0; i < 5; i++ {
+			postID := fmt.Sprintf("user-post%d", i)
+			_, err := db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
+				postID, postID, fmt.Sprintf("Content %d", i))
+			require.NoError(t, err)
+		}
+
+		indexer := New(mockSearch, mockClient, mockBots, db, nil)
+		result, err := indexer.CheckIndexHealth(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, int64(5), result.DBPostCount) // Should exclude bot posts
+		assert.Equal(t, int64(5), result.IndexedPostCount)
+		assert.Equal(t, "healthy", result.Status)
+	})
+
+	t.Run("works correctly when no bots configured", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+
+		now := model.GetMillis()
+
+		// Add 5 posts
+		for i := 0; i < 5; i++ {
+			postID := fmt.Sprintf("post%d", i)
+			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type) VALUES ($1, $2, 0, $3, '')",
+				postID, now+int64(i), fmt.Sprintf("Message %d", i))
+			require.NoError(t, err)
+		}
+
+		// Add 5 indexed posts
+		for i := 0; i < 5; i++ {
+			postID := fmt.Sprintf("post%d", i)
+			_, err := db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
+				postID, postID, fmt.Sprintf("Content %d", i))
+			require.NoError(t, err)
+		}
+
+		// nil bots
+		indexer := New(mockSearch, mockClient, nil, db, nil)
+		result, err := indexer.CheckIndexHealth(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, int64(5), result.DBPostCount)
+		assert.Equal(t, int64(5), result.IndexedPostCount)
+		assert.Equal(t, "healthy", result.Status)
+	})
+
+	t.Run("works correctly with empty bot list", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockBots := &bots.MMBots{}
+		mockBots.SetBotsForTesting([]*bots.Bot{}) // Empty list
+
+		now := model.GetMillis()
+
+		// Add 5 posts
+		for i := 0; i < 5; i++ {
+			postID := fmt.Sprintf("post%d", i)
+			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type) VALUES ($1, $2, 0, $3, '')",
+				postID, now+int64(i), fmt.Sprintf("Message %d", i))
+			require.NoError(t, err)
+		}
+
+		// Add 5 indexed posts
+		for i := 0; i < 5; i++ {
+			postID := fmt.Sprintf("post%d", i)
+			_, err := db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
+				postID, postID, fmt.Sprintf("Content %d", i))
+			require.NoError(t, err)
+		}
+
+		indexer := New(mockSearch, mockClient, mockBots, db, nil)
+		result, err := indexer.CheckIndexHealth(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, int64(5), result.DBPostCount)
+		assert.Equal(t, int64(5), result.IndexedPostCount)
+		assert.Equal(t, "healthy", result.Status)
 	})
 }

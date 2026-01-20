@@ -43,12 +43,16 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
         healthCheckResult,
         healthCheckLoading,
         modelCompatibility,
+        isJobStale,
+        incrementalStats,
         handleReindexClick,
         handleConfirmReindex,
         handleCancelReindex,
         handleCancelJob,
         handleCatchUpClick,
         handleHealthCheck,
+        handleResetStaleJob,
+        handleResetIncrementalStats,
     } = useJobStatus();
 
     if (!isBasicsLicensed) {
@@ -207,10 +211,14 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                         healthCheckResult={healthCheckResult}
                         healthCheckLoading={healthCheckLoading}
                         modelCompatibility={modelCompatibility}
+                        isJobStale={isJobStale}
+                        incrementalStats={incrementalStats}
                         onReindexClick={handleReindexClick}
                         onCancelJob={handleCancelJob}
                         onCatchUpClick={handleCatchUpClick}
                         onHealthCheck={handleHealthCheck}
+                        onResetStaleJob={handleResetStaleJob}
+                        onResetIncrementalStats={handleResetIncrementalStats}
                     />
                 )}
             </ItemList>

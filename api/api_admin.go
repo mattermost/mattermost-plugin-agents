@@ -175,8 +175,99 @@ func (a *API) handleGetModelCompatibility(c *gin.Context) {
 	// Get current embedding config
 	cfg := a.config.EmbeddingSearchConfig()
 
-	result := a.indexerService.CheckModelCompatibility(cfg.Dimensions, "")
+	result := a.indexerService.CheckModelCompatibility(cfg.Dimensions, cfg.GetModelName())
 	c.JSON(http.StatusOK, result)
+}
+
+// handleResetStaleJob resets a stale reindex job that appears to be orphaned
+func (a *API) handleResetStaleJob(c *gin.Context) {
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if a.indexerService == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "search functionality is not configured"})
+		return
+	}
+
+	jobStatus, err := a.indexerService.ResetStaleJob()
+	if err != nil {
+		switch err.Error() {
+		case "no job found":
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		case "job is not stale":
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		default:
+			c.AbortWithError(http.StatusInternalServerError, err)
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, jobStatus)
+}
+
+// handleGetStaleJobStatus checks if the current job is stale
+func (a *API) handleGetStaleJobStatus(c *gin.Context) {
+	if a.indexerService == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "search functionality is not configured"})
+		return
+	}
+
+	isStale, jobStatus, err := a.indexerService.IsJobStale()
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+
+	if jobStatus == nil {
+		c.JSON(http.StatusNotFound, gin.H{"stale": false, "status": "no_job"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"stale":  isStale,
+		"status": jobStatus,
+	})
+}
+
+// handleGetIncrementalStats retrieves statistics for incremental post indexing
+func (a *API) handleGetIncrementalStats(c *gin.Context) {
+	if a.indexerService == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "search functionality is not configured"})
+		return
+	}
+
+	stats, err := a.indexerService.GetIncrementalStats()
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, stats)
+}
+
+// handleResetIncrementalStats resets the incremental indexing statistics
+func (a *API) handleResetIncrementalStats(c *gin.Context) {
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if a.indexerService == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "search functionality is not configured"})
+		return
+	}
+
+	err := a.indexerService.ResetIncrementalStats()
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Incremental stats reset successfully"})
 }
 
 func (a *API) mattermostAdminAuthorizationRequired(c *gin.Context) {

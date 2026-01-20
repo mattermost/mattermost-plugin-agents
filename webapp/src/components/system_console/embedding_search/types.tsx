@@ -33,6 +33,8 @@ export interface JobStatusType {
     resumable?: boolean;
     error_count?: number;
     node_id?: string;
+    cutoff_at?: number;
+    last_updated_at?: string;
 }
 
 export interface StatusMessageType {
@@ -55,4 +57,19 @@ export interface ModelCompatibilityType {
     compatible: boolean;
     needs_reindex: boolean;
     reason?: string;
+}
+
+// Match the server's IncrementalStats struct
+export interface IncrementalStatsType {
+    error_count: number;
+    last_error?: string;
+    last_error_at?: string;
+    total_indexed: number;
+    last_indexed_at?: string;
+}
+
+// Response from the stale job status endpoint
+export interface StaleJobStatusType {
+    stale: boolean;
+    status: JobStatusType | 'no_job';
 }

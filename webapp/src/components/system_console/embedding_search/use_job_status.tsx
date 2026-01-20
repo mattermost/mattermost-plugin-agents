@@ -4,9 +4,9 @@
 import {useState, useEffect, useCallback} from 'react';
 import {useIntl} from 'react-intl';
 
-import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkIndexHealth, getModelCompatibility} from '../../../client';
+import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkIndexHealth, getModelCompatibility, getStaleJobStatus, resetStaleJob, getIncrementalStats, resetIncrementalStats} from '../../../client';
 
-import {JobStatusType, StatusMessageType, HealthCheckResultType, ModelCompatibilityType} from './types';
+import {JobStatusType, StatusMessageType, HealthCheckResultType, ModelCompatibilityType, IncrementalStatsType} from './types';
 
 export const useJobStatus = () => {
     const intl = useIntl();
@@ -17,6 +17,8 @@ export const useJobStatus = () => {
     const [healthCheckResult, setHealthCheckResult] = useState<HealthCheckResultType | null>(null);
     const [healthCheckLoading, setHealthCheckLoading] = useState(false);
     const [modelCompatibility, setModelCompatibility] = useState<ModelCompatibilityType | null>(null);
+    const [isJobStale, setIsJobStale] = useState(false);
+    const [incrementalStats, setIncrementalStats] = useState<IncrementalStatsType | null>(null);
 
     // Function to fetch job status
     const fetchJobStatus = useCallback(async () => {
@@ -83,11 +85,42 @@ export const useJobStatus = () => {
         }
     }, []);
 
+    // Function to check if job is stale
+    const checkStaleJob = useCallback(async () => {
+        try {
+            const result = await getStaleJobStatus();
+            setIsJobStale(result.stale || false);
+        } catch (error) {
+            // Silently fail - stale check is optional
+            setIsJobStale(false);
+        }
+    }, []);
+
+    // Function to fetch incremental stats
+    const fetchIncrementalStats = useCallback(async () => {
+        try {
+            const stats = await getIncrementalStats();
+            setIncrementalStats(stats);
+        } catch (error) {
+            // Silently fail - incremental stats are optional
+        }
+    }, []);
+
     // Check status on component mount
     useEffect(() => {
         fetchJobStatus();
         fetchModelCompatibility();
-    }, [fetchJobStatus, fetchModelCompatibility]);
+        fetchIncrementalStats();
+    }, [fetchJobStatus, fetchModelCompatibility, fetchIncrementalStats]);
+
+    // Check stale status when job is running
+    useEffect(() => {
+        if (jobStatus?.status === 'running') {
+            checkStaleJob();
+        } else {
+            setIsJobStale(false);
+        }
+    }, [jobStatus?.status, checkStaleJob]);
 
     const handleReindexClick = () => {
         setShowReindexConfirmation(true);
@@ -162,6 +195,42 @@ export const useJobStatus = () => {
         }
     };
 
+    const handleResetStaleJob = async () => {
+        try {
+            const response = await resetStaleJob();
+            setJobStatus(response);
+            setIsJobStale(false);
+            setStatusMessage({
+                success: false,
+                message: intl.formatMessage({defaultMessage: 'Stale job has been reset. You can now start a new reindex.'}),
+            });
+        } catch (error) {
+            setStatusMessage({
+                success: false,
+                message: intl.formatMessage({defaultMessage: 'Failed to reset stale job.'}),
+            });
+        }
+    };
+
+    const handleResetIncrementalStats = async () => {
+        try {
+            await resetIncrementalStats();
+            setIncrementalStats({
+                error_count: 0,
+                total_indexed: 0,
+            });
+            setStatusMessage({
+                success: true,
+                message: intl.formatMessage({defaultMessage: 'Incremental stats have been reset.'}),
+            });
+        } catch (error) {
+            setStatusMessage({
+                success: false,
+                message: intl.formatMessage({defaultMessage: 'Failed to reset incremental stats.'}),
+            });
+        }
+    };
+
     return {
         jobStatus,
         statusMessage,
@@ -170,11 +239,15 @@ export const useJobStatus = () => {
         healthCheckResult,
         healthCheckLoading,
         modelCompatibility,
+        isJobStale,
+        incrementalStats,
         handleReindexClick,
         handleConfirmReindex,
         handleCancelReindex,
         handleCancelJob,
         handleCatchUpClick,
         handleHealthCheck,
+        handleResetStaleJob,
+        handleResetIncrementalStats,
     };
 };

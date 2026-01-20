@@ -429,6 +429,74 @@ export async function getModelCompatibility() {
     });
 }
 
+export async function getStaleJobStatus() {
+    const url = `${baseRoute()}/admin/reindex/stale`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function resetStaleJob() {
+    const url = `${baseRoute()}/admin/reindex/reset-stale`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getIncrementalStats() {
+    const url = `${baseRoute()}/admin/reindex/incremental-stats`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function resetIncrementalStats() {
+    const url = `${baseRoute()}/admin/reindex/incremental-stats/reset`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function getMCPTools() {
     const url = `${baseRoute()}/admin/mcp/tools`;
     const response = await fetch(url, Client4.getOptions({

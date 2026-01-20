@@ -18,14 +18,17 @@ const (
 	JobStatusFailed    = "failed"
 	JobStatusCanceled  = "canceled"
 
-	defaultBatchSize = 100
-	maxRetries       = 3
+	defaultBatchSize        = 100
+	maxRetries              = 3
+	maxIncrementalRetries   = 2
+	incrementalRetryBackoff = 500 * time.Millisecond
 
 	// KV store keys
 	ReindexJobKey         = "reindex_job_status"
 	IndexerCursorKey      = "indexer_cursor"
 	IndexerModelKey       = "indexer_model_info"
 	IndexerLastIndexedKey = "indexer_last_indexed_ts"
+	IncrementalStatsKey   = "indexer_incremental_stats"
 )
 
 // PostRecord represents a post record from the database
@@ -52,6 +55,8 @@ type JobStatus struct {
 	Resumable     bool      `json:"resumable"`
 	ErrorCount    int       `json:"error_count"`
 	NodeID        string    `json:"node_id,omitempty"`
+	CutoffAt      int64     `json:"cutoff_at,omitempty"`
+	LastUpdatedAt time.Time `json:"last_updated_at,omitempty"`
 }
 
 // Cursor stores the cursor position for resumable indexing
@@ -85,8 +90,17 @@ type ModelCompatibility struct {
 	Reason       string `json:"reason,omitempty"`
 }
 
+// IncrementalStats tracks statistics for incremental (real-time) post indexing
+type IncrementalStats struct {
+	ErrorCount    int       `json:"error_count"`
+	LastError     string    `json:"last_error,omitempty"`
+	LastErrorAt   time.Time `json:"last_error_at,omitempty"`
+	TotalIndexed  int64     `json:"total_indexed"`
+	LastIndexedAt time.Time `json:"last_indexed_at,omitempty"`
+}
+
 // runReindexJob runs the reindexing process
-func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
+func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolint:gocognit
 	defer func() {
 		if r := recover(); r != nil {
 			s.pluginAPI.LogError("Reindex job panicked", "panic", r)
@@ -130,6 +144,7 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 		}
 
 		// Run a batch of indexing
+		// Use cutoff timestamp to prevent race gap with posts created during reindexing
 		query := `SELECT
 			Posts.Id as id,
 			Posts.Message as message,
@@ -143,10 +158,11 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 		LEFT JOIN Channels ON Posts.ChannelId = Channels.Id
 		WHERE Posts.DeleteAt = 0 AND Posts.Message != '' AND Posts.Type = ''
 			AND (Posts.CreateAt, Posts.Id) > ($1, $2)
+			AND Posts.CreateAt <= $3
 		ORDER BY Posts.CreateAt ASC, Posts.Id ASC
-		LIMIT $3`
+		LIMIT $4`
 
-		err := s.db.Select(&posts, query, lastCreateAt, lastID, defaultBatchSize)
+		err := s.db.Select(&posts, query, lastCreateAt, lastID, jobStatus.CutoffAt, defaultBatchSize)
 		if err != nil {
 			s.handleJobError(jobStatus, fmt.Sprintf("Failed to fetch posts: %s", err), lastCreateAt, lastID)
 			return
@@ -176,6 +192,9 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 		lastCreateAt = lastPost.CreateAt
 		lastID = lastPost.ID
 
+		// Update heartbeat timestamp every batch
+		jobStatus.LastUpdatedAt = time.Now()
+
 		// Save cursor and progress every 500 additional processed records
 		if processedCount >= lastSavedCount+500 {
 			s.saveCursor(Cursor{LastCreateAt: lastCreateAt, LastID: lastID})
@@ -187,6 +206,17 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 		}
 	}
 
+	// Run catch-up pass to index posts created during the main reindex
+	catchUpCount, catchUpErr := s.runCatchUpPass(ctx, jobStatus.CutoffAt)
+	if catchUpErr != nil {
+		s.pluginAPI.LogError("Catch-up pass failed", "error", catchUpErr)
+		// Continue with completion even if catch-up fails - main index is complete
+	} else if catchUpCount > 0 {
+		processedCount += catchUpCount
+		jobStatus.ProcessedRows = processedCount
+		s.pluginAPI.LogWarn("Catch-up pass completed", "catch_up_posts", catchUpCount)
+	}
+
 	// Completed successfully
 	jobStatus.Status = JobStatusCompleted
 	jobStatus.CompletedAt = time.Now()
@@ -195,8 +225,17 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) {
 	// Clear the cursor on successful completion
 	_ = s.pluginAPI.KVDelete(IndexerCursorKey)
 
-	// Update last indexed timestamp
+	// Update last indexed timestamp to now (after catch-up pass)
 	s.saveLastIndexedTimestamp(time.Now().UnixMilli())
+
+	// Save model info after a successful full reindex
+	if clearIndex {
+		if modelInfo := s.getModelInfoFromConfig(); modelInfo != nil {
+			if err := s.SaveModelInfo(*modelInfo); err != nil {
+				s.pluginAPI.LogError("Failed to save model info after reindex", "error", err)
+			}
+		}
+	}
 
 	s.pluginAPI.LogWarn("Reindexing completed", "processed_posts", processedCount)
 }
@@ -309,4 +348,63 @@ func (s *Indexer) saveJobStatus(status *JobStatus) {
 	if err := s.pluginAPI.KVSet(ReindexJobKey, status); err != nil {
 		s.pluginAPI.LogError("Failed to save job status", "error", err)
 	}
+}
+
+// runCatchUpPass indexes posts created after the cutoff timestamp during the main reindex
+func (s *Indexer) runCatchUpPass(ctx context.Context, cutoffAt int64) (int64, error) {
+	if cutoffAt == 0 {
+		return 0, nil
+	}
+
+	var posts []PostRecord
+	var catchUpCount int64
+	lastCreateAt := cutoffAt
+	lastID := ""
+
+	for {
+		// Query posts created after the cutoff
+		query := `SELECT
+			Posts.Id as id,
+			Posts.Message as message,
+			Posts.UserId as userid,
+			Posts.ChannelId as channelid,
+			Posts.CreateAt as createat,
+			Channels.TeamId as teamid,
+			Channels.Name as channelname,
+			Channels.Type as channeltype
+		FROM Posts
+		LEFT JOIN Channels ON Posts.ChannelId = Channels.Id
+		WHERE Posts.DeleteAt = 0 AND Posts.Message != '' AND Posts.Type = ''
+			AND (Posts.CreateAt, Posts.Id) > ($1, $2)
+		ORDER BY Posts.CreateAt ASC, Posts.Id ASC
+		LIMIT $3`
+
+		err := s.db.SelectContext(ctx, &posts, query, lastCreateAt, lastID, defaultBatchSize)
+		if err != nil {
+			return catchUpCount, fmt.Errorf("failed to fetch catch-up posts: %w", err)
+		}
+
+		if len(posts) == 0 {
+			break
+		}
+
+		// Filter and create documents
+		docs := s.filterAndCreateDocs(posts)
+
+		// Store with retry
+		if len(docs) > 0 {
+			if err := s.storeWithRetry(ctx, docs); err != nil {
+				return catchUpCount, fmt.Errorf("failed to store catch-up documents: %w", err)
+			}
+		}
+
+		catchUpCount += int64(len(posts))
+
+		// Update cursor for next batch
+		lastPost := posts[len(posts)-1]
+		lastCreateAt = lastPost.CreateAt
+		lastID = lastPost.ID
+	}
+
+	return catchUpCount, nil
 }

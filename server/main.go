@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
 	"github.com/mattermost/mattermost-plugin-ai/database"
+	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/indexer"
@@ -159,10 +160,15 @@ func (p *Plugin) OnActivate() error {
 
 	indexerService := indexer.New(embeddingsSearch, mmClient, bots, dbClient.DB, p.API)
 
+	// Wire config getter so indexer can save model info after reindexing
+	indexerService.SetConfigGetter(func() embeddings.EmbeddingSearchConfig {
+		return p.configuration.EmbeddingSearchConfig()
+	})
+
 	// Check model compatibility and disable search if model has changed
 	if embeddingsSearch != nil {
 		embeddingsCfg := p.configuration.EmbeddingSearchConfig()
-		compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.Dimensions, "")
+		compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())
 		if !compatibility.Compatible {
 			pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
 				"reason", compatibility.Reason)

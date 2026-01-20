@@ -9,7 +9,7 @@ import {PrimaryButton, SecondaryButton, TertiaryButton} from '../../assets/butto
 
 import {HelpText, ItemLabel} from '../item';
 
-import {JobStatusType, StatusMessageType, HealthCheckResultType, ModelCompatibilityType} from './types';
+import {JobStatusType, StatusMessageType, HealthCheckResultType, ModelCompatibilityType, IncrementalStatsType} from './types';
 
 const ButtonContainer = styled.div`
     margin-top: 24px;
@@ -149,16 +149,71 @@ const SectionDivider = styled.div`
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
+const JobInfoCard = styled.div`
+    background-color: rgba(var(--center-channel-color-rgb), 0.04);
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-top: 8px;
+    font-size: 12px;
+`;
+
+const JobInfoRow = styled.div`
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+`;
+
+const JobInfoLabel = styled.span`
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+`;
+
+const JobInfoValue = styled.span`
+    color: var(--center-channel-color);
+`;
+
+const StaleBanner = styled.div`
+    background-color: rgba(var(--error-text-color-rgb), 0.1);
+    border: 1px solid var(--error-text);
+    border-radius: 4px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+`;
+
+const StaleText = styled.div`
+    color: var(--center-channel-color);
+    font-size: 14px;
+    flex: 1;
+`;
+
+const ErrorBadge = styled.span`
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    background-color: rgba(var(--error-text-color-rgb), 0.16);
+    color: var(--error-text);
+    margin-left: 8px;
+`;
+
 interface ReindexSectionProps {
     jobStatus: JobStatusType | null;
     statusMessage: StatusMessageType;
     healthCheckResult: HealthCheckResultType | null;
     healthCheckLoading: boolean;
     modelCompatibility: ModelCompatibilityType | null;
+    isJobStale: boolean;
+    incrementalStats: IncrementalStatsType | null;
     onReindexClick: () => void;
     onCancelJob: () => void;
     onCatchUpClick: () => void;
     onHealthCheck: () => void;
+    onResetStaleJob: () => void;
+    onResetIncrementalStats: () => void;
 }
 
 export const ReindexSection = ({
@@ -167,13 +222,25 @@ export const ReindexSection = ({
     healthCheckResult,
     healthCheckLoading,
     modelCompatibility,
+    isJobStale,
+    incrementalStats,
     onReindexClick,
     onCancelJob,
     onCatchUpClick,
     onHealthCheck,
+    onResetStaleJob,
+    onResetIncrementalStats,
 }: ReindexSectionProps) => {
     // Check if job is running
     const isReindexing = jobStatus?.status === 'running';
+
+    const formatTimestamp = (timestamp: string | undefined) => {
+        if (!timestamp) {
+            return '-';
+        }
+        const date = new Date(timestamp);
+        return date.toLocaleString();
+    };
 
     const getStatusLabel = (status: string) => {
         switch (status) {
@@ -192,6 +259,24 @@ export const ReindexSection = ({
 
     return (
         <ButtonContainer>
+            {/* Stale Job Warning */}
+            {isJobStale && isReindexing && (
+                <StaleBanner>
+                    <WarningIcon>{'⚠️'}</WarningIcon>
+                    <StaleText>
+                        <strong><FormattedMessage defaultMessage='Job May Be Stale'/></strong>
+                        <br/>
+                        <FormattedMessage
+                            defaultMessage='The reindex job has not updated in over 30 minutes. The node running it ({nodeId}) may have crashed.'
+                            values={{nodeId: jobStatus?.node_id || 'unknown'}}
+                        />
+                    </StaleText>
+                    <SecondaryButton onClick={onResetStaleJob}>
+                        <FormattedMessage defaultMessage='Reset Job'/>
+                    </SecondaryButton>
+                </StaleBanner>
+            )}
+
             {/* Model Compatibility Warning */}
             {modelCompatibility && !modelCompatibility.compatible && (
                 <WarningBanner>
@@ -239,6 +324,24 @@ export const ReindexSection = ({
                                             progress={jobStatus.total_rows ? Math.min((jobStatus.processed_rows / jobStatus.total_rows) * 100, 100) : 0}
                                         />
                                     </ProgressContainer>
+                                    <JobInfoCard>
+                                        {jobStatus.node_id && (
+                                            <JobInfoRow>
+                                                <JobInfoLabel>
+                                                    <FormattedMessage defaultMessage='Running on node'/>
+                                                </JobInfoLabel>
+                                                <JobInfoValue>{jobStatus.node_id}</JobInfoValue>
+                                            </JobInfoRow>
+                                        )}
+                                        {jobStatus.last_updated_at && (
+                                            <JobInfoRow>
+                                                <JobInfoLabel>
+                                                    <FormattedMessage defaultMessage='Last heartbeat'/>
+                                                </JobInfoLabel>
+                                                <JobInfoValue>{formatTimestamp(jobStatus.last_updated_at)}</JobInfoValue>
+                                            </JobInfoRow>
+                                        )}
+                                    </JobInfoCard>
                                 </>
                             )}
                         </>
@@ -335,6 +438,80 @@ export const ReindexSection = ({
 
                         <HelpText>
                             <FormattedMessage defaultMessage='Check if the number of indexed posts matches the database. This helps identify if posts are missing from the search index.'/>
+                        </HelpText>
+                    </div>
+                </ActionContainer>
+            </SectionDivider>
+
+            {/* Incremental Indexing Stats Section */}
+            <SectionDivider>
+                <ActionContainer>
+                    <ItemLabel>
+                        <FormattedMessage defaultMessage='Real-time Indexing'/>
+                        {incrementalStats && incrementalStats.error_count > 0 && (
+                            <ErrorBadge>
+                                <FormattedMessage
+                                    defaultMessage='{count} errors'
+                                    values={{count: incrementalStats.error_count}}
+                                />
+                            </ErrorBadge>
+                        )}
+                    </ItemLabel>
+                    <div>
+                        {incrementalStats && (
+                            <HealthCheckCard>
+                                <HealthCheckRow>
+                                    <HealthCheckLabel>
+                                        <FormattedMessage defaultMessage='Posts Indexed'/>
+                                    </HealthCheckLabel>
+                                    <HealthCheckValue>
+                                        {incrementalStats.total_indexed.toLocaleString()}
+                                    </HealthCheckValue>
+                                </HealthCheckRow>
+                                {incrementalStats.last_indexed_at && (
+                                    <HealthCheckRow>
+                                        <HealthCheckLabel>
+                                            <FormattedMessage defaultMessage='Last Indexed'/>
+                                        </HealthCheckLabel>
+                                        <HealthCheckValue>
+                                            {formatTimestamp(incrementalStats.last_indexed_at)}
+                                        </HealthCheckValue>
+                                    </HealthCheckRow>
+                                )}
+                                {incrementalStats.error_count > 0 && (
+                                    <>
+                                        <HealthCheckRow>
+                                            <HealthCheckLabel>
+                                                <FormattedMessage defaultMessage='Error Count'/>
+                                            </HealthCheckLabel>
+                                            <HealthCheckValue style={{color: 'var(--error-text)'}}>
+                                                {incrementalStats.error_count}
+                                            </HealthCheckValue>
+                                        </HealthCheckRow>
+                                        {incrementalStats.last_error && (
+                                            <ErrorHelpText>
+                                                <FormattedMessage
+                                                    defaultMessage='Last error ({time}): {error}'
+                                                    values={{
+                                                        time: formatTimestamp(incrementalStats.last_error_at),
+                                                        error: incrementalStats.last_error,
+                                                    }}
+                                                />
+                                            </ErrorHelpText>
+                                        )}
+                                    </>
+                                )}
+                            </HealthCheckCard>
+                        )}
+
+                        {incrementalStats && (incrementalStats.total_indexed > 0 || incrementalStats.error_count > 0) && (
+                            <TertiaryButton onClick={onResetIncrementalStats}>
+                                <FormattedMessage defaultMessage='Reset Stats'/>
+                            </TertiaryButton>
+                        )}
+
+                        <HelpText>
+                            <FormattedMessage defaultMessage='Statistics for posts indexed in real-time as they are created. This does not include posts indexed during bulk reindexing.'/>
                         </HelpText>
                     </div>
                 </ActionContainer>
