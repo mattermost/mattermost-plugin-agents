@@ -121,8 +121,9 @@ test.describe('Bot Management UI', () => {
         // Verify bot appears with configured values in the bots list
         await expect(botsListSection.getByText('Test Assistant')).toBeVisible();
 
-        // Verify the bot also appears in the default agent dropdown
-        const defaultAgentDropdown = page.getByLabel(/default agent/i).or(page.locator('text=Default agent').locator('..').getByRole('combobox'));
-        await expect(defaultAgentDropdown).toContainText('Test Assistant');
+        // Verify the bot also appears in the default bot dropdown
+        const defaultBotDropdown = page.getByText('Default bot').locator('..').getByRole('combobox');
+        await defaultBotDropdown.scrollIntoViewIfNeeded();
+        await expect(defaultBotDropdown).toContainText('Test Assistant');
     });
 });

@@ -18,14 +18,14 @@ export class SystemConsoleHelper {
      */
     async navigateToPluginConfig(baseUrl: string): Promise<void> {
         await this.page.goto(`${baseUrl}/admin_console/plugins/plugin_mattermost-ai`);
-        await this.page.waitForLoadState('networkidle');
+        await this.page.waitForLoadState('domcontentloaded');
 
         // Handle "View in Browser" button if it appears (mobile preview page)
         const viewInBrowserButton = this.page.getByRole('button', { name: /view in browser/i });
         const isVisible = await viewInBrowserButton.isVisible().catch(() => false);
         if (isVisible) {
             await viewInBrowserButton.click();
-            await this.page.waitForLoadState('networkidle');
+            await this.page.waitForLoadState('domcontentloaded');
         }
 
         // Wait for the plugin configuration UI to fully render
@@ -95,10 +95,10 @@ export class SystemConsoleHelper {
     }
 
     /**
-     * Get the no bots message
+     * Get the no agents message
      */
     getNoBotsMessage(): Locator {
-        return this.page.locator('text=/no.*ai.*(bots|agents)/i');
+        return this.page.locator('text=/no ai agents/i');
     }
 
     /**
