@@ -159,23 +159,11 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		return
 	}
 	analysisPost := a.makeAnalysisPost(user.Locale, "", data.AnalysisType, *siteURL)
-	// Using empty postId since it's channel analysis, or maybe we should post to channel?
-	// The requirement says "opens the RHS panel... similar to summarize thread".
-	// Thread summary streams to DM.
-	// We should probably stream to DM as well.
-	// `makeAnalysisPost` takes rootID. For channel summary, maybe we don't have a rootID?
-	// `StreamToNewDM` creates a new post in DM.
 
 	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), bot.GetMMBot().UserId, analysisStream, user.Id, analysisPost, ""); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
-
-	// Save title if applicable, though we don't have a thread ID here really.
-	// We might skip saving title for now or associate it with the new DM post?
-	// The `StreamToNewDM` returns the new post. But `StreamToNewDM` signature:
-	// func (s *Service) StreamToNewDM(ctx context.Context, botUserID string, stream *llm.TextStreamResult, userID string, post *model.Post, rootID string) error
-	// It updates `post.Id` after creation.
 
 	a.conversationsService.SaveTitleAsync(analysisPost.Id, TitleSummarizeChannel)
 
