@@ -14,6 +14,7 @@ import (
 const (
 	ProviderTypeOpenAI           = "openai"
 	ProviderTypeOpenAICompatible = "openai-compatible"
+	ProviderTypeBifrost          = "bifrost"
 	ProviderTypeMock             = "mock"
 )
 

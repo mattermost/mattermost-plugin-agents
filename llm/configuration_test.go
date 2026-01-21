@@ -313,24 +313,6 @@ func TestIsValidService(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "Valid ASage service with API key",
-			service: ServiceConfig{
-				ID:     "service-5",
-				Type:   ServiceTypeASage,
-				APIKey: "asage-key",
-			},
-			want: true,
-		},
-		{
-			name: "ASage service missing API key",
-			service: ServiceConfig{
-				ID:     "service-5",
-				Type:   ServiceTypeASage,
-				APIKey: "", // bad
-			},
-			want: false,
-		},
-		{
 			name: "Valid Cohere service with API key",
 			service: ServiceConfig{
 				ID:     "service-6",

@@ -9,14 +9,11 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/mattermost/mattermost-plugin-ai/anthropic"
-	"github.com/mattermost/mattermost-plugin-ai/asage"
-	"github.com/mattermost/mattermost-plugin-ai/bedrock"
-	"github.com/mattermost/mattermost-plugin-ai/config"
+	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/mattermost/mattermost-plugin-ai/bifrost"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/openai"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -242,39 +239,14 @@ func (b *MMBots) EnsureBots() error {
 }
 
 func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (llm.LanguageModel, error) {
-	// Create the correct model
+	// Create the correct model using Bifrost for all providers
 	var result llm.LanguageModel
-	switch serviceConfig.Type {
-	case llm.ServiceTypeOpenAI:
-		result = openai.New(config.OpenAIConfigFromServiceConfig(serviceConfig, botConfig), b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeOpenAICompatible:
-		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfig(serviceConfig, botConfig), b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeAzure:
-		result = openai.NewAzure(config.OpenAIConfigFromServiceConfig(serviceConfig, botConfig), b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeAnthropic:
-		result = anthropic.New(serviceConfig, botConfig, b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeBedrock:
-		var err error
-		result, err = bedrock.New(serviceConfig, b.llmUpstreamHTTPClient)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Bedrock client: %w", err)
-		}
-	case llm.ServiceTypeASage:
-		result = asage.New(serviceConfig, b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeCohere:
-		// Set the Cohere OpenAI compatibility endpoint
-		cohereCfg := serviceConfig
-		cohereCfg.APIURL = "https://api.cohere.ai/compatibility/v1"
-		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfig(cohereCfg, botConfig), b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeMistral:
-		// Set the Mistral OpenAI compatibility endpoint
-		mistralCfg := serviceConfig
-		mistralCfg.APIURL = "https://api.mistral.ai/v1"
-		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfigWithOptions(mistralCfg, botConfig, true, true), b.llmUpstreamHTTPClient)
-	default:
+	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig, b.llmUpstreamHTTPClient)
+	if err != nil {
 		b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
-		return nil, fmt.Errorf("unsupported service type: %s", serviceConfig.Type)
+		return nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
 	}
+	result = bifrostLLM
 
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)
@@ -307,19 +279,43 @@ func (b *MMBots) GetTranscribe() Transcriber {
 	}
 
 	service := bot.service
+
+	// Map service type to Bifrost provider
+	var provider schemas.ModelProvider
 	switch service.Type {
 	case llm.ServiceTypeOpenAI:
-		return openai.New(config.OpenAIConfigFromServiceConfig(service, bot.cfg), b.llmUpstreamHTTPClient)
+		provider = schemas.OpenAI
 	case llm.ServiceTypeOpenAICompatible:
-		return openai.NewCompatible(config.OpenAIConfigFromServiceConfig(service, bot.cfg), b.llmUpstreamHTTPClient)
+		provider = schemas.OpenAI
 	case llm.ServiceTypeAzure:
-		return openai.NewAzure(config.OpenAIConfigFromServiceConfig(service, bot.cfg), b.llmUpstreamHTTPClient)
+		provider = schemas.Azure
 	default:
 		b.pluginAPI.Log.Error("Unsupported service type for transcript generator",
 			"bot_name", bot.GetMMBot().Username,
 			"service_type", service.Type)
 		return nil
 	}
+
+	// Use the service's default model for transcription, or fall back to whisper-1
+	transcriptModel := service.DefaultModel
+	if transcriptModel == "" {
+		transcriptModel = "whisper-1"
+	}
+
+	transcriber, err := bifrost.NewTranscriber(bifrost.TranscriptionConfig{
+		Provider: provider,
+		APIKey:   service.APIKey,
+		APIURL:   service.APIURL,
+		Model:    transcriptModel,
+	})
+	if err != nil {
+		b.pluginAPI.Log.Error("Failed to create Bifrost transcriber",
+			"bot_name", bot.GetMMBot().Username,
+			"error", err.Error())
+		return nil
+	}
+
+	return transcriber
 }
 
 func (b *MMBots) getTrasncriberBot() *Bot {
