@@ -70,14 +70,13 @@ type Config struct {
 
 // providerAccount implements the Bifrost Account interface for a single provider.
 type providerAccount struct {
-	provider   schemas.ModelProvider
-	apiKey     string
-	apiURL     string
-	orgID      string
-	region     string
-	awsKeyID   string
-	awsSecret  string
-	httpClient *http.Client
+	provider  schemas.ModelProvider
+	apiKey    string
+	apiURL    string
+	orgID     string
+	region    string
+	awsKeyID  string
+	awsSecret string
 }
 
 func (a *providerAccount) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
@@ -118,8 +117,27 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 		return nil, fmt.Errorf("provider %s not supported", provider)
 	}
 
+	networkConfig := schemas.DefaultNetworkConfig
+
+	// Use BaseURL for providers that support custom endpoints (not Azure, which uses AzureKeyConfig)
+	if a.apiURL != "" && a.provider != schemas.Azure {
+		networkConfig.BaseURL = a.apiURL
+	}
+
+	// Pass OrgID via ExtraHeaders for OpenAI
+	if a.orgID != "" && a.provider == schemas.OpenAI {
+		networkConfig.ExtraHeaders = map[string]string{
+			"OpenAI-Organization": a.orgID,
+		}
+	}
+
+	// Configure retry logic with sensible defaults
+	networkConfig.MaxRetries = 2
+	networkConfig.RetryBackoffInitial = 1 * time.Second
+	networkConfig.RetryBackoffMax = 10 * time.Second
+
 	config := &schemas.ProviderConfig{
-		NetworkConfig:            schemas.DefaultNetworkConfig,
+		NetworkConfig:            networkConfig,
 		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
 	}
 
@@ -127,16 +145,16 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 }
 
 // New creates a new BifrostLLM instance with the given configuration.
+// Note: httpClient is kept for API compatibility but Bifrost manages its own HTTP client.
 func New(cfg Config, httpClient *http.Client) (*BifrostLLM, error) {
 	account := &providerAccount{
-		provider:   cfg.Provider,
-		apiKey:     cfg.APIKey,
-		apiURL:     cfg.APIURL,
-		orgID:      cfg.OrgID,
-		region:     cfg.Region,
-		awsKeyID:   cfg.AWSAccessKeyID,
-		awsSecret:  cfg.AWSSecretAccessKey,
-		httpClient: httpClient,
+		provider:  cfg.Provider,
+		apiKey:    cfg.APIKey,
+		apiURL:    cfg.APIURL,
+		orgID:     cfg.OrgID,
+		region:    cfg.Region,
+		awsKeyID:  cfg.AWSAccessKeyID,
+		awsSecret: cfg.AWSSecretAccessKey,
 	}
 
 	bifrostConfig := schemas.BifrostConfig{
