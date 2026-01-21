@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/mattermost/mattermost-plugin-ai/bifrost"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -19,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 type Config interface {

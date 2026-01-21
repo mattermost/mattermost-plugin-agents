@@ -35,8 +35,8 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 	}
 }
 
-// NewFromServiceConfig creates a BifrostLLM instance from ServiceConfig and BotConfig.
-func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, httpClient *http.Client) (*BifrostLLM, error) {
+// NewFromServiceConfig creates a LLM instance from ServiceConfig and BotConfig.
+func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, httpClient *http.Client) (*LLM, error) {
 	provider, err := MapServiceTypeToProvider(serviceConfig.Type)
 	if err != nil {
 		return nil, err

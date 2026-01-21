@@ -13,15 +13,15 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 )
 
-// BifrostEmbeddingProvider implements the embeddings.EmbeddingProvider interface using Bifrost.
-type BifrostEmbeddingProvider struct {
+// EmbeddingProvider implements the embeddings.EmbeddingProvider interface using Bifrost.
+type EmbeddingProvider struct {
 	client     *bifrostcore.Bifrost
 	provider   schemas.ModelProvider
 	model      string
 	dimensions int
 }
 
-// EmbeddingConfig holds the configuration for creating a BifrostEmbeddingProvider.
+// EmbeddingConfig holds the configuration for creating a EmbeddingProvider.
 type EmbeddingConfig struct {
 	Provider   schemas.ModelProvider
 	APIKey     string
@@ -30,8 +30,8 @@ type EmbeddingConfig struct {
 	Dimensions int
 }
 
-// NewEmbeddingProvider creates a new BifrostEmbeddingProvider.
-func NewEmbeddingProvider(cfg EmbeddingConfig) (*BifrostEmbeddingProvider, error) {
+// NewEmbeddingProvider creates a new EmbeddingProvider.
+func NewEmbeddingProvider(cfg EmbeddingConfig) (*EmbeddingProvider, error) {
 	account := &providerAccount{
 		provider: cfg.Provider,
 		apiKey:   cfg.APIKey,
@@ -47,7 +47,7 @@ func NewEmbeddingProvider(cfg EmbeddingConfig) (*BifrostEmbeddingProvider, error
 		return nil, fmt.Errorf("failed to initialize Bifrost client for embeddings: %w", err)
 	}
 
-	return &BifrostEmbeddingProvider{
+	return &EmbeddingProvider{
 		client:     client,
 		provider:   cfg.Provider,
 		model:      cfg.Model,
@@ -56,18 +56,18 @@ func NewEmbeddingProvider(cfg EmbeddingConfig) (*BifrostEmbeddingProvider, error
 }
 
 // CreateEmbedding generates an embedding for the given text.
-func (p *BifrostEmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([]float32, error) {
-	req := &schemas.BifrostRequest{
+func (p *EmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([]float32, error) {
+	bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
+
+	req := &schemas.BifrostEmbeddingRequest{
 		Provider: p.provider,
 		Model:    p.model,
-		Input: schemas.RequestInput{
-			EmbeddingInput: &schemas.EmbeddingInput{
-				Text: Ptr(text),
-			},
+		Input: &schemas.EmbeddingInput{
+			Text: Ptr(text),
 		},
 	}
 
-	resp, bifrostErr := p.client.EmbeddingRequest(ctx, req)
+	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)
 	if bifrostErr != nil {
 		return nil, fmt.Errorf("bifrost embedding error: %s", bifrostErr.Error.Message)
 	}
@@ -78,26 +78,26 @@ func (p *BifrostEmbeddingProvider) CreateEmbedding(ctx context.Context, text str
 
 	// Extract embedding from response
 	embResp := resp.Data[0].Embedding
-	if embResp.EmbeddingArray == nil {
+	if len(embResp.EmbeddingArray) == 0 {
 		return nil, fmt.Errorf("no embedding array in response")
 	}
 
-	return *embResp.EmbeddingArray, nil
+	return embResp.EmbeddingArray, nil
 }
 
 // BatchCreateEmbeddings generates embeddings for multiple texts.
-func (p *BifrostEmbeddingProvider) BatchCreateEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
-	req := &schemas.BifrostRequest{
+func (p *EmbeddingProvider) BatchCreateEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
+	bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
+
+	req := &schemas.BifrostEmbeddingRequest{
 		Provider: p.provider,
 		Model:    p.model,
-		Input: schemas.RequestInput{
-			EmbeddingInput: &schemas.EmbeddingInput{
-				Texts: texts,
-			},
+		Input: &schemas.EmbeddingInput{
+			Texts: texts,
 		},
 	}
 
-	resp, bifrostErr := p.client.EmbeddingRequest(ctx, req)
+	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)
 	if bifrostErr != nil {
 		return nil, fmt.Errorf("bifrost batch embedding error: %s", bifrostErr.Error.Message)
 	}
@@ -109,26 +109,26 @@ func (p *BifrostEmbeddingProvider) BatchCreateEmbeddings(ctx context.Context, te
 	// Extract embeddings from response
 	result := make([][]float32, len(resp.Data))
 	for i, data := range resp.Data {
-		if data.Embedding.EmbeddingArray == nil {
+		if len(data.Embedding.EmbeddingArray) == 0 {
 			return nil, fmt.Errorf("no embedding array in response for index %d", i)
 		}
-		result[i] = *data.Embedding.EmbeddingArray
+		result[i] = data.Embedding.EmbeddingArray
 	}
 
 	return result, nil
 }
 
 // Dimensions returns the dimensionality of the embeddings.
-func (p *BifrostEmbeddingProvider) Dimensions() int {
+func (p *EmbeddingProvider) Dimensions() int {
 	return p.dimensions
 }
 
 // Shutdown gracefully shuts down the Bifrost client.
-func (p *BifrostEmbeddingProvider) Shutdown() {
+func (p *EmbeddingProvider) Shutdown() {
 	if p.client != nil {
 		p.client.Shutdown()
 	}
 }
 
-// Ensure BifrostEmbeddingProvider implements the interface.
-var _ embeddings.EmbeddingProvider = (*BifrostEmbeddingProvider)(nil)
+// Ensure EmbeddingProvider implements the interface.
+var _ embeddings.EmbeddingProvider = (*EmbeddingProvider)(nil)

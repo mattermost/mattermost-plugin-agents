@@ -16,14 +16,14 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
 )
 
-// BifrostTranscriber implements transcription using the Bifrost gateway.
-type BifrostTranscriber struct {
+// Transcriber implements transcription using the Bifrost gateway.
+type Transcriber struct {
 	client   *bifrostcore.Bifrost
 	provider schemas.ModelProvider
 	model    string
 }
 
-// TranscriptionConfig holds configuration for creating a BifrostTranscriber.
+// TranscriptionConfig holds configuration for creating a Transcriber.
 type TranscriptionConfig struct {
 	Provider schemas.ModelProvider
 	APIKey   string
@@ -31,8 +31,8 @@ type TranscriptionConfig struct {
 	Model    string // e.g., "whisper-1"
 }
 
-// NewTranscriber creates a new BifrostTranscriber.
-func NewTranscriber(cfg TranscriptionConfig) (*BifrostTranscriber, error) {
+// NewTranscriber creates a new Transcriber.
+func NewTranscriber(cfg TranscriptionConfig) (*Transcriber, error) {
 	account := &providerAccount{
 		provider: cfg.Provider,
 		apiKey:   cfg.APIKey,
@@ -53,7 +53,7 @@ func NewTranscriber(cfg TranscriptionConfig) (*BifrostTranscriber, error) {
 		model = "whisper-1"
 	}
 
-	return &BifrostTranscriber{
+	return &Transcriber{
 		client:   client,
 		provider: cfg.Provider,
 		model:    model,
@@ -61,8 +61,8 @@ func NewTranscriber(cfg TranscriptionConfig) (*BifrostTranscriber, error) {
 }
 
 // Transcribe converts audio to text using Bifrost.
-func (t *BifrostTranscriber) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+func (t *Transcriber) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
+	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	// Read the file into bytes for the request
@@ -71,28 +71,28 @@ func (t *BifrostTranscriber) Transcribe(file io.Reader) (*subtitles.Subtitles, e
 		return nil, fmt.Errorf("failed to read audio file: %w", err)
 	}
 
-	req := &schemas.BifrostRequest{
+	req := &schemas.BifrostTranscriptionRequest{
 		Provider: t.provider,
 		Model:    t.model,
-		Input: schemas.RequestInput{
-			TranscriptionInput: &schemas.TranscriptionInput{
-				File:           data,
-				ResponseFormat: Ptr("vtt"), // Use VTT format for timed transcription
-			},
+		Input: &schemas.TranscriptionInput{
+			File: data,
+		},
+		Params: &schemas.TranscriptionParameters{
+			ResponseFormat: Ptr("vtt"), // Use VTT format for timed transcription
 		},
 	}
 
-	resp, bifrostErr := t.client.TranscriptionRequest(ctx, req)
+	resp, bifrostErr := t.client.TranscriptionRequest(bifrostCtx, req)
 	if bifrostErr != nil {
 		return nil, fmt.Errorf("bifrost transcription error: %s", bifrostErr.Error.Message)
 	}
 
-	if resp == nil || resp.Transcribe == nil || resp.Transcribe.Text == "" {
+	if resp == nil || resp.Text == "" {
 		return nil, fmt.Errorf("no transcription data returned")
 	}
 
 	// Parse the VTT response
-	timedTranscript, err := subtitles.NewSubtitlesFromVTT(strings.NewReader(resp.Transcribe.Text))
+	timedTranscript, err := subtitles.NewSubtitlesFromVTT(strings.NewReader(resp.Text))
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse transcription: %w", err)
 	}
@@ -101,7 +101,7 @@ func (t *BifrostTranscriber) Transcribe(file io.Reader) (*subtitles.Subtitles, e
 }
 
 // Shutdown gracefully shuts down the Bifrost client.
-func (t *BifrostTranscriber) Shutdown() {
+func (t *Transcriber) Shutdown() {
 	if t.client != nil {
 		t.client.Shutdown()
 	}

@@ -9,12 +9,12 @@ import (
 	"net/http"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/mattermost/mattermost-plugin-ai/bifrost"
 	"github.com/mattermost/mattermost-plugin-ai/chunking"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/postgres"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // newVectorStore creates a new vector store based on the provided configuration

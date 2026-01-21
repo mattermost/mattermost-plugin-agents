@@ -29,8 +29,8 @@ const (
 	DefaultStreamingTimeout = 30 * time.Second
 )
 
-// BifrostLLM implements the llm.LanguageModel interface using the Bifrost gateway.
-type BifrostLLM struct {
+// LLM implements the llm.LanguageModel interface using the Bifrost gateway.
+type LLM struct {
 	client           *bifrostcore.Bifrost
 	provider         schemas.ModelProvider
 	defaultModel     string
@@ -46,7 +46,7 @@ type BifrostLLM struct {
 	thinkingBudget     int
 }
 
-// Config holds the configuration for creating a BifrostLLM instance.
+// Config holds the configuration for creating a LLM instance.
 type Config struct {
 	Provider           schemas.ModelProvider
 	APIKey             string
@@ -83,29 +83,30 @@ func (a *providerAccount) GetConfiguredProviders() ([]schemas.ModelProvider, err
 	return []schemas.ModelProvider{a.provider}, nil
 }
 
-func (a *providerAccount) GetKeysForProvider(ctx *context.Context, provider schemas.ModelProvider) ([]schemas.Key, error) {
+func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schemas.ModelProvider) ([]schemas.Key, error) {
 	if provider != a.provider {
 		return nil, fmt.Errorf("provider %s not supported", provider)
 	}
 
 	key := schemas.Key{
-		Value:  a.apiKey,
+		Value:  schemas.EnvVar{Val: a.apiKey},
 		Weight: 1.0,
 	}
 
 	// Handle Azure config
 	if a.provider == schemas.Azure && a.apiURL != "" {
 		key.AzureKeyConfig = &schemas.AzureKeyConfig{
-			Endpoint: a.apiURL,
+			Endpoint: schemas.EnvVar{Val: a.apiURL},
 		}
 	}
 
 	// Handle Bedrock config
 	if a.provider == schemas.Bedrock {
+		region := schemas.EnvVar{Val: a.region}
 		key.BedrockKeyConfig = &schemas.BedrockKeyConfig{
-			AccessKey: a.awsKeyID,
-			SecretKey: a.awsSecret,
-			Region:    &a.region,
+			AccessKey: schemas.EnvVar{Val: a.awsKeyID},
+			SecretKey: schemas.EnvVar{Val: a.awsSecret},
+			Region:    &region,
 		}
 	}
 
@@ -144,9 +145,9 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 	return config, nil
 }
 
-// New creates a new BifrostLLM instance with the given configuration.
+// New creates a new LLM instance with the given configuration.
 // Note: httpClient is kept for API compatibility but Bifrost manages its own HTTP client.
-func New(cfg Config, httpClient *http.Client) (*BifrostLLM, error) {
+func New(cfg Config, httpClient *http.Client) (*LLM, error) {
 	account := &providerAccount{
 		provider:  cfg.Provider,
 		apiKey:    cfg.APIKey,
@@ -176,7 +177,7 @@ func New(cfg Config, httpClient *http.Client) (*BifrostLLM, error) {
 		outputLimit = DefaultMaxTokens
 	}
 
-	return &BifrostLLM{
+	return &LLM{
 		client:             client,
 		provider:           cfg.Provider,
 		defaultModel:       cfg.DefaultModel,
@@ -192,21 +193,21 @@ func New(cfg Config, httpClient *http.Client) (*BifrostLLM, error) {
 }
 
 // Shutdown gracefully shuts down the Bifrost client.
-func (b *BifrostLLM) Shutdown() {
+func (b *LLM) Shutdown() {
 	if b.client != nil {
 		b.client.Shutdown()
 	}
 }
 
 // GetDefaultConfig returns the default language model configuration.
-func (b *BifrostLLM) GetDefaultConfig() llm.LanguageModelConfig {
+func (b *LLM) GetDefaultConfig() llm.LanguageModelConfig {
 	return llm.LanguageModelConfig{
 		Model:              b.defaultModel,
 		MaxGeneratedTokens: b.outputTokenLimit,
 	}
 }
 
-func (b *BifrostLLM) createConfig(opts []llm.LanguageModelOption) llm.LanguageModelConfig {
+func (b *LLM) createConfig(opts []llm.LanguageModelOption) llm.LanguageModelConfig {
 	cfg := b.GetDefaultConfig()
 	for _, opt := range opts {
 		opt(&cfg)
@@ -215,7 +216,7 @@ func (b *BifrostLLM) createConfig(opts []llm.LanguageModelOption) llm.LanguageMo
 }
 
 // ChatCompletion performs a streaming chat completion request.
-func (b *BifrostLLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (b *LLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	cfg := b.createConfig(opts)
 	eventStream := make(chan llm.TextStreamEvent)
 
@@ -228,7 +229,7 @@ func (b *BifrostLLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.L
 }
 
 // ChatCompletionNoStream performs a non-streaming chat completion request.
-func (b *BifrostLLM) ChatCompletionNoStream(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+func (b *LLM) ChatCompletionNoStream(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
 	result, err := b.ChatCompletion(request, opts...)
 	if err != nil {
 		return "", err
@@ -237,7 +238,7 @@ func (b *BifrostLLM) ChatCompletionNoStream(request llm.CompletionRequest, opts 
 }
 
 // CountTokens estimates the token count for the given text.
-func (b *BifrostLLM) CountTokens(text string) int {
+func (b *LLM) CountTokens(text string) int {
 	// Approximation based on character and word counts
 	charCount := float64(len(text)) / 4.0
 	wordCount := float64(len(strings.Fields(text))) / 0.75
@@ -245,7 +246,7 @@ func (b *BifrostLLM) CountTokens(text string) int {
 }
 
 // InputTokenLimit returns the maximum number of input tokens supported.
-func (b *BifrostLLM) InputTokenLimit() int {
+func (b *LLM) InputTokenLimit() int {
 	if b.inputTokenLimit > 0 {
 		return b.inputTokenLimit
 	}
@@ -262,15 +263,15 @@ func (b *BifrostLLM) InputTokenLimit() int {
 }
 
 // streamChat handles the streaming chat completion.
-func (b *BifrostLLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
-	ctx, cancel := context.WithTimeout(context.Background(), b.streamingTimeout*10)
+func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
+	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(context.Background(), b.streamingTimeout*10)
 	defer cancel()
 
 	// Convert to Bifrost request
 	bifrostReq := b.convertToBifrostRequest(request, cfg)
 
 	// Make streaming request
-	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(ctx, bifrostReq)
+	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
@@ -295,7 +296,7 @@ func (b *BifrostLLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageM
 			case <-timer.C:
 				cancel()
 				return
-			case <-ctx.Done():
+			case <-bifrostCtx.Done():
 				return
 			case <-watchdog:
 				watchdogMu.Lock()
@@ -327,13 +328,13 @@ func (b *BifrostLLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageM
 		}
 
 		// Process response chunk
-		if chunk.BifrostResponse != nil {
-			resp := chunk.BifrostResponse
-			if resp.Choices != nil && len(resp.Choices) > 0 {
+		if chunk.BifrostChatResponse != nil {
+			resp := chunk.BifrostChatResponse
+			if len(resp.Choices) > 0 {
 				choice := resp.Choices[0]
 
 				// Handle text content from delta (streaming)
-				if choice.BifrostStreamResponseChoice != nil && choice.Delta.Content != nil {
+				if choice.ChatStreamResponseChoice != nil && choice.Delta != nil && choice.Delta.Content != nil {
 					content := *choice.Delta.Content
 					if content != "" {
 						output <- llm.TextStreamEvent{
@@ -344,11 +345,12 @@ func (b *BifrostLLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageM
 				}
 
 				// Handle tool calls (streaming)
-				if choice.BifrostStreamResponseChoice != nil && len(choice.Delta.ToolCalls) > 0 {
+				if choice.ChatStreamResponseChoice != nil && choice.Delta != nil && len(choice.Delta.ToolCalls) > 0 {
 					if toolCallsBuffer == nil {
 						toolCallsBuffer = make(map[int]*toolCallBuffer)
 					}
-					for idx, tc := range choice.Delta.ToolCalls {
+					for _, tc := range choice.Delta.ToolCalls {
+						idx := int(tc.Index)
 						if toolCallsBuffer[idx] == nil {
 							toolCallsBuffer[idx] = &toolCallBuffer{}
 						}
@@ -403,7 +405,7 @@ func (b *BifrostLLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageM
 		}
 
 		// Check if this is the final chunk
-		if bifrostcore.IsFinalChunk(&ctx) {
+		if bifrostcore.IsFinalChunk(bifrostCtx) {
 			break
 		}
 	}
@@ -441,43 +443,41 @@ type toolCallBuffer struct {
 }
 
 // convertToBifrostRequest converts our CompletionRequest to Bifrost's format.
-func (b *BifrostLLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) *schemas.BifrostRequest {
+func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) *schemas.BifrostChatRequest {
 	messages := b.convertMessages(request.Posts)
 	tools := b.convertTools(request, cfg)
 
-	req := &schemas.BifrostRequest{
+	req := &schemas.BifrostChatRequest{
 		Provider: b.provider,
 		Model:    cfg.Model,
-		Input: schemas.RequestInput{
-			ChatCompletionInput: &messages,
-		},
+		Input:    messages,
 	}
 
 	// Set parameters
-	params := &schemas.ModelParameters{}
+	params := &schemas.ChatParameters{}
 	if cfg.MaxGeneratedTokens > 0 {
-		params.MaxTokens = Ptr(cfg.MaxGeneratedTokens)
+		params.MaxCompletionTokens = Ptr(cfg.MaxGeneratedTokens)
 	}
 	if len(tools) > 0 {
-		params.Tools = &tools
+		params.Tools = tools
 	}
 	req.Params = params
 
 	return req
 }
 
-// convertMessages converts llm.Post messages to Bifrost BifrostMessage format.
-func (b *BifrostLLM) convertMessages(posts []llm.Post) []schemas.BifrostMessage {
-	messages := make([]schemas.BifrostMessage, 0, len(posts))
+// convertMessages converts llm.Post messages to Bifrost ChatMessage format.
+func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
+	messages := make([]schemas.ChatMessage, 0, len(posts))
 
 	for _, post := range posts {
-		var msg schemas.BifrostMessage
+		var msg schemas.ChatMessage
 
 		switch post.Role {
 		case llm.PostRoleSystem:
-			msg = schemas.BifrostMessage{
-				Role: schemas.ModelChatMessageRoleSystem,
-				Content: schemas.MessageContent{
+			msg = schemas.ChatMessage{
+				Role: schemas.ChatMessageRoleSystem,
+				Content: &schemas.ChatMessageContent{
 					ContentStr: Ptr(post.Message),
 				},
 			}
@@ -486,44 +486,45 @@ func (b *BifrostLLM) convertMessages(posts []llm.Post) []schemas.BifrostMessage 
 			if len(post.Files) > 0 {
 				// Multimodal message with images
 				parts := b.createMultimodalContent(post)
-				msg = schemas.BifrostMessage{
-					Role: schemas.ModelChatMessageRoleUser,
-					Content: schemas.MessageContent{
-						ContentBlocks: &parts,
+				msg = schemas.ChatMessage{
+					Role: schemas.ChatMessageRoleUser,
+					Content: &schemas.ChatMessageContent{
+						ContentBlocks: parts,
 					},
 				}
 			} else {
-				msg = schemas.BifrostMessage{
-					Role: schemas.ModelChatMessageRoleUser,
-					Content: schemas.MessageContent{
+				msg = schemas.ChatMessage{
+					Role: schemas.ChatMessageRoleUser,
+					Content: &schemas.ChatMessageContent{
 						ContentStr: Ptr(post.Message),
 					},
 				}
 			}
 
 		case llm.PostRoleBot:
-			msg = schemas.BifrostMessage{
-				Role: schemas.ModelChatMessageRoleAssistant,
-				Content: schemas.MessageContent{
+			msg = schemas.ChatMessage{
+				Role: schemas.ChatMessageRoleAssistant,
+				Content: &schemas.ChatMessageContent{
 					ContentStr: Ptr(post.Message),
 				},
 			}
 
 			// Handle tool calls in assistant messages
 			if len(post.ToolUse) > 0 {
-				toolCalls := make([]schemas.ToolCall, 0, len(post.ToolUse))
-				for _, tc := range post.ToolUse {
-					toolCalls = append(toolCalls, schemas.ToolCall{
-						ID:   Ptr(tc.ID),
-						Type: Ptr("function"),
-						Function: schemas.FunctionCall{
+				toolCalls := make([]schemas.ChatAssistantMessageToolCall, 0, len(post.ToolUse))
+				for i, tc := range post.ToolUse {
+					toolCalls = append(toolCalls, schemas.ChatAssistantMessageToolCall{
+						Index: uint16(i % 65536), //nolint:gosec // index will never exceed uint16 max in practice
+						ID:    Ptr(tc.ID),
+						Type:  Ptr("function"),
+						Function: schemas.ChatAssistantMessageToolCallFunction{
 							Name:      Ptr(tc.Name),
 							Arguments: string(tc.Arguments),
 						},
 					})
 				}
-				msg.AssistantMessage = &schemas.AssistantMessage{
-					ToolCalls: &toolCalls,
+				msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{
+					ToolCalls: toolCalls,
 				}
 
 				// Add the assistant message with tool calls
@@ -531,12 +532,12 @@ func (b *BifrostLLM) convertMessages(posts []llm.Post) []schemas.BifrostMessage 
 
 				// Add tool result messages
 				for _, tc := range post.ToolUse {
-					toolResultMsg := schemas.BifrostMessage{
-						Role: schemas.ModelChatMessageRoleTool,
-						Content: schemas.MessageContent{
+					toolResultMsg := schemas.ChatMessage{
+						Role: schemas.ChatMessageRoleTool,
+						Content: &schemas.ChatMessageContent{
 							ContentStr: Ptr(tc.Result),
 						},
-						ToolMessage: &schemas.ToolMessage{
+						ChatToolMessage: &schemas.ChatToolMessage{
 							ToolCallID: Ptr(tc.ID),
 						},
 					}
@@ -553,20 +554,20 @@ func (b *BifrostLLM) convertMessages(posts []llm.Post) []schemas.BifrostMessage 
 }
 
 // createMultimodalContent creates content blocks for messages with images.
-func (b *BifrostLLM) createMultimodalContent(post llm.Post) []schemas.ContentBlock {
-	parts := make([]schemas.ContentBlock, 0, len(post.Files)+1)
+func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock {
+	parts := make([]schemas.ChatContentBlock, 0, len(post.Files)+1)
 
 	if post.Message != "" {
-		parts = append(parts, schemas.ContentBlock{
-			Type: "text",
+		parts = append(parts, schemas.ChatContentBlock{
+			Type: schemas.ChatContentBlockTypeText,
 			Text: Ptr(post.Message),
 		})
 	}
 
 	for _, file := range post.Files {
 		if !isValidImageType(file.MimeType) {
-			parts = append(parts, schemas.ContentBlock{
-				Type: "text",
+			parts = append(parts, schemas.ChatContentBlock{
+				Type: schemas.ChatContentBlockTypeText,
 				Text: Ptr(fmt.Sprintf("[Unsupported image type: %s]", file.MimeType)),
 			})
 			continue
@@ -574,8 +575,8 @@ func (b *BifrostLLM) createMultimodalContent(post llm.Post) []schemas.ContentBlo
 
 		data, err := io.ReadAll(file.Reader)
 		if err != nil {
-			parts = append(parts, schemas.ContentBlock{
-				Type: "text",
+			parts = append(parts, schemas.ChatContentBlock{
+				Type: schemas.ChatContentBlockTypeText,
 				Text: Ptr("[Error reading image data]"),
 			})
 			continue
@@ -584,9 +585,9 @@ func (b *BifrostLLM) createMultimodalContent(post llm.Post) []schemas.ContentBlo
 		encoded := base64.StdEncoding.EncodeToString(data)
 		dataURL := fmt.Sprintf("data:%s;base64,%s", file.MimeType, encoded)
 
-		parts = append(parts, schemas.ContentBlock{
+		parts = append(parts, schemas.ChatContentBlock{
 			Type: "image_url",
-			ImageURL: &schemas.ImageURLStruct{
+			ImageURLStruct: &schemas.ChatInputImage{
 				URL: dataURL,
 			},
 		})
@@ -595,18 +596,18 @@ func (b *BifrostLLM) createMultimodalContent(post llm.Post) []schemas.ContentBlo
 	return parts
 }
 
-// convertTools converts llm.Tool to Bifrost Tool format.
-func (b *BifrostLLM) convertTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.Tool {
+// convertTools converts llm.Tool to Bifrost ChatTool format.
+func (b *LLM) convertTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ChatTool {
 	if cfg.ToolsDisabled || request.Context == nil || request.Context.Tools == nil {
 		return nil
 	}
 
 	tools := request.Context.Tools.GetTools()
-	result := make([]schemas.Tool, 0, len(tools))
+	result := make([]schemas.ChatTool, 0, len(tools))
 
 	for _, tool := range tools {
-		// Convert schema to FunctionParameters
-		var params schemas.FunctionParameters
+		// Convert schema to ToolFunctionParameters
+		var params *schemas.ToolFunctionParameters
 		if tool.Schema != nil {
 			switch s := tool.Schema.(type) {
 			case map[string]interface{}:
@@ -624,18 +625,20 @@ func (b *BifrostLLM) convertTools(request llm.CompletionRequest, cfg llm.Languag
 		}
 
 		// Ensure params has default values
+		if params == nil {
+			params = &schemas.ToolFunctionParameters{
+				Type: "object",
+			}
+		}
 		if params.Type == "" {
 			params.Type = "object"
 		}
-		if params.Properties == nil {
-			params.Properties = map[string]interface{}{}
-		}
 
-		bifrostTool := schemas.Tool{
-			Type: "function",
-			Function: schemas.Function{
+		bifrostTool := schemas.ChatTool{
+			Type: schemas.ChatToolTypeFunction,
+			Function: &schemas.ChatToolFunction{
 				Name:        tool.Name,
-				Description: tool.Description,
+				Description: Ptr(tool.Description),
 				Parameters:  params,
 			},
 		}
@@ -645,9 +648,9 @@ func (b *BifrostLLM) convertTools(request llm.CompletionRequest, cfg llm.Languag
 	return result
 }
 
-// schemaMapToFunctionParams converts a schema map to FunctionParameters
-func schemaMapToFunctionParams(schemaMap map[string]interface{}) schemas.FunctionParameters {
-	params := schemas.FunctionParameters{
+// schemaMapToFunctionParams converts a schema map to ToolFunctionParameters
+func schemaMapToFunctionParams(schemaMap map[string]interface{}) *schemas.ToolFunctionParameters {
+	params := &schemas.ToolFunctionParameters{
 		Type: "object",
 	}
 
@@ -658,7 +661,7 @@ func schemaMapToFunctionParams(schemaMap map[string]interface{}) schemas.Functio
 		params.Description = &desc
 	}
 	if props, ok := schemaMap["properties"].(map[string]interface{}); ok {
-		params.Properties = props
+		params.Properties = (*schemas.OrderedMap)(&props)
 	}
 	if req, ok := schemaMap["required"].([]interface{}); ok {
 		required := make([]string, 0, len(req))

@@ -4,9 +4,11 @@
 package bifrost
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
+	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -20,12 +22,53 @@ type FetchModelsConfig struct {
 	OrgID    string
 }
 
-// FetchModels retrieves the list of available models from a provider.
-// Note: Model listing is not supported in Bifrost v1.1.38 - this returns an error.
+// FetchModels retrieves the list of available models from a provider using Bifrost.
 func FetchModels(cfg FetchModelsConfig, httpClient *http.Client) ([]llm.ModelInfo, error) {
-	// Bifrost v1.1.38 doesn't support listing models
-	// Return an empty list for now - this feature requires a newer version of Bifrost
-	return []llm.ModelInfo{}, nil
+	account := &providerAccount{
+		provider: cfg.Provider,
+		apiKey:   cfg.APIKey,
+		apiURL:   cfg.APIURL,
+		orgID:    cfg.OrgID,
+	}
+
+	bifrostConfig := schemas.BifrostConfig{
+		Account: account,
+	}
+
+	client, err := bifrostcore.Init(context.Background(), bifrostConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize Bifrost client for model listing: %w", err)
+	}
+	defer client.Shutdown()
+
+	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+
+	req := &schemas.BifrostListModelsRequest{
+		Provider: cfg.Provider,
+	}
+
+	resp, bifrostErr := client.ListAllModels(bifrostCtx, req)
+	if bifrostErr != nil {
+		return nil, fmt.Errorf("bifrost list models error: %s", bifrostErr.Error.Message)
+	}
+
+	if resp == nil {
+		return []llm.ModelInfo{}, nil
+	}
+
+	models := make([]llm.ModelInfo, 0, len(resp.Data))
+	for _, m := range resp.Data {
+		displayName := m.ID
+		if m.Name != nil && *m.Name != "" {
+			displayName = *m.Name
+		}
+		models = append(models, llm.ModelInfo{
+			ID:          m.ID,
+			DisplayName: displayName,
+		})
+	}
+
+	return models, nil
 }
 
 // FetchModelsForServiceType fetches models for a given service type string.

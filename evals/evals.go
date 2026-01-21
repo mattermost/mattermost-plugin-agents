@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/mattermost/mattermost-plugin-ai/bifrost"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 type EvalT struct {
