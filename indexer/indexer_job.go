@@ -111,11 +111,28 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 		}
 	}()
 
+	// Snapshot search at job start for consistency throughout the entire job
+	if s.getSearch == nil {
+		jobStatus.Status = JobStatusFailed
+		jobStatus.Error = "Search not configured"
+		jobStatus.CompletedAt = time.Now()
+		s.saveJobStatus(jobStatus)
+		return
+	}
+	search := s.getSearch()
+	if search == nil {
+		jobStatus.Status = JobStatusFailed
+		jobStatus.Error = "Search not configured"
+		jobStatus.CompletedAt = time.Now()
+		s.saveJobStatus(jobStatus)
+		return
+	}
+
 	ctx := context.Background()
 
 	// Only clear the index if explicitly requested (full reindex)
 	if clearIndex {
-		if err := s.search.Clear(ctx); err != nil {
+		if err := search.Clear(ctx); err != nil {
 			jobStatus.Status = JobStatusFailed
 			jobStatus.Error = fmt.Sprintf("Failed to clear search index: %s", err)
 			jobStatus.CompletedAt = time.Now()
@@ -177,7 +194,7 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 
 		// Store the batch with retry logic
 		if len(docs) > 0 {
-			if err := s.storeWithRetry(ctx, docs); err != nil {
+			if err := s.storeWithRetry(ctx, docs, search); err != nil {
 				s.handleJobError(jobStatus, fmt.Sprintf("Failed to store documents: %s", err), lastCreateAt, lastID)
 				return
 			}
@@ -207,7 +224,7 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 	}
 
 	// Run catch-up pass to index posts created during the main reindex
-	catchUpCount, catchUpErr := s.runCatchUpPass(ctx, jobStatus.CutoffAt)
+	catchUpCount, catchUpErr := s.runCatchUpPass(ctx, jobStatus.CutoffAt, search)
 	if catchUpErr != nil {
 		s.pluginAPI.LogError("Catch-up pass failed", "error", catchUpErr)
 		// Continue with completion even if catch-up fails - main index is complete
@@ -277,10 +294,10 @@ func (s *Indexer) filterAndCreateDocs(posts []PostRecord) []embeddings.PostDocum
 }
 
 // storeWithRetry stores documents with retry logic
-func (s *Indexer) storeWithRetry(ctx context.Context, docs []embeddings.PostDocument) error {
+func (s *Indexer) storeWithRetry(ctx context.Context, docs []embeddings.PostDocument, search embeddings.EmbeddingSearch) error {
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		err := s.search.Store(ctx, docs)
+		err := search.Store(ctx, docs)
 		if err == nil {
 			return nil
 		}
@@ -351,7 +368,7 @@ func (s *Indexer) saveJobStatus(status *JobStatus) {
 }
 
 // runCatchUpPass indexes posts created after the cutoff timestamp during the main reindex
-func (s *Indexer) runCatchUpPass(ctx context.Context, cutoffAt int64) (int64, error) {
+func (s *Indexer) runCatchUpPass(ctx context.Context, cutoffAt int64, search embeddings.EmbeddingSearch) (int64, error) {
 	if cutoffAt == 0 {
 		return 0, nil
 	}
@@ -393,7 +410,7 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, cutoffAt int64) (int64, er
 
 		// Store with retry
 		if len(docs) > 0 {
-			if err := s.storeWithRetry(ctx, docs); err != nil {
+			if err := s.storeWithRetry(ctx, docs, search); err != nil {
 				return catchUpCount, fmt.Errorf("failed to store catch-up documents: %w", err)
 			}
 		}

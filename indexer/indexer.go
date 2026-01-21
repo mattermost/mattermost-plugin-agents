@@ -18,23 +18,25 @@ import (
 )
 
 type Indexer struct {
-	search       embeddings.EmbeddingSearch
+	getSearch    func() embeddings.EmbeddingSearch
+	configGetter func() embeddings.EmbeddingSearchConfig
 	pluginAPI    mmapi.Client
 	bots         *bots.MMBots
 	db           *sqlx.DB
 	clusterMutex cluster.MutexPluginAPI
-	configGetter func() embeddings.EmbeddingSearchConfig
 }
 
 func New(
-	search embeddings.EmbeddingSearch,
+	getSearch func() embeddings.EmbeddingSearch,
+	configGetter func() embeddings.EmbeddingSearchConfig,
 	pluginAPI mmapi.Client,
 	bots *bots.MMBots,
 	db *sqlx.DB,
 	clusterMutex cluster.MutexPluginAPI,
 ) *Indexer {
 	return &Indexer{
-		search:       search,
+		getSearch:    getSearch,
+		configGetter: configGetter,
 		pluginAPI:    pluginAPI,
 		bots:         bots,
 		db:           db,
@@ -48,7 +50,11 @@ func (s *Indexer) IndexPost(ctx context.Context, post *model.Post, channel *mode
 		return nil
 	}
 
-	if s.search == nil {
+	if s.getSearch == nil {
+		return nil // Search not configured
+	}
+	search := s.getSearch()
+	if search == nil {
 		return nil // Search not configured
 	}
 
@@ -63,16 +69,16 @@ func (s *Indexer) IndexPost(ctx context.Context, post *model.Post, channel *mode
 	}
 
 	// Store the document with retry logic
-	err := s.storeWithRetryIncremental(ctx, []embeddings.PostDocument{doc})
+	err := s.storeWithRetryIncremental(ctx, []embeddings.PostDocument{doc}, search)
 	s.updateIncrementalStats(err)
 	return err
 }
 
 // storeWithRetryIncremental stores documents with retry logic optimized for single post indexing
-func (s *Indexer) storeWithRetryIncremental(ctx context.Context, docs []embeddings.PostDocument) error {
+func (s *Indexer) storeWithRetryIncremental(ctx context.Context, docs []embeddings.PostDocument, search embeddings.EmbeddingSearch) error {
 	var lastErr error
 	for attempt := 0; attempt < maxIncrementalRetries; attempt++ {
-		err := s.search.Store(ctx, docs)
+		err := search.Store(ctx, docs)
 		if err == nil {
 			return nil
 		}
@@ -125,11 +131,15 @@ func (s *Indexer) ResetIncrementalStats() error {
 
 // DeletePost deletes a post from the index
 func (s *Indexer) DeletePost(ctx context.Context, postID string) error {
-	if s.search == nil {
+	if s.getSearch == nil {
+		return nil // Search not configured
+	}
+	search := s.getSearch()
+	if search == nil {
 		return nil // Search not configured
 	}
 
-	return s.search.Delete(ctx, []string{postID})
+	return search.Delete(ctx, []string{postID})
 }
 
 // StartReindexJob starts a post reindexing job
@@ -137,7 +147,7 @@ func (s *Indexer) DeletePost(ctx context.Context, postID string) error {
 // If clearIndex is false, the job will resume from where it left off (if applicable).
 func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	// Check if search is initialized
-	if s.search == nil {
+	if s.getSearch == nil || s.getSearch() == nil {
 		return JobStatus{}, fmt.Errorf("search functionality is not configured")
 	}
 
@@ -291,7 +301,7 @@ func (s *Indexer) shouldIndexPost(post *model.Post, channel *model.Channel) bool
 
 // StartCatchUpJob indexes posts created since the last successful index
 func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
-	if s.search == nil {
+	if s.getSearch == nil || s.getSearch() == nil {
 		return JobStatus{}, fmt.Errorf("search functionality is not configured")
 	}
 
@@ -350,7 +360,7 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 
 // CheckIndexHealth compares database posts with indexed posts
 func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, error) {
-	if s.search == nil {
+	if s.getSearch == nil || s.getSearch() == nil {
 		return HealthCheckResult{}, fmt.Errorf("search functionality is not configured")
 	}
 
@@ -482,16 +492,6 @@ func (s *Indexer) CheckModelCompatibility(currentDimensions int, currentModelNam
 		NeedsReindex: false,
 		Reason:       "",
 	}
-}
-
-// SetConfigGetter sets the function to retrieve the current embedding search config
-func (s *Indexer) SetConfigGetter(getter func() embeddings.EmbeddingSearchConfig) {
-	s.configGetter = getter
-}
-
-// SetSearch updates the embedding search instance used by the indexer
-func (s *Indexer) SetSearch(search embeddings.EmbeddingSearch) {
-	s.search = search
 }
 
 // StaleJobThreshold is the duration after which a running job is considered stale

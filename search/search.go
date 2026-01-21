@@ -58,7 +58,7 @@ type Options struct {
 }
 
 type Search struct {
-	embeddings.EmbeddingSearch
+	getSearch        func() embeddings.EmbeddingSearch
 	mmclient         mmapi.Client
 	prompts          *llm.Prompts
 	streamingService streaming.Service
@@ -66,14 +66,14 @@ type Search struct {
 }
 
 func New(
-	search embeddings.EmbeddingSearch,
+	getSearch func() embeddings.EmbeddingSearch,
 	mmclient mmapi.Client,
 	prompts *llm.Prompts,
 	streamingService streaming.Service,
 	licenseChecker *enterprise.LicenseChecker,
 ) *Search {
 	return &Search{
-		EmbeddingSearch:  search,
+		getSearch:        getSearch,
 		mmclient:         mmclient,
 		prompts:          prompts,
 		streamingService: streamingService,
@@ -83,12 +83,16 @@ func New(
 
 // Enabled returns true if the search service is enabled and functional
 func (s *Search) Enabled() bool {
-	return s != nil && s.EmbeddingSearch != nil
+	return s != nil && s.getSearch != nil && s.getSearch() != nil
 }
 
-// SetEmbeddingSearch updates the embedding search instance used by the search service
-func (s *Search) SetEmbeddingSearch(search embeddings.EmbeddingSearch) {
-	s.EmbeddingSearch = search
+// Search performs a semantic search using the underlying embedding search
+func (s *Search) Search(ctx context.Context, query string, opts embeddings.SearchOptions) ([]embeddings.SearchResult, error) {
+	search := s.getSearch()
+	if search == nil {
+		return nil, fmt.Errorf("embedding search not configured")
+	}
+	return search.Search(ctx, query, opts)
 }
 
 // enrichResults converts raw search results to RAGResults with channel/user metadata.
@@ -154,12 +158,17 @@ func (s *Search) executeSearch(ctx context.Context, query string, opts Options) 
 		return nil, fmt.Errorf("query cannot be empty")
 	}
 
+	search := s.getSearch()
+	if search == nil {
+		return nil, fmt.Errorf("embedding search not configured")
+	}
+
 	limit := opts.Limit
 	if limit == 0 {
 		limit = 5
 	}
 
-	searchResults, err := s.Search(ctx, query, embeddings.SearchOptions{
+	searchResults, err := search.Search(ctx, query, embeddings.SearchOptions{
 		Limit:     limit,
 		TeamID:    opts.TeamID,
 		ChannelID: opts.ChannelID,

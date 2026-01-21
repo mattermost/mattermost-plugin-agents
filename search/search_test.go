@@ -394,7 +394,7 @@ func TestExecuteSearch(t *testing.T) {
 				tc.setupMocks(mockEmbedding, mockClient)
 			}
 
-			s := New(mockEmbedding, mockClient, nil, nil, nil)
+			s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil)
 			results, err := s.executeSearch(context.Background(), tc.query, tc.opts)
 
 			if tc.expectError != "" {

@@ -40,7 +40,8 @@ func TestHandleRunSearch(t *testing.T) {
 			setupMock: func(t *testing.T) *search.Search {
 				mockClient := mmapimocks.NewMockClient(t)
 				mockClient.On("DM", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("DM failed"))
-				return search.New(mocks.NewMockEmbeddingSearch(t), mockClient, nil, nil, nil)
+				me := mocks.NewMockEmbeddingSearch(t)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, mockClient, nil, nil, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -76,8 +77,11 @@ func TestHandleRunSearch(t *testing.T) {
 			expectError:    true,
 		},
 		{
-			name:          "search fails - empty query",
-			searchService: search.New(mocks.NewMockEmbeddingSearch(t), nil, nil, nil, nil),
+			name: "search fails - empty query",
+			setupMock: func(t *testing.T) *search.Search {
+				me := mocks.NewMockEmbeddingSearch(t)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
+			},
 			requestBody: SearchRequest{
 				Query:      "",
 				TeamID:     "team123",
@@ -147,7 +151,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			setupMock: func(t *testing.T) *search.Search {
 				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 				mockEmbedding.On("Search", mock.Anything, "test query", mock.Anything).Return([]embeddings.SearchResult{}, nil)
-				return search.New(mockEmbedding, nil, nil, nil, nil)
+				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",

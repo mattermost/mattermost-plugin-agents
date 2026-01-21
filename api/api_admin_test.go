@@ -391,5 +391,5 @@ func createMockIndexer(t *testing.T, mockService *mockIndexerService) *indexer.I
 	mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
 	mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
 
-	return indexer.New(nil, mockClient, nil, nil, mockMutexAPI)
+	return indexer.New(nil, nil, mockClient, nil, nil, mockMutexAPI)
 }

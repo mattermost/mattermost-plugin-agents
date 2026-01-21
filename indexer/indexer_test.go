@@ -97,7 +97,7 @@ func TestShouldIndexPost(t *testing.T) {
 
 	// Create indexer with empty bots
 	mockBots := &bots.MMBots{}
-	indexer := New(nil, nil, mockBots, nil, nil)
+	indexer := New(nil, nil, nil, mockBots, nil, nil)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -114,7 +114,7 @@ func TestDeletePost(t *testing.T) {
 
 	t.Run("does nothing when search is nil", func(t *testing.T) {
 		// Create indexer with nil search
-		indexer := New(nil, nil, mockBots, nil, nil)
+		indexer := New(nil, nil, nil, mockBots, nil, nil)
 
 		// Should not panic and should return no error
 		err := indexer.DeletePost(ctx, postID)
@@ -127,7 +127,7 @@ func TestIndexPost(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("does not index deleted post", func(t *testing.T) {
-		indexer := New(nil, nil, mockBots, nil, nil)
+		indexer := New(nil, nil, nil, mockBots, nil, nil)
 
 		post := &model.Post{
 			Id:       "post2",
@@ -151,7 +151,7 @@ func TestIndexPost(t *testing.T) {
 
 	t.Run("does nothing when search is nil", func(t *testing.T) {
 		// Create indexer with nil search
-		indexer := New(nil, nil, mockBots, nil, nil)
+		indexer := New(nil, nil, nil, mockBots, nil, nil)
 
 		post := &model.Post{
 			Id:       "post1",
@@ -174,7 +174,7 @@ func TestIndexPost(t *testing.T) {
 
 func TestFilterAndCreateDocs(t *testing.T) {
 	mockBots := &bots.MMBots{}
-	indexer := New(nil, nil, mockBots, nil, nil)
+	indexer := New(nil, nil, nil, mockBots, nil, nil)
 
 	tests := []struct {
 		name          string
@@ -380,7 +380,7 @@ func TestCheckModelCompatibility(t *testing.T) {
 				}).
 				Return(tt.storedInfoErr)
 
-			indexer := New(nil, mockClient, nil, nil, nil)
+			indexer := New(nil, nil, mockClient, nil, nil, nil)
 			result := indexer.CheckModelCompatibility(tt.currentDimensions, tt.currentModelName)
 
 			assert.Equal(t, tt.expectedCompat, result.Compatible)
@@ -402,7 +402,7 @@ func TestCursorOperations(t *testing.T) {
 		// Expect KVSet to be called with the cursor
 		mockClient.On("KVSet", IndexerCursorKey, cursor).Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		indexer.saveCursor(cursor)
 
 		// Now setup for load
@@ -424,7 +424,7 @@ func TestCursorOperations(t *testing.T) {
 		mockClient.On("KVGet", IndexerCursorKey, mock.AnythingOfType("*indexer.Cursor")).
 			Return(errors.New("not found"))
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		loaded := indexer.loadCursor()
 
 		assert.Equal(t, int64(0), loaded.LastCreateAt)
@@ -438,7 +438,7 @@ func TestCursorOperations(t *testing.T) {
 		mockClient.On("KVSet", IndexerCursorKey, cursor).Return(errors.New("kv error"))
 		mockClient.On("LogError", "Failed to save cursor", mock.Anything).Return()
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		indexer.saveCursor(cursor) // Should not panic, just log error
 	})
 }
@@ -451,7 +451,7 @@ func TestLastIndexedTimestamp(t *testing.T) {
 
 		mockClient.On("KVSet", IndexerLastIndexedKey, timestamp).Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		indexer.saveLastIndexedTimestamp(timestamp)
 
 		mockClient.On("KVGet", IndexerLastIndexedKey, mock.AnythingOfType("*int64")).
@@ -471,7 +471,7 @@ func TestLastIndexedTimestamp(t *testing.T) {
 		mockClient.On("KVGet", IndexerLastIndexedKey, mock.AnythingOfType("*int64")).
 			Return(errors.New("not found"))
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		loaded := indexer.getLastIndexedTimestamp()
 
 		assert.Equal(t, int64(0), loaded)
@@ -483,7 +483,7 @@ func TestLastIndexedTimestamp(t *testing.T) {
 		mockClient.On("KVSet", IndexerLastIndexedKey, int64(100)).Return(errors.New("kv error"))
 		mockClient.On("LogError", "Failed to save last indexed timestamp", mock.Anything).Return()
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		indexer.saveLastIndexedTimestamp(100) // Should not panic, just log error
 	})
 }
@@ -507,7 +507,7 @@ func TestModelInfoOperations(t *testing.T) {
 				saved.IndexedAt > 0
 		})).Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		err := indexer.SaveModelInfo(info)
 		require.NoError(t, err)
 
@@ -541,8 +541,8 @@ func TestStoreWithRetry(t *testing.T) {
 
 		mockSearch.On("Store", mock.Anything, docs).Return(nil)
 
-		indexer := New(mockSearch, mockClient, nil, nil, nil)
-		err := indexer.storeWithRetry(context.Background(), docs)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, nil, nil)
+		err := indexer.storeWithRetry(context.Background(), docs, mockSearch)
 
 		require.NoError(t, err)
 	})
@@ -571,8 +571,8 @@ func TestStoreWithRetry(t *testing.T) {
 		// Expect LogWarn calls for retries
 		mockClient.On("LogWarn", "Embedding store failed, retrying", mock.Anything).Return()
 
-		indexer := New(mockSearch, mockClient, nil, nil, nil)
-		err := indexer.storeWithRetry(context.Background(), docs)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, nil, nil)
+		err := indexer.storeWithRetry(context.Background(), docs, mockSearch)
 
 		require.NoError(t, err)
 		assert.Equal(t, 3, callCount)
@@ -589,8 +589,8 @@ func TestStoreWithRetry(t *testing.T) {
 		mockSearch.On("Store", mock.Anything, docs).Return(errors.New("persistent error"))
 		mockClient.On("LogWarn", "Embedding store failed, retrying", mock.Anything).Return()
 
-		indexer := New(mockSearch, mockClient, nil, nil, nil)
-		err := indexer.storeWithRetry(context.Background(), docs)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, nil, nil)
+		err := indexer.storeWithRetry(context.Background(), docs, mockSearch)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "persistent error")
@@ -606,7 +606,7 @@ func TestStartCatchUpJob(t *testing.T) {
 		mockClient.On("KVGet", IndexerLastIndexedKey, mock.AnythingOfType("*int64")).
 			Return(errors.New("not found"))
 
-		indexer := New(mockSearch, mockClient, nil, nil, nil)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, nil, nil)
 		_, err := indexer.StartCatchUpJob()
 
 		require.Error(t, err)
@@ -616,7 +616,7 @@ func TestStartCatchUpJob(t *testing.T) {
 	t.Run("returns error when search is nil", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		_, err := indexer.StartCatchUpJob()
 
 		require.Error(t, err)
@@ -745,7 +745,7 @@ func TestCheckIndexHealth(t *testing.T) {
 	t.Run("returns error when search is nil", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		_, err := indexer.CheckIndexHealth(context.Background())
 
 		require.Error(t, err)
@@ -776,7 +776,7 @@ func TestCheckIndexHealth(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		indexer := New(mockSearch, mockClient, nil, db, nil)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -810,7 +810,7 @@ func TestCheckIndexHealth(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		indexer := New(mockSearch, mockClient, nil, db, nil)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -844,7 +844,7 @@ func TestCheckIndexHealth(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		indexer := New(mockSearch, mockClient, nil, db, nil)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -887,7 +887,7 @@ func TestCheckIndexHealth(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		indexer := New(mockSearch, mockClient, nil, db, nil)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -929,7 +929,7 @@ func TestCheckIndexHealth(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		indexer := New(mockSearch, mockClient, nil, db, nil)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -960,7 +960,7 @@ func TestCountIndexedPosts(t *testing.T) {
 			"post2", "post2", "Content 2")
 		require.NoError(t, err)
 
-		indexer := New(mockSearch, mockClient, nil, db, nil)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
 		count, err := indexer.countIndexedPosts(context.Background())
 
 		require.NoError(t, err)
@@ -968,19 +968,17 @@ func TestCountIndexedPosts(t *testing.T) {
 	})
 }
 
-func TestSetConfigGetter(t *testing.T) {
+func TestConfigGetter(t *testing.T) {
 	t.Run("getModelInfoFromConfig returns nil when no getter set", func(t *testing.T) {
-		indexer := New(nil, nil, nil, nil, nil)
+		indexer := New(nil, nil, nil, nil, nil, nil)
 
 		result := indexer.getModelInfoFromConfig()
 		assert.Nil(t, result)
 	})
 
 	t.Run("getModelInfoFromConfig returns correct ModelInfo from config", func(t *testing.T) {
-		indexer := New(nil, nil, nil, nil, nil)
-
-		// Set a config getter with full config
-		indexer.SetConfigGetter(func() embeddings.EmbeddingSearchConfig {
+		// Pass config getter to constructor
+		configGetter := func() embeddings.EmbeddingSearchConfig {
 			return embeddings.EmbeddingSearchConfig{
 				Dimensions: 1536,
 				EmbeddingProvider: embeddings.UpstreamConfig{
@@ -988,7 +986,9 @@ func TestSetConfigGetter(t *testing.T) {
 					Parameters: []byte(`{"embeddingModel": "text-embedding-3-small"}`),
 				},
 			}
-		})
+		}
+
+		indexer := New(nil, configGetter, nil, nil, nil, nil)
 
 		result := indexer.getModelInfoFromConfig()
 
@@ -1006,7 +1006,7 @@ func TestIncrementalStats(t *testing.T) {
 		mockClient.On("KVGet", IncrementalStatsKey, mock.AnythingOfType("*indexer.IncrementalStats")).
 			Return(errors.New("not found"))
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		stats, err := indexer.GetIncrementalStats()
 
 		require.NoError(t, err)
@@ -1029,7 +1029,7 @@ func TestIncrementalStats(t *testing.T) {
 			}).
 			Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		stats, err := indexer.GetIncrementalStats()
 
 		require.NoError(t, err)
@@ -1043,7 +1043,7 @@ func TestIncrementalStats(t *testing.T) {
 
 		mockClient.On("KVDelete", IncrementalStatsKey).Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		err := indexer.ResetIncrementalStats()
 
 		require.NoError(t, err)
@@ -1066,7 +1066,7 @@ func TestIncrementalStats(t *testing.T) {
 			return stats.TotalIndexed == 11 && !stats.LastIndexedAt.IsZero()
 		})).Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		indexer.updateIncrementalStats(nil) // nil error = success
 	})
 
@@ -1087,7 +1087,7 @@ func TestIncrementalStats(t *testing.T) {
 			return stats.ErrorCount == 6 && stats.LastError == "test indexing error"
 		})).Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		indexer.updateIncrementalStats(errors.New("test indexing error"))
 	})
 
@@ -1104,7 +1104,7 @@ func TestIncrementalStats(t *testing.T) {
 				stats.ErrorCount == 1
 		})).Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		indexer.updateIncrementalStats(errors.New("connection timeout"))
 	})
 }
@@ -1120,8 +1120,8 @@ func TestStoreWithRetryIncremental(t *testing.T) {
 
 		mockSearch.On("Store", mock.Anything, docs).Return(nil)
 
-		indexer := New(mockSearch, mockClient, nil, nil, nil)
-		err := indexer.storeWithRetryIncremental(context.Background(), docs)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, nil, nil)
+		err := indexer.storeWithRetryIncremental(context.Background(), docs, mockSearch)
 
 		require.NoError(t, err)
 	})
@@ -1149,8 +1149,8 @@ func TestStoreWithRetryIncremental(t *testing.T) {
 
 		mockClient.On("LogWarn", "Incremental embedding store failed, retrying", mock.Anything).Return()
 
-		indexer := New(mockSearch, mockClient, nil, nil, nil)
-		err := indexer.storeWithRetryIncremental(context.Background(), docs)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, nil, nil)
+		err := indexer.storeWithRetryIncremental(context.Background(), docs, mockSearch)
 
 		require.NoError(t, err)
 		assert.Equal(t, 2, callCount)
@@ -1168,8 +1168,8 @@ func TestStoreWithRetryIncremental(t *testing.T) {
 		mockSearch.On("Store", mock.Anything, docs).Return(errors.New("persistent error"))
 		mockClient.On("LogWarn", "Incremental embedding store failed, retrying", mock.Anything).Return()
 
-		indexer := New(mockSearch, mockClient, nil, nil, nil)
-		err := indexer.storeWithRetryIncremental(context.Background(), docs)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, nil, nil)
+		err := indexer.storeWithRetryIncremental(context.Background(), docs, mockSearch)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "persistent error")
@@ -1183,7 +1183,7 @@ func TestIsJobStale(t *testing.T) {
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Return(errors.New("not found"))
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		isStale, jobStatus, err := indexer.IsJobStale()
 
 		require.NoError(t, err)
@@ -1201,7 +1201,7 @@ func TestIsJobStale(t *testing.T) {
 			}).
 			Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		isStale, jobStatus, err := indexer.IsJobStale()
 
 		require.NoError(t, err)
@@ -1220,7 +1220,7 @@ func TestIsJobStale(t *testing.T) {
 			}).
 			Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		isStale, _, err := indexer.IsJobStale()
 
 		require.NoError(t, err)
@@ -1237,7 +1237,7 @@ func TestIsJobStale(t *testing.T) {
 			}).
 			Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		isStale, _, err := indexer.IsJobStale()
 
 		require.NoError(t, err)
@@ -1257,7 +1257,7 @@ func TestIsJobStale(t *testing.T) {
 			}).
 			Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		isStale, jobStatus, err := indexer.IsJobStale()
 
 		require.NoError(t, err)
@@ -1278,7 +1278,7 @@ func TestIsJobStale(t *testing.T) {
 			}).
 			Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		isStale, jobStatus, err := indexer.IsJobStale()
 
 		require.NoError(t, err)
@@ -1300,7 +1300,7 @@ func TestIsJobStale(t *testing.T) {
 			}).
 			Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, nil)
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		isStale, _, err := indexer.IsJobStale()
 
 		require.NoError(t, err)
@@ -1319,7 +1319,7 @@ func TestResetStaleJob(t *testing.T) {
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Return(errors.New("not found"))
 
-		indexer := New(nil, mockClient, nil, nil, mockMutexAPI)
+		indexer := New(nil, nil, mockClient, nil, nil, mockMutexAPI)
 		_, err := indexer.ResetStaleJob()
 
 		require.Error(t, err)
@@ -1343,7 +1343,7 @@ func TestResetStaleJob(t *testing.T) {
 			}).
 			Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, mockMutexAPI)
+		indexer := New(nil, nil, mockClient, nil, nil, mockMutexAPI)
 		_, err := indexer.ResetStaleJob()
 
 		require.Error(t, err)
@@ -1375,7 +1375,7 @@ func TestResetStaleJob(t *testing.T) {
 				!status.CompletedAt.IsZero()
 		})).Return(nil)
 
-		indexer := New(nil, mockClient, nil, nil, mockMutexAPI)
+		indexer := New(nil, nil, mockClient, nil, nil, mockMutexAPI)
 		jobStatus, err := indexer.ResetStaleJob()
 
 		require.NoError(t, err)
@@ -1420,14 +1420,14 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 		// Update the user posts to have regular user IDs
 		for i := 0; i < 5; i++ {
 			postID := fmt.Sprintf("user-post%d", i)
-			_, err := db.Exec("UPDATE Posts SET UserId = 'regular-user-id' WHERE Id = $1", postID)
+			_, err = db.Exec("UPDATE Posts SET UserId = 'regular-user-id' WHERE Id = $1", postID)
 			require.NoError(t, err)
 		}
 
 		// Add 3 posts from the bot user (should be excluded)
 		for i := 0; i < 3; i++ {
 			postID := fmt.Sprintf("bot-post%d", i)
-			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, UserId) VALUES ($1, $2, 0, $3, '', 'bot-user-id')",
+			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, UserId) VALUES ($1, $2, 0, $3, '', 'bot-user-id')",
 				postID, now+int64(100+i), fmt.Sprintf("Bot message %d", i))
 			require.NoError(t, err)
 		}
@@ -1435,12 +1435,12 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 		// Add 5 indexed posts (matching the user posts)
 		for i := 0; i < 5; i++ {
 			postID := fmt.Sprintf("user-post%d", i)
-			_, err := db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
+			_, err = db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
 				postID, postID, fmt.Sprintf("Content %d", i))
 			require.NoError(t, err)
 		}
 
-		indexer := New(mockSearch, mockClient, mockBots, db, nil)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -1475,7 +1475,7 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 		}
 
 		// nil bots
-		indexer := New(mockSearch, mockClient, nil, db, nil)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)
@@ -1511,7 +1511,7 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		indexer := New(mockSearch, mockClient, mockBots, db, nil)
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
 		result, err := indexer.CheckIndexHealth(context.Background())
 
 		require.NoError(t, err)

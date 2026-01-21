@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-ai/api"
@@ -147,6 +148,24 @@ func (p *Plugin) OnActivate() error {
 
 	streamingService := streaming.NewMMPostStreamService(mmClient, i18nBundle)
 
+	// Atomic pointer for the embedding search - single source of truth
+	var currentSearch atomic.Pointer[embeddings.EmbeddingSearch]
+
+	// Getter function that reads from the atomic pointer
+	getSearch := func() embeddings.EmbeddingSearch {
+		ptr := currentSearch.Load()
+		if ptr == nil {
+			return nil
+		}
+		return *ptr
+	}
+
+	// Config getter for saving model info after reindexing
+	configGetter := func() embeddings.EmbeddingSearchConfig {
+		return p.configuration.EmbeddingSearchConfig()
+	}
+
+	// Initialize embedding search
 	embeddingsSearch, err := search.InitEmbeddingsSearch(
 		dbClient.DB,
 		llmUpstreamHTTPClient,
@@ -158,12 +177,8 @@ func (p *Plugin) OnActivate() error {
 		// Continue without search functionality
 	}
 
-	indexerService := indexer.New(embeddingsSearch, mmClient, bots, dbClient.DB, p.API)
-
-	// Wire config getter so indexer can save model info after reindexing
-	indexerService.SetConfigGetter(func() embeddings.EmbeddingSearchConfig {
-		return p.configuration.EmbeddingSearchConfig()
-	})
+	// Create indexer service with getter function
+	indexerService := indexer.New(getSearch, configGetter, mmClient, bots, dbClient.DB, p.API)
 
 	// Check model compatibility and disable search if model has changed
 	if embeddingsSearch != nil {
@@ -173,12 +188,17 @@ func (p *Plugin) OnActivate() error {
 			pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
 				"reason", compatibility.Reason)
 			embeddingsSearch = nil // Disable search
-			indexerService.SetSearch(nil)
 		}
 	}
 
+	// Store initial search in atomic pointer
+	if embeddingsSearch != nil {
+		currentSearch.Store(&embeddingsSearch)
+	}
+
+	// Create search service with getter function
 	searchService := search.New(
-		embeddingsSearch,
+		getSearch,
 		mmClient,
 		prompts,
 		streamingService,
@@ -196,8 +216,7 @@ func (p *Plugin) OnActivate() error {
 		if initErr != nil {
 			pluginAPI.Log.Error("Failed to reinitialize embedding search on config change", "error", initErr)
 			// Disable search on failure
-			indexerService.SetSearch(nil)
-			searchService.SetEmbeddingSearch(nil)
+			currentSearch.Store(nil)
 			return
 		}
 
@@ -212,9 +231,12 @@ func (p *Plugin) OnActivate() error {
 			}
 		}
 
-		// Update both services
-		indexerService.SetSearch(newEmbeddingsSearch)
-		searchService.SetEmbeddingSearch(newEmbeddingsSearch)
+		// Update atomic pointer - both services will see the new value
+		if newEmbeddingsSearch != nil {
+			currentSearch.Store(&newEmbeddingsSearch)
+		} else {
+			currentSearch.Store(nil)
+		}
 		pluginAPI.Log.Info("Embedding search reinitialized on config change")
 	})
 

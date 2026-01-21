@@ -474,8 +474,11 @@ func TestHandleGetAIBots(t *testing.T) {
 		envSetup                 func(e *TestEnvironment)
 	}{
 		{
-			name:                     "search enabled - non-nil service with non-nil embedding search",
-			searchService:            search.New(mocks.NewMockEmbeddingSearch(t), nil, nil, nil, nil),
+			name: "search enabled - non-nil service with non-nil embedding search",
+			searchService: func() *search.Search {
+				me := mocks.NewMockEmbeddingSearch(t)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
+			}(),
 			expectedSearchEnabled:    true,
 			expectedAllowUnsafeLinks: false,
 			expectedStatus:           http.StatusOK,

@@ -25,11 +25,6 @@ func NewCompositeSearch(store VectorStore, provider EmbeddingProvider, options c
 	}
 }
 
-// SetChunkingOptions updates the chunking options
-func (c *CompositeSearch) SetChunkingOptions(options chunking.Options) {
-	c.options = options
-}
-
 // Store chunks documents, generates embeddings, and stores them
 func (c *CompositeSearch) Store(ctx context.Context, docs []PostDocument) error {
 	// Apply chunking to each document
