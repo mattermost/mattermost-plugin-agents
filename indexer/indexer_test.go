@@ -985,7 +985,7 @@ func TestSetConfigGetter(t *testing.T) {
 				Dimensions: 1536,
 				EmbeddingProvider: embeddings.UpstreamConfig{
 					Type:       embeddings.ProviderTypeOpenAI,
-					Parameters: []byte(`{"model": "text-embedding-3-small"}`),
+					Parameters: []byte(`{"embeddingModel": "text-embedding-3-small"}`),
 				},
 			}
 		})

@@ -86,6 +86,11 @@ func (s *Search) Enabled() bool {
 	return s != nil && s.EmbeddingSearch != nil
 }
 
+// SetEmbeddingSearch updates the embedding search instance used by the search service
+func (s *Search) SetEmbeddingSearch(search embeddings.EmbeddingSearch) {
+	s.EmbeddingSearch = search
+}
+
 // enrichResults converts raw search results to RAGResults with channel/user metadata.
 func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGResult {
 	var ragResults []RAGResult

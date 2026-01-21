@@ -193,7 +193,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     dimensions: dimensionsValue,
                                 });
                             }}
-                            min={0}
+                            min={1}
                             helptext={intl.formatMessage({defaultMessage: 'The number of dimensions for the vector embeddings. Common values are 768, 1024, or 1536 depending on the model.'})}
                         />
 

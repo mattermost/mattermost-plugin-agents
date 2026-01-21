@@ -127,10 +127,10 @@ func (c *EmbeddingSearchConfig) GetModelName() string {
 	}
 
 	var params struct {
-		Model string `json:"model"`
+		EmbeddingModel string `json:"embeddingModel"`
 	}
 	if err := json.Unmarshal(c.EmbeddingProvider.Parameters, &params); err != nil {
 		return ""
 	}
-	return params.Model
+	return params.EmbeddingModel
 }

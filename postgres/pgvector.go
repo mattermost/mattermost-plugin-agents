@@ -24,6 +24,10 @@ type PGVectorConfig struct {
 }
 
 func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
+	if config.Dimensions <= 0 {
+		return nil, fmt.Errorf("pgvector dimensions must be greater than 0, got %d", config.Dimensions)
+	}
+
 	// Enable pgvector extension if not already enabled
 	if _, err := db.Exec("CREATE EXTENSION IF NOT EXISTS vector"); err != nil {
 		return nil, fmt.Errorf("failed to create vector extension: %w", err)

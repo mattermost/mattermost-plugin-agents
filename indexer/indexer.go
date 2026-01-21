@@ -489,6 +489,11 @@ func (s *Indexer) SetConfigGetter(getter func() embeddings.EmbeddingSearchConfig
 	s.configGetter = getter
 }
 
+// SetSearch updates the embedding search instance used by the indexer
+func (s *Indexer) SetSearch(search embeddings.EmbeddingSearch) {
+	s.search = search
+}
+
 // StaleJobThreshold is the duration after which a running job is considered stale
 const StaleJobThreshold = 30 * time.Minute
 

@@ -173,6 +173,7 @@ func (p *Plugin) OnActivate() error {
 			pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
 				"reason", compatibility.Reason)
 			embeddingsSearch = nil // Disable search
+			indexerService.SetSearch(nil)
 		}
 	}
 
@@ -183,6 +184,39 @@ func (p *Plugin) OnActivate() error {
 		streamingService,
 		licenseChecker,
 	)
+
+	// Register update listener for embedding search config changes
+	p.configuration.RegisterUpdateListener(func() {
+		newEmbeddingsSearch, initErr := search.InitEmbeddingsSearch(
+			dbClient.DB,
+			llmUpstreamHTTPClient,
+			p.configuration.EmbeddingSearchConfig(),
+			licenseChecker,
+		)
+		if initErr != nil {
+			pluginAPI.Log.Error("Failed to reinitialize embedding search on config change", "error", initErr)
+			// Disable search on failure
+			indexerService.SetSearch(nil)
+			searchService.SetEmbeddingSearch(nil)
+			return
+		}
+
+		// Check model compatibility
+		if newEmbeddingsSearch != nil {
+			embeddingsCfg := p.configuration.EmbeddingSearchConfig()
+			compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())
+			if !compatibility.Compatible {
+				pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
+					"reason", compatibility.Reason)
+				newEmbeddingsSearch = nil
+			}
+		}
+
+		// Update both services
+		indexerService.SetSearch(newEmbeddingsSearch)
+		searchService.SetEmbeddingSearch(newEmbeddingsSearch)
+		pluginAPI.Log.Info("Embedding search reinitialized on config change")
+	})
 
 	webSearchService := mmtools.NewWebSearchService(func() *config.Config {
 		return p.configuration.Config()

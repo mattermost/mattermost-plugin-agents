@@ -64,7 +64,7 @@ func TestEmbeddingSearchConfig_GetModelName(t *testing.T) {
 			config: EmbeddingSearchConfig{
 				EmbeddingProvider: UpstreamConfig{
 					Type:       ProviderTypeOpenAI,
-					Parameters: json.RawMessage(`{"model": "text-embedding-3-small"}`),
+					Parameters: json.RawMessage(`{"embeddingModel": "text-embedding-3-small"}`),
 				},
 			},
 			expected: "text-embedding-3-small",
@@ -74,7 +74,7 @@ func TestEmbeddingSearchConfig_GetModelName(t *testing.T) {
 			config: EmbeddingSearchConfig{
 				EmbeddingProvider: UpstreamConfig{
 					Type:       ProviderTypeOpenAI,
-					Parameters: json.RawMessage(`{"model": "text-embedding-ada-002", "apiKey": "test-key"}`),
+					Parameters: json.RawMessage(`{"embeddingModel": "text-embedding-ada-002", "apiKey": "test-key"}`),
 				},
 			},
 			expected: "text-embedding-ada-002",
@@ -90,7 +90,7 @@ func TestEmbeddingSearchConfig_GetModelName(t *testing.T) {
 			expected: "",
 		},
 		{
-			name: "returns empty string when model field missing from JSON",
+			name: "returns empty string when embeddingModel field missing from JSON",
 			config: EmbeddingSearchConfig{
 				EmbeddingProvider: UpstreamConfig{
 					Type:       ProviderTypeOpenAI,

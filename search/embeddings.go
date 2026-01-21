@@ -66,6 +66,10 @@ func InitEmbeddingsSearch(db *sqlx.DB, httpClient *http.Client, cfg embeddings.E
 		return nil, fmt.Errorf("search is unavailable without a valid license")
 	}
 
+	if cfg.Dimensions <= 0 {
+		return nil, fmt.Errorf("embedding dimensions must be greater than 0, got %d", cfg.Dimensions)
+	}
+
 	switch cfg.Type { //nolint:gocritic
 	case embeddings.SearchTypeComposite:
 		vector, err := newVectorStore(db, cfg.VectorStore, cfg.Dimensions)
