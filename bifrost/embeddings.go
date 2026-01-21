@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/maximhq/bifrost/core"
+	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
@@ -15,7 +15,7 @@ import (
 
 // BifrostEmbeddingProvider implements the embeddings.EmbeddingProvider interface using Bifrost.
 type BifrostEmbeddingProvider struct {
-	client     *core.Bifrost
+	client     *bifrostcore.Bifrost
 	provider   schemas.ModelProvider
 	model      string
 	dimensions int
@@ -42,7 +42,7 @@ func NewEmbeddingProvider(cfg EmbeddingConfig) (*BifrostEmbeddingProvider, error
 		Account: account,
 	}
 
-	client, err := core.Init(context.Background(), bifrostConfig)
+	client, err := bifrostcore.Init(context.Background(), bifrostConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Bifrost client for embeddings: %w", err)
 	}
@@ -57,71 +57,62 @@ func NewEmbeddingProvider(cfg EmbeddingConfig) (*BifrostEmbeddingProvider, error
 
 // CreateEmbedding generates an embedding for the given text.
 func (p *BifrostEmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([]float32, error) {
-	bifrostCtx := schemas.NewBifrostContext(ctx, ctx.Deadline())
-
-	req := &schemas.BifrostEmbeddingRequest{
+	req := &schemas.BifrostRequest{
 		Provider: p.provider,
 		Model:    p.model,
-		Input: &schemas.EmbeddingInput{
-			InputStr: core.Ptr(text),
+		Input: schemas.RequestInput{
+			EmbeddingInput: &schemas.EmbeddingInput{
+				Text: Ptr(text),
+			},
 		},
 	}
 
-	if p.dimensions > 0 {
-		req.Dimensions = core.Ptr(p.dimensions)
-	}
-
-	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)
+	resp, bifrostErr := p.client.EmbeddingRequest(ctx, req)
 	if bifrostErr != nil {
-		return nil, fmt.Errorf("bifrost embedding error: %s", core.GetErrorMessage(bifrostErr))
+		return nil, fmt.Errorf("bifrost embedding error: %s", bifrostErr.Error.Message)
 	}
 
 	if resp == nil || len(resp.Data) == 0 {
 		return nil, fmt.Errorf("no embedding data returned")
 	}
 
-	// Convert float64 to float32
-	embedding := make([]float32, len(resp.Data[0].Embedding))
-	for i, v := range resp.Data[0].Embedding {
-		embedding[i] = float32(v)
+	// Extract embedding from response
+	embResp := resp.Data[0].Embedding
+	if embResp.EmbeddingArray == nil {
+		return nil, fmt.Errorf("no embedding array in response")
 	}
 
-	return embedding, nil
+	return *embResp.EmbeddingArray, nil
 }
 
 // BatchCreateEmbeddings generates embeddings for multiple texts.
 func (p *BifrostEmbeddingProvider) BatchCreateEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
-	bifrostCtx := schemas.NewBifrostContext(ctx, ctx.Deadline())
-
-	req := &schemas.BifrostEmbeddingRequest{
+	req := &schemas.BifrostRequest{
 		Provider: p.provider,
 		Model:    p.model,
-		Input: &schemas.EmbeddingInput{
-			InputStrArray: &texts,
+		Input: schemas.RequestInput{
+			EmbeddingInput: &schemas.EmbeddingInput{
+				Texts: texts,
+			},
 		},
 	}
 
-	if p.dimensions > 0 {
-		req.Dimensions = core.Ptr(p.dimensions)
-	}
-
-	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)
+	resp, bifrostErr := p.client.EmbeddingRequest(ctx, req)
 	if bifrostErr != nil {
-		return nil, fmt.Errorf("bifrost batch embedding error: %s", core.GetErrorMessage(bifrostErr))
+		return nil, fmt.Errorf("bifrost batch embedding error: %s", bifrostErr.Error.Message)
 	}
 
 	if resp == nil || len(resp.Data) == 0 {
 		return nil, fmt.Errorf("no embedding data returned")
 	}
 
-	// Convert response data to float32 slices
+	// Extract embeddings from response
 	result := make([][]float32, len(resp.Data))
 	for i, data := range resp.Data {
-		embedding := make([]float32, len(data.Embedding))
-		for j, v := range data.Embedding {
-			embedding[j] = float32(v)
+		if data.Embedding.EmbeddingArray == nil {
+			return nil, fmt.Errorf("no embedding array in response for index %d", i)
 		}
-		result[i] = embedding
+		result[i] = *data.Embedding.EmbeddingArray
 	}
 
 	return result, nil

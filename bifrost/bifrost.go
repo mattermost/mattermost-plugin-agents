@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maximhq/bifrost/core"
+	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -31,7 +31,7 @@ const (
 
 // BifrostLLM implements the llm.LanguageModel interface using the Bifrost gateway.
 type BifrostLLM struct {
-	client           *core.Bifrost
+	client           *bifrostcore.Bifrost
 	provider         schemas.ModelProvider
 	defaultModel     string
 	inputTokenLimit  int
@@ -94,6 +94,22 @@ func (a *providerAccount) GetKeysForProvider(ctx *context.Context, provider sche
 		Weight: 1.0,
 	}
 
+	// Handle Azure config
+	if a.provider == schemas.Azure && a.apiURL != "" {
+		key.AzureKeyConfig = &schemas.AzureKeyConfig{
+			Endpoint: a.apiURL,
+		}
+	}
+
+	// Handle Bedrock config
+	if a.provider == schemas.Bedrock {
+		key.BedrockKeyConfig = &schemas.BedrockKeyConfig{
+			AccessKey: a.awsKeyID,
+			SecretKey: a.awsSecret,
+			Region:    &a.region,
+		}
+	}
+
 	return []schemas.Key{key}, nil
 }
 
@@ -105,11 +121,6 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 	config := &schemas.ProviderConfig{
 		NetworkConfig:            schemas.DefaultNetworkConfig,
 		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
-	}
-
-	// Set custom base URL if provided
-	if a.apiURL != "" {
-		config.BaseURL = &a.apiURL
 	}
 
 	return config, nil
@@ -132,7 +143,7 @@ func New(cfg Config, httpClient *http.Client) (*BifrostLLM, error) {
 		Account: account,
 	}
 
-	client, err := core.Init(context.Background(), bifrostConfig)
+	client, err := bifrostcore.Init(context.Background(), bifrostConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Bifrost client: %w", err)
 	}
@@ -237,18 +248,15 @@ func (b *BifrostLLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageM
 	ctx, cancel := context.WithTimeout(context.Background(), b.streamingTimeout*10)
 	defer cancel()
 
-	// Create Bifrost context
-	bifrostCtx := schemas.NewBifrostContext(ctx, time.Now().Add(b.streamingTimeout*10))
-
-	// Convert to Bifrost chat request
-	chatReq := b.convertToBifrostRequest(request, cfg)
+	// Convert to Bifrost request
+	bifrostReq := b.convertToBifrostRequest(request, cfg)
 
 	// Make streaming request
-	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, chatReq)
+	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(ctx, bifrostReq)
 	if bifrostErr != nil {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: fmt.Errorf("bifrost error: %s", core.GetErrorMessage(bifrostErr)),
+			Value: fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message),
 		}
 		return
 	}
@@ -295,20 +303,20 @@ func (b *BifrostLLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageM
 		if chunk.BifrostError != nil {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: fmt.Errorf("stream error: %s", core.GetErrorMessage(chunk.BifrostError)),
+				Value: fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message),
 			}
 			return
 		}
 
-		// Process chat completion chunk
-		if chunk.ChatCompletionChunk != nil {
-			cc := chunk.ChatCompletionChunk
-			if cc.Choices != nil && len(*cc.Choices) > 0 {
-				choice := (*cc.Choices)[0]
+		// Process response chunk
+		if chunk.BifrostResponse != nil {
+			resp := chunk.BifrostResponse
+			if resp.Choices != nil && len(resp.Choices) > 0 {
+				choice := resp.Choices[0]
 
-				// Handle text content
-				if choice.Delta != nil && choice.Delta.Content != nil && choice.Delta.Content.ContentStr != nil {
-					content := *choice.Delta.Content.ContentStr
+				// Handle text content from delta (streaming)
+				if choice.BifrostStreamResponseChoice != nil && choice.Delta.Content != nil {
+					content := *choice.Delta.Content
 					if content != "" {
 						output <- llm.TextStreamEvent{
 							Type:  llm.EventTypeText,
@@ -317,30 +325,22 @@ func (b *BifrostLLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageM
 					}
 				}
 
-				// Handle tool calls
-				if choice.Delta != nil && choice.Delta.ToolCalls != nil {
+				// Handle tool calls (streaming)
+				if choice.BifrostStreamResponseChoice != nil && len(choice.Delta.ToolCalls) > 0 {
 					if toolCallsBuffer == nil {
 						toolCallsBuffer = make(map[int]*toolCallBuffer)
 					}
-					for _, tc := range *choice.Delta.ToolCalls {
-						idx := 0
-						if tc.Index != nil {
-							idx = *tc.Index
-						}
+					for idx, tc := range choice.Delta.ToolCalls {
 						if toolCallsBuffer[idx] == nil {
 							toolCallsBuffer[idx] = &toolCallBuffer{}
 						}
 						if tc.ID != nil {
 							toolCallsBuffer[idx].id = *tc.ID
 						}
-						if tc.Function != nil {
-							if tc.Function.Name != nil {
-								toolCallsBuffer[idx].name = *tc.Function.Name
-							}
-							if tc.Function.Arguments != nil {
-								toolCallsBuffer[idx].arguments.WriteString(*tc.Function.Arguments)
-							}
+						if tc.Function.Name != nil {
+							toolCallsBuffer[idx].name = *tc.Function.Name
 						}
+						toolCallsBuffer[idx].arguments.WriteString(tc.Function.Arguments)
 					}
 				}
 
@@ -370,13 +370,10 @@ func (b *BifrostLLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageM
 			}
 
 			// Handle usage data
-			if cc.Usage != nil {
-				usage := llm.TokenUsage{}
-				if cc.Usage.PromptTokens != nil {
-					usage.InputTokens = int64(*cc.Usage.PromptTokens)
-				}
-				if cc.Usage.CompletionTokens != nil {
-					usage.OutputTokens = int64(*cc.Usage.CompletionTokens)
+			if resp.Usage != nil {
+				usage := llm.TokenUsage{
+					InputTokens:  int64(resp.Usage.PromptTokens),
+					OutputTokens: int64(resp.Usage.CompletionTokens),
 				}
 				if usage.InputTokens > 0 || usage.OutputTokens > 0 {
 					output <- llm.TextStreamEvent{
@@ -388,7 +385,7 @@ func (b *BifrostLLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageM
 		}
 
 		// Check if this is the final chunk
-		if core.IsFinalChunk(bifrostCtx) {
+		if bifrostcore.IsFinalChunk(&ctx) {
 			break
 		}
 	}
@@ -426,42 +423,44 @@ type toolCallBuffer struct {
 }
 
 // convertToBifrostRequest converts our CompletionRequest to Bifrost's format.
-func (b *BifrostLLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) *schemas.BifrostChatRequest {
+func (b *BifrostLLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) *schemas.BifrostRequest {
 	messages := b.convertMessages(request.Posts)
 	tools := b.convertTools(request, cfg)
 
-	req := &schemas.BifrostChatRequest{
+	req := &schemas.BifrostRequest{
 		Provider: b.provider,
 		Model:    cfg.Model,
-		Input:    messages,
+		Input: schemas.RequestInput{
+			ChatCompletionInput: &messages,
+		},
 	}
 
 	// Set parameters
-	params := &schemas.ChatParameters{}
+	params := &schemas.ModelParameters{}
 	if cfg.MaxGeneratedTokens > 0 {
-		params.MaxTokens = core.Ptr(cfg.MaxGeneratedTokens)
+		params.MaxTokens = Ptr(cfg.MaxGeneratedTokens)
 	}
 	if len(tools) > 0 {
-		params.Tools = tools
+		params.Tools = &tools
 	}
 	req.Params = params
 
 	return req
 }
 
-// convertMessages converts llm.Post messages to Bifrost ChatMessage format.
-func (b *BifrostLLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
-	messages := make([]schemas.ChatMessage, 0, len(posts))
+// convertMessages converts llm.Post messages to Bifrost BifrostMessage format.
+func (b *BifrostLLM) convertMessages(posts []llm.Post) []schemas.BifrostMessage {
+	messages := make([]schemas.BifrostMessage, 0, len(posts))
 
 	for _, post := range posts {
-		var msg schemas.ChatMessage
+		var msg schemas.BifrostMessage
 
 		switch post.Role {
 		case llm.PostRoleSystem:
-			msg = schemas.ChatMessage{
-				Role: schemas.ChatMessageRoleSystem,
-				Content: &schemas.ChatMessageContent{
-					ContentStr: core.Ptr(post.Message),
+			msg = schemas.BifrostMessage{
+				Role: schemas.ModelChatMessageRoleSystem,
+				Content: schemas.MessageContent{
+					ContentStr: Ptr(post.Message),
 				},
 			}
 
@@ -469,54 +468,61 @@ func (b *BifrostLLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 			if len(post.Files) > 0 {
 				// Multimodal message with images
 				parts := b.createMultimodalContent(post)
-				msg = schemas.ChatMessage{
-					Role: schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{
-						ContentParts: &parts,
+				msg = schemas.BifrostMessage{
+					Role: schemas.ModelChatMessageRoleUser,
+					Content: schemas.MessageContent{
+						ContentBlocks: &parts,
 					},
 				}
 			} else {
-				msg = schemas.ChatMessage{
-					Role: schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{
-						ContentStr: core.Ptr(post.Message),
+				msg = schemas.BifrostMessage{
+					Role: schemas.ModelChatMessageRoleUser,
+					Content: schemas.MessageContent{
+						ContentStr: Ptr(post.Message),
 					},
 				}
 			}
 
 		case llm.PostRoleBot:
-			msg = schemas.ChatMessage{
-				Role: schemas.ChatMessageRoleAssistant,
-				Content: &schemas.ChatMessageContent{
-					ContentStr: core.Ptr(post.Message),
+			msg = schemas.BifrostMessage{
+				Role: schemas.ModelChatMessageRoleAssistant,
+				Content: schemas.MessageContent{
+					ContentStr: Ptr(post.Message),
 				},
 			}
 
 			// Handle tool calls in assistant messages
 			if len(post.ToolUse) > 0 {
-				toolCalls := make([]schemas.ChatAssistantMessageToolCall, 0, len(post.ToolUse))
+				toolCalls := make([]schemas.ToolCall, 0, len(post.ToolUse))
 				for _, tc := range post.ToolUse {
-					toolCalls = append(toolCalls, schemas.ChatAssistantMessageToolCall{
-						ID:   tc.ID,
-						Type: "function",
-						Function: schemas.ChatAssistantMessageToolCallFunction{
-							Name:      tc.Name,
+					toolCalls = append(toolCalls, schemas.ToolCall{
+						ID:   Ptr(tc.ID),
+						Type: Ptr("function"),
+						Function: schemas.FunctionCall{
+							Name:      Ptr(tc.Name),
 							Arguments: string(tc.Arguments),
 						},
 					})
 				}
-				msg.ToolCalls = &toolCalls
+				msg.AssistantMessage = &schemas.AssistantMessage{
+					ToolCalls: &toolCalls,
+				}
+
+				// Add the assistant message with tool calls
+				messages = append(messages, msg)
 
 				// Add tool result messages
 				for _, tc := range post.ToolUse {
-					toolResultMsg := schemas.ChatMessage{
-						Role:       schemas.ChatMessageRoleTool,
-						ToolCallID: core.Ptr(tc.ID),
-						Content: &schemas.ChatMessageContent{
-							ContentStr: core.Ptr(tc.Result),
+					toolResultMsg := schemas.BifrostMessage{
+						Role: schemas.ModelChatMessageRoleTool,
+						Content: schemas.MessageContent{
+							ContentStr: Ptr(tc.Result),
+						},
+						ToolMessage: &schemas.ToolMessage{
+							ToolCallID: Ptr(tc.ID),
 						},
 					}
-					messages = append(messages, msg, toolResultMsg)
+					messages = append(messages, toolResultMsg)
 				}
 				continue // Skip adding msg again
 			}
@@ -528,31 +534,31 @@ func (b *BifrostLLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 	return messages
 }
 
-// createMultimodalContent creates content parts for messages with images.
-func (b *BifrostLLM) createMultimodalContent(post llm.Post) []schemas.ChatMessageContentPart {
-	parts := make([]schemas.ChatMessageContentPart, 0, len(post.Files)+1)
+// createMultimodalContent creates content blocks for messages with images.
+func (b *BifrostLLM) createMultimodalContent(post llm.Post) []schemas.ContentBlock {
+	parts := make([]schemas.ContentBlock, 0, len(post.Files)+1)
 
 	if post.Message != "" {
-		parts = append(parts, schemas.ChatMessageContentPart{
+		parts = append(parts, schemas.ContentBlock{
 			Type: "text",
-			Text: core.Ptr(post.Message),
+			Text: Ptr(post.Message),
 		})
 	}
 
 	for _, file := range post.Files {
 		if !isValidImageType(file.MimeType) {
-			parts = append(parts, schemas.ChatMessageContentPart{
+			parts = append(parts, schemas.ContentBlock{
 				Type: "text",
-				Text: core.Ptr(fmt.Sprintf("[Unsupported image type: %s]", file.MimeType)),
+				Text: Ptr(fmt.Sprintf("[Unsupported image type: %s]", file.MimeType)),
 			})
 			continue
 		}
 
 		data, err := io.ReadAll(file.Reader)
 		if err != nil {
-			parts = append(parts, schemas.ChatMessageContentPart{
+			parts = append(parts, schemas.ContentBlock{
 				Type: "text",
-				Text: core.Ptr("[Error reading image data]"),
+				Text: Ptr("[Error reading image data]"),
 			})
 			continue
 		}
@@ -560,9 +566,9 @@ func (b *BifrostLLM) createMultimodalContent(post llm.Post) []schemas.ChatMessag
 		encoded := base64.StdEncoding.EncodeToString(data)
 		dataURL := fmt.Sprintf("data:%s;base64,%s", file.MimeType, encoded)
 
-		parts = append(parts, schemas.ChatMessageContentPart{
+		parts = append(parts, schemas.ContentBlock{
 			Type: "image_url",
-			ImageURL: &schemas.ChatMessageContentPartImageURL{
+			ImageURL: &schemas.ImageURLStruct{
 				URL: dataURL,
 			},
 		})
@@ -571,58 +577,82 @@ func (b *BifrostLLM) createMultimodalContent(post llm.Post) []schemas.ChatMessag
 	return parts
 }
 
-// convertTools converts llm.Tool to Bifrost ChatTool format.
-func (b *BifrostLLM) convertTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ChatTool {
+// convertTools converts llm.Tool to Bifrost Tool format.
+func (b *BifrostLLM) convertTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.Tool {
 	if cfg.ToolsDisabled || request.Context == nil || request.Context.Tools == nil {
 		return nil
 	}
 
 	tools := request.Context.Tools.GetTools()
-	result := make([]schemas.ChatTool, 0, len(tools))
+	result := make([]schemas.Tool, 0, len(tools))
 
 	for _, tool := range tools {
-		// Convert schema to map
-		var schemaMap map[string]interface{}
+		// Convert schema to FunctionParameters
+		var params schemas.FunctionParameters
 		if tool.Schema != nil {
-			// Handle different schema types
 			switch s := tool.Schema.(type) {
 			case map[string]interface{}:
-				schemaMap = s
+				params = schemaMapToFunctionParams(s)
 			default:
 				// Marshal and unmarshal to convert to map
 				data, err := json.Marshal(tool.Schema)
 				if err == nil {
-					json.Unmarshal(data, &schemaMap)
+					var schemaMap map[string]interface{}
+					if json.Unmarshal(data, &schemaMap) == nil {
+						params = schemaMapToFunctionParams(schemaMap)
+					}
 				}
 			}
 		}
 
-		// Ensure schema has required fields
-		if schemaMap == nil {
-			schemaMap = map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{},
-			}
+		// Ensure params has default values
+		if params.Type == "" {
+			params.Type = "object"
 		}
-		if _, ok := schemaMap["type"]; !ok {
-			schemaMap["type"] = "object"
-		}
-		if _, ok := schemaMap["properties"]; !ok {
-			schemaMap["properties"] = map[string]interface{}{}
+		if params.Properties == nil {
+			params.Properties = map[string]interface{}{}
 		}
 
-		chatTool := schemas.ChatTool{
-			Type: schemas.ChatToolTypeFunction,
-			Function: &schemas.ChatToolFunction{
+		bifrostTool := schemas.Tool{
+			Type: "function",
+			Function: schemas.Function{
 				Name:        tool.Name,
-				Description: core.Ptr(tool.Description),
-				Parameters:  schemaMap,
+				Description: tool.Description,
+				Parameters:  params,
 			},
 		}
-		result = append(result, chatTool)
+		result = append(result, bifrostTool)
 	}
 
 	return result
+}
+
+// schemaMapToFunctionParams converts a schema map to FunctionParameters
+func schemaMapToFunctionParams(schemaMap map[string]interface{}) schemas.FunctionParameters {
+	params := schemas.FunctionParameters{
+		Type: "object",
+	}
+
+	if t, ok := schemaMap["type"].(string); ok {
+		params.Type = t
+	}
+	if desc, ok := schemaMap["description"].(string); ok {
+		params.Description = &desc
+	}
+	if props, ok := schemaMap["properties"].(map[string]interface{}); ok {
+		params.Properties = props
+	}
+	if req, ok := schemaMap["required"].([]interface{}); ok {
+		required := make([]string, 0, len(req))
+		for _, r := range req {
+			if s, ok := r.(string); ok {
+				required = append(required, s)
+			}
+		}
+		params.Required = required
+	}
+
+	return params
 }
 
 // isValidImageType checks if the MIME type is supported.
@@ -634,4 +664,9 @@ func isValidImageType(mimeType string) bool {
 		"image/webp": true,
 	}
 	return validTypes[mimeType]
+}
+
+// Ptr is a helper function to create a pointer to a value.
+func Ptr[T any](v T) *T {
+	return &v
 }

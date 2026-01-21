@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/maximhq/bifrost/core"
+	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
@@ -18,7 +18,7 @@ import (
 
 // BifrostTranscriber implements transcription using the Bifrost gateway.
 type BifrostTranscriber struct {
-	client   *core.Bifrost
+	client   *bifrostcore.Bifrost
 	provider schemas.ModelProvider
 	model    string
 }
@@ -43,7 +43,7 @@ func NewTranscriber(cfg TranscriptionConfig) (*BifrostTranscriber, error) {
 		Account: account,
 	}
 
-	client, err := core.Init(context.Background(), bifrostConfig)
+	client, err := bifrostcore.Init(context.Background(), bifrostConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Bifrost client for transcription: %w", err)
 	}
@@ -65,32 +65,34 @@ func (t *BifrostTranscriber) Transcribe(file io.Reader) (*subtitles.Subtitles, e
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	bifrostCtx := schemas.NewBifrostContext(ctx, time.Now().Add(5*time.Minute))
-
 	// Read the file into bytes for the request
 	data, err := io.ReadAll(file)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read audio file: %w", err)
 	}
 
-	req := &schemas.BifrostTranscriptionRequest{
-		Provider:       t.provider,
-		Model:          t.model,
-		File:           data,
-		ResponseFormat: core.Ptr("vtt"), // Use VTT format for timed transcription
+	req := &schemas.BifrostRequest{
+		Provider: t.provider,
+		Model:    t.model,
+		Input: schemas.RequestInput{
+			TranscriptionInput: &schemas.TranscriptionInput{
+				File:           data,
+				ResponseFormat: Ptr("vtt"), // Use VTT format for timed transcription
+			},
+		},
 	}
 
-	resp, bifrostErr := t.client.TranscriptionRequest(bifrostCtx, req)
+	resp, bifrostErr := t.client.TranscriptionRequest(ctx, req)
 	if bifrostErr != nil {
-		return nil, fmt.Errorf("bifrost transcription error: %s", core.GetErrorMessage(bifrostErr))
+		return nil, fmt.Errorf("bifrost transcription error: %s", bifrostErr.Error.Message)
 	}
 
-	if resp == nil || resp.Text == "" {
+	if resp == nil || resp.Transcribe == nil || resp.Transcribe.Text == "" {
 		return nil, fmt.Errorf("no transcription data returned")
 	}
 
 	// Parse the VTT response
-	timedTranscript, err := subtitles.NewSubtitlesFromVTT(strings.NewReader(resp.Text))
+	timedTranscript, err := subtitles.NewSubtitlesFromVTT(strings.NewReader(resp.Transcribe.Text))
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse transcription: %w", err)
 	}

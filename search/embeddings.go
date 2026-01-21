@@ -14,7 +14,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/chunking"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/openai"
 	"github.com/mattermost/mattermost-plugin-ai/postgres"
 )
 
@@ -42,6 +41,13 @@ type BifrostEmbeddingConfig struct {
 	Model    string `json:"model"` // e.g., "text-embedding-3-small"
 }
 
+// OpenAIEmbeddingConfig holds configuration for OpenAI-based embeddings (via Bifrost)
+type OpenAIEmbeddingConfig struct {
+	APIKey string `json:"apiKey"`
+	APIURL string `json:"apiUrl,omitempty"`
+	Model  string `json:"defaultModel"` // e.g., "text-embedding-3-small"
+}
+
 // newEmbeddingProvider creates a new embedding provider based on the provided configuration
 func newEmbeddingProvider(config embeddings.UpstreamConfig, dimensions int, httpClient *http.Client) (embeddings.EmbeddingProvider, error) {
 	switch config.Type {
@@ -64,19 +70,28 @@ func newEmbeddingProvider(config embeddings.UpstreamConfig, dimensions int, http
 			Dimensions: dimensions,
 		})
 	case embeddings.ProviderTypeOpenAICompatible:
-		compatibleConfig := openai.Config{}
+		var compatibleConfig OpenAIEmbeddingConfig
 		if err := json.Unmarshal(config.Parameters, &compatibleConfig); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal OpenAI-compatible config: %w", err)
 		}
-		compatibleConfig.EmbeddingDimensions = dimensions
-		return openai.NewCompatibleEmbeddings(compatibleConfig, httpClient), nil
+		return bifrost.NewEmbeddingProvider(bifrost.EmbeddingConfig{
+			Provider:   schemas.OpenAI,
+			APIKey:     compatibleConfig.APIKey,
+			APIURL:     compatibleConfig.APIURL,
+			Model:      compatibleConfig.Model,
+			Dimensions: dimensions,
+		})
 	case embeddings.ProviderTypeOpenAI:
-		var openaiConfig openai.Config
+		var openaiConfig OpenAIEmbeddingConfig
 		if err := json.Unmarshal(config.Parameters, &openaiConfig); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal OpenAI config: %w", err)
 		}
-		openaiConfig.EmbeddingDimensions = dimensions
-		return openai.NewEmbeddings(openaiConfig, httpClient), nil
+		return bifrost.NewEmbeddingProvider(bifrost.EmbeddingConfig{
+			Provider:   schemas.OpenAI,
+			APIKey:     openaiConfig.APIKey,
+			Model:      openaiConfig.Model,
+			Dimensions: dimensions,
+		})
 	case embeddings.ProviderTypeMock:
 		return embeddings.NewMockEmbeddingProvider(dimensions), nil
 	}

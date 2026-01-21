@@ -9,13 +9,11 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/mattermost/mattermost-plugin-ai/asage"
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/mattermost/mattermost-plugin-ai/bifrost"
-	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/openai"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -241,26 +239,14 @@ func (b *MMBots) EnsureBots() error {
 }
 
 func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (llm.LanguageModel, error) {
-	// Create the correct model
+	// Create the correct model using Bifrost for all providers
 	var result llm.LanguageModel
-	var err error
-
-	// Use Bifrost for supported providers
-	if bifrost.IsSupported(serviceConfig.Type) {
-		result, err = bifrost.NewFromServiceConfig(serviceConfig, botConfig, b.llmUpstreamHTTPClient)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
-		}
-	} else {
-		// Fall back to legacy implementations for unsupported providers
-		switch serviceConfig.Type {
-		case llm.ServiceTypeASage:
-			result = asage.New(serviceConfig, b.llmUpstreamHTTPClient)
-		default:
-			b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
-			return nil, fmt.Errorf("unsupported service type: %s", serviceConfig.Type)
-		}
+	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig, b.llmUpstreamHTTPClient)
+	if err != nil {
+		b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
+		return nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
 	}
+	result = bifrostLLM
 
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)
@@ -293,19 +279,43 @@ func (b *MMBots) GetTranscribe() Transcriber {
 	}
 
 	service := bot.service
+
+	// Map service type to Bifrost provider
+	var provider schemas.ModelProvider
 	switch service.Type {
 	case llm.ServiceTypeOpenAI:
-		return openai.New(config.OpenAIConfigFromServiceConfig(service, bot.cfg), b.llmUpstreamHTTPClient)
+		provider = schemas.OpenAI
 	case llm.ServiceTypeOpenAICompatible:
-		return openai.NewCompatible(config.OpenAIConfigFromServiceConfig(service, bot.cfg), b.llmUpstreamHTTPClient)
+		provider = schemas.OpenAI
 	case llm.ServiceTypeAzure:
-		return openai.NewAzure(config.OpenAIConfigFromServiceConfig(service, bot.cfg), b.llmUpstreamHTTPClient)
+		provider = schemas.Azure
 	default:
 		b.pluginAPI.Log.Error("Unsupported service type for transcript generator",
 			"bot_name", bot.GetMMBot().Username,
 			"service_type", service.Type)
 		return nil
 	}
+
+	// Use the service's default model for transcription, or fall back to whisper-1
+	transcriptModel := service.DefaultModel
+	if transcriptModel == "" {
+		transcriptModel = "whisper-1"
+	}
+
+	transcriber, err := bifrost.NewTranscriber(bifrost.TranscriptionConfig{
+		Provider: provider,
+		APIKey:   service.APIKey,
+		APIURL:   service.APIURL,
+		Model:    transcriptModel,
+	})
+	if err != nil {
+		b.pluginAPI.Log.Error("Failed to create Bifrost transcriber",
+			"bot_name", bot.GetMMBot().Username,
+			"error", err.Error())
+		return nil
+	}
+
+	return transcriber
 }
 
 func (b *MMBots) getTrasncriberBot() *Bot {
