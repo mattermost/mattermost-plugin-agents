@@ -114,7 +114,8 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Info("In-memory configuration updated after migrations")
 	}
 
-	tokenLogger, err := llm.CreateTokenLogger()
+	tokenLogOutput := llm.TokenUsageLogOutput(p.configuration.GetTokenUsageLoggingOutput())
+	tokenLogger, err := llm.CreateTokenLogger(tokenLogOutput)
 	if err != nil {
 		return fmt.Errorf("failed to create token usage logger: %w", err)
 	}

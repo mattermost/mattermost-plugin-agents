@@ -37,7 +37,7 @@ func (f *benchFakeLLM) InputTokenLimit() int {
 
 // BenchmarkTokenTracking benchmarks the TokenUsageLoggingWrapper performance.
 func BenchmarkTokenTracking(b *testing.B) {
-	logger, err := CreateTokenLogger()
+	logger, err := CreateTokenLogger(TokenUsageLogOutputFile)
 	if err != nil {
 		b.Skip("Could not create token logger:", err)
 	}

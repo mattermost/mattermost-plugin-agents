@@ -15,6 +15,16 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/openai"
 )
 
+// TokenUsageLoggingOutput defines where token usage logs are written
+type TokenUsageLoggingOutput string
+
+const (
+	// TokenUsageLoggingOutputFile writes token usage logs to a file (logs/agents/token_usage.log)
+	TokenUsageLoggingOutputFile TokenUsageLoggingOutput = "file"
+	// TokenUsageLoggingOutputStdout writes token usage logs to stdout (recommended for containers)
+	TokenUsageLoggingOutputStdout TokenUsageLoggingOutput = "stdout"
+)
+
 type Config struct {
 	Services                 []llm.ServiceConfig              `json:"services"`
 	Bots                     []llm.BotConfig                  `json:"bots"`
@@ -22,6 +32,7 @@ type Config struct {
 	TranscriptGenerator      string                           `json:"transcriptBackend"`
 	EnableLLMTrace           bool                             `json:"enableLLMTrace"`
 	EnableTokenUsageLogging  bool                             `json:"enableTokenUsageLogging"`
+	TokenUsageLoggingOutput  TokenUsageLoggingOutput          `json:"tokenUsageLoggingOutput"`
 	AllowedUpstreamHostnames string                           `json:"allowedUpstreamHostnames"`
 	AllowUnsafeLinks         bool                             `json:"allowUnsafeLinks"`
 	EmbeddingSearchConfig    embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
@@ -106,6 +117,15 @@ func (c *Container) EnableLLMLogging() bool {
 
 func (c *Container) EnableTokenUsageLogging() bool {
 	return c.cfg.Load().EnableTokenUsageLogging
+}
+
+func (c *Container) GetTokenUsageLoggingOutput() TokenUsageLoggingOutput {
+	output := c.cfg.Load().TokenUsageLoggingOutput
+	// Default to file for backward compatibility
+	if output == "" {
+		return TokenUsageLoggingOutputFile
+	}
+	return output
 }
 
 func (c *Container) MCP() mcp.Config {

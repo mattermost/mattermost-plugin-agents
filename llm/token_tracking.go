@@ -35,31 +35,56 @@ func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, toke
 	}
 }
 
+// TokenUsageLogOutput defines where token usage logs are written
+type TokenUsageLogOutput string
+
+const (
+	// TokenUsageLogOutputFile writes to logs/agents/token_usage.log
+	TokenUsageLogOutputFile TokenUsageLogOutput = "file"
+	// TokenUsageLogOutputStdout writes to stdout (recommended for containers)
+	TokenUsageLogOutputStdout TokenUsageLogOutput = "stdout"
+)
+
 // CreateTokenLogger creates a dedicated logger for token usage metrics
-func CreateTokenLogger() (*mlog.Logger, error) {
+// output parameter determines whether logs go to a file or stdout
+func CreateTokenLogger(output TokenUsageLogOutput) (*mlog.Logger, error) {
 	logger, err := mlog.NewLogger()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token logger: %w", err)
 	}
 
-	jsonTargetCfg := mlog.TargetCfg{
-		Type:   "file",
-		Format: "json",
-		Levels: []mlog.Level{mlog.LvlInfo, mlog.LvlDebug},
+	var targetCfg mlog.TargetCfg
+
+	switch output {
+	case TokenUsageLogOutputStdout:
+		targetCfg = mlog.TargetCfg{
+			Type:   "console",
+			Format: "json",
+			Levels: []mlog.Level{mlog.LvlInfo, mlog.LvlDebug},
+		}
+		// Console target uses stdout by default, no additional options needed
+	case TokenUsageLogOutputFile:
+		fallthrough
+	default:
+		targetCfg = mlog.TargetCfg{
+			Type:   "file",
+			Format: "json",
+			Levels: []mlog.Level{mlog.LvlInfo, mlog.LvlDebug},
+		}
+		jsonFileOptions := map[string]interface{}{
+			"filename": "logs/agents/token_usage.log",
+			"max_size": 100,  // MB
+			"compress": true, // compress rotated files
+		}
+		jsonOptions, err := json.Marshal(jsonFileOptions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal json file options: %w", err)
+		}
+		targetCfg.Options = json.RawMessage(jsonOptions)
 	}
-	jsonFileOptions := map[string]interface{}{
-		"filename": "logs/agents/token_usage.log",
-		"max_size": 100,  // MB
-		"compress": true, // compress rotated files
-	}
-	jsonOptions, err := json.Marshal(jsonFileOptions)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal json file options: %w", err)
-	}
-	jsonTargetCfg.Options = json.RawMessage(jsonOptions)
 
 	err = logger.ConfigureTargets(map[string]mlog.TargetCfg{
-		"token_usage": jsonTargetCfg,
+		"token_usage": targetCfg,
 	}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure token logger targets: %w", err)

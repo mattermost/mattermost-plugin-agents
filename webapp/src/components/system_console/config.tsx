@@ -27,6 +27,7 @@ type Config = {
     transcriptBackend: string,
     enableLLMTrace: boolean,
     enableTokenUsageLogging: boolean,
+    tokenUsageLoggingOutput: 'file' | 'stdout',
     enableCallSummary: boolean,
     allowedUpstreamHostnames: string,
     allowUnsafeLinks: boolean,
@@ -81,6 +82,7 @@ const defaultConfig = {
     transcriptBackend: '',
     enableLLMTrace: false,
     enableTokenUsageLogging: false,
+    tokenUsageLoggingOutput: 'file' as const,
     allowUnsafeLinks: false,
     embeddingSearchConfig: {
         type: 'disabled',
@@ -323,6 +325,23 @@ const Config = (props: Props) => {
                         onChange={(to) => props.onChange(props.id, {...value, enableTokenUsageLogging: to})}
                         helpText={intl.formatMessage({defaultMessage: 'Enable logging of token usage for all LLM interactions.'})}
                     />
+                    {value.enableTokenUsageLogging && (
+                        <SelectionItem
+                            label={intl.formatMessage({defaultMessage: 'Token Usage Log Output'})}
+                            value={value.tokenUsageLoggingOutput || 'file'}
+                            onChange={(e) => {
+                                props.onChange(props.id, {...value, tokenUsageLoggingOutput: e.target.value});
+                                props.setSaveNeeded();
+                            }}
+                        >
+                            <SelectionItemOption value='file'>
+                                {intl.formatMessage({defaultMessage: 'File (logs/agents/token_usage.log)'})}
+                            </SelectionItemOption>
+                            <SelectionItemOption value='stdout'>
+                                {intl.formatMessage({defaultMessage: 'Stdout (recommended for containers)'})}
+                            </SelectionItemOption>
+                        </SelectionItem>
+                    )}
                 </ItemList>
             </Panel>
             <EmbeddingSearchPanel
