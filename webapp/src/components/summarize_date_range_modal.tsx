@@ -3,9 +3,11 @@
 
 import React from 'react';
 import styled from 'styled-components';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 
-import IconCancel from './assets/icon_cancel';
+import {CloseIcon} from '@mattermost/compass-icons/components';
+
+import {DatePicker} from '@/mm_webapp';
 
 const ModalOverlay = styled.div`
     position: fixed;
@@ -68,16 +70,16 @@ const CloseButton = styled.button`
     background: none;
     border: none;
     cursor: pointer;
-    padding: 4px;
+    padding: 0;
     border-radius: 4px;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
+    color: var(--center-channel-color);
+    opacity: 0.64;
     display: flex;
     align-items: center;
     justify-content: center;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.08);
-        color: rgba(var(--center-channel-color-rgb), 0.72);
     }
 `;
 
@@ -191,22 +193,134 @@ interface Props {
     channelName?: string;
 }
 
+// Helper to format Date to YYYY-MM-DD string
+const formatDateToString = (date: Date | null): string => {
+    if (!date) {
+        return '';
+    }
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+// Helper to parse YYYY-MM-DD string to Date (returns null for empty string)
+const parseDateString = (dateStr: string): Date | null => {
+    if (!dateStr) {
+        return null;
+    }
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return new Date(year, month - 1, day);
+};
+
+// Helper to convert null to undefined for react-day-picker compatibility
+const nullToUndefined = <T, >(value: T | null): T | undefined => (value === null ? [][0] : value);
+
 export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName}: Props) => {
-    const [startDate, setStartDate] = React.useState('');
-    const [endDate, setEndDate] = React.useState('');
+    const intl = useIntl();
+    const [startDate, setStartDate] = React.useState<Date | null>(null);
+    const [endDate, setEndDate] = React.useState<Date | null>(null);
+    const [isStartDateOpen, setIsStartDateOpen] = React.useState(false);
+    const [isEndDateOpen, setIsEndDateOpen] = React.useState(false);
 
     if (!show) {
         return null;
     }
 
     const handleSummarize = () => {
-        onSummarize(startDate, endDate);
+        onSummarize(formatDateToString(startDate), formatDateToString(endDate));
         onClose();
     };
 
     // Prevent clicks inside modal from closing it
     const handleModalClick = (e: React.MouseEvent) => {
         e.stopPropagation();
+    };
+
+    const handleStartDateSelect = (day: Date | undefined) => {
+        setStartDate(day ?? null);
+        setIsStartDateOpen(false);
+    };
+
+    const handleEndDateSelect = (day: Date | undefined) => {
+        setEndDate(day ?? null);
+        setIsEndDateOpen(false);
+    };
+
+    const locale = intl.locale || 'en';
+
+    const renderStartDateInput = () => {
+        if (DatePicker) {
+            return (
+                <DatePicker
+                    isPopperOpen={isStartDateOpen}
+                    handlePopperOpenState={setIsStartDateOpen}
+                    locale={locale}
+                    label={intl.formatMessage({defaultMessage: 'Start date'})}
+                    value={startDate?.toLocaleDateString(locale)}
+                    datePickerProps={{
+                        mode: 'single',
+                        selected: nullToUndefined(startDate),
+                        onSelect: handleStartDateSelect,
+                    }}
+                >
+                    <span>
+                        <FormattedMessage defaultMessage='Select start date'/>
+                    </span>
+                </DatePicker>
+            );
+        }
+
+        // Fallback to native date input for older Mattermost versions
+        return (
+            <>
+                <DateLabel>
+                    <FormattedMessage defaultMessage='Start date'/>
+                </DateLabel>
+                <DateInput
+                    type='date'
+                    value={formatDateToString(startDate)}
+                    onChange={(e) => setStartDate(parseDateString(e.target.value))}
+                />
+            </>
+        );
+    };
+
+    const renderEndDateInput = () => {
+        if (DatePicker) {
+            return (
+                <DatePicker
+                    isPopperOpen={isEndDateOpen}
+                    handlePopperOpenState={setIsEndDateOpen}
+                    locale={locale}
+                    label={intl.formatMessage({defaultMessage: 'End date'})}
+                    value={endDate?.toLocaleDateString(locale)}
+                    datePickerProps={{
+                        mode: 'single',
+                        selected: nullToUndefined(endDate),
+                        onSelect: handleEndDateSelect,
+                    }}
+                >
+                    <span>
+                        <FormattedMessage defaultMessage='Select end date'/>
+                    </span>
+                </DatePicker>
+            );
+        }
+
+        // Fallback to native date input for older Mattermost versions
+        return (
+            <>
+                <DateLabel>
+                    <FormattedMessage defaultMessage='End date'/>
+                </DateLabel>
+                <DateInput
+                    type='date'
+                    value={formatDateToString(endDate)}
+                    onChange={(e) => setEndDate(parseDateString(e.target.value))}
+                />
+            </>
+        );
     };
 
     return (
@@ -224,7 +338,7 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
                         )}
                     </HeaderContent>
                     <CloseButton onClick={onClose}>
-                        <IconCancel/>
+                        <CloseIcon size={20}/>
                     </CloseButton>
                 </ModalHeader>
                 <ModalBody>
@@ -233,24 +347,10 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
                     </Description>
                     <DateInputsContainer>
                         <DateInputGroup>
-                            <DateLabel>
-                                <FormattedMessage defaultMessage='Start date'/>
-                            </DateLabel>
-                            <DateInput
-                                type='date'
-                                value={startDate}
-                                onChange={(e) => setStartDate(e.target.value)}
-                            />
+                            {renderStartDateInput()}
                         </DateInputGroup>
                         <DateInputGroup>
-                            <DateLabel>
-                                <FormattedMessage defaultMessage='End date'/>
-                            </DateLabel>
-                            <DateInput
-                                type='date'
-                                value={endDate}
-                                onChange={(e) => setEndDate(e.target.value)}
-                            />
+                            {renderEndDateInput()}
                         </DateInputGroup>
                     </DateInputsContainer>
                 </ModalBody>
