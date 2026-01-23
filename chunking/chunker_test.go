@@ -222,30 +222,6 @@ func TestChunkText(t *testing.T) {
 			assert.False(t, chunks[0].IsChunk, "Content smaller than chunk size should be non-chunk")
 			assert.Equal(t, content, chunks[0].Content)
 		})
-
-		// Test that content which would create exactly one modified chunk is still marked as chunk
-		// The splitter may trim or modify the content, and if the result differs from input,
-		// it should be marked as a chunk
-		t.Run("content with leading/trailing spaces that gets trimmed", func(t *testing.T) {
-			content := "  Hello world.  "
-			opts := Options{
-				ChunkSize:        100,
-				ChunkOverlap:     0,
-				ChunkingStrategy: "sentences",
-			}
-
-			chunks := ChunkText(content, opts)
-			require.Len(t, chunks, 1)
-
-			// The underlying splitter may or may not trim whitespace
-			// If it trims, the content differs from input, making it a "chunk"
-			// If it doesn't trim, content equals input, making it a "non-chunk"
-			if chunks[0].Content == content {
-				assert.False(t, chunks[0].IsChunk, "Unchanged content should be non-chunk")
-			} else {
-				assert.True(t, chunks[0].IsChunk, "Modified content should be marked as chunk")
-			}
-		})
 	})
 
 	t.Run("unknown/invalid chunking strategy string", func(t *testing.T) {

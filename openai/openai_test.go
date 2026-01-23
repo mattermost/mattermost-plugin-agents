@@ -685,63 +685,6 @@ func TestCountTokens(t *testing.T) {
 	}
 }
 
-func TestDimensions(t *testing.T) {
-	tests := []struct {
-		name     string
-		config   Config
-		expected int
-	}{
-		{
-			name: "custom dimensions",
-			config: Config{
-				EmbeddingDimensions: 1536,
-			},
-			expected: 1536,
-		},
-		{
-			name: "large embedding dimensions",
-			config: Config{
-				EmbeddingDimensions: 3072,
-			},
-			expected: 3072,
-		},
-		{
-			name:     "zero dimensions",
-			config:   Config{},
-			expected: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			o := &OpenAI{config: tt.config}
-			result := o.Dimensions()
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestToolBufferElement(t *testing.T) {
-	t.Run("tool buffer accumulation", func(t *testing.T) {
-		buffer := &ToolBufferElement{}
-
-		// Test ID accumulation
-		buffer.id.WriteString("call_")
-		buffer.id.WriteString("123")
-		assert.Equal(t, "call_123", buffer.id.String())
-
-		// Test name accumulation
-		buffer.name.WriteString("search")
-		buffer.name.WriteString("_function")
-		assert.Equal(t, "search_function", buffer.name.String())
-
-		// Test arguments accumulation
-		buffer.args.WriteString(`{"query":`)
-		buffer.args.WriteString(`"test"}`)
-		assert.Equal(t, `{"query":"test"}`, buffer.args.String())
-	})
-}
-
 func TestCreateEmbedding(t *testing.T) {
 	tests := []struct {
 		name           string

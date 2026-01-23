@@ -10,49 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestEmbeddingSearchConfig_GetProviderType(t *testing.T) {
-	tests := []struct {
-		name     string
-		config   EmbeddingSearchConfig
-		expected string
-	}{
-		{
-			name: "returns provider type from config",
-			config: EmbeddingSearchConfig{
-				EmbeddingProvider: UpstreamConfig{
-					Type: ProviderTypeOpenAI,
-				},
-			},
-			expected: ProviderTypeOpenAI,
-		},
-		{
-			name: "returns openai-compatible provider type",
-			config: EmbeddingSearchConfig{
-				EmbeddingProvider: UpstreamConfig{
-					Type: ProviderTypeOpenAICompatible,
-				},
-			},
-			expected: ProviderTypeOpenAICompatible,
-		},
-		{
-			name: "returns empty string when provider not set",
-			config: EmbeddingSearchConfig{
-				EmbeddingProvider: UpstreamConfig{
-					Type: "",
-				},
-			},
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.config.GetProviderType()
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestEmbeddingSearchConfig_GetModelName(t *testing.T) {
 	tests := []struct {
 		name     string

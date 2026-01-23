@@ -485,33 +485,6 @@ func TestBuildPrompt(t *testing.T) {
 	}
 }
 
-func TestEnabled(t *testing.T) {
-	t.Run("nil Search struct returns false", func(t *testing.T) {
-		var s *Search
-		require.False(t, s.Enabled())
-	})
-
-	t.Run("nil getSearch function returns false", func(t *testing.T) {
-		s := New(nil, nil, nil, nil, nil)
-		require.False(t, s.Enabled())
-	})
-
-	t.Run("getSearch returns nil returns false", func(t *testing.T) {
-		s := New(func() embeddings.EmbeddingSearch {
-			return nil
-		}, nil, nil, nil, nil)
-		require.False(t, s.Enabled())
-	})
-
-	t.Run("getSearch returns valid search returns true", func(t *testing.T) {
-		mockSearch := mocks.NewMockEmbeddingSearch(t)
-		s := New(func() embeddings.EmbeddingSearch {
-			return mockSearch
-		}, nil, nil, nil, nil)
-		require.True(t, s.Enabled())
-	})
-}
-
 func TestSearch(t *testing.T) {
 	tests := []struct {
 		name        string

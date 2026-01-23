@@ -289,56 +289,6 @@ func TestNewEmbeddingProvider(t *testing.T) {
 // require a real database connection. The mock provider path is tested through
 // TestNewEmbeddingProvider which verifies the mock provider can be created correctly.
 
-func TestInitEmbeddingsSearchValidationOrder(t *testing.T) {
-	// Test that validation happens in the correct order:
-	// 1. Check if search type is empty
-	// 2. Check license
-	// 3. Check dimensions
-	// 4. Check search type validity
-
-	t.Run("empty type checked before license", func(t *testing.T) {
-		// Even with invalid license, empty type should be checked first
-		licenseChecker := createLicenseChecker(t, false) // unlicensed
-
-		cfg := embeddings.EmbeddingSearchConfig{
-			Type:       "", // Empty
-			Dimensions: 1536,
-		}
-
-		_, err := InitEmbeddingsSearch(nil, &http.Client{}, cfg, licenseChecker)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "search is disabled")
-	})
-
-	t.Run("license checked before dimensions", func(t *testing.T) {
-		licenseChecker := createLicenseChecker(t, false) // unlicensed
-
-		cfg := embeddings.EmbeddingSearchConfig{
-			Type:       embeddings.SearchTypeComposite,
-			Dimensions: 0, // Invalid
-		}
-
-		_, err := InitEmbeddingsSearch(nil, &http.Client{}, cfg, licenseChecker)
-		require.Error(t, err)
-		// License error should come before dimension error
-		require.Contains(t, err.Error(), "without a valid license")
-	})
-
-	t.Run("dimensions checked before search type validity", func(t *testing.T) {
-		licenseChecker := createLicenseChecker(t, true) // licensed
-
-		cfg := embeddings.EmbeddingSearchConfig{
-			Type:       "invalid-type",
-			Dimensions: 0, // Invalid
-		}
-
-		_, err := InitEmbeddingsSearch(nil, &http.Client{}, cfg, licenseChecker)
-		require.Error(t, err)
-		// Dimension error should come before search type error
-		require.Contains(t, err.Error(), "embedding dimensions must be greater than 0")
-	})
-}
-
 func TestEmbeddingProviderConfigUnmarshalEdgeCases(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -474,81 +424,6 @@ func TestChunkingOptionsDefault(t *testing.T) {
 	require.Greater(t, defaults.ChunkSize, 0, "default ChunkSize should be positive")
 	require.GreaterOrEqual(t, defaults.ChunkOverlap, 0, "default ChunkOverlap should be non-negative")
 	require.NotEmpty(t, defaults.ChunkingStrategy, "default ChunkingStrategy should not be empty")
-}
-
-func TestChunkingOptionsDefaultAppliedWhenChunkSizeIsZero(t *testing.T) {
-	// This test verifies the logic that InitEmbeddingsSearch uses to determine
-	// whether to apply default chunking options. The condition is:
-	//   if chunkingOpts.ChunkSize == 0 { chunkingOpts = chunking.DefaultOptions() }
-	//
-	// Since we cannot fully test InitEmbeddingsSearch without a database, we test
-	// the condition logic directly here.
-
-	tests := []struct {
-		name                   string
-		inputOptions           chunking.Options
-		shouldApplyDefaults    bool
-		expectedChunkSizeIsSet bool
-	}{
-		{
-			name: "zero ChunkSize triggers default application",
-			inputOptions: chunking.Options{
-				ChunkSize:        0,
-				ChunkOverlap:     50,
-				ChunkingStrategy: "paragraphs",
-			},
-			shouldApplyDefaults:    true,
-			expectedChunkSizeIsSet: true,
-		},
-		{
-			name: "positive ChunkSize does not trigger defaults",
-			inputOptions: chunking.Options{
-				ChunkSize:        500,
-				ChunkOverlap:     50,
-				ChunkingStrategy: "sentences",
-			},
-			shouldApplyDefaults:    false,
-			expectedChunkSizeIsSet: true,
-		},
-		{
-			name: "all zero values triggers defaults",
-			inputOptions: chunking.Options{
-				ChunkSize:        0,
-				ChunkOverlap:     0,
-				ChunkingStrategy: "",
-			},
-			shouldApplyDefaults:    true,
-			expectedChunkSizeIsSet: true,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			// Simulate the logic from InitEmbeddingsSearch
-			chunkingOpts := tc.inputOptions
-			if chunkingOpts.ChunkSize == 0 {
-				chunkingOpts = chunking.DefaultOptions()
-			}
-
-			if tc.shouldApplyDefaults {
-				// When defaults are applied, ChunkSize should be the default value
-				defaults := chunking.DefaultOptions()
-				require.Equal(t, defaults.ChunkSize, chunkingOpts.ChunkSize, "ChunkSize should match default")
-				require.Equal(t, defaults.ChunkOverlap, chunkingOpts.ChunkOverlap, "ChunkOverlap should match default")
-				require.Equal(t, defaults.ChunkingStrategy, chunkingOpts.ChunkingStrategy, "ChunkingStrategy should match default")
-			} else {
-				// When defaults are not applied, values should remain as input
-				require.Equal(t, tc.inputOptions.ChunkSize, chunkingOpts.ChunkSize)
-				require.Equal(t, tc.inputOptions.ChunkOverlap, chunkingOpts.ChunkOverlap)
-				require.Equal(t, tc.inputOptions.ChunkingStrategy, chunkingOpts.ChunkingStrategy)
-			}
-
-			// Verify that after the logic, ChunkSize is always set if expected
-			if tc.expectedChunkSizeIsSet {
-				require.Greater(t, chunkingOpts.ChunkSize, 0, "ChunkSize should be positive after logic")
-			}
-		})
-	}
 }
 
 func TestMockProviderDimensions(t *testing.T) {

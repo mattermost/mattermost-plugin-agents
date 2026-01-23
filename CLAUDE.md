@@ -27,3 +27,24 @@
 - Document all public APIs
 - Always add i18n for new text
 - Write go unit tests as table driven tests whenever possible
+
+## Testing Principles
+Write tests that verify behavior which could actually break due to bugs in our code. Before writing a test, ask: "If this test fails, does it indicate a real bug?"
+
+**Don't test:**
+- Simple getters/setters that just return or assign a field
+- Struct field assignment (creating a struct and checking fields equal what you set)
+- Constants equal their values (`assert.Equal(t, "running", JobStatusRunning)`)
+- Go standard library behavior (e.g., `strings.Builder`, `map` access)
+- Implementation details like validation order or which error appears first
+
+**Avoid:**
+- Duplicating production code logic in tests instead of calling the actual function
+- Conditional test assertions that accept multiple outcomes (`if x { assert A } else { assert B }`)
+- Tests where the only way they can fail is if the Go compiler is broken
+
+**Do test:**
+- Functions with actual logic, branching, or calculations
+- Error conditions and edge cases in real code paths
+- Integration between components
+- Behavior that depends on state or external inputs
