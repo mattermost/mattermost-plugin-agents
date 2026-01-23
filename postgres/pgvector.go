@@ -6,6 +6,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 
 	sq "github.com/Masterminds/squirrel"
@@ -179,10 +180,14 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 		queryBuilder = queryBuilder.Where(sq.Lt{"e.created_at": opts.CreatedBefore})
 	}
 
-	// Filter by MinScore in SQL when specified (distance threshold = 1 - minScore)
+	// Filter by MinScore in SQL when specified
+	// Convert minScore to L2 distance threshold: L2 = sqrt(2(1 - score))
 	if opts.MinScore > 0 {
-		maxDistance := 1 - opts.MinScore
-		queryBuilder = queryBuilder.Where("(e.embedding <-> ?) < ?", pgvector.NewVector(embedding), maxDistance)
+		maxDistanceSquared := 2 * (1 - opts.MinScore)
+		if maxDistanceSquared > 0 {
+			maxDistance := float32(math.Sqrt(float64(maxDistanceSquared)))
+			queryBuilder = queryBuilder.Where("(e.embedding <-> ?) < ?", pgvector.NewVector(embedding), maxDistance)
+		}
 	}
 
 	queryBuilder = queryBuilder.OrderBy("similarity ASC")
@@ -237,7 +242,10 @@ func scanSearchResults(rows *sqlx.Rows, minScore float32) ([]embeddings.SearchRe
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
 
-		score := 1 - similarity
+		// Convert L2 distance to cosine similarity for normalized vectors
+		// For unit vectors: L2² = 2(1 - cos(θ)), so cos(θ) = 1 - L2²/2
+		// This gives a score from 1 (identical) to -1 (opposite)
+		score := 1 - (similarity*similarity)/2
 		if score < 0 {
 			score = 0
 		}

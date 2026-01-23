@@ -630,8 +630,12 @@ func TestSearch(t *testing.T) {
 		ctx, pgVector, db, _, searchVector := setupSearchTest(t)
 		defer cleanupDB(t, db)
 
+		// With correct L2-to-cosine-similarity conversion:
+		// - post2 [0.9,0.9,0.9] vs [1,1,1]: L2 ≈ 0.173, score ≈ 0.985
+		// - post1 [0.7,0.7,0.7] vs [1,1,1]: L2 ≈ 0.52, score ≈ 0.865
+		// MinScore 0.9 should only match post2
 		opts := embeddings.SearchOptions{
-			MinScore: 0.8, // Only include very similar vectors
+			MinScore: 0.9, // Only include very similar vectors
 			UserID:   "system_user",
 		}
 
@@ -2092,4 +2096,107 @@ func TestConcurrentStoreOperations(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, count, "Should have exactly one document for the post after concurrent operations")
 	})
+}
+
+func TestSearchScoreCalculation(t *testing.T) {
+	// This test verifies that similarity scores are calculated correctly from L2 distance.
+	// For normalized vectors (unit length), L2 distance relates to cosine similarity:
+	// L2² = 2(1 - cos(θ)), so cos(θ) = 1 - L2²/2
+	//
+	// L2 distance ranges from 0 (identical) to 2 (opposite) for unit vectors.
+	// Expected scores:
+	// - L2 = 0 → score = 1 (identical)
+	// - L2 = 1 → score = 0.5 (60° angle)
+	// - L2 = sqrt(2) ≈ 1.414 → score = 0 (orthogonal, 90° angle)
+	// - L2 = 2 → score = -1 → clamped to 0 (opposite)
+
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	pgVectorConfig := PGVectorConfig{Dimensions: 3}
+	pgVector, err := NewPGVector(db, pgVectorConfig)
+	require.NoError(t, err)
+
+	// Set up channel and membership
+	addTestChannels(t, db, []string{"channel1"}, false)
+	addTestChannelMembers(t, db, "channel1", []string{"user1"})
+
+	now := model.GetMillis()
+
+	// Create test posts with different embeddings
+	// We'll use simple normalized vectors for predictable L2 distances
+	testCases := []struct {
+		postID           string
+		embedding        []float32
+		expectedMinScore float32 // minimum expected score
+		expectedMaxScore float32 // maximum expected score
+		description      string
+	}{
+		{
+			postID:           "identical",
+			embedding:        []float32{1, 0, 0}, // Same as query vector
+			expectedMinScore: 0.99,
+			expectedMaxScore: 1.01,
+			description:      "identical vector should have score ~1",
+		},
+		{
+			postID:           "similar",
+			embedding:        []float32{0.9, 0.436, 0}, // ~26° angle, L2 ≈ 0.45
+			expectedMinScore: 0.85,
+			expectedMaxScore: 1.0,
+			description:      "similar vector should have score > 0.85",
+		},
+		{
+			postID:           "orthogonal",
+			embedding:        []float32{0, 1, 0}, // 90° angle, L2 = sqrt(2)
+			expectedMinScore: 0.0,
+			expectedMaxScore: 0.1,
+			description:      "orthogonal vector should have score ~0",
+		},
+		{
+			postID:           "opposite",
+			embedding:        []float32{-1, 0, 0}, // 180° angle, L2 = 2
+			expectedMinScore: 0.0,
+			expectedMaxScore: 0.01,
+			description:      "opposite vector should have score 0 (clamped)",
+		},
+	}
+
+	// Add posts and store embeddings
+	for i, tc := range testCases {
+		addTestPosts(t, db, []string{tc.postID}, []int64{now + int64(i)})
+		docs := []embeddings.PostDocument{
+			{PostID: tc.postID, CreateAt: now + int64(i), TeamID: "team1", ChannelID: "channel1", UserID: "user1", Content: tc.description},
+		}
+		err = pgVector.Store(context.Background(), docs, [][]float32{tc.embedding})
+		require.NoError(t, err)
+	}
+
+	// Query with [1, 0, 0] vector
+	queryEmbedding := []float32{1, 0, 0}
+	results, err := pgVector.Search(context.Background(), queryEmbedding, embeddings.SearchOptions{
+		Limit:  10,
+		UserID: "user1",
+	})
+	require.NoError(t, err)
+	require.Len(t, results, len(testCases))
+
+	// Verify scores
+	scoreMap := make(map[string]float32)
+	for _, r := range results {
+		scoreMap[r.Document.PostID] = r.Score
+		t.Logf("Post %s: score=%.4f", r.Document.PostID, r.Score)
+	}
+
+	for _, tc := range testCases {
+		score, found := scoreMap[tc.postID]
+		require.True(t, found, "Post %s not found in results", tc.postID)
+		assert.GreaterOrEqual(t, score, tc.expectedMinScore, "%s: score %.4f below min %.4f", tc.description, score, tc.expectedMinScore)
+		assert.LessOrEqual(t, score, tc.expectedMaxScore, "%s: score %.4f above max %.4f", tc.description, score, tc.expectedMaxScore)
+	}
+
+	// Verify ordering: identical > similar > orthogonal >= opposite
+	assert.Greater(t, scoreMap["identical"], scoreMap["similar"], "identical should score higher than similar")
+	assert.Greater(t, scoreMap["similar"], scoreMap["orthogonal"], "similar should score higher than orthogonal")
+	assert.GreaterOrEqual(t, scoreMap["orthogonal"], scoreMap["opposite"], "orthogonal should score >= opposite")
 }
