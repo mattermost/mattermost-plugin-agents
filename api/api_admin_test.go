@@ -25,11 +25,8 @@ import (
 
 // mockIndexerService holds the mock configuration for creating test indexers
 type mockIndexerService struct {
-	isStale        bool
-	jobStatus      *indexer.JobStatus
-	incrementStats indexer.IncrementalStats
-	statsErr       error
-	resetStatsErr  error
+	isStale   bool
+	jobStatus *indexer.JobStatus
 }
 
 // setupAdminTestEnvironment creates a test environment for admin endpoint testing
@@ -210,126 +207,6 @@ func TestHandleResetStaleJob(t *testing.T) {
 	}
 }
 
-func TestHandleGetIncrementalStats(t *testing.T) {
-	tests := []struct {
-		name           string
-		indexerNil     bool
-		stats          indexer.IncrementalStats
-		statsErr       error
-		expectedStatus int
-	}{
-		{
-			name:           "returns 400 when indexer not configured",
-			indexerNil:     true,
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:       "returns stats correctly",
-			indexerNil: false,
-			stats: indexer.IncrementalStats{
-				TotalIndexed: 100,
-				ErrorCount:   5,
-				LastError:    "test error",
-			},
-			expectedStatus: http.StatusOK,
-		},
-		{
-			name:           "returns empty stats when none exist",
-			indexerNil:     false,
-			stats:          indexer.IncrementalStats{},
-			expectedStatus: http.StatusOK,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			api, mockAPI := setupAdminTestEnvironment(t)
-			defer mockAPI.AssertExpectations(t)
-
-			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
-			mockAPI.On("LogError", mock.Anything).Return().Maybe()
-
-			if !tt.indexerNil {
-				mockIndexer := &mockIndexerService{
-					incrementStats: tt.stats,
-					statsErr:       tt.statsErr,
-				}
-				api.indexerService = createMockIndexer(t, mockIndexer)
-			}
-
-			req := httptest.NewRequest(http.MethodGet, "/admin/reindex/incremental-stats", nil)
-			req.Header.Set("Mattermost-User-Id", "admin-user")
-
-			recorder := httptest.NewRecorder()
-			api.ServeHTTP(&plugin.Context{}, recorder, req)
-
-			resp := recorder.Result()
-			require.Equal(t, tt.expectedStatus, resp.StatusCode)
-
-			if tt.expectedStatus == http.StatusOK {
-				var response indexer.IncrementalStats
-				err := json.NewDecoder(resp.Body).Decode(&response)
-				require.NoError(t, err)
-				require.Equal(t, tt.stats.TotalIndexed, response.TotalIndexed)
-				require.Equal(t, tt.stats.ErrorCount, response.ErrorCount)
-			}
-		})
-	}
-}
-
-func TestHandleResetIncrementalStats(t *testing.T) {
-	tests := []struct {
-		name           string
-		indexerNil     bool
-		resetErr       error
-		expectedStatus int
-	}{
-		{
-			name:           "returns 400 when indexer not configured",
-			indexerNil:     true,
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "successfully resets stats",
-			indexerNil:     false,
-			expectedStatus: http.StatusOK,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			api, mockAPI := setupAdminTestEnvironment(t)
-			defer mockAPI.AssertExpectations(t)
-
-			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
-			mockAPI.On("LogError", mock.Anything).Return().Maybe()
-
-			if !tt.indexerNil {
-				mockIndexer := &mockIndexerService{
-					resetStatsErr: tt.resetErr,
-				}
-				api.indexerService = createMockIndexer(t, mockIndexer)
-			}
-
-			req := httptest.NewRequest(http.MethodPost, "/admin/reindex/incremental-stats/reset", nil)
-			req.Header.Set("Mattermost-User-Id", "admin-user")
-
-			recorder := httptest.NewRecorder()
-			api.ServeHTTP(&plugin.Context{}, recorder, req)
-
-			resp := recorder.Result()
-			require.Equal(t, tt.expectedStatus, resp.StatusCode)
-
-			if tt.expectedStatus == http.StatusOK {
-				var response map[string]string
-				err := json.NewDecoder(resp.Body).Decode(&response)
-				require.NoError(t, err)
-				require.Contains(t, response["message"], "reset successfully")
-			}
-		})
-	}
-}
-
 // notFoundError simulates the "not found" error that the indexer checks for
 type notFoundError struct{}
 
@@ -365,26 +242,6 @@ func createMockIndexer(t *testing.T, mockService *mockIndexerService) *indexer.I
 	if mockService.jobStatus != nil && mockService.isStale {
 		mockClient.On("KVSet", indexer.ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Return(nil).Maybe()
-	}
-
-	// Setup mock for GetIncrementalStats
-	if mockService.statsErr != nil {
-		mockClient.On("KVGet", indexer.IncrementalStatsKey, mock.AnythingOfType("*indexer.IncrementalStats")).
-			Return(mockService.statsErr).Maybe()
-	} else {
-		mockClient.On("KVGet", indexer.IncrementalStatsKey, mock.AnythingOfType("*indexer.IncrementalStats")).
-			Run(func(args mock.Arguments) {
-				stats := args.Get(1).(*indexer.IncrementalStats)
-				*stats = mockService.incrementStats
-			}).
-			Return(nil).Maybe()
-	}
-
-	// Setup mock for ResetIncrementalStats
-	if mockService.resetStatsErr != nil {
-		mockClient.On("KVDelete", indexer.IncrementalStatsKey).Return(mockService.resetStatsErr).Maybe()
-	} else {
-		mockClient.On("KVDelete", indexer.IncrementalStatsKey).Return(nil).Maybe()
 	}
 
 	// Setup mutex mocks for ResetStaleJob

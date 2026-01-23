@@ -39,7 +39,6 @@ func TestChunkText(t *testing.T) {
 		content := "This is sentence one. This is sentence two! This is sentence three? This is sentence four."
 		opts := Options{
 			ChunkSize:        25,
-			MinChunkSize:     0.75,
 			ChunkingStrategy: "sentences",
 		}
 

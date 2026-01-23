@@ -28,7 +28,6 @@ const (
 	IndexerCursorKey      = "indexer_cursor"
 	IndexerModelKey       = "indexer_model_info"
 	IndexerLastIndexedKey = "indexer_last_indexed_ts"
-	IncrementalStatsKey   = "indexer_incremental_stats"
 )
 
 // PostRecord represents a post record from the database
@@ -88,15 +87,6 @@ type ModelCompatibility struct {
 	Compatible   bool   `json:"compatible"`
 	NeedsReindex bool   `json:"needs_reindex"`
 	Reason       string `json:"reason,omitempty"`
-}
-
-// IncrementalStats tracks statistics for incremental (real-time) post indexing
-type IncrementalStats struct {
-	ErrorCount    int       `json:"error_count"`
-	LastError     string    `json:"last_error,omitempty"`
-	LastErrorAt   time.Time `json:"last_error_at,omitempty"`
-	TotalIndexed  int64     `json:"total_indexed"`
-	LastIndexedAt time.Time `json:"last_indexed_at,omitempty"`
 }
 
 // runReindexJob runs the reindexing process

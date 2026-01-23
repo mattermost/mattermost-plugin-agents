@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -69,9 +70,7 @@ func (s *Indexer) IndexPost(ctx context.Context, post *model.Post, channel *mode
 	}
 
 	// Store the document with retry logic
-	err := s.storeWithRetryIncremental(ctx, []embeddings.PostDocument{doc}, search)
-	s.updateIncrementalStats(err)
-	return err
+	return s.storeWithRetryIncremental(ctx, []embeddings.PostDocument{doc}, search)
 }
 
 // storeWithRetryIncremental stores documents with retry logic optimized for single post indexing
@@ -93,40 +92,6 @@ func (s *Indexer) storeWithRetryIncremental(ctx context.Context, docs []embeddin
 		}
 	}
 	return lastErr
-}
-
-// updateIncrementalStats updates the incremental indexing statistics
-func (s *Indexer) updateIncrementalStats(indexErr error) {
-	var stats IncrementalStats
-	_ = s.pluginAPI.KVGet(IncrementalStatsKey, &stats)
-
-	if indexErr != nil {
-		stats.ErrorCount++
-		stats.LastError = indexErr.Error()
-		stats.LastErrorAt = time.Now()
-	} else {
-		stats.TotalIndexed++
-		stats.LastIndexedAt = time.Now()
-	}
-
-	if err := s.pluginAPI.KVSet(IncrementalStatsKey, stats); err != nil {
-		s.pluginAPI.LogError("Failed to update incremental stats", "error", err)
-	}
-}
-
-// GetIncrementalStats retrieves the incremental indexing statistics
-func (s *Indexer) GetIncrementalStats() (IncrementalStats, error) {
-	var stats IncrementalStats
-	err := s.pluginAPI.KVGet(IncrementalStatsKey, &stats)
-	if err != nil && err.Error() == "not found" {
-		return IncrementalStats{}, nil
-	}
-	return stats, err
-}
-
-// ResetIncrementalStats resets the incremental indexing statistics
-func (s *Indexer) ResetIncrementalStats() error {
-	return s.pluginAPI.KVDelete(IncrementalStatsKey)
 }
 
 // DeletePost deletes a post from the index
@@ -374,12 +339,25 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 		botUserIDs = s.bots.GetAllBotUserIDs()
 	}
 
-	// Count posts in database, excluding bot posts
+	// Count posts in database, excluding bot posts and posts in bot DM channels
+	// This matches the filtering in shouldIndexPost which skips:
+	// - Posts from bots (UserId in botUserIDs)
+	// - Posts in DM channels with bots (channel Type='D' and Name contains bot ID)
 	if len(botUserIDs) > 0 {
+		// Build exclusion for bot DM channels
+		// DM channel names contain both user IDs separated by "__"
+		var likeConditions []string
+		for _, botID := range botUserIDs {
+			likeConditions = append(likeConditions, fmt.Sprintf("c.Name LIKE '%%%s%%'", botID))
+		}
+		botDMExclusion := fmt.Sprintf("NOT (c.Type = 'D' AND (%s))", strings.Join(likeConditions, " OR "))
+
 		query, args, err := sqlx.In(`
-			SELECT COUNT(*) FROM Posts
-			WHERE DeleteAt = 0 AND Message != '' AND Type = ''
-			AND UserId NOT IN (?)`, botUserIDs)
+			SELECT COUNT(*) FROM Posts p
+			JOIN Channels c ON p.ChannelId = c.Id
+			WHERE p.DeleteAt = 0 AND p.Message != '' AND p.Type = ''
+			AND p.UserId NOT IN (?)
+			AND `+botDMExclusion, botUserIDs)
 		if err != nil {
 			result.Error = fmt.Sprintf("failed to build query: %v", err)
 			result.Status = "error"

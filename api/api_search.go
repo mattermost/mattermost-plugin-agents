@@ -20,6 +20,11 @@ type SearchRequest struct {
 	MaxResults int    `json:"maxResults"`
 }
 
+const (
+	defaultMaxResults = 5
+	maxMaxResults     = 100
+)
+
 func (a *API) handleRunSearch(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
@@ -38,6 +43,13 @@ func (a *API) handleRunSearch(c *gin.Context) {
 	if req.Query == "" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("query cannot be empty"))
 		return
+	}
+
+	// Validate MaxResults
+	if req.MaxResults <= 0 {
+		req.MaxResults = defaultMaxResults
+	} else if req.MaxResults > maxMaxResults {
+		req.MaxResults = maxMaxResults
 	}
 
 	result, err := a.searchService.RunSearch(c.Request.Context(), userID, bot, req.Query, req.TeamID, req.ChannelID, req.MaxResults)
@@ -62,6 +74,13 @@ func (a *API) handleSearchQuery(c *gin.Context) {
 	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request: %w", err))
 		return
+	}
+
+	// Validate MaxResults
+	if req.MaxResults <= 0 {
+		req.MaxResults = defaultMaxResults
+	} else if req.MaxResults > maxMaxResults {
+		req.MaxResults = maxMaxResults
 	}
 
 	response, err := a.searchService.SearchQuery(c.Request.Context(), userID, bot, req.Query, req.TeamID, req.ChannelID, req.MaxResults)

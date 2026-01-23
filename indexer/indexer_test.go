@@ -678,12 +678,18 @@ func testDB(t *testing.T) *sqlx.DB {
 
 	// Create mock tables for tests
 	tables := []string{
+		`CREATE TABLE IF NOT EXISTS Channels (
+			Id TEXT PRIMARY KEY,
+			Type TEXT NOT NULL DEFAULT '',
+			Name TEXT NOT NULL DEFAULT ''
+		)`,
 		`CREATE TABLE IF NOT EXISTS Posts (
 			Id TEXT PRIMARY KEY,
 			CreateAt BIGINT NOT NULL,
 			DeleteAt BIGINT NOT NULL DEFAULT 0,
 			Message TEXT NOT NULL DEFAULT '',
-			Type TEXT NOT NULL DEFAULT ''
+			Type TEXT NOT NULL DEFAULT '',
+			ChannelId TEXT DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS llm_posts_embeddings (
 			id TEXT PRIMARY KEY,
@@ -999,116 +1005,6 @@ func TestConfigGetter(t *testing.T) {
 	})
 }
 
-func TestIncrementalStats(t *testing.T) {
-	t.Run("GetIncrementalStats returns empty stats when not found", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-
-		mockClient.On("KVGet", IncrementalStatsKey, mock.AnythingOfType("*indexer.IncrementalStats")).
-			Return(errors.New("not found"))
-
-		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		stats, err := indexer.GetIncrementalStats()
-
-		require.NoError(t, err)
-		assert.Equal(t, IncrementalStats{}, stats)
-	})
-
-	t.Run("GetIncrementalStats returns stored stats", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-
-		expectedStats := IncrementalStats{
-			TotalIndexed: 100,
-			ErrorCount:   5,
-			LastError:    "test error",
-		}
-
-		mockClient.On("KVGet", IncrementalStatsKey, mock.AnythingOfType("*indexer.IncrementalStats")).
-			Run(func(args mock.Arguments) {
-				stats := args.Get(1).(*IncrementalStats)
-				*stats = expectedStats
-			}).
-			Return(nil)
-
-		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		stats, err := indexer.GetIncrementalStats()
-
-		require.NoError(t, err)
-		assert.Equal(t, expectedStats.TotalIndexed, stats.TotalIndexed)
-		assert.Equal(t, expectedStats.ErrorCount, stats.ErrorCount)
-		assert.Equal(t, expectedStats.LastError, stats.LastError)
-	})
-
-	t.Run("ResetIncrementalStats clears stats", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-
-		mockClient.On("KVDelete", IncrementalStatsKey).Return(nil)
-
-		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		err := indexer.ResetIncrementalStats()
-
-		require.NoError(t, err)
-	})
-
-	t.Run("updateIncrementalStats increments total_indexed on success", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-
-		// First call: KVGet returns existing stats
-		mockClient.On("KVGet", IncrementalStatsKey, mock.AnythingOfType("*indexer.IncrementalStats")).
-			Run(func(args mock.Arguments) {
-				stats := args.Get(1).(*IncrementalStats)
-				stats.TotalIndexed = 10
-			}).
-			Return(nil)
-
-		// KVSet should save updated stats
-		mockClient.On("KVSet", IncrementalStatsKey, mock.MatchedBy(func(v interface{}) bool {
-			stats := v.(IncrementalStats)
-			return stats.TotalIndexed == 11 && !stats.LastIndexedAt.IsZero()
-		})).Return(nil)
-
-		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		indexer.updateIncrementalStats(nil) // nil error = success
-	})
-
-	t.Run("updateIncrementalStats increments error_count on failure", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-
-		// KVGet returns existing stats
-		mockClient.On("KVGet", IncrementalStatsKey, mock.AnythingOfType("*indexer.IncrementalStats")).
-			Run(func(args mock.Arguments) {
-				stats := args.Get(1).(*IncrementalStats)
-				stats.ErrorCount = 5
-			}).
-			Return(nil)
-
-		// KVSet should save updated stats with incremented error count
-		mockClient.On("KVSet", IncrementalStatsKey, mock.MatchedBy(func(v interface{}) bool {
-			stats := v.(IncrementalStats)
-			return stats.ErrorCount == 6 && stats.LastError == "test indexing error"
-		})).Return(nil)
-
-		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		indexer.updateIncrementalStats(errors.New("test indexing error"))
-	})
-
-	t.Run("updateIncrementalStats stores last error message and timestamp", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-
-		mockClient.On("KVGet", IncrementalStatsKey, mock.AnythingOfType("*indexer.IncrementalStats")).
-			Return(errors.New("not found"))
-
-		mockClient.On("KVSet", IncrementalStatsKey, mock.MatchedBy(func(v interface{}) bool {
-			stats := v.(IncrementalStats)
-			return stats.LastError == "connection timeout" &&
-				!stats.LastErrorAt.IsZero() &&
-				stats.ErrorCount == 1
-		})).Return(nil)
-
-		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		indexer.updateIncrementalStats(errors.New("connection timeout"))
-	})
-}
-
 func TestStoreWithRetryIncremental(t *testing.T) {
 	t.Run("success on first attempt", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
@@ -1405,29 +1301,26 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 
 		now := model.GetMillis()
 
-		// Add 5 posts from regular users
-		for i := 0; i < 5; i++ {
-			postID := fmt.Sprintf("user-post%d", i)
-			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type) VALUES ($1, $2, 0, $3, '')",
-				postID, now+int64(i), fmt.Sprintf("User message %d", i))
-			require.NoError(t, err)
-		}
-
-		// Add table with UserId column for this test
-		_, err := db.Exec("ALTER TABLE Posts ADD COLUMN UserId TEXT DEFAULT ''")
+		// Create a regular channel (not a DM with bot)
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('regular-channel', 'O', 'town-square')")
 		require.NoError(t, err)
 
-		// Update the user posts to have regular user IDs
+		// Add table with UserId column for this test
+		_, err = db.Exec("ALTER TABLE Posts ADD COLUMN UserId TEXT DEFAULT ''")
+		require.NoError(t, err)
+
+		// Add 5 posts from regular users in regular channel
 		for i := 0; i < 5; i++ {
 			postID := fmt.Sprintf("user-post%d", i)
-			_, err = db.Exec("UPDATE Posts SET UserId = 'regular-user-id' WHERE Id = $1", postID)
+			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'regular-channel', 'regular-user-id')",
+				postID, now+int64(i), fmt.Sprintf("User message %d", i))
 			require.NoError(t, err)
 		}
 
 		// Add 3 posts from the bot user (should be excluded)
 		for i := 0; i < 3; i++ {
 			postID := fmt.Sprintf("bot-post%d", i)
-			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, UserId) VALUES ($1, $2, 0, $3, '', 'bot-user-id')",
+			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'regular-channel', 'bot-user-id')",
 				postID, now+int64(100+i), fmt.Sprintf("Bot message %d", i))
 			require.NoError(t, err)
 		}

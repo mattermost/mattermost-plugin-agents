@@ -42,6 +42,11 @@ func (c *CompositeSearch) Store(ctx context.Context, docs []PostDocument) error 
 		}
 	}
 
+	// Early return if no documents after chunking (all filtered or empty input)
+	if len(chunkedDocs) == 0 {
+		return nil
+	}
+
 	// Extract texts for embedding
 	texts := make([]string, len(chunkedDocs))
 	for i, doc := range chunkedDocs {

@@ -199,8 +199,6 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.GET("/reindex/model-compatibility", a.handleGetModelCompatibility)
 	adminRouter.GET("/reindex/stale", a.handleGetStaleJobStatus)
 	adminRouter.POST("/reindex/reset-stale", a.handleResetStaleJob)
-	adminRouter.GET("/reindex/incremental-stats", a.handleGetIncrementalStats)
-	adminRouter.POST("/reindex/incremental-stats/reset", a.handleResetIncrementalStats)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)

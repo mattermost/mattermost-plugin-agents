@@ -233,43 +233,6 @@ func (a *API) handleGetStaleJobStatus(c *gin.Context) {
 	})
 }
 
-// handleGetIncrementalStats retrieves statistics for incremental post indexing
-func (a *API) handleGetIncrementalStats(c *gin.Context) {
-	if a.indexerService == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "search functionality is not configured"})
-		return
-	}
-
-	stats, err := a.indexerService.GetIncrementalStats()
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
-
-	c.JSON(http.StatusOK, stats)
-}
-
-// handleResetIncrementalStats resets the incremental indexing statistics
-func (a *API) handleResetIncrementalStats(c *gin.Context) {
-	if err := a.enforceEmptyBody(c); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err)
-		return
-	}
-
-	if a.indexerService == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "search functionality is not configured"})
-		return
-	}
-
-	err := a.indexerService.ResetIncrementalStats()
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "Incremental stats reset successfully"})
-}
-
 func (a *API) mattermostAdminAuthorizationRequired(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 

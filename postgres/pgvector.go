@@ -72,6 +72,22 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 }
 
 func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, embeddings [][]float32) error {
+	// Collect unique post IDs to clean up before insert
+	// This ensures that when a post is re-indexed with a different chunk count,
+	// old chunks are removed to prevent orphaned data.
+	postIDs := make(map[string]struct{})
+	for _, doc := range docs {
+		postIDs[doc.PostID] = struct{}{}
+	}
+
+	// Delete existing entries for all posts being updated
+	for postID := range postIDs {
+		if _, err := pv.db.ExecContext(ctx, "DELETE FROM llm_posts_embeddings WHERE post_id = $1", postID); err != nil {
+			return fmt.Errorf("failed to delete existing chunks for post %s: %w", postID, err)
+		}
+	}
+
+	// Insert new entries
 	for i, doc := range docs {
 		id := doc.PostID
 		if doc.IsChunk {
@@ -85,13 +101,7 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 			VALUES (
 				:id, :post_id, :team_id, :channel_id, :user_id, :content, :embedding, :created_at,
 				:is_chunk, :chunk_index, :total_chunks
-			)
-			ON CONFLICT (id) DO UPDATE SET
-				content = EXCLUDED.content,
-				embedding = EXCLUDED.embedding,
-				is_chunk = EXCLUDED.is_chunk,
-				chunk_index = EXCLUDED.chunk_index,
-				total_chunks = EXCLUDED.total_chunks`,
+			)`,
 			map[string]interface{}{
 				"id":           id,
 				"post_id":      doc.PostID,
@@ -164,11 +174,21 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 		queryBuilder = queryBuilder.Where(sq.Lt{"e.created_at": opts.CreatedBefore})
 	}
 
+	// Filter by MinScore in SQL when specified (distance threshold = 1 - minScore)
+	if opts.MinScore > 0 {
+		maxDistance := 1 - opts.MinScore
+		queryBuilder = queryBuilder.Where("(e.embedding <-> ?) < ?", pgvector.NewVector(embedding), maxDistance)
+	}
+
 	queryBuilder = queryBuilder.OrderBy("similarity ASC")
 
-	if opts.Limit > 0 && opts.Limit < 100000 {
-		queryBuilder = queryBuilder.Limit(uint64(opts.Limit)) //nolint:gosec
+	// Apply limit with sensible default/max
+	const maxSearchLimit = 1000
+	limit := opts.Limit
+	if limit <= 0 || limit > maxSearchLimit {
+		limit = maxSearchLimit
 	}
+	queryBuilder = queryBuilder.Limit(uint64(limit)) //nolint:gosec
 
 	query, args, err := queryBuilder.ToSql()
 	if err != nil {
