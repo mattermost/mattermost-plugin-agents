@@ -373,7 +373,7 @@ Currently integrations are limited to direct messages between users and the agen
 
 ## Model Context Protocol (MCP) Integration
 
-The Model Context Protocol (MCP) integration allows Agents to connect to external tools and services through standardized MCP servers. This [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature enables expanding AI capabilities with custom integrations.
+The Model Context Protocol (MCP) integration allows Agents to connect to external tools and services through standardized MCP servers. This feature enables expanding AI capabilities with custom integrations.
 
 ### Configuration
 
@@ -430,7 +430,7 @@ For more information, see [Atlassian's documentation on MCP server settings](htt
 
 ## Mattermost MCP Server
 
-The Mattermost MCP Server enables AI agents and external applications to interact with your Mattermost instance through the Model Context Protocol (MCP). This [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature is a standardized protocol that allows AI assistants to read messages, search content, create posts, and manage channels and teams programmatically. 
+The Mattermost MCP Server enables AI agents and external applications to interact with your Mattermost instance through the Model Context Protocol (MCP). This is a standardized protocol that allows AI assistants to read messages, search content, create posts, and manage channels and teams programmatically. 
 
 ### Overview
 
