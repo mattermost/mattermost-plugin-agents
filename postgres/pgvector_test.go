@@ -1250,3 +1250,846 @@ func TestSearchExcludesDeletedPosts(t *testing.T) {
 		assert.False(t, returnedPostIDs[postID], "Deleted post %s should NOT be returned", postID)
 	}
 }
+
+func TestNewPGVectorValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		dimensions int
+		wantErr    bool
+		errMsg     string
+	}{
+		{
+			name:       "zero dimensions should error",
+			dimensions: 0,
+			wantErr:    true,
+			errMsg:     "pgvector dimensions must be greater than 0, got 0",
+		},
+		{
+			name:       "negative dimensions should error",
+			dimensions: -10,
+			wantErr:    true,
+			errMsg:     "pgvector dimensions must be greater than 0, got -10",
+		},
+		{
+			name:       "positive dimensions should succeed",
+			dimensions: 128,
+			wantErr:    false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testDB(t)
+			defer cleanupDB(t, db)
+
+			config := PGVectorConfig{
+				Dimensions: tc.dimensions,
+			}
+
+			pgVector, err := NewPGVector(db, config)
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.errMsg)
+				assert.Nil(t, pgVector)
+			} else {
+				require.NoError(t, err)
+				assert.NotNil(t, pgVector)
+			}
+		})
+	}
+}
+
+func TestStoreValidation(t *testing.T) {
+	t.Run("mismatched docs and embeddings length returns error", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		config := PGVectorConfig{
+			Dimensions: 3,
+		}
+		pgVector, err := NewPGVector(db, config)
+		require.NoError(t, err)
+
+		// Create test data
+		now := model.GetMillis()
+		postIDs := []string{"post1", "post2"}
+		createAts := []int64{now, now}
+		addTestPosts(t, db, postIDs, createAts)
+
+		docs := []embeddings.PostDocument{
+			{
+				PostID:    "post1",
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   "Content 1",
+			},
+			{
+				PostID:    "post2",
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   "Content 2",
+			},
+		}
+
+		// Only provide one embedding for two docs - should return error
+		embedVectors := [][]float32{
+			{0.1, 0.2, 0.3},
+		}
+
+		ctx := context.Background()
+
+		// Store should return an error when docs and embeddings lengths mismatch
+		err = pgVector.Store(ctx, docs, embedVectors)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "mismatched input lengths")
+		assert.Contains(t, err.Error(), "2 documents")
+		assert.Contains(t, err.Error(), "1 embeddings")
+	})
+
+	t.Run("unicode and special characters in content", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		config := PGVectorConfig{
+			Dimensions: 3,
+		}
+		pgVector, err := NewPGVector(db, config)
+		require.NoError(t, err)
+
+		now := model.GetMillis()
+		postIDs := []string{"post_unicode"}
+		createAts := []int64{now}
+		addTestPosts(t, db, postIDs, createAts)
+
+		// Test with various unicode characters, emojis, and special characters
+		unicodeContent := "Hello 世界! 🎉🚀 Héllo Wörld! \n\t Special chars: <>\"'&;-- SQL injection test'; DROP TABLE--"
+
+		docs := []embeddings.PostDocument{
+			{
+				PostID:    "post_unicode",
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   unicodeContent,
+			},
+		}
+
+		embedVectors := [][]float32{
+			{0.1, 0.2, 0.3},
+		}
+
+		ctx := context.Background()
+
+		err = pgVector.Store(ctx, docs, embedVectors)
+		require.NoError(t, err)
+
+		// Verify the content was stored correctly
+		var storedContent string
+		err = db.Get(&storedContent, "SELECT content FROM llm_posts_embeddings WHERE id = 'post_unicode'")
+		require.NoError(t, err)
+		assert.Equal(t, unicodeContent, storedContent)
+	})
+
+	t.Run("reindexing post that changed from single to chunked", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		config := PGVectorConfig{
+			Dimensions: 3,
+		}
+		pgVector, err := NewPGVector(db, config)
+		require.NoError(t, err)
+
+		now := model.GetMillis()
+		postIDs := []string{"post_reindex"}
+		createAts := []int64{now}
+		addTestPosts(t, db, postIDs, createAts)
+
+		ctx := context.Background()
+
+		// First, store as single document
+		singleDoc := []embeddings.PostDocument{
+			{
+				PostID:    "post_reindex",
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   "Short content",
+				ChunkInfo: chunking.ChunkInfo{
+					IsChunk:     false,
+					ChunkIndex:  0,
+					TotalChunks: 1,
+				},
+			},
+		}
+		singleEmbed := [][]float32{{0.1, 0.2, 0.3}}
+
+		err = pgVector.Store(ctx, singleDoc, singleEmbed)
+		require.NoError(t, err)
+
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings WHERE post_id = 'post_reindex'")
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+
+		// Now reindex as multiple chunks
+		chunkedDocs := []embeddings.PostDocument{
+			{
+				PostID:    "post_reindex",
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   "Chunk 0",
+				ChunkInfo: chunking.ChunkInfo{
+					IsChunk:     true,
+					ChunkIndex:  0,
+					TotalChunks: 3,
+				},
+			},
+			{
+				PostID:    "post_reindex",
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   "Chunk 1",
+				ChunkInfo: chunking.ChunkInfo{
+					IsChunk:     true,
+					ChunkIndex:  1,
+					TotalChunks: 3,
+				},
+			},
+			{
+				PostID:    "post_reindex",
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   "Chunk 2",
+				ChunkInfo: chunking.ChunkInfo{
+					IsChunk:     true,
+					ChunkIndex:  2,
+					TotalChunks: 3,
+				},
+			},
+		}
+		chunkedEmbeds := [][]float32{
+			{0.1, 0.2, 0.3},
+			{0.4, 0.5, 0.6},
+			{0.7, 0.8, 0.9},
+		}
+
+		err = pgVector.Store(ctx, chunkedDocs, chunkedEmbeds)
+		require.NoError(t, err)
+
+		// Verify old single entry was removed and new chunks exist
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings WHERE post_id = 'post_reindex'")
+		require.NoError(t, err)
+		assert.Equal(t, 3, count, "Should have 3 chunks after reindex")
+
+		// Verify all are chunks
+		var nonChunkCount int
+		err = db.Get(&nonChunkCount, "SELECT COUNT(*) FROM llm_posts_embeddings WHERE post_id = 'post_reindex' AND is_chunk = false")
+		require.NoError(t, err)
+		assert.Equal(t, 0, nonChunkCount, "Original single document should have been removed")
+	})
+
+	t.Run("reindexing post that changed from chunked to single", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		config := PGVectorConfig{
+			Dimensions: 3,
+		}
+		pgVector, err := NewPGVector(db, config)
+		require.NoError(t, err)
+
+		now := model.GetMillis()
+		postIDs := []string{"post_unchunk"}
+		createAts := []int64{now}
+		addTestPosts(t, db, postIDs, createAts)
+
+		ctx := context.Background()
+
+		// First, store as multiple chunks
+		chunkedDocs := []embeddings.PostDocument{
+			{
+				PostID:    "post_unchunk",
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   "Chunk 0",
+				ChunkInfo: chunking.ChunkInfo{
+					IsChunk:     true,
+					ChunkIndex:  0,
+					TotalChunks: 2,
+				},
+			},
+			{
+				PostID:    "post_unchunk",
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   "Chunk 1",
+				ChunkInfo: chunking.ChunkInfo{
+					IsChunk:     true,
+					ChunkIndex:  1,
+					TotalChunks: 2,
+				},
+			},
+		}
+		chunkedEmbeds := [][]float32{
+			{0.1, 0.2, 0.3},
+			{0.4, 0.5, 0.6},
+		}
+
+		err = pgVector.Store(ctx, chunkedDocs, chunkedEmbeds)
+		require.NoError(t, err)
+
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings WHERE post_id = 'post_unchunk'")
+		require.NoError(t, err)
+		assert.Equal(t, 2, count)
+
+		// Now reindex as single document (content edited to be shorter)
+		singleDoc := []embeddings.PostDocument{
+			{
+				PostID:    "post_unchunk",
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   "Short content now",
+				ChunkInfo: chunking.ChunkInfo{
+					IsChunk:     false,
+					ChunkIndex:  0,
+					TotalChunks: 1,
+				},
+			},
+		}
+		singleEmbed := [][]float32{{0.9, 0.9, 0.9}}
+
+		err = pgVector.Store(ctx, singleDoc, singleEmbed)
+		require.NoError(t, err)
+
+		// Verify old chunks were removed and new single entry exists
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings WHERE post_id = 'post_unchunk'")
+		require.NoError(t, err)
+		assert.Equal(t, 1, count, "Should have 1 document after reindex")
+
+		// Verify it's not a chunk
+		var isChunk bool
+		err = db.Get(&isChunk, "SELECT is_chunk FROM llm_posts_embeddings WHERE post_id = 'post_unchunk'")
+		require.NoError(t, err)
+		assert.False(t, isChunk, "Should not be a chunk")
+	})
+
+	t.Run("very large document content", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		config := PGVectorConfig{
+			Dimensions: 3,
+		}
+		pgVector, err := NewPGVector(db, config)
+		require.NoError(t, err)
+
+		now := model.GetMillis()
+		postIDs := []string{"post_large"}
+		createAts := []int64{now}
+		addTestPosts(t, db, postIDs, createAts)
+
+		// Create a large document (1MB of content)
+		largeContent := make([]byte, 1024*1024)
+		for i := range largeContent {
+			largeContent[i] = byte('A' + (i % 26))
+		}
+
+		docs := []embeddings.PostDocument{
+			{
+				PostID:    "post_large",
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   string(largeContent),
+			},
+		}
+
+		embedVectors := [][]float32{
+			{0.1, 0.2, 0.3},
+		}
+
+		ctx := context.Background()
+
+		err = pgVector.Store(ctx, docs, embedVectors)
+		require.NoError(t, err)
+
+		// Verify the content was stored
+		var storedLen int
+		err = db.Get(&storedLen, "SELECT LENGTH(content) FROM llm_posts_embeddings WHERE id = 'post_large'")
+		require.NoError(t, err)
+		assert.Equal(t, len(largeContent), storedLen)
+	})
+}
+
+func TestSearchValidation(t *testing.T) {
+	setupSearchValidationTest := func(t *testing.T) (context.Context, *PGVector, *sqlx.DB, []int64) {
+		db := testDB(t)
+
+		config := PGVectorConfig{
+			Dimensions: 3,
+		}
+		pgVector, err := NewPGVector(db, config)
+		require.NoError(t, err)
+
+		now := model.GetMillis()
+		postIDs := []string{"post1", "post2", "post3", "post4", "post5"}
+		createAts := []int64{now - 4000, now - 3000, now - 2000, now - 1000, now}
+		addTestPosts(t, db, postIDs, createAts)
+
+		channelIDs := []string{"channel1"}
+		addTestChannels(t, db, channelIDs, false)
+		addTestChannelMembers(t, db, "channel1", []string{"user1"})
+
+		docs := []embeddings.PostDocument{
+			{PostID: "post1", CreateAt: createAts[0], TeamID: "team1", ChannelID: "channel1", UserID: "user1", Content: "Content 1"},
+			{PostID: "post2", CreateAt: createAts[1], TeamID: "team1", ChannelID: "channel1", UserID: "user1", Content: "Content 2"},
+			{PostID: "post3", CreateAt: createAts[2], TeamID: "team1", ChannelID: "channel1", UserID: "user1", Content: "Content 3"},
+			{PostID: "post4", CreateAt: createAts[3], TeamID: "team2", ChannelID: "channel1", UserID: "user1", Content: "Content 4"},
+			{PostID: "post5", CreateAt: createAts[4], TeamID: "team2", ChannelID: "channel1", UserID: "user1", Content: "Content 5"},
+		}
+
+		embedVectors := [][]float32{
+			{0.1, 0.1, 0.1},
+			{0.3, 0.3, 0.3},
+			{0.5, 0.5, 0.5},
+			{0.7, 0.7, 0.7},
+			{0.9, 0.9, 0.9},
+		}
+
+		ctx := context.Background()
+		err = pgVector.Store(ctx, docs, embedVectors)
+		require.NoError(t, err)
+
+		return ctx, pgVector, db, createAts
+	}
+
+	t.Run("limit zero uses maxSearchLimit default", func(t *testing.T) {
+		ctx, pgVector, db, _ := setupSearchValidationTest(t)
+		defer cleanupDB(t, db)
+
+		searchVector := []float32{0.5, 0.5, 0.5}
+		opts := embeddings.SearchOptions{
+			Limit:  0,
+			UserID: "user1",
+		}
+
+		results, err := pgVector.Search(ctx, searchVector, opts)
+		require.NoError(t, err)
+		// With limit 0, all 5 posts should be returned (default to maxSearchLimit)
+		assert.Len(t, results, 5)
+	})
+
+	t.Run("negative limit uses maxSearchLimit default", func(t *testing.T) {
+		ctx, pgVector, db, _ := setupSearchValidationTest(t)
+		defer cleanupDB(t, db)
+
+		searchVector := []float32{0.5, 0.5, 0.5}
+		opts := embeddings.SearchOptions{
+			Limit:  -10,
+			UserID: "user1",
+		}
+
+		results, err := pgVector.Search(ctx, searchVector, opts)
+		require.NoError(t, err)
+		// With negative limit, all 5 posts should be returned (default to maxSearchLimit)
+		assert.Len(t, results, 5)
+	})
+
+	t.Run("combined filters: team + channel + time range + min score", func(t *testing.T) {
+		ctx, pgVector, db, createAts := setupSearchValidationTest(t)
+		defer cleanupDB(t, db)
+
+		searchVector := []float32{0.9, 0.9, 0.9}
+		opts := embeddings.SearchOptions{
+			Limit:         10,
+			UserID:        "user1",
+			TeamID:        "team2",
+			ChannelID:     "channel1",
+			CreatedAfter:  createAts[2], // After post3
+			CreatedBefore: createAts[4], // Before post5
+			MinScore:      0.5,
+		}
+
+		results, err := pgVector.Search(ctx, searchVector, opts)
+		require.NoError(t, err)
+		// Should only return post4 (team2, in time range, meets min score)
+		assert.Len(t, results, 1)
+		if len(results) > 0 {
+			assert.Equal(t, "post4", results[0].Document.PostID)
+		}
+	})
+
+	t.Run("CreatedBefore filter alone", func(t *testing.T) {
+		ctx, pgVector, db, createAts := setupSearchValidationTest(t)
+		defer cleanupDB(t, db)
+
+		searchVector := []float32{0.5, 0.5, 0.5}
+		opts := embeddings.SearchOptions{
+			Limit:         10,
+			UserID:        "user1",
+			CreatedBefore: createAts[2], // Before post3
+		}
+
+		results, err := pgVector.Search(ctx, searchVector, opts)
+		require.NoError(t, err)
+		// Should return post1, post2 (created before createAts[2])
+		assert.Len(t, results, 2)
+		for _, result := range results {
+			assert.True(t, result.Document.CreateAt < createAts[2])
+		}
+	})
+
+	t.Run("CreatedAfter AND CreatedBefore together (time range query)", func(t *testing.T) {
+		ctx, pgVector, db, createAts := setupSearchValidationTest(t)
+		defer cleanupDB(t, db)
+
+		searchVector := []float32{0.5, 0.5, 0.5}
+		opts := embeddings.SearchOptions{
+			Limit:         10,
+			UserID:        "user1",
+			CreatedAfter:  createAts[1], // After post2
+			CreatedBefore: createAts[4], // Before post5
+		}
+
+		results, err := pgVector.Search(ctx, searchVector, opts)
+		require.NoError(t, err)
+		// Should return post3, post4 (between createAts[1] and createAts[4])
+		assert.Len(t, results, 2)
+		for _, result := range results {
+			assert.True(t, result.Document.CreateAt > createAts[1])
+			assert.True(t, result.Document.CreateAt < createAts[4])
+		}
+	})
+
+	t.Run("zero MinScore value", func(t *testing.T) {
+		ctx, pgVector, db, _ := setupSearchValidationTest(t)
+		defer cleanupDB(t, db)
+
+		searchVector := []float32{0.5, 0.5, 0.5}
+		opts := embeddings.SearchOptions{
+			Limit:    10,
+			UserID:   "user1",
+			MinScore: 0.0,
+		}
+
+		results, err := pgVector.Search(ctx, searchVector, opts)
+		require.NoError(t, err)
+		// MinScore 0 should not filter anything
+		assert.Len(t, results, 5)
+	})
+
+	t.Run("negative MinScore value", func(t *testing.T) {
+		ctx, pgVector, db, _ := setupSearchValidationTest(t)
+		defer cleanupDB(t, db)
+
+		searchVector := []float32{0.5, 0.5, 0.5}
+		opts := embeddings.SearchOptions{
+			Limit:    10,
+			UserID:   "user1",
+			MinScore: -0.5,
+		}
+
+		results, err := pgVector.Search(ctx, searchVector, opts)
+		require.NoError(t, err)
+		// Negative MinScore should not filter (condition is opts.MinScore > 0)
+		assert.Len(t, results, 5)
+	})
+
+	t.Run("very high MinScore value greater than 1.0", func(t *testing.T) {
+		ctx, pgVector, db, _ := setupSearchValidationTest(t)
+		defer cleanupDB(t, db)
+
+		searchVector := []float32{0.5, 0.5, 0.5}
+		opts := embeddings.SearchOptions{
+			Limit:    10,
+			UserID:   "user1",
+			MinScore: 1.5, // Score > 1.0 (impossible for normalized scores)
+		}
+
+		results, err := pgVector.Search(ctx, searchVector, opts)
+		require.NoError(t, err)
+		// With MinScore > 1.0, maxDistance = 1 - 1.5 = -0.5, so SQL filter should exclude everything
+		// In the scanSearchResults, score < minScore check will also filter out results
+		assert.Len(t, results, 0, "No results should have score > 1.0")
+	})
+
+	t.Run("empty embedding vector passed to search", func(t *testing.T) {
+		ctx, pgVector, db, _ := setupSearchValidationTest(t)
+		defer cleanupDB(t, db)
+
+		emptyVector := []float32{}
+		opts := embeddings.SearchOptions{
+			Limit:  10,
+			UserID: "user1",
+		}
+
+		_, err := pgVector.Search(ctx, emptyVector, opts)
+		// pgvector should error on mismatched dimensions
+		require.Error(t, err)
+	})
+
+	t.Run("malformed embedding vector (wrong dimensions)", func(t *testing.T) {
+		ctx, pgVector, db, _ := setupSearchValidationTest(t)
+		defer cleanupDB(t, db)
+
+		// Table was created with 3 dimensions, search with 5
+		wrongDimVector := []float32{0.1, 0.2, 0.3, 0.4, 0.5}
+		opts := embeddings.SearchOptions{
+			Limit:  10,
+			UserID: "user1",
+		}
+
+		_, err := pgVector.Search(ctx, wrongDimVector, opts)
+		// pgvector should error on mismatched dimensions
+		require.Error(t, err)
+	})
+
+	t.Run("user who is member of zero channels", func(t *testing.T) {
+		ctx, pgVector, db, _ := setupSearchValidationTest(t)
+		defer cleanupDB(t, db)
+
+		searchVector := []float32{0.5, 0.5, 0.5}
+		opts := embeddings.SearchOptions{
+			Limit:  10,
+			UserID: "user_no_channels", // This user has no channel memberships
+		}
+
+		results, err := pgVector.Search(ctx, searchVector, opts)
+		require.NoError(t, err)
+		// User with no channel memberships should see no results
+		assert.Len(t, results, 0)
+	})
+}
+
+func TestSearchLargeResultSets(t *testing.T) {
+	t.Run("large result set approaching maxSearchLimit", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		config := PGVectorConfig{
+			Dimensions: 3,
+		}
+		pgVector, err := NewPGVector(db, config)
+		require.NoError(t, err)
+
+		now := model.GetMillis()
+		numPosts := 100 // Create 100 posts to test with
+
+		postIDs := make([]string, numPosts)
+		createAts := make([]int64, numPosts)
+		for i := 0; i < numPosts; i++ {
+			postIDs[i] = fmt.Sprintf("post_%d", i)
+			createAts[i] = now + int64(i)
+		}
+		addTestPosts(t, db, postIDs, createAts)
+
+		channelIDs := []string{"channel1"}
+		addTestChannels(t, db, channelIDs, false)
+		addTestChannelMembers(t, db, "channel1", []string{"user1"})
+
+		docs := make([]embeddings.PostDocument, numPosts)
+		embedVectors := make([][]float32, numPosts)
+		for i := 0; i < numPosts; i++ {
+			docs[i] = embeddings.PostDocument{
+				PostID:    postIDs[i],
+				CreateAt:  createAts[i],
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   fmt.Sprintf("Content for post %d", i),
+			}
+			embedVectors[i] = []float32{0.5, 0.5, 0.5}
+		}
+
+		ctx := context.Background()
+		err = pgVector.Store(ctx, docs, embedVectors)
+		require.NoError(t, err)
+
+		// Search with limit less than total posts
+		searchVector := []float32{0.5, 0.5, 0.5}
+		opts := embeddings.SearchOptions{
+			Limit:  50,
+			UserID: "user1",
+		}
+
+		results, err := pgVector.Search(ctx, searchVector, opts)
+		require.NoError(t, err)
+		assert.Len(t, results, 50)
+
+		// Search with limit greater than total posts (should return all)
+		opts.Limit = 200
+		results, err = pgVector.Search(ctx, searchVector, opts)
+		require.NoError(t, err)
+		assert.Len(t, results, numPosts)
+	})
+}
+
+func TestDeleteValidation(t *testing.T) {
+	t.Run("delete with empty postIDs slice succeeds without deleting anything", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		config := PGVectorConfig{
+			Dimensions: 3,
+		}
+		pgVector, err := NewPGVector(db, config)
+		require.NoError(t, err)
+
+		// First add some data
+		now := model.GetMillis()
+		postIDs := []string{"post1"}
+		createAts := []int64{now}
+		addTestPosts(t, db, postIDs, createAts)
+
+		docs := []embeddings.PostDocument{
+			{
+				PostID:    "post1",
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   "Content 1",
+			},
+		}
+		embedVectors := [][]float32{{0.1, 0.2, 0.3}}
+
+		ctx := context.Background()
+		err = pgVector.Store(ctx, docs, embedVectors)
+		require.NoError(t, err)
+
+		// Verify data exists
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings")
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+
+		// Delete with empty slice - squirrel generates WHERE (1=0) which deletes nothing
+		err = pgVector.Delete(ctx, []string{})
+		require.NoError(t, err, "Delete with empty slice should succeed")
+
+		// Data should remain unchanged
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings")
+		require.NoError(t, err)
+		assert.Equal(t, 1, count, "No data should be deleted when postIDs is empty")
+	})
+
+	t.Run("delete non-existent post IDs should succeed silently", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		config := PGVectorConfig{
+			Dimensions: 3,
+		}
+		pgVector, err := NewPGVector(db, config)
+		require.NoError(t, err)
+
+		// First add some data
+		now := model.GetMillis()
+		postIDs := []string{"post1"}
+		createAts := []int64{now}
+		addTestPosts(t, db, postIDs, createAts)
+
+		docs := []embeddings.PostDocument{
+			{
+				PostID:    "post1",
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   "Content 1",
+			},
+		}
+		embedVectors := [][]float32{{0.1, 0.2, 0.3}}
+
+		ctx := context.Background()
+		err = pgVector.Store(ctx, docs, embedVectors)
+		require.NoError(t, err)
+
+		// Delete non-existent IDs
+		err = pgVector.Delete(ctx, []string{"nonexistent1", "nonexistent2"})
+		require.NoError(t, err, "Deleting non-existent posts should succeed silently")
+
+		// Verify existing data is unchanged
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings")
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+}
+
+func TestConcurrentStoreOperations(t *testing.T) {
+	t.Run("concurrent store operations on same post_id", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		config := PGVectorConfig{
+			Dimensions: 3,
+		}
+		pgVector, err := NewPGVector(db, config)
+		require.NoError(t, err)
+
+		now := model.GetMillis()
+		postIDs := []string{"concurrent_post"}
+		createAts := []int64{now}
+		addTestPosts(t, db, postIDs, createAts)
+
+		ctx := context.Background()
+
+		// Run multiple goroutines trying to store to the same post
+		numGoroutines := 10
+		errChan := make(chan error, numGoroutines)
+
+		for i := 0; i < numGoroutines; i++ {
+			go func(idx int) {
+				docs := []embeddings.PostDocument{
+					{
+						PostID:    "concurrent_post",
+						CreateAt:  now,
+						TeamID:    "team1",
+						ChannelID: "channel1",
+						UserID:    "user1",
+						Content:   fmt.Sprintf("Content from goroutine %d", idx),
+					},
+				}
+				embedVectors := [][]float32{
+					{float32(idx) * 0.1, float32(idx) * 0.2, float32(idx) * 0.3},
+				}
+				errChan <- pgVector.Store(ctx, docs, embedVectors)
+			}(i)
+		}
+
+		// Wait for all goroutines to complete
+		for i := 0; i < numGoroutines; i++ {
+			// Just drain the channel - we don't need to track errors for this test
+			<-errChan
+		}
+
+		// Some operations may fail due to race conditions, but the system should remain consistent
+		// At minimum, there should be exactly one document for the post
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings WHERE post_id = 'concurrent_post'")
+		require.NoError(t, err)
+		assert.Equal(t, 1, count, "Should have exactly one document for the post after concurrent operations")
+	})
+}

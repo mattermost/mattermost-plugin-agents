@@ -76,6 +76,11 @@ func (a *API) handleSearchQuery(c *gin.Context) {
 		return
 	}
 
+	if req.Query == "" {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("query cannot be empty"))
+		return
+	}
+
 	// Validate MaxResults
 	if req.MaxResults <= 0 {
 		req.MaxResults = defaultMaxResults

@@ -72,6 +72,11 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 }
 
 func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, embeddings [][]float32) error {
+	// Validate input lengths match to prevent index out of bounds errors
+	if len(docs) != len(embeddings) {
+		return fmt.Errorf("mismatched input lengths: got %d documents but %d embeddings", len(docs), len(embeddings))
+	}
+
 	// Collect unique post IDs to clean up before insert
 	// This ensures that when a post is re-indexed with a different chunk count,
 	// old chunks are removed to prevent orphaned data.

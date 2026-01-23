@@ -183,6 +183,10 @@ func (s *Search) executeSearch(ctx context.Context, query string, opts Options) 
 
 // buildPrompt creates an LLM completion request for answering a search query.
 func (s *Search) buildPrompt(query string, results []RAGResult) (llm.CompletionRequest, error) {
+	if s.prompts == nil {
+		return llm.CompletionRequest{}, fmt.Errorf("failed to format prompt: prompts not configured")
+	}
+
 	promptCtx := llm.NewContext()
 	promptCtx.Parameters = map[string]interface{}{
 		"Query":   query,

@@ -6,12 +6,15 @@ package search
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/chunking"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	llmmocks "github.com/mattermost/mattermost-plugin-ai/llm/mocks"
 	mmapimocks "github.com/mattermost/mattermost-plugin-ai/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -480,4 +483,506 @@ func TestBuildPrompt(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnabled(t *testing.T) {
+	t.Run("nil Search struct returns false", func(t *testing.T) {
+		var s *Search
+		require.False(t, s.Enabled())
+	})
+
+	t.Run("nil getSearch function returns false", func(t *testing.T) {
+		s := New(nil, nil, nil, nil, nil)
+		require.False(t, s.Enabled())
+	})
+
+	t.Run("getSearch returns nil returns false", func(t *testing.T) {
+		s := New(func() embeddings.EmbeddingSearch {
+			return nil
+		}, nil, nil, nil, nil)
+		require.False(t, s.Enabled())
+	})
+
+	t.Run("getSearch returns valid search returns true", func(t *testing.T) {
+		mockSearch := mocks.NewMockEmbeddingSearch(t)
+		s := New(func() embeddings.EmbeddingSearch {
+			return mockSearch
+		}, nil, nil, nil, nil)
+		require.True(t, s.Enabled())
+	})
+}
+
+func TestSearch(t *testing.T) {
+	tests := []struct {
+		name        string
+		getSearch   func() embeddings.EmbeddingSearch
+		setupMock   func(*mocks.MockEmbeddingSearch)
+		query       string
+		opts        embeddings.SearchOptions
+		expectError string
+		validate    func(t *testing.T, results []embeddings.SearchResult)
+	}{
+		{
+			name: "search not configured returns error",
+			getSearch: func() embeddings.EmbeddingSearch {
+				return nil
+			},
+			query:       "test query",
+			opts:        embeddings.SearchOptions{},
+			expectError: "embedding search not configured",
+		},
+		{
+			name: "successful search returns results",
+			getSearch: func() embeddings.EmbeddingSearch {
+				return nil // Will be set in setupMock
+			},
+			setupMock: func(m *mocks.MockEmbeddingSearch) {
+				m.On("Search", mock.Anything, "test query", embeddings.SearchOptions{Limit: 5}).
+					Return([]embeddings.SearchResult{
+						{
+							Document: embeddings.PostDocument{PostID: "post1"},
+							Score:    0.9,
+						},
+					}, nil)
+			},
+			query: "test query",
+			opts:  embeddings.SearchOptions{Limit: 5},
+			validate: func(t *testing.T, results []embeddings.SearchResult) {
+				require.Len(t, results, 1)
+				require.Equal(t, "post1", results[0].Document.PostID)
+			},
+		},
+		{
+			name: "search error is propagated",
+			getSearch: func() embeddings.EmbeddingSearch {
+				return nil // Will be set in setupMock
+			},
+			setupMock: func(m *mocks.MockEmbeddingSearch) {
+				m.On("Search", mock.Anything, "test query", mock.Anything).
+					Return(nil, errors.New("search failed"))
+			},
+			query:       "test query",
+			opts:        embeddings.SearchOptions{},
+			expectError: "search failed",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var mockSearch *mocks.MockEmbeddingSearch
+			var getSearchFunc func() embeddings.EmbeddingSearch
+
+			if tc.setupMock != nil {
+				mockSearch = mocks.NewMockEmbeddingSearch(t)
+				tc.setupMock(mockSearch)
+				getSearchFunc = func() embeddings.EmbeddingSearch { return mockSearch }
+			} else {
+				getSearchFunc = tc.getSearch
+			}
+
+			s := New(getSearchFunc, nil, nil, nil, nil)
+			results, err := s.Search(context.Background(), tc.query, tc.opts)
+
+			if tc.expectError != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectError)
+			} else {
+				require.NoError(t, err)
+				if tc.validate != nil {
+					tc.validate(t, results)
+				}
+			}
+		})
+	}
+}
+
+func TestSearchQuery(t *testing.T) {
+	// Load real prompts for tests
+	promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err, "Failed to load prompts")
+
+	tests := []struct {
+		name        string
+		setupMocks  func(*mocks.MockEmbeddingSearch, *mmapimocks.MockClient, *llmmocks.MockLanguageModel)
+		query       string
+		expectError string
+		validate    func(t *testing.T, resp Response)
+	}{
+		{
+			name: "zero results returns empty response with message",
+			setupMocks: func(me *mocks.MockEmbeddingSearch, mc *mmapimocks.MockClient, ml *llmmocks.MockLanguageModel) {
+				me.On("Search", mock.Anything, "no results query", mock.Anything).
+					Return([]embeddings.SearchResult{}, nil)
+			},
+			query:       "no results query",
+			expectError: "",
+			validate: func(t *testing.T, resp Response) {
+				require.Contains(t, resp.Answer, "couldn't find any relevant messages")
+				require.Empty(t, resp.Results)
+			},
+		},
+		{
+			name: "LLM failure returns error",
+			setupMocks: func(me *mocks.MockEmbeddingSearch, mc *mmapimocks.MockClient, ml *llmmocks.MockLanguageModel) {
+				me.On("Search", mock.Anything, "test query", mock.Anything).
+					Return([]embeddings.SearchResult{
+						{
+							Document: embeddings.PostDocument{
+								PostID:    "post1",
+								ChannelID: "channel1",
+								UserID:    "user1",
+								Content:   "test content",
+							},
+							Score: 0.9,
+						},
+					}, nil)
+				mc.On("GetChannel", "channel1").Return(&model.Channel{
+					Id:          "channel1",
+					DisplayName: "General",
+					Type:        model.ChannelTypeOpen,
+				}, nil)
+				mc.On("GetUser", "user1").Return(&model.User{
+					Id:       "user1",
+					Username: "testuser",
+				}, nil)
+				ml.On("ChatCompletionNoStream", mock.Anything).
+					Return("", errors.New("LLM service unavailable"))
+			},
+			query:       "test query",
+			expectError: "failed to generate answer",
+		},
+		{
+			name: "successful search with LLM response",
+			setupMocks: func(me *mocks.MockEmbeddingSearch, mc *mmapimocks.MockClient, ml *llmmocks.MockLanguageModel) {
+				me.On("Search", mock.Anything, "test query", mock.Anything).
+					Return([]embeddings.SearchResult{
+						{
+							Document: embeddings.PostDocument{
+								PostID:    "post1",
+								ChannelID: "channel1",
+								UserID:    "user1",
+								Content:   "test content",
+							},
+							Score: 0.9,
+						},
+					}, nil)
+				mc.On("GetChannel", "channel1").Return(&model.Channel{
+					Id:          "channel1",
+					DisplayName: "General",
+					Type:        model.ChannelTypeOpen,
+				}, nil)
+				mc.On("GetUser", "user1").Return(&model.User{
+					Id:       "user1",
+					Username: "testuser",
+				}, nil)
+				ml.On("ChatCompletionNoStream", mock.Anything).
+					Return("Based on the search results, here is the answer.", nil)
+			},
+			query:       "test query",
+			expectError: "",
+			validate: func(t *testing.T, resp Response) {
+				require.Equal(t, "Based on the search results, here is the answer.", resp.Answer)
+				require.Len(t, resp.Results, 1)
+				require.Equal(t, "post1", resp.Results[0].PostID)
+			},
+		},
+		{
+			name: "search failure propagates error",
+			setupMocks: func(me *mocks.MockEmbeddingSearch, mc *mmapimocks.MockClient, ml *llmmocks.MockLanguageModel) {
+				me.On("Search", mock.Anything, "test query", mock.Anything).
+					Return(nil, errors.New("search service unavailable"))
+			},
+			query:       "test query",
+			expectError: "search failed",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+			mockClient := mmapimocks.NewMockClient(t)
+			mockLLM := llmmocks.NewMockLanguageModel(t)
+
+			if tc.setupMocks != nil {
+				tc.setupMocks(mockEmbedding, mockClient, mockLLM)
+			}
+
+			s := New(
+				func() embeddings.EmbeddingSearch { return mockEmbedding },
+				mockClient,
+				promptsObj,
+				nil,
+				nil,
+			)
+
+			// Create a bot with the mock LLM
+			bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, mockLLM)
+
+			resp, err := s.SearchQuery(context.Background(), "user1", bot, tc.query, "", "", 5)
+
+			if tc.expectError != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectError)
+			} else {
+				require.NoError(t, err)
+				if tc.validate != nil {
+					tc.validate(t, resp)
+				}
+			}
+		})
+	}
+}
+
+func TestRunSearch(t *testing.T) {
+	t.Run("search not enabled returns error", func(t *testing.T) {
+		mockClient := mmapimocks.NewMockClient(t)
+		s := New(func() embeddings.EmbeddingSearch { return nil }, mockClient, nil, nil, nil)
+		bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
+
+		_, err := s.RunSearch(context.Background(), "user1", bot, "test query", "", "", 5)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "search functionality is not configured")
+	})
+
+	t.Run("empty query returns error", func(t *testing.T) {
+		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+		mockClient := mmapimocks.NewMockClient(t)
+		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil)
+		bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
+
+		_, err := s.RunSearch(context.Background(), "user1", bot, "", "", "", 5)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "query cannot be empty")
+	})
+
+	t.Run("DM creation failure returns error", func(t *testing.T) {
+		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+		mockClient := mmapimocks.NewMockClient(t)
+		mockClient.On("DM", "user1", "bot1", mock.Anything).
+			Return(errors.New("failed to create DM"))
+
+		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil)
+		bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
+
+		_, err := s.RunSearch(context.Background(), "user1", bot, "test query", "", "", 5)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to create question post")
+	})
+
+	t.Run("successful RunSearch returns post info", func(t *testing.T) {
+		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+		mockClient := mmapimocks.NewMockClient(t)
+
+		// First DM is for question post (synchronous)
+		mockClient.On("DM", "user1", "bot1", mock.Anything).
+			Run(func(args mock.Arguments) {
+				post := args.Get(2).(*model.Post)
+				post.Id = "question_post_id"
+				post.ChannelId = "dm_channel_id"
+			}).
+			Return(nil).Once()
+
+		// Second DM is for response post (async in goroutine) - use Maybe since test may finish before goroutine
+		mockClient.On("DM", "bot1", "user1", mock.Anything).Return(nil).Maybe()
+
+		// The goroutine may call LogError if the search fails - use Maybe to handle both cases
+		mockClient.On("LogError", mock.Anything, mock.Anything).Maybe()
+
+		// The goroutine may call Search - set up to return empty results to avoid further processing
+		mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).
+			Return([]embeddings.SearchResult{}, nil).Maybe()
+
+		// If zero results, UpdatePost is called
+		mockClient.On("UpdatePost", mock.Anything).Return(nil).Maybe()
+
+		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil)
+		bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
+
+		result, err := s.RunSearch(context.Background(), "user1", bot, "test query", "", "", 5)
+
+		require.NoError(t, err)
+		require.Equal(t, "question_post_id", result["postid"])
+		require.Equal(t, "dm_channel_id", result["channelid"])
+	})
+}
+
+func TestEnrichResultsSameChannelMultipleTimes(t *testing.T) {
+	// Test that when the same channel is accessed multiple times,
+	// the mock shows each call is made (no caching in current implementation)
+	mockClient := mmapimocks.NewMockClient(t)
+
+	// Setup mock to expect the same channel ID called twice
+	mockClient.On("GetChannel", "channel1").Return(&model.Channel{
+		Id:          "channel1",
+		DisplayName: "General",
+		Type:        model.ChannelTypeOpen,
+	}, nil).Twice() // Expect two calls
+
+	mockClient.On("GetUser", "user1").Return(&model.User{
+		Id:       "user1",
+		Username: "testuser",
+	}, nil).Twice()
+
+	searchResults := []embeddings.SearchResult{
+		{
+			Document: embeddings.PostDocument{
+				PostID:    "post1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   "content 1",
+			},
+			Score: 0.9,
+		},
+		{
+			Document: embeddings.PostDocument{
+				PostID:    "post2",
+				ChannelID: "channel1", // Same channel
+				UserID:    "user1",    // Same user
+				Content:   "content 2",
+			},
+			Score: 0.85,
+		},
+	}
+
+	s := New(nil, mockClient, nil, nil, nil)
+	results := s.enrichResults(searchResults)
+
+	require.Len(t, results, 2)
+	require.Equal(t, "General", results[0].ChannelName)
+	require.Equal(t, "General", results[1].ChannelName)
+	require.Equal(t, "testuser", results[0].Username)
+	require.Equal(t, "testuser", results[1].Username)
+
+	// The mock assertions verify the calls were made twice
+}
+
+func TestEnrichResultsSameUserMultipleTimes(t *testing.T) {
+	// Test that when the same user is accessed multiple times,
+	// the mock shows each call is made (no caching in current implementation)
+	mockClient := mmapimocks.NewMockClient(t)
+
+	// Different channels but same user
+	mockClient.On("GetChannel", "channel1").Return(&model.Channel{
+		Id:          "channel1",
+		DisplayName: "Channel One",
+		Type:        model.ChannelTypeOpen,
+	}, nil)
+	mockClient.On("GetChannel", "channel2").Return(&model.Channel{
+		Id:          "channel2",
+		DisplayName: "Channel Two",
+		Type:        model.ChannelTypeOpen,
+	}, nil)
+
+	// Same user called twice
+	mockClient.On("GetUser", "user1").Return(&model.User{
+		Id:       "user1",
+		Username: "testuser",
+	}, nil).Twice()
+
+	searchResults := []embeddings.SearchResult{
+		{
+			Document: embeddings.PostDocument{
+				PostID:    "post1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   "content 1",
+			},
+			Score: 0.9,
+		},
+		{
+			Document: embeddings.PostDocument{
+				PostID:    "post2",
+				ChannelID: "channel2",
+				UserID:    "user1", // Same user
+				Content:   "content 2",
+			},
+			Score: 0.85,
+		},
+	}
+
+	s := New(nil, mockClient, nil, nil, nil)
+	results := s.enrichResults(searchResults)
+
+	require.Len(t, results, 2)
+	require.Equal(t, "testuser", results[0].Username)
+	require.Equal(t, "testuser", results[1].Username)
+}
+
+func TestBuildPromptWithNilPrompts(t *testing.T) {
+	// Test that buildPrompt fails gracefully when prompts are nil
+	s := New(nil, nil, nil, nil, nil)
+	_, err := s.buildPrompt("test query", []RAGResult{})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to format prompt")
+}
+
+func TestBuildPromptWithLargeResults(t *testing.T) {
+	// Load real prompts for tests
+	promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err, "Failed to load prompts")
+
+	// Create a large result set
+	var largeResults []RAGResult
+	for i := 0; i < 100; i++ {
+		largeResults = append(largeResults, RAGResult{
+			PostID:      fmt.Sprintf("post%d", i),
+			ChannelID:   fmt.Sprintf("channel%d", i),
+			ChannelName: fmt.Sprintf("Channel %d", i),
+			UserID:      fmt.Sprintf("user%d", i),
+			Username:    fmt.Sprintf("username%d", i),
+			Content:     fmt.Sprintf("This is some content for result %d that adds some length to the prompt", i),
+			Score:       float32(0.9 - float32(i)*0.001),
+		})
+	}
+
+	s := New(nil, nil, promptsObj, nil, nil)
+	req, err := s.buildPrompt("test query with many results", largeResults)
+
+	// Should succeed - prompt size is handled by the template
+	require.NoError(t, err)
+	require.NotEmpty(t, req.Posts[0].Message)
+	// The template uses Username and ChannelName, not PostID
+	require.Contains(t, req.Posts[0].Message, "username0")  // First result should be included
+	require.Contains(t, req.Posts[0].Message, "username99") // Last result should be included
+	require.Contains(t, req.Posts[0].Message, "Channel 0")
+	require.Contains(t, req.Posts[0].Message, "Channel 99")
+}
+
+func TestExecuteSearchNotConfigured(t *testing.T) {
+	// Test executeSearch when getSearch() returns nil
+	s := New(func() embeddings.EmbeddingSearch { return nil }, nil, nil, nil, nil)
+
+	results, err := s.executeSearch(context.Background(), "test query", Options{})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "embedding search not configured")
+	require.Nil(t, results)
+}
+
+func TestSearchQueryWithEmptyQuery(t *testing.T) {
+	// Load real prompts for tests
+	promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err, "Failed to load prompts")
+
+	mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+	mockClient := mmapimocks.NewMockClient(t)
+
+	s := New(
+		func() embeddings.EmbeddingSearch { return mockEmbedding },
+		mockClient,
+		promptsObj,
+		nil,
+		nil,
+	)
+
+	bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: "bot1"}, nil)
+
+	_, err = s.SearchQuery(context.Background(), "user1", bot, "", "", "", 5)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "query cannot be empty")
 }

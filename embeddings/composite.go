@@ -5,6 +5,7 @@ package embeddings
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-ai/chunking"
 )
@@ -57,6 +58,11 @@ func (c *CompositeSearch) Store(ctx context.Context, docs []PostDocument) error 
 	embeddings, err := c.provider.BatchCreateEmbeddings(ctx, texts)
 	if err != nil {
 		return err
+	}
+
+	// Validate embedding count matches document count
+	if len(embeddings) != len(chunkedDocs) {
+		return fmt.Errorf("embedding count mismatch: got %d embeddings for %d documents", len(embeddings), len(chunkedDocs))
 	}
 
 	// Store the chunks and their embeddings
