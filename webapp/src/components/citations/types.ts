@@ -2,11 +2,17 @@
 // See LICENSE.txt for license information.
 
 export interface Annotation {
-    type: string;
+    type: 'url_citation' | 'post_citation';
     start_index: number;
     end_index: number;
-    url: string;
-    title: string;
+    url?: string;
+    title?: string;
     cited_text?: string;
     index: number;
+
+    // Post citation fields
+    post_id?: string;
+    channel_id?: string;
+    channel_name?: string;
+    username?: string;
 }

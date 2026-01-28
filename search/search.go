@@ -40,6 +40,7 @@ type Response struct {
 
 // RAGResult represents an enriched search result with metadata
 type RAGResult struct {
+	Index       int     `json:"index"` // 1-based index for citation mapping
 	PostID      string  `json:"postId"`
 	ChannelID   string  `json:"channelId"`
 	ChannelName string  `json:"channelName"`
@@ -98,7 +99,7 @@ func (s *Search) Search(ctx context.Context, query string, opts embeddings.Searc
 // enrichResults converts raw search results to RAGResults with channel/user metadata.
 func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGResult {
 	var ragResults []RAGResult
-	for _, result := range searchResults {
+	for i, result := range searchResults {
 		// Get channel name
 		var channelName string
 		channel, chErr := s.mmclient.GetChannel(result.Document.ChannelID)
@@ -138,6 +139,7 @@ func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGRes
 		}
 
 		ragResults = append(ragResults, RAGResult{
+			Index:       i + 1, // 1-based index for citation mapping
 			PostID:      result.Document.PostID,
 			ChannelID:   result.Document.ChannelID,
 			ChannelName: channelName + chunkInfo,
@@ -301,6 +303,9 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 		processingError = err
 		return
 	}
+
+	// Decorate stream to emit citation annotations based on !!CITE#!! markers
+	resultStream = DecorateSearchStreamWithAnnotations(resultStream, results)
 
 	resultsJSON, err := json.Marshal(results)
 	if err != nil {

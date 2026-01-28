@@ -49,14 +49,16 @@ func TestInitEmbeddingsSearch(t *testing.T) {
 		validate      func(t *testing.T, search embeddings.EmbeddingSearch)
 	}{
 		{
-			name: "cfg.Type empty returns search disabled error",
+			name: "cfg.Type empty returns nil without error",
 			cfg: embeddings.EmbeddingSearchConfig{
 				Type:       "",
 				Dimensions: 1536,
 			},
-			licensed:      true,
-			expectError:   true,
-			errorContains: "search is disabled",
+			licensed:    true,
+			expectError: false,
+			validate: func(t *testing.T, search embeddings.EmbeddingSearch) {
+				require.Nil(t, search)
+			},
 		},
 		{
 			name: "missing license returns license error",
@@ -115,9 +117,10 @@ func TestInitEmbeddingsSearch(t *testing.T) {
 				require.Nil(t, search)
 			} else {
 				require.NoError(t, err)
-				require.NotNil(t, search)
 				if tc.validate != nil {
 					tc.validate(t, search)
+				} else {
+					require.NotNil(t, search)
 				}
 			}
 		})

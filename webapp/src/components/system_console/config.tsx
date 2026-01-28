@@ -83,7 +83,7 @@ const defaultConfig = {
     enableTokenUsageLogging: false,
     allowUnsafeLinks: false,
     embeddingSearchConfig: {
-        type: 'disabled',
+        type: '',
         vectorStore: {
             type: '',
             parameters: {},

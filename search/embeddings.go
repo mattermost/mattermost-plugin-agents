@@ -59,7 +59,8 @@ func newEmbeddingProvider(config embeddings.UpstreamConfig, dimensions int, http
 // InitEmbeddingsSearch creates and initializes the embedding search system
 func InitEmbeddingsSearch(db *sqlx.DB, httpClient *http.Client, cfg embeddings.EmbeddingSearchConfig, licenseChecker *enterprise.LicenseChecker) (embeddings.EmbeddingSearch, error) {
 	if cfg.Type == "" {
-		return nil, fmt.Errorf("search is disabled")
+		// Search is intentionally disabled, not an error
+		return nil, nil
 	}
 
 	if !licenseChecker.IsBasicsLicensed() {

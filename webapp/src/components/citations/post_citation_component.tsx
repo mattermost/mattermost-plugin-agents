@@ -4,35 +4,33 @@
 import React, {useState, useRef} from 'react';
 import styled from 'styled-components';
 
-import {LinkVariantIcon} from '@mattermost/compass-icons/components';
+import {MessageTextOutlineIcon} from '@mattermost/compass-icons/components';
 
 import {Annotation} from './types';
 
-interface CitationComponentProps {
+interface PostCitationComponentProps {
     annotation: Annotation;
 }
 
-export const CitationComponent = (props: CitationComponentProps) => {
+export const PostCitationComponent = (props: PostCitationComponentProps) => {
     const [showTooltip, setShowTooltip] = useState(false);
     const markerRef = useRef<HTMLSpanElement>(null);
 
     const handleClick = (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        if (props.annotation.url) {
-            window.open(props.annotation.url, '_blank', 'noopener,noreferrer');
+
+        // Navigate to the post using Mattermost's permalink URL
+        if (props.annotation.post_id) {
+            // Get the current site URL from the window location
+            const siteUrl = window.location.origin;
+            const permalinkUrl = `${siteUrl}/_redirect/pl/${props.annotation.post_id}`;
+            window.location.href = permalinkUrl;
         }
     };
 
-    // Extract domain from URL for display
-    const domain = (() => {
-        const url = props.annotation.url || '';
-        try {
-            return new URL(url).hostname;
-        } catch {
-            return url;
-        }
-    })();
+    const username = props.annotation.username || 'Unknown User';
+    const channelName = props.annotation.channel_name || 'Unknown Channel';
 
     return (
         <CitationWrapper
@@ -45,37 +43,19 @@ export const CitationComponent = (props: CitationComponentProps) => {
             {showTooltip && (
                 <TooltipContainer>
                     <TooltipContent>
-                        <FaviconIcon domain={domain}/>
-                        <TooltipDomain>{domain}</TooltipDomain>
+                        <TooltipRow>
+                            <TooltipLabel>{'@'}</TooltipLabel>
+                            <TooltipValue>{username}</TooltipValue>
+                        </TooltipRow>
+                        <TooltipRow>
+                            <TooltipLabel>{'#'}</TooltipLabel>
+                            <TooltipValue>{channelName}</TooltipValue>
+                        </TooltipRow>
                     </TooltipContent>
                     <TooltipArrow/>
                 </TooltipContainer>
             )}
         </CitationWrapper>
-    );
-};
-
-// Favicon component
-interface FaviconIconProps {
-    domain: string;
-}
-
-const FaviconIcon = (props: FaviconIconProps) => {
-    const [showFallback, setShowFallback] = useState(false);
-
-    const faviconUrl = `https://${props.domain}/favicon.ico`;
-
-    if (showFallback) {
-        return <FallbackIcon>{'🌐'}</FallbackIcon>;
-    }
-
-    return (
-        <FaviconImage
-            src={faviconUrl}
-            alt={`${props.domain} favicon`}
-            onError={() => setShowFallback(true)}
-            onLoad={() => setShowFallback(false)}
-        />
     );
 };
 
@@ -98,7 +78,7 @@ const CitationWrapper = styled.span`
     }
 `;
 
-const CitationIcon = styled(LinkVariantIcon)`
+const CitationIcon = styled(MessageTextOutlineIcon)`
     color: rgba(var(--center-channel-color-rgb), 0.75);
     transition: color 0.15s ease;
 
@@ -128,31 +108,28 @@ const TooltipContent = styled.div`
     background: #1b1d22;
     border-radius: 4px;
     box-shadow: 0px 6px 14px 0px rgba(0, 0, 0, 0.12);
-    padding: 4px 8px;
+    padding: 6px 10px;
     display: flex;
-    align-items: center;
-    gap: 4px;
+    flex-direction: column;
+    gap: 2px;
     white-space: nowrap;
 `;
 
-const FaviconImage = styled.img`
-    width: 12px;
-    height: 12px;
-    border-radius: 2px;
-    flex-shrink: 0;
-`;
-
-const FallbackIcon = styled.span`
-    font-size: 12px;
-    line-height: 1;
-    width: 12px;
-    height: 12px;
+const TooltipRow = styled.div`
     display: flex;
     align-items: center;
-    justify-content: center;
+    gap: 2px;
 `;
 
-const TooltipDomain = styled.span`
+const TooltipLabel = styled.span`
+    font-family: 'Open Sans', sans-serif;
+    font-weight: 400;
+    font-size: 11px;
+    line-height: 14px;
+    color: rgba(255, 255, 255, 0.64);
+`;
+
+const TooltipValue = styled.span`
     font-family: 'Open Sans', sans-serif;
     font-weight: 600;
     font-size: 12px;
