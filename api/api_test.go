@@ -22,6 +22,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-ai/search"
+	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -551,6 +552,59 @@ func TestHandleGetAIBots(t *testing.T) {
 				require.Equal(t, test.expectedAllowUnsafeLinks, response.AllowUnsafeLinks, "AllowUnsafeLinks field should match expected value")
 				require.NotEmpty(t, response.Bots, "Should return at least one bot")
 			}
+		})
+	}
+}
+
+func TestToolPrivateRequiresRequester(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name     string
+		endpoint string
+	}{
+		{
+			name:     "tool call private endpoint rejects non-requester",
+			endpoint: "/post/postid/tool_call_private?botUsername=permtest",
+		},
+		{
+			name:     "tool result private endpoint rejects non-requester",
+			endpoint: "/post/postid/tool_result_private?botUsername=permtest",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.setupTestBot(llm.BotConfig{Name: "permtest", DisplayName: "Permission Bot"})
+
+			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
+			e.mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+			e.mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+
+			post := &model.Post{
+				Id:        "postid",
+				ChannelId: "channelid",
+			}
+			post.AddProp(streaming.LLMRequesterUserID, "requester")
+
+			e.mockAPI.On("GetPost", "postid").Return(post, nil)
+			e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{
+				Id:   "channelid",
+				Type: model.ChannelTypeOpen,
+			}, nil)
+			e.mockAPI.On("HasPermissionToChannel", "other-user", "channelid", model.PermissionReadChannel).Return(true)
+
+			request := httptest.NewRequest(http.MethodGet, test.endpoint, nil)
+			request.Header.Add("Mattermost-User-ID", "other-user")
+
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+			resp := recorder.Result()
+			require.Equal(t, http.StatusForbidden, resp.StatusCode)
 		})
 	}
 }
