@@ -301,7 +301,15 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return errors.New("post missing pending tool results")
 	}
 
-	resultKVKey := streaming.ToolResultPrivateKVKey(post.Id, userID)
+	requesterID, ok := post.GetProp(streaming.LLMRequesterUserID).(string)
+	if !ok || requesterID == "" {
+		return errors.New("post missing requester id")
+	}
+	if requesterID != userID {
+		return errors.New("only the original requester can approve/reject tool results")
+	}
+
+	resultKVKey := streaming.ToolResultPrivateKVKey(post.Id, requesterID)
 	var tools []llm.ToolCall
 	if kvErr := c.mmClient.KVGet(resultKVKey, &tools); kvErr != nil {
 		if kvErr.Error() == "not found" {
@@ -310,9 +318,111 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return fmt.Errorf("failed to load tool call results from KV store: %w", kvErr)
 	}
 
-	_ = channel
-	_ = acceptedToolIDs
+	acceptedToolIDSet := make(map[string]struct{}, len(acceptedToolIDs))
+	for _, toolID := range acceptedToolIDs {
+		acceptedToolIDSet[toolID] = struct{}{}
+	}
+	for i := range tools {
+		if _, accepted := acceptedToolIDSet[tools[i].ID]; accepted {
+			continue
+		}
+		tools[i].Result = ""
+		tools[i].Status = llm.ToolCallStatusRejected
+	}
 
-	// TODO: implement tool result approval flow.
+	user, err := c.mmClient.GetUser(userID)
+	if err != nil {
+		return err
+	}
+
+	// Extract web search context from conversation history to preserve citations
+	webSearchParams := c.extractWebSearchContext(post)
+
+	var contextOpts []llm.ContextOption
+	contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextDefaultTools(bot))
+	if len(webSearchParams) > 0 {
+		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
+	}
+
+	llmContext := c.contextBuilder.BuildLLMContextUserRequest(
+		bot,
+		user,
+		channel,
+		contextOpts...,
+	)
+
+	responseRootID := post.Id
+	if post.RootId != "" {
+		responseRootID = post.RootId
+	}
+
+	previousConversation, err := mmapi.GetThreadData(c.mmClient, responseRootID)
+	if err != nil {
+		return fmt.Errorf("failed to get previous conversation: %w", err)
+	}
+	previousConversation.CutoffBeforePostID(post.Id)
+
+	toolCallPostCopy := post.Clone()
+	if props := post.GetProps(); props != nil {
+		toolCallPostCopy.Props = model.StringInterface{}
+		for key, value := range props {
+			toolCallPostCopy.Props[key] = value
+		}
+	}
+
+	resolvedToolsJSON, err := json.Marshal(tools)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tool call results: %w", err)
+	}
+	toolCallPostCopy.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
+	previousConversation.Posts = append(previousConversation.Posts, toolCallPostCopy)
+
+	posts, err := c.existingConversationToLLMPosts(bot, previousConversation, llmContext)
+	if err != nil {
+		return fmt.Errorf("failed to convert existing conversation to LLM posts: %w", err)
+	}
+
+	completionRequest := llm.CompletionRequest{
+		Posts:   posts,
+		Context: llmContext,
+	}
+	result, err := bot.LLM().ChatCompletion(completionRequest)
+	if err != nil {
+		return fmt.Errorf("failed to get chat completion: %w", err)
+	}
+
+	// Decorate the stream with web search annotations if available
+	webSearchData := mmtools.ConsumeWebSearchContexts(llmContext)
+	c.mmClient.LogDebug("Checking for web search data in HandleToolResult", "has_data", len(webSearchData) > 0, "num_contexts", len(webSearchData))
+	if len(webSearchData) > 0 {
+		flatResults := mmtools.FlattenWebSearchResults(webSearchData)
+		c.mmClient.LogDebug("Flattened web search results", "num_results", len(flatResults))
+		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
+	}
+
+	redactedTools := streaming.RedactToolCalls(tools)
+	redactedToolsJSON, err := json.Marshal(redactedTools)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tool call results: %w", err)
+	}
+	post.AddProp(streaming.ToolCallProp, string(redactedToolsJSON))
+	post.AddProp(streaming.ToolCallRedactedProp, "true")
+	post.DelProp(streaming.PendingToolResultProp)
+	if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
+		return fmt.Errorf("failed to update post after tool result approval: %w", updateErr)
+	}
+
+	responsePost := &model.Post{
+		ChannelId: channel.Id,
+		RootId:    responseRootID,
+	}
+	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, user.Id, result, responsePost, post.Id); err != nil {
+		return fmt.Errorf("failed to stream result to new post: %w", err)
+	}
+
+	if deleteErr := c.mmClient.KVDelete(resultKVKey); deleteErr != nil {
+		c.mmClient.LogError("Failed to delete tool result KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", resultKVKey)
+	}
+
 	return nil
 }
