@@ -127,9 +127,26 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	}
 
 	var tools []llm.ToolCall
-	unmarshalErr := json.Unmarshal([]byte(toolsJSON.(string)), &tools)
+	toolsJSONValue, ok := toolsJSON.(string)
+	if !ok {
+		return errors.New("post pending tool calls not valid JSON")
+	}
+	unmarshalErr := json.Unmarshal([]byte(toolsJSONValue), &tools)
 	if unmarshalErr != nil {
 		return errors.New("post pending tool calls not valid JSON")
+	}
+
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	requesterID, _ := post.GetProp(streaming.LLMRequesterUserID).(string)
+	toolCallKVKey := ""
+	if !isDM {
+		if requesterID == "" {
+			return errors.New("post missing requester id")
+		}
+		toolCallKVKey = streaming.ToolCallPrivateKVKey(post.Id, requesterID)
+		if kvErr := c.mmClient.KVGet(toolCallKVKey, &tools); kvErr != nil {
+			return fmt.Errorf("failed to load tool calls from KV store: %w", kvErr)
+		}
 	}
 
 	// Extract web search context from conversation history to preserve citations
@@ -165,6 +182,33 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 			tools[i].Result = "Tool call rejected by user"
 			tools[i].Status = llm.ToolCallStatusRejected
 		}
+	}
+
+	if !isDM {
+		resultKVKey := streaming.ToolResultPrivateKVKey(post.Id, requesterID)
+		if kvErr := c.mmClient.KVSet(resultKVKey, tools); kvErr != nil {
+			return fmt.Errorf("failed to store tool call results: %w", kvErr)
+		}
+
+		if toolCallKVKey != "" {
+			if deleteErr := c.mmClient.KVDelete(toolCallKVKey); deleteErr != nil {
+				c.mmClient.LogError("Failed to delete tool call KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", toolCallKVKey)
+			}
+		}
+
+		redactedTools := streaming.RedactToolCalls(tools)
+		resolvedToolsJSON, marshalErr := json.Marshal(redactedTools)
+		if marshalErr != nil {
+			return fmt.Errorf("failed to marshal tool call results: %w", marshalErr)
+		}
+		post.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
+		post.AddProp(streaming.ToolCallRedactedProp, "true")
+		post.AddProp(streaming.PendingToolResultProp, "true")
+		if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
+			return fmt.Errorf("failed to update post with tool call results: %w", updateErr)
+		}
+
+		return nil
 	}
 
 	responseRootID := post.Id

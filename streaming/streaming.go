@@ -37,6 +37,8 @@ const PostStreamingControlStart = "start"
 const ToolCallProp = "pending_tool_call"
 const ToolCallRedactedProp = "pending_tool_call_redacted"
 const ToolCallPrivateKeyPrefix = "tool_call_private"
+const ToolResultPrivateKeyPrefix = "tool_result_private"
+const PendingToolResultProp = "pending_tool_result"
 const ReasoningSummaryProp = "reasoning_summary"
 const AnnotationsProp = "annotations"
 const WebSearchContextProp = "web_search_context"
@@ -44,6 +46,10 @@ const ReasoningSignatureProp = "reasoning_signature"
 
 func ToolCallPrivateKVKey(postID, requesterID string) string {
 	return fmt.Sprintf("%s:%s:%s", ToolCallPrivateKeyPrefix, postID, requesterID)
+}
+
+func ToolResultPrivateKVKey(postID, requesterID string) string {
+	return fmt.Sprintf("%s:%s:%s", ToolResultPrivateKeyPrefix, postID, requesterID)
 }
 
 func RedactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
