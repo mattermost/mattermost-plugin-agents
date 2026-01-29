@@ -171,4 +171,33 @@ export class AIPlugin {
     }
   }
 
+  /**
+   * Trigger an embedding search via the search bar
+   * @param query - The search query to execute
+   */
+  async triggerEmbeddingSearch(query: string) {
+    // Open the search bar
+    await this.page.getByRole('button', { name: 'Search' }).click();
+    // Wait for search options to appear
+    await this.page.waitForTimeout(500);
+    // Select the Agents search type
+    const agentsRadio = this.page.getByRole('radio', { name: /Agents/i });
+    await agentsRadio.click();
+    // Enter search query and execute
+    await this.page.getByRole('searchbox', { name: 'Search' }).fill(query);
+    await this.page.getByRole('searchbox', { name: 'Search' }).press('Enter');
+  }
+
+  /**
+   * Verify the Agents search option is visible in the search bar
+   */
+  async expectAgentsSearchVisible() {
+    // Open the search bar
+    await this.page.getByRole('button', { name: 'Search' }).click();
+    await this.page.waitForTimeout(500);
+    // Verify Agents radio option is visible
+    const agentsRadio = this.page.getByRole('radio', { name: /Agents/i });
+    await expect(agentsRadio).toBeVisible({ timeout: 10000 });
+  }
+
 }

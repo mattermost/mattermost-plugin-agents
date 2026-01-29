@@ -41,7 +41,7 @@ export class OpenAIMockContainer {
 			.withExposedPorts(8081)
 			.withNetwork(network)
 			.withNetworkAliases("openai")
-			.withWaitStrategy(Wait.forLogMessage("Starting mock server"))
+			.withWaitStrategy(Wait.forHttp("/version", 8081))
 			.start()
 
 		await this.resetMocks();

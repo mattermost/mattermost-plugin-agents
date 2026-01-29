@@ -1,4 +1,4 @@
-import {StartedTestContainer, GenericContainer, StartedNetwork, Network, Wait} from "testcontainers";
+import {StartedTestContainer, GenericContainer, StartedNetwork, Network, Wait, PullPolicy} from "testcontainers";
 import {StartedPostgreSqlContainer, PostgreSqlContainer} from "@testcontainers/postgresql";
 import {Client4} from "@mattermost/client";
 import { Client } from 'pg'
@@ -187,6 +187,7 @@ export default class MattermostContainer {
         }
 
         this.container = await new GenericContainer(defaultMattermostImage)
+            .withPullPolicy(PullPolicy.alwaysPull())
             .withEnvironment(this.envs)
             .withExposedPorts(8065)
             .withNetwork(this.network)
