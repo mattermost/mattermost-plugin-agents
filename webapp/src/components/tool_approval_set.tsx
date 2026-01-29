@@ -192,6 +192,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     onReject={() => handleToolDecision(tool.id, false)}
                     showArguments={props.showArguments}
                     showResults={props.showResults}
+                    approvalStage={props.approvalStage}
                 />
             ))}
 
@@ -204,6 +205,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     onToggleCollapse={() => toggleCollapse(tool.id)}
                     showArguments={props.showArguments}
                     showResults={props.showResults}
+                    approvalStage={props.approvalStage}
                 />
             ))}
 
