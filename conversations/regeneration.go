@@ -191,9 +191,9 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		)
 
 		// Process the user request with the context that has the callback
-		// Note: ProcessUserRequestWithContext internally checks if this is a DM and applies WithToolsDisabled() if not
+		// Note: tools remain disabled in channel regen requests.
 		var processErr error
-		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback)
+		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback, false)
 		if processErr != nil {
 			return fmt.Errorf("could not continue conversation on regen: %w", processErr)
 		}

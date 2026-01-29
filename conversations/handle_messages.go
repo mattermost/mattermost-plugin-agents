@@ -95,7 +95,7 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 		return err
 	}
 
-	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post)
+	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, true)
 	if err != nil {
 		return fmt.Errorf("unable to process bot mention: %w", err)
 	}
@@ -121,7 +121,7 @@ func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, posting
 		return err
 	}
 
-	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post)
+	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, false)
 	if err != nil {
 		return fmt.Errorf("unable to process bot mention: %w", err)
 	}

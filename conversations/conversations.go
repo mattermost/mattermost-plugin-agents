@@ -87,14 +87,15 @@ func (c *Conversations) SetMeetingsService(meetingsService MeetingsService) {
 }
 
 // ProcessUserRequestWithContext is an internal helper that uses an existing context to process a message
-func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context) (*llm.TextStreamResult, error) {
+func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
-	var disabledToolsInfo []llm.ToolInfo
-	if !isDM && context != nil && context.Tools != nil {
-		disabledToolsInfo = context.Tools.GetToolsInfo()
-	}
+	toolsDisabled := !isDM && !allowToolsInChannel
 	if context != nil {
-		context.DisabledToolsInfo = disabledToolsInfo
+		if toolsDisabled && context.Tools != nil {
+			context.DisabledToolsInfo = context.Tools.GetToolsInfo()
+		} else {
+			context.DisabledToolsInfo = nil
+		}
 	}
 
 	var posts []llm.Post
@@ -132,8 +133,8 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		Context: context,
 	}
 	var opts []llm.LanguageModelOption
-	if !isDM {
-		// In non-DM channels, disable tools for security but provide info about DM-only tools
+	if toolsDisabled {
+		// Tools are disabled in this context but we still inform the LLM about DM-only tools.
 		opts = append(opts, llm.WithToolsDisabled())
 	}
 	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
@@ -160,7 +161,7 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 }
 
 // ProcessUserRequest processes a user request to a bot
-func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post) (*llm.TextStreamResult, error) {
+func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
 	// Extract web search context from conversation history to preserve citations
 	// This ensures citations from previous searches work in follow-up messages
 	webSearchParams := c.extractWebSearchContext(post)
@@ -202,7 +203,7 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 		}
 	}
 
-	return c.ProcessUserRequestWithContext(bot, postingUser, channel, post, llmContext)
+	return c.ProcessUserRequestWithContext(bot, postingUser, channel, post, llmContext, allowToolsInChannel)
 }
 
 func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID string, context *llm.Context) error {
