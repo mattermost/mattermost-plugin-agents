@@ -303,6 +303,101 @@ func (a *API) handleToolCall(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+func (a *API) handleToolCallPrivate(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+
+	if !a.licenseChecker.IsBasicsLicensed() {
+		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	// Only the original requester can view private tool calls
+	if post.GetProp(streaming.LLMRequesterUserID) != userID {
+		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can view tool calls"))
+		return
+	}
+
+	kvKey := streaming.ToolCallPrivateKVKey(post.Id, userID)
+	var toolCalls []llm.ToolCall
+	if err := a.mmClient.KVGet(kvKey, &toolCalls); err != nil {
+		if err.Error() == "not found" {
+			c.AbortWithError(http.StatusBadRequest, errors.New("post missing pending tool calls"))
+		} else {
+			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load tool calls from KV store: %w", err))
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, toolCalls)
+}
+
+func (a *API) handleToolResultPrivate(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+
+	if !a.licenseChecker.IsBasicsLicensed() {
+		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	// Only the original requester can view private tool results
+	if post.GetProp(streaming.LLMRequesterUserID) != userID {
+		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can view tool results"))
+		return
+	}
+
+	kvKey := streaming.ToolResultPrivateKVKey(post.Id, userID)
+	var toolResults []llm.ToolCall
+	if err := a.mmClient.KVGet(kvKey, &toolResults); err != nil {
+		if err.Error() == "not found" {
+			c.AbortWithError(http.StatusBadRequest, errors.New("post missing pending tool results"))
+		} else {
+			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load tool results from KV store: %w", err))
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, toolResults)
+}
+
+func (a *API) handleToolResult(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+
+	if !a.licenseChecker.IsBasicsLicensed() {
+		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	// Only the original requester can approve/reject tool results
+	if post.GetProp(streaming.LLMRequesterUserID) != userID {
+		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can approve/reject tool results"))
+		return
+	}
+
+	var data struct {
+		AcceptedToolIDs []string `json:"accepted_tool_ids" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&data); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if err := a.conversationsService.HandleToolResult(userID, post, channel, data.AcceptedToolIDs); err != nil {
+		if err.Error() == "post missing pending tool results" || err.Error() == "post pending tool results not valid JSON" {
+			c.AbortWithError(http.StatusBadRequest, err)
+		} else {
+			c.AbortWithError(http.StatusInternalServerError, err)
+		}
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
 func (a *API) handlePostbackSummary(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)

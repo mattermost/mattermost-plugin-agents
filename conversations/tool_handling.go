@@ -289,3 +289,30 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 
 	return nil
 }
+
+// HandleToolResult handles tool result approval after tool execution.
+func (c *Conversations) HandleToolResult(userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+	bot := c.bots.GetBotByID(post.UserId)
+	if bot == nil {
+		return fmt.Errorf("unable to get bot")
+	}
+
+	if post.GetProp(streaming.PendingToolResultProp) == nil {
+		return errors.New("post missing pending tool results")
+	}
+
+	resultKVKey := streaming.ToolResultPrivateKVKey(post.Id, userID)
+	var tools []llm.ToolCall
+	if kvErr := c.mmClient.KVGet(resultKVKey, &tools); kvErr != nil {
+		if kvErr.Error() == "not found" {
+			return errors.New("post missing pending tool results")
+		}
+		return fmt.Errorf("failed to load tool call results from KV store: %w", kvErr)
+	}
+
+	_ = channel
+	_ = acceptedToolIDs
+
+	// TODO: implement tool result approval flow.
+	return nil
+}
