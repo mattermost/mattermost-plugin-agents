@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {FormattedMessage} from 'react-intl';
 import {useSelector} from 'react-redux';
 import styled from 'styled-components';
@@ -9,13 +9,14 @@ import styled from 'styled-components';
 import {WebSocketMessage} from '@mattermost/client';
 import {GlobalState} from '@mattermost/types/store';
 
-import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
+import {doPostbackSummary, doRegenerate, doStopGenerating, getToolCallPrivate, getToolResultPrivate} from '@/client';
 import {useSelectNotAIPost} from '@/hooks';
 import {PostMessagePreview} from '@/mm_webapp';
 
 import {SearchSources} from '../search_sources';
 import PostText from '../post_text';
 import ToolApprovalSet from '../tool_approval_set';
+import {ToolApprovalStage, ToolCall} from '../tool_types';
 import {Annotation} from '../citations/types';
 
 import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
@@ -30,23 +31,6 @@ export interface PostUpdateWebsocketMessage {
     tool_call?: string
     reasoning?: string
     annotations?: string
-}
-
-export enum ToolCallStatus {
-    Pending = 0,
-    Accepted = 1,
-    Rejected = 2,
-    Error = 3,
-    Success = 4
-}
-
-export interface ToolCall {
-    id: string;
-    name: string;
-    description: string;
-    arguments: any;
-    result?: string;
-    status: ToolCallStatus;
 }
 
 interface LLMBotPostProps {
@@ -76,6 +60,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         }
         return [];
     });
+    const [privateToolCalls, setPrivateToolCalls] = useState<ToolCall[] | null>(null);
+    const [privateToolResults, setPrivateToolResults] = useState<ToolCall[] | null>(null);
 
     // State for annotations/citations - initialize from persisted annotations if available
     const [annotations, setAnnotations] = useState<Annotation[]>(() => {
@@ -117,6 +103,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
+    const requesterIsCurrentUser = (props.post.props?.llm_requester_user_id === currentUserId);
+    const isToolCallRedacted = String(props.post.props?.pending_tool_call_redacted).toLowerCase() === 'true';
+    const hasPendingToolResult = Boolean(props.post.props?.pending_tool_result);
+    const toolApprovalStage: ToolApprovalStage = hasPendingToolResult ? 'result' : 'call';
 
     // Initialize reasoning from persisted data when navigating to different posts
     const previousPostIdRef = useRef(props.post.id);
@@ -163,6 +153,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             } else {
                 setToolCalls([]);
             }
+            setPrivateToolCalls(null);
+            setPrivateToolResults(null);
 
             // Set precontent if this is a fresh empty post (no content, no reasoning, no tool calls, no annotations)
             // Otherwise reset to false (historical posts or posts with any content)
@@ -190,6 +182,54 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
         }
     }, [props.post.props?.pending_tool_call]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        if (requesterIsCurrentUser && isToolCallRedacted && toolApprovalStage === 'call' && toolCalls.length > 0) {
+            getToolCallPrivate(props.post.id).then((data) => {
+                if (cancelled) {
+                    return;
+                }
+                setPrivateToolCalls(data);
+            }).catch(() => {
+                if (cancelled) {
+                    return;
+                }
+                setPrivateToolCalls(null);
+            });
+        } else {
+            setPrivateToolCalls(null);
+        }
+
+        return () => {
+            cancelled = true;
+        };
+    }, [props.post.id, requesterIsCurrentUser, isToolCallRedacted, toolApprovalStage, toolCalls.length, props.post.props?.pending_tool_call]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        if (requesterIsCurrentUser && isToolCallRedacted && toolApprovalStage === 'result' && toolCalls.length > 0) {
+            getToolResultPrivate(props.post.id).then((data) => {
+                if (cancelled) {
+                    return;
+                }
+                setPrivateToolResults(data);
+            }).catch(() => {
+                if (cancelled) {
+                    return;
+                }
+                setPrivateToolResults(null);
+            });
+        } else {
+            setPrivateToolResults(null);
+        }
+
+        return () => {
+            cancelled = true;
+        };
+    }, [props.post.id, requesterIsCurrentUser, isToolCallRedacted, toolApprovalStage, toolCalls.length, props.post.props?.pending_tool_result]);
 
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
@@ -236,6 +276,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     try {
                         const parsedToolCalls = JSON.parse(data.tool_call);
                         setToolCalls(parsedToolCalls);
+                        setPrivateToolCalls(null);
+                        setPrivateToolResults(null);
                         setPrecontent(false); // Clear "Starting..." when tool calls arrive
                     } catch (error) {
                         // Handle error silently
@@ -286,6 +328,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     // Clear tool calls and annotations when starting new generation
                     setToolCalls([]);
                     setAnnotations([]);
+                    setPrivateToolCalls(null);
+                    setPrivateToolResults(null);
 
                     if (!message) {
                         setMessage('');
@@ -320,6 +364,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
         // Clear tool calls when regenerating
         setToolCalls([]);
+        setPrivateToolCalls(null);
+        setPrivateToolResults(null);
 
         doRegenerate(props.post.id);
     };
@@ -336,7 +382,42 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         selectPost(result.rootid, result.channelid);
     };
 
-    const requesterIsCurrentUser = (props.post.props?.llm_requester_user_id === currentUserId);
+    const resolvedToolCalls = useMemo(() => {
+        if (toolApprovalStage === 'result') {
+            if (privateToolResults && privateToolResults.length > 0) {
+                return privateToolResults;
+            }
+            return toolCalls;
+        }
+        if (privateToolCalls && privateToolCalls.length > 0) {
+            return privateToolCalls;
+        }
+        return toolCalls;
+    }, [toolApprovalStage, privateToolCalls, privateToolResults, toolCalls]);
+
+    const showToolArguments = useMemo(() => {
+        if (!isToolCallRedacted) {
+            return true;
+        }
+        if (!requesterIsCurrentUser) {
+            return false;
+        }
+        if (toolApprovalStage === 'call') {
+            return Boolean(privateToolCalls?.length);
+        }
+        return Boolean(privateToolResults?.length);
+    }, [isToolCallRedacted, requesterIsCurrentUser, toolApprovalStage, privateToolCalls, privateToolResults]);
+
+    const showToolResults = useMemo(() => {
+        if (!isToolCallRedacted) {
+            return true;
+        }
+        if (!requesterIsCurrentUser || toolApprovalStage !== 'result') {
+            return false;
+        }
+        return Boolean(privateToolResults?.length);
+    }, [isToolCallRedacted, requesterIsCurrentUser, toolApprovalStage, privateToolResults]);
+
     const isThreadSummaryPost = (props.post.props?.referenced_thread && props.post.props?.referenced_thread !== '');
     const isNoShowRegen = (props.post.props?.no_regen && props.post.props?.no_regen !== '');
     const isTranscriptionResult = rootPost?.props?.referenced_transcript_post_id && rootPost?.props?.referenced_transcript_post_id !== '';
@@ -401,10 +482,14 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     sources={JSON.parse(props.post.props[SearchResultsPropKey])}
                 />
             )}
-            {toolCalls && toolCalls.length > 0 && (
+            {resolvedToolCalls && resolvedToolCalls.length > 0 && (
                 <ToolApprovalSet
                     postID={props.post.id}
-                    toolCalls={toolCalls}
+                    toolCalls={resolvedToolCalls}
+                    approvalStage={toolApprovalStage}
+                    canApprove={requesterIsCurrentUser}
+                    showArguments={showToolArguments}
+                    showResults={showToolResults}
                 />
             )}
             { showPostbackButton &&

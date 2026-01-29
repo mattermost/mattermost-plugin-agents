@@ -11,7 +11,7 @@ import {GlobalState} from '@mattermost/types/store';
 
 import manifest from '@/manifest';
 
-import {ToolCall, ToolCallStatus} from './llmbot_post/llmbot_post';
+import {ToolCall, ToolCallStatus} from './tool_types';
 
 import LoadingSpinner from './assets/loading_spinner';
 import IconCheckCircle from './assets/icon_check_circle';
@@ -190,6 +190,8 @@ interface ToolCardProps {
     onToggleCollapse: () => void;
     onApprove?: () => void;
     onReject?: () => void;
+    showArguments: boolean;
+    showResults: boolean;
 }
 
 const ToolCard: React.FC<ToolCardProps> = ({
@@ -199,12 +201,16 @@ const ToolCard: React.FC<ToolCardProps> = ({
     onToggleCollapse,
     onApprove,
     onReject,
+    showArguments,
+    showResults,
 }) => {
     const isPending = tool.status === ToolCallStatus.Pending;
     const isAccepted = tool.status === ToolCallStatus.Accepted;
     const isSuccess = tool.status === ToolCallStatus.Success;
     const isError = tool.status === ToolCallStatus.Error;
     const isRejected = tool.status === ToolCallStatus.Rejected;
+    const showDecisionButtons = Boolean(onApprove && onReject);
+    const showProcessingSpinner = isProcessing || isPending || isAccepted;
 
     // Convert underscores to spaces and capitalize first letter of each word
     // (e.g., "create_post" -> "Create Post")
@@ -237,40 +243,39 @@ const ToolCard: React.FC<ToolCardProps> = ({
         inlinelatex: false,
     };
 
-    // Render arguments as JSON code block
-    const argumentsMarkdown = `\`\`\`json\n${JSON.stringify(tool.arguments, null, 2)}\n\`\`\``;
     const renderedArguments = useMemo(() => {
+        if (!showArguments || typeof tool.arguments === 'undefined') {
+            return null;
+        }
+
+        const argumentsValue = tool.arguments ?? {};
+        const argumentsMarkdown = `\`\`\`json\n${JSON.stringify(argumentsValue, null, 2)}\n\`\`\``;
         return messageHtmlToComponent(
             formatText(argumentsMarkdown, markdownOptions),
             messageHtmlToComponentOptions,
         );
-    }, [tool.arguments]);
-
-    // Render result as code block - try to detect if it's JSON
-    const resultMarkdown = useMemo(() => {
-        if (!tool.result) {
-            return '';
-        }
-
-        // Try to parse as JSON to determine if we should use json syntax highlighting
-        try {
-            JSON.parse(tool.result);
-            return `\`\`\`json\n${tool.result}\n\`\`\``;
-        } catch {
-            // Not JSON, use plain code block
-            return `\`\`\`\n${tool.result}\n\`\`\``;
-        }
-    }, [tool.result]);
+    }, [showArguments, tool.arguments]);
 
     const renderedResult = useMemo(() => {
-        if (!tool.result || !resultMarkdown) {
+        if (!showResults || !tool.result) {
             return null;
         }
+
+        // Render result as code block - try to detect if it's JSON
+        const resultMarkdown = (() => {
+            try {
+                JSON.parse(tool.result as string);
+                return `\`\`\`json\n${tool.result}\n\`\`\``;
+            } catch {
+                return `\`\`\`\n${tool.result}\n\`\`\``;
+            }
+        })();
+
         return messageHtmlToComponent(
             formatText(resultMarkdown, markdownOptions),
             messageHtmlToComponentOptions,
         );
-    }, [resultMarkdown]);
+    }, [showResults, tool.result]);
 
     return (
         <ToolCallCard>
@@ -282,20 +287,19 @@ const ToolCard: React.FC<ToolCardProps> = ({
                     {isCollapsed ? <ChevronRightIcon size={16}/> : <ChevronDownIcon size={16}/>}
                 </StyledChevronIcon>
                 <StatusIcon>
-                    {isPending && !isProcessing && <SmallSpinner/>}
-                    {(isAccepted || (isPending && isProcessing)) && <SmallSpinner/>}
-                    {isSuccess && <SmallSuccessIcon size={16}/>}
-                    {isError && <SmallErrorIcon size={16}/>}
-                    {isRejected && <SmallRejectedIcon size={16}/>}
+                    {showProcessingSpinner && <SmallSpinner/>}
+                    {!showProcessingSpinner && isSuccess && <SmallSuccessIcon size={16}/>}
+                    {!showProcessingSpinner && isError && <SmallErrorIcon size={16}/>}
+                    {!showProcessingSpinner && isRejected && <SmallRejectedIcon size={16}/>}
                 </StatusIcon>
                 <ToolName>{displayName}</ToolName>
             </ToolCallHeader>
 
             {!isCollapsed && (
                 <>
-                    <ToolCallArguments>{renderedArguments}</ToolCallArguments>
+                    {renderedArguments && <ToolCallArguments>{renderedArguments}</ToolCallArguments>}
 
-                    {(isSuccess || isError) && renderedResult && (
+                    {showResults && (isSuccess || isError) && renderedResult && (
                         <>
                             <ResponseLabel>
                                 {isSuccess && <ResponseSuccessIcon/>}
@@ -321,7 +325,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
                 </>
             )}
 
-            {isPending && (
+            {showDecisionButtons && (
                 isProcessing ? (
                     <StatusContainer>
                         <ProcessingSpinnerContainer>

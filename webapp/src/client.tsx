@@ -151,6 +151,60 @@ export async function doToolCall(postid: string, toolIDs: string[]) {
     });
 }
 
+export async function getToolCallPrivate(postid: string) {
+    const url = `${postRoute(postid)}/tool_call_private`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getToolResultPrivate(postid: string) {
+    const url = `${postRoute(postid)}/tool_result_private`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function doToolResult(postid: string, toolIDs: string[]) {
+    const url = `${postRoute(postid)}/tool_result`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({
+            accepted_tool_ids: toolIDs,
+        }),
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function doPostbackSummary(postid: string) {
     const url = `${postRoute(postid)}/postback_summary`;
     const response = await fetch(url, Client4.getOptions({
