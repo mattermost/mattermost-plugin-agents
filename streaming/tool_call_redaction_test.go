@@ -180,20 +180,20 @@ func TestStreamToPostToolCallRedaction(t *testing.T) {
 
 			if testCase.expectKV {
 				kvKey := ToolCallPrivateKVKey(postID, requesterID)
-				storedKV, ok := client.kv[kvKey]
-				require.True(t, ok)
-				kvCalls, ok := storedKV.([]llm.ToolCall)
-				require.True(t, ok)
+				storedKV, kvFound := client.kv[kvKey]
+				require.True(t, kvFound)
+				kvCalls, kvCallsOK := storedKV.([]llm.ToolCall)
+				require.True(t, kvCallsOK)
 				require.Len(t, kvCalls, len(toolCalls))
 				require.Contains(t, string(kvCalls[0].Arguments), "secret")
 			} else {
 				require.Empty(t, client.kv)
 			}
 
-			toolEvent, ok := findToolCallEvent(client.events)
-			require.True(t, ok)
-			toolCallPayload, ok := toolEvent.payload["tool_call"].(string)
-			require.True(t, ok)
+			toolEvent, eventFound := findToolCallEvent(client.events)
+			require.True(t, eventFound)
+			toolCallPayload, payloadOK := toolEvent.payload["tool_call"].(string)
+			require.True(t, payloadOK)
 			if testCase.expectRedacted {
 				require.NotContains(t, toolCallPayload, "secret")
 				require.NotContains(t, toolCallPayload, "sensitive-result")
