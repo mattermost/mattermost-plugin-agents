@@ -7,14 +7,14 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, ChevronRightIcon, CheckIcon, AlertCircleOutlineIcon, CloseCircleOutlineIcon, GlobeIcon, LockIcon} from '@mattermost/compass-icons/components';
 import {useSelector} from 'react-redux';
 
+// eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
+import {OverlayTrigger, Tooltip} from 'react-bootstrap';
+
 import {GlobalState} from '@mattermost/types/store';
 
 import manifest from '@/manifest';
 
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
-
-//eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
-import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 
 import LoadingSpinner from './assets/loading_spinner';
 import IconCheckCircle from './assets/icon_check_circle';
