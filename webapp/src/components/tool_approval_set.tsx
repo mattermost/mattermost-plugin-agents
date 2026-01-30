@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
@@ -54,6 +54,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     const [collapsedTools, setCollapsedTools] = useState<string[]>([]);
     const [toolDecisions, setToolDecisions] = useState<ToolDecision>({});
     const autoSubmitRef = useRef(false);
+    const submitInFlightRef = useRef(false);
 
     const isCallStage = props.approvalStage === 'call';
 
@@ -81,7 +82,30 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         setIsSubmitting(false);
         setError('');
         autoSubmitRef.current = false;
+        submitInFlightRef.current = false;
     }, [props.toolCalls, props.approvalStage]);
+
+    const submitDecisions = useCallback(async (approvedToolIDs: string[]) => {
+        if (submitInFlightRef.current) {
+            return;
+        }
+
+        submitInFlightRef.current = true;
+        setIsSubmitting(true);
+        try {
+            if (isCallStage) {
+                await doToolCall(props.postID, approvedToolIDs);
+            } else {
+                await doToolResult(props.postID, approvedToolIDs);
+            }
+            setIsSubmitting(false);
+        } catch (err) {
+            setError('Failed to submit tool decisions');
+            setIsSubmitting(false);
+        } finally {
+            submitInFlightRef.current = false;
+        }
+    }, [isCallStage, props.postID]);
 
     useEffect(() => {
         if (isCallStage || !props.canApprove) {
@@ -92,20 +116,21 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             return;
         }
 
-        if (autoSubmitRef.current || isSubmitting) {
+        const allRejected = props.toolCalls.every((call) => call.status === ToolCallStatus.Rejected);
+        if (!allRejected) {
+            return;
+        }
+
+        if (autoSubmitRef.current || isSubmitting || submitInFlightRef.current) {
             return;
         }
 
         autoSubmitRef.current = true;
-        setIsSubmitting(true);
-        doToolResult(props.postID, []).catch(() => {
-            setError('Failed to submit tool decisions');
-            setIsSubmitting(false);
-        });
-    }, [decisionToolCalls.length, isCallStage, isSubmitting, props.canApprove, props.postID, props.toolCalls]);
+        submitDecisions([]);
+    }, [decisionToolCalls.length, isCallStage, isSubmitting, props.canApprove, props.postID, props.toolCalls, submitDecisions]);
 
     const handleToolDecision = async (toolID: string, approved: boolean) => {
-        if (!props.canApprove || isSubmitting || !decisionToolIDSet.has(toolID)) {
+        if (!props.canApprove || isSubmitting || submitInFlightRef.current || !decisionToolIDSet.has(toolID)) {
             return;
         }
 
@@ -132,17 +157,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             }).
             map((tool) => tool.id);
 
-        setIsSubmitting(true);
-        try {
-            if (isCallStage) {
-                await doToolCall(props.postID, approvedToolIDs);
-            } else {
-                await doToolResult(props.postID, approvedToolIDs);
-            }
-        } catch (err) {
-            setError('Failed to submit tool decisions');
-            setIsSubmitting(false);
-        }
+        submitDecisions(approvedToolIDs);
     };
 
     const toggleCollapse = (toolID: string) => {
