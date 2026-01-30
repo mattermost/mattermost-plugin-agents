@@ -25,6 +25,7 @@ type Context struct {
 	Time        string
 	ServerName  string
 	CompanyName string
+	SiteURL     string
 
 	// Location
 	Team    *model.Team

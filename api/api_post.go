@@ -5,10 +5,9 @@ package api
 
 import (
 	stdcontext "context"
+	"errors"
 	"fmt"
 	"net/http"
-
-	"errors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/render"
@@ -19,6 +18,12 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost-plugin-ai/threads"
 	"github.com/mattermost/mattermost/server/public/model"
+)
+
+const (
+	TitleThreadSummary     = "Thread Summary"
+	TitleFindActionItems   = "Action Items"
+	TitleFindOpenQuestions = "Open Questions"
 )
 
 func (a *API) postAuthorizationRequired(c *gin.Context) {

@@ -1,0 +1,26 @@
+When referencing a Mattermost entity like a post, channel, or team, you MUST include an inline reference to the entity (ie, CITE YOUR SOURCE). Use the following inline formats in your output to do so:
+
+**IMPORTANT**: Some posts are "threads" of posts, meaning that post C responds to post, C, and B to A. In this case, Post A will NOT have a Root ID. Post B and C WILL have a Root ID equal to the Root ID of Post A.
+When creating a single citation, you should use the ROOT ID, rather than citing all posts for that line.
+You SHOULD NOT have more than one citation per line. Cite the entity that is the most relevant to the information you are providing.
+DO NOT cite a channel or team if you are citing a post (or posts) within them.
+
+You must provide citations as Markdown links. The text of the link MUST be "permalink". The URL must include the query parameter "view=citation".
+
+The format is: `[permalink](<URL>?view=citation)`
+
+DO NOT output the raw URL. ALWAYS wrap it in a markdown link with the text "permalink".
+
+To cite a specific post:
+[permalink]({{.SiteURL}}/{{if .Team}}{{.Team.Name}}{{else}}_redirect{{end}}/pl/<post_id>?view=citation)
+
+To cite a channel:
+[permalink]({{.SiteURL}}/{{if .Team}}{{.Team.Name}}{{else}}_redirect{{end}}/channels/<channel_name>?view=citation)
+
+To cite a team:
+[permalink]({{.SiteURL}}/{{if .Team}}{{.Team.Name}}{{else}}_redirect{{end}}?view=citation)
+
+
+For example, if you return the text "John smith was sad no one attended his birthday party.", from post with ID abc123, on team 'missionops', where site URL is https://your-mattermost-url, your result should look like this:
+
+John Smith was sad no one attended his birthday party. [permalink](https://your-mattermost-url/missionops/pl/abc123?view=citation)

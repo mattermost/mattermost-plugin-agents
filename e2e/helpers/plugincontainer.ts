@@ -21,6 +21,15 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 		  "enableLLMTrace": true,
 		  "enableUserRestrictions": false,
 		  "defaultBotName": "mock",
+		  "mcp": {
+			  "embeddedServer": {
+				  "enabled": true
+			  },
+			  "enablePluginServer": true,
+			  "enabled": true,
+			  "idleTimeoutMinutes": 30,
+			  "servers": null
+		  },
 		  "services": [
 			  {
 				  "id": "mock-service",
@@ -116,8 +125,6 @@ const RunContainer = async (): Promise<MattermostContainer> => {
       organization: "test",
       install_plugins: [],
   });
-
-  await new Promise(resolve => setTimeout(resolve, 1000))
 
   return mattermost;
 }

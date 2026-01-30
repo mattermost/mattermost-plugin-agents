@@ -171,4 +171,65 @@ export class AIPlugin {
     }
   }
 
+  async openChannelAnalysisPopover() {
+    // Find the "Ask Agents about this channel" button in the channel header
+    // This button has an AI icon and opens a popover with channel analysis options
+    const channelHeaderButtons = this.page.locator('.channel-header__top, [class*="channel-header"]');
+    const agentsButton = channelHeaderButtons.locator('button').filter({ hasText: /Ask Agents/ }).or(
+      channelHeaderButtons.locator('button[aria-label*="Agents"]')
+    ).or(
+      channelHeaderButtons.locator('button:has(svg)').last()
+    );
+
+    await agentsButton.click({ timeout: 10000 });
+
+    // Wait for the popover to appear
+    const popover = this.page.locator('.channel-summarize-popover');
+    await expect(popover).toBeVisible({ timeout: 10000 });
+
+    // CRITICAL: Wait for bots to be loaded before interacting
+    // The bot name appears in the "GENERATE WITH:" section
+    // If activeBot is null, handleSummarize will silently return without doing anything
+    await expect(popover.getByText('Mock Bot')).toBeVisible({ timeout: 15000 });
+  }
+
+  async sendChannelAnalysisMessage(message: string) {
+    // Type in the channel analysis input field and submit
+    const popover = this.page.locator('.channel-summarize-popover');
+    const input = popover.locator('input[type="text"]');
+
+    // Use fill() to set the value and wait for React state to update
+    await input.fill(message);
+
+    // Verify the input has the expected value before submitting
+    await expect(input).toHaveValue(message);
+
+    // Press Enter to submit - this is processed in the same event loop as React state
+    await input.press('Enter');
+
+    // Wait for RHS to open with the response
+    const rhsContainer = this.page.getByTestId('mattermost-ai-rhs');
+    await expect(rhsContainer).toBeVisible({ timeout: 10000 });
+  }
+
+  async clickSummarizeUnreads() {
+    const popover = this.page.locator('.channel-summarize-popover');
+    const unreadsButton = popover.getByText('Summarize unreads');
+    await unreadsButton.click();
+
+    // Wait for RHS to open with the response
+    const rhsContainer = this.page.getByTestId('mattermost-ai-rhs');
+    await expect(rhsContainer).toBeVisible({ timeout: 10000 });
+  }
+
+  async clickSummarizeDays(days: 7 | 14) {
+    const popover = this.page.locator('.channel-summarize-popover');
+    const daysButton = popover.getByText(`Summarize last ${days} days`);
+    await daysButton.click();
+
+    // Wait for RHS to open with the response
+    const rhsContainer = this.page.getByTestId('mattermost-ai-rhs');
+    await expect(rhsContainer).toBeVisible({ timeout: 10000 });
+  }
+
 }

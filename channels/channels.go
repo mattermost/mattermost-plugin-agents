@@ -4,6 +4,7 @@
 package channels
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/mattermost/mattermost-plugin-ai/format"
@@ -32,6 +33,84 @@ func New(
 		client:   client,
 		dbClient: dbClient,
 	}
+}
+
+// AnalyzeChannel uses MCP tools to analyze channel activity based on user request
+func (c *Channels) AnalyzeChannel(
+	context *llm.Context,
+	channelID string,
+	analysisData map[string]any,
+) (*llm.TextStreamResult, error) {
+	// Inject analysis data into context for the prompt
+	displayName := context.Channel.DisplayName
+	if displayName == "" {
+		switch context.Channel.Type {
+		case model.ChannelTypeDirect:
+			displayName = "Direct Message"
+		case model.ChannelTypeGroup:
+			displayName = "Group Message"
+		default:
+			displayName = context.Channel.Id
+		}
+	}
+
+	context.Parameters = map[string]any{
+		"Channel": map[string]string{
+			"Id":          channelID,
+			"DisplayName": displayName,
+		},
+		"Analysis": analysisData,
+	}
+
+	systemPrompt, err := c.prompts.Format(prompts.PromptSummarizeChannelSystem, context)
+	if err != nil {
+		return nil, fmt.Errorf("failed to format system prompt: %w", err)
+	}
+
+	// We can use a simple user prompt to trigger the agent
+	userPrompt := "Please summarize the channel activity as requested."
+
+	// Get tools and bind channel_id so it cannot be manipulated by the LLM
+	readChannel := context.Tools.GetTool("read_channel")
+	if readChannel == nil {
+		return nil, fmt.Errorf("read_channel tool not available - ensure MCP embedded server is enabled and running")
+	}
+	boundReadChannel := readChannel.WithBoundParams(map[string]interface{}{"channel_id": channelID})
+
+	getChannelInfo := context.Tools.GetTool("get_channel_info")
+	if getChannelInfo == nil {
+		return nil, fmt.Errorf("get_channel_info tool not available - ensure MCP embedded server is enabled and running")
+	}
+	boundGetChannelInfo := getChannelInfo.WithBoundParams(map[string]interface{}{"channel_id": channelID})
+
+	// Create scoped tool store with bound tools
+	scopedTools := llm.NewToolStore(nil, false)
+	scopedTools.AddTools([]llm.Tool{boundReadChannel, boundGetChannelInfo})
+	context.Tools = scopedTools
+
+	completionRequest := llm.CompletionRequest{
+		Posts: []llm.Post{
+			{
+				Role:    llm.PostRoleSystem,
+				Message: systemPrompt,
+			},
+			{
+				Role:    llm.PostRoleUser,
+				Message: userPrompt,
+			},
+		},
+		Context: context,
+	}
+
+	// Auto-run the bound tools
+	resultStream, err := c.llm.ChatCompletion(completionRequest,
+		llm.WithAutoRunTools([]string{"read_channel", "get_channel_info"}),
+		llm.WithReasoningDisabled())
+	if err != nil {
+		return nil, err
+	}
+
+	return resultStream, nil
 }
 
 func (c *Channels) Interval(

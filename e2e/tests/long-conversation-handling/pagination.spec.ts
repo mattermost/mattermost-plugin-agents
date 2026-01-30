@@ -47,9 +47,17 @@ async function setupTestPage(page) {
 
     await mmPage.login(url, username, password);
 
+    // Wait for page to be fully loaded after login
+    await page.waitForLoadState('networkidle');
+
     // Wait for plugin to be fully initialized by ensuring the app bar icon is loaded
     // This ensures the plugin is ready before any test interactions
-    await expect(aiPlugin.appBarIcon).toBeVisible({ timeout: 30000 });
+    // Use waitFor first to handle cases where the element takes time to appear in DOM
+    await aiPlugin.appBarIcon.waitFor({ state: 'visible', timeout: 30000 });
+    await expect(aiPlugin.appBarIcon).toBeVisible({ timeout: 5000 });
+
+    // Small delay to ensure plugin is fully interactive
+    await page.waitForTimeout(500);
 
     return { mmPage, aiPlugin };
 }

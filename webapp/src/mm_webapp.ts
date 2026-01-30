@@ -16,4 +16,6 @@ export const Timestamp = (window as any).Components.Timestamp;
 
 export const ThreadViewer = (window as any).Components.ThreadViewer;
 
+export const DatePicker = (window as any).Components?.DatePicker;
+
 export const useWebSocketClient = (window as any).ProductApi.useWebSocketClient;

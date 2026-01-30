@@ -28,6 +28,7 @@ import UnreadsSummarize from './components/unreads_summarize';
 import {PostbackPost} from './components/postback_post';
 import {isRHSCompatable} from './mm_webapp';
 import SearchButton from './components/search_button';
+import AskChannelButton from './components/ask_channel_button';
 import {doSelectPost} from './hooks';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
@@ -174,6 +175,10 @@ export default class Plugin {
 
         if (registry.registerNewMessagesSeparatorActionComponent) {
             registry.registerNewMessagesSeparatorActionComponent(UnreadsSummarize);
+        }
+
+        if (registry.registerChannelHeaderIcon) {
+            registry.registerChannelHeaderIcon(AskChannelButton);
         }
 
         // Register slash commands
