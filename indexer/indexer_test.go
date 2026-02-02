@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1765,6 +1766,176 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "job already running")
+	})
+
+	t.Run("sets CutoffAt to current timestamp", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockMutexAPI := &plugintest.API{}
+
+		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+		lastIndexed := int64(1234567890)
+		beforeCall := time.Now().UnixMilli()
+
+		// Get last indexed timestamp
+		mockClient.On("KVGet", IndexerLastIndexedKey, mock.AnythingOfType("*int64")).
+			Run(func(args mock.Arguments) {
+				ts := args.Get(1).(*int64)
+				*ts = lastIndexed
+			}).
+			Return(nil).Once()
+
+		// Check if job is running
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Return(errors.New("not found"))
+
+		// Capture the saved job status to verify CutoffAt
+		var savedStatus JobStatus
+		mockClient.On("KVSet", ReindexJobKey, mock.MatchedBy(func(v interface{}) bool {
+			status := v.(JobStatus)
+			savedStatus = status
+			return status.Status == JobStatusRunning
+		})).Return(nil).Once()
+
+		// Save cursor
+		mockClient.On("KVSet", IndexerCursorKey, mock.Anything).Return(nil).Once()
+
+		// Background job operations
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, mockMutexAPI)
+		status, err := indexer.StartCatchUpJob()
+
+		afterCall := time.Now().UnixMilli()
+
+		require.NoError(t, err)
+		assert.Equal(t, JobStatusRunning, status.Status)
+
+		// CutoffAt must be set (non-zero) and within the time window of the call
+		assert.NotZero(t, savedStatus.CutoffAt, "CutoffAt should be set")
+		assert.GreaterOrEqual(t, savedStatus.CutoffAt, beforeCall, "CutoffAt should be >= time before call")
+		assert.LessOrEqual(t, savedStatus.CutoffAt, afterCall, "CutoffAt should be <= time after call")
+
+		// Also verify the returned status
+		assert.NotZero(t, status.CutoffAt, "returned status.CutoffAt should be set")
+
+		// Give the background goroutine a moment
+		time.Sleep(50 * time.Millisecond)
+	})
+
+	t.Run("catches up only posts created after last indexed timestamp", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockMutexAPI := &plugintest.API{}
+		mockBots := &bots.MMBots{}
+
+		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+		// Create test channel
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name, TeamId) VALUES ('channel1', 'O', 'town-square', 'team1')")
+		require.NoError(t, err)
+
+		// Timeline setup: lastIndexedTime is the cutoff point
+		now := model.GetMillis()
+		lastIndexedTime := now - 10000 // 10 seconds ago
+
+		// Posts BEFORE lastIndexedTime (should NOT be caught up - simulate already indexed)
+		oldPostIDs := []string{"old-post-1", "old-post-2", "old-post-3"}
+		for i, postID := range oldPostIDs {
+			_, err = db.Exec(
+				"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'channel1', 'user1')",
+				postID, lastIndexedTime-1000-int64(i)*100, fmt.Sprintf("Old message %d", i))
+			require.NoError(t, err)
+		}
+
+		// Posts AFTER lastIndexedTime (SHOULD be caught up)
+		newPostIDs := []string{"new-post-1", "new-post-2", "new-post-3"}
+		for i, postID := range newPostIDs {
+			_, err = db.Exec(
+				"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'channel1', 'user1')",
+				postID, lastIndexedTime+int64(i+1)*100, fmt.Sprintf("New message %d", i))
+			require.NoError(t, err)
+		}
+
+		// Mock: return lastIndexedTime when asked
+		mockClient.On("KVGet", IndexerLastIndexedKey, mock.AnythingOfType("*int64")).
+			Run(func(args mock.Arguments) {
+				ts := args.Get(1).(*int64)
+				*ts = lastIndexedTime
+			}).
+			Return(nil)
+
+		// Check if job is running - return not found
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Return(errors.New("not found"))
+
+		// Cursor operations - the catch-up job sets cursor to start from lastIndexedTime
+		// When the background job loads it, return the cursor that was set
+		mockClient.On("KVGet", IndexerCursorKey, mock.AnythingOfType("*indexer.Cursor")).
+			Run(func(args mock.Arguments) {
+				cursor := args.Get(1).(*Cursor)
+				cursor.LastCreateAt = lastIndexedTime
+				cursor.LastID = ""
+			}).
+			Return(nil).Maybe()
+
+		// Other KVGet calls (like model info)
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
+
+		// Track which documents are stored
+		var storedPostIDs []string
+		var storedMu sync.Mutex
+		mockSearch.On("Store", mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) {
+				docs := args.Get(1).([]embeddings.PostDocument)
+				storedMu.Lock()
+				for _, doc := range docs {
+					storedPostIDs = append(storedPostIDs, doc.PostID)
+				}
+				storedMu.Unlock()
+			}).
+			Return(nil).Maybe()
+
+		// Other KV operations
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, mockMutexAPI)
+		status, err := indexer.StartCatchUpJob()
+
+		require.NoError(t, err)
+		assert.Equal(t, JobStatusRunning, status.Status)
+
+		// Wait for background job to complete
+		time.Sleep(300 * time.Millisecond)
+
+		// VERIFY: Only posts after lastIndexedTime were stored
+		storedMu.Lock()
+		defer storedMu.Unlock()
+
+		assert.ElementsMatch(t, newPostIDs, storedPostIDs,
+			"Only posts after lastIndexedTime should be indexed; got: %v, expected: %v", storedPostIDs, newPostIDs)
+
+		// VERIFY: Posts before lastIndexedTime were NOT stored
+		for _, oldPostID := range oldPostIDs {
+			assert.NotContains(t, storedPostIDs, oldPostID,
+				"Posts before lastIndexedTime should not be re-indexed: %s", oldPostID)
+		}
 	})
 }
 

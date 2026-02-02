@@ -291,6 +291,9 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 		return jobStatus, fmt.Errorf("job already running")
 	}
 
+	// Capture cutoff timestamp for catch-up
+	cutoffTimestamp := time.Now().UnixMilli()
+
 	// Count posts to catch up
 	var count int64
 	err = s.db.Get(&count, `
@@ -307,6 +310,7 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 		TotalRows: count,
 		Resumable: true,
 		NodeID:    s.getNodeID(),
+		CutoffAt:  cutoffTimestamp,
 	}
 
 	err = s.pluginAPI.KVSet(ReindexJobKey, newJobStatus)
