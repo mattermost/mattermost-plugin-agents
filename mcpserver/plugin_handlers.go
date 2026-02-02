@@ -64,12 +64,17 @@ func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHa
 		TrackAIGenerated:    &trackAIGenerated,
 	}
 
+	// Create HTTP search service for callback to plugin API
+	pluginURL := siteURL + "/plugins/mattermost-ai"
+	searchService := tools.NewHTTPSemanticSearchService(pluginURL)
+
 	// Register tools with remote access mode
 	toolProvider := tools.NewMattermostToolProvider(
 		authProvider,
 		logger,
 		config,
 		tools.AccessModeRemote,
+		searchService,
 	)
 	toolProvider.ProvideTools(mcpServer)
 

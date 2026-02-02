@@ -179,7 +179,7 @@ func (s *EmbeddedTestSuite) SetupEmbeddedServer() {
 	}
 
 	// Create embedded server
-	server, err := mcpserver.NewInMemoryServer(config, s.logger)
+	server, err := mcpserver.NewInMemoryServer(config, s.logger, nil)
 	require.NoError(s.t, err, "Failed to create embedded MCP server")
 
 	s.embeddedServer = server

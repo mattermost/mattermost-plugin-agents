@@ -53,6 +53,7 @@ type RAGResult struct {
 // Options configures a search operation
 type Options struct {
 	Limit     int
+	Offset    int
 	TeamID    string
 	ChannelID string
 	UserID    string
@@ -172,6 +173,7 @@ func (s *Search) executeSearch(ctx context.Context, query string, opts Options) 
 
 	searchResults, err := search.Search(ctx, query, embeddings.SearchOptions{
 		Limit:     limit,
+		Offset:    opts.Offset,
 		TeamID:    opts.TeamID,
 		ChannelID: opts.ChannelID,
 		UserID:    opts.UserID,
@@ -330,6 +332,12 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 	}
 	defer s.streamingService.FinishStreaming(responsePost.Id)
 	s.streamingService.StreamToPost(streamContext, resultStream, responsePost, "")
+}
+
+// ExecuteSearchForMCP performs a search and returns enriched results for MCP servers
+// This is a simplified interface for external MCP servers that need search results
+func (s *Search) ExecuteSearchForMCP(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
+	return s.executeSearch(ctx, query, opts)
 }
 
 // SearchQuery performs a search and returns results immediately

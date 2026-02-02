@@ -49,6 +49,7 @@ type SearchResult struct {
 // SearchOptions contains parameters for search operations
 type SearchOptions struct {
 	Limit         int
+	Offset        int
 	MinScore      float32
 	TeamID        string
 	ChannelID     string

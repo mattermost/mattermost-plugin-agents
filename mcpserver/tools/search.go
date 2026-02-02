@@ -7,17 +7,31 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// SearchPostsArgs represents arguments for the search_posts tool
-type SearchPostsArgs struct {
-	Query     string `json:"query" jsonschema:"The search query,minLength=1,maxLength=4000"`
-	TeamID    string `json:"team_id,omitempty" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
-	ChannelID string `json:"channel_id,omitempty" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
-	Limit     int    `json:"limit,omitempty" jsonschema:"Number of results to return (default: 20, max: 100),minimum=1,maximum=100"`
+// CombinedSearchArgs represents arguments for search_posts when both semantic and keyword search are available
+type CombinedSearchArgs struct {
+	Query          string `json:"query" jsonschema:"The search query,minLength=1,maxLength=4000"`
+	TeamID         string `json:"team_id,omitempty" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
+	ChannelID      string `json:"channel_id,omitempty" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
+	SemanticLimit  int    `json:"semantic_limit,omitempty" jsonschema:"Max results from semantic search (default 10; max 50),minimum=1,maximum=50"`
+	SemanticOffset int    `json:"semantic_offset,omitempty" jsonschema:"Offset for semantic search pagination,minimum=0"`
+	KeywordLimit   int    `json:"keyword_limit,omitempty" jsonschema:"Max results from keyword search (default 10; max 100),minimum=1,maximum=100"`
+	KeywordOffset  int    `json:"keyword_offset,omitempty" jsonschema:"Offset for keyword search pagination,minimum=0"`
+}
+
+// KeywordOnlySearchArgs represents arguments for search_posts when only keyword search is available
+type KeywordOnlySearchArgs struct {
+	Query         string `json:"query" jsonschema:"The search query,minLength=1,maxLength=4000"`
+	TeamID        string `json:"team_id,omitempty" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
+	ChannelID     string `json:"channel_id,omitempty" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
+	KeywordLimit  int    `json:"keyword_limit,omitempty" jsonschema:"Max results from keyword search (default 10; max 100),minimum=1,maximum=100"`
+	KeywordOffset int    `json:"keyword_offset,omitempty" jsonschema:"Offset for keyword search pagination,minimum=0"`
 }
 
 // SearchUsersArgs represents arguments for the search_users tool
@@ -28,12 +42,32 @@ type SearchUsersArgs struct {
 
 // getSearchTools returns all search-related tools
 func (p *MattermostToolProvider) getSearchTools() []MCPTool {
+	semanticEnabled := p.searchService != nil && p.searchService.Enabled()
+
+	var schema *jsonschema.Schema
+	var description string
+
+	if semanticEnabled {
+		schema = llm.NewJSONSchemaFromStruct[CombinedSearchArgs]()
+		description = "Search for posts in Mattermost using both semantic (AI-powered) and keyword search. " +
+			"Parameters: query (required), team_id (optional), channel_id (optional). " +
+			"semantic_limit/semantic_offset control semantic results (default: 10). " +
+			"keyword_limit/keyword_offset control keyword results (default: 10). " +
+			"Returns matching posts with content, author, channel, and relevance score for semantic results."
+	} else {
+		schema = llm.NewJSONSchemaFromStruct[KeywordOnlySearchArgs]()
+		description = "Search for posts in Mattermost using keyword search. " +
+			"Parameters: query (required), team_id (optional), channel_id (optional). " +
+			"keyword_limit/keyword_offset control results (default: 10). " +
+			"Returns matching posts with content, author, and channel."
+	}
+
 	return []MCPTool{
 		{
 			Name:        "search_posts",
-			Description: "Search for posts in Mattermost. Parameters: query (required search terms), team_id (optional scope), channel_id (optional scope), limit (1-100, default 20). Returns matching posts with content, author, channel, and timestamp. Example: {\"query\": \"bug fix\", \"limit\": 10}",
-			Schema:      llm.NewJSONSchemaFromStruct[SearchPostsArgs](),
-			Resolver:    p.toolSearchPosts,
+			Description: description,
+			Schema:      schema,
+			Resolver:    p.toolCombinedSearch,
 		},
 		{
 			Name:        "search_users",
@@ -44,11 +78,21 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	}
 }
 
-// toolSearchPosts implements the search_posts tool
-func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args SearchPostsArgs
-	err := argsGetter(&args)
-	if err != nil {
+// searchPostResult holds a post result with metadata for deduplication and formatting
+type searchPostResult struct {
+	Post        *model.Post
+	ChannelName string
+	TeamName    string
+	Username    string
+	Score       float32 // Only set for semantic results
+	Source      string  // "semantic" or "keyword"
+}
+
+// toolCombinedSearch implements the combined search_posts tool
+func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+	// Parse into the full args struct - missing fields will be zero values
+	var args CombinedSearchArgs
+	if err := argsGetter(&args); err != nil {
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool search_posts: %w", err)
 	}
 
@@ -66,11 +110,17 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 	}
 
 	// Set defaults
-	if args.Limit == 0 {
-		args.Limit = 20
+	if args.SemanticLimit == 0 {
+		args.SemanticLimit = 10
 	}
-	if args.Limit > 100 {
-		args.Limit = 100
+	if args.SemanticLimit > 50 {
+		args.SemanticLimit = 50
+	}
+	if args.KeywordLimit == 0 {
+		args.KeywordLimit = 10
+	}
+	if args.KeywordLimit > 100 {
+		args.KeywordLimit = 100
 	}
 
 	// Get client from context
@@ -80,45 +130,128 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 	client := mcpContext.Client
 	ctx := context.Background()
 
-	// Build search parameters - use the simpler search method
-	searchTerm := args.Query
-
-	// For team-specific search, include team context. This can be an empty string if not specified.
-	teamID := args.TeamID
-
-	// Perform the search using basic search
-	searchResults, _, err := client.SearchPosts(ctx, teamID, searchTerm, false)
+	// Get user ID for semantic search permissions
+	user, _, err := client.GetMe(ctx, "")
 	if err != nil {
-		return "search failed", fmt.Errorf("error searching posts: %w", err)
+		return "failed to get user", fmt.Errorf("failed to get current user: %w", err)
+	}
+
+	var semanticResults []searchPostResult
+	var keywordResults []searchPostResult
+	var semanticErr, keywordErr error
+	var wg sync.WaitGroup
+
+	semanticEnabled := p.searchService != nil && p.searchService.Enabled()
+
+	// Run semantic search if enabled
+	if semanticEnabled {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			semanticResults, semanticErr = p.executeSemanticSearch(ctx, client, args, user.Id)
+		}()
+	}
+
+	// Always run keyword search
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		keywordResults, keywordErr = p.executeKeywordSearch(ctx, client, args)
+	}()
+
+	wg.Wait()
+
+	// Log errors but don't fail if one search type fails
+	if semanticErr != nil {
+		p.logger.Warn("semantic search failed", "error", semanticErr)
+	}
+	if keywordErr != nil {
+		p.logger.Warn("keyword search failed", "error", keywordErr)
+	}
+
+	// If both failed, return error
+	if semanticErr != nil && keywordErr != nil {
+		return "search failed", fmt.Errorf("both search methods failed: semantic: %v, keyword: %v", semanticErr, keywordErr)
+	}
+
+	// Format and return results
+	return p.formatCombinedResults(args.Query, semanticResults, keywordResults, semanticEnabled, args.ChannelID)
+}
+
+// executeSemanticSearch runs the semantic search and returns enriched results
+func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs, userID string) ([]searchPostResult, error) {
+	opts := SemanticSearchOptions{
+		Limit:     args.SemanticLimit,
+		Offset:    args.SemanticOffset,
+		TeamID:    args.TeamID,
+		ChannelID: args.ChannelID,
+		UserID:    userID,
+	}
+
+	results, err := p.searchService.Search(ctx, args.Query, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	postResults := make([]searchPostResult, 0, len(results))
+	for _, r := range results {
+		postResults = append(postResults, searchPostResult{
+			Post: &model.Post{
+				Id:        r.PostID,
+				ChannelId: r.ChannelID,
+				UserId:    r.UserID,
+				Message:   r.Content,
+			},
+			ChannelName: r.ChannelName,
+			Username:    r.Username,
+			Score:       r.Score,
+			Source:      "semantic",
+		})
+	}
+
+	return postResults, nil
+}
+
+// executeKeywordSearch runs the Mattermost keyword search and returns enriched results
+func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs) ([]searchPostResult, error) {
+	searchResults, _, err := client.SearchPosts(ctx, args.TeamID, args.Query, false)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(searchResults.Posts) == 0 {
-		return "no posts found matching the search criteria", nil
+		return nil, nil
 	}
 
-	// Convert posts map to slice
+	// Convert posts map to slice and apply offset/limit
 	posts := make([]*model.Post, 0, len(searchResults.Posts))
 	for _, post := range searchResults.Posts {
 		posts = append(posts, post)
 	}
 
-	// Limit results
-	if len(posts) > args.Limit {
-		posts = posts[:args.Limit]
+	// Apply offset
+	if args.KeywordOffset > 0 && args.KeywordOffset < len(posts) {
+		posts = posts[args.KeywordOffset:]
+	} else if args.KeywordOffset >= len(posts) {
+		return nil, nil
 	}
 
-	// Pre-fetch all unique channels and teams to avoid duplicate API calls
+	// Apply limit
+	if len(posts) > args.KeywordLimit {
+		posts = posts[:args.KeywordLimit]
+	}
+
+	// Pre-fetch channel and team info
 	channelCache := make(map[string]*model.Channel)
 	teamCache := make(map[string]*model.Team)
+	userCache := make(map[string]*model.User)
 
 	for _, post := range posts {
 		if _, exists := channelCache[post.ChannelId]; !exists {
-			channel, _, err := client.GetChannel(ctx, post.ChannelId, "")
-			if err == nil {
+			channel, _, chErr := client.GetChannel(ctx, post.ChannelId, "")
+			if chErr == nil {
 				channelCache[post.ChannelId] = channel
-
-				// Also fetch the team for this channel if not already cached
-				if _, teamExists := teamCache[channel.TeamId]; !teamExists {
+				if _, teamExists := teamCache[channel.TeamId]; !teamExists && channel.TeamId != "" {
 					team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
 					if teamErr == nil {
 						teamCache[channel.TeamId] = team
@@ -126,49 +259,133 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 				}
 			}
 		}
+		if _, exists := userCache[post.UserId]; !exists {
+			u, _, uErr := client.GetUser(ctx, post.UserId, "")
+			if uErr == nil {
+				userCache[post.UserId] = u
+			}
+		}
 	}
 
-	// Format the response
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d posts matching '%s':\n", len(posts), args.Query))
-
-	// If channelID was provided, include it once in the header
-	if args.ChannelID != "" {
-		result.WriteString(fmt.Sprintf("Channel ID: %s\n", args.ChannelID))
-	}
-	result.WriteString("\n")
-
-	for i, post := range posts {
-		// Get user info for the post
-		user, _, err := client.GetUser(ctx, post.UserId, "")
-		if err != nil {
-			p.logger.Warn("failed to get user for post", "user_id", post.UserId, "error", err)
-			result.WriteString(fmt.Sprintf("**Result %d** by Unknown User:\n", i+1))
-		} else {
-			result.WriteString(fmt.Sprintf("**Result %d** by %s:\n", i+1, user.Username))
+	// Build results with metadata
+	postResults := make([]searchPostResult, 0, len(posts))
+	for _, post := range posts {
+		result := searchPostResult{
+			Post:   post,
+			Source: "keyword",
 		}
 
-		// Get channel and team info from cache
 		if channel, exists := channelCache[post.ChannelId]; exists {
+			switch channel.Type {
+			case model.ChannelTypeDirect:
+				result.ChannelName = "Direct Message"
+			case model.ChannelTypeGroup:
+				result.ChannelName = "Group Message"
+			default:
+				result.ChannelName = channel.DisplayName
+			}
 			if team, teamExists := teamCache[channel.TeamId]; teamExists {
-				result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channel.DisplayName, team.DisplayName))
-			} else {
-				result.WriteString(fmt.Sprintf("Channel: %s\n", channel.DisplayName))
+				result.TeamName = team.DisplayName
 			}
 		}
 
-		result.WriteString(fmt.Sprintf("Post ID: %s\n", post.Id))
-		// Only include Channel ID per-post if it wasn't provided as a search parameter
-		if args.ChannelID == "" {
-			result.WriteString(fmt.Sprintf("Channel ID: %s\n", post.ChannelId))
+		if u, exists := userCache[post.UserId]; exists {
+			result.Username = u.Username
 		}
-		if post.RootId != "" {
-			result.WriteString(fmt.Sprintf("Root ID: %s\n", post.RootId))
+
+		postResults = append(postResults, result)
+	}
+
+	return postResults, nil
+}
+
+// formatCombinedResults formats the combined search results into a readable string
+func (p *MattermostToolProvider) formatCombinedResults(query string, semanticResults, keywordResults []searchPostResult, semanticEnabled bool, channelIDFilter string) (string, error) {
+	// Deduplicate: if a post appears in both, keep it in semantic only
+	seenPostIDs := make(map[string]bool)
+	for _, r := range semanticResults {
+		seenPostIDs[r.Post.Id] = true
+	}
+
+	dedupedKeywordResults := make([]searchPostResult, 0, len(keywordResults))
+	for _, r := range keywordResults {
+		if !seenPostIDs[r.Post.Id] {
+			dedupedKeywordResults = append(dedupedKeywordResults, r)
 		}
-		result.WriteString(fmt.Sprintf("Message: %s\n\n", post.Message))
+	}
+
+	totalSemantic := len(semanticResults)
+	totalKeyword := len(dedupedKeywordResults)
+	total := totalSemantic + totalKeyword
+
+	if total == 0 {
+		return "No posts found matching the search criteria.", nil
+	}
+
+	var result strings.Builder
+
+	if semanticEnabled {
+		result.WriteString(fmt.Sprintf("Found %d results for \"%s\" (%d semantic, %d keyword):\n", total, query, totalSemantic, totalKeyword))
+	} else {
+		result.WriteString(fmt.Sprintf("Found %d results for \"%s\":\n", total, query))
+	}
+
+	if channelIDFilter != "" {
+		result.WriteString(fmt.Sprintf("Channel ID filter: %s\n", channelIDFilter))
+	}
+
+	// Format semantic results
+	if semanticEnabled && totalSemantic > 0 {
+		result.WriteString("\n## Semantic Search Results\n\n")
+		for i, r := range semanticResults {
+			p.formatSingleResult(&result, i+1, r, true, channelIDFilter)
+		}
+	}
+
+	// Format keyword results
+	if totalKeyword > 0 {
+		if semanticEnabled {
+			result.WriteString("\n## Keyword Search Results\n\n")
+		} else {
+			result.WriteString("\n")
+		}
+		for i, r := range dedupedKeywordResults {
+			p.formatSingleResult(&result, i+1, r, false, channelIDFilter)
+		}
 	}
 
 	return result.String(), nil
+}
+
+// formatSingleResult formats a single search result
+func (p *MattermostToolProvider) formatSingleResult(result *strings.Builder, index int, r searchPostResult, includeScore bool, channelIDFilter string) {
+	username := r.Username
+	if username == "" {
+		username = "Unknown User"
+	}
+
+	if includeScore && r.Score > 0 {
+		fmt.Fprintf(result, "**Result %d** (Score: %.2f) by @%s:\n", index, r.Score, username)
+	} else {
+		fmt.Fprintf(result, "**Result %d** by @%s:\n", index, username)
+	}
+
+	if r.ChannelName != "" {
+		if r.TeamName != "" {
+			fmt.Fprintf(result, "Channel: %s (Team: %s)\n", r.ChannelName, r.TeamName)
+		} else {
+			fmt.Fprintf(result, "Channel: %s\n", r.ChannelName)
+		}
+	}
+
+	fmt.Fprintf(result, "Post ID: %s\n", r.Post.Id)
+	if channelIDFilter == "" {
+		fmt.Fprintf(result, "Channel ID: %s\n", r.Post.ChannelId)
+	}
+	if r.Post.RootId != "" {
+		fmt.Fprintf(result, "Root ID: %s\n", r.Post.RootId)
+	}
+	fmt.Fprintf(result, "Message: %s\n\n", r.Post.Message)
 }
 
 // toolSearchUsers implements the search_users tool

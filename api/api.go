@@ -163,6 +163,9 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 		mcpServerGroup.Any("/mcp", func(gc *gin.Context) {
 			a.delegateToMCPHandler(gc, a.mcpHandlers.MCPHandler)
 		})
+
+		// Semantic search endpoint for external MCP servers to call back to
+		mcpServerGroup.POST("/semantic-search", a.handleMCPSemanticSearch)
 	}
 
 	router.Use(a.MattermostAuthorizationRequired)

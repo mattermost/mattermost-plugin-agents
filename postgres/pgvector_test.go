@@ -662,6 +662,95 @@ func TestSearch(t *testing.T) {
 		assert.Contains(t, ids, "post3")
 		assert.Contains(t, ids, "post4")
 	})
+
+	t.Run("search with offset for pagination", func(t *testing.T) {
+		ctx, pgVector, db, _, searchVector := setupSearchTest(t)
+		defer cleanupDB(t, db)
+
+		// First, get all results to establish the order
+		allOpts := embeddings.SearchOptions{
+			Limit:  10,
+			UserID: "system_user",
+		}
+		allResults, err := pgVector.Search(ctx, searchVector, allOpts)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(allResults), 3)
+
+		// Now get results with offset=2, should skip first 2
+		offsetOpts := embeddings.SearchOptions{
+			Limit:  10,
+			Offset: 2,
+			UserID: "system_user",
+		}
+		offsetResults, err := pgVector.Search(ctx, searchVector, offsetOpts)
+		require.NoError(t, err)
+
+		// First result with offset should equal third result without offset
+		assert.Equal(t, allResults[2].Document.PostID, offsetResults[0].Document.PostID,
+			"offset should skip first 2 results")
+	})
+
+	t.Run("offset beyond results returns empty", func(t *testing.T) {
+		ctx, pgVector, db, _, searchVector := setupSearchTest(t)
+		defer cleanupDB(t, db)
+
+		opts := embeddings.SearchOptions{
+			Limit:  10,
+			Offset: 100, // Way beyond our 4 test posts
+			UserID: "system_user",
+		}
+		results, err := pgVector.Search(ctx, searchVector, opts)
+		require.NoError(t, err)
+		assert.Empty(t, results, "offset beyond total should return empty")
+	})
+
+	t.Run("offset with limit for pagination", func(t *testing.T) {
+		ctx, pgVector, db, _, searchVector := setupSearchTest(t)
+		defer cleanupDB(t, db)
+
+		// Get all results first
+		allOpts := embeddings.SearchOptions{
+			Limit:  10,
+			UserID: "system_user",
+		}
+		allResults, err := pgVector.Search(ctx, searchVector, allOpts)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(allResults), 4)
+
+		// Get first page (limit=2, offset=0)
+		page1Opts := embeddings.SearchOptions{
+			Limit:  2,
+			Offset: 0,
+			UserID: "system_user",
+		}
+		page1, err := pgVector.Search(ctx, searchVector, page1Opts)
+		require.NoError(t, err)
+		assert.Len(t, page1, 2)
+
+		// Get second page (limit=2, offset=2)
+		page2Opts := embeddings.SearchOptions{
+			Limit:  2,
+			Offset: 2,
+			UserID: "system_user",
+		}
+		page2, err := pgVector.Search(ctx, searchVector, page2Opts)
+		require.NoError(t, err)
+		assert.Len(t, page2, 2)
+
+		// Verify pages don't overlap
+		page1IDs := map[string]bool{page1[0].Document.PostID: true, page1[1].Document.PostID: true}
+		for _, result := range page2 {
+			assert.False(t, page1IDs[result.Document.PostID], "page2 should not contain posts from page1")
+		}
+
+		// Verify page1 matches first 2 of allResults
+		assert.Equal(t, allResults[0].Document.PostID, page1[0].Document.PostID)
+		assert.Equal(t, allResults[1].Document.PostID, page1[1].Document.PostID)
+
+		// Verify page2 matches next 2 of allResults
+		assert.Equal(t, allResults[2].Document.PostID, page2[0].Document.PostID)
+		assert.Equal(t, allResults[3].Document.PostID, page2[1].Document.PostID)
+	})
 }
 
 func TestSearchWithPermissions(t *testing.T) {

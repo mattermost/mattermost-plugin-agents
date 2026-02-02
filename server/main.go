@@ -24,6 +24,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
 	"github.com/mattermost/mattermost-plugin-ai/meetings"
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
@@ -84,6 +85,50 @@ func (l *pluginLogger) Error(message string, keyValuePairs ...any) {
 		return
 	}
 	l.service.Error(message, keyValuePairs...)
+}
+
+// searchServiceAdapter adapts *search.Search to implement tools.SemanticSearchService
+type searchServiceAdapter struct {
+	search *search.Search
+}
+
+func (a *searchServiceAdapter) Enabled() bool {
+	return a.search != nil && a.search.Enabled()
+}
+
+func (a *searchServiceAdapter) Search(ctx context.Context, query string, opts tools.SemanticSearchOptions) ([]tools.SemanticSearchResult, error) {
+	if a.search == nil {
+		return nil, fmt.Errorf("search service not available")
+	}
+
+	searchOpts := embeddings.SearchOptions{
+		Limit:     opts.Limit,
+		Offset:    opts.Offset,
+		TeamID:    opts.TeamID,
+		ChannelID: opts.ChannelID,
+		UserID:    opts.UserID,
+	}
+
+	results, err := a.search.Search(ctx, query, searchOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert results
+	toolResults := make([]tools.SemanticSearchResult, 0, len(results))
+	for _, r := range results {
+		toolResults = append(toolResults, tools.SemanticSearchResult{
+			PostID:      r.Document.PostID,
+			ChannelID:   r.Document.ChannelID,
+			ChannelName: "", // Will be enriched by the tool
+			UserID:      r.Document.UserID,
+			Username:    "", // Will be enriched by the tool
+			Content:     r.Document.Content,
+			Score:       r.Score,
+		})
+	}
+
+	return toolResults, nil
 }
 
 func (p *Plugin) OnActivate() error {
@@ -259,10 +304,13 @@ func (p *Plugin) OnActivate() error {
 	manifestID := manifest.Id
 	oauthCallbackURL := fmt.Sprintf("%s/plugins/%s/oauth/callback", *siteURL, manifestID)
 
+	// Create search service adapter for MCP tools
+	mcpSearchService := &searchServiceAdapter{search: searchService}
+
 	// Create embedded MCP server if enabled
 	var embeddedMCPServer mcp.EmbeddedMCPServer
 	if p.configuration.MCP().EmbeddedServer.Enabled {
-		embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
+		embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, mcpSearchService)
 		if err != nil {
 			pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
 			// Continue without embedded server
@@ -276,7 +324,7 @@ func (p *Plugin) OnActivate() error {
 		var embeddedServer mcp.EmbeddedMCPServer
 		var embeddedErr error
 		if p.configuration.MCP().EmbeddedServer.Enabled {
-			embeddedServer, embeddedErr = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
+			embeddedServer, embeddedErr = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, mcpSearchService)
 			if embeddedErr != nil {
 				pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
 			}

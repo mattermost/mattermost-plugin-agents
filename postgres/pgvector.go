@@ -200,6 +200,10 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 	}
 	queryBuilder = queryBuilder.Limit(uint64(limit)) //nolint:gosec
 
+	if opts.Offset > 0 {
+		queryBuilder = queryBuilder.Offset(uint64(opts.Offset)) //nolint:gosec
+	}
+
 	query, args, err := queryBuilder.ToSql()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build SQL: %w", err)

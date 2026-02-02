@@ -24,7 +24,7 @@ func TestInMemoryServerCreation(t *testing.T) {
 	mcpLogger, err := logger.CreateLoggerWithOptions(false, "")
 	require.NoError(t, err)
 
-	server, err := mcpserver.NewInMemoryServer(config, mcpLogger)
+	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, server)
 
@@ -45,7 +45,7 @@ func TestInMemoryServerMultipleUsers(t *testing.T) {
 	mcpLogger, err := logger.CreateLoggerWithOptions(false, "")
 	require.NoError(t, err)
 
-	server, err := mcpserver.NewInMemoryServer(config, mcpLogger)
+	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, nil)
 	require.NoError(t, err)
 
 	// Create multiple user connections
