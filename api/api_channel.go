@@ -72,6 +72,11 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		return
 	}
 
+	if data.Days > 14 {
+		c.AbortWithError(http.StatusBadRequest, errors.New("days cannot exceed 14"))
+		return
+	}
+
 	// Get the user to build context
 	user, err := a.pluginAPI.User.Get(userID)
 	if err != nil {
