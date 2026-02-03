@@ -277,8 +277,8 @@ func TestHandleToolCallChannelStoresInKVAndRedactsProps(t *testing.T) {
 	require.Contains(t, string(resultCalls[0].Arguments), "secret")
 
 	_, stillPresent := fakeClient.kv[toolCallKVKey]
-	require.False(t, stillPresent)
-	require.Contains(t, fakeClient.kvDeletes, toolCallKVKey)
+	require.True(t, stillPresent)
+	require.NotContains(t, fakeClient.kvDeletes, toolCallKVKey)
 
 	toolCallProp, ok := post.GetProp(streaming.ToolCallProp).(string)
 	require.True(t, ok)

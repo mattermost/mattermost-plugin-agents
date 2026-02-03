@@ -8,6 +8,7 @@ import (
 )
 
 const LLMRequesterUserID = "llm_requester_user_id"
+const AllowToolsInChannelProp = "allow_tools_in_channel"
 const RespondingToProp = "responding_to"
 const NoRegen = "no_regen"
 const UnsafeLinksPostProp = "unsafe_links"

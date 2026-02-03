@@ -137,6 +137,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	}
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	allowToolsInChannel := allowToolsInChannelFromPost(post)
 	requesterID, _ := post.GetProp(streaming.LLMRequesterUserID).(string)
 	toolCallKVKey := ""
 	if !isDM {
@@ -164,6 +165,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		channel,
 		contextOpts...,
 	)
+	toolsDisabled := applyToolAvailability(llmContext, isDM, allowToolsInChannel)
 
 	for i := range tools {
 		if slices.Contains(acceptedToolIDs, tools[i].ID) {
@@ -185,15 +187,27 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	}
 
 	if !isDM {
+		hasReviewableResult := slices.ContainsFunc(tools, func(tc llm.ToolCall) bool {
+			return tc.Status == llm.ToolCallStatusSuccess || tc.Status == llm.ToolCallStatusError
+		})
+		if !hasReviewableResult {
+			redactedTools := streaming.RedactToolCalls(tools)
+			resolvedToolsJSON, marshalErr := json.Marshal(redactedTools)
+			if marshalErr != nil {
+				return fmt.Errorf("failed to marshal tool call results: %w", marshalErr)
+			}
+			post.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
+			post.AddProp(streaming.ToolCallRedactedProp, "true")
+			post.DelProp(streaming.PendingToolResultProp)
+			if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
+				return fmt.Errorf("failed to update post with tool call results: %w", updateErr)
+			}
+			return nil
+		}
+
 		resultKVKey := streaming.ToolResultPrivateKVKey(post.Id, requesterID)
 		if kvErr := c.mmClient.KVSet(resultKVKey, tools); kvErr != nil {
 			return fmt.Errorf("failed to store tool call results: %w", kvErr)
-		}
-
-		if toolCallKVKey != "" {
-			if deleteErr := c.mmClient.KVDelete(toolCallKVKey); deleteErr != nil {
-				c.mmClient.LogError("Failed to delete tool call KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", toolCallKVKey)
-			}
 		}
 
 		redactedTools := streaming.RedactToolCalls(tools)
@@ -265,7 +279,11 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		Posts:   posts,
 		Context: llmContext,
 	}
-	result, err := bot.LLM().ChatCompletion(completionRequest)
+	var opts []llm.LanguageModelOption
+	if toolsDisabled {
+		opts = append(opts, llm.WithToolsDisabled())
+	}
+	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to get chat completion: %w", err)
 	}
@@ -283,6 +301,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
+	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
 	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, user.Id, result, responsePost, post.Id); err != nil {
 		return fmt.Errorf("failed to stream result to new post: %w", err)
 	}
@@ -309,6 +328,9 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return errors.New("only the original requester can approve/reject tool results")
 	}
 
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	allowToolsInChannel := allowToolsInChannelFromPost(post)
+
 	resultKVKey := streaming.ToolResultPrivateKVKey(post.Id, requesterID)
 	var tools []llm.ToolCall
 	if kvErr := c.mmClient.KVGet(resultKVKey, &tools); kvErr != nil {
@@ -328,6 +350,27 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		}
 		tools[i].Result = ""
 		tools[i].Status = llm.ToolCallStatusRejected
+	}
+
+	hasApprovedResults := slices.ContainsFunc(tools, func(tc llm.ToolCall) bool {
+		return tc.Status != llm.ToolCallStatusRejected
+	})
+	if !hasApprovedResults {
+		redactedTools := streaming.RedactToolCalls(tools)
+		redactedToolsJSON, marshalErr := json.Marshal(redactedTools)
+		if marshalErr != nil {
+			return fmt.Errorf("failed to marshal tool call results: %w", marshalErr)
+		}
+		post.AddProp(streaming.ToolCallProp, string(redactedToolsJSON))
+		post.AddProp(streaming.ToolCallRedactedProp, "true")
+		post.DelProp(streaming.PendingToolResultProp)
+		if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
+			return fmt.Errorf("failed to update post after tool result rejection: %w", updateErr)
+		}
+		if deleteErr := c.mmClient.KVDelete(resultKVKey); deleteErr != nil {
+			c.mmClient.LogError("Failed to delete tool result KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", resultKVKey)
+		}
+		return nil
 	}
 
 	user, err := c.mmClient.GetUser(userID)
@@ -350,6 +393,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		channel,
 		contextOpts...,
 	)
+	toolsDisabled := applyToolAvailability(llmContext, isDM, allowToolsInChannel)
 
 	responseRootID := post.Id
 	if post.RootId != "" {
@@ -386,7 +430,11 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		Posts:   posts,
 		Context: llmContext,
 	}
-	result, err := bot.LLM().ChatCompletion(completionRequest)
+	var opts []llm.LanguageModelOption
+	if toolsDisabled {
+		opts = append(opts, llm.WithToolsDisabled())
+	}
+	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to get chat completion: %w", err)
 	}
@@ -416,6 +464,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
+	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
 	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, user.Id, result, responsePost, post.Id); err != nil {
 		return fmt.Errorf("failed to stream result to new post: %w", err)
 	}

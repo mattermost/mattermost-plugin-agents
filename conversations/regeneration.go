@@ -191,9 +191,9 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		)
 
 		// Process the user request with the context that has the callback
-		// Note: tools remain disabled in channel regen requests.
+		allowToolsInChannel := allowToolsInChannelFromPost(post)
 		var processErr error
-		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback, false)
+		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback, allowToolsInChannel)
 		if processErr != nil {
 			return fmt.Errorf("could not continue conversation on regen: %w", processErr)
 		}

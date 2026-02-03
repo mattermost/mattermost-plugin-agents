@@ -186,7 +186,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     useEffect(() => {
         let cancelled = false;
 
-        if (requesterIsCurrentUser && isToolCallRedacted && toolApprovalStage === 'call' && toolCalls.length > 0) {
+        if (requesterIsCurrentUser && isToolCallRedacted && toolCalls.length > 0) {
             getToolCallPrivate(props.post.id).then((data) => {
                 if (cancelled) {
                     return;
@@ -382,18 +382,33 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         selectPost(result.rootid, result.channelid);
     };
 
+    const mergedToolCalls = useMemo(() => {
+        if (!privateToolCalls || privateToolCalls.length === 0) {
+            return toolCalls;
+        }
+
+        const publicById = new Map(toolCalls.map((call) => [call.id, call]));
+        return privateToolCalls.map((call) => {
+            const publicCall = publicById.get(call.id);
+            if (!publicCall) {
+                return call;
+            }
+            return {
+                ...publicCall,
+                arguments: call.arguments,
+            };
+        });
+    }, [privateToolCalls, toolCalls]);
+
     const resolvedToolCalls = useMemo(() => {
         if (toolApprovalStage === 'result') {
             if (privateToolResults && privateToolResults.length > 0) {
                 return privateToolResults;
             }
-            return toolCalls;
+            return mergedToolCalls;
         }
-        if (privateToolCalls && privateToolCalls.length > 0) {
-            return privateToolCalls;
-        }
-        return toolCalls;
-    }, [toolApprovalStage, privateToolCalls, privateToolResults, toolCalls]);
+        return mergedToolCalls;
+    }, [toolApprovalStage, mergedToolCalls, privateToolResults]);
 
     const showToolArguments = useMemo(() => {
         if (!isToolCallRedacted) {
@@ -402,11 +417,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         if (!requesterIsCurrentUser) {
             return false;
         }
-        if (toolApprovalStage === 'call') {
-            return Boolean(privateToolCalls?.length);
-        }
-        return Boolean(privateToolResults?.length);
-    }, [isToolCallRedacted, requesterIsCurrentUser, toolApprovalStage, privateToolCalls, privateToolResults]);
+        return Boolean(privateToolCalls?.length || privateToolResults?.length);
+    }, [isToolCallRedacted, requesterIsCurrentUser, privateToolCalls, privateToolResults]);
 
     const showToolResults = useMemo(() => {
         if (!isToolCallRedacted) {

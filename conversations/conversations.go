@@ -405,7 +405,12 @@ func (c *Conversations) PostToAIPost(bot *bots.Bot, post *model.Post) llm.Post {
 		if err := json.Unmarshal([]byte(pendingTools), &toolCalls); err != nil {
 			c.mmClient.LogError("Error unmarshalling tool calls", "error", err)
 		} else {
-			tools = toolCalls
+			for _, toolCall := range toolCalls {
+				if toolCall.Status == llm.ToolCallStatusRejected {
+					continue
+				}
+				tools = append(tools, toolCall)
+			}
 		}
 	}
 
