@@ -30,6 +30,7 @@ type Config = {
     enableCallSummary: boolean,
     allowedUpstreamHostnames: string,
     allowUnsafeLinks: boolean,
+    allowNativeWebSearchInChannels: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig,
     webSearch: WebSearchSettings,
@@ -82,6 +83,7 @@ const defaultConfig = {
     enableLLMTrace: false,
     enableTokenUsageLogging: false,
     allowUnsafeLinks: false,
+    allowNativeWebSearchInChannels: false,
     embeddingSearchConfig: {
         type: 'disabled',
         vectorStore: {
@@ -303,6 +305,15 @@ const Config = (props: Props) => {
                             props.setSaveNeeded();
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, AI responses may contain clickable links, including potentially malicious destinations. Enable only if you trust the LLM output and have mitigations for exfiltration risks.'})}
+                    />
+                    <BooleanItem
+                        label={<FormattedMessage defaultMessage='Allow native web search in channels'/>}
+                        value={Boolean(value.allowNativeWebSearchInChannels)}
+                        onChange={(to) => {
+                            props.onChange(props.id, {...value, allowNativeWebSearchInChannels: to});
+                            props.setSaveNeeded();
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.'})}
                     />
                 </ItemList>
             </Panel>

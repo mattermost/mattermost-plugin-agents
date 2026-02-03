@@ -33,13 +33,14 @@ type LanguageModel interface {
 }
 
 type LanguageModelConfig struct {
-	Model              string
-	MaxGeneratedTokens int
-	EnableVision       bool
-	JSONOutputFormat   *jsonschema.Schema
-	ToolsDisabled      bool
-	AutoRunTools       []string
-	ReasoningDisabled  bool
+	Model                  string
+	MaxGeneratedTokens     int
+	EnableVision           bool
+	JSONOutputFormat       *jsonschema.Schema
+	ToolsDisabled          bool
+	NativeWebSearchAllowed bool // Allows native web search even when ToolsDisabled is true
+	AutoRunTools           []string
+	ReasoningDisabled      bool
 }
 
 type LanguageModelOption func(*LanguageModelConfig)
@@ -64,6 +65,12 @@ func WithJSONOutput[T any]() LanguageModelOption {
 func WithToolsDisabled() LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.ToolsDisabled = true
+	}
+}
+
+func WithNativeWebSearchAllowed() LanguageModelOption {
+	return func(cfg *LanguageModelConfig) {
+		cfg.NativeWebSearchAllowed = true
 	}
 }
 

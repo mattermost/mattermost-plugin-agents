@@ -131,6 +131,7 @@ func TestConversationMentionHandling(t *testing.T) {
 				licenseChecker,
 				i18n.Init(),
 				nil,
+				nil,
 			)
 
 			// Create a mock bot
