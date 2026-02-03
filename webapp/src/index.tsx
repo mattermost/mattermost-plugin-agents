@@ -33,6 +33,7 @@ import {doSelectPost} from './hooks';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
 import {useBotlist} from './bots';
+import AgentsTour from './components/tutorial/agents_tour';
 
 type WebappStore = Store<GlobalState, Action<Record<string, unknown>>>
 
@@ -195,8 +196,11 @@ export default class Plugin {
             });
         }
 
+        if (registry.registerRootComponent) {
+            registry.registerRootComponent(AgentsTour);
+        }
+
         if (registry.registerSearchComponents) {
-            // The SearchButton and SearchHints components will check if search is enabled
             registry.registerSearchComponents({
                 buttonComponent: SearchButton,
                 suggestionsComponent: () => null,

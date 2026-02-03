@@ -39,3 +39,7 @@ node_modules/
 specs/
 
 .cursor/
+
+.opencode/
+
+opencode.json
