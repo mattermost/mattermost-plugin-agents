@@ -72,8 +72,9 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		return
 	}
 
-	if data.Days > 14 {
-		c.AbortWithError(http.StatusBadRequest, errors.New("days cannot exceed 14"))
+	const maxAnalysisDays = 14
+	if data.Days < 0 || data.Days > maxAnalysisDays {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("days must be between 0 and %d", maxAnalysisDays))
 		return
 	}
 
