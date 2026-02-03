@@ -37,7 +37,8 @@ const ToolCallHeader = styled.div<{isCollapsed: boolean}>`
 
 const StyledChevronIcon = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.56);
-	width: 12px;
+	width: 16px;
+    padding: 0 1px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -52,7 +53,7 @@ const StatusIcon = styled.div`
 `;
 
 const ToolName = styled.span`
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 400;
     line-height: 20px;
     color: rgba(var(--center-channel-color-rgb), 0.75);

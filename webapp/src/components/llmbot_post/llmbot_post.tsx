@@ -383,7 +383,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             )}
             {precontent && (
                 <MinimalReasoningContainer>
-                    <LoadingSpinner/>
+                    <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>
                     <span>
                         <FormattedMessage defaultMessage='Starting...'/>
                     </span>
@@ -430,13 +430,20 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 const PostBody = styled.div`
 `;
 
+const SpinnerWrapper = styled.div`
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+`;
+
 const PostSummaryHelpMessage = styled.div`
 	font-size: 14px;
 	font-style: italic;
 	font-weight: 400;
 	line-height: 20px;
 	border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-
 	padding-top: 8px;
 	padding-bottom: 8px;
 	margin-top: 16px;
