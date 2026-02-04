@@ -357,22 +357,21 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					channel, err := p.mmClient.GetChannel(post.ChannelId)
 					if err != nil {
 						p.mmClient.LogError("Failed to get channel for tool call redaction", "error", err, "post_id", post.Id, "channel_id", post.ChannelId)
-						isDMWithBot = false
-					} else {
-						isDMWithBot = mmapi.IsDMWith(post.UserId, channel)
+						return
 					}
+					isDMWithBot = mmapi.IsDMWith(post.UserId, channel)
 
 					toolCallsForPost := toolCalls
 					if !isDMWithBot {
 						requesterID, ok := post.GetProp(LLMRequesterUserID).(string)
 						if !ok || requesterID == "" {
-							p.mmClient.LogError("Missing requester ID for tool call redaction", "post_id", post.Id)
-						} else {
-							kvKey := ToolCallPrivateKVKey(post.Id, requesterID)
-							kvErr := p.mmClient.KVSet(kvKey, toolCalls)
-							if kvErr != nil {
-								p.mmClient.LogError("Failed to store tool calls in KV store", "error", kvErr, "post_id", post.Id, "kv_key", kvKey)
-							}
+							p.mmClient.LogError("Missing requester ID for tool call, cannot persist private data", "post_id", post.Id)
+							return
+						}
+						kvKey := ToolCallPrivateKVKey(post.Id, requesterID)
+						if kvErr := p.mmClient.KVSet(kvKey, toolCalls); kvErr != nil {
+							p.mmClient.LogError("Failed to store tool calls in KV store, cannot continue", "error", kvErr, "post_id", post.Id, "kv_key", kvKey)
+							return
 						}
 						toolCallsForPost = RedactToolCalls(toolCalls)
 						post.AddProp(ToolCallRedactedProp, "true")

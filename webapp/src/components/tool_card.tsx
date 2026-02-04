@@ -361,7 +361,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
     };
 
     const renderedArguments = useMemo(() => {
-        if (!showArguments || typeof tool.arguments === 'undefined') {
+        if (!showArguments) {
             return null;
         }
 
@@ -433,30 +433,42 @@ const ToolCard: React.FC<ToolCardProps> = ({
                     {showResultReviewCallout && (
                         <ResultReviewCallout>
                             <ResultReviewHeader>
-                                <FormattedMessage defaultMessage='Review tool response'/>
+                                <FormattedMessage
+                                    id='ai.tool_call.review_tool_response'
+                                    defaultMessage='Review tool response'
+                                />
                                 <OverlayTrigger
                                     placement='top'
                                     overlay={
                                         <Tooltip>
                                             <TooltipTitle>
-                                                <FormattedMessage defaultMessage='Why is there a second approval step?'/>
+                                                <FormattedMessage
+                                                    id='ai.tool_call.tooltip.why_second_step'
+                                                    defaultMessage='Why is there a second approval step?'
+                                                />
                                             </TooltipTitle>
                                             <TooltipBody>
-                                                <FormattedMessage defaultMessage='This step controls whether Agents can use the tool response when generating the next message in the channel. If you reject, the response stays private and won’t be used in the channel reply.'/>
+                                                <FormattedMessage
+                                                    id='ai.tool_call.tooltip.approval_body'
+                                                    defaultMessage='This step controls whether Agents can use the tool response when generating the next message in the channel. If you reject, the response stays private and won’t be used in the channel reply.'
+                                                />
                                             </TooltipBody>
                                         </Tooltip>
                                     }
                                 >
                                     <ResultReviewHelpButton
                                         type='button'
-                                        aria-label={formatMessage({defaultMessage: 'Learn more'})}
+                                        aria-label={formatMessage({id: 'ai.tool_call.learn_more', defaultMessage: 'Learn more'})}
                                     >
                                         <AlertCircleOutlineIcon size={16}/>
                                     </ResultReviewHelpButton>
                                 </OverlayTrigger>
                             </ResultReviewHeader>
                             <ResultReviewBody>
-                                <FormattedMessage defaultMessage='Approving lets Agents use this response in its next message. That message will be visible to everyone in the channel—only approve results you’re comfortable sharing.'/>
+                                <FormattedMessage
+                                    id='ai.tool_call.approval_warning'
+                                    defaultMessage='Approving lets Agents use this response in its next message. That message will be visible to everyone in the channel—only approve results you’re comfortable sharing.'
+                                />
                             </ResultReviewBody>
                         </ResultReviewCallout>
                     )}
@@ -493,7 +505,10 @@ const ToolCard: React.FC<ToolCardProps> = ({
                                     overlay={
                                         <ShareVisibilityTooltip>
                                             <GlobeIcon size={14}/>
-                                            <FormattedMessage defaultMessage='Visible to channel'/>
+                                            <FormattedMessage
+                                                id='ai.tool_call.visible_to_channel'
+                                                defaultMessage='Visible to channel'
+                                            />
                                         </ShareVisibilityTooltip>
                                     }
                                 >
@@ -504,7 +519,10 @@ const ToolCard: React.FC<ToolCardProps> = ({
                                             disabled={isProcessing}
                                         >
                                             <GlobeIcon size={14}/>
-                                            <FormattedMessage defaultMessage='Share'/>
+                                            <FormattedMessage
+                                                id='ai.tool_call.share'
+                                                defaultMessage='Share'
+                                            />
                                         </ResultDecisionButton>
                                     </span>
                                 </OverlayTrigger>
@@ -514,7 +532,10 @@ const ToolCard: React.FC<ToolCardProps> = ({
                                     disabled={isProcessing}
                                 >
                                     <LockIcon size={14}/>
-                                    <FormattedMessage defaultMessage='Keep private'/>
+                                    <FormattedMessage
+                                        id='ai.tool_call.keep_private'
+                                        defaultMessage='Keep private'
+                                    />
                                 </ResultDecisionButton>
                             </>
                         ) : (

@@ -8,6 +8,8 @@ import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
 import manifest from './manifest';
 
+import {ToolCall} from './components/tool_types';
+
 const Client4 = new Client4Class();
 
 export function setSiteURL(siteURL: string) {
@@ -172,14 +174,14 @@ export async function doToolCall(postid: string, toolIDs: string[]) {
     });
 }
 
-export async function getToolCallPrivate(postid: string) {
+export async function getToolCallPrivate(postid: string): Promise<ToolCall[]> {
     const url = `${postRoute(postid)}/tool_call_private`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
 
     if (response.ok) {
-        return response.json();
+        return response.json() as Promise<ToolCall[]>;
     }
 
     throw new ClientError(Client4.url, {
@@ -189,14 +191,14 @@ export async function getToolCallPrivate(postid: string) {
     });
 }
 
-export async function getToolResultPrivate(postid: string) {
+export async function getToolResultPrivate(postid: string): Promise<ToolCall[]> {
     const url = `${postRoute(postid)}/tool_result_private`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
 
     if (response.ok) {
-        return response.json();
+        return response.json() as Promise<ToolCall[]>;
     }
 
     throw new ClientError(Client4.url, {
@@ -206,7 +208,7 @@ export async function getToolResultPrivate(postid: string) {
     });
 }
 
-export async function doToolResult(postid: string, toolIDs: string[]) {
+export async function doToolResult(postid: string, toolIDs: string[]): Promise<void> {
     const url = `${postRoute(postid)}/tool_result`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',

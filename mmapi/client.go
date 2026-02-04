@@ -94,6 +94,14 @@ func (m *client) KVDelete(key string) error {
 	return m.pluginAPI.KV.Delete(key)
 }
 
+// IsKVNotFound checks if the error returned by KVGet indicates the key was not found.
+func IsKVNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return err.Error() == "not found"
+}
+
 func (m *client) GetUserByUsername(username string) (*model.User, error) {
 	return m.pluginAPI.User.GetByUsername(username)
 }

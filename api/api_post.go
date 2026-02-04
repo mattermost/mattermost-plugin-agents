@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/react"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost-plugin-ai/threads"
@@ -326,7 +327,7 @@ func (a *API) handleToolCallPrivate(c *gin.Context) {
 	kvKey := streaming.ToolCallPrivateKVKey(post.Id, userID)
 	var toolCalls []llm.ToolCall
 	if err := a.mmClient.KVGet(kvKey, &toolCalls); err != nil {
-		if err.Error() == "not found" {
+		if mmapi.IsKVNotFound(err) {
 			c.AbortWithError(http.StatusBadRequest, errors.New("post missing pending tool calls"))
 		} else {
 			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load tool calls from KV store: %w", err))
@@ -355,7 +356,7 @@ func (a *API) handleToolResultPrivate(c *gin.Context) {
 	kvKey := streaming.ToolResultPrivateKVKey(post.Id, userID)
 	var toolResults []llm.ToolCall
 	if err := a.mmClient.KVGet(kvKey, &toolResults); err != nil {
-		if err.Error() == "not found" {
+		if mmapi.IsKVNotFound(err) {
 			c.AbortWithError(http.StatusBadRequest, errors.New("post missing pending tool results"))
 		} else {
 			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load tool results from KV store: %w", err))

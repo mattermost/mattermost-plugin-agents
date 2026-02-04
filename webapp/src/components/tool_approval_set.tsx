@@ -3,7 +3,7 @@
 
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 
 import {doToolCall, doToolResult} from '@/client';
 
@@ -46,6 +46,8 @@ type ToolDecision = {
 };
 
 const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
+    const {formatMessage} = useIntl();
+
     // Track which tools are currently being processed
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState('');
@@ -100,7 +102,10 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             }
             setIsSubmitting(false);
         } catch (err) {
-            setError('Failed to submit tool decisions');
+            setError(formatMessage({
+                id: 'ai.tool_call.submit_failed',
+                defaultMessage: 'Failed to submit tool decisions',
+            }));
             setIsSubmitting(false);
         } finally {
             submitInFlightRef.current = false;

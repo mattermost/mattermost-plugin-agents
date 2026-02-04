@@ -9,11 +9,19 @@ export enum ToolCallStatus {
     Success = 4
 }
 
+export type JSONValue =
+    | string
+    | number
+    | boolean
+    | null
+    | {[key: string]: JSONValue}
+    | JSONValue[];
+
 export interface ToolCall {
     id: string;
     name: string;
     description: string;
-    arguments?: any;
+    arguments?: JSONValue;
     result?: string;
     status: ToolCallStatus;
 }

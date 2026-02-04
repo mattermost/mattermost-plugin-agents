@@ -144,8 +144,14 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		if requesterID == "" {
 			return errors.New("post missing requester id")
 		}
+		if requesterID != userID {
+			return errors.New("only the original requester can approve/reject tool calls")
+		}
 		toolCallKVKey = streaming.ToolCallPrivateKVKey(post.Id, requesterID)
 		if kvErr := c.mmClient.KVGet(toolCallKVKey, &tools); kvErr != nil {
+			if mmapi.IsKVNotFound(kvErr) {
+				return errors.New("post missing pending tool calls")
+			}
 			return fmt.Errorf("failed to load tool calls from KV store: %w", kvErr)
 		}
 	}
@@ -202,6 +208,9 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 			if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
 				return fmt.Errorf("failed to update post with tool call results: %w", updateErr)
 			}
+			if deleteErr := c.mmClient.KVDelete(toolCallKVKey); deleteErr != nil {
+				c.mmClient.LogError("Failed to delete tool call KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", toolCallKVKey)
+			}
 			return nil
 		}
 
@@ -221,6 +230,9 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
 			return fmt.Errorf("failed to update post with tool call results: %w", updateErr)
 		}
+		// Note: toolCallKVKey is NOT deleted here because the UI may still need to fetch
+		// private tool call arguments during the result review stage. It will be deleted
+		// in HandleToolResult after the flow completes.
 
 		return nil
 	}
@@ -332,9 +344,10 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	allowToolsInChannel := allowToolsInChannelFromPost(post)
 
 	resultKVKey := streaming.ToolResultPrivateKVKey(post.Id, requesterID)
+	toolCallKVKey := streaming.ToolCallPrivateKVKey(post.Id, requesterID)
 	var tools []llm.ToolCall
 	if kvErr := c.mmClient.KVGet(resultKVKey, &tools); kvErr != nil {
-		if kvErr.Error() == "not found" {
+		if mmapi.IsKVNotFound(kvErr) {
 			return errors.New("post missing pending tool results")
 		}
 		return fmt.Errorf("failed to load tool call results from KV store: %w", kvErr)
@@ -369,6 +382,9 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		}
 		if deleteErr := c.mmClient.KVDelete(resultKVKey); deleteErr != nil {
 			c.mmClient.LogError("Failed to delete tool result KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", resultKVKey)
+		}
+		if deleteErr := c.mmClient.KVDelete(toolCallKVKey); deleteErr != nil {
+			c.mmClient.LogError("Failed to delete tool call KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", toolCallKVKey)
 		}
 		return nil
 	}
@@ -471,6 +487,9 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 
 	if deleteErr := c.mmClient.KVDelete(resultKVKey); deleteErr != nil {
 		c.mmClient.LogError("Failed to delete tool result KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", resultKVKey)
+	}
+	if deleteErr := c.mmClient.KVDelete(toolCallKVKey); deleteErr != nil {
+		c.mmClient.LogError("Failed to delete tool call KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", toolCallKVKey)
 	}
 
 	return nil
