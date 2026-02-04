@@ -9,7 +9,7 @@ type Props = {
     size?: number;
 };
 
-const IconCancel = ({ size = 20 }: Props) => (
+const IconCancel = ({size = 20}: Props) => (
     <Svg
         width={size}
         height={size}
