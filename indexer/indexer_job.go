@@ -82,11 +82,50 @@ type HealthCheckResult struct {
 	Error            string    `json:"error,omitempty"`
 }
 
+// batchProcessor provides shared batch processing logic for reindex and catch-up passes
+type batchProcessor struct {
+	indexer        *Indexer
+	jobStatus      *JobStatus
+	search         embeddings.EmbeddingSearch
+	processedCount int64
+	lastSavedCount int64
+}
+
+// processBatch processes a batch of posts: filters, stores, updates progress and heartbeat
+func (bp *batchProcessor) processBatch(ctx context.Context, posts []PostRecord) error {
+	// Filter and create documents
+	docs := bp.indexer.filterAndCreateDocs(posts)
+
+	// Store with retry
+	if len(docs) > 0 {
+		if err := bp.indexer.storeWithRetry(ctx, docs, bp.search); err != nil {
+			return err
+		}
+	}
+
+	// Update progress
+	bp.processedCount += int64(len(posts))
+	bp.jobStatus.ProcessedRows = bp.processedCount
+
+	// Update heartbeat
+	bp.jobStatus.LastUpdatedAt = time.Now()
+
+	// Save checkpoint every 500 posts
+	if bp.processedCount >= bp.lastSavedCount+500 {
+		bp.indexer.saveJobStatus(bp.jobStatus)
+		bp.lastSavedCount = bp.processedCount
+	}
+
+	return nil
+}
+
 // ModelCompatibility represents the result of checking model compatibility
 type ModelCompatibility struct {
-	Compatible   bool   `json:"compatible"`
-	NeedsReindex bool   `json:"needs_reindex"`
-	Reason       string `json:"reason,omitempty"`
+	Compatible       bool   `json:"compatible"`
+	NeedsReindex     bool   `json:"needs_reindex"`
+	Reason           string `json:"reason,omitempty"`
+	StoredDimensions int    `json:"stored_dimensions,omitempty"`
+	StoredModelName  string `json:"stored_model_name,omitempty"`
 }
 
 // runReindexJob runs the reindexing process
@@ -214,13 +253,12 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 	}
 
 	// Run catch-up pass to index posts created during the main reindex
-	catchUpCount, catchUpErr := s.runCatchUpPass(ctx, jobStatus.CutoffAt, search)
+	catchUpCount, catchUpErr := s.runCatchUpPass(ctx, jobStatus, search)
 	if catchUpErr != nil {
-		s.pluginAPI.LogError("Catch-up pass failed", "error", catchUpErr)
-		// Continue with completion even if catch-up fails - main index is complete
-	} else if catchUpCount > 0 {
-		processedCount += catchUpCount
-		jobStatus.ProcessedRows = processedCount
+		s.handleJobError(jobStatus, fmt.Sprintf("Catch-up pass failed: %s", catchUpErr), 0, "")
+		return
+	}
+	if catchUpCount > 0 {
 		s.pluginAPI.LogWarn("Catch-up pass completed", "catch_up_posts", catchUpCount)
 	}
 
@@ -358,14 +396,22 @@ func (s *Indexer) saveJobStatus(status *JobStatus) {
 }
 
 // runCatchUpPass indexes posts created after the cutoff timestamp during the main reindex
-func (s *Indexer) runCatchUpPass(ctx context.Context, cutoffAt int64, search embeddings.EmbeddingSearch) (int64, error) {
-	if cutoffAt == 0 {
+func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, search embeddings.EmbeddingSearch) (int64, error) {
+	if jobStatus.CutoffAt == 0 {
 		return 0, nil
+	}
+
+	bp := &batchProcessor{
+		indexer:        s,
+		jobStatus:      jobStatus,
+		search:         search,
+		processedCount: jobStatus.ProcessedRows,
+		lastSavedCount: jobStatus.ProcessedRows,
 	}
 
 	var posts []PostRecord
 	var catchUpCount int64
-	lastCreateAt := cutoffAt
+	lastCreateAt := jobStatus.CutoffAt
 	lastID := ""
 
 	for {
@@ -395,14 +441,9 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, cutoffAt int64, search emb
 			break
 		}
 
-		// Filter and create documents
-		docs := s.filterAndCreateDocs(posts)
-
-		// Store with retry
-		if len(docs) > 0 {
-			if err := s.storeWithRetry(ctx, docs, search); err != nil {
-				return catchUpCount, fmt.Errorf("failed to store catch-up documents: %w", err)
-			}
+		// Process batch (filters, stores, updates heartbeat and saves progress)
+		if err := bp.processBatch(ctx, posts); err != nil {
+			return catchUpCount, fmt.Errorf("failed to store catch-up documents: %w", err)
 		}
 
 		catchUpCount += int64(len(posts))

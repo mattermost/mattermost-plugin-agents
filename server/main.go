@@ -225,6 +225,12 @@ func (p *Plugin) OnActivate() error {
 	// Create indexer service with getter function
 	indexerService := indexer.New(getSearch, configGetter, mmClient, bots, dbClient.DB, p.API)
 
+	// Mark any orphaned reindex jobs from this node as failed
+	// This handles the case where the plugin/server crashed while a job was running
+	if orphanErr := indexerService.MarkOrphanedJobAsFailed(); orphanErr != nil {
+		pluginAPI.Log.Warn("Failed to check for orphaned reindex job", "error", orphanErr)
+	}
+
 	// Check model compatibility and disable search if model has changed
 	if embeddingsSearch != nil {
 		embeddingsCfg := p.configuration.EmbeddingSearchConfig()

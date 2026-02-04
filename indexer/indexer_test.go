@@ -2521,3 +2521,609 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 		assert.Equal(t, "healthy", result.Status)
 	})
 }
+
+// TestResumeFromCheckpoint tests that reindexing can resume from a saved checkpoint
+func TestResumeFromCheckpoint(t *testing.T) {
+	t.Run("resumes from saved cursor when clearIndex is false", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockBots := &bots.MMBots{}
+
+		// Add a channel and 10 posts with sequential timestamps
+		now := model.GetMillis()
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+
+		for i := 0; i < 10; i++ {
+			postID := fmt.Sprintf("post%02d", i)
+			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
+				postID, now+int64(i*1000), fmt.Sprintf("Message %d", i))
+			require.NoError(t, err)
+		}
+
+		// Simulate a saved cursor from a previous failed job
+		// The cursor points to post05, so resuming should start from post06
+		savedCursor := Cursor{
+			LastCreateAt: now + 5000, // Timestamp of post05
+			LastID:       "post05",
+		}
+
+		// Track which posts are indexed
+		var indexedPosts []string
+		mockSearch.On("Store", mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) {
+				docs := args.Get(1).([]embeddings.PostDocument)
+				for _, doc := range docs {
+					indexedPosts = append(indexedPosts, doc.PostID)
+				}
+			}).
+			Return(nil).Maybe()
+
+		// No Clear call should happen when clearIndex=false
+		// (If Clear is called, the test will fail with "unexpected method call")
+
+		// KV operations
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Return(errors.New("not found")).Maybe()
+		mockClient.On("KVGet", IndexerCursorKey, mock.AnythingOfType("*indexer.Cursor")).
+			Run(func(args mock.Arguments) {
+				cursor := args.Get(1).(*Cursor)
+				*cursor = savedCursor
+			}).
+			Return(nil).Once()
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
+
+		jobStatus := &JobStatus{
+			Status:        JobStatusRunning,
+			StartedAt:     time.Now(),
+			CutoffAt:      now + 20000, // Include all posts
+			ProcessedRows: 6,           // Already processed 6 posts (post00-post05)
+		}
+
+		// Run with clearIndex=false to resume from checkpoint
+		indexer.runReindexJob(jobStatus, false)
+
+		if jobStatus.Status == JobStatusFailed {
+			t.Logf("Job failed with error: %s", jobStatus.Error)
+		}
+
+		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
+
+		// Should only have indexed posts after the cursor (post06-post09)
+		// Not post00-post05 which were already processed
+		assert.Equal(t, 4, len(indexedPosts), "Should only index posts after cursor position")
+		for _, postID := range indexedPosts {
+			assert.True(t, postID >= "post06", "Should not re-index posts before cursor: %s", postID)
+		}
+
+		// Verify total processed count includes both previous and new
+		assert.Equal(t, int64(10), jobStatus.ProcessedRows)
+	})
+
+	t.Run("starts from beginning when no cursor exists", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockBots := &bots.MMBots{}
+
+		// Add a channel and 5 posts
+		now := model.GetMillis()
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+
+		for i := 0; i < 5; i++ {
+			postID := fmt.Sprintf("post%02d", i)
+			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
+				postID, now+int64(i*1000), fmt.Sprintf("Message %d", i))
+			require.NoError(t, err)
+		}
+
+		// Track indexed posts
+		var indexedPosts []string
+		mockSearch.On("Store", mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) {
+				docs := args.Get(1).([]embeddings.PostDocument)
+				for _, doc := range docs {
+					indexedPosts = append(indexedPosts, doc.PostID)
+				}
+			}).
+			Return(nil).Maybe()
+
+		// No cursor exists
+		mockClient.On("KVGet", IndexerCursorKey, mock.AnythingOfType("*indexer.Cursor")).
+			Return(errors.New("not found"))
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
+
+		jobStatus := &JobStatus{
+			Status:    JobStatusRunning,
+			StartedAt: time.Now(),
+			CutoffAt:  now + 10000,
+		}
+
+		// Run with clearIndex=false but no cursor - should start from beginning
+		indexer.runReindexJob(jobStatus, false)
+
+		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
+		assert.Equal(t, 5, len(indexedPosts), "Should index all posts when no cursor exists")
+	})
+
+	t.Run("saves cursor on failure for later resume", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockBots := &bots.MMBots{}
+
+		// Add a channel and enough posts to require multiple batches (batch size is 100)
+		now := model.GetMillis()
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+
+		for i := 0; i < 150; i++ {
+			postID := fmt.Sprintf("post%03d", i)
+			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
+				postID, now+int64(i*1000), fmt.Sprintf("Message %d", i))
+			require.NoError(t, err)
+		}
+
+		mockSearch.On("Clear", mock.Anything).Return(nil)
+
+		// First batch succeeds, second batch fails (after all retries)
+		batchCount := 0
+		mockSearch.On("Store", mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) {
+				batchCount++
+			}).
+			Return(func(ctx context.Context, docs []embeddings.PostDocument) error {
+				// First batch succeeds, all subsequent calls fail
+				if batchCount > 1 {
+					return errors.New("simulated storage failure")
+				}
+				return nil
+			})
+
+		// Track cursor saves
+		var savedCursor *Cursor
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
+		mockClient.On("KVSet", IndexerCursorKey, mock.AnythingOfType("indexer.Cursor")).
+			Run(func(args mock.Arguments) {
+				c := args.Get(1).(Cursor)
+				savedCursor = &c
+			}).
+			Return(nil).Maybe()
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
+
+		jobStatus := &JobStatus{
+			Status:    JobStatusRunning,
+			StartedAt: time.Now(),
+			CutoffAt:  now + 200000,
+		}
+
+		indexer.runReindexJob(jobStatus, true)
+
+		assert.Equal(t, JobStatusFailed, jobStatus.Status)
+		assert.Contains(t, jobStatus.Error, "Failed to store documents")
+
+		// Cursor should have been saved for resume - pointing to where first batch ended
+		assert.NotNil(t, savedCursor, "Cursor should be saved on failure")
+		if savedCursor != nil {
+			// Cursor should point to approximately where first batch ended (around post099)
+			assert.True(t, savedCursor.LastCreateAt > now, "Cursor should have a valid timestamp")
+		}
+	})
+}
+
+// TestMarkOrphanedJobAsFailed tests the automatic marking of orphaned jobs on startup
+func TestMarkOrphanedJobAsFailed(t *testing.T) {
+	t.Run("marks running job on same node as failed", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		// Get current hostname to match the job's NodeID
+		hostname, _ := os.Hostname()
+
+		// Return a running job on this node
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusRunning
+				status.NodeID = hostname
+				status.ProcessedRows = 1000
+				status.StartedAt = time.Now().Add(-1 * time.Hour)
+			}).
+			Return(nil)
+
+		// Expect KVSet to mark as failed
+		var savedStatus *JobStatus
+		mockClient.On("KVSet", ReindexJobKey, mock.MatchedBy(func(v interface{}) bool {
+			status := v.(JobStatus)
+			savedStatus = &status
+			return status.Status == JobStatusFailed
+		})).Return(nil)
+
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
+		err := indexer.MarkOrphanedJobAsFailed()
+
+		require.NoError(t, err)
+		require.NotNil(t, savedStatus)
+		assert.Equal(t, JobStatusFailed, savedStatus.Status)
+		assert.Contains(t, savedStatus.Error, "Job orphaned")
+		assert.Contains(t, savedStatus.Error, hostname)
+		assert.False(t, savedStatus.CompletedAt.IsZero())
+	})
+
+	t.Run("does not mark job running on different node", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		// Return a running job on a DIFFERENT node
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusRunning
+				status.NodeID = "different-node-hostname"
+				status.ProcessedRows = 1000
+			}).
+			Return(nil)
+
+		// KVSet should NOT be called
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
+		err := indexer.MarkOrphanedJobAsFailed()
+
+		require.NoError(t, err)
+		mockClient.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+	})
+
+	t.Run("does nothing when no job exists", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Return(errors.New("not found"))
+
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
+		err := indexer.MarkOrphanedJobAsFailed()
+
+		require.NoError(t, err)
+		mockClient.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+	})
+
+	t.Run("does nothing when job is not running", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		hostname, _ := os.Hostname()
+
+		// Return a completed job on this node
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusCompleted
+				status.NodeID = hostname
+			}).
+			Return(nil)
+
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
+		err := indexer.MarkOrphanedJobAsFailed()
+
+		require.NoError(t, err)
+		mockClient.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+	})
+
+	t.Run("does nothing when job is failed", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		hostname, _ := os.Hostname()
+
+		// Return a failed job on this node
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusFailed
+				status.NodeID = hostname
+			}).
+			Return(nil)
+
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
+		err := indexer.MarkOrphanedJobAsFailed()
+
+		require.NoError(t, err)
+		mockClient.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+	})
+}
+
+// TestCatchUpPassHeartbeat tests that catch-up pass updates heartbeat and saves progress
+func TestCatchUpPassHeartbeat(t *testing.T) {
+	t.Run("catch-up pass updates LastUpdatedAt", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockBots := &bots.MMBots{}
+
+		// Set up cutoff time before posts are created
+		cutoffTime := model.GetMillis()
+
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+
+		// Add posts AFTER the cutoff (these will be processed by catch-up pass)
+		for i := 0; i < 5; i++ {
+			postID := fmt.Sprintf("catchup-post%d", i)
+			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
+				postID, cutoffTime+100+int64(i), fmt.Sprintf("Catch-up message %d", i))
+			require.NoError(t, err)
+		}
+
+		mockSearch.On("Clear", mock.Anything).Return(nil)
+		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
+
+		initialTime := time.Now().Add(-time.Hour) // Set initial time in the past
+		jobStatus := &JobStatus{
+			Status:        JobStatusRunning,
+			StartedAt:     time.Now(),
+			CutoffAt:      cutoffTime,
+			LastUpdatedAt: initialTime,
+		}
+
+		indexer.runReindexJob(jobStatus, true)
+
+		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
+		// LastUpdatedAt should have been updated during catch-up
+		assert.True(t, jobStatus.LastUpdatedAt.After(initialTime), "LastUpdatedAt should be updated during catch-up")
+	})
+
+	t.Run("catch-up saves progress every 500 posts", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockBots := &bots.MMBots{}
+
+		cutoffTime := model.GetMillis()
+
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+
+		// Add 600+ posts after cutoff to trigger progress save during catch-up
+		for i := 0; i < 650; i++ {
+			postID := fmt.Sprintf("catchup-post%03d", i)
+			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
+				postID, cutoffTime+100+int64(i), fmt.Sprintf("Catch-up message %d", i))
+			require.NoError(t, err)
+		}
+
+		mockSearch.On("Clear", mock.Anything).Return(nil)
+		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
+
+		// Track job status saves during catch-up
+		catchUpSaveCount := 0
+		mockClient.On("KVSet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				// Count saves that occur during catch-up (ProcessedRows > 0 but status still running)
+				if status.Status == JobStatusRunning && status.ProcessedRows > 0 {
+					catchUpSaveCount++
+				}
+			}).
+			Return(nil).Maybe()
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
+
+		jobStatus := &JobStatus{
+			Status:    JobStatusRunning,
+			StartedAt: time.Now(),
+			CutoffAt:  cutoffTime,
+		}
+
+		indexer.runReindexJob(jobStatus, true)
+
+		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
+		// Should have saved progress at least once during catch-up (after 500 posts)
+		assert.Greater(t, catchUpSaveCount, 0, "Should save progress during catch-up pass")
+	})
+}
+
+// TestCatchUpFailureHandling tests that catch-up failure marks job as failed
+func TestCatchUpFailureHandling(t *testing.T) {
+	t.Run("catch-up failure marks job as failed", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockBots := &bots.MMBots{}
+
+		cutoffTime := model.GetMillis()
+
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+
+		// Add posts AFTER the cutoff (catch-up posts)
+		for i := 0; i < 5; i++ {
+			postID := fmt.Sprintf("catchup-post%d", i)
+			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
+				postID, cutoffTime+100+int64(i), fmt.Sprintf("Catch-up message %d", i))
+			require.NoError(t, err)
+		}
+
+		mockSearch.On("Clear", mock.Anything).Return(nil)
+
+		// Track whether we're in catch-up phase (no posts before cutoff means first Store is catch-up)
+		mockSearch.On("Store", mock.Anything, mock.Anything).Return(errors.New("simulated catch-up failure"))
+
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, nil)
+
+		jobStatus := &JobStatus{
+			Status:    JobStatusRunning,
+			StartedAt: time.Now(),
+			CutoffAt:  cutoffTime,
+		}
+
+		indexer.runReindexJob(jobStatus, true)
+
+		// Job should be failed, not completed
+		assert.Equal(t, JobStatusFailed, jobStatus.Status)
+		assert.Contains(t, jobStatus.Error, "Catch-up pass failed")
+	})
+}
+
+// TestResumePreservation tests that resume preserves CutoffAt and TotalRows
+func TestResumePreservation(t *testing.T) {
+	t.Run("resume preserves CutoffAt and TotalRows from failed job", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockBots := &bots.MMBots{}
+		mockMutexAPI := &plugintest.API{}
+
+		// Create a failed job with specific CutoffAt and TotalRows
+		originalCutoffAt := int64(1700000000000)
+		originalTotalRows := int64(5000)
+		originalProcessedRows := int64(2500)
+
+		failedJobStatus := JobStatus{
+			Status:        JobStatusFailed,
+			CutoffAt:      originalCutoffAt,
+			TotalRows:     originalTotalRows,
+			ProcessedRows: originalProcessedRows,
+		}
+
+		// Setup mocks
+		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				*status = failedJobStatus
+			}).
+			Return(nil)
+
+		// Capture the new job status that gets saved
+		var savedJobStatus *JobStatus
+		mockClient.On("KVSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(JobStatus)
+				savedJobStatus = &status
+			}).
+			Return(nil)
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, mockMutexAPI)
+
+		// Start resume (clearIndex=false)
+		_, err := indexer.StartReindexJob(false)
+		require.NoError(t, err)
+
+		// Verify the new job preserved the original values
+		require.NotNil(t, savedJobStatus)
+		assert.Equal(t, originalCutoffAt, savedJobStatus.CutoffAt, "CutoffAt should be preserved from failed job")
+		assert.Equal(t, originalTotalRows, savedJobStatus.TotalRows, "TotalRows should be preserved from failed job")
+		assert.Equal(t, originalProcessedRows, savedJobStatus.ProcessedRows, "ProcessedRows should be preserved from failed job")
+	})
+
+	t.Run("fresh reindex calculates new CutoffAt and TotalRows", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+		mockBots := &bots.MMBots{}
+		mockMutexAPI := &plugintest.API{}
+
+		// Add posts to the database
+		now := model.GetMillis()
+		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
+		require.NoError(t, err)
+		for i := 0; i < 10; i++ {
+			postID := fmt.Sprintf("post%d", i)
+			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
+				postID, now+int64(i), fmt.Sprintf("Message %d", i))
+			require.NoError(t, err)
+		}
+
+		// No previous job exists
+		mockSearch.On("Clear", mock.Anything).Return(nil).Maybe()
+		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Return(errors.New("not found"))
+
+		// Capture the new job status
+		var savedJobStatus *JobStatus
+		mockClient.On("KVSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(JobStatus)
+				savedJobStatus = &status
+			}).
+			Return(nil)
+		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
+		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, mockMutexAPI)
+
+		// Start fresh reindex (clearIndex=true)
+		_, err = indexer.StartReindexJob(true)
+		require.NoError(t, err)
+
+		// Verify new values were calculated
+		require.NotNil(t, savedJobStatus)
+		assert.Greater(t, savedJobStatus.CutoffAt, int64(0), "CutoffAt should be set for fresh reindex")
+		assert.Equal(t, int64(10), savedJobStatus.TotalRows, "TotalRows should be calculated for fresh reindex")
+		assert.Equal(t, int64(0), savedJobStatus.ProcessedRows, "ProcessedRows should be 0 for fresh reindex")
+	})
+}

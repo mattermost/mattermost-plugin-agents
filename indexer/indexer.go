@@ -159,10 +159,20 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	newJobStatus := JobStatus{
 		Status:    JobStatusRunning,
 		StartedAt: time.Now(),
-		TotalRows: count,
 		Resumable: !clearIndex,
 		NodeID:    s.getNodeID(),
-		CutoffAt:  cutoffTimestamp,
+	}
+
+	// When resuming, preserve CutoffAt, TotalRows, and ProcessedRows from the previous job
+	// so the UI shows accurate progress and catch-up covers posts from original start time
+	if !clearIndex && jobStatus.Status != "" {
+		newJobStatus.TotalRows = jobStatus.TotalRows
+		newJobStatus.CutoffAt = jobStatus.CutoffAt
+		newJobStatus.ProcessedRows = jobStatus.ProcessedRows
+	} else {
+		// Fresh start - calculate new values
+		newJobStatus.TotalRows = count
+		newJobStatus.CutoffAt = cutoffTimestamp
 	}
 
 	// Save initial job status
@@ -449,35 +459,36 @@ func (s *Indexer) CheckModelCompatibility(currentDimensions int, currentModelNam
 		return ModelCompatibility{
 			Compatible:   true,
 			NeedsReindex: false,
-			Reason:       "",
 		}
+	}
+
+	// Always include stored values so frontend can do client-side comparison
+	result := ModelCompatibility{
+		StoredDimensions: storedInfo.Dimensions,
+		StoredModelName:  storedInfo.ModelName,
 	}
 
 	if storedInfo.Dimensions != currentDimensions {
-		return ModelCompatibility{
-			Compatible:   false,
-			NeedsReindex: true,
-			Reason:       fmt.Sprintf("dimension mismatch: stored=%d, current=%d", storedInfo.Dimensions, currentDimensions),
-		}
+		result.Compatible = false
+		result.NeedsReindex = true
+		result.Reason = fmt.Sprintf("dimension mismatch: stored=%d, current=%d", storedInfo.Dimensions, currentDimensions)
+		return result
 	}
 
 	if storedInfo.ModelName != currentModelName && currentModelName != "" {
-		return ModelCompatibility{
-			Compatible:   false,
-			NeedsReindex: true,
-			Reason:       fmt.Sprintf("model changed: stored=%s, current=%s", storedInfo.ModelName, currentModelName),
-		}
+		result.Compatible = false
+		result.NeedsReindex = true
+		result.Reason = fmt.Sprintf("model changed: stored=%s, current=%s", storedInfo.ModelName, currentModelName)
+		return result
 	}
 
-	return ModelCompatibility{
-		Compatible:   true,
-		NeedsReindex: false,
-		Reason:       "",
-	}
+	result.Compatible = true
+	result.NeedsReindex = false
+	return result
 }
 
 // StaleJobThreshold is the duration after which a running job is considered stale
-const StaleJobThreshold = 30 * time.Minute
+const StaleJobThreshold = 10 * time.Minute
 
 // IsJobStale checks if the currently running job is stale (no heartbeat updates)
 func (s *Indexer) IsJobStale() (bool, *JobStatus, error) {
@@ -540,6 +551,42 @@ func (s *Indexer) ResetStaleJob() (JobStatus, error) {
 	}
 
 	return *jobStatus, nil
+}
+
+// MarkOrphanedJobAsFailed marks any running job on this node as failed.
+// This should be called on plugin startup to handle cases where the plugin/server
+// crashed while a job was running. Only affects jobs that were running on THIS node.
+func (s *Indexer) MarkOrphanedJobAsFailed() error {
+	var jobStatus JobStatus
+	err := s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
+	if err != nil {
+		if err.Error() == "not found" {
+			return nil // No job exists, nothing to do
+		}
+		return err
+	}
+
+	// Only mark as failed if job is running
+	if jobStatus.Status != JobStatusRunning {
+		return nil
+	}
+
+	// Only mark as failed if job was running on THIS node
+	currentNodeID := s.getNodeID()
+	if jobStatus.NodeID != currentNodeID {
+		return nil // Job is running on a different node, don't interfere
+	}
+
+	// Mark as failed - the plugin restarted while this job was running
+	jobStatus.Status = JobStatusFailed
+	jobStatus.Error = fmt.Sprintf("Job orphaned: plugin restarted on node %s while job was running", currentNodeID)
+	jobStatus.CompletedAt = time.Now()
+
+	s.pluginAPI.LogWarn("Marking orphaned reindex job as failed",
+		"node_id", currentNodeID,
+		"processed_rows", jobStatus.ProcessedRows)
+
+	return s.pluginAPI.KVSet(ReindexJobKey, jobStatus)
 }
 
 // getModelInfoFromConfig builds ModelInfo from the current configuration

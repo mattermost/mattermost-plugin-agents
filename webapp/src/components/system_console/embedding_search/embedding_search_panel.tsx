@@ -51,9 +51,32 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
         handleCancelJob,
         handleCatchUpClick,
         handleHealthCheck,
-        handleResetStaleJob,
         handleResetIncrementalStats,
+        handleResumeClick,
     } = useJobStatus();
+
+    // Check if current form values differ from stored (indexed) values
+    // This enables showing a warning immediately when editing, before save
+    const currentModelName = value.embeddingProvider.parameters?.embeddingModel as string | null;
+    const storedDimensions = modelCompatibility?.stored_dimensions ?? 0;
+    const storedModelName = modelCompatibility?.stored_model_name ?? '';
+
+    // Compute local mismatch and reason
+    let localMismatchReason = '';
+    if (modelCompatibility && storedDimensions > 0) {
+        if (value.dimensions !== storedDimensions) {
+            localMismatchReason = intl.formatMessage(
+                {defaultMessage: 'dimension mismatch: stored={stored}, current={current}'},
+                {stored: storedDimensions, current: value.dimensions},
+            );
+        } else if (currentModelName && currentModelName !== storedModelName) {
+            localMismatchReason = intl.formatMessage(
+                {defaultMessage: 'model changed: stored={stored}, current={current}'},
+                {stored: storedModelName, current: currentModelName},
+            );
+        }
+    }
+    const hasLocalModelMismatch = localMismatchReason !== '';
 
     if (!isBasicsLicensed) {
         return (
@@ -210,15 +233,16 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                         statusMessage={statusMessage}
                         healthCheckResult={healthCheckResult}
                         healthCheckLoading={healthCheckLoading}
-                        modelCompatibility={modelCompatibility}
+                        hasLocalModelMismatch={hasLocalModelMismatch}
+                        localMismatchReason={localMismatchReason}
                         isJobStale={isJobStale}
                         incrementalStats={incrementalStats}
                         onReindexClick={handleReindexClick}
                         onCancelJob={handleCancelJob}
                         onCatchUpClick={handleCatchUpClick}
                         onHealthCheck={handleHealthCheck}
-                        onResetStaleJob={handleResetStaleJob}
                         onResetIncrementalStats={handleResetIncrementalStats}
+                        onResumeClick={handleResumeClick}
                     />
                 )}
             </ItemList>

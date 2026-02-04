@@ -9,7 +9,7 @@ import {PrimaryButton, SecondaryButton, TertiaryButton} from '../../assets/butto
 
 import {HelpText, ItemLabel} from '../item';
 
-import {JobStatusType, StatusMessageType, HealthCheckResultType, ModelCompatibilityType, IncrementalStatsType} from './types';
+import {JobStatusType, StatusMessageType, HealthCheckResultType, IncrementalStatsType} from './types';
 
 const ButtonContainer = styled.div`
     margin-top: 24px;
@@ -205,15 +205,16 @@ interface ReindexSectionProps {
     statusMessage: StatusMessageType;
     healthCheckResult: HealthCheckResultType | null;
     healthCheckLoading: boolean;
-    modelCompatibility: ModelCompatibilityType | null;
+    hasLocalModelMismatch: boolean;
+    localMismatchReason: string;
     isJobStale: boolean;
     incrementalStats: IncrementalStatsType | null;
     onReindexClick: () => void;
     onCancelJob: () => void;
     onCatchUpClick: () => void;
     onHealthCheck: () => void;
-    onResetStaleJob: () => void;
     onResetIncrementalStats: () => void;
+    onResumeClick: () => void;
 }
 
 export const ReindexSection = ({
@@ -221,18 +222,30 @@ export const ReindexSection = ({
     statusMessage,
     healthCheckResult,
     healthCheckLoading,
-    modelCompatibility,
+    hasLocalModelMismatch,
+    localMismatchReason,
     isJobStale,
     incrementalStats,
     onReindexClick,
     onCancelJob,
     onCatchUpClick,
     onHealthCheck,
-    onResetStaleJob,
     onResetIncrementalStats,
+    onResumeClick,
 }: ReindexSectionProps) => {
     // Check if job is running
     const isReindexing = jobStatus?.status === 'running';
+
+    // Check if job can be resumed (failed or canceled with progress)
+    const canResume = (jobStatus?.status === 'failed' || jobStatus?.status === 'canceled') &&
+        jobStatus?.processed_rows > 0;
+
+    // Check if catch-up is relevant (only show when there's an existing index that needs updating)
+    const showCatchUp = healthCheckResult &&
+        healthCheckResult.indexed_post_count > 0 &&
+        (healthCheckResult.missing_posts > 0 ||
+         healthCheckResult.status === 'mismatch' ||
+         healthCheckResult.status === 'needs_reindex');
 
     const formatTimestamp = (timestamp: string | undefined) => {
         if (!timestamp) {
@@ -259,7 +272,7 @@ export const ReindexSection = ({
 
     return (
         <ButtonContainer>
-            {/* Stale Job Warning */}
+            {/* Stale Job Warning - informational only, job is auto-reset by backend */}
             {isJobStale && isReindexing && (
                 <StaleBanner>
                     <WarningIcon>{'⚠️'}</WarningIcon>
@@ -267,18 +280,15 @@ export const ReindexSection = ({
                         <strong><FormattedMessage defaultMessage='Job May Be Stale'/></strong>
                         <br/>
                         <FormattedMessage
-                            defaultMessage='The reindex job has not updated in over 30 minutes. The node running it ({nodeId}) may have crashed.'
+                            defaultMessage='The reindex job has not updated in over 10 minutes. The node running it ({nodeId}) may have crashed. The job will be automatically marked as failed so you can resume.'
                             values={{nodeId: jobStatus?.node_id || 'unknown'}}
                         />
                     </StaleText>
-                    <SecondaryButton onClick={onResetStaleJob}>
-                        <FormattedMessage defaultMessage='Reset Job'/>
-                    </SecondaryButton>
                 </StaleBanner>
             )}
 
-            {/* Model Compatibility Warning */}
-            {modelCompatibility && !modelCompatibility.compatible && (
+            {/* Model Compatibility Warning - show when form values differ from stored index values */}
+            {hasLocalModelMismatch && (
                 <WarningBanner>
                     <WarningIcon>{'⚠️'}</WarningIcon>
                     <WarningText>
@@ -286,7 +296,7 @@ export const ReindexSection = ({
                         <br/>
                         <FormattedMessage
                             defaultMessage='The embedding model configuration has changed ({reason}). Search functionality is disabled until you run a full reindex.'
-                            values={{reason: modelCompatibility.reason}}
+                            values={{reason: localMismatchReason}}
                         />
                     </WarningText>
                 </WarningBanner>
@@ -298,8 +308,8 @@ export const ReindexSection = ({
                     <FormattedMessage defaultMessage='Reindex All Posts'/>
                 </ItemLabel>
                 <div>
-                    {/* Show different UI based on job status */}
-                    {isReindexing ? (
+                    {/* Show running job UI */}
+                    {isReindexing && (
                         <>
                             <ButtonGroup>
                                 <SecondaryButton onClick={onCancelJob}>
@@ -345,14 +355,43 @@ export const ReindexSection = ({
                                 </>
                             )}
                         </>
-                    ) : (
+                    )}
+
+                    {/* Show resume UI when job failed or canceled with progress */}
+                    {!isReindexing && canResume && jobStatus && (
+                        <>
+                            <ButtonGroup>
+                                <PrimaryButton onClick={onResumeClick}>
+                                    <FormattedMessage defaultMessage='Resume Reindex'/>
+                                </PrimaryButton>
+                                <SecondaryButton onClick={onReindexClick}>
+                                    <FormattedMessage defaultMessage='Start Over'/>
+                                </SecondaryButton>
+                            </ButtonGroup>
+                            <ProgressText>
+                                <FormattedMessage
+                                    defaultMessage='Previous progress: {processed} of {total} posts ({percent}%) - Resume to continue from checkpoint'
+                                    values={{
+                                        processed: jobStatus.processed_rows.toLocaleString(),
+                                        total: jobStatus.total_rows.toLocaleString(),
+                                        percent: jobStatus.total_rows ? Math.floor((jobStatus.processed_rows / jobStatus.total_rows) * 100) : 0,
+                                    }}
+                                />
+                            </ProgressText>
+                        </>
+                    )}
+
+                    {/* Show default buttons when no job running and not resumable */}
+                    {!isReindexing && !canResume && (
                         <ButtonGroup>
                             <PrimaryButton onClick={onReindexClick}>
                                 <FormattedMessage defaultMessage='Full Reindex'/>
                             </PrimaryButton>
-                            <TertiaryButton onClick={onCatchUpClick}>
-                                <FormattedMessage defaultMessage='Catch Up'/>
-                            </TertiaryButton>
+                            {showCatchUp && (
+                                <TertiaryButton onClick={onCatchUpClick}>
+                                    <FormattedMessage defaultMessage='Catch Up'/>
+                                </TertiaryButton>
+                            )}
                         </ButtonGroup>
                     )}
 
@@ -386,9 +425,9 @@ export const ReindexSection = ({
                             disabled={healthCheckLoading}
                         >
                             {healthCheckLoading ? (
-                                <FormattedMessage defaultMessage='Checking...'/>
+                                <FormattedMessage defaultMessage='Refreshing...'/>
                             ) : (
-                                <FormattedMessage defaultMessage='Check Health'/>
+                                <FormattedMessage defaultMessage='Refresh'/>
                             )}
                         </TertiaryButton>
 
@@ -435,10 +474,6 @@ export const ReindexSection = ({
                                 )}
                             </HealthCheckCard>
                         )}
-
-                        <HelpText>
-                            <FormattedMessage defaultMessage='Check if the number of indexed posts matches the database. This helps identify if posts are missing from the search index.'/>
-                        </HelpText>
                     </div>
                 </ActionContainer>
             </SectionDivider>

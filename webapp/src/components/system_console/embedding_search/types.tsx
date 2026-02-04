@@ -57,6 +57,8 @@ export interface ModelCompatibilityType {
     compatible: boolean;
     needs_reindex: boolean;
     reason?: string;
+    stored_dimensions?: number;
+    stored_model_name?: string;
 }
 
 // Match the server's IncrementalStats struct

@@ -209,7 +209,7 @@ func (a *API) handleResetStaleJob(c *gin.Context) {
 	c.JSON(http.StatusOK, jobStatus)
 }
 
-// handleGetStaleJobStatus checks if the current job is stale
+// handleGetStaleJobStatus checks if the current job is stale and auto-resets it if so
 func (a *API) handleGetStaleJobStatus(c *gin.Context) {
 	if a.indexerService == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "search functionality is not configured"})
@@ -225,6 +225,15 @@ func (a *API) handleGetStaleJobStatus(c *gin.Context) {
 	if jobStatus == nil {
 		c.JSON(http.StatusNotFound, gin.H{"stale": false, "status": "no_job"})
 		return
+	}
+
+	// Auto-reset stale jobs so the user can immediately resume without a manual reset step
+	if isStale && jobStatus.Status == "running" {
+		resetStatus, resetErr := a.indexerService.ResetStaleJob()
+		if resetErr == nil {
+			jobStatus = &resetStatus
+		}
+		// If reset fails, still return the stale status - user can try manual reset
 	}
 
 	c.JSON(http.StatusOK, gin.H{

@@ -4,7 +4,7 @@
 import {useState, useEffect, useCallback} from 'react';
 import {useIntl} from 'react-intl';
 
-import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkIndexHealth, getModelCompatibility, getStaleJobStatus, resetStaleJob, getIncrementalStats, resetIncrementalStats} from '../../../client';
+import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkIndexHealth, getModelCompatibility, getStaleJobStatus, getIncrementalStats, resetIncrementalStats} from '../../../client';
 
 import {JobStatusType, StatusMessageType, HealthCheckResultType, ModelCompatibilityType, IncrementalStatsType} from './types';
 
@@ -86,10 +86,21 @@ export const useJobStatus = () => {
     }, []);
 
     // Function to check if job is stale
+    // The backend auto-resets stale jobs, so we also update the job status from the response
     const checkStaleJob = useCallback(async () => {
         try {
             const result = await getStaleJobStatus();
             setIsJobStale(result.stale || false);
+
+            // Update job status from the response - this reflects the auto-reset if the job was stale
+            if (result.status && typeof result.status === 'object') {
+                setJobStatus(result.status);
+
+                // If job was auto-reset to failed, stop polling and show appropriate message
+                if (result.stale && result.status.status === 'failed') {
+                    setPolling(false);
+                }
+            }
         } catch (error) {
             // Silently fail - stale check is optional
             setIsJobStale(false);
@@ -111,6 +122,8 @@ export const useJobStatus = () => {
         fetchJobStatus();
         fetchModelCompatibility();
         fetchIncrementalStats();
+        handleHealthCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [fetchJobStatus, fetchModelCompatibility, fetchIncrementalStats]);
 
     // Check stale status when job is running
@@ -121,6 +134,14 @@ export const useJobStatus = () => {
             setIsJobStale(false);
         }
     }, [jobStatus?.status, checkStaleJob]);
+
+    // Refresh health check when job completes
+    useEffect(() => {
+        if (jobStatus?.status === 'completed') {
+            handleHealthCheck();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [jobStatus?.status]);
 
     const handleReindexClick = () => {
         setShowReindexConfirmation(true);
@@ -144,6 +165,21 @@ export const useJobStatus = () => {
 
     const handleCancelReindex = () => {
         setShowReindexConfirmation(false);
+    };
+
+    const handleResumeClick = async () => {
+        setStatusMessage({});
+
+        try {
+            const response = await doReindexPosts(false); // Resume from checkpoint
+            setJobStatus(response);
+            setPolling(true);
+        } catch (error) {
+            setStatusMessage({
+                success: false,
+                message: intl.formatMessage({defaultMessage: 'Failed to resume reindexing. Please try again.'}),
+            });
+        }
     };
 
     const handleCancelJob = async () => {
@@ -195,23 +231,6 @@ export const useJobStatus = () => {
         }
     };
 
-    const handleResetStaleJob = async () => {
-        try {
-            const response = await resetStaleJob();
-            setJobStatus(response);
-            setIsJobStale(false);
-            setStatusMessage({
-                success: false,
-                message: intl.formatMessage({defaultMessage: 'Stale job has been reset. You can now start a new reindex.'}),
-            });
-        } catch (error) {
-            setStatusMessage({
-                success: false,
-                message: intl.formatMessage({defaultMessage: 'Failed to reset stale job.'}),
-            });
-        }
-    };
-
     const handleResetIncrementalStats = async () => {
         try {
             await resetIncrementalStats();
@@ -247,7 +266,7 @@ export const useJobStatus = () => {
         handleCancelJob,
         handleCatchUpClick,
         handleHealthCheck,
-        handleResetStaleJob,
         handleResetIncrementalStats,
+        handleResumeClick,
     };
 };
