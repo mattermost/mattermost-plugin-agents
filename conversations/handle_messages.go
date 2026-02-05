@@ -96,7 +96,7 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 	}
 
 	// Check config to determine if tools should be allowed in channel mentions
-	allowToolsInChannel := c.config != nil && c.config.EnableChannelMentionToolCalling()
+	allowToolsInChannel := c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
 
 	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, allowToolsInChannel)
 	if err != nil {

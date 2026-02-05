@@ -194,7 +194,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		allowToolsInChannel := allowToolsInChannelFromPost(post)
 		// Defense-in-depth: if config flag is off and not a DM, disable tools regardless of post prop
 		isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
-		if !isDM && (c.config == nil || !c.config.EnableChannelMentionToolCalling()) {
+		if !isDM && (c.configProvider == nil || !c.configProvider.EnableChannelMentionToolCalling()) {
 			allowToolsInChannel = false
 		}
 		var processErr error

@@ -142,7 +142,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	toolCallKVKey := ""
 	if !isDM {
 		// Defense-in-depth: block channel tool calls if config flag is off
-		if c.config == nil || !c.config.EnableChannelMentionToolCalling() {
+		if c.configProvider == nil || !c.configProvider.EnableChannelMentionToolCalling() {
 			return ErrChannelToolCallingDisabled
 		}
 		// Block if the post doesn't have the allow_tools_in_channel prop set
@@ -353,7 +353,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 
 	// Defense-in-depth: block channel tool results if config flag is off
 	if !isDM {
-		if c.config == nil || !c.config.EnableChannelMentionToolCalling() {
+		if c.configProvider == nil || !c.configProvider.EnableChannelMentionToolCalling() {
 			return ErrChannelToolCallingDisabled
 		}
 		// Block if the post doesn't have the allow_tools_in_channel prop set
