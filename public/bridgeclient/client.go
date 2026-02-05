@@ -66,6 +66,7 @@ type BridgeAgentInfo struct {
 	Username    string `json:"username"`
 	ServiceID   string `json:"service_id"`
 	ServiceType string `json:"service_type"`
+	IsDefault   bool   `json:"is_default"`
 }
 
 // BridgeServiceInfo represents basic service information from the bridge API

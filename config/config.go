@@ -25,6 +25,7 @@ type Config struct {
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
+	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                             mcp.Config                       `json:"mcp"`
 	WebSearch                       WebSearchConfig                  `json:"webSearch"`
@@ -129,6 +130,15 @@ func (c *Container) EnableChannelMentionToolCalling() bool {
 	}
 
 	return cfg.EnableChannelMentionToolCalling
+}
+
+func (c *Container) AllowNativeWebSearchInChannels() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return false
+	}
+
+	return cfg.AllowNativeWebSearchInChannels
 }
 
 func (c *Container) RegisterUpdateListener(listener UpdateListener) {

@@ -72,6 +72,12 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		return
 	}
 
+	const maxAnalysisDays = 14
+	if data.Days < 0 || data.Days > maxAnalysisDays {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("days must be between 0 and %d", maxAnalysisDays))
+		return
+	}
+
 	// Get the user to build context
 	user, err := a.pluginAPI.User.Get(userID)
 	if err != nil {

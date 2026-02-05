@@ -39,9 +39,10 @@ type AIThread struct {
 	UpdateAt   int64  `json:"update_at"`
 }
 
-// ToolCallingConfig provides configuration values for tool calling behavior
-type ToolCallingConfig interface {
+// ConfigProvider provides configuration values for conversation behavior
+type ConfigProvider interface {
 	EnableChannelMentionToolCalling() bool
+	AllowNativeWebSearchInChannels() bool
 }
 
 type Conversations struct {
@@ -54,7 +55,7 @@ type Conversations struct {
 	licenseChecker   *enterprise.LicenseChecker
 	i18n             *i18n.Bundle
 	meetingsService  MeetingsService
-	config           ToolCallingConfig
+	configProvider   ConfigProvider
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations
@@ -73,7 +74,7 @@ func New(
 	licenseChecker *enterprise.LicenseChecker,
 	i18nBundle *i18n.Bundle,
 	meetingsService MeetingsService,
-	config ToolCallingConfig,
+	configProvider ConfigProvider,
 ) *Conversations {
 	return &Conversations{
 		prompts:          prompts,
@@ -85,7 +86,7 @@ func New(
 		licenseChecker:   licenseChecker,
 		i18n:             i18nBundle,
 		meetingsService:  meetingsService,
-		config:           config,
+		configProvider:   configProvider,
 	}
 }
 
@@ -144,6 +145,10 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 	if toolsDisabled {
 		// Tools are disabled in this context but we still inform the LLM about DM-only tools.
 		opts = append(opts, llm.WithToolsDisabled())
+
+		if c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled() {
+			opts = append(opts, llm.WithNativeWebSearchAllowed())
+		}
 	}
 	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {

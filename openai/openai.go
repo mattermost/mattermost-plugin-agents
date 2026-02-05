@@ -1061,8 +1061,8 @@ func (s *OpenAI) convertTools(completionTools []openai.ChatCompletionToolUnionPa
 		})
 	}
 
-	// Add native tools if enabled
-	if !cfg.ToolsDisabled {
+	// Add native web search if tools not disabled OR native web search explicitly allowed
+	if !cfg.ToolsDisabled || cfg.NativeWebSearchAllowed {
 		for _, nativeTool := range s.config.EnabledNativeTools {
 			if nativeTool == "web_search" {
 				tools = append(tools, responses.ToolUnionParam{

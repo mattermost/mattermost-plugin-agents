@@ -208,17 +208,22 @@ func (a *Anthropic) buildAPIParams(state *messageState) anthropicSDK.MessageNewP
 		Messages:  state.messages,
 	}
 
+	// Add regular tools only if not disabled
 	if !state.config.ToolsDisabled {
 		params.Tools = convertTools(state.tools)
+	}
 
-		if a.isNativeToolEnabled("web_search") {
-			params.Tools = append(params.Tools, anthropicSDK.ToolUnionParam{
-				OfWebSearchTool20250305: &anthropicSDK.WebSearchTool20250305Param{
-					Name: "web_search",
-					Type: "web_search_20250305",
-				},
-			})
-		}
+	// Add native web search if:
+	// 1. Tools are not disabled, OR
+	// 2. Native web search is explicitly allowed (for channel context)
+	// AND the agent has web_search enabled in their native tools config
+	if (!state.config.ToolsDisabled || state.config.NativeWebSearchAllowed) && a.isNativeToolEnabled("web_search") {
+		params.Tools = append(params.Tools, anthropicSDK.ToolUnionParam{
+			OfWebSearchTool20250305: &anthropicSDK.WebSearchTool20250305Param{
+				Name: "web_search",
+				Type: "web_search_20250305",
+			},
+		})
 	}
 
 	if state.system != "" {

@@ -42,6 +42,15 @@ func (b *Bot) GetService() llm.ServiceConfig {
 	return b.service
 }
 
+func (b *Bot) HasNativeWebSearchEnabled() bool {
+	for _, tool := range b.cfg.EnabledNativeTools {
+		if tool == "web_search" {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *Bot) SetLLMForTest(llm llm.LanguageModel) {
 	b.llm = llm
 }

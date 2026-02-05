@@ -131,7 +131,7 @@ func TestConversationMentionHandling(t *testing.T) {
 				licenseChecker,
 				i18n.Init(),
 				nil,
-				nil, // config - nil means channel tool calling is disabled (default)
+				nil, // configProvider - nil means channel tool calling is disabled (default)
 			)
 
 			// Create a mock bot

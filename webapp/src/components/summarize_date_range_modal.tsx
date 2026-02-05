@@ -34,7 +34,7 @@ const ModalContainer = styled.div`
 const ModalHeader = styled.div`
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: center;
     padding: 24px 32px;
 `;
 
@@ -70,10 +70,9 @@ const CloseButton = styled.button`
     background: none;
     border: none;
     cursor: pointer;
-    padding: 0;
+    padding: 10px;
     border-radius: 4px;
-    color: var(--center-channel-color);
-    opacity: 0.64;
+    color: rgba(var(--center-channel-color-rgb), 0.64);
     display: flex;
     align-items: center;
     justify-content: center;

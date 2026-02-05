@@ -43,7 +43,7 @@ export const ReasoningDisplay: React.FC<ReasoningDisplayProps> = ({
                 <MinimalExpandIcon isExpanded={false}>
                     <ChevronRightIcon/>
                 </MinimalExpandIcon>
-                {isReasoningLoading && <LoadingSpinner/>}
+                {isReasoningLoading && <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>}
                 <span>{'Thinking'}</span>
             </MinimalReasoningContainer>
         );
@@ -58,7 +58,7 @@ export const ReasoningDisplay: React.FC<ReasoningDisplayProps> = ({
                 <ExpandedChevron>
                     <ChevronRightIcon/>
                 </ExpandedChevron>
-                {isReasoningLoading && <LoadingSpinner/>}
+                {isReasoningLoading && <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>}
                 <span>{'Thinking'}</span>
             </ExpandedReasoningHeader>
             {reasoningSummary && (
@@ -89,8 +89,8 @@ const ExpandedReasoningHeader = styled.div`
 	align-items: center;
 	gap: 8px;
 	margin-bottom: 12px;
-	font-size: 14px;
-	color: rgba(var(--center-channel-color-rgb), 0.64);
+	font-size: 12px;
+	color: rgba(var(--center-channel-color-rgb), 0.75);
 	cursor: pointer;
 	user-select: none;
 
@@ -114,13 +114,21 @@ const ExpandedChevron = styled.div`
 	}
 `;
 
+const SpinnerWrapper = styled.div`
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+`;
+
 export const LoadingSpinner = styled.div`
 	display: inline-block;
 	width: 14px;
 	height: 14px;
 	border: 2px solid rgba(var(--center-channel-color-rgb), 0.16);
 	border-radius: 50%;
-	border-top-color: rgba(var(--center-channel-color-rgb), 0.64);
+	border-top-color: rgba(var(--center-channel-color-rgb), 0.75);
 	animation: spin 1s linear infinite;
 
 	@keyframes spin {
@@ -134,9 +142,9 @@ export const MinimalReasoningContainer = styled.div`
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	margin-bottom: 4px;
-	font-size: 14px;
-	color: rgba(var(--center-channel-color-rgb), 0.64);
+	margin: 4px 0;
+	font-size: 12px;
+	color: rgba(var(--center-channel-color-rgb), 0.75);
 	cursor: pointer;
 	user-select: none;
 

@@ -33,6 +33,7 @@ type Config = {
     allowedUpstreamHostnames: string,
     allowUnsafeLinks: boolean,
     enableChannelMentionToolCalling: boolean,
+    allowNativeWebSearchInChannels: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig,
     webSearch: WebSearchSettings,
@@ -86,6 +87,7 @@ const defaultConfig = {
     enableTokenUsageLogging: false,
     allowUnsafeLinks: false,
     enableChannelMentionToolCalling: false,
+    allowNativeWebSearchInChannels: false,
     embeddingSearchConfig: {
         type: 'disabled',
         vectorStore: {
@@ -321,6 +323,15 @@ const Config = (props: Props) => {
                             props.setSaveNeeded();
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, @mentioning a bot in public channels allows tool calling (e.g., web search, integrations). When disabled, channel mentions still work but tools are disabled—only DMs allow tool usage. This is an experimental feature for multi-player tool calling in channels.'})}
+                    />
+                    <BooleanItem
+                        label={<FormattedMessage defaultMessage='Allow native web search in channels'/>}
+                        value={Boolean(value.allowNativeWebSearchInChannels)}
+                        onChange={(to) => {
+                            props.onChange(props.id, {...value, allowNativeWebSearchInChannels: to});
+                            props.setSaveNeeded();
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.'})}
                     />
                 </ItemList>
             </Panel>

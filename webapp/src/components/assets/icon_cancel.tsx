@@ -5,10 +5,14 @@ import React from 'react';
 
 import Svg from '../svg';
 
-const IconCancel = () => (
+type Props = {
+    size?: number;
+};
+
+const IconCancel = ({size = 20}: Props) => (
     <Svg
-        width='20'
-        height='20'
+        width={size}
+        height={size}
         viewBox='0 0 10 10'
         fill='none'
         xmlns='http://www.w3.org/2000/svg'
