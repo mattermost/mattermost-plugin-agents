@@ -483,13 +483,15 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
 	}
 
-	redactedTools := streaming.RedactToolCalls(tools)
-	redactedToolsJSON, err := json.Marshal(redactedTools)
+	// Write full (unredacted) tool calls to post props since the user approved
+	// sharing. This makes the data available after page refresh and in future
+	// conversation context without needing the KV store.
+	approvedToolsJSON, err := json.Marshal(tools)
 	if err != nil {
 		return fmt.Errorf("failed to marshal tool call results: %w", err)
 	}
-	post.AddProp(streaming.ToolCallProp, string(redactedToolsJSON))
-	post.AddProp(streaming.ToolCallRedactedProp, "true")
+	post.AddProp(streaming.ToolCallProp, string(approvedToolsJSON))
+	post.DelProp(streaming.ToolCallRedactedProp)
 	post.DelProp(streaming.PendingToolResultProp)
 	if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
 		return fmt.Errorf("failed to update post after tool result approval: %w", updateErr)

@@ -511,7 +511,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     toolCalls={resolvedToolCalls}
                     approvalStage={toolApprovalStage}
                     canApprove={requesterIsCurrentUser}
-                    canExpand={!isToolCallRedacted || requesterIsCurrentUser}
+                    canExpand={requesterIsCurrentUser}
                     showArguments={showToolArguments}
                     showResults={showToolResults}
                 />
