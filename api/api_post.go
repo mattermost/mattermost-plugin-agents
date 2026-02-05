@@ -275,9 +275,17 @@ func (a *API) handleToolCall(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	// Defense-in-depth: block channel tool calls if config flag is off
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	if !isDM && !a.config.EnableChannelMentionToolCalling() {
+		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
 		return
 	}
 
@@ -298,9 +306,12 @@ func (a *API) handleToolCall(c *gin.Context) {
 
 	err := a.conversationsService.HandleToolCall(userID, post, channel, data.AcceptedToolIDs)
 	if err != nil {
-		if err.Error() == "post missing pending tool calls" || err.Error() == "post pending tool calls not valid JSON" {
+		switch {
+		case err.Error() == "post missing pending tool calls" || err.Error() == "post pending tool calls not valid JSON":
 			c.AbortWithError(http.StatusBadRequest, err)
-		} else {
+		case errors.Is(err, conversations.ErrChannelToolCallingDisabled):
+			c.AbortWithError(http.StatusForbidden, err)
+		default:
 			c.AbortWithError(http.StatusInternalServerError, err)
 		}
 		return
@@ -312,9 +323,18 @@ func (a *API) handleToolCall(c *gin.Context) {
 func (a *API) handleToolCallPrivate(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	// Defense-in-depth: block channel tool call access if config flag is off
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	if !isDM && !a.config.EnableChannelMentionToolCalling() {
+		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
 		return
 	}
 
@@ -341,9 +361,18 @@ func (a *API) handleToolCallPrivate(c *gin.Context) {
 func (a *API) handleToolResultPrivate(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	// Defense-in-depth: block channel tool result access if config flag is off
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	if !isDM && !a.config.EnableChannelMentionToolCalling() {
+		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
 		return
 	}
 
@@ -371,9 +400,17 @@ func (a *API) handleToolResult(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	// Defense-in-depth: block channel tool results if config flag is off
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	if !isDM && !a.config.EnableChannelMentionToolCalling() {
+		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
 		return
 	}
 
@@ -393,9 +430,12 @@ func (a *API) handleToolResult(c *gin.Context) {
 	}
 
 	if err := a.conversationsService.HandleToolResult(userID, post, channel, data.AcceptedToolIDs); err != nil {
-		if err.Error() == "post missing pending tool results" || err.Error() == "post pending tool results not valid JSON" {
+		switch {
+		case err.Error() == "post missing pending tool results" || err.Error() == "post pending tool results not valid JSON":
 			c.AbortWithError(http.StatusBadRequest, err)
-		} else {
+		case errors.Is(err, conversations.ErrChannelToolCallingDisabled):
+			c.AbortWithError(http.StatusForbidden, err)
+		default:
 			c.AbortWithError(http.StatusInternalServerError, err)
 		}
 		return

@@ -4,12 +4,17 @@
 package conversations
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 )
+
+// ErrChannelToolCallingDisabled is returned when tool calling is attempted in a channel
+// but the EnableChannelMentionToolCalling config flag is disabled.
+var ErrChannelToolCallingDisabled = errors.New("channel tool calling is disabled")
 
 func allowToolsInChannelFromPost(post *model.Post) bool {
 	if post == nil {

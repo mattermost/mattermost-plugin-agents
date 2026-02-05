@@ -229,6 +229,7 @@ func (p *Plugin) OnActivate() error {
 		licenseChecker,
 		i18nBundle,
 		nil, // meetingsService will be set after it's created
+		&p.configuration,
 	)
 
 	meetingsService := meetings.NewService(

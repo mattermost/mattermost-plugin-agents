@@ -65,6 +65,10 @@ func (tc *testConfigImpl) AllowUnsafeLinks() bool {
 	return tc.allowUnsafeLinks
 }
 
+func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
+	return false
+}
+
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct{}
 

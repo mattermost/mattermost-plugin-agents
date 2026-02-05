@@ -39,6 +39,11 @@ type AIThread struct {
 	UpdateAt   int64  `json:"update_at"`
 }
 
+// ToolCallingConfig provides configuration values for tool calling behavior
+type ToolCallingConfig interface {
+	EnableChannelMentionToolCalling() bool
+}
+
 type Conversations struct {
 	prompts          *llm.Prompts
 	mmClient         mmapi.Client
@@ -49,6 +54,7 @@ type Conversations struct {
 	licenseChecker   *enterprise.LicenseChecker
 	i18n             *i18n.Bundle
 	meetingsService  MeetingsService
+	config           ToolCallingConfig
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations
@@ -67,6 +73,7 @@ func New(
 	licenseChecker *enterprise.LicenseChecker,
 	i18nBundle *i18n.Bundle,
 	meetingsService MeetingsService,
+	config ToolCallingConfig,
 ) *Conversations {
 	return &Conversations{
 		prompts:          prompts,
@@ -78,6 +85,7 @@ func New(
 		licenseChecker:   licenseChecker,
 		i18n:             i18nBundle,
 		meetingsService:  meetingsService,
+		config:           config,
 	}
 }
 

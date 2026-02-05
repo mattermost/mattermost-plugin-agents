@@ -16,17 +16,18 @@ import (
 )
 
 type Config struct {
-	Services                 []llm.ServiceConfig              `json:"services"`
-	Bots                     []llm.BotConfig                  `json:"bots"`
-	DefaultBotName           string                           `json:"defaultBotName"`
-	TranscriptGenerator      string                           `json:"transcriptBackend"`
-	EnableLLMTrace           bool                             `json:"enableLLMTrace"`
-	EnableTokenUsageLogging  bool                             `json:"enableTokenUsageLogging"`
-	AllowedUpstreamHostnames string                           `json:"allowedUpstreamHostnames"`
-	AllowUnsafeLinks         bool                             `json:"allowUnsafeLinks"`
-	EmbeddingSearchConfig    embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
-	MCP                      mcp.Config                       `json:"mcp"`
-	WebSearch                WebSearchConfig                  `json:"webSearch"`
+	Services                        []llm.ServiceConfig              `json:"services"`
+	Bots                            []llm.BotConfig                  `json:"bots"`
+	DefaultBotName                  string                           `json:"defaultBotName"`
+	TranscriptGenerator             string                           `json:"transcriptBackend"`
+	EnableLLMTrace                  bool                             `json:"enableLLMTrace"`
+	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
+	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
+	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
+	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
+	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
+	MCP                             mcp.Config                       `json:"mcp"`
+	WebSearch                       WebSearchConfig                  `json:"webSearch"`
 }
 
 type WebSearchConfig struct {
@@ -119,6 +120,15 @@ func (c *Container) AllowUnsafeLinks() bool {
 	}
 
 	return cfg.AllowUnsafeLinks
+}
+
+func (c *Container) EnableChannelMentionToolCalling() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return false
+	}
+
+	return cfg.EnableChannelMentionToolCalling
 }
 
 func (c *Container) RegisterUpdateListener(listener UpdateListener) {

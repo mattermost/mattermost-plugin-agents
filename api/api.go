@@ -43,6 +43,7 @@ type Config interface {
 	GetDefaultBotName() string
 	MCP() mcp.Config
 	AllowUnsafeLinks() bool
+	EnableChannelMentionToolCalling() bool
 }
 
 type MCPClientManager interface {

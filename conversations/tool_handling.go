@@ -141,6 +141,14 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	requesterID, _ := post.GetProp(streaming.LLMRequesterUserID).(string)
 	toolCallKVKey := ""
 	if !isDM {
+		// Defense-in-depth: block channel tool calls if config flag is off
+		if c.config == nil || !c.config.EnableChannelMentionToolCalling() {
+			return ErrChannelToolCallingDisabled
+		}
+		// Block if the post doesn't have the allow_tools_in_channel prop set
+		if !allowToolsInChannel {
+			return errors.New("tool calling not allowed for this post")
+		}
 		if requesterID == "" {
 			return errors.New("post missing requester id")
 		}
@@ -342,6 +350,17 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 	allowToolsInChannel := allowToolsInChannelFromPost(post)
+
+	// Defense-in-depth: block channel tool results if config flag is off
+	if !isDM {
+		if c.config == nil || !c.config.EnableChannelMentionToolCalling() {
+			return ErrChannelToolCallingDisabled
+		}
+		// Block if the post doesn't have the allow_tools_in_channel prop set
+		if !allowToolsInChannel {
+			return errors.New("tool calling not allowed for this post")
+		}
+	}
 
 	resultKVKey := streaming.ToolResultPrivateKVKey(post.Id, requesterID)
 	toolCallKVKey := streaming.ToolCallPrivateKVKey(post.Id, requesterID)

@@ -238,6 +238,11 @@ export default class Plugin {
             return {args};
         }
 
+        // Block all threaded replies from our AI bots
+        if (post.root_id && post.type === 'custom_llmbot') {
+            return {args: {...args, notify: false}};
+        }
+
         // Only handle threaded posts from bots
         if (!post.root_id || post.props?.from_bot !== 'true') {
             return {args};

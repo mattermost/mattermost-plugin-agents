@@ -179,6 +179,15 @@ func (p *testConfigProvider) GetServiceByID(string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }
 
+// testToolCallingConfig implements ToolCallingConfig for testing
+type testToolCallingConfig struct {
+	enableChannelMentionToolCalling bool
+}
+
+func (c *testToolCallingConfig) EnableChannelMentionToolCalling() bool {
+	return c.enableChannelMentionToolCalling
+}
+
 type toolArgs struct {
 	Value string `json:"value"`
 }
@@ -226,6 +235,7 @@ func TestHandleToolCallChannelStoresInKVAndRedactsProps(t *testing.T) {
 		CreateAt:  1,
 	}
 	post.AddProp(streaming.LLMRequesterUserID, requesterID)
+	post.AddProp(streaming.AllowToolsInChannelProp, "true")
 
 	toolCalls := []llm.ToolCall{
 		{
@@ -257,7 +267,8 @@ func TestHandleToolCallChannelStoresInKVAndRedactsProps(t *testing.T) {
 	toolCallKVKey := streaming.ToolCallPrivateKVKey(postID, requesterID)
 	fakeClient.kv[toolCallKVKey] = toolCalls
 
-	conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil)
+	toolCallingConfig := &testToolCallingConfig{enableChannelMentionToolCalling: true}
+	conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
 
 	channel := &model.Channel{
 		Id:     channelID,
@@ -293,4 +304,158 @@ func TestHandleToolCallChannelStoresInKVAndRedactsProps(t *testing.T) {
 	require.Equal(t, "true", post.GetProp(streaming.ToolCallRedactedProp))
 	require.Equal(t, "true", post.GetProp(streaming.PendingToolResultProp))
 	require.Len(t, fakeClient.updatedPosts, 1)
+}
+
+func TestHandleToolCallChannelBlockedWhenConfigDisabled(t *testing.T) {
+	postID := "post1"
+	channelID := "channel1"
+	requesterID := "user1"
+	botID := "bot1"
+	teamID := "team1"
+
+	mockAPI := &plugintest.API{}
+	client := pluginapi.NewClient(mockAPI, nil)
+	licenseChecker := enterprise.NewLicenseChecker(client)
+
+	siteName := "test"
+	mockAPI.On("GetConfig").Return(&model.Config{TeamSettings: model.TeamSettings{SiteName: &siteName}}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+	mockAPI.On("GetTeam", teamID).Return(&model.Team{Id: teamID}, nil).Maybe()
+
+	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{}}, nil, &testConfigProvider{})
+
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+	bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, nil)
+	botService.SetBotsForTesting([]*bots.Bot{bot})
+
+	post := &model.Post{
+		Id:        postID,
+		UserId:    botID,
+		ChannelId: channelID,
+		CreateAt:  1,
+	}
+	post.AddProp(streaming.LLMRequesterUserID, requesterID)
+	post.AddProp(streaming.AllowToolsInChannelProp, "true") // Post has prop but config is disabled
+
+	toolCalls := []llm.ToolCall{
+		{
+			ID:        "tool-1",
+			Name:      "test_tool",
+			Arguments: json.RawMessage(`{"value":"secret"}`),
+		},
+	}
+	redactedToolCalls := streaming.RedactToolCalls(toolCalls)
+	redactedJSON, err := json.Marshal(redactedToolCalls)
+	require.NoError(t, err)
+	post.AddProp(streaming.ToolCallProp, string(redactedJSON))
+
+	postList := &model.PostList{
+		Order: []string{postID},
+		Posts: map[string]*model.Post{postID: post},
+	}
+
+	fakeClient := &fakeMMClient{
+		users: map[string]*model.User{
+			requesterID: {Id: requesterID, Locale: "en"},
+			botID:       {Id: botID, Locale: "en"},
+		},
+		postThreads: map[string]*model.PostList{
+			postID: postList,
+		},
+		kv: map[string]interface{}{},
+	}
+	toolCallKVKey := streaming.ToolCallPrivateKVKey(postID, requesterID)
+	fakeClient.kv[toolCallKVKey] = toolCalls
+
+	// Create conversation service with config that disables channel tool calling
+	toolCallingConfig := &testToolCallingConfig{enableChannelMentionToolCalling: false}
+	conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
+
+	channel := &model.Channel{
+		Id:     channelID,
+		Type:   model.ChannelTypeOpen,
+		TeamId: teamID,
+	}
+
+	// Should return error because config flag is off
+	err = conversationService.HandleToolCall(requesterID, post, channel, []string{"tool-1"})
+	require.Error(t, err)
+	require.ErrorIs(t, err, conversations.ErrChannelToolCallingDisabled)
+}
+
+func TestHandleToolCallChannelBlockedWhenPostPropMissing(t *testing.T) {
+	postID := "post1"
+	channelID := "channel1"
+	requesterID := "user1"
+	botID := "bot1"
+	teamID := "team1"
+
+	mockAPI := &plugintest.API{}
+	client := pluginapi.NewClient(mockAPI, nil)
+	licenseChecker := enterprise.NewLicenseChecker(client)
+
+	siteName := "test"
+	mockAPI.On("GetConfig").Return(&model.Config{TeamSettings: model.TeamSettings{SiteName: &siteName}}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+	mockAPI.On("GetTeam", teamID).Return(&model.Team{Id: teamID}, nil).Maybe()
+
+	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{}}, nil, &testConfigProvider{})
+
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+	bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, nil)
+	botService.SetBotsForTesting([]*bots.Bot{bot})
+
+	post := &model.Post{
+		Id:        postID,
+		UserId:    botID,
+		ChannelId: channelID,
+		CreateAt:  1,
+	}
+	post.AddProp(streaming.LLMRequesterUserID, requesterID)
+	// NOTE: NOT setting AllowToolsInChannelProp - simulating old post without the prop
+
+	toolCalls := []llm.ToolCall{
+		{
+			ID:        "tool-1",
+			Name:      "test_tool",
+			Arguments: json.RawMessage(`{"value":"secret"}`),
+		},
+	}
+	redactedToolCalls := streaming.RedactToolCalls(toolCalls)
+	redactedJSON, err := json.Marshal(redactedToolCalls)
+	require.NoError(t, err)
+	post.AddProp(streaming.ToolCallProp, string(redactedJSON))
+
+	postList := &model.PostList{
+		Order: []string{postID},
+		Posts: map[string]*model.Post{postID: post},
+	}
+
+	fakeClient := &fakeMMClient{
+		users: map[string]*model.User{
+			requesterID: {Id: requesterID, Locale: "en"},
+			botID:       {Id: botID, Locale: "en"},
+		},
+		postThreads: map[string]*model.PostList{
+			postID: postList,
+		},
+		kv: map[string]interface{}{},
+	}
+	toolCallKVKey := streaming.ToolCallPrivateKVKey(postID, requesterID)
+	fakeClient.kv[toolCallKVKey] = toolCalls
+
+	// Create conversation service with config that enables channel tool calling
+	toolCallingConfig := &testToolCallingConfig{enableChannelMentionToolCalling: true}
+	conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
+
+	channel := &model.Channel{
+		Id:     channelID,
+		Type:   model.ChannelTypeOpen,
+		TeamId: teamID,
+	}
+
+	// Should return error because post doesn't have the allow_tools_in_channel prop
+	err = conversationService.HandleToolCall(requesterID, post, channel, []string{"tool-1"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tool calling not allowed for this post")
 }

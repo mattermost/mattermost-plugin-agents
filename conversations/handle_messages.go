@@ -95,7 +95,10 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 		return err
 	}
 
-	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, true)
+	// Check config to determine if tools should be allowed in channel mentions
+	allowToolsInChannel := c.config != nil && c.config.EnableChannelMentionToolCalling()
+
+	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, allowToolsInChannel)
 	if err != nil {
 		return fmt.Errorf("unable to process bot mention: %w", err)
 	}
@@ -109,7 +112,7 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	setAllowToolsInChannelProp(responsePost, true)
+	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
 	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, postingUser.Id, stream, responsePost, post.Id); err != nil {
 		return fmt.Errorf("unable to stream response: %w", err)
 	}
