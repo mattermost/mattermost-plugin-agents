@@ -188,6 +188,10 @@ func (c *testToolCallingConfig) EnableChannelMentionToolCalling() bool {
 	return c.enableChannelMentionToolCalling
 }
 
+func (c *testToolCallingConfig) AllowNativeWebSearchInChannels() bool {
+	return false
+}
+
 type toolArgs struct {
 	Value string `json:"value"`
 }
