@@ -30,11 +30,11 @@ const ToolCallCard = styled.div`
     box-shadow: none;
 `;
 
-const ToolCallHeader = styled.div<{isCollapsed: boolean}>`
+const ToolCallHeader = styled.div<{isCollapsed: boolean; $canExpand: boolean}>`
     display: flex;
     align-items: center;
     gap: 8px;
-    cursor: pointer;
+    cursor: ${(props) => (props.$canExpand ? 'pointer' : 'default')};
     user-select: none;
 `;
 
@@ -302,6 +302,7 @@ interface ToolCardProps {
     onToggleCollapse: () => void;
     onApprove?: () => void;
     onReject?: () => void;
+    canExpand: boolean;
     showArguments: boolean;
     showResults: boolean;
     approvalStage?: ToolApprovalStage;
@@ -314,6 +315,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
     onToggleCollapse,
     onApprove,
     onReject,
+    canExpand,
     showArguments,
     showResults,
     approvalStage = 'call',
@@ -399,11 +401,14 @@ const ToolCard: React.FC<ToolCardProps> = ({
         <ToolCallCard>
             <ToolCallHeader
                 isCollapsed={isCollapsed}
-                onClick={onToggleCollapse}
+                $canExpand={canExpand}
+                onClick={canExpand ? onToggleCollapse : undefined} // eslint-disable-line no-undefined
             >
-                <StyledChevronIcon>
-                    {isCollapsed ? <ChevronRightIcon size={16}/> : <ChevronDownIcon size={16}/>}
-                </StyledChevronIcon>
+                {canExpand && (
+                    <StyledChevronIcon>
+                        {isCollapsed ? <ChevronRightIcon size={16}/> : <ChevronDownIcon size={16}/>}
+                    </StyledChevronIcon>
+                )}
                 <StatusIcon>
                     {showProcessingSpinner && <SmallSpinner/>}
                     {!showProcessingSpinner && isSuccess && <SmallSuccessIcon size={16}/>}

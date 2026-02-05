@@ -36,6 +36,7 @@ interface ToolApprovalSetProps {
     toolCalls: ToolCall[];
     approvalStage: ToolApprovalStage;
     canApprove: boolean;
+    canExpand: boolean;
     showArguments: boolean;
     showResults: boolean;
 }
@@ -210,6 +211,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     onToggleCollapse={() => toggleCollapse(tool.id)}
                     onApprove={() => handleToolDecision(tool.id, true)}
                     onReject={() => handleToolDecision(tool.id, false)}
+                    canExpand={props.canExpand}
                     showArguments={props.showArguments}
                     showResults={props.showResults}
                     approvalStage={props.approvalStage}
@@ -223,6 +225,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     isCollapsed={isToolCollapsed(tool)}
                     isProcessing={false}
                     onToggleCollapse={() => toggleCollapse(tool.id)}
+                    canExpand={props.canExpand}
                     showArguments={props.showArguments}
                     showResults={props.showResults}
                     approvalStage={props.approvalStage}

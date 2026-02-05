@@ -24,14 +24,15 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
  * Current order of radio button pairs on the page:
  *   0-1:  Plugin Enable (Mattermost built-in)
  *   2-3:  Render AI-generated links
- *   4-5:  Allow native web search in channels
- *   6-7:  Enable LLM Trace
- *   8-9:  Enable Token Usage Logging
- *   10+:  Web Search, MCP settings...
+ *   4-5:  Enable Channel Mention Tool Calling
+ *   6-7:  Allow native web search in channels
+ *   8-9:  Enable LLM Trace
+ *   10-11: Enable Token Usage Logging
+ *   12+:  Web Search, MCP settings...
  */
 const RADIO_INDICES = {
-    enableLLMTrace: { true: 6, false: 7 },
-    enableTokenUsageLogging: { true: 8, false: 9 },
+    enableLLMTrace: { true: 8, false: 9 },
+    enableTokenUsageLogging: { true: 10, false: 11 },
 } as const;
 
 /**

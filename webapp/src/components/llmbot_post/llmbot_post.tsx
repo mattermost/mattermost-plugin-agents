@@ -16,7 +16,7 @@ import {PostMessagePreview} from '@/mm_webapp';
 import {SearchSources} from '../search_sources';
 import PostText from '../post_text';
 import ToolApprovalSet from '../tool_approval_set';
-import {ToolApprovalStage, ToolCall} from '../tool_types';
+import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
 
 import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
@@ -191,12 +191,15 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 if (cancelled) {
                     return;
                 }
-                setPrivateToolCalls(data);
-            }).catch(() => {
-                if (cancelled) {
-                    return;
+
+                // Only update state if data is a non-empty array; preserve
+                // previously fetched data when the server returns null after
+                // the tool call flow completes.
+                if (Array.isArray(data) && data.length > 0) {
+                    setPrivateToolCalls(data);
                 }
-                setPrivateToolCalls(null);
+            }).catch(() => {
+                // Don't reset — preserve previously fetched data
             });
         } else {
             setPrivateToolCalls(null);
@@ -207,20 +210,31 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         };
     }, [props.post.id, requesterIsCurrentUser, isToolCallRedacted, toolApprovalStage, toolCalls.length, props.post.props?.pending_tool_call]);
 
+    // Check if any tool calls have completed (Success or Error status) - used to
+    // determine when to fetch private results even after the approval flow completes.
+    const hasCompletedToolCalls = useMemo(() => {
+        return toolCalls.some((tc) =>
+            tc.status === ToolCallStatus.Success || tc.status === ToolCallStatus.Error,
+        );
+    }, [toolCalls]);
+
     useEffect(() => {
         let cancelled = false;
 
-        if (requesterIsCurrentUser && isToolCallRedacted && toolApprovalStage === 'result' && toolCalls.length > 0) {
+        if (requesterIsCurrentUser && isToolCallRedacted && hasCompletedToolCalls) {
             getToolResultPrivate(props.post.id).then((data) => {
                 if (cancelled) {
                     return;
                 }
-                setPrivateToolResults(data);
-            }).catch(() => {
-                if (cancelled) {
-                    return;
+
+                // Only update state if data is a non-empty array; preserve
+                // previously fetched data when the server returns null after
+                // the tool call flow completes.
+                if (Array.isArray(data) && data.length > 0) {
+                    setPrivateToolResults(data);
                 }
-                setPrivateToolResults(null);
+            }).catch(() => {
+                // Don't reset — preserve previously fetched data
             });
         } else {
             setPrivateToolResults(null);
@@ -229,7 +243,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         return () => {
             cancelled = true;
         };
-    }, [props.post.id, requesterIsCurrentUser, isToolCallRedacted, toolApprovalStage, toolCalls.length, props.post.props?.pending_tool_result]);
+    }, [props.post.id, requesterIsCurrentUser, isToolCallRedacted, hasCompletedToolCalls, props.post.props?.pending_tool_result]);
 
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
@@ -401,14 +415,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }, [privateToolCalls, toolCalls]);
 
     const resolvedToolCalls = useMemo(() => {
-        if (toolApprovalStage === 'result') {
-            if (privateToolResults && privateToolResults.length > 0) {
-                return privateToolResults;
-            }
-            return mergedToolCalls;
+        if (privateToolResults && privateToolResults.length > 0) {
+            return privateToolResults;
         }
         return mergedToolCalls;
-    }, [toolApprovalStage, mergedToolCalls, privateToolResults]);
+    }, [mergedToolCalls, privateToolResults]);
 
     const showToolArguments = useMemo(() => {
         if (!isToolCallRedacted) {
@@ -424,11 +435,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         if (!isToolCallRedacted) {
             return true;
         }
-        if (!requesterIsCurrentUser || toolApprovalStage !== 'result') {
+        if (!requesterIsCurrentUser) {
             return false;
         }
         return Boolean(privateToolResults?.length);
-    }, [isToolCallRedacted, requesterIsCurrentUser, toolApprovalStage, privateToolResults]);
+    }, [isToolCallRedacted, requesterIsCurrentUser, privateToolResults]);
 
     const isThreadSummaryPost = (props.post.props?.referenced_thread && props.post.props?.referenced_thread !== '');
     const isNoShowRegen = (props.post.props?.no_regen && props.post.props?.no_regen !== '');
@@ -500,6 +511,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     toolCalls={resolvedToolCalls}
                     approvalStage={toolApprovalStage}
                     canApprove={requesterIsCurrentUser}
+                    canExpand={!isToolCallRedacted || requesterIsCurrentUser}
                     showArguments={showToolArguments}
                     showResults={showToolResults}
                 />
