@@ -99,6 +99,32 @@ jobs:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: npx playwright test tests/channel-analysis/backend-verification/real-api.spec.ts --project=chromium --reporter=list
 
+  e2e-tool-calling:
+    timeout-minutes: 180
+    runs-on: ubuntu-latest
+    env:
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:latest' }}
+    defaults:
+      run:
+        working-directory: ./e2e
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 18
+    - name: Build
+      run: make dist
+      working-directory: ./
+    - name: Install dependencies
+      run: npm ci
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+    - name: Run Tool Calling tests with real APIs
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: npx playwright test tests/multiplayer-tool-calling --project=chromium --reporter=list
+
   plugin-tests:
     runs-on: ubuntu-latest
     services:
@@ -268,7 +294,7 @@ jobs:
           aws s3 cp dist/mattermost-ai-*.tar.gz s3://${{ secrets.AWS_S3_BUCKET }}/mattermost-plugin-agents/mattermost-plugin-agents-${{ steps.short-sha.outputs.sha }}.tar.gz
 
   deploy:
-    needs: [lint, build, plugin-tests, e2e]
+    needs: [lint, build, plugin-tests, e2e, e2e-tool-calling]
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
