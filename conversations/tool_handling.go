@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/mmtools"
@@ -109,6 +110,15 @@ func (c *Conversations) unmarshalWebSearchContext(webSearchContextJSON string, p
 	return params
 }
 
+// responseRootIDFromPost returns the root ID for responding in a thread.
+// If the post is already in a thread, it returns the root; otherwise the post's own ID.
+func responseRootIDFromPost(post *model.Post) string {
+	if post.RootId != "" {
+		return post.RootId
+	}
+	return post.Id
+}
+
 // HandleToolCall handles tool call approval/rejection
 func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
 	bot := c.bots.GetBotByID(post.UserId)
@@ -167,8 +177,9 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	// Extract web search context from conversation history to preserve citations
 	webSearchParams := c.extractWebSearchContext(post)
 
-	var contextOpts []llm.ContextOption
-	contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextDefaultTools(bot))
+	contextOpts := []llm.ContextOption{
+		c.contextBuilder.WithLLMContextDefaultTools(bot),
+	}
 	if len(webSearchParams) > 0 {
 		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
@@ -245,11 +256,6 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return nil
 	}
 
-	responseRootID := post.Id
-	if post.RootId != "" {
-		responseRootID = post.RootId
-	}
-
 	// Update post with the tool call results
 	resolvedToolsJSON, err := json.Marshal(tools)
 	if err != nil {
@@ -265,9 +271,6 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 				c.mmClient.LogError("Failed to marshal web search context", "error", marshalErr)
 			} else {
 				post.AddProp(streaming.WebSearchContextProp, string(webSearchJSON))
-				c.mmClient.LogDebug("Persisted web search context to post props",
-					"post_id", post.Id,
-					"has_results", hasWebSearch)
 			}
 		}
 	}
@@ -276,57 +279,14 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return fmt.Errorf("failed to update post with tool call results: %w", updateErr)
 	}
 
-	// Only continue if at lest one tool call was successful
+	// Only continue if at least one tool call was successful
 	if !slices.ContainsFunc(tools, func(tc llm.ToolCall) bool {
 		return tc.Status == llm.ToolCallStatusSuccess
 	}) {
 		return nil
 	}
 
-	previousConversation, err := mmapi.GetThreadData(c.mmClient, responseRootID)
-	if err != nil {
-		return fmt.Errorf("failed to get previous conversation: %w", err)
-	}
-	previousConversation.CutoffBeforePostID(post.Id)
-	previousConversation.Posts = append(previousConversation.Posts, post)
-
-	posts, err := c.existingConversationToLLMPosts(bot, previousConversation, llmContext)
-	if err != nil {
-		return fmt.Errorf("failed to convert existing conversation to LLM posts: %w", err)
-	}
-
-	completionRequest := llm.CompletionRequest{
-		Posts:   posts,
-		Context: llmContext,
-	}
-	var opts []llm.LanguageModelOption
-	if toolsDisabled {
-		opts = append(opts, llm.WithToolsDisabled())
-	}
-	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
-	if err != nil {
-		return fmt.Errorf("failed to get chat completion: %w", err)
-	}
-
-	// Decorate the stream with web search annotations if available
-	webSearchData := mmtools.ConsumeWebSearchContexts(llmContext)
-	c.mmClient.LogDebug("Checking for web search data in HandleToolCall", "has_data", len(webSearchData) > 0, "num_contexts", len(webSearchData))
-	if len(webSearchData) > 0 {
-		flatResults := mmtools.FlattenWebSearchResults(webSearchData)
-		c.mmClient.LogDebug("Flattened web search results", "num_results", len(flatResults))
-		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
-	}
-
-	responsePost := &model.Post{
-		ChannelId: channel.Id,
-		RootId:    responseRootID,
-	}
-	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
-	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, user.Id, result, responsePost, post.Id); err != nil {
-		return fmt.Errorf("failed to stream result to new post: %w", err)
-	}
-
-	return nil
+	return c.completeAndStreamToolResponse(bot, user, channel, post, llmContext, toolsDisabled, allowToolsInChannel)
 }
 
 // HandleToolResult handles tool result approval after tool execution.
@@ -356,7 +316,6 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		if c.configProvider == nil || !c.configProvider.EnableChannelMentionToolCalling() {
 			return ErrChannelToolCallingDisabled
 		}
-		// Block if the post doesn't have the allow_tools_in_channel prop set
 		if !allowToolsInChannel {
 			return errors.New("tool calling not allowed for this post")
 		}
@@ -372,12 +331,8 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return fmt.Errorf("failed to load tool call results from KV store: %w", kvErr)
 	}
 
-	acceptedToolIDSet := make(map[string]struct{}, len(acceptedToolIDs))
-	for _, toolID := range acceptedToolIDs {
-		acceptedToolIDSet[toolID] = struct{}{}
-	}
 	for i := range tools {
-		if _, accepted := acceptedToolIDSet[tools[i].ID]; accepted {
+		if slices.Contains(acceptedToolIDs, tools[i].ID) {
 			continue
 		}
 		tools[i].Result = ""
@@ -399,12 +354,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
 			return fmt.Errorf("failed to update post after tool result rejection: %w", updateErr)
 		}
-		if deleteErr := c.mmClient.KVDelete(resultKVKey); deleteErr != nil {
-			c.mmClient.LogError("Failed to delete tool result KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", resultKVKey)
-		}
-		if deleteErr := c.mmClient.KVDelete(toolCallKVKey); deleteErr != nil {
-			c.mmClient.LogError("Failed to delete tool call KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", toolCallKVKey)
-		}
+		c.deleteToolCallKVEntries(post.Id, resultKVKey, toolCallKVKey)
 		return nil
 	}
 
@@ -416,8 +366,9 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	// Extract web search context from conversation history to preserve citations
 	webSearchParams := c.extractWebSearchContext(post)
 
-	var contextOpts []llm.ContextOption
-	contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextDefaultTools(bot))
+	contextOpts := []llm.ContextOption{
+		c.contextBuilder.WithLLMContextDefaultTools(bot),
+	}
 	if len(webSearchParams) > 0 {
 		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
@@ -430,31 +381,57 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	)
 	toolsDisabled := applyToolAvailability(llmContext, isDM, allowToolsInChannel)
 
-	responseRootID := post.Id
-	if post.RootId != "" {
-		responseRootID = post.RootId
+	resolvedToolsJSON, err := json.Marshal(tools)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tool call results: %w", err)
 	}
+
+	// Build a copy of the post with full (unredacted) tool results for conversation context.
+	// Clone() shares the Props map, so create a separate copy to avoid mutating the original.
+	toolCallPostCopy := post.Clone()
+	toolCallPostCopy.Props = make(model.StringInterface, len(post.GetProps()))
+	for key, value := range post.GetProps() {
+		toolCallPostCopy.Props[key] = value
+	}
+	toolCallPostCopy.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
+
+	// Update the original post: unredact tool calls and clear pending flags.
+	// This makes the data available after page refresh and in future
+	// conversation context without needing the KV store.
+	post.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
+	post.DelProp(streaming.ToolCallRedactedProp)
+	post.DelProp(streaming.PendingToolResultProp)
+	if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
+		return fmt.Errorf("failed to update post after tool result approval: %w", updateErr)
+	}
+
+	if err := c.completeAndStreamToolResponse(bot, user, channel, toolCallPostCopy, llmContext, toolsDisabled, allowToolsInChannel); err != nil {
+		return err
+	}
+
+	c.deleteToolCallKVEntries(post.Id, resultKVKey, toolCallKVKey)
+	return nil
+}
+
+// completeAndStreamToolResponse builds the conversation history from the thread,
+// runs LLM completion with tool results, and streams the response to a new post.
+func (c *Conversations) completeAndStreamToolResponse(
+	bot *bots.Bot,
+	user *model.User,
+	channel *model.Channel,
+	toolCallPost *model.Post,
+	llmContext *llm.Context,
+	toolsDisabled bool,
+	allowToolsInChannel bool,
+) error {
+	responseRootID := responseRootIDFromPost(toolCallPost)
 
 	previousConversation, err := mmapi.GetThreadData(c.mmClient, responseRootID)
 	if err != nil {
 		return fmt.Errorf("failed to get previous conversation: %w", err)
 	}
-	previousConversation.CutoffBeforePostID(post.Id)
-
-	toolCallPostCopy := post.Clone()
-	if props := post.GetProps(); props != nil {
-		toolCallPostCopy.Props = model.StringInterface{}
-		for key, value := range props {
-			toolCallPostCopy.Props[key] = value
-		}
-	}
-
-	resolvedToolsJSON, err := json.Marshal(tools)
-	if err != nil {
-		return fmt.Errorf("failed to marshal tool call results: %w", err)
-	}
-	toolCallPostCopy.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
-	previousConversation.Posts = append(previousConversation.Posts, toolCallPostCopy)
+	previousConversation.CutoffBeforePostID(toolCallPost.Id)
+	previousConversation.Posts = append(previousConversation.Posts, toolCallPost)
 
 	posts, err := c.existingConversationToLLMPosts(bot, previousConversation, llmContext)
 	if err != nil {
@@ -475,26 +452,8 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	}
 
 	// Decorate the stream with web search annotations if available
-	webSearchData := mmtools.ConsumeWebSearchContexts(llmContext)
-	c.mmClient.LogDebug("Checking for web search data in HandleToolResult", "has_data", len(webSearchData) > 0, "num_contexts", len(webSearchData))
-	if len(webSearchData) > 0 {
-		flatResults := mmtools.FlattenWebSearchResults(webSearchData)
-		c.mmClient.LogDebug("Flattened web search results", "num_results", len(flatResults))
+	if webSearchData := mmtools.ConsumeWebSearchContexts(llmContext); len(webSearchData) > 0 {
 		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
-	}
-
-	// Write full (unredacted) tool calls to post props since the user approved
-	// sharing. This makes the data available after page refresh and in future
-	// conversation context without needing the KV store.
-	approvedToolsJSON, err := json.Marshal(tools)
-	if err != nil {
-		return fmt.Errorf("failed to marshal tool call results: %w", err)
-	}
-	post.AddProp(streaming.ToolCallProp, string(approvedToolsJSON))
-	post.DelProp(streaming.ToolCallRedactedProp)
-	post.DelProp(streaming.PendingToolResultProp)
-	if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
-		return fmt.Errorf("failed to update post after tool result approval: %w", updateErr)
 	}
 
 	responsePost := &model.Post{
@@ -502,16 +461,18 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		RootId:    responseRootID,
 	}
 	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
-	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, user.Id, result, responsePost, post.Id); err != nil {
+	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, user.Id, result, responsePost, toolCallPost.Id); err != nil {
 		return fmt.Errorf("failed to stream result to new post: %w", err)
 	}
 
-	if deleteErr := c.mmClient.KVDelete(resultKVKey); deleteErr != nil {
-		c.mmClient.LogError("Failed to delete tool result KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", resultKVKey)
-	}
-	if deleteErr := c.mmClient.KVDelete(toolCallKVKey); deleteErr != nil {
-		c.mmClient.LogError("Failed to delete tool call KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", toolCallKVKey)
-	}
-
 	return nil
+}
+
+// deleteToolCallKVEntries cleans up KV store entries, logging any deletion errors.
+func (c *Conversations) deleteToolCallKVEntries(postID string, kvKeys ...string) {
+	for _, key := range kvKeys {
+		if err := c.mmClient.KVDelete(key); err != nil {
+			c.mmClient.LogError("Failed to delete KV entry", "error", err, "post_id", postID, "kv_key", key)
+		}
+	}
 }
