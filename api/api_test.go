@@ -50,7 +50,8 @@ type TestEnvironment struct {
 
 // testConfigImpl is a minimal implementation of Config for testing
 type testConfigImpl struct {
-	allowUnsafeLinks bool
+	allowUnsafeLinks                bool
+	enableChannelMentionToolCalling bool
 }
 
 func (tc *testConfigImpl) GetDefaultBotName() string {
@@ -66,7 +67,7 @@ func (tc *testConfigImpl) AllowUnsafeLinks() bool {
 }
 
 func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
-	return false
+	return tc.enableChannelMentionToolCalling
 }
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
@@ -583,6 +584,10 @@ func TestToolPrivateRequiresRequester(t *testing.T) {
 			e := SetupTestEnvironment(t)
 			defer e.Cleanup(t)
 
+			// Enable channel tool calling so the config guard passes and
+			// the handler actually reaches the requester identity check.
+			e.config.enableChannelMentionToolCalling = true
+
 			e.setupTestBot(llm.BotConfig{Name: "permtest", DisplayName: "Permission Bot"})
 
 			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
@@ -601,6 +606,7 @@ func TestToolPrivateRequiresRequester(t *testing.T) {
 				Type: model.ChannelTypeOpen,
 			}, nil)
 			e.mockAPI.On("HasPermissionToChannel", "other-user", "channelid", model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
 
 			request := httptest.NewRequest(http.MethodGet, test.endpoint, nil)
 			request.Header.Add("Mattermost-User-ID", "other-user")
