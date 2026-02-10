@@ -24,8 +24,8 @@ func TestConfig_Sanitize(t *testing.T) {
 			name: "sanitizes service API keys",
 			config: Config{
 				Services: []llm.ServiceConfig{
-					{ID: "svc1", APIKey: "sk-secret-key", AWSAccessKeyID: "AKIAIOSFODNN7", AWSSecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCY"},
-					{ID: "svc2", APIKey: "sk-another-key"},
+					{ID: "svc1", APIKey: "test-api-key-1", AWSAccessKeyID: "test-aws-access-key", AWSSecretAccessKey: "test-aws-secret-key"},
+					{ID: "svc2", APIKey: "test-api-key-2"},
 					{ID: "svc3"},
 				},
 			},
@@ -73,7 +73,7 @@ func TestConfig_Sanitize(t *testing.T) {
 				EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
 					EmbeddingProvider: embeddings.UpstreamConfig{
 						Type:       "openai",
-						Parameters: json.RawMessage(`{"apiKey":"sk-embed-secret","embeddingModel":"text-embedding-3-small"}`),
+						Parameters: json.RawMessage(`{"apiKey":"test-embed-key","embeddingModel":"text-embedding-3-small"}`),
 					},
 				},
 			},
@@ -115,9 +115,9 @@ func TestConfig_Sanitize(t *testing.T) {
 						DisplayName: "Bot 1",
 						ServiceID:   "svc1",
 						Service: &llm.ServiceConfig{
-							APIKey:             "inline-secret",
-							AWSAccessKeyID:     "AKIA-INLINE",
-							AWSSecretAccessKey: "inline-aws-secret",
+							APIKey:             "test-inline-api-key",
+							AWSAccessKeyID:     "test-inline-aws-access-key",
+							AWSSecretAccessKey: "test-inline-aws-secret-key",
 						},
 					},
 					{
