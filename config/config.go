@@ -15,6 +15,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/openai"
 )
 
+const redactedValue = "****"
+
 type Config struct {
 	Services                       []llm.ServiceConfig              `json:"services"`
 	Bots                           []llm.BotConfig                  `json:"bots"`
@@ -51,6 +53,61 @@ type WebSearchBraveConfig struct {
 	ResultLimit  int    `json:"resultLimit"`
 	PollTimeout  int    `json:"pollTimeout"`
 	PollInterval int    `json:"pollInterval"`
+}
+
+// Sanitize replaces sensitive fields in the configuration with redacted values.
+// The receiver is modified in-place; callers should Clone() first if the
+// original must be preserved.
+func (c *Config) Sanitize() {
+	// Sanitize LLM service credentials
+	for i := range c.Services {
+		if c.Services[i].APIKey != "" {
+			c.Services[i].APIKey = redactedValue
+		}
+		if c.Services[i].AWSAccessKeyID != "" {
+			c.Services[i].AWSAccessKeyID = redactedValue
+		}
+		if c.Services[i].AWSSecretAccessKey != "" {
+			c.Services[i].AWSSecretAccessKey = redactedValue
+		}
+	}
+
+	// Sanitize deprecated inline service configs in bots
+	for i := range c.Bots {
+		if c.Bots[i].Service != nil {
+			if c.Bots[i].Service.APIKey != "" {
+				c.Bots[i].Service.APIKey = redactedValue
+			}
+			if c.Bots[i].Service.AWSAccessKeyID != "" {
+				c.Bots[i].Service.AWSAccessKeyID = redactedValue
+			}
+			if c.Bots[i].Service.AWSSecretAccessKey != "" {
+				c.Bots[i].Service.AWSSecretAccessKey = redactedValue
+			}
+		}
+	}
+
+	// Sanitize web search API keys
+	if c.WebSearch.Google.APIKey != "" {
+		c.WebSearch.Google.APIKey = redactedValue
+	}
+	if c.WebSearch.Brave.APIKey != "" {
+		c.WebSearch.Brave.APIKey = redactedValue
+	}
+
+	// Sanitize embedding provider parameters (may contain credentials)
+	c.EmbeddingSearchConfig.EmbeddingProvider.Parameters = nil
+
+	// Sanitize MCP server headers (may contain auth tokens)
+	for i := range c.MCP.Servers {
+		if len(c.MCP.Servers[i].Headers) > 0 {
+			sanitized := make(map[string]string, len(c.MCP.Servers[i].Headers))
+			for k := range c.MCP.Servers[i].Headers {
+				sanitized[k] = redactedValue
+			}
+			c.MCP.Servers[i].Headers = sanitized
+		}
+	}
 }
 
 func (c *Config) Clone() *Config {

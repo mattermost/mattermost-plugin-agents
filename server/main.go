@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -351,6 +352,29 @@ func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Req
 
 func (p *Plugin) ServeMetrics(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
 	p.apiService.ServeMetrics(c, w, r)
+}
+
+// GenerateSupportData returns sanitized plugin configuration for inclusion in support packets.
+func (p *Plugin) GenerateSupportData(_ *plugin.Context) ([]*model.FileData, error) {
+	cfg := p.configuration.Config()
+	if cfg == nil {
+		return nil, nil
+	}
+
+	sanitized := cfg.Clone()
+	sanitized.Sanitize()
+
+	data, err := json.MarshalIndent(sanitized, "", "    ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal sanitized config: %w", err)
+	}
+
+	return []*model.FileData{
+		{
+			Filename: "agents_sanitized_config.json",
+			Body:     data,
+		},
+	}, nil
 }
 
 // EmailNotificationWillBeSent blocks email notifications for bot replies in threads.
