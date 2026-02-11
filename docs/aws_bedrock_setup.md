@@ -120,6 +120,7 @@ Alternatively, install via `mmctl` on the server:
 | **Default Model** | The Bedrock model identifier (e.g., `amazon.nova-pro-v1:0`) |
 | **AWS Access Key ID** | Leave empty when using IAM instance profiles |
 | **AWS Secret Access Key** | Leave empty when using IAM instance profiles |
+| **API Key** | Optional. Bedrock console API key (base64 encoded). Suitable for short-term testing only—keys expire after 12 hours. Leave empty when using IAM instance profiles or IAM user credentials, as those methods take precedence. |
 
 4. Select **Save**.
 
