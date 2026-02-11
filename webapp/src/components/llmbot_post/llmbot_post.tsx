@@ -102,6 +102,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
 
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
+    const channel = useSelector<GlobalState, {type?: string} | undefined>(
+        (state) => state.entities.channels.channels[props.post.channel_id],
+    );
+    const isDM = channel?.type === 'D';
     const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
     const requesterIsCurrentUser = (props.post.props?.llm_requester_user_id === currentUserId);
     const isToolCallRedacted = String(props.post.props?.pending_tool_call_redacted).toLowerCase() === 'true';
@@ -461,7 +465,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Consider both generating and reasoning loading states for determining if generation is in progress
     const isGenerationInProgress = generating || isReasoningLoading;
 
-    const showRegenerate = !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
+    const showRegenerate = isDM && !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
     const showPostbackButton = !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
     const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
     const hasContent = message !== '' || reasoningSummary !== '';

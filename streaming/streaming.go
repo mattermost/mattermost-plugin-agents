@@ -239,6 +239,9 @@ func (p *MMPostStreamService) GetStreamingContext(inCtx context.Context, postID 
 func (p *MMPostStreamService) FinishStreaming(postID string) {
 	p.contextsMutex.Lock()
 	defer p.contextsMutex.Unlock()
+	if streamContext, ok := p.contexts[postID]; ok {
+		streamContext.cancel()
+	}
 	delete(p.contexts, postID)
 }
 

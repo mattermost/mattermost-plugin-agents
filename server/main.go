@@ -95,6 +95,16 @@ func (p *Plugin) OnActivate() error {
 	llmUpstreamHTTPClient := httpservice.MakeHTTPServicePlugin(p.API).MakeClient(true)
 	llmUpstreamHTTPClient.Timeout = time.Minute * 10 // LLM requests can be slow
 
+	// Tune connection pool for LLM streaming: shorter idle timeout to avoid
+	// reusing stale connections after SSE streams close during tool calling,
+	// and more idle connections per host for concurrent LLM requests.
+	if mmTransport, ok := llmUpstreamHTTPClient.Transport.(*httpservice.MattermostTransport); ok {
+		if transport, ok := mmTransport.Transport.(*http.Transport); ok {
+			transport.IdleConnTimeout = 30 * time.Second
+			transport.MaxIdleConnsPerHost = 10
+		}
+	}
+
 	untrustedHTTPClient := httpservice.MakeHTTPServicePlugin(p.API).MakeClient(false)
 
 	metricsService := metrics.NewMetrics(metrics.InstanceInfo{
