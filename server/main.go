@@ -153,7 +153,7 @@ func (p *Plugin) OnActivate() error {
 		licenseChecker,
 	)
 	if err != nil {
-		pluginAPI.Log.Error("failed to initialize search infrastructure", "error", err)
+		pluginAPI.Log.Warn("failed to initialize search infrastructure", "error", err)
 		// Continue without search functionality
 	}
 
