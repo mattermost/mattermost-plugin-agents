@@ -19,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/openai"
+	"github.com/mattermost/mattermost-plugin-ai/scale"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -292,6 +293,8 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 		mistralCfg := serviceConfig
 		mistralCfg.APIURL = "https://api.mistral.ai/v1"
 		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfigWithOptions(mistralCfg, botConfig, true, true), b.llmUpstreamHTTPClient)
+	case llm.ServiceTypeScale:
+		result = scale.New(serviceConfig, botConfig, b.llmUpstreamHTTPClient)
 	default:
 		b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
 		return nil, fmt.Errorf("unsupported service type: %s", serviceConfig.Type)
