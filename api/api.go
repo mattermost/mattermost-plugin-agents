@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-ai/bifrost"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
+	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
@@ -54,6 +55,22 @@ type MCPClientManager interface {
 	EnsureMCPSessionID(userID string) (string, error)
 }
 
+// ConfigStore provides read/write access to the plugin configuration in the database.
+type ConfigStore interface {
+	GetConfig() (*config.Config, error)
+	SaveConfig(cfg config.Config) error
+}
+
+// ConfigUpdater updates the in-memory plugin configuration.
+type ConfigUpdater interface {
+	Update(cfg *config.Config)
+}
+
+// ClusterNotifier broadcasts config update events to other cluster nodes.
+type ClusterNotifier interface {
+	PublishConfigUpdate()
+}
+
 // API represents the HTTP API functionality for the plugin
 type API struct {
 	bots                  *bots.MMBots
@@ -75,6 +92,9 @@ type API struct {
 	mcpClientManager      MCPClientManager
 	mcpHandlers           *mcpserver.PluginMCPHandlers
 	llmUpstreamHTTPClient *http.Client
+	configStore           ConfigStore
+	configUpdater         ConfigUpdater
+	clusterNotifier       ClusterNotifier
 }
 
 // New creates a new API instance
@@ -97,6 +117,9 @@ func New(
 	mcpClientManager MCPClientManager,
 	mcpHandlers *mcpserver.PluginMCPHandlers,
 	llmUpstreamHTTPClient *http.Client,
+	configStore ConfigStore,
+	configUpdater ConfigUpdater,
+	clusterNotifier ClusterNotifier,
 ) *API {
 	return &API{
 		bots:                  bots,
@@ -118,6 +141,9 @@ func New(
 		mcpClientManager:      mcpClientManager,
 		mcpHandlers:           mcpHandlers,
 		llmUpstreamHTTPClient: llmUpstreamHTTPClient,
+		configStore:           configStore,
+		configUpdater:         configUpdater,
+		clusterNotifier:       clusterNotifier,
 	}
 }
 
@@ -199,6 +225,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
+	adminRouter.GET("/config", a.handleGetConfig)
+	adminRouter.PUT("/config", a.handleSaveConfig)
 
 	searchRouter := botRequiredRouter.Group("/search")
 	// Only returns search results

@@ -345,6 +345,9 @@ func (p *Plugin) OnActivate() error {
 		mcpClientManager,
 		mcpHandlers,
 		llmUpstreamHTTPClient,
+		p.store,
+		&p.configuration,
+		p,
 	)
 
 	// Keep only what we need

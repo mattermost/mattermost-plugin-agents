@@ -540,3 +540,39 @@ export async function getChannelInterval(
         url,
     });
 }
+
+export async function getPluginConfig(): Promise<any> {
+    const url = `${baseRoute()}/admin/config`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function savePluginConfig(config: any): Promise<void> {
+    const url = `${baseRoute()}/admin/config`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify(config),
+        headers: {'Content-Type': 'application/json'},
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
