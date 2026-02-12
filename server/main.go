@@ -14,7 +14,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
-	"github.com/mattermost/mattermost-plugin-ai/database"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/indexer"
@@ -28,10 +27,12 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/mmtools"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/search"
+	"github.com/mattermost/mattermost-plugin-ai/store"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 	"github.com/mattermost/mattermost/server/public/shared/httpservice"
 )
 
@@ -50,6 +51,8 @@ type Plugin struct {
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
+	store                *store.Store
+	configMigrated       bool //nolint:unused // Used in Phase 2 for config migration lifecycle
 }
 
 type pluginLogger struct {
@@ -89,6 +92,19 @@ func (p *Plugin) OnActivate() error {
 	mmClient := mmapi.NewClient(pluginAPI)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
 	dbClient := mmapi.NewDBClient(pluginAPI)
+
+	// Initialize store and run database migrations
+	p.store = store.New(dbClient.DB)
+	mtx, err := cluster.NewMutex(p.API, "ai_db_migrations")
+	if err != nil {
+		return fmt.Errorf("failed to create cluster mutex: %w", err)
+	}
+	mtx.Lock()
+	if migrateErr := p.store.RunMigrations(); migrateErr != nil {
+		mtx.Unlock()
+		return fmt.Errorf("failed to run database migrations: %w", migrateErr)
+	}
+	mtx.Unlock()
 
 	i18nBundle := i18n.Init()
 
@@ -141,11 +157,6 @@ func (p *Plugin) OnActivate() error {
 		// If we fail to ensure bots, we log the error but do not return
 		// as it would leave the plugin in a state where it can't be configured from the system console.
 		pluginAPI.Log.Error("failed to ensure bots", "error", ensureBotsErr)
-	}
-
-	if setupTablesErr := database.SetupTables(dbClient.DB); setupTablesErr != nil {
-		pluginAPI.Log.Error("failed to setup database tables", "error", setupTablesErr)
-		return setupTablesErr
 	}
 
 	prompts, promptManagerErr := llm.NewPrompts(prompts.PromptsFolder)
