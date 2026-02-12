@@ -983,6 +983,14 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	var toolCalls []llm.ToolCall
 	toolCallsBuffer := make(map[string]*responsesToolCallBuffer)
 
+	// Reasoning buffers
+	var reasoningBuffer strings.Builder
+	var reasoningSignature string
+	var reasoningComplete bool
+
+	// Annotation buffer
+	var annotations []llm.Annotation
+
 	// Watchdog timer for streaming timeout
 	watchdog := make(chan struct{})
 	var watchdogMu sync.Mutex
@@ -1032,12 +1040,67 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 
 			switch resp.Type {
 			case schemas.ResponsesStreamResponseTypeOutputTextDelta:
+				// Emit reasoning end before first text if we have accumulated reasoning
+				if !reasoningComplete && reasoningBuffer.Len() > 0 {
+					output <- llm.TextStreamEvent{
+						Type: llm.EventTypeReasoningEnd,
+						Value: llm.ReasoningData{
+							Text:      reasoningBuffer.String(),
+							Signature: reasoningSignature,
+						},
+					}
+					reasoningComplete = true
+				}
 				// Text delta
 				if resp.Delta != nil && *resp.Delta != "" {
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeText,
 						Value: *resp.Delta,
 					}
+				}
+
+			case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
+				// Reasoning text chunk - stream immediately
+				if resp.Delta != nil && *resp.Delta != "" {
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeReasoning,
+						Value: *resp.Delta,
+					}
+					reasoningBuffer.WriteString(*resp.Delta)
+				}
+				// Capture signature if present
+				if resp.Signature != nil && *resp.Signature != "" {
+					reasoningSignature = *resp.Signature
+				}
+
+			case schemas.ResponsesStreamResponseTypeReasoningSummaryPartAdded,
+				schemas.ResponsesStreamResponseTypeReasoningSummaryPartDone,
+				schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone:
+				// These events mark progress but don't require action
+				// Signature may come with these events
+				if resp.Signature != nil && *resp.Signature != "" {
+					reasoningSignature = *resp.Signature
+				}
+
+			case schemas.ResponsesStreamResponseTypeOutputTextAnnotationAdded:
+				// Accumulate annotations as they arrive
+				if resp.Annotation != nil {
+					if ann := convertBifrostAnnotation(resp.Annotation, len(annotations)+1); ann != nil {
+						annotations = append(annotations, *ann)
+					}
+				}
+
+			case schemas.ResponsesStreamResponseTypeOutputTextAnnotationDone:
+				// Annotation finalized - no additional action needed
+
+			case schemas.ResponsesStreamResponseTypeOutputTextDone:
+				// Text complete - emit accumulated annotations
+				if len(annotations) > 0 {
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeAnnotations,
+						Value: annotations,
+					}
+					annotations = nil
 				}
 
 			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
@@ -1108,6 +1171,27 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				}
 
 			case schemas.ResponsesStreamResponseTypeCompleted:
+				// Emit any unsent reasoning
+				if !reasoningComplete && reasoningBuffer.Len() > 0 {
+					output <- llm.TextStreamEvent{
+						Type: llm.EventTypeReasoningEnd,
+						Value: llm.ReasoningData{
+							Text:      reasoningBuffer.String(),
+							Signature: reasoningSignature,
+						},
+					}
+					reasoningComplete = true
+				}
+
+				// Emit any accumulated annotations
+				if len(annotations) > 0 {
+					output <- llm.TextStreamEvent{
+						Type:  llm.EventTypeAnnotations,
+						Value: annotations,
+					}
+					annotations = nil
+				}
+
 				// Response completed - emit tool calls if any
 				if len(toolCallsBuffer) > 0 {
 					for _, buf := range toolCallsBuffer {
@@ -1180,4 +1264,34 @@ type responsesToolCallBuffer struct {
 	id        string
 	name      string
 	arguments strings.Builder
+}
+
+// convertBifrostAnnotation converts a Bifrost annotation to llm.Annotation
+func convertBifrostAnnotation(ann *schemas.ResponsesOutputMessageContentTextAnnotation, index int) *llm.Annotation {
+	if ann == nil || ann.Type != "url_citation" {
+		return nil
+	}
+
+	result := &llm.Annotation{
+		Type:  llm.AnnotationTypeURLCitation,
+		Index: index,
+	}
+
+	if ann.StartIndex != nil {
+		result.StartIndex = *ann.StartIndex
+	}
+	if ann.EndIndex != nil {
+		result.EndIndex = *ann.EndIndex
+	}
+	if ann.URL != nil {
+		result.URL = *ann.URL
+	}
+	if ann.Title != nil {
+		result.Title = *ann.Title
+	}
+	if ann.Text != nil {
+		result.CitedText = *ann.Text
+	}
+
+	return result
 }
