@@ -161,6 +161,14 @@ export default class MattermostContainer {
     }
 
     start = async (): Promise<MattermostContainer> => {
+        let image = defaultMattermostImage;
+        const isCustomImage = !!process.env.MM_IMAGE;
+        if (isCustomImage) {
+            image = process.env.MM_IMAGE;
+        }
+        console.log(`\n🚀 Starting Mattermost container`);
+        console.log(`   Image: ${image}${isCustomImage ? ' (custom via MM_IMAGE)' : ' (default)'}`);
+
         this.network = await new Network().start()
         // Use pgvector image to enable semantic search functionality
         this.pgContainer = await new PostgreSqlContainer("pgvector/pgvector:pg15")
@@ -186,7 +194,7 @@ export default class MattermostContainer {
             console.log("Semantic search features may not be available")
         }
 
-        this.container = await new GenericContainer(defaultMattermostImage)
+        this.container = await new GenericContainer(image)
             .withEnvironment(this.envs)
             .withExposedPorts(8065)
             .withNetwork(this.network)

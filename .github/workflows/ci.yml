@@ -14,6 +14,9 @@ jobs:
   e2e:
     timeout-minutes: 60
     runs-on: ubuntu-latest
+    env:
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:latest' }}
+      EXCLUDE_REAL_API_TESTS: 'true'
     defaults:
       run:
         working-directory: ./e2e
@@ -29,8 +32,8 @@ jobs:
       run: npm ci
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
-    - name: Run Playwright tests (excluding llmbot tests on PRs)
-      run: npx playwright test --project=chromium --grep-invert "llmbot-post-component"
+    - name: Run Playwright tests (excluding real API tests)
+      run: npx playwright test --project=chromium
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -47,6 +50,8 @@ jobs:
   e2e-llmbot-real-apis:
     timeout-minutes: 180
     runs-on: ubuntu-latest
+    env:
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:latest' }}
     defaults:
       run:
         working-directory: ./e2e
@@ -67,6 +72,32 @@ jobs:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: npx playwright test tests/llmbot-post-component --project=chromium --reporter=list
+
+  e2e-channel-analysis-real-apis:
+    timeout-minutes: 180
+    runs-on: ubuntu-latest
+    env:
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:latest' }}
+    defaults:
+      run:
+        working-directory: ./e2e
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 18
+    - name: Build
+      run: make dist
+      working-directory: ./
+    - name: Install dependencies
+      run: npm ci
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+    - name: Run Channel Analysis tests with real APIs
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: npx playwright test tests/channel-analysis/backend-verification/real-api.spec.ts --project=chromium --reporter=list
 
   plugin-tests:
     runs-on: ubuntu-latest

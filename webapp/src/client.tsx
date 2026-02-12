@@ -63,6 +63,27 @@ export async function doThreadAnalysis(postid: string, analysisType: string, bot
     });
 }
 
+export async function doChannelAnalysis(channelId: string, analysisType: string, botUsername: string, options?: any) {
+    const url = `${channelRoute(channelId)}/analyze?botUsername=${botUsername}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({
+            analysis_type: analysisType,
+            ...options,
+        }),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function doTranscribe(postid: string, fileID: string) {
     const url = `${postRoute(postid)}/transcribe/file/${fileID}`;
     const response = await fetch(url, Client4.getOptions({

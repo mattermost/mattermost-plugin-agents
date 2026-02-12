@@ -34,7 +34,7 @@ export const ControlsBarComponent: React.FC<ControlsBarComponentProps> = ({
                     data-testid='stop-generating-button'
                     onClick={onStopGenerating}
                 >
-                    <IconCancel/>
+                    <IconCancel size={10}/>
                     <FormattedMessage defaultMessage='Stop Generating'/>
                 </StopGeneratingButton>
             )}
