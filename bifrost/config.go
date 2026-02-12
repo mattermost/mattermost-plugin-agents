@@ -5,7 +5,6 @@ package bifrost
 
 import (
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -36,7 +35,7 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 }
 
 // NewFromServiceConfig creates a LLM instance from ServiceConfig and BotConfig.
-func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, httpClient *http.Client) (*LLM, error) {
+func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (*LLM, error) {
 	provider, err := MapServiceTypeToProvider(serviceConfig.Type)
 	if err != nil {
 		return nil, err
@@ -90,7 +89,7 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		cfg.DefaultModel = botConfig.Model
 	}
 
-	return New(cfg, httpClient)
+	return New(cfg)
 }
 
 // IsSupported returns true if the service type is supported by Bifrost.

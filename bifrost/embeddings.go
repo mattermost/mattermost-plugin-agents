@@ -66,6 +66,11 @@ func (p *EmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([
 			Text: Ptr(text),
 		},
 	}
+	if p.dimensions > 0 {
+		req.Params = &schemas.EmbeddingParameters{
+			Dimensions: Ptr(p.dimensions),
+		}
+	}
 
 	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)
 	if bifrostErr != nil {
@@ -95,6 +100,11 @@ func (p *EmbeddingProvider) BatchCreateEmbeddings(ctx context.Context, texts []s
 		Input: &schemas.EmbeddingInput{
 			Texts: texts,
 		},
+	}
+	if p.dimensions > 0 {
+		req.Params = &schemas.EmbeddingParameters{
+			Dimensions: Ptr(p.dimensions),
+		}
 	}
 
 	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)

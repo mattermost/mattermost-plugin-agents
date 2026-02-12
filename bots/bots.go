@@ -262,12 +262,14 @@ func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
 func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (llm.LanguageModel, error) {
 	// Create the correct model using Bifrost for all providers
 	var result llm.LanguageModel
-	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig, b.llmUpstreamHTTPClient)
+	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig)
 	if err != nil {
 		b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
 		return nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
 	}
-	result = bifrostLLM
+
+	// Auto-run tools support (before truncation so tool re-submissions are also truncated)
+	result = llm.NewAutoRunToolsWrapper(bifrostLLM)
 
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)
@@ -317,11 +319,7 @@ func (b *MMBots) GetTranscribe() Transcriber {
 		return nil
 	}
 
-	// Use the service's default model for transcription, or fall back to whisper-1
-	transcriptModel := service.DefaultModel
-	if transcriptModel == "" {
-		transcriptModel = "whisper-1"
-	}
+	transcriptModel := "whisper-1"
 
 	transcriber, err := bifrost.NewTranscriber(bifrost.TranscriptionConfig{
 		Provider: provider,

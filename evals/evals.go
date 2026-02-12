@@ -6,7 +6,6 @@ package evals
 import (
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -35,7 +34,6 @@ type Eval struct {
 // createProvider creates an LLM provider based on the provider name using Bifrost
 // Reads configuration from environment variables with optional model override
 func createProvider(providerName string, modelOverride string) (llm.LanguageModel, error) {
-	httpClient := &http.Client{}
 	timeout := 20 * time.Second
 
 	switch strings.ToLower(providerName) {
@@ -58,7 +56,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 			APIKey:           apiKey,
 			DefaultModel:     model,
 			StreamingTimeout: timeout,
-		}, httpClient)
+		})
 
 	case "anthropic":
 		apiKey := os.Getenv("ANTHROPIC_API_KEY")
@@ -80,7 +78,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 			DefaultModel:     model,
 			StreamingTimeout: timeout,
 			ReasoningEnabled: true,
-		}, httpClient)
+		})
 
 	case "azure":
 		apiKey := os.Getenv("AZURE_OPENAI_API_KEY")
@@ -107,7 +105,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 			APIURL:           apiURL,
 			DefaultModel:     model,
 			StreamingTimeout: timeout,
-		}, httpClient)
+		})
 
 	case "openaicompatible":
 		apiURL := os.Getenv("OPENAI_COMPATIBLE_API_URL")
@@ -132,7 +130,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 			APIURL:           apiURL,
 			DefaultModel:     model,
 			StreamingTimeout: timeout,
-		}, httpClient)
+		})
 
 	case "mistral":
 		apiKey := os.Getenv("MISTRAL_API_KEY")
@@ -153,7 +151,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 			APIKey:           apiKey,
 			DefaultModel:     model,
 			StreamingTimeout: timeout,
-		}, httpClient)
+		})
 
 	case "bedrock":
 		region := os.Getenv("AWS_BEDROCK_REGION")
@@ -176,7 +174,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 			AWSSecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
 			DefaultModel:       model,
 			StreamingTimeout:   timeout,
-		}, httpClient)
+		})
 
 	case "cohere":
 		apiKey := os.Getenv("COHERE_API_KEY")
@@ -197,7 +195,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 			APIKey:           apiKey,
 			DefaultModel:     model,
 			StreamingTimeout: timeout,
-		}, httpClient)
+		})
 
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", providerName)

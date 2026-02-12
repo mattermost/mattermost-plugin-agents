@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -152,8 +151,7 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 }
 
 // New creates a new LLM instance with the given configuration.
-// Note: httpClient is kept for API compatibility but Bifrost manages its own HTTP client.
-func New(cfg Config, httpClient *http.Client) (*LLM, error) {
+func New(cfg Config) (*LLM, error) {
 	account := &providerAccount{
 		provider:  cfg.Provider,
 		apiKey:    cfg.APIKey,
@@ -229,7 +227,7 @@ func (b *LLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.Language
 
 	go func() {
 		defer close(eventStream)
-		if b.shouldUseResponsesAPI() {
+		if b.shouldUseResponsesAPI(cfg) {
 			b.streamResponses(request, cfg, eventStream)
 		} else {
 			b.streamChat(request, cfg, eventStream)
@@ -295,6 +293,11 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 	var toolCalls []llm.ToolCall
 	var toolCallsBuffer map[int]*toolCallBuffer
 
+	// Reasoning buffers
+	var reasoningBuffer strings.Builder
+	var reasoningSignature string
+	var reasoningComplete bool
+
 	// Watchdog timer for streaming timeout
 	watchdog := make(chan struct{})
 	var watchdogMu sync.Mutex
@@ -348,9 +351,36 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 				if choice.ChatStreamResponseChoice != nil && choice.Delta != nil && choice.Delta.Content != nil {
 					content := *choice.Delta.Content
 					if content != "" {
+						// Emit reasoning end before first text if we have accumulated reasoning
+						if !reasoningComplete && reasoningBuffer.Len() > 0 {
+							output <- llm.TextStreamEvent{
+								Type: llm.EventTypeReasoningEnd,
+								Value: llm.ReasoningData{
+									Text:      reasoningBuffer.String(),
+									Signature: reasoningSignature,
+								},
+							}
+							reasoningComplete = true
+						}
 						output <- llm.TextStreamEvent{
 							Type:  llm.EventTypeText,
 							Value: content,
+						}
+					}
+				}
+
+				// Handle reasoning/thinking content (streaming)
+				if choice.ChatStreamResponseChoice != nil && choice.Delta != nil {
+					if choice.Delta.Reasoning != nil && *choice.Delta.Reasoning != "" {
+						output <- llm.TextStreamEvent{
+							Type:  llm.EventTypeReasoning,
+							Value: *choice.Delta.Reasoning,
+						}
+						reasoningBuffer.WriteString(*choice.Delta.Reasoning)
+					}
+					for _, rd := range choice.Delta.ReasoningDetails {
+						if rd.Signature != nil && *rd.Signature != "" {
+							reasoningSignature = *rd.Signature
 						}
 					}
 				}
@@ -395,7 +425,17 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 							return
 						}
 					case "stop":
-						// Normal completion
+						// Emit reasoning end if we accumulated reasoning
+						if !reasoningComplete && reasoningBuffer.Len() > 0 {
+							output <- llm.TextStreamEvent{
+								Type: llm.EventTypeReasoningEnd,
+								Value: llm.ReasoningData{
+									Text:      reasoningBuffer.String(),
+									Signature: reasoningSignature,
+								},
+							}
+							reasoningComplete = true
+						}
 					}
 				}
 			}
@@ -418,6 +458,17 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 		// Check if this is the final chunk
 		if bifrostcore.IsFinalChunk(bifrostCtx) {
 			break
+		}
+	}
+
+	// Emit any unsent reasoning
+	if !reasoningComplete && reasoningBuffer.Len() > 0 {
+		output <- llm.TextStreamEvent{
+			Type: llm.EventTypeReasoningEnd,
+			Value: llm.ReasoningData{
+				Text:      reasoningBuffer.String(),
+				Signature: reasoningSignature,
+			},
 		}
 	}
 
@@ -454,21 +505,36 @@ type toolCallBuffer struct {
 }
 
 // buildChatReasoning creates a ChatReasoning configuration if reasoning is enabled.
-func (b *LLM) buildChatReasoning() *schemas.ChatReasoning {
-	if !b.reasoningEnabled {
+func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReasoning {
+	if !b.reasoningEnabled || cfg.ReasoningDisabled {
 		return nil
 	}
 	reasoning := &schemas.ChatReasoning{}
-	effort := b.reasoningEffort
-	if effort == "" {
-		effort = "medium"
-	}
-	reasoning.Effort = Ptr(effort)
-	// Anthropic requires MaxTokens for thinking
-	if b.provider == schemas.Anthropic && b.thinkingBudget > 0 {
-		reasoning.MaxTokens = Ptr(b.thinkingBudget)
+
+	if b.provider == schemas.Anthropic {
+		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
+		if budget >= cfg.MaxGeneratedTokens {
+			return nil // Anthropic requires budget < max_tokens
+		}
+		reasoning.MaxTokens = Ptr(budget)
+	} else {
+		effort := b.reasoningEffort
+		if effort == "" {
+			effort = "medium"
+		}
+		reasoning.Effort = Ptr(effort)
 	}
 	return reasoning
+}
+
+// calculateThinkingBudget computes the thinking budget for Anthropic models.
+func (b *LLM) calculateThinkingBudget(maxGeneratedTokens int) int {
+	const minBudget, maxBudget = 1024, 8192
+	if b.thinkingBudget > 0 {
+		return max(b.thinkingBudget, minBudget)
+	}
+	budget := maxGeneratedTokens / 4
+	return max(min(budget, maxBudget), minBudget)
 }
 
 // convertToBifrostRequest converts our CompletionRequest to Bifrost's format.
@@ -491,9 +557,7 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 		params.Tools = tools
 	}
 	// Apply reasoning configuration
-	if b.reasoningEnabled {
-		params.Reasoning = b.buildChatReasoning()
-	}
+	params.Reasoning = b.buildChatReasoning(cfg)
 	req.Params = params
 
 	return req
@@ -542,6 +606,19 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 				},
 			}
 
+			// Add reasoning details for thinking-enabled conversations
+			if post.Reasoning != "" {
+				if msg.ChatAssistantMessage == nil {
+					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
+				}
+				msg.ReasoningDetails = []schemas.ChatReasoningDetails{{
+					Index:     0,
+					Type:      schemas.BifrostReasoningDetailsTypeText,
+					Text:      Ptr(post.Reasoning),
+					Signature: Ptr(post.ReasoningSignature),
+				}}
+			}
+
 			// Handle tool calls in assistant messages
 			if len(post.ToolUse) > 0 {
 				toolCalls := make([]schemas.ChatAssistantMessageToolCall, 0, len(post.ToolUse))
@@ -556,9 +633,10 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 						},
 					})
 				}
-				msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{
-					ToolCalls: toolCalls,
+				if msg.ChatAssistantMessage == nil {
+					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
 				}
+				msg.ToolCalls = toolCalls
 
 				// Add the assistant message with tool calls
 				messages = append(messages, msg)
@@ -583,7 +661,68 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 		messages = append(messages, msg)
 	}
 
+	// Merge consecutive same-role messages for Anthropic
+	if b.provider == schemas.Anthropic {
+		messages = b.mergeConsecutiveSameRoleMessages(messages)
+	}
+
 	return messages
+}
+
+// mergeConsecutiveSameRoleMessages merges consecutive messages with the same role
+// into a single message with combined content blocks. Tool messages are never merged.
+func (b *LLM) mergeConsecutiveSameRoleMessages(messages []schemas.ChatMessage) []schemas.ChatMessage {
+	if len(messages) <= 1 {
+		return messages
+	}
+	merged := make([]schemas.ChatMessage, 0, len(messages))
+	for _, msg := range messages {
+		if len(merged) > 0 && merged[len(merged)-1].Role == msg.Role &&
+			msg.Role != schemas.ChatMessageRoleTool {
+			// Merge into previous message by converting both to content blocks
+			prev := &merged[len(merged)-1]
+			prevBlocks := messageToContentBlocks(prev)
+			newBlocks := messageToContentBlocks(&msg)
+			prev.Content = &schemas.ChatMessageContent{
+				ContentBlocks: append(prevBlocks, newBlocks...),
+			}
+			// Merge assistant metadata (tool calls, reasoning)
+			if msg.ChatAssistantMessage != nil {
+				if prev.ChatAssistantMessage == nil {
+					prev.ChatAssistantMessage = msg.ChatAssistantMessage
+				} else {
+					prev.ToolCalls = append(
+						prev.ToolCalls,
+						msg.ToolCalls...)
+					if msg.ReasoningDetails != nil {
+						prev.ReasoningDetails = append(
+							prev.ReasoningDetails,
+							msg.ReasoningDetails...)
+					}
+				}
+			}
+		} else {
+			merged = append(merged, msg)
+		}
+	}
+	return merged
+}
+
+// messageToContentBlocks extracts content blocks from a ChatMessage.
+func messageToContentBlocks(msg *schemas.ChatMessage) []schemas.ChatContentBlock {
+	if msg.Content == nil {
+		return nil
+	}
+	if len(msg.Content.ContentBlocks) > 0 {
+		return msg.Content.ContentBlocks
+	}
+	if msg.Content.ContentStr != nil {
+		return []schemas.ChatContentBlock{{
+			Type: schemas.ChatContentBlockTypeText,
+			Text: msg.Content.ContentStr,
+		}}
+	}
+	return nil
 }
 
 // createMultimodalContent creates content blocks for messages with images.
@@ -726,8 +865,24 @@ func Ptr[T any](v T) *T {
 }
 
 // shouldUseResponsesAPI determines if the Responses API should be used for this request.
-func (b *LLM) shouldUseResponsesAPI() bool {
-	return b.useResponsesAPI && len(b.enabledNativeTools) > 0
+func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
+	if len(b.enabledNativeTools) > 0 {
+		return true
+	}
+	if cfg.NativeWebSearchAllowed && b.isNativeToolEnabled("web_search") {
+		return true
+	}
+	return false
+}
+
+// isNativeToolEnabled checks if a native tool is enabled by name.
+func (b *LLM) isNativeToolEnabled(name string) bool {
+	for _, t := range b.enabledNativeTools {
+		if t == name {
+			return true
+		}
+	}
+	return false
 }
 
 // convertToResponsesMessages converts llm.Post messages to Bifrost ResponsesMessage format.
@@ -773,6 +928,17 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 					ContentStr: Ptr(post.Message),
 				},
 			}
+
+			// Add reasoning for thinking-enabled conversations
+			if post.Reasoning != "" {
+				msg.ResponsesReasoning = &schemas.ResponsesReasoning{
+					Summary: []schemas.ResponsesReasoningSummary{{
+						Type: schemas.ResponsesReasoningContentBlockTypeSummaryText,
+						Text: post.Reasoning,
+					}},
+				}
+			}
+
 			messages = append(messages, msg)
 
 			// Handle tool calls in assistant messages
@@ -856,7 +1022,7 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ResponsesTool {
 	var result []schemas.ResponsesTool
 
-	// Add native tools
+	// Add native tools (always add when configured, regardless of ToolsDisabled)
 	for _, nativeTool := range b.enabledNativeTools {
 		switch nativeTool {
 		case "web_search":
@@ -872,6 +1038,14 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 				Type: schemas.ResponsesToolTypeCodeInterpreter,
 			})
 		}
+	}
+
+	// When NativeWebSearchAllowed is true but web_search is not in enabledNativeTools,
+	// add it dynamically
+	if cfg.NativeWebSearchAllowed && !b.isNativeToolEnabled("web_search") {
+		result = append(result, schemas.ResponsesTool{
+			Type: schemas.ResponsesToolTypeWebSearch,
+		})
 	}
 
 	// Add custom function tools if available
@@ -916,19 +1090,24 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 }
 
 // buildResponsesReasoning creates a ResponsesParametersReasoning configuration if reasoning is enabled.
-func (b *LLM) buildResponsesReasoning() *schemas.ResponsesParametersReasoning {
-	if !b.reasoningEnabled {
+func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.ResponsesParametersReasoning {
+	if !b.reasoningEnabled || cfg.ReasoningDisabled {
 		return nil
 	}
 	reasoning := &schemas.ResponsesParametersReasoning{}
-	effort := b.reasoningEffort
-	if effort == "" {
-		effort = "medium"
-	}
-	reasoning.Effort = Ptr(effort)
-	// Anthropic requires MaxTokens for thinking
-	if b.provider == schemas.Anthropic && b.thinkingBudget > 0 {
-		reasoning.MaxTokens = Ptr(b.thinkingBudget)
+
+	if b.provider == schemas.Anthropic {
+		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
+		if budget >= cfg.MaxGeneratedTokens {
+			return nil // Anthropic requires budget < max_tokens
+		}
+		reasoning.MaxTokens = Ptr(budget)
+	} else {
+		effort := b.reasoningEffort
+		if effort == "" {
+			effort = "medium"
+		}
+		reasoning.Effort = Ptr(effort)
 	}
 	return reasoning
 }
@@ -953,9 +1132,7 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 		params.Tools = tools
 	}
 	// Apply reasoning configuration
-	if b.reasoningEnabled {
-		params.Reasoning = b.buildResponsesReasoning()
-	}
+	params.Reasoning = b.buildResponsesReasoning(cfg)
 	req.Params = params
 
 	return req
