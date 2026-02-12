@@ -6,7 +6,6 @@ package bifrost
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -23,7 +22,7 @@ type FetchModelsConfig struct {
 }
 
 // FetchModels retrieves the list of available models from a provider using Bifrost.
-func FetchModels(cfg FetchModelsConfig, httpClient *http.Client) ([]llm.ModelInfo, error) {
+func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 	account := &providerAccount{
 		provider: cfg.Provider,
 		apiKey:   cfg.APIKey,
@@ -72,7 +71,7 @@ func FetchModels(cfg FetchModelsConfig, httpClient *http.Client) ([]llm.ModelInf
 }
 
 // FetchModelsForServiceType fetches models for a given service type string.
-func FetchModelsForServiceType(serviceType, apiKey, apiURL, orgID string, httpClient *http.Client) ([]llm.ModelInfo, error) {
+func FetchModelsForServiceType(serviceType, apiKey, apiURL, orgID string) ([]llm.ModelInfo, error) {
 	provider, err := MapServiceTypeToProvider(serviceType)
 	if err != nil {
 		return nil, fmt.Errorf("model fetching not supported for service type: %s", serviceType)
@@ -83,5 +82,5 @@ func FetchModelsForServiceType(serviceType, apiKey, apiURL, orgID string, httpCl
 		APIKey:   apiKey,
 		APIURL:   apiURL,
 		OrgID:    orgID,
-	}, httpClient)
+	})
 }

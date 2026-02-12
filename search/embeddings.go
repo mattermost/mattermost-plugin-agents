@@ -35,16 +35,16 @@ func newVectorStore(db *sqlx.DB, config embeddings.UpstreamConfig, dimensions in
 
 // BifrostEmbeddingConfig holds configuration for Bifrost-based embeddings
 type BifrostEmbeddingConfig struct {
-	Provider string `json:"provider"` // e.g., "openai", "anthropic", "cohere"
+	Provider string `json:"provider"` // e.g., "openai", "azure", "cohere", "bedrock"
 	APIKey   string `json:"apiKey"`
-	APIURL   string `json:"apiUrl,omitempty"`
+	APIURL   string `json:"apiURL,omitempty"`
 	Model    string `json:"model"` // e.g., "text-embedding-3-small"
 }
 
 // OpenAIEmbeddingConfig holds configuration for OpenAI-based embeddings (via Bifrost)
 type OpenAIEmbeddingConfig struct {
 	APIKey string `json:"apiKey"`
-	APIURL string `json:"apiUrl,omitempty"`
+	APIURL string `json:"apiURL,omitempty"`
 	Model  string `json:"defaultModel"` // e.g., "text-embedding-3-small"
 }
 

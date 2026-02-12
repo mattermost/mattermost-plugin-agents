@@ -165,10 +165,10 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 			expected:           true,
 		},
 		{
-			name:               "NativeWebSearchAllowed without web_search in tools returns false",
+			name:               "NativeWebSearchAllowed without web_search in tools returns true",
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
-			expected:           false,
+			expected:           true,
 		},
 		{
 			name:               "nothing configured returns false",

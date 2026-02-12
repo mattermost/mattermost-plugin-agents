@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -409,8 +410,14 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 				if choice.FinishReason != nil {
 					switch *choice.FinishReason {
 					case "tool_calls":
-						// Convert buffered tool calls
-						for _, buf := range toolCallsBuffer {
+						// Convert buffered tool calls in index order
+						indices := make([]int, 0, len(toolCallsBuffer))
+						for k := range toolCallsBuffer {
+							indices = append(indices, k)
+						}
+						sort.Ints(indices)
+						for _, k := range indices {
+							buf := toolCallsBuffer[k]
 							toolCalls = append(toolCalls, llm.ToolCall{
 								ID:        buf.id,
 								Name:      buf.name,
@@ -472,9 +479,15 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 		}
 	}
 
-	// If we have pending tool calls, emit them
+	// If we have pending tool calls, emit them in index order
 	if len(toolCallsBuffer) > 0 && len(toolCalls) == 0 {
-		for _, buf := range toolCallsBuffer {
+		indices := make([]int, 0, len(toolCallsBuffer))
+		for k := range toolCallsBuffer {
+			indices = append(indices, k)
+		}
+		sort.Ints(indices)
+		for _, k := range indices {
+			buf := toolCallsBuffer[k]
 			if buf.name != "" {
 				toolCalls = append(toolCalls, llm.ToolCall{
 					ID:        buf.id,
@@ -866,10 +879,13 @@ func Ptr[T any](v T) *T {
 
 // shouldUseResponsesAPI determines if the Responses API should be used for this request.
 func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
+	if b.useResponsesAPI {
+		return true
+	}
 	if len(b.enabledNativeTools) > 0 {
 		return true
 	}
-	if cfg.NativeWebSearchAllowed && b.isNativeToolEnabled("web_search") {
+	if cfg.NativeWebSearchAllowed {
 		return true
 	}
 	return false
@@ -1369,9 +1385,15 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 					annotations = nil
 				}
 
-				// Response completed - emit tool calls if any
+				// Response completed - emit tool calls if any, in sorted key order
 				if len(toolCallsBuffer) > 0 {
-					for _, buf := range toolCallsBuffer {
+					keys := make([]string, 0, len(toolCallsBuffer))
+					for k := range toolCallsBuffer {
+						keys = append(keys, k)
+					}
+					sort.Strings(keys)
+					for _, k := range keys {
+						buf := toolCallsBuffer[k]
 						if buf.name != "" {
 							toolCalls = append(toolCalls, llm.ToolCall{
 								ID:        buf.id,
@@ -1411,9 +1433,15 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 		}
 	}
 
-	// If we have pending tool calls, emit them
+	// If we have pending tool calls, emit them in sorted key order
 	if len(toolCallsBuffer) > 0 && len(toolCalls) == 0 {
-		for _, buf := range toolCallsBuffer {
+		keys := make([]string, 0, len(toolCallsBuffer))
+		for k := range toolCallsBuffer {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			buf := toolCallsBuffer[k]
 			if buf.name != "" {
 				toolCalls = append(toolCalls, llm.ToolCall{
 					ID:        buf.id,

@@ -393,11 +393,12 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	var models []llm.ModelInfo
-	var err error
+	if !bifrost.IsSupported(req.ServiceType) {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("model fetching not supported for service type: %s", req.ServiceType))
+		return
+	}
 
-	models, err = bifrost.FetchModelsForServiceType(req.ServiceType, req.APIKey, req.APIURL, req.OrgID, a.llmUpstreamHTTPClient)
-
+	models, err := bifrost.FetchModelsForServiceType(req.ServiceType, req.APIKey, req.APIURL, req.OrgID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
 		return
