@@ -469,7 +469,7 @@ The MCP server provides the following tools to AI agents and external clients:
 
 ### Deployment
 
-![MCP Server Configuration](img/system-console-mcp.PNG)
+![MCP Server Configuration](img/system-console-mcp.png)
 
 #### For AI Agents
 
