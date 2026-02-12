@@ -5,4 +5,4 @@ CREATE TABLE IF NOT EXISTS Agents_ConfigHistory (
     Active BOOLEAN NOT NULL DEFAULT false
 );
 
-CREATE INDEX IF NOT EXISTS idx_agents_confighistory_active ON Agents_ConfigHistory(Active);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_confighistory_active ON Agents_ConfigHistory(Active) WHERE Active = true;

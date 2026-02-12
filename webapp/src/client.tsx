@@ -6,6 +6,8 @@ import {ChannelWithTeamData} from '@mattermost/types/channels';
 
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
+import {PluginConfig} from '@/components/system_console/plugin_config_types';
+
 import manifest from './manifest';
 
 import {ToolCall} from './components/tool_types';
@@ -541,7 +543,7 @@ export async function getChannelInterval(
     });
 }
 
-export async function getPluginConfig(): Promise<any> {
+export async function getPluginConfig(): Promise<PluginConfig> {
     const url = `${baseRoute()}/admin/config`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
@@ -558,7 +560,7 @@ export async function getPluginConfig(): Promise<any> {
     });
 }
 
-export async function savePluginConfig(config: any): Promise<void> {
+export async function savePluginConfig(config: PluginConfig): Promise<void> {
     const url = `${baseRoute()}/admin/config`;
     const response = await fetch(url, Client4.getOptions({
         method: 'PUT',

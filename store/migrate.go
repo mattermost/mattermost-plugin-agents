@@ -48,7 +48,7 @@ func (s *Store) RunMigrations() error {
 	engine, err := morph.New(context.Background(), driver, source,
 		morph.WithLock("agents-plugin-lock-key"),
 		morph.SetMigrationTableName("Agents_DB_Migrations"),
-		morph.SetStatementTimeoutInSeconds(100000),
+		morph.SetStatementTimeoutInSeconds(300),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create morph engine: %w", err)

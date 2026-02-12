@@ -18,26 +18,11 @@ import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} fro
 import NoBotsPage from './no_bots_page';
 import NoServicesPage from './no_services_page';
 import EmbeddingSearchPanel from './embedding_search/embedding_search_panel';
-import {EmbeddingSearchConfig} from './embedding_search/types';
-import MCPServers, {MCPConfig} from './mcp_servers';
-import WebSearchPanel, {WebSearchConfig as WebSearchSettings} from './web_search/web_search_panel';
+import MCPServers from './mcp_servers';
+import {PluginConfig} from './plugin_config_types';
+import WebSearchPanel from './web_search/web_search_panel';
 
-type Config = {
-    services: LLMService[],
-    bots: LLMBotConfig[],
-    defaultBotName: string,
-    transcriptBackend: string,
-    enableLLMTrace: boolean,
-    enableTokenUsageLogging: boolean,
-    enableCallSummary: boolean,
-    allowedUpstreamHostnames: string,
-    allowUnsafeLinks: boolean,
-    enableChannelMentionToolCalling: boolean,
-    allowNativeWebSearchInChannels: boolean,
-    embeddingSearchConfig: EmbeddingSearchConfig,
-    mcp: MCPConfig,
-    webSearch: WebSearchSettings,
-}
+type Config = PluginConfig;
 
 type Props = {
     id: string
@@ -195,7 +180,7 @@ const Config = (props: Props) => {
             }
         };
         loadConfig();
-    }, []);
+    }, [intl]);
 
     // Register save action that PUTs config to plugin API
     useEffect(() => {
