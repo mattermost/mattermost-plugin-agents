@@ -106,6 +106,11 @@ func (a *API) convertRequestToLLMOptions(req bridgeclient.CompletionRequest) ([]
 
 	// Plugin bridge requests do not allow tools to be enabled
 	options = append(options, llm.WithToolsDisabled())
+
+	if req.DisableReasoning {
+		options = append(options, llm.WithReasoningDisabled())
+	}
+
 	return options, nil
 }
 

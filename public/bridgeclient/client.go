@@ -41,6 +41,10 @@ type CompletionRequest struct {
 	Posts              []Post                 `json:"posts"`
 	MaxGeneratedTokens int                    `json:"max_generated_tokens,omitempty"`
 	JSONOutputFormat   map[string]interface{} `json:"json_output_format,omitempty"`
+	// DisableReasoning disables reasoning/thinking for this request.
+	// When true, reasoning blocks will not be included in the response,
+	// even if the underlying bot has reasoning enabled.
+	DisableReasoning bool `json:"disable_reasoning,omitempty"`
 	// UserID is the optional Mattermost user ID making the request.
 	// If provided, the bridge will check user-level permissions.
 	UserID string `json:"user_id,omitempty"`

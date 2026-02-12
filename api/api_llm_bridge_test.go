@@ -20,6 +20,62 @@ import (
 
 // Full-stack integration tests using bridge client → real API → fake LLM
 
+func TestConvertRequestToLLMOptions(t *testing.T) {
+	tests := []struct {
+		name                    string
+		request                 bridgeclient.CompletionRequest
+		expectToolsDisabled     bool
+		expectReasoningDisabled bool
+	}{
+		{
+			name: "default request disables tools but not reasoning",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{{Role: "user", Message: "hello"}},
+			},
+			expectToolsDisabled:     true,
+			expectReasoningDisabled: false,
+		},
+		{
+			name: "disable reasoning flag is passed through",
+			request: bridgeclient.CompletionRequest{
+				Posts:            []bridgeclient.Post{{Role: "user", Message: "hello"}},
+				DisableReasoning: true,
+			},
+			expectToolsDisabled:     true,
+			expectReasoningDisabled: true,
+		},
+		{
+			name: "max generated tokens with disable reasoning",
+			request: bridgeclient.CompletionRequest{
+				Posts:              []bridgeclient.Post{{Role: "user", Message: "hello"}},
+				MaxGeneratedTokens: 500,
+				DisableReasoning:   true,
+			},
+			expectToolsDisabled:     true,
+			expectReasoningDisabled: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			opts, err := e.api.convertRequestToLLMOptions(tc.request)
+			require.NoError(t, err)
+
+			// Apply options to a config to verify
+			cfg := &llm.LanguageModelConfig{}
+			for _, opt := range opts {
+				opt(cfg)
+			}
+
+			require.Equal(t, tc.expectToolsDisabled, cfg.ToolsDisabled, "ToolsDisabled")
+			require.Equal(t, tc.expectReasoningDisabled, cfg.ReasoningDisabled, "ReasoningDisabled")
+		})
+	}
+}
+
 func TestBridgeClientAgentCompletion(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
