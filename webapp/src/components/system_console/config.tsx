@@ -187,7 +187,7 @@ const Config = (props: Props) => {
         const save = async () => {
             try {
                 await savePluginConfig(localConfig);
-                Object.keys(avatarUpdates).map((username: string) => setUserProfilePictureByUsername(username, avatarUpdates[username]));
+                Object.keys(avatarUpdates).forEach((username: string) => setUserProfilePictureByUsername(username, avatarUpdates[username]));
                 return {};
             } catch (e: any) {
                 return {error: {message: intl.formatMessage({defaultMessage: 'Failed to save configuration.'})}};
@@ -197,7 +197,7 @@ const Config = (props: Props) => {
         return () => {
             props.unRegisterSaveAction(save);
         };
-    }, [localConfig, avatarUpdates]);
+    }, [localConfig, avatarUpdates, intl, props.registerSaveAction, props.unRegisterSaveAction]);
 
     const updateConfig = useCallback((updates: Partial<Config>) => {
         setLocalConfig((prev) => ({...prev, ...updates}));
