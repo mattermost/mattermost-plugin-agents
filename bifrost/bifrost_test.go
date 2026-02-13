@@ -478,3 +478,91 @@ func TestNormalizeOpenAIBaseURL(t *testing.T) {
 		})
 	}
 }
+
+func intPtr(i int) *int       { return &i }
+func strPtr(s string) *string { return &s }
+
+func TestConvertBifrostAnnotation(t *testing.T) {
+	tests := []struct {
+		name     string
+		ann      *schemas.ResponsesOutputMessageContentTextAnnotation
+		index    int
+		expected *llm.Annotation
+	}{
+		{
+			name:     "nil annotation",
+			ann:      nil,
+			index:    1,
+			expected: nil,
+		},
+		{
+			name: "non-url_citation type is ignored",
+			ann: &schemas.ResponsesOutputMessageContentTextAnnotation{
+				Type: "file_citation",
+			},
+			index:    1,
+			expected: nil,
+		},
+		{
+			name: "OpenAI fields used when present",
+			ann: &schemas.ResponsesOutputMessageContentTextAnnotation{
+				Type:       "url_citation",
+				StartIndex: intPtr(10),
+				EndIndex:   intPtr(50),
+				URL:        strPtr("https://example.com"),
+				Title:      strPtr("Example"),
+				Text:       strPtr("cited text"),
+			},
+			index: 1,
+			expected: &llm.Annotation{
+				Type:       llm.AnnotationTypeURLCitation,
+				StartIndex: 10,
+				EndIndex:   50,
+				URL:        "https://example.com",
+				Title:      "Example",
+				CitedText:  "cited text",
+				Index:      1,
+			},
+		},
+		{
+			name: "nil StartIndex and EndIndex default to zero",
+			ann: &schemas.ResponsesOutputMessageContentTextAnnotation{
+				Type:  "url_citation",
+				URL:   strPtr("https://anthropic.com"),
+				Title: strPtr("Anthropic"),
+			},
+			index: 3,
+			expected: &llm.Annotation{
+				Type:  llm.AnnotationTypeURLCitation,
+				URL:   "https://anthropic.com",
+				Title: "Anthropic",
+				Index: 3,
+			},
+		},
+		{
+			name: "all position fields nil defaults to zero",
+			ann: &schemas.ResponsesOutputMessageContentTextAnnotation{
+				Type: "url_citation",
+				URL:  strPtr("https://example.com"),
+			},
+			index: 1,
+			expected: &llm.Annotation{
+				Type:  llm.AnnotationTypeURLCitation,
+				URL:   "https://example.com",
+				Index: 1,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertBifrostAnnotation(tt.ann, tt.index)
+			if tt.expected == nil {
+				require.Nil(t, result)
+			} else {
+				require.NotNil(t, result)
+				assert.Equal(t, *tt.expected, *result)
+			}
+		})
+	}
+}

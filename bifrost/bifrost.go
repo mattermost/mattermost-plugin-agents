@@ -1190,8 +1190,10 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	var reasoningSignature string
 	var reasoningComplete bool
 
-	// Annotation buffer
+	// Annotation buffer and text position tracking
 	var annotations []llm.Annotation
+	var textLen int       // cumulative byte length of all streamed text
+	var blockStartPos int // byte position where current text block started
 
 	// Watchdog timer for streaming timeout
 	watchdog := make(chan struct{})
@@ -1259,6 +1261,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 						Type:  llm.EventTypeText,
 						Value: *resp.Delta,
 					}
+					textLen += len(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
@@ -1288,6 +1291,15 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				// Accumulate annotations as they arrive
 				if resp.Annotation != nil {
 					if ann := convertBifrostAnnotation(resp.Annotation, len(annotations)+1); ann != nil {
+						// Bifrost doesn't provide output-text positions during Anthropic streaming.
+						// Compute them from tracked block boundaries, matching the approach used by
+						// the old Anthropic SDK implementation (extractAnnotations).
+						if resp.Annotation.StartIndex == nil {
+							ann.StartIndex = blockStartPos
+						}
+						if resp.Annotation.EndIndex == nil {
+							ann.EndIndex = textLen
+						}
 						annotations = append(annotations, *ann)
 					}
 				}
@@ -1296,8 +1308,8 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				// Annotation finalized - no additional action needed
 
 			case schemas.ResponsesStreamResponseTypeOutputTextDone:
-				// Text complete - emit accumulated annotations.
-				// Keep the buffer so subsequent output_text_done events can include
+				// Text block complete - emit accumulated annotations and advance block position.
+				// Keep the annotation buffer so subsequent output_text_done events can include
 				// citations accumulated across the full response.
 				if len(annotations) > 0 {
 					output <- llm.TextStreamEvent{
@@ -1305,6 +1317,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 						Value: annotations,
 					}
 				}
+				blockStartPos = textLen
 
 			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
 				// Tool call arguments delta

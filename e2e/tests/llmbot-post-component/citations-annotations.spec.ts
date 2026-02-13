@@ -28,7 +28,8 @@ import {
  * 4. Citation Multiple Citations
  * 5. Citation Persistence After Refresh
  * 6. Citations with Markdown Content
- * 7. Citation Favicon Display
+ * 7. Citation Inline Positioning
+ * 8. Citation Favicon Display
  */
 
 const username = 'regularuser';
@@ -331,6 +332,35 @@ function createProviderTestSuite(provider: ProviderBundle) {
             // Web search in DM context MUST produce citations
             expect(count).toBeGreaterThan(0);
             await expect(citations.first()).toBeVisible();
+        });
+
+        test('Citation Inline Positioning', async ({ page }) => {
+            test.skip(!config.shouldRunTests, skipMessage);
+            test.setTimeout(360000); // 6 minutes: allows 5 min streaming + buffer
+
+            const { mmPage, aiPlugin, llmBotHelper, botUsername } = await setupTestPage(page, mattermost, provider);
+            await mmPage.login(mattermost.url(), username, password);
+
+            // Navigate to DM with bot (required for web_search native tool)
+            await mmPage.createAndNavigateToDMWithBot(mattermost, username, password, botUsername);
+
+            await aiPlugin.openRHS();
+
+            const isAnthropic = provider.service.type === 'anthropic';
+            const prompt = isAnthropic
+                ? 'Search the web for TypeScript, JavaScript, and React. Briefly compare them in one paragraph and include at least 2 citations from different sources in the final answer.'
+                : 'Use web search to find TypeScript, JavaScript, React info and briefly compare with citations (1 paragraph)';
+
+            await aiPlugin.sendMessage(withCitationInstruction(prompt));
+
+            // Wait for streaming to complete (smart wait, up to 5 min)
+            await llmBotHelper.waitForStreamingComplete();
+
+            // Wait for multiple citations to appear
+            await llmBotHelper.waitForCitationWithRetry(2, undefined, 60000);
+
+            // Verify citations are inline (not all grouped at beginning)
+            await llmBotHelper.expectCitationsInline();
         });
 
         test('Citation Favicon Display', async ({ page }) => {
