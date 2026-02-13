@@ -472,7 +472,6 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 				}
 			}
 		}
-
 	}
 
 	// Emit any unsent reasoning
@@ -1436,7 +1435,6 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				}
 			}
 		}
-
 	}
 
 	// If we have pending tool calls, emit them in sorted key order
