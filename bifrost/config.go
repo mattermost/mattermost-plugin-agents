@@ -5,6 +5,7 @@ package bifrost
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -62,6 +63,8 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		}
 	}
 
+	apiURL = normalizeOpenAIBaseURL(provider, apiURL)
+
 	cfg := Config{
 		Provider:           provider,
 		APIKey:             serviceConfig.APIKey,
@@ -90,6 +93,19 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 	}
 
 	return New(cfg)
+}
+
+// normalizeOpenAIBaseURL strips a trailing /v1 suffix from API URLs for OpenAI-type providers.
+// Bifrost constructs full request paths starting with /v1/ (e.g., /v1/chat/completions,
+// /v1/responses), so the base URL must not include a /v1 suffix. This maintains backward
+// compatibility with URLs like "https://api.openai.com/v1" which were handled correctly
+// by the previous OpenAI Go SDK.
+func normalizeOpenAIBaseURL(provider schemas.ModelProvider, apiURL string) string {
+	if provider == schemas.OpenAI && apiURL != "" {
+		apiURL = strings.TrimRight(apiURL, "/")
+		apiURL = strings.TrimSuffix(apiURL, "/v1")
+	}
+	return apiURL
 }
 
 // IsSupported returns true if the service type is supported by Bifrost.

@@ -419,3 +419,62 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeOpenAIBaseURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider schemas.ModelProvider
+		apiURL   string
+		expected string
+	}{
+		{
+			name:     "strips /v1 suffix from OpenAI URL",
+			provider: schemas.OpenAI,
+			apiURL:   "https://api.openai.com/v1",
+			expected: "https://api.openai.com",
+		},
+		{
+			name:     "strips /v1/ suffix from OpenAI URL",
+			provider: schemas.OpenAI,
+			apiURL:   "https://api.openai.com/v1/",
+			expected: "https://api.openai.com",
+		},
+		{
+			name:     "no change for URL without /v1",
+			provider: schemas.OpenAI,
+			apiURL:   "http://localhost:8080",
+			expected: "http://localhost:8080",
+		},
+		{
+			name:     "no change for empty URL",
+			provider: schemas.OpenAI,
+			apiURL:   "",
+			expected: "",
+		},
+		{
+			name:     "preserves /v1 in non-suffix position",
+			provider: schemas.OpenAI,
+			apiURL:   "http://localhost:8080/v1/proxy",
+			expected: "http://localhost:8080/v1/proxy",
+		},
+		{
+			name:     "no change for Anthropic provider",
+			provider: schemas.Anthropic,
+			apiURL:   "https://api.anthropic.com/v1",
+			expected: "https://api.anthropic.com/v1",
+		},
+		{
+			name:     "strips from custom OpenAI-compatible URL",
+			provider: schemas.OpenAI,
+			apiURL:   "http://myserver:11434/v1",
+			expected: "http://myserver:11434",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeOpenAIBaseURL(tt.provider, tt.apiURL)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

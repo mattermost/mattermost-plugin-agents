@@ -91,7 +91,7 @@ export class OpenAIMockContainer {
 		return this.addMock({
 			request: {
 				method: "POST",
-				path: prefix + "/chat/completions",
+				path: prefix + "/v1/chat/completions",
 			},
 			context: {
 				times: 100,
@@ -112,7 +112,7 @@ export class OpenAIMockContainer {
 		return this.addMock({
 			request: {
 				method: "POST",
-				path: prefix + "/chat/completions",
+				path: prefix + "/v1/chat/completions",
 				body: {
 					matcher: "ShouldContainSubstring",
 					value: requestBodyContains
@@ -137,7 +137,7 @@ export class OpenAIMockContainer {
 		return this.addMock({
 			request: {
 				method: "POST",
-				path: prefix + "/chat/completions",
+				path: prefix + "/v1/chat/completions",
 			},
 			context: {
 				times: 100,
