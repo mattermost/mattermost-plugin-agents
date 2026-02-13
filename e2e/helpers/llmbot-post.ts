@@ -435,7 +435,7 @@ export class LLMBotPostHelper {
                     throw error;
                 }
                 await this.regenerateResponse(postId);
-                await this.waitForStreamingComplete();
+                await this.waitForStreamingComplete(maxTimeout);
             }
         }
     }

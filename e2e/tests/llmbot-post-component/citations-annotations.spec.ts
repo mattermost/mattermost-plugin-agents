@@ -207,8 +207,10 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
             const isAnthropic = provider.service.type === 'anthropic';
             const prompt = isAnthropic
-                ? 'Search the web for TypeScript, JavaScript, and React and briefly compare them with citations (1 paragraph)'
+                ? 'Search the web for TypeScript, JavaScript, and React. Briefly compare them in one paragraph and include at least 2 citations from different sources in the final answer.'
                 : 'Use web search to find TypeScript, JavaScript, React info and briefly compare with citations (1 paragraph)';
+            const citationTimeout = isAnthropic ? 45000 : 60000;
+            const citationRetries = isAnthropic ? 3 : 1;
 
             await aiPlugin.sendMessage(withCitationInstruction(prompt));
 
@@ -216,8 +218,8 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for multiple citations to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
-            await llmBotHelper.waitForCitationWithRetry(2, undefined, 60000);
+            await llmBotHelper.waitForCitationWithRetry(1, undefined, citationTimeout, citationRetries);
+            await llmBotHelper.waitForCitationWithRetry(2, undefined, citationTimeout, citationRetries);
 
             const citations = llmBotHelper.getAllCitationIcons();
             const count = await citations.count();

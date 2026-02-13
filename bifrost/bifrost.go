@@ -1296,13 +1296,14 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				// Annotation finalized - no additional action needed
 
 			case schemas.ResponsesStreamResponseTypeOutputTextDone:
-				// Text complete - emit accumulated annotations
+				// Text complete - emit accumulated annotations.
+				// Keep the buffer so subsequent output_text_done events can include
+				// citations accumulated across the full response.
 				if len(annotations) > 0 {
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeAnnotations,
 						Value: annotations,
 					}
-					annotations = nil
 				}
 
 			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
@@ -1391,7 +1392,6 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 						Type:  llm.EventTypeAnnotations,
 						Value: annotations,
 					}
-					annotations = nil
 				}
 
 				// Response completed - emit tool calls if any, in sorted key order
