@@ -275,15 +275,16 @@ func (a *API) handleToolCall(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
-	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
 		return
 	}
 
-	// Defense-in-depth: block channel tool calls if config flag is off
-	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	// Defense-in-depth: block channel tool calls if config flag is off.
+	// Use post.UserId (the bot that created the post) to check the DM,
+	// because the botUsername query parameter may resolve to a different bot.
+	isDM := mmapi.IsDMWith(post.UserId, channel)
 	if !isDM && !a.config.EnableChannelMentionToolCalling() {
 		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
 		return
@@ -324,15 +325,16 @@ func (a *API) handleToolCallPrivate(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
-	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
 		return
 	}
 
-	// Defense-in-depth: block channel tool call access if config flag is off
-	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	// Defense-in-depth: block channel tool call access if config flag is off.
+	// Use post.UserId (the bot that created the post) to check the DM,
+	// because the botUsername query parameter may resolve to a different bot.
+	isDM := mmapi.IsDMWith(post.UserId, channel)
 	if !isDM && !a.config.EnableChannelMentionToolCalling() {
 		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
 		return
@@ -362,15 +364,16 @@ func (a *API) handleToolResultPrivate(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
-	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
 		return
 	}
 
-	// Defense-in-depth: block channel tool result access if config flag is off
-	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	// Defense-in-depth: block channel tool result access if config flag is off.
+	// Use post.UserId (the bot that created the post) to check the DM,
+	// because the botUsername query parameter may resolve to a different bot.
+	isDM := mmapi.IsDMWith(post.UserId, channel)
 	if !isDM && !a.config.EnableChannelMentionToolCalling() {
 		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
 		return
@@ -400,15 +403,16 @@ func (a *API) handleToolResult(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
-	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
 		return
 	}
 
-	// Defense-in-depth: block channel tool results if config flag is off
-	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	// Defense-in-depth: block channel tool results if config flag is off.
+	// Use post.UserId (the bot that created the post) to check the DM,
+	// because the botUsername query parameter may resolve to a different bot.
+	isDM := mmapi.IsDMWith(post.UserId, channel)
 	if !isDM && !a.config.EnableChannelMentionToolCalling() {
 		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
 		return
