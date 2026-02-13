@@ -26,7 +26,7 @@ import (
 const (
 	DefaultMaxTokens        = 8192
 	MaxToolResolutionDepth  = 10
-	DefaultStreamingTimeout = 30 * time.Second
+	DefaultStreamingTimeout = 5 * time.Minute
 )
 
 // LLM implements the llm.LanguageModel interface using the Bifrost gateway.
@@ -76,13 +76,14 @@ type Config struct {
 
 // providerAccount implements the Bifrost Account interface for a single provider.
 type providerAccount struct {
-	provider  schemas.ModelProvider
-	apiKey    string
-	apiURL    string
-	orgID     string
-	region    string
-	awsKeyID  string
-	awsSecret string
+	provider                schemas.ModelProvider
+	apiKey                  string
+	apiURL                  string
+	orgID                   string
+	region                  string
+	awsKeyID                string
+	awsSecret               string
+	streamingTimeoutSeconds int
 }
 
 func (a *providerAccount) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
@@ -126,6 +127,15 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 
 	networkConfig := schemas.DefaultNetworkConfig
 
+	// Pass through the streaming timeout to the Bifrost HTTP client so that
+	// long-running requests (e.g. thinking models) are not killed by the
+	// underlying fasthttp ReadTimeout before the watchdog timer fires.
+	if a.streamingTimeoutSeconds > 0 {
+		networkConfig.DefaultRequestTimeoutInSeconds = a.streamingTimeoutSeconds * 10
+	} else {
+		networkConfig.DefaultRequestTimeoutInSeconds = int(DefaultStreamingTimeout.Seconds()) * 10
+	}
+
 	// Use BaseURL for providers that support custom endpoints (not Azure, which uses AzureKeyConfig)
 	if a.apiURL != "" && a.provider != schemas.Azure {
 		networkConfig.BaseURL = a.apiURL
@@ -154,13 +164,14 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 // New creates a new LLM instance with the given configuration.
 func New(cfg Config) (*LLM, error) {
 	account := &providerAccount{
-		provider:  cfg.Provider,
-		apiKey:    cfg.APIKey,
-		apiURL:    cfg.APIURL,
-		orgID:     cfg.OrgID,
-		region:    cfg.Region,
-		awsKeyID:  cfg.AWSAccessKeyID,
-		awsSecret: cfg.AWSSecretAccessKey,
+		provider:                cfg.Provider,
+		apiKey:                  cfg.APIKey,
+		apiURL:                  cfg.APIURL,
+		orgID:                   cfg.OrgID,
+		region:                  cfg.Region,
+		awsKeyID:                cfg.AWSAccessKeyID,
+		awsSecret:               cfg.AWSSecretAccessKey,
+		streamingTimeoutSeconds: int(cfg.StreamingTimeout.Seconds()),
 	}
 
 	bifrostConfig := schemas.BifrostConfig{
@@ -462,10 +473,6 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 			}
 		}
 
-		// Check if this is the final chunk
-		if bifrostcore.IsFinalChunk(bifrostCtx) {
-			break
-		}
 	}
 
 	// Emit any unsent reasoning
@@ -1430,10 +1437,6 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 			}
 		}
 
-		// Check if this is the final chunk
-		if bifrostcore.IsFinalChunk(bifrostCtx) {
-			break
-		}
 	}
 
 	// If we have pending tool calls, emit them in sorted key order
