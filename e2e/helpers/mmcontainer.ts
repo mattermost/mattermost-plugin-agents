@@ -90,15 +90,38 @@ export default class MattermostContainer {
         await this.container.exec(["mmctl", "--local", "config", "set", "ServiceSettings.ListenAddress", `${containerPort}`])
     }
 
-    installPlugin = async (pluginPath: string, pluginID: string, pluginConfig: any) => {
-		const patch = JSON.stringify({PluginSettings: {Plugins: {[pluginID]: pluginConfig}}})
-
+    installPlugin = async (pluginPath: string, pluginID: string, pluginConfig?: any) => {
         await this.container.copyFilesToContainer([{source: pluginPath, target: `/tmp/plugin.tar.gz`}])
-        await this.container.copyContentToContainer([{content: patch, target: `/tmp/plugin.config.json`}])
 
         await this.container.exec(["mmctl", "--local", "plugin", "add", '/tmp/plugin.tar.gz'])
-        await this.container.exec(["mmctl", "--local", "config", "patch", '/tmp/plugin.config.json'])
         await this.container.exec(["mmctl", "--local", "plugin", "enable", pluginID])
+
+        // Set config via plugin admin API (replaces mmctl config patch)
+        if (pluginConfig) {
+            // Callers pass { config: {...} } — extract the inner config object
+            // since the admin API expects config.Config directly
+            const configData = pluginConfig.config ?? pluginConfig;
+            await this.setPluginConfig(pluginID, configData);
+        }
+    }
+
+    setPluginConfig = async (pluginID: string, config: any) => {
+        const adminClient = await this.getAdminClient();
+        const url = `${this.url()}/plugins/${pluginID}/admin/config`;
+        const response = await fetch(url, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${adminClient.getToken()}`,
+            },
+            body: JSON.stringify(config),
+        });
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Failed to set plugin config: ${response.status} ${text}`);
+        }
+        // Wait for config update listeners to fire (EnsureBots, MCP reinit, etc.)
+        await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
     withEnv = (env: string, value: string): MattermostContainer => {

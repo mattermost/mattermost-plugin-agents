@@ -17,6 +17,7 @@ export type PluginConfig = {
     enableCallSummary: boolean,
     allowedUpstreamHostnames: string,
     allowUnsafeLinks: boolean,
+    enableChannelMentionToolCalling: boolean,
     allowNativeWebSearchInChannels: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig,
