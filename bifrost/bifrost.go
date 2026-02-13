@@ -1124,6 +1124,9 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 			effort = "medium"
 		}
 		reasoning.Effort = Ptr(effort)
+		// Enable reasoning summaries so the provider returns reasoning text in the stream.
+		// Without this, providers like OpenAI will not include reasoning_summary events.
+		reasoning.Summary = Ptr("auto")
 	}
 	return reasoning
 }

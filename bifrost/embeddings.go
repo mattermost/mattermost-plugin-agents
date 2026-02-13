@@ -35,7 +35,7 @@ func NewEmbeddingProvider(cfg EmbeddingConfig) (*EmbeddingProvider, error) {
 	account := &providerAccount{
 		provider: cfg.Provider,
 		apiKey:   cfg.APIKey,
-		apiURL:   cfg.APIURL,
+		apiURL:   normalizeOpenAIBaseURL(cfg.Provider, cfg.APIURL),
 	}
 
 	bifrostConfig := schemas.BifrostConfig{

@@ -89,6 +89,7 @@ func newEmbeddingProvider(config embeddings.UpstreamConfig, dimensions int, http
 		return bifrost.NewEmbeddingProvider(bifrost.EmbeddingConfig{
 			Provider:   schemas.OpenAI,
 			APIKey:     openaiConfig.APIKey,
+			APIURL:     openaiConfig.APIURL,
 			Model:      openaiConfig.Model,
 			Dimensions: dimensions,
 		})
