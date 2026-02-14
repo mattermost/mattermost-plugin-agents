@@ -224,3 +224,32 @@ func TestServiceCompletionStreamEscapesServicePath(t *testing.T) {
 	require.NoError(t, readErr)
 	require.Empty(t, text)
 }
+
+func TestAgentCompletionStreamIgnoresNonDataLines(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		sse := strings.Join([]string{
+			"event: keepalive",
+			"id: 1",
+			":heartbeat",
+			`data: {"Type":0,"Value":"hello"}`,
+			`data: {"Type":1,"Value":null}`,
+			"",
+		}, "\n")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+
+	text, readErr := result.ReadAll()
+	require.NoError(t, readErr)
+	require.Equal(t, "hello", text)
+}
