@@ -744,3 +744,52 @@ func TestNormalizeStreamEvent(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildCompletionHTTPRequest(t *testing.T) {
+	t.Run("returns marshal error", func(t *testing.T) {
+		_, err := buildCompletionHTTPRequest("/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+			Posts: []Post{{Role: "user", Message: "hello"}},
+			JSONOutputFormat: map[string]interface{}{
+				"bad": func() {},
+			},
+		}, false)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to marshal request")
+	})
+
+	t.Run("returns create request error", func(t *testing.T) {
+		_, err := buildCompletionHTTPRequest("%", CompletionRequest{}, false)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to create request")
+	})
+
+	t.Run("non-stream request sets content type only", func(t *testing.T) {
+		req, err := buildCompletionHTTPRequest("/mattermost-ai/bridge/v1/completion/service/openai/nostream", CompletionRequest{
+			Posts:        []Post{{Role: "user", Message: "hello"}},
+			AllowedTools: []string{"weather_lookup"},
+		}, false)
+		require.NoError(t, err)
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "application/json", req.Header.Get("Content-Type"))
+		require.Empty(t, req.Header.Get("Accept"))
+
+		body, readErr := io.ReadAll(req.Body)
+		require.NoError(t, readErr)
+
+		var payload CompletionRequest
+		unmarshalErr := json.Unmarshal(body, &payload)
+		require.NoError(t, unmarshalErr)
+		require.Len(t, payload.Posts, 1)
+		require.Equal(t, "weather_lookup", payload.AllowedTools[0])
+	})
+
+	t.Run("stream request sets accept header", func(t *testing.T) {
+		req, err := buildCompletionHTTPRequest("/mattermost-ai/bridge/v1/completion/service/openai", CompletionRequest{
+			Posts: []Post{{Role: "user", Message: "hello"}},
+		}, true)
+		require.NoError(t, err)
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "application/json", req.Header.Get("Content-Type"))
+		require.Equal(t, "text/event-stream", req.Header.Get("Accept"))
+	})
+}
