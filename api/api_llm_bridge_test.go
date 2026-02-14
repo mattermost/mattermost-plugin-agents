@@ -1931,3 +1931,51 @@ func TestBridgeGetAgentToolsReturnsEmptyWhenMCPDisabled(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, tools)
 }
+
+func TestBridgeClientAgentCompletionAllowedToolsFailsWhenNoEligibleToolsAvailable(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	// MCP disabled means allowed_tools cannot resolve any bridge-eligible tools.
+	e.config.mcpConfig = mcp.Config{
+		Enabled: false,
+	}
+
+	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
+		e.client,
+		&testLLMContextToolProvider{
+			tools: []llm.Tool{
+				{
+					Name:        "context_only_tool",
+					Description: "present in context but not bridge-eligible",
+					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+						return "ok", nil
+					},
+				},
+			},
+		},
+		nil,
+		&testLLMContextConfigProvider{},
+	)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	client := e.CreateBridgeClient()
+	_, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "Try tool call"},
+		},
+		AllowedTools: []string{"context_only_tool"},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no eligible tools available for this agent")
+}
