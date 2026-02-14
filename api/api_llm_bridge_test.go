@@ -1816,6 +1816,73 @@ func TestBridgeGetAgentToolsAgentNotFound(t *testing.T) {
 	require.Contains(t, err.Error(), "bot not found")
 }
 
+func TestBridgeGetAgentToolsRejectsInvalidUserIDQuery(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	req, err := http.NewRequest(http.MethodGet, "/mattermost-ai/bridge/v1/agents/"+testBotUserID+"/tools?user_id=bad", nil)
+	require.NoError(t, err)
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, readErr)
+	require.Contains(t, string(respBody), "invalid user_id")
+}
+
+func TestBridgeGetAgentsRejectsInvalidUserIDQuery(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	req, err := http.NewRequest(http.MethodGet, "/mattermost-ai/bridge/v1/agents?user_id=bad", nil)
+	require.NoError(t, err)
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, readErr)
+	require.Contains(t, string(respBody), "invalid user_id")
+}
+
+func TestBridgeGetServicesRejectsInvalidUserIDQuery(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	req, err := http.NewRequest(http.MethodGet, "/mattermost-ai/bridge/v1/services?user_id=bad", nil)
+	require.NoError(t, err)
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, readErr)
+	require.Contains(t, string(respBody), "invalid user_id")
+}
+
 func TestBridgeClientAgentCompletionRejectsExplicitEmptyAllowedToolsArray(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard

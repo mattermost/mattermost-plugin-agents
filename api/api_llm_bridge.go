@@ -190,6 +190,18 @@ func normalizeAllowedTools(rawTools []string) ([]string, error) {
 	return normalized, nil
 }
 
+func validateBridgeOptionalUserID(userID string) error {
+	if userID == "" {
+		return nil
+	}
+
+	if err := bridgeclient.ValidateID(userID); err != nil {
+		return fmt.Errorf("invalid user_id: %w", err)
+	}
+
+	return nil
+}
+
 func (a *API) prepareAgentBridgeCompletion(
 	ctx context.Context,
 	agent string,
@@ -485,6 +497,12 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRe
 // handleGetAgents returns all available agents, optionally filtered by user permissions
 func (a *API) handleGetAgents(c *gin.Context) {
 	userID := c.Query("user_id")
+	if err := validateBridgeOptionalUserID(userID); err != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: err.Error(),
+		})
+		return
+	}
 
 	allBots := a.bots.GetAllBots()
 	agents := make([]bridgeclient.BridgeAgentInfo, 0, len(allBots))
@@ -526,6 +544,12 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 	}
 
 	userID := c.Query("user_id")
+	if err := validateBridgeOptionalUserID(userID); err != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: err.Error(),
+		})
+		return
+	}
 
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
@@ -571,6 +595,12 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 // handleGetServices returns all available services, optionally filtered by user permissions
 func (a *API) handleGetServices(c *gin.Context) {
 	userID := c.Query("user_id")
+	if err := validateBridgeOptionalUserID(userID); err != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: err.Error(),
+		})
+		return
+	}
 
 	// Get all unique services
 	servicesMap := make(map[string]bridgeclient.BridgeServiceInfo)
