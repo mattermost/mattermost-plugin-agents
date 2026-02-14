@@ -764,6 +764,77 @@ func TestBridgeClientServiceCompletionRejectsInvalidPrincipalIDs(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid channel_id")
 }
 
+func TestBridgeClientAgentCompletionStreamRejectsInvalidPrincipalIDs(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	fakeLLM := NewFakeLLM("unused")
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(fakeLLM)
+	}
+
+	client := e.CreateBridgeClient()
+
+	_, err := client.AgentCompletionStream(testBotUserID, bridgeclient.CompletionRequest{
+		Posts:  []bridgeclient.Post{{Role: "user", Message: "hello"}},
+		UserID: "bad",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid user_id")
+
+	_, err = client.AgentCompletionStream(testBotUserID, bridgeclient.CompletionRequest{
+		Posts:     []bridgeclient.Post{{Role: "user", Message: "hello"}},
+		ChannelID: "bad",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid channel_id")
+}
+
+func TestBridgeClientServiceCompletionStreamRejectsInvalidPrincipalIDs(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetServiceForTest(llm.ServiceConfig{ID: "service-id", Name: "service-name"})
+		bot.SetLLMForTest(NewFakeLLM("unused"))
+	}
+
+	client := e.CreateBridgeClient()
+
+	_, err := client.ServiceCompletionStream("service-id", bridgeclient.CompletionRequest{
+		Posts:  []bridgeclient.Post{{Role: "user", Message: "hello"}},
+		UserID: "bad",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid user_id")
+
+	_, err = client.ServiceCompletionStream("service-id", bridgeclient.CompletionRequest{
+		Posts:     []bridgeclient.Post{{Role: "user", Message: "hello"}},
+		ChannelID: "bad",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid channel_id")
+}
+
 func TestBridgeGetBots(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
