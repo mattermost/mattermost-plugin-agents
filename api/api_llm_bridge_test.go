@@ -569,6 +569,28 @@ func TestBridgeClientPermissions(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name:      "ChannelID only with valid channel ID - succeeds (user checks skipped)",
+			userID:    "",
+			channelID: testChannelID,
+			botConfig: llm.BotConfig{
+				UserAccessLevel: llm.UserAccessLevelBlock,
+				UserIDs:         []string{testUserID},
+			},
+			envSetup:    func(e *TestEnvironment) {},
+			expectError: false,
+		},
+		{
+			name:      "ChannelID only with invalid channel ID - returns validation error",
+			userID:    "",
+			channelID: "bad",
+			botConfig: llm.BotConfig{
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+			envSetup:    func(e *TestEnvironment) {},
+			expectError: true,
+			errorMsg:    "invalid channel_id",
+		},
+		{
 			name:      "UserID only with allowed user - succeeds",
 			userID:    testUserID,
 			channelID: "",
