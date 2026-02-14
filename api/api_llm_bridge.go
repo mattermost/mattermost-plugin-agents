@@ -231,6 +231,15 @@ func normalizeBridgeAgentID(agent string) (string, error) {
 	return normalizedAgent, nil
 }
 
+func normalizeBridgeServiceIdentifier(service string) (string, error) {
+	normalizedService := strings.TrimSpace(service)
+	if normalizedService == "" {
+		return "", errors.New("service parameter is required")
+	}
+
+	return normalizedService, nil
+}
+
 func (a *API) prepareAgentBridgeCompletion(
 	ctx context.Context,
 	agent string,
@@ -786,10 +795,10 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 
 // handleServiceCompletionStreaming handles streaming completion requests for a specific service
 func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
-	service := c.Param("service")
-	if service == "" {
+	service, err := normalizeBridgeServiceIdentifier(c.Param("service"))
+	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "service parameter is required",
+			Error: err.Error(),
 		})
 		return
 	}
@@ -868,10 +877,10 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 
 // handleServiceCompletionNoStream handles non-streaming completion requests for a specific service
 func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
-	service := c.Param("service")
-	if service == "" {
+	service, err := normalizeBridgeServiceIdentifier(c.Param("service"))
+	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "service parameter is required",
+			Error: err.Error(),
 		})
 		return
 	}
