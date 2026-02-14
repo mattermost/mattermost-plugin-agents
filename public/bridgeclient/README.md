@@ -154,6 +154,7 @@ If not using built-in permission checks, your plugin must verify permissions bef
 
 The bridge API trims surrounding whitespace on `UserID` and `ChannelID` values. Whitespace-only
 values are treated as unset. Non-empty malformed IDs are rejected by the bridge with `400 Bad Request`.
+For backward compatibility, channel permission checks only run when `UserID` is also provided.
 
 ## Agent vs Service
 
