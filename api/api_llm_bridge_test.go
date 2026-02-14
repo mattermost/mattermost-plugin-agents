@@ -2267,6 +2267,34 @@ func TestBridgeGetAgentToolsTrimsAgentPath(t *testing.T) {
 	require.Contains(t, string(respBody), `"tools":[]`)
 }
 
+func TestBridgeGetAgentToolsTrimsTabbedAgentPath(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+		DisableTools:    true,
+	}
+	e.setupTestBot(botConfig)
+
+	req, err := http.NewRequest(http.MethodGet, "/mattermost-ai/bridge/v1/agents/%09"+testBotUserID+"%09/tools", nil)
+	require.NoError(t, err)
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, readErr)
+	require.Contains(t, string(respBody), `"tools":[]`)
+}
+
 func TestBridgeGetAgentToolsRejectsInvalidUserIDQuery(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
