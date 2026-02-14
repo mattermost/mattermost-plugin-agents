@@ -6,7 +6,6 @@ package bridgeclient
 import (
 	"fmt"
 	"net/url"
-	"strings"
 )
 
 func appendValidatedUserIDQuery(requestURL string, userID string) (string, error) {
@@ -18,16 +17,16 @@ func appendValidatedUserIDQuery(requestURL string, userID string) (string, error
 		return "", fmt.Errorf("invalid user ID: %w", err)
 	}
 
-	separator := "?"
-	if strings.Contains(requestURL, "?") {
-		if strings.HasSuffix(requestURL, "?") || strings.HasSuffix(requestURL, "&") {
-			separator = ""
-		} else {
-			separator = "&"
-		}
+	parsedURL, err := url.Parse(requestURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse request URL: %w", err)
 	}
 
-	return fmt.Sprintf("%s%suser_id=%s", requestURL, separator, url.QueryEscape(userID)), nil
+	query := parsedURL.Query()
+	query.Set("user_id", userID)
+	parsedURL.RawQuery = query.Encode()
+
+	return parsedURL.String(), nil
 }
 
 // GetAgents retrieves all available agents from the bridge API.

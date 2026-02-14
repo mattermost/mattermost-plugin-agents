@@ -413,6 +413,12 @@ func TestAppendValidatedUserIDQuery(t *testing.T) {
 		require.Equal(t, "/mattermost-ai/bridge/v1/services?foo=bar&user_id=abcdefghijklmnopqrstuvwxyz", requestURL)
 	})
 
+	t.Run("existing user id query is replaced", func(t *testing.T) {
+		requestURL, err := appendValidatedUserIDQuery("/mattermost-ai/bridge/v1/services?foo=bar&user_id=oldvalue", "abcdefghijklmnopqrstuvwxyz")
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/services?foo=bar&user_id=abcdefghijklmnopqrstuvwxyz", requestURL)
+	})
+
 	t.Run("valid user id appends without extra separator when query ends with question mark", func(t *testing.T) {
 		requestURL, err := appendValidatedUserIDQuery("/mattermost-ai/bridge/v1/services?", "abcdefghijklmnopqrstuvwxyz")
 		require.NoError(t, err)
@@ -429,5 +435,11 @@ func TestAppendValidatedUserIDQuery(t *testing.T) {
 		_, err := appendValidatedUserIDQuery("/mattermost-ai/bridge/v1/services", "bad")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid user ID")
+	})
+
+	t.Run("malformed request url returns parse error", func(t *testing.T) {
+		_, err := appendValidatedUserIDQuery("%", "abcdefghijklmnopqrstuvwxyz")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to parse request URL")
 	})
 }
