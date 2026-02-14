@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -221,21 +222,26 @@ func normalizeStreamEvent(event llm.TextStreamEvent) llm.TextStreamEvent {
 
 	switch value := event.Value.(type) {
 	case nil:
-		event.Value = fmt.Errorf("unknown stream error")
+		event.Value = errors.New("unknown stream error")
 	case error:
 		// Keep existing error as-is.
 	case string:
-		event.Value = fmt.Errorf("%s", value)
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			event.Value = errors.New("unknown stream error")
+			return event
+		}
+		event.Value = errors.New(trimmed)
 	case map[string]interface{}:
-		if errValue, ok := value["error"].(string); ok && errValue != "" {
-			event.Value = fmt.Errorf("%s", errValue)
+		if errValue, ok := value["error"].(string); ok && strings.TrimSpace(errValue) != "" {
+			event.Value = errors.New(strings.TrimSpace(errValue))
 			return event
 		}
-		if messageValue, ok := value["message"].(string); ok && messageValue != "" {
-			event.Value = fmt.Errorf("%s", messageValue)
+		if messageValue, ok := value["message"].(string); ok && strings.TrimSpace(messageValue) != "" {
+			event.Value = errors.New(strings.TrimSpace(messageValue))
 			return event
 		}
-		event.Value = fmt.Errorf("%v", value)
+		event.Value = errors.New("unknown stream error")
 	default:
 		event.Value = fmt.Errorf("%v", value)
 	}

@@ -459,11 +459,32 @@ func TestNormalizeStreamEvent(t *testing.T) {
 			expectedMessage: "server failed",
 		},
 		{
+			name: "error event with empty string uses fallback",
+			event: llm.TextStreamEvent{
+				Type:  llm.EventTypeError,
+				Value: "   ",
+			},
+			expectedType:    llm.EventTypeError,
+			expectedMessage: "unknown stream error",
+		},
+		{
 			name: "error event with map error field",
 			event: llm.TextStreamEvent{
 				Type: llm.EventTypeError,
 				Value: map[string]interface{}{
 					"error": "tool failed",
+				},
+			},
+			expectedType:    llm.EventTypeError,
+			expectedMessage: "tool failed",
+		},
+		{
+			name: "error event with map error and message prefers error",
+			event: llm.TextStreamEvent{
+				Type: llm.EventTypeError,
+				Value: map[string]interface{}{
+					"error":   "tool failed",
+					"message": "provider unavailable",
 				},
 			},
 			expectedType:    llm.EventTypeError,
@@ -479,6 +500,29 @@ func TestNormalizeStreamEvent(t *testing.T) {
 			},
 			expectedType:    llm.EventTypeError,
 			expectedMessage: "provider unavailable",
+		},
+		{
+			name: "error event with empty map values uses fallback",
+			event: llm.TextStreamEvent{
+				Type: llm.EventTypeError,
+				Value: map[string]interface{}{
+					"error":   "",
+					"message": "  ",
+				},
+			},
+			expectedType:    llm.EventTypeError,
+			expectedMessage: "unknown stream error",
+		},
+		{
+			name: "error event with map without recognized fields uses fallback",
+			event: llm.TextStreamEvent{
+				Type: llm.EventTypeError,
+				Value: map[string]interface{}{
+					"code": "bad_gateway",
+				},
+			},
+			expectedType:    llm.EventTypeError,
+			expectedMessage: "unknown stream error",
 		},
 		{
 			name: "error event with existing error is preserved",
