@@ -249,6 +249,37 @@ func TestAgentCompletionStreamHandlesLargeSSELine(t *testing.T) {
 	require.Equal(t, largeChunk, text)
 }
 
+func TestAgentCompletionStreamEmitsErrorWhenSSELineExceedsLimit(t *testing.T) {
+	client := &Client{}
+	tooLargeChunk := strings.Repeat("a", maxSSELineBytes+16)
+
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		sse := strings.Join([]string{
+			fmt.Sprintf(`data: {"Type":0,"Value":"%s"}`, tooLargeChunk),
+			`data: {"Type":1,"Value":null}`,
+			"",
+		}, "\n")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+
+	event := <-result.Stream
+	require.Equal(t, llm.EventTypeError, event.Type)
+	streamErr, ok := event.Value.(error)
+	require.True(t, ok)
+	require.Contains(t, streamErr.Error(), "error reading stream")
+	require.Contains(t, streamErr.Error(), "token too long")
+}
+
 func TestAgentCompletionStreamEmitsErrorForMalformedEvent(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
