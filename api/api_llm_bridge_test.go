@@ -1180,3 +1180,49 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	require.NotNil(t, fakeLLM.LastConversation.Context.Tools)
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
 }
+
+func TestBridgeGetAgentToolsRespectsUserPermissions(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAllow,
+		UserIDs:         []string{testOtherUserID},
+	}
+	e.setupTestBot(botConfig)
+
+	client := e.CreateBridgeClient()
+	_, err := client.GetAgentTools(testBotUserID, testUserID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "permission denied")
+}
+
+func TestBridgeClientAgentCompletionRejectsInvalidAllowedToolsEntry(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	client := e.CreateBridgeClient()
+	_, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "Hello"},
+		},
+		AllowedTools: []string{"   "},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "allowed_tools cannot contain empty tool names")
+}
