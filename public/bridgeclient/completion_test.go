@@ -422,6 +422,106 @@ func TestAgentCompletionStreamEmitsErrorWhenReaderFails(t *testing.T) {
 	require.Contains(t, event.Value.(error).Error(), "read failure")
 }
 
+func TestNormalizeStreamEvent(t *testing.T) {
+	originalErr := errors.New("original error")
+
+	testCases := []struct {
+		name            string
+		event           llm.TextStreamEvent
+		expectedType    llm.EventType
+		expectedMessage string
+		expectSameError bool
+	}{
+		{
+			name: "non-error event unchanged",
+			event: llm.TextStreamEvent{
+				Type:  llm.EventTypeText,
+				Value: "hello",
+			},
+			expectedType: llm.EventTypeText,
+		},
+		{
+			name: "error event with nil value uses fallback",
+			event: llm.TextStreamEvent{
+				Type:  llm.EventTypeError,
+				Value: nil,
+			},
+			expectedType:    llm.EventTypeError,
+			expectedMessage: "unknown stream error",
+		},
+		{
+			name: "error event with string value becomes error",
+			event: llm.TextStreamEvent{
+				Type:  llm.EventTypeError,
+				Value: "server failed",
+			},
+			expectedType:    llm.EventTypeError,
+			expectedMessage: "server failed",
+		},
+		{
+			name: "error event with map error field",
+			event: llm.TextStreamEvent{
+				Type: llm.EventTypeError,
+				Value: map[string]interface{}{
+					"error": "tool failed",
+				},
+			},
+			expectedType:    llm.EventTypeError,
+			expectedMessage: "tool failed",
+		},
+		{
+			name: "error event with map message field",
+			event: llm.TextStreamEvent{
+				Type: llm.EventTypeError,
+				Value: map[string]interface{}{
+					"message": "provider unavailable",
+				},
+			},
+			expectedType:    llm.EventTypeError,
+			expectedMessage: "provider unavailable",
+		},
+		{
+			name: "error event with existing error is preserved",
+			event: llm.TextStreamEvent{
+				Type:  llm.EventTypeError,
+				Value: originalErr,
+			},
+			expectedType:    llm.EventTypeError,
+			expectSameError: true,
+		},
+		{
+			name: "error event with unknown value type stringifies",
+			event: llm.TextStreamEvent{
+				Type:  llm.EventTypeError,
+				Value: 42,
+			},
+			expectedType:    llm.EventTypeError,
+			expectedMessage: "42",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			normalized := normalizeStreamEvent(tc.event)
+			require.Equal(t, tc.expectedType, normalized.Type)
+
+			if tc.expectedType != llm.EventTypeError {
+				require.Equal(t, tc.event.Value, normalized.Value)
+				return
+			}
+
+			normalizedErr, ok := normalized.Value.(error)
+			require.True(t, ok)
+			if tc.expectSameError {
+				require.Equal(t, originalErr, normalizedErr)
+				return
+			}
+
+			require.EqualError(t, normalizedErr, tc.expectedMessage)
+		})
+	}
+}
+
 type erroringReader struct {
 	err error
 }
