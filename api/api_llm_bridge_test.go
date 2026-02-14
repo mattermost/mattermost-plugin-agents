@@ -2400,6 +2400,42 @@ func TestBridgeAgentCompletionTrimsAgentPath(t *testing.T) {
 	require.Contains(t, string(respBody), "trimmed-agent-ok")
 }
 
+func TestBridgeAgentCompletionTrimsTabbedAgentPath(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(NewFakeLLM("trimmed-agent-tab-ok"))
+	}
+
+	rawBody := `{"posts":[{"role":"user","message":"Hello"}]}`
+	req, err := http.NewRequest(
+		http.MethodPost,
+		"/mattermost-ai/bridge/v1/completion/agent/%09"+testBotUserID+"%09/nostream",
+		strings.NewReader(rawBody),
+	)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, readErr)
+	require.Contains(t, string(respBody), "trimmed-agent-tab-ok")
+}
+
 func TestBridgeAgentCompletionStreamTrimsAgentPath(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -2526,6 +2562,43 @@ func TestBridgeServiceCompletionTrimsServicePath(t *testing.T) {
 	respBody, readErr := io.ReadAll(resp.Body)
 	require.NoError(t, readErr)
 	require.Contains(t, string(respBody), "trimmed-service-ok")
+}
+
+func TestBridgeServiceCompletionTrimsTabbedServicePath(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetServiceForTest(llm.ServiceConfig{ID: "service-id", Name: "service-name"})
+		bot.SetLLMForTest(NewFakeLLM("trimmed-service-tab-ok"))
+	}
+
+	rawBody := `{"posts":[{"role":"user","message":"Hello"}]}`
+	req, err := http.NewRequest(
+		http.MethodPost,
+		"/mattermost-ai/bridge/v1/completion/service/%09service-id%09/nostream",
+		strings.NewReader(rawBody),
+	)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, readErr)
+	require.Contains(t, string(respBody), "trimmed-service-tab-ok")
 }
 
 func TestBridgeServiceCompletionStreamTrimsServicePath(t *testing.T) {
