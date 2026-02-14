@@ -187,6 +187,8 @@ func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm
 				return
 			}
 
+			event = normalizeStreamEvent(event)
+
 			// Send the event to the channel
 			stream <- event
 
@@ -210,4 +212,33 @@ func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm
 	return &llm.TextStreamResult{
 		Stream: stream,
 	}, nil
+}
+
+func normalizeStreamEvent(event llm.TextStreamEvent) llm.TextStreamEvent {
+	if event.Type != llm.EventTypeError {
+		return event
+	}
+
+	switch value := event.Value.(type) {
+	case nil:
+		event.Value = fmt.Errorf("unknown stream error")
+	case error:
+		// Keep existing error as-is.
+	case string:
+		event.Value = fmt.Errorf("%s", value)
+	case map[string]interface{}:
+		if errValue, ok := value["error"].(string); ok && errValue != "" {
+			event.Value = fmt.Errorf("%s", errValue)
+			return event
+		}
+		if messageValue, ok := value["message"].(string); ok && messageValue != "" {
+			event.Value = fmt.Errorf("%s", messageValue)
+			return event
+		}
+		event.Value = fmt.Errorf("%v", value)
+	default:
+		event.Value = fmt.Errorf("%v", value)
+	}
+
+	return event
 }

@@ -155,6 +155,60 @@ func TestAgentCompletionStreamEmitsErrorForMalformedEvent(t *testing.T) {
 	require.Error(t, event.Value.(error))
 }
 
+func TestAgentCompletionStreamConvertsServerStringErrorToError(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		sse := strings.Join([]string{
+			`data: {"Type":2,"Value":"server failed"}`,
+			"",
+		}, "\n")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+
+	event := <-result.Stream
+	require.Equal(t, llm.EventTypeError, event.Type)
+	streamErr, ok := event.Value.(error)
+	require.True(t, ok)
+	require.EqualError(t, streamErr, "server failed")
+}
+
+func TestAgentCompletionStreamReadAllReturnsServerError(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		sse := strings.Join([]string{
+			`data: {"Type":0,"Value":"partial "}`,
+			`data: {"Type":2,"Value":"server failed"}`,
+			"",
+		}, "\n")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+
+	text, readErr := result.ReadAll()
+	require.Error(t, readErr)
+	require.Empty(t, text)
+	require.EqualError(t, readErr, "server failed")
+}
+
 func TestServiceCompletionStreamReturnsErrorFromPlainTextBody(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
