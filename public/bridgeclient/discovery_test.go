@@ -85,6 +85,104 @@ func TestGetAgentToolsErrorResponse(t *testing.T) {
 	require.Contains(t, err.Error(), "missing permission")
 }
 
+func TestGetAgentsSuccess(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodGet, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/agents", req.URL.Path)
+		require.Equal(t, "user_id=abcdefghijklmnopqrstuvwxyz", req.URL.RawQuery)
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{
+				"agents": [
+					{
+						"id":"abcdefghijklmnopqrstuvwxyz",
+						"displayName":"Support Agent",
+						"username":"support.bot",
+						"service_id":"svc-openai",
+						"service_type":"openai",
+						"is_default":true
+					}
+				]
+			}`)),
+		}, nil
+	})
+
+	agents, err := client.GetAgents("abcdefghijklmnopqrstuvwxyz")
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	require.Equal(t, "abcdefghijklmnopqrstuvwxyz", agents[0].ID)
+	require.Equal(t, "Support Agent", agents[0].DisplayName)
+	require.Equal(t, "support.bot", agents[0].Username)
+	require.Equal(t, "svc-openai", agents[0].ServiceID)
+	require.Equal(t, "openai", agents[0].ServiceType)
+	require.True(t, agents[0].IsDefault)
+}
+
+func TestGetServicesSuccess(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodGet, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/services", req.URL.Path)
+		require.Equal(t, "user_id=abcdefghijklmnopqrstuvwxyz", req.URL.RawQuery)
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{
+				"services": [
+					{"id":"svc-openai","name":"OpenAI","type":"openai"},
+					{"id":"svc-anthropic","name":"Anthropic","type":"anthropic"}
+				]
+			}`)),
+		}, nil
+	})
+
+	services, err := client.GetServices("abcdefghijklmnopqrstuvwxyz")
+	require.NoError(t, err)
+	require.Len(t, services, 2)
+	require.Equal(t, "svc-openai", services[0].ID)
+	require.Equal(t, "OpenAI", services[0].Name)
+	require.Equal(t, "openai", services[0].Type)
+	require.Equal(t, "svc-anthropic", services[1].ID)
+	require.Equal(t, "Anthropic", services[1].Name)
+	require.Equal(t, "anthropic", services[1].Type)
+}
+
+func TestGetAgentsErrorResponse(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":"upstream unavailable"}`)),
+		}, nil
+	})
+
+	_, err := client.GetAgents("")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "request failed with status 500")
+	require.Contains(t, err.Error(), "upstream unavailable")
+}
+
+func TestGetServicesErrorResponse(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadGateway,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":"bridge timeout"}`)),
+		}, nil
+	})
+
+	_, err := client.GetServices("")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "request failed with status 502")
+	require.Contains(t, err.Error(), "bridge timeout")
+}
+
 type roundTripFunc func(req *http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
