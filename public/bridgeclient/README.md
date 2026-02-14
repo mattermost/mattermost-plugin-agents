@@ -209,6 +209,12 @@ for _, tool := range tools {
 
 This endpoint returns only tools that are currently eligible for `AllowedTools`.
 
+You can optionally pass `userID` to apply user-level permission filtering:
+
+```go
+tools, err := client.GetAgentTools("bot-user-id", userID)
+```
+
 ### Discovery with User Permissions
 
 Like completion endpoints, discovery endpoints support optional user filtering:
