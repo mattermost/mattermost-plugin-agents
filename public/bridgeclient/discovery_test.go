@@ -332,3 +332,19 @@ func TestGetServicesErrorResponseWithPlainTextBody(t *testing.T) {
 	require.Contains(t, err.Error(), "request failed with status 500")
 	require.Contains(t, err.Error(), "internal error")
 }
+
+func TestGetAgentsErrorResponseWithoutErrorFieldFallsBackToBody(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"message":"invalid user filter"}`)),
+		}, nil
+	})
+
+	_, err := client.GetAgents("")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "request failed with status 400")
+	require.Contains(t, err.Error(), `{"message":"invalid user filter"}`)
+}

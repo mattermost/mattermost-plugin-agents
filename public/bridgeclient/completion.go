@@ -91,11 +91,7 @@ func (c *Client) doCompletionRequest(url string, request CompletionRequest) (str
 
 	// Check for error status codes
 	if resp.StatusCode != http.StatusOK {
-		var errResp ErrorResponse
-		if err := json.Unmarshal(respBody, &errResp); err != nil {
-			return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
-		}
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errResp.Error)
+		return "", requestFailedError(resp.StatusCode, respBody)
 	}
 
 	// Parse the success response
@@ -145,11 +141,7 @@ func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm
 		if err != nil {
 			return nil, fmt.Errorf("request failed with status %d", resp.StatusCode)
 		}
-		var errResp ErrorResponse
-		if err := json.Unmarshal(respBody, &errResp); err != nil {
-			return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
-		}
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errResp.Error)
+		return nil, requestFailedError(resp.StatusCode, respBody)
 	}
 
 	// Create a channel for the stream

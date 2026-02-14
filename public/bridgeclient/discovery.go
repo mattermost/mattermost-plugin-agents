@@ -39,11 +39,7 @@ func (c *Client) GetAgents(userID string) ([]BridgeAgentInfo, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		var errResp ErrorResponse
-		if err := json.Unmarshal(respBody, &errResp); err != nil {
-			return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
-		}
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errResp.Error)
+		return nil, requestFailedError(resp.StatusCode, respBody)
 	}
 
 	var agentsResp AgentsResponse
@@ -82,11 +78,7 @@ func (c *Client) GetServices(userID string) ([]BridgeServiceInfo, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		var errResp ErrorResponse
-		if err := json.Unmarshal(respBody, &errResp); err != nil {
-			return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
-		}
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errResp.Error)
+		return nil, requestFailedError(resp.StatusCode, respBody)
 	}
 
 	var servicesResp ServicesResponse
@@ -129,11 +121,7 @@ func (c *Client) GetAgentTools(agent string, userID string) ([]BridgeToolInfo, e
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		var errResp ErrorResponse
-		if err := json.Unmarshal(respBody, &errResp); err != nil {
-			return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
-		}
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errResp.Error)
+		return nil, requestFailedError(resp.StatusCode, respBody)
 	}
 
 	var toolsResp AgentToolsResponse

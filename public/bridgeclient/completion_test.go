@@ -96,6 +96,24 @@ func TestServiceCompletionReturnsErrorFromPlainTextBody(t *testing.T) {
 	require.Contains(t, err.Error(), "upstream timeout")
 }
 
+func TestServiceCompletionReturnsErrorFromJSONBodyWithoutErrorField(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"message":"invalid request"}`)),
+		}, nil
+	})
+
+	_, err := client.ServiceCompletion("openai", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "request failed with status 400")
+	require.Contains(t, err.Error(), `{"message":"invalid request"}`)
+}
+
 func TestAgentCompletionStreamParsesSSEEvents(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
