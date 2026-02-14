@@ -19,7 +19,7 @@ func (c *Client) GetAgents(userID string) ([]BridgeAgentInfo, error) {
 		if err := ValidateID(userID); err != nil {
 			return nil, fmt.Errorf("invalid user ID: %w", err)
 		}
-		requestURL = fmt.Sprintf("%s?user_id=%s", requestURL, userID)
+		requestURL = fmt.Sprintf("%s?user_id=%s", requestURL, url.QueryEscape(userID))
 	}
 
 	req, err := http.NewRequest("GET", requestURL, nil)
@@ -62,7 +62,7 @@ func (c *Client) GetServices(userID string) ([]BridgeServiceInfo, error) {
 		if err := ValidateID(userID); err != nil {
 			return nil, fmt.Errorf("invalid user ID: %w", err)
 		}
-		requestURL = fmt.Sprintf("%s?user_id=%s", requestURL, userID)
+		requestURL = fmt.Sprintf("%s?user_id=%s", requestURL, url.QueryEscape(userID))
 	}
 
 	req, err := http.NewRequest("GET", requestURL, nil)
