@@ -183,6 +183,44 @@ func TestGetServicesErrorResponse(t *testing.T) {
 	require.Contains(t, err.Error(), "bridge timeout")
 }
 
+func TestGetAgentsWithoutUserIDOmitsQuery(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodGet, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/agents", req.URL.Path)
+		require.Empty(t, req.URL.RawQuery)
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"agents":[]}`)),
+		}, nil
+	})
+
+	agents, err := client.GetAgents("")
+	require.NoError(t, err)
+	require.Empty(t, agents)
+}
+
+func TestGetServicesWithoutUserIDOmitsQuery(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodGet, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/services", req.URL.Path)
+		require.Empty(t, req.URL.RawQuery)
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"services":[]}`)),
+		}, nil
+	})
+
+	services, err := client.GetServices("")
+	require.NoError(t, err)
+	require.Empty(t, services)
+}
+
 type roundTripFunc func(req *http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
