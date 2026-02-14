@@ -290,11 +290,65 @@ func TestAgentCompletionStreamConvertsServerMapErrorToError(t *testing.T) {
 	require.EqualError(t, streamErr, "tool execution failed")
 }
 
+func TestAgentCompletionStreamConvertsServerMapMessageToError(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		sse := strings.Join([]string{
+			`data: {"Type":2,"Value":{"message":"provider unavailable"}}`,
+			"",
+		}, "\n")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+
+	event := <-result.Stream
+	require.Equal(t, llm.EventTypeError, event.Type)
+	streamErr, ok := event.Value.(error)
+	require.True(t, ok)
+	require.EqualError(t, streamErr, "provider unavailable")
+}
+
 func TestAgentCompletionStreamConvertsNilErrorValueToFallbackError(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		sse := strings.Join([]string{
 			`data: {"Type":2,"Value":null}`,
+			"",
+		}, "\n")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+
+	event := <-result.Stream
+	require.Equal(t, llm.EventTypeError, event.Type)
+	streamErr, ok := event.Value.(error)
+	require.True(t, ok)
+	require.EqualError(t, streamErr, "unknown stream error")
+}
+
+func TestAgentCompletionStreamConvertsBlankStringErrorToFallbackError(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		sse := strings.Join([]string{
+			`data: {"Type":2,"Value":"   "}`,
 			"",
 		}, "\n")
 
