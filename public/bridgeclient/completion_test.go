@@ -741,6 +741,33 @@ func TestAgentCompletionStreamParsesDataLinesWithoutSpaceAfterColon(t *testing.T
 	require.Equal(t, "hello world", text)
 }
 
+func TestAgentCompletionStreamParsesDataLinesWithTabAfterColon(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		sse := strings.Join([]string{
+			"data:\t{\"Type\":0,\"Value\":\"hello \"}",
+			"data:\t\t{\"Type\":0,\"Value\":\"world\"}",
+			"data:\t{\"Type\":1,\"Value\":null}",
+			"",
+		}, "\n")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+
+	text, readErr := result.ReadAll()
+	require.NoError(t, readErr)
+	require.Equal(t, "hello world", text)
+}
+
 func TestAgentCompletionStreamEmitsErrorWhenReaderFails(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {

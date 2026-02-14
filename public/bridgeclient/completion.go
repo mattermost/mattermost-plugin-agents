@@ -144,7 +144,7 @@ func (c *Client) doStreamingRequest(requestURL string, request CompletionRequest
 			}
 
 			// Extract the data portion
-			data := strings.TrimLeft(strings.TrimPrefix(line, "data:"), " ")
+			data := strings.TrimLeft(strings.TrimPrefix(line, "data:"), " \t")
 
 			// Check for empty data lines
 			if data == "" {
