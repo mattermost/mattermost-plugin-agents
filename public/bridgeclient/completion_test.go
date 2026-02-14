@@ -938,4 +938,10 @@ func TestBuildAgentCompletionURL(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz", requestURL)
 	})
+
+	t.Run("trims surrounding agent id whitespace", func(t *testing.T) {
+		requestURL, err := buildAgentCompletionURL("  abcdefghijklmnopqrstuvwxyz  ", false)
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz/nostream", requestURL)
+	})
 }

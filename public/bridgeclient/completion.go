@@ -261,11 +261,12 @@ func buildServiceCompletionURL(service string, isStreaming bool) (string, error)
 }
 
 func buildAgentCompletionURL(agent string, isStreaming bool) (string, error) {
-	if err := ValidateID(agent); err != nil {
+	trimmedAgent := strings.TrimSpace(agent)
+	if err := ValidateID(trimmedAgent); err != nil {
 		return "", fmt.Errorf("invalid agent ID: %w", err)
 	}
 
-	path := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", aiPluginID, agent)
+	path := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", aiPluginID, trimmedAgent)
 	if !isStreaming {
 		path = fmt.Sprintf("%s/nostream", path)
 	}
