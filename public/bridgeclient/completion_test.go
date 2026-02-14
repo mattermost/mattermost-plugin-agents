@@ -114,6 +114,32 @@ func TestServiceCompletionReturnsErrorFromJSONBodyWithoutErrorField(t *testing.T
 	require.Contains(t, err.Error(), `{"message":"invalid request"}`)
 }
 
+func TestAgentCompletionReturnsMarshalError(t *testing.T) {
+	client := &Client{}
+
+	_, err := client.AgentCompletion("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+		JSONOutputFormat: map[string]interface{}{
+			"bad": func() {},
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to marshal request")
+}
+
+func TestServiceCompletionReturnsMarshalError(t *testing.T) {
+	client := &Client{}
+
+	_, err := client.ServiceCompletion("openai", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+		JSONOutputFormat: map[string]interface{}{
+			"bad": func() {},
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to marshal request")
+}
+
 func TestServiceCompletionReturnsReadBodyError(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -405,6 +431,32 @@ func TestServiceCompletionStreamReturnsErrorFromJSONBody(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "request failed with status 403")
 	require.Contains(t, err.Error(), "permission denied")
+}
+
+func TestAgentCompletionStreamReturnsMarshalError(t *testing.T) {
+	client := &Client{}
+
+	_, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+		JSONOutputFormat: map[string]interface{}{
+			"bad": func() {},
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to marshal request")
+}
+
+func TestServiceCompletionStreamReturnsMarshalError(t *testing.T) {
+	client := &Client{}
+
+	_, err := client.ServiceCompletionStream("openai", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+		JSONOutputFormat: map[string]interface{}{
+			"bad": func() {},
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to marshal request")
 }
 
 func TestServiceCompletionStreamStatusWhenErrorBodyUnreadable(t *testing.T) {
