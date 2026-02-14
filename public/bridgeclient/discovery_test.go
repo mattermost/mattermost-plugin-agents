@@ -221,6 +221,71 @@ func TestGetServicesWithoutUserIDOmitsQuery(t *testing.T) {
 	require.Empty(t, services)
 }
 
+func TestGetAgentToolsWithoutUserIDOmitsQuery(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodGet, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/agents/abcdefghijklmnopqrstuvwxyz/tools", req.URL.Path)
+		require.Empty(t, req.URL.RawQuery)
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"tools":[]}`)),
+		}, nil
+	})
+
+	tools, err := client.GetAgentTools("abcdefghijklmnopqrstuvwxyz", "")
+	require.NoError(t, err)
+	require.Empty(t, tools)
+}
+
+func TestGetAgentToolsErrorResponseWithPlainTextBody(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("temporary outage")),
+		}, nil
+	})
+
+	_, err := client.GetAgentTools("abcdefghijklmnopqrstuvwxyz", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "request failed with status 503")
+	require.Contains(t, err.Error(), "temporary outage")
+}
+
+func TestGetAgentsMalformedResponseBody(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"agents":"not-an-array"}`)),
+		}, nil
+	})
+
+	_, err := client.GetAgents("")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to unmarshal response")
+}
+
+func TestGetServicesMalformedResponseBody(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"services":"not-an-array"}`)),
+		}, nil
+	})
+
+	_, err := client.GetServices("")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to unmarshal response")
+}
+
 type roundTripFunc func(req *http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
