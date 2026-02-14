@@ -61,20 +61,10 @@ func (c *Client) ServiceCompletionStream(service string, request CompletionReque
 
 // doCompletionRequest performs a non-streaming completion request
 func (c *Client) doCompletionRequest(url string, request CompletionRequest) (string, error) {
-	// Marshal the request body
-	body, err := json.Marshal(request)
+	req, err := buildCompletionHTTPRequest(url, request, false)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		return "", err
 	}
-
-	// Create the HTTP request
-	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
 
 	// Make the request
 	resp, err := c.httpClient.Do(req)
@@ -105,21 +95,10 @@ func (c *Client) doCompletionRequest(url string, request CompletionRequest) (str
 
 // doStreamingRequest performs a streaming completion request and returns a TextStreamResult
 func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm.TextStreamResult, error) {
-	// Marshal the request body
-	body, err := json.Marshal(request)
+	req, err := buildCompletionHTTPRequest(url, request, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, err
 	}
-
-	// Create the HTTP request
-	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
 
 	// Make the request
 	resp, err := c.httpClient.Do(req)
@@ -239,4 +218,23 @@ func normalizeStreamEvent(event llm.TextStreamEvent) llm.TextStreamEvent {
 	}
 
 	return event
+}
+
+func buildCompletionHTTPRequest(requestURL string, request CompletionRequest, isStreaming bool) (*http.Request, error) {
+	body, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if isStreaming {
+		req.Header.Set("Accept", "text/event-stream")
+	}
+
+	return req, nil
 }
