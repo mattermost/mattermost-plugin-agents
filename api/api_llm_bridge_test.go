@@ -2316,6 +2316,81 @@ func TestBridgeAgentCompletionStreamRejectsInvalidAgentPath(t *testing.T) {
 	require.Contains(t, string(respBody), "invalid agent ID")
 }
 
+func TestBridgeAgentCompletionTrimsAgentPath(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(NewFakeLLM("trimmed-agent-ok"))
+	}
+
+	rawBody := `{"posts":[{"role":"user","message":"Hello"}]}`
+	req, err := http.NewRequest(
+		http.MethodPost,
+		"/mattermost-ai/bridge/v1/completion/agent/%20"+testBotUserID+"%20/nostream",
+		strings.NewReader(rawBody),
+	)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, readErr)
+	require.Contains(t, string(respBody), "trimmed-agent-ok")
+}
+
+func TestBridgeAgentCompletionStreamTrimsAgentPath(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(NewFakeLLMWithStreamEvents([]llm.TextStreamEvent{
+			{Type: llm.EventTypeText, Value: "trimmed-agent-stream-ok"},
+			{Type: llm.EventTypeEnd, Value: nil},
+		}))
+	}
+
+	rawBody := `{"posts":[{"role":"user","message":"Hello"}]}`
+	req, err := http.NewRequest(
+		http.MethodPost,
+		"/mattermost-ai/bridge/v1/completion/agent/%20"+testBotUserID+"%20",
+		strings.NewReader(rawBody),
+	)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, readErr)
+	require.Contains(t, string(respBody), "trimmed-agent-stream-ok")
+}
+
 func TestBridgeServiceCompletionRejectsWhitespaceServicePath(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
