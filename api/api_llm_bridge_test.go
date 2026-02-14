@@ -1173,6 +1173,75 @@ func TestBridgeGetAgentToolsSkipsUnreachableEligibleServer(t *testing.T) {
 	require.Equal(t, "eligible_tool", tools[0].Name)
 }
 
+func TestBridgeGetAgentToolsReturnsSortedToolsForAllowedUser(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := setupBridgeEligibleMCPServer(t, []string{"z_tool", "a_tool"})
+	defer server.Close()
+
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{
+			{
+				Name:    "service-account-server",
+				Enabled: true,
+				BaseURL: server.URL,
+				Headers: map[string]string{"Authorization": "Bearer test-token"},
+			},
+		},
+	}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		httpClient: &http.Client{
+			Transport: &http.Transport{DisableKeepAlives: true},
+		},
+	}
+
+	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
+		e.client,
+		&testLLMContextToolProvider{
+			tools: []llm.Tool{
+				{
+					Name:        "z_tool",
+					Description: "tool z",
+					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+						return "ok", nil
+					},
+				},
+				{
+					Name:        "a_tool",
+					Description: "tool a",
+					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+						return "ok", nil
+					},
+				},
+			},
+		},
+		nil,
+		&testLLMContextConfigProvider{},
+	)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAllow,
+		UserIDs:         []string{testUserID},
+	}
+	e.setupTestBot(botConfig)
+
+	client := e.CreateBridgeClient()
+	tools, err := client.GetAgentTools(testBotUserID, testUserID)
+	require.NoError(t, err)
+	require.Len(t, tools, 2)
+	require.Equal(t, "a_tool", tools[0].Name)
+	require.Equal(t, "z_tool", tools[1].Name)
+}
+
 func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
