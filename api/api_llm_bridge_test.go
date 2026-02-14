@@ -1108,6 +1108,71 @@ func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 	require.Equal(t, "eligible from context", tools[0].Description)
 }
 
+func TestBridgeGetAgentToolsSkipsUnreachableEligibleServer(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := setupBridgeEligibleMCPServer(t, []string{"eligible_tool"})
+	defer server.Close()
+
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{
+			{
+				Name:    "unreachable-server",
+				Enabled: true,
+				BaseURL: "http://127.0.0.1:1",
+				Headers: map[string]string{"Authorization": "Bearer bad"},
+			},
+			{
+				Name:    "reachable-server",
+				Enabled: true,
+				BaseURL: server.URL,
+				Headers: map[string]string{"Authorization": "Bearer good"},
+			},
+		},
+	}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		httpClient: &http.Client{
+			Transport: &http.Transport{DisableKeepAlives: true},
+		},
+	}
+
+	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
+		e.client,
+		&testLLMContextToolProvider{
+			tools: []llm.Tool{
+				{
+					Name:        "eligible_tool",
+					Description: "eligible from context",
+					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+						return "ok", nil
+					},
+				},
+			},
+		},
+		nil,
+		&testLLMContextConfigProvider{},
+	)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	client := e.CreateBridgeClient()
+	tools, err := client.GetAgentTools(testBotUserID, "")
+	require.NoError(t, err)
+	require.Len(t, tools, 1)
+	require.Equal(t, "eligible_tool", tools[0].Name)
+}
+
 func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard

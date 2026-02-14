@@ -229,7 +229,8 @@ func (a *API) discoverBridgeEligibleTools(ctx context.Context, userID string) ([
 			toolsCache,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed discovering eligible tools for MCP server %s: %w", serverConfig.Name, err)
+			a.pluginAPI.Log.Warn("Failed discovering eligible bridge tools from MCP server; skipping server", "server_name", serverConfig.Name, "error", err)
+			continue
 		}
 
 		for _, tool := range tools {
