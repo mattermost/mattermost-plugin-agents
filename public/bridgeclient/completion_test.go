@@ -174,3 +174,53 @@ func TestCompletionEndpointInputValidation(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "service cannot be empty")
 }
+
+func TestServiceCompletionEscapesServicePath(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/v1 beta/nostream", req.URL.Path)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1%20beta/nostream", req.URL.EscapedPath())
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"completion":"ok"}`)),
+		}, nil
+	})
+
+	completion, err := client.ServiceCompletion("openai/v1 beta", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "ok", completion)
+}
+
+func TestServiceCompletionStreamEscapesServicePath(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/v1 beta", req.URL.Path)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1%20beta", req.URL.EscapedPath())
+
+		sse := strings.Join([]string{
+			`data: {"Type":1,"Value":null}`,
+			"",
+		}, "\n")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	result, err := client.ServiceCompletionStream("openai/v1 beta", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+
+	text, readErr := result.ReadAll()
+	require.NoError(t, readErr)
+	require.Empty(t, text)
+}
