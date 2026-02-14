@@ -252,5 +252,6 @@ The client performs local validation before issuing requests:
 - `GetAgents`, `GetServices`, and `GetAgentTools` trim surrounding whitespace and validate optional `userID` when provided. Whitespace-only `userID` values are treated as unset.
 - `ServiceCompletion` and `ServiceCompletionStream` trim surrounding whitespace and reject empty service values.
 - `UserID` and `ChannelID` in completion requests are validated by the bridge API (server-side) when non-empty.
+- For raw HTTP callers (without this client), bridge handlers also validate path identifiers: malformed agent IDs and whitespace-only service path values return `400 Bad Request`.
 
 When validation fails, methods return an error immediately without making an HTTP request.
