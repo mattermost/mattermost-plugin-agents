@@ -1291,3 +1291,50 @@ func TestBridgeClientAgentCompletionRejectsInvalidAllowedToolsEntry(t *testing.T
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "allowed_tools cannot contain empty tool names")
 }
+
+func TestBridgeClientAgentCompletionRejectsAllowedToolsWhenAgentToolsDisabled(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+		DisableTools:    true,
+	}
+	e.setupTestBot(botConfig)
+
+	client := e.CreateBridgeClient()
+	_, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "Hello"},
+		},
+		AllowedTools: []string{"eligible_tool"},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "agent has tools disabled")
+}
+
+func TestBridgeGetAgentToolsReturnsEmptyWhenAgentToolsDisabled(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+		DisableTools:    true,
+	}
+	e.setupTestBot(botConfig)
+
+	client := e.CreateBridgeClient()
+	tools, err := client.GetAgentTools(testBotUserID, "")
+	require.NoError(t, err)
+	require.Empty(t, tools)
+}
