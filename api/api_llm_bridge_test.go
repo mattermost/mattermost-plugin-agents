@@ -3216,6 +3216,14 @@ func TestNormalizeBridgeCompletionPrincipalIDs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "abcdefghijklmnopqrstuvwxyz", userID)
 		require.Equal(t, "zyxwvutsrqponmlkjihgfedcba", channelID)
+
+		userID, channelID, err = normalizeBridgeCompletionPrincipalIDs(
+			"\nabcdefghijklmnopqrstuvwxyz\t",
+			"\nzyxwvutsrqponmlkjihgfedcba\t",
+		)
+		require.NoError(t, err)
+		require.Equal(t, "abcdefghijklmnopqrstuvwxyz", userID)
+		require.Equal(t, "zyxwvutsrqponmlkjihgfedcba", channelID)
 	})
 
 	t.Run("invalid user ID returns validation error", func(t *testing.T) {
@@ -3277,6 +3285,7 @@ func TestBridgeToolDiscoveryUserID(t *testing.T) {
 	t.Run("empty and whitespace user IDs fallback to synthetic user", func(t *testing.T) {
 		require.Equal(t, bridgeSyntheticUserID, bridgeToolDiscoveryUserID(""))
 		require.Equal(t, bridgeSyntheticUserID, bridgeToolDiscoveryUserID(" \t "))
+		require.Equal(t, bridgeSyntheticUserID, bridgeToolDiscoveryUserID(" \n\t "))
 	})
 
 	t.Run("non-empty user ID is trimmed and preserved", func(t *testing.T) {
