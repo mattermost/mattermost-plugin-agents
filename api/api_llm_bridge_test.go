@@ -1883,6 +1883,91 @@ func TestBridgeGetServicesRejectsInvalidUserIDQuery(t *testing.T) {
 	require.Contains(t, string(respBody), "invalid user_id")
 }
 
+func TestBridgeGetAgentsTreatsWhitespaceUserIDQueryAsUnset(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAllow,
+		UserIDs:         []string{testOtherUserID},
+	}
+	e.setupTestBot(botConfig)
+
+	req, err := http.NewRequest(http.MethodGet, "/mattermost-ai/bridge/v1/agents?user_id=%20%09%20", nil)
+	require.NoError(t, err)
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, readErr)
+	require.Contains(t, string(respBody), testBotUserID)
+}
+
+func TestBridgeGetServicesTreatsWhitespaceUserIDQueryAsUnset(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAllow,
+		UserIDs:         []string{testOtherUserID},
+	}
+	e.setupTestBot(botConfig)
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetServiceForTest(llm.ServiceConfig{ID: "svc-trim-test", Name: "trim-service", Type: "openai"})
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "/mattermost-ai/bridge/v1/services?user_id=%20%09%20", nil)
+	require.NoError(t, err)
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, readErr)
+	require.Contains(t, string(respBody), "svc-trim-test")
+}
+
+func TestBridgeGetAgentToolsTreatsWhitespaceUserIDQueryAsUnset(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAllow,
+		UserIDs:         []string{testOtherUserID},
+		DisableTools:    true,
+	}
+	e.setupTestBot(botConfig)
+
+	req, err := http.NewRequest(http.MethodGet, "/mattermost-ai/bridge/v1/agents/"+testBotUserID+"/tools?user_id=%20%09%20", nil)
+	require.NoError(t, err)
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
 func TestBridgeClientAgentCompletionRejectsExplicitEmptyAllowedToolsArray(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard

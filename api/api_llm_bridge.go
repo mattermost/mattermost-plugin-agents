@@ -190,16 +190,17 @@ func normalizeAllowedTools(rawTools []string) ([]string, error) {
 	return normalized, nil
 }
 
-func validateBridgeOptionalUserID(userID string) error {
-	if userID == "" {
-		return nil
+func normalizeBridgeOptionalUserID(userID string) (string, error) {
+	normalizedUserID := strings.TrimSpace(userID)
+	if normalizedUserID == "" {
+		return "", nil
 	}
 
-	if err := bridgeclient.ValidateID(userID); err != nil {
-		return fmt.Errorf("invalid user_id: %w", err)
+	if err := bridgeclient.ValidateID(normalizedUserID); err != nil {
+		return "", fmt.Errorf("invalid user_id: %w", err)
 	}
 
-	return nil
+	return normalizedUserID, nil
 }
 
 func (a *API) prepareAgentBridgeCompletion(
@@ -261,10 +262,11 @@ func (a *API) prepareAgentBridgeCompletion(
 }
 
 func bridgeToolDiscoveryUserID(userID string) string {
-	if userID == "" {
+	normalizedUserID := strings.TrimSpace(userID)
+	if normalizedUserID == "" {
 		return bridgeSyntheticUserID
 	}
-	return userID
+	return normalizedUserID
 }
 
 func (a *API) discoverBridgeEligibleTools(ctx context.Context, userID string) ([]bridgeclient.BridgeToolInfo, error) {
@@ -496,8 +498,8 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRe
 
 // handleGetAgents returns all available agents, optionally filtered by user permissions
 func (a *API) handleGetAgents(c *gin.Context) {
-	userID := c.Query("user_id")
-	if err := validateBridgeOptionalUserID(userID); err != nil {
+	userID, err := normalizeBridgeOptionalUserID(c.Query("user_id"))
+	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: err.Error(),
 		})
@@ -543,8 +545,8 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 		return
 	}
 
-	userID := c.Query("user_id")
-	if err := validateBridgeOptionalUserID(userID); err != nil {
+	userID, err := normalizeBridgeOptionalUserID(c.Query("user_id"))
+	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: err.Error(),
 		})
@@ -594,8 +596,8 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 
 // handleGetServices returns all available services, optionally filtered by user permissions
 func (a *API) handleGetServices(c *gin.Context) {
-	userID := c.Query("user_id")
-	if err := validateBridgeOptionalUserID(userID); err != nil {
+	userID, err := normalizeBridgeOptionalUserID(c.Query("user_id"))
+	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: err.Error(),
 		})
