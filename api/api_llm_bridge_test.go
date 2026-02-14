@@ -2969,3 +2969,90 @@ func TestBridgeClientAgentCompletionStreamAllowedToolsFailsWhenNoEligibleToolsAv
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no eligible tools available for this agent")
 }
+
+func TestNormalizeBridgeOptionalUserID(t *testing.T) {
+	t.Run("empty and whitespace user IDs become unset", func(t *testing.T) {
+		normalized, err := normalizeBridgeOptionalUserID("")
+		require.NoError(t, err)
+		require.Equal(t, "", normalized)
+
+		normalized, err = normalizeBridgeOptionalUserID(" \t ")
+		require.NoError(t, err)
+		require.Equal(t, "", normalized)
+	})
+
+	t.Run("valid user ID is trimmed", func(t *testing.T) {
+		normalized, err := normalizeBridgeOptionalUserID("  abcdefghijklmnopqrstuvwxyz  ")
+		require.NoError(t, err)
+		require.Equal(t, "abcdefghijklmnopqrstuvwxyz", normalized)
+	})
+
+	t.Run("invalid user ID returns validation error", func(t *testing.T) {
+		_, err := normalizeBridgeOptionalUserID("bad")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid user_id")
+	})
+}
+
+func TestNormalizeBridgeCompletionPrincipalIDs(t *testing.T) {
+	t.Run("empty and whitespace principal IDs become unset", func(t *testing.T) {
+		userID, channelID, err := normalizeBridgeCompletionPrincipalIDs("", " \t ")
+		require.NoError(t, err)
+		require.Equal(t, "", userID)
+		require.Equal(t, "", channelID)
+	})
+
+	t.Run("valid principal IDs are trimmed", func(t *testing.T) {
+		userID, channelID, err := normalizeBridgeCompletionPrincipalIDs(
+			"  abcdefghijklmnopqrstuvwxyz ",
+			"\tzyxwvutsrqponmlkjihgfedcba  ",
+		)
+		require.NoError(t, err)
+		require.Equal(t, "abcdefghijklmnopqrstuvwxyz", userID)
+		require.Equal(t, "zyxwvutsrqponmlkjihgfedcba", channelID)
+	})
+
+	t.Run("invalid user ID returns validation error", func(t *testing.T) {
+		_, _, err := normalizeBridgeCompletionPrincipalIDs("bad", "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid user_id")
+	})
+
+	t.Run("invalid channel ID returns validation error", func(t *testing.T) {
+		_, _, err := normalizeBridgeCompletionPrincipalIDs("", "bad")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid channel_id")
+	})
+}
+
+func TestNormalizeBridgeAgentID(t *testing.T) {
+	t.Run("valid agent ID is trimmed", func(t *testing.T) {
+		normalized, err := normalizeBridgeAgentID(" \tabcdefghijklmnopqrstuvwxyz ")
+		require.NoError(t, err)
+		require.Equal(t, "abcdefghijklmnopqrstuvwxyz", normalized)
+	})
+
+	t.Run("invalid agent ID returns validation error", func(t *testing.T) {
+		_, err := normalizeBridgeAgentID("bad")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid agent ID")
+	})
+}
+
+func TestNormalizeBridgeServiceIdentifier(t *testing.T) {
+	t.Run("valid service identifier is trimmed", func(t *testing.T) {
+		normalized, err := normalizeBridgeServiceIdentifier(" \topenai ")
+		require.NoError(t, err)
+		require.Equal(t, "openai", normalized)
+	})
+
+	t.Run("empty and whitespace service values are rejected", func(t *testing.T) {
+		_, err := normalizeBridgeServiceIdentifier("")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "service parameter is required")
+
+		_, err = normalizeBridgeServiceIdentifier(" \n\t ")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "service parameter is required")
+	})
+}
