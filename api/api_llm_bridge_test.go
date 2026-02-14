@@ -1396,6 +1396,44 @@ func TestBridgeClientAgentCompletionStreamAllowedToolsEnablesAutoRun(t *testing.
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
 }
 
+func TestBridgeClientAgentCompletionStreamDisablesToolsByDefault(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	fakeLLM := NewFakeLLMWithStreamEvents([]llm.TextStreamEvent{
+		{Type: llm.EventTypeText, Value: "default-stream"},
+		{Type: llm.EventTypeEnd, Value: nil},
+	})
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(fakeLLM)
+	}
+
+	client := e.CreateBridgeClient()
+	result, err := client.AgentCompletionStream(testBotUserID, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "No tools allowed"},
+		},
+	})
+	require.NoError(t, err)
+
+	text, readErr := result.ReadAll()
+	require.NoError(t, readErr)
+	require.Equal(t, "default-stream", text)
+
+	require.True(t, fakeLLM.LastConfig.ToolsDisabled)
+	require.Empty(t, fakeLLM.LastConfig.AutoRunTools)
+}
+
 func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
