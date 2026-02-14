@@ -260,6 +260,25 @@ func TestGetServicesWithoutUserIDOmitsQuery(t *testing.T) {
 	require.Empty(t, services)
 }
 
+func TestGetServicesWithWhitespaceUserIDOmitsQuery(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodGet, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/services", req.URL.Path)
+		require.Empty(t, req.URL.RawQuery)
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"services":[]}`)),
+		}, nil
+	})
+
+	services, err := client.GetServices(" \n\t ")
+	require.NoError(t, err)
+	require.Empty(t, services)
+}
+
 func TestGetAgentToolsWithoutUserIDOmitsQuery(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -275,6 +294,25 @@ func TestGetAgentToolsWithoutUserIDOmitsQuery(t *testing.T) {
 	})
 
 	tools, err := client.GetAgentTools("abcdefghijklmnopqrstuvwxyz", "")
+	require.NoError(t, err)
+	require.Empty(t, tools)
+}
+
+func TestGetAgentToolsWithWhitespaceUserIDOmitsQuery(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodGet, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/agents/abcdefghijklmnopqrstuvwxyz/tools", req.URL.Path)
+		require.Empty(t, req.URL.RawQuery)
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"tools":[]}`)),
+		}, nil
+	})
+
+	tools, err := client.GetAgentTools("abcdefghijklmnopqrstuvwxyz", " \n\t ")
 	require.NoError(t, err)
 	require.Empty(t, tools)
 }
