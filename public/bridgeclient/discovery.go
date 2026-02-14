@@ -20,7 +20,11 @@ func appendValidatedUserIDQuery(requestURL string, userID string) (string, error
 
 	separator := "?"
 	if strings.Contains(requestURL, "?") {
-		separator = "&"
+		if strings.HasSuffix(requestURL, "?") || strings.HasSuffix(requestURL, "&") {
+			separator = ""
+		} else {
+			separator = "&"
+		}
 	}
 
 	return fmt.Sprintf("%s%suser_id=%s", requestURL, separator, url.QueryEscape(userID)), nil

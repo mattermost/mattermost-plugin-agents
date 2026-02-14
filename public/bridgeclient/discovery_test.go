@@ -413,6 +413,18 @@ func TestAppendValidatedUserIDQuery(t *testing.T) {
 		require.Equal(t, "/mattermost-ai/bridge/v1/services?foo=bar&user_id=abcdefghijklmnopqrstuvwxyz", requestURL)
 	})
 
+	t.Run("valid user id appends without extra separator when query ends with question mark", func(t *testing.T) {
+		requestURL, err := appendValidatedUserIDQuery("/mattermost-ai/bridge/v1/services?", "abcdefghijklmnopqrstuvwxyz")
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/services?user_id=abcdefghijklmnopqrstuvwxyz", requestURL)
+	})
+
+	t.Run("valid user id appends without extra separator when query ends with ampersand", func(t *testing.T) {
+		requestURL, err := appendValidatedUserIDQuery("/mattermost-ai/bridge/v1/services?foo=bar&", "abcdefghijklmnopqrstuvwxyz")
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/services?foo=bar&user_id=abcdefghijklmnopqrstuvwxyz", requestURL)
+	})
+
 	t.Run("invalid user id returns validation error", func(t *testing.T) {
 		_, err := appendValidatedUserIDQuery("/mattermost-ai/bridge/v1/services", "bad")
 		require.Error(t, err)
