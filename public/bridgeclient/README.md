@@ -208,6 +208,7 @@ for _, tool := range tools {
 ```
 
 This endpoint returns only tools that are currently eligible for `AllowedTools`.
+In practice, this is limited to service-account style MCP tools configured for bridge eligibility.
 
 You can optionally pass `userID` to apply user-level permission filtering:
 
