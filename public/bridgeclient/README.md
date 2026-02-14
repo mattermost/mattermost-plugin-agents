@@ -98,6 +98,9 @@ for event := range result.Stream {
 
 For `llm.EventTypeError`, the client normalizes server error payloads into Go `error` values.
 
+For non-200 HTTP responses, the client surfaces `{"error":"..."}` when available and falls back
+to raw response body text if the payload is not in that shape.
+
 ### Multi-turn Conversations
 
 ```go
