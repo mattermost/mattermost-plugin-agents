@@ -581,9 +581,58 @@ func TestCompletionEndpointInputValidation(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "service cannot be empty")
 
+	_, err = client.ServiceCompletion("   ", CompletionRequest{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "service cannot be empty")
+
 	_, err = client.ServiceCompletionStream("", CompletionRequest{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "service cannot be empty")
+
+	_, err = client.ServiceCompletionStream(" \t ", CompletionRequest{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "service cannot be empty")
+}
+
+func TestAgentCompletionTrimsAgentPath(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz/nostream", req.URL.Path)
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"completion":"ok"}`)),
+		}, nil
+	})
+
+	completion, err := client.AgentCompletion(" \tabcdefghijklmnopqrstuvwxyz  ", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "ok", completion)
+}
+
+func TestServiceCompletionTrimsServicePath(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/nostream", req.URL.Path)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/nostream", req.URL.EscapedPath())
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"completion":"ok"}`)),
+		}, nil
+	})
+
+	completion, err := client.ServiceCompletion("   openai\t", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "ok", completion)
 }
 
 func TestServiceCompletionEscapesServicePath(t *testing.T) {
