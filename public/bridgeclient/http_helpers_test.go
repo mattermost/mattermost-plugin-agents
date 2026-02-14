@@ -22,6 +22,15 @@ func TestDoGetJSON(t *testing.T) {
 		require.EqualError(t, err, "response target cannot be nil")
 	})
 
+	t.Run("empty request url returns validation error", func(t *testing.T) {
+		client := &Client{}
+		var response AgentsResponse
+
+		err := client.doGetJSON("   ", &response)
+		require.Error(t, err)
+		require.EqualError(t, err, "request URL cannot be empty")
+	})
+
 	t.Run("create request failure", func(t *testing.T) {
 		client := &Client{}
 

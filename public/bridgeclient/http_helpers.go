@@ -8,11 +8,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 func (c *Client) doGetJSON(requestURL string, out any) error {
 	if out == nil {
 		return fmt.Errorf("response target cannot be nil")
+	}
+	if strings.TrimSpace(requestURL) == "" {
+		return fmt.Errorf("request URL cannot be empty")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, requestURL, nil)

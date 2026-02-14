@@ -224,6 +224,10 @@ func normalizeStreamEvent(event llm.TextStreamEvent) llm.TextStreamEvent {
 }
 
 func buildCompletionHTTPRequest(requestURL string, request CompletionRequest, isStreaming bool) (*http.Request, error) {
+	if strings.TrimSpace(requestURL) == "" {
+		return nil, fmt.Errorf("request URL cannot be empty")
+	}
+
 	body, err := json.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)

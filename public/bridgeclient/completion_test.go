@@ -851,6 +851,12 @@ func TestBuildCompletionHTTPRequest(t *testing.T) {
 		require.Contains(t, err.Error(), "failed to create request")
 	})
 
+	t.Run("returns error for empty request url", func(t *testing.T) {
+		_, err := buildCompletionHTTPRequest("   ", CompletionRequest{}, false)
+		require.Error(t, err)
+		require.EqualError(t, err, "request URL cannot be empty")
+	})
+
 	t.Run("non-stream request sets content type only", func(t *testing.T) {
 		req, err := buildCompletionHTTPRequest("/mattermost-ai/bridge/v1/completion/service/openai/nostream", CompletionRequest{
 			Posts:        []Post{{Role: "user", Message: "hello"}},
