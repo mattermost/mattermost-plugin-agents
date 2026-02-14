@@ -21,3 +21,19 @@ func TestGetAgentToolsValidation(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid user ID")
 }
+
+func TestGetAgentsValidation(t *testing.T) {
+	client := &Client{}
+
+	_, err := client.GetAgents("bad")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid user ID")
+}
+
+func TestGetServicesValidation(t *testing.T) {
+	client := &Client{}
+
+	_, err := client.GetServices("bad")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid user ID")
+}
