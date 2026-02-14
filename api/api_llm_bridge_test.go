@@ -1348,6 +1348,40 @@ func TestBridgeGetAgentToolsRespectsUserPermissions(t *testing.T) {
 	require.Contains(t, err.Error(), "permission denied")
 }
 
+func TestBridgeClientAgentCompletionRejectsExplicitEmptyAllowedToolsArray(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	// Send a raw JSON payload to explicitly include allowed_tools: [].
+	rawBody := `{"posts":[{"role":"user","message":"Hello"}],"allowed_tools":[]}`
+	req, err := http.NewRequest(
+		http.MethodPost,
+		fmt.Sprintf("/mattermost-ai/bridge/v1/completion/agent/%s/nostream", testBotUserID),
+		strings.NewReader(rawBody),
+	)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(respBody), "allowed_tools cannot be empty")
+}
+
 func TestBridgeClientAgentCompletionRejectsInvalidAllowedToolsEntry(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
