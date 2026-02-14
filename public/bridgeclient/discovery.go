@@ -8,16 +8,27 @@ import (
 	"net/url"
 )
 
+func appendValidatedUserIDQuery(requestURL string, userID string) (string, error) {
+	if userID == "" {
+		return requestURL, nil
+	}
+
+	if err := ValidateID(userID); err != nil {
+		return "", fmt.Errorf("invalid user ID: %w", err)
+	}
+
+	return fmt.Sprintf("%s?user_id=%s", requestURL, url.QueryEscape(userID)), nil
+}
+
 // GetAgents retrieves all available agents from the bridge API.
 // If userID is provided, only agents accessible to that user are returned.
 func (c *Client) GetAgents(userID string) ([]BridgeAgentInfo, error) {
 	requestURL := fmt.Sprintf("/%s/bridge/v1/agents", aiPluginID)
-	if userID != "" {
-		if err := ValidateID(userID); err != nil {
-			return nil, fmt.Errorf("invalid user ID: %w", err)
-		}
-		requestURL = fmt.Sprintf("%s?user_id=%s", requestURL, url.QueryEscape(userID))
+	updatedRequestURL, err := appendValidatedUserIDQuery(requestURL, userID)
+	if err != nil {
+		return nil, err
 	}
+	requestURL = updatedRequestURL
 
 	var agentsResp AgentsResponse
 	if err := c.doGetJSON(requestURL, &agentsResp); err != nil {
@@ -31,12 +42,11 @@ func (c *Client) GetAgents(userID string) ([]BridgeAgentInfo, error) {
 // If userID is provided, only services accessible to that user (via their permitted bots) are returned.
 func (c *Client) GetServices(userID string) ([]BridgeServiceInfo, error) {
 	requestURL := fmt.Sprintf("/%s/bridge/v1/services", aiPluginID)
-	if userID != "" {
-		if err := ValidateID(userID); err != nil {
-			return nil, fmt.Errorf("invalid user ID: %w", err)
-		}
-		requestURL = fmt.Sprintf("%s?user_id=%s", requestURL, url.QueryEscape(userID))
+	updatedRequestURL, err := appendValidatedUserIDQuery(requestURL, userID)
+	if err != nil {
+		return nil, err
 	}
+	requestURL = updatedRequestURL
 
 	var servicesResp ServicesResponse
 	if err := c.doGetJSON(requestURL, &servicesResp); err != nil {
@@ -54,12 +64,11 @@ func (c *Client) GetAgentTools(agent string, userID string) ([]BridgeToolInfo, e
 	}
 
 	requestURL := fmt.Sprintf("/%s/bridge/v1/agents/%s/tools", aiPluginID, agent)
-	if userID != "" {
-		if err := ValidateID(userID); err != nil {
-			return nil, fmt.Errorf("invalid user ID: %w", err)
-		}
-		requestURL = fmt.Sprintf("%s?user_id=%s", requestURL, url.QueryEscape(userID))
+	updatedRequestURL, err := appendValidatedUserIDQuery(requestURL, userID)
+	if err != nil {
+		return nil, err
 	}
+	requestURL = updatedRequestURL
 
 	var toolsResp AgentToolsResponse
 	if err := c.doGetJSON(requestURL, &toolsResp); err != nil {

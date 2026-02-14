@@ -393,3 +393,23 @@ func TestGetServicesErrorResponseWithEmptyBody(t *testing.T) {
 	require.Error(t, err)
 	require.EqualError(t, err, "request failed with status 502")
 }
+
+func TestAppendValidatedUserIDQuery(t *testing.T) {
+	t.Run("empty user id leaves url unchanged", func(t *testing.T) {
+		requestURL, err := appendValidatedUserIDQuery("/mattermost-ai/bridge/v1/agents", "")
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/agents", requestURL)
+	})
+
+	t.Run("valid user id appends escaped query", func(t *testing.T) {
+		requestURL, err := appendValidatedUserIDQuery("/mattermost-ai/bridge/v1/services", "abcdefghijklmnopqrstuvwxyz")
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/services?user_id=abcdefghijklmnopqrstuvwxyz", requestURL)
+	})
+
+	t.Run("invalid user id returns validation error", func(t *testing.T) {
+		_, err := appendValidatedUserIDQuery("/mattermost-ai/bridge/v1/services", "bad")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid user ID")
+	})
+}
