@@ -4,10 +4,7 @@
 package bridgeclient
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 )
 
@@ -22,29 +19,9 @@ func (c *Client) GetAgents(userID string) ([]BridgeAgentInfo, error) {
 		requestURL = fmt.Sprintf("%s?user_id=%s", requestURL, url.QueryEscape(userID))
 	}
 
-	req, err := http.NewRequest("GET", requestURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, requestFailedError(resp.StatusCode, respBody)
-	}
-
 	var agentsResp AgentsResponse
-	if err := json.Unmarshal(respBody, &agentsResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if err := c.doGetJSON(requestURL, &agentsResp); err != nil {
+		return nil, err
 	}
 
 	return agentsResp.Agents, nil
@@ -61,29 +38,9 @@ func (c *Client) GetServices(userID string) ([]BridgeServiceInfo, error) {
 		requestURL = fmt.Sprintf("%s?user_id=%s", requestURL, url.QueryEscape(userID))
 	}
 
-	req, err := http.NewRequest("GET", requestURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, requestFailedError(resp.StatusCode, respBody)
-	}
-
 	var servicesResp ServicesResponse
-	if err := json.Unmarshal(respBody, &servicesResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if err := c.doGetJSON(requestURL, &servicesResp); err != nil {
+		return nil, err
 	}
 
 	return servicesResp.Services, nil
@@ -104,29 +61,9 @@ func (c *Client) GetAgentTools(agent string, userID string) ([]BridgeToolInfo, e
 		requestURL = fmt.Sprintf("%s?user_id=%s", requestURL, url.QueryEscape(userID))
 	}
 
-	req, err := http.NewRequest("GET", requestURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, requestFailedError(resp.StatusCode, respBody)
-	}
-
 	var toolsResp AgentToolsResponse
-	if err := json.Unmarshal(respBody, &toolsResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if err := c.doGetJSON(requestURL, &toolsResp); err != nil {
+		return nil, err
 	}
 
 	return toolsResp.Tools, nil
