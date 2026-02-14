@@ -5,6 +5,7 @@ package bridgeclient
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -58,6 +59,23 @@ func TestAgentCompletionSendsExpectedPayload(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "done", completion)
+}
+
+func TestAgentCompletionMalformedSuccessResponseBody(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"completion":123}`)),
+		}, nil
+	})
+
+	_, err := client.AgentCompletion("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to unmarshal response")
 }
 
 func TestServiceCompletionReturnsErrorFromPlainTextBody(t *testing.T) {
@@ -153,6 +171,24 @@ func TestServiceCompletionStreamReturnsErrorFromPlainTextBody(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "request failed with status 503")
 	require.Contains(t, err.Error(), "bridge unavailable")
+}
+
+func TestServiceCompletionStreamReturnsErrorFromJSONBody(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":"permission denied"}`)),
+		}, nil
+	})
+
+	_, err := client.ServiceCompletionStream("openai", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "request failed with status 403")
+	require.Contains(t, err.Error(), "permission denied")
 }
 
 func TestCompletionEndpointInputValidation(t *testing.T) {
@@ -252,4 +288,36 @@ func TestAgentCompletionStreamIgnoresNonDataLines(t *testing.T) {
 	text, readErr := result.ReadAll()
 	require.NoError(t, readErr)
 	require.Equal(t, "hello", text)
+}
+
+func TestAgentCompletionStreamEmitsErrorWhenReaderFails(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(&erroringReader{
+				err: errors.New("read failure"),
+			}),
+		}, nil
+	})
+
+	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+
+	event := <-result.Stream
+	require.Equal(t, llm.EventTypeError, event.Type)
+	require.Error(t, event.Value.(error))
+	require.Contains(t, event.Value.(error).Error(), "error reading stream")
+	require.Contains(t, event.Value.(error).Error(), "read failure")
+}
+
+type erroringReader struct {
+	err error
+}
+
+func (r *erroringReader) Read(_ []byte) (int, error) {
+	return 0, r.err
 }
