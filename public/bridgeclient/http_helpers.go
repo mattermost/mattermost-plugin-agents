@@ -8,12 +8,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 )
 
 func (c *Client) doGetJSON(requestURL string, out any) error {
 	if out == nil {
 		return fmt.Errorf("response target cannot be nil")
+	}
+	outValue := reflect.ValueOf(out)
+	if outValue.Kind() != reflect.Pointer || outValue.IsNil() {
+		return fmt.Errorf("response target must be a non-nil pointer")
 	}
 	if strings.TrimSpace(requestURL) == "" {
 		return fmt.Errorf("request URL cannot be empty")

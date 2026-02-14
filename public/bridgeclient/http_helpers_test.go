@@ -22,6 +22,24 @@ func TestDoGetJSON(t *testing.T) {
 		require.EqualError(t, err, "response target cannot be nil")
 	})
 
+	t.Run("non-pointer output target returns validation error", func(t *testing.T) {
+		client := &Client{}
+		var response AgentsResponse
+
+		err := client.doGetJSON("/mattermost-ai/bridge/v1/agents", response)
+		require.Error(t, err)
+		require.EqualError(t, err, "response target must be a non-nil pointer")
+	})
+
+	t.Run("nil pointer output target returns validation error", func(t *testing.T) {
+		client := &Client{}
+		var response *AgentsResponse
+
+		err := client.doGetJSON("/mattermost-ai/bridge/v1/agents", response)
+		require.Error(t, err)
+		require.EqualError(t, err, "response target must be a non-nil pointer")
+	})
+
 	t.Run("empty request url returns validation error", func(t *testing.T) {
 		client := &Client{}
 		var response AgentsResponse
