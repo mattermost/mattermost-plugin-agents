@@ -62,8 +62,8 @@ func (c *Client) ServiceCompletionStream(service string, request CompletionReque
 }
 
 // doCompletionRequest performs a non-streaming completion request
-func (c *Client) doCompletionRequest(url string, request CompletionRequest) (string, error) {
-	req, err := buildCompletionHTTPRequest(url, request, false)
+func (c *Client) doCompletionRequest(requestURL string, request CompletionRequest) (string, error) {
+	req, err := buildCompletionHTTPRequest(requestURL, request, false)
 	if err != nil {
 		return "", err
 	}
@@ -96,8 +96,8 @@ func (c *Client) doCompletionRequest(url string, request CompletionRequest) (str
 }
 
 // doStreamingRequest performs a streaming completion request and returns a TextStreamResult
-func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm.TextStreamResult, error) {
-	req, err := buildCompletionHTTPRequest(url, request, true)
+func (c *Client) doStreamingRequest(requestURL string, request CompletionRequest) (*llm.TextStreamResult, error) {
+	req, err := buildCompletionHTTPRequest(requestURL, request, true)
 	if err != nil {
 		return nil, err
 	}

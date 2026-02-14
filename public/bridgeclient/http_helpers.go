@@ -11,6 +11,10 @@ import (
 )
 
 func (c *Client) doGetJSON(requestURL string, out any) error {
+	if out == nil {
+		return fmt.Errorf("response target cannot be nil")
+	}
+
 	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)

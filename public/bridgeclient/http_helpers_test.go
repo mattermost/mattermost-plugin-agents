@@ -14,6 +14,14 @@ import (
 )
 
 func TestDoGetJSON(t *testing.T) {
+	t.Run("nil output target returns validation error", func(t *testing.T) {
+		client := &Client{}
+
+		err := client.doGetJSON("/mattermost-ai/bridge/v1/agents", nil)
+		require.Error(t, err)
+		require.EqualError(t, err, "response target cannot be nil")
+	})
+
 	t.Run("create request failure", func(t *testing.T) {
 		client := &Client{}
 
