@@ -32,10 +32,10 @@ func (c *Client) AgentCompletion(agent string, request CompletionRequest) (strin
 // ServiceCompletion makes a non-streaming completion request to a specific service.
 // The service parameter can be either a service ID or name (e.g., "openai", "anthropic").
 func (c *Client) ServiceCompletion(service string, request CompletionRequest) (string, error) {
-	if service == "" {
-		return "", fmt.Errorf("service cannot be empty")
+	requestURL, err := buildServiceCompletionURL(service, false)
+	if err != nil {
+		return "", err
 	}
-	requestURL := fmt.Sprintf("/%s/bridge/v1/completion/service/%s/nostream", aiPluginID, url.PathEscape(service))
 	return c.doCompletionRequest(requestURL, request)
 }
 
@@ -54,10 +54,10 @@ func (c *Client) AgentCompletionStream(agent string, request CompletionRequest) 
 // The service parameter can be either a service ID or name (e.g., "openai", "anthropic").
 // Returns a TextStreamResult with a Stream channel for processing events.
 func (c *Client) ServiceCompletionStream(service string, request CompletionRequest) (*llm.TextStreamResult, error) {
-	if service == "" {
-		return nil, fmt.Errorf("service cannot be empty")
+	requestURL, err := buildServiceCompletionURL(service, true)
+	if err != nil {
+		return nil, err
 	}
-	requestURL := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", aiPluginID, url.PathEscape(service))
 	return c.doStreamingRequest(requestURL, request)
 }
 
@@ -240,4 +240,17 @@ func buildCompletionHTTPRequest(requestURL string, request CompletionRequest, is
 	}
 
 	return req, nil
+}
+
+func buildServiceCompletionURL(service string, isStreaming bool) (string, error) {
+	if service == "" {
+		return "", fmt.Errorf("service cannot be empty")
+	}
+
+	path := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", aiPluginID, url.PathEscape(service))
+	if !isStreaming {
+		path = fmt.Sprintf("%s/nostream", path)
+	}
+
+	return path, nil
 }

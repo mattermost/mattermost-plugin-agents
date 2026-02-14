@@ -881,3 +881,23 @@ func TestBuildCompletionHTTPRequest(t *testing.T) {
 		require.Equal(t, "text/event-stream", req.Header.Get("Accept"))
 	})
 }
+
+func TestBuildServiceCompletionURL(t *testing.T) {
+	t.Run("returns error for empty service", func(t *testing.T) {
+		_, err := buildServiceCompletionURL("", false)
+		require.Error(t, err)
+		require.EqualError(t, err, "service cannot be empty")
+	})
+
+	t.Run("returns escaped non-stream url", func(t *testing.T) {
+		requestURL, err := buildServiceCompletionURL("openai/v1 beta", false)
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1%20beta/nostream", requestURL)
+	})
+
+	t.Run("returns escaped stream url", func(t *testing.T) {
+		requestURL, err := buildServiceCompletionURL("openai/v1 beta", true)
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1%20beta", requestURL)
+	})
+}
