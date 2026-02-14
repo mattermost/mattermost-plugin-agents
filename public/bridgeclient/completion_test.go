@@ -621,11 +621,3 @@ func TestNormalizeStreamEvent(t *testing.T) {
 		})
 	}
 }
-
-type erroringReader struct {
-	err error
-}
-
-func (r *erroringReader) Read(_ []byte) (int, error) {
-	return 0, r.err
-}
