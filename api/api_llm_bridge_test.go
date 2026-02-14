@@ -3110,6 +3110,12 @@ func TestNormalizeBridgeAgentID(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid agent ID")
 	})
+
+	t.Run("whitespace-only agent ID returns validation error", func(t *testing.T) {
+		_, err := normalizeBridgeAgentID(" \t ")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid agent ID")
+	})
 }
 
 func TestNormalizeBridgeServiceIdentifier(t *testing.T) {
@@ -3127,5 +3133,16 @@ func TestNormalizeBridgeServiceIdentifier(t *testing.T) {
 		_, err = normalizeBridgeServiceIdentifier(" \n\t ")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "service parameter is required")
+	})
+}
+
+func TestBridgeToolDiscoveryUserID(t *testing.T) {
+	t.Run("empty and whitespace user IDs fallback to synthetic user", func(t *testing.T) {
+		require.Equal(t, bridgeSyntheticUserID, bridgeToolDiscoveryUserID(""))
+		require.Equal(t, bridgeSyntheticUserID, bridgeToolDiscoveryUserID(" \t "))
+	})
+
+	t.Run("non-empty user ID is trimmed and preserved", func(t *testing.T) {
+		require.Equal(t, "abcdefghijklmnopqrstuvwxyz", bridgeToolDiscoveryUserID("  abcdefghijklmnopqrstuvwxyz  "))
 	})
 }
