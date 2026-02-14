@@ -47,6 +47,12 @@ func TestRequestFailedError(t *testing.T) {
 			expectedError: "request failed with status 502: upstream timeout",
 		},
 		{
+			name:          "plain text body is trimmed",
+			statusCode:    502,
+			responseBody:  "  upstream timeout \n",
+			expectedError: "request failed with status 502: upstream timeout",
+		},
+		{
 			name:          "empty body omits suffix",
 			statusCode:    500,
 			responseBody:  "",
