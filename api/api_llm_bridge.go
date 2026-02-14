@@ -203,11 +203,37 @@ func normalizeBridgeOptionalUserID(userID string) (string, error) {
 	return normalizedUserID, nil
 }
 
+func normalizeBridgeCompletionPrincipalIDs(userID string, channelID string) (string, string, error) {
+	normalizedUserID := strings.TrimSpace(userID)
+	normalizedChannelID := strings.TrimSpace(channelID)
+
+	if normalizedUserID != "" {
+		if err := bridgeclient.ValidateID(normalizedUserID); err != nil {
+			return "", "", fmt.Errorf("invalid user_id: %w", err)
+		}
+	}
+
+	if normalizedChannelID != "" {
+		if err := bridgeclient.ValidateID(normalizedChannelID); err != nil {
+			return "", "", fmt.Errorf("invalid channel_id: %w", err)
+		}
+	}
+
+	return normalizedUserID, normalizedChannelID, nil
+}
+
 func (a *API) prepareAgentBridgeCompletion(
 	ctx context.Context,
 	agent string,
 	req bridgeclient.CompletionRequest,
 ) (*bots.Bot, llm.CompletionRequest, []llm.LanguageModelOption, int, error) {
+	normalizedUserID, normalizedChannelID, err := normalizeBridgeCompletionPrincipalIDs(req.UserID, req.ChannelID)
+	if err != nil {
+		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, err
+	}
+	req.UserID = normalizedUserID
+	req.ChannelID = normalizedChannelID
+
 	allowedTools, err := normalizeAllowedTools(req.AllowedTools)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid allowed_tools: %w", err)
@@ -743,6 +769,16 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 		return
 	}
 
+	normalizedUserID, normalizedChannelID, err := normalizeBridgeCompletionPrincipalIDs(req.UserID, req.ChannelID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: err.Error(),
+		})
+		return
+	}
+	req.UserID = normalizedUserID
+	req.ChannelID = normalizedChannelID
+
 	// Find a bot that uses the specified service (by ID or name)
 	bot, err := a.getBotByService(service)
 	if err != nil {
@@ -814,6 +850,16 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 		})
 		return
 	}
+
+	normalizedUserID, normalizedChannelID, err := normalizeBridgeCompletionPrincipalIDs(req.UserID, req.ChannelID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: err.Error(),
+		})
+		return
+	}
+	req.UserID = normalizedUserID
+	req.ChannelID = normalizedChannelID
 
 	// Find a bot that uses the specified service (by ID or name)
 	bot, err := a.getBotByService(service)
