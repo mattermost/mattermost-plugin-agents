@@ -17,6 +17,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
 
+const maxSSELineBytes = 1024 * 1024
+
 // AgentCompletion makes a non-streaming completion request to a specific agent by Bot ID.
 // The agent parameter should be the Mattermost Bot User ID (an immutable identifier).
 func (c *Client) AgentCompletion(agent string, request CompletionRequest) (string, error) {
@@ -132,6 +134,7 @@ func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm
 		defer close(stream)
 
 		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
 		for scanner.Scan() {
 			line := scanner.Text()
 
