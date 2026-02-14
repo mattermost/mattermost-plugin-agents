@@ -286,6 +286,53 @@ func TestGetServicesMalformedResponseBody(t *testing.T) {
 	require.Contains(t, err.Error(), "failed to unmarshal response")
 }
 
+func TestGetAgentToolsMalformedResponseBody(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"tools":"not-an-array"}`)),
+		}, nil
+	})
+
+	_, err := client.GetAgentTools("abcdefghijklmnopqrstuvwxyz", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to unmarshal response")
+}
+
+func TestGetAgentsErrorResponseWithPlainTextBody(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadGateway,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("upstream failed")),
+		}, nil
+	})
+
+	_, err := client.GetAgents("")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "request failed with status 502")
+	require.Contains(t, err.Error(), "upstream failed")
+}
+
+func TestGetServicesErrorResponseWithPlainTextBody(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("internal error")),
+		}, nil
+	})
+
+	_, err := client.GetServices("")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "request failed with status 500")
+	require.Contains(t, err.Error(), "internal error")
+}
+
 type roundTripFunc func(req *http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
