@@ -18,8 +18,10 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
+	prompttemplates "github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
@@ -52,6 +54,7 @@ type TestEnvironment struct {
 type testConfigImpl struct {
 	allowUnsafeLinks                bool
 	enableChannelMentionToolCalling bool
+	mcpConfig                       mcp.Config
 }
 
 func (tc *testConfigImpl) GetDefaultBotName() string {
@@ -59,7 +62,7 @@ func (tc *testConfigImpl) GetDefaultBotName() string {
 }
 
 func (tc *testConfigImpl) MCP() mcp.Config {
-	return mcp.Config{}
+	return tc.mcpConfig
 }
 
 func (tc *testConfigImpl) AllowUnsafeLinks() bool {
@@ -70,15 +73,37 @@ func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 	return tc.enableChannelMentionToolCalling
 }
 
+type testLLMContextToolProvider struct {
+	tools []llm.Tool
+}
+
+func (p *testLLMContextToolProvider) GetTools(_ *bots.Bot) []llm.Tool {
+	return p.tools
+}
+
+type testLLMContextConfigProvider struct{}
+
+func (p *testLLMContextConfigProvider) GetEnableLLMTrace() bool {
+	return false
+}
+
+func (p *testLLMContextConfigProvider) GetServiceByID(_ string) (llm.ServiceConfig, bool) {
+	return llm.ServiceConfig{}, false
+}
+
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
-type mockMCPClientManager struct{}
+type mockMCPClientManager struct {
+	oauthManager *mcp.OAuthManager
+	toolsCache   *mcp.ToolsCache
+	httpClient   *http.Client
+}
 
 func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
-	return nil
+	return m.oauthManager
 }
 
 func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
-	return nil
+	return m.toolsCache
 }
 
 func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error) {
@@ -94,7 +119,7 @@ func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error)
 }
 
 func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
-	return nil
+	return m.httpClient
 }
 
 func (e *TestEnvironment) Cleanup(t *testing.T) {
@@ -161,6 +186,15 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	noopMetrics := &metrics.NoopMetrics{}
 
 	client := pluginapi.NewClient(mockAPI, nil)
+	llmPrompts, err := llm.NewPrompts(prompttemplates.PromptsFolder)
+	require.NoError(t, err)
+
+	contextBuilder := llmcontext.NewLLMContextBuilder(
+		client,
+		&testLLMContextToolProvider{},
+		nil,
+		&testLLMContextConfigProvider{},
+	)
 
 	// Create test bots instance
 	testBots := createTestBots(mockAPI, client)
@@ -170,7 +204,38 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 
 	cfg := &testConfigImpl{}
 
-	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil)
+	// Allow arbitrary log calls from subsystems used in tests (e.g. MCP discovery).
+	for i := 1; i <= 20; i++ {
+		args := make([]interface{}, i)
+		for j := range args {
+			args[j] = mock.Anything
+		}
+		mockAPI.On("LogDebug", args...).Maybe()
+		mockAPI.On("LogInfo", args...).Maybe()
+		mockAPI.On("LogWarn", args...).Maybe()
+		mockAPI.On("LogError", args...).Maybe()
+	}
+
+	api := New(
+		testBots,
+		conversationsService,
+		nil,
+		nil,
+		nil,
+		client,
+		noopMetrics,
+		contextBuilder,
+		cfg,
+		llmPrompts,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		&mockMCPClientManager{httpClient: &http.Client{}},
+		nil,
+		nil,
+	)
 
 	return &TestEnvironment{
 		api:     api,

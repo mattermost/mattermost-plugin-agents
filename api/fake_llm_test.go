@@ -23,10 +23,21 @@ type FakeLLM struct {
 	TokenCount int
 	// TokenLimit to return from InputTokenLimit
 	TokenLimit int
+	// LastConversation captures the most recent completion request.
+	LastConversation llm.CompletionRequest
+	// LastConfig captures the resolved language model config from options.
+	LastConfig llm.LanguageModelConfig
 }
 
 // ChatCompletion implements streaming completion
 func (f *FakeLLM) ChatCompletion(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+	f.LastConversation = conversation
+	cfg := llm.LanguageModelConfig{}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	f.LastConfig = cfg
+
 	if f.Error != nil {
 		return nil, f.Error
 	}
@@ -63,6 +74,13 @@ func (f *FakeLLM) ChatCompletion(conversation llm.CompletionRequest, opts ...llm
 
 // ChatCompletionNoStream implements non-streaming completion
 func (f *FakeLLM) ChatCompletionNoStream(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	f.LastConversation = conversation
+	cfg := llm.LanguageModelConfig{}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	f.LastConfig = cfg
+
 	if f.Error != nil {
 		return "", f.Error
 	}

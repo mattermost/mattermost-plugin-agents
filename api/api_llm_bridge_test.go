@@ -4,16 +4,22 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
+	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -899,4 +905,261 @@ func TestBridgeGetServices(t *testing.T) {
 			}
 		})
 	}
+}
+
+func setupBridgeEligibleMCPServer(t *testing.T, toolNames []string) *httptest.Server {
+	t.Helper()
+
+	server := gosdkmcp.NewServer(
+		&gosdkmcp.Implementation{
+			Name:    "bridge-test-mcp-server",
+			Version: "1.0.0",
+		},
+		nil,
+	)
+
+	for _, toolName := range toolNames {
+		name := toolName
+		server.AddTool(
+			&gosdkmcp.Tool{
+				Name:        name,
+				Description: "discovered " + name,
+				InputSchema: llm.NewJSONSchemaFromStruct[struct{}](),
+			},
+			func(_ context.Context, _ *gosdkmcp.CallToolRequest) (*gosdkmcp.CallToolResult, error) {
+				return &gosdkmcp.CallToolResult{
+					Content: []gosdkmcp.Content{
+						&gosdkmcp.TextContent{Text: "ok"},
+					},
+					IsError: false,
+				}, nil
+			},
+		)
+	}
+
+	handler := gosdkmcp.NewStreamableHTTPHandler(func(_ *http.Request) *gosdkmcp.Server {
+		return server
+	}, nil)
+
+	return httptest.NewServer(handler)
+}
+
+func TestBridgeClientAgentCompletionUsesAgentContextAndPrompt(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:               "testbot",
+		DisplayName:        "Test Bot",
+		CustomInstructions: "Always answer with a single short sentence.",
+		UserAccessLevel:    llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	fakeLLM := NewFakeLLM("Hello! How can I help?")
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(fakeLLM)
+	}
+
+	client := e.CreateBridgeClient()
+	result, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "Hi there"},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "Hello! How can I help?", result)
+
+	require.NotNil(t, fakeLLM.LastConversation.Context)
+	require.Equal(t, "Test Bot", fakeLLM.LastConversation.Context.BotName)
+	require.Equal(t, "testbot", fakeLLM.LastConversation.Context.BotUsername)
+	require.NotNil(t, fakeLLM.LastConversation.Context.RequestingUser)
+	require.Equal(t, bridgeSyntheticUsername, fakeLLM.LastConversation.Context.RequestingUser.Username)
+
+	require.GreaterOrEqual(t, len(fakeLLM.LastConversation.Posts), 2)
+	require.Equal(t, llm.PostRoleSystem, fakeLLM.LastConversation.Posts[0].Role)
+	require.Contains(t, fakeLLM.LastConversation.Posts[0].Message, "You are called Test Bot")
+	require.Contains(t, fakeLLM.LastConversation.Posts[0].Message, "Always answer with a single short sentence.")
+	require.Equal(t, llm.PostRoleUser, fakeLLM.LastConversation.Posts[1].Role)
+	require.Equal(t, "Hi there", fakeLLM.LastConversation.Posts[1].Message)
+	require.True(t, fakeLLM.LastConfig.ToolsDisabled)
+}
+
+func TestBridgeClientServiceCompletionRejectsAllowedTools(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetServiceForTest(llm.ServiceConfig{ID: "service-id", Name: "service-name"})
+		bot.SetLLMForTest(NewFakeLLM("ignored"))
+	}
+
+	client := e.CreateBridgeClient()
+	_, err := client.ServiceCompletion("service-id", bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "Hi"},
+		},
+		AllowedTools: []string{"eligible_tool"},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "allowed_tools is only supported for agent completion endpoints")
+}
+
+func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := setupBridgeEligibleMCPServer(t, []string{"eligible_tool"})
+	defer server.Close()
+
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{
+			{
+				Name:    "service-account-server",
+				Enabled: true,
+				BaseURL: server.URL,
+				Headers: map[string]string{"Authorization": "Bearer test-token"},
+			},
+			{
+				Name:    "non-eligible-no-headers",
+				Enabled: true,
+				BaseURL: server.URL,
+			},
+		},
+	}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		httpClient: &http.Client{
+			Transport: &http.Transport{DisableKeepAlives: true},
+		},
+	}
+
+	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
+		e.client,
+		&testLLMContextToolProvider{
+			tools: []llm.Tool{
+				{
+					Name:        "eligible_tool",
+					Description: "eligible from context",
+					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+						return "ok", nil
+					},
+				},
+				{
+					Name:        "ineligible_tool",
+					Description: "should be filtered out",
+					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+						return "ok", nil
+					},
+				},
+			},
+		},
+		nil,
+		&testLLMContextConfigProvider{},
+	)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	client := e.CreateBridgeClient()
+	tools, err := client.GetAgentTools(testBotUserID, "")
+	require.NoError(t, err)
+	require.Len(t, tools, 1)
+	require.Equal(t, "eligible_tool", tools[0].Name)
+	require.Equal(t, "eligible from context", tools[0].Description)
+}
+
+func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := setupBridgeEligibleMCPServer(t, []string{"eligible_tool"})
+	defer server.Close()
+
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{
+			{
+				Name:    "service-account-server",
+				Enabled: true,
+				BaseURL: server.URL,
+				Headers: map[string]string{"Authorization": "Bearer test-token"},
+			},
+		},
+	}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		httpClient: &http.Client{
+			Transport: &http.Transport{DisableKeepAlives: true},
+		},
+	}
+
+	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
+		e.client,
+		&testLLMContextToolProvider{
+			tools: []llm.Tool{
+				{
+					Name:        "eligible_tool",
+					Description: "eligible from context",
+					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+						return "ok", nil
+					},
+				},
+			},
+		},
+		nil,
+		&testLLMContextConfigProvider{},
+	)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	fakeLLM := NewFakeLLM("auto run enabled")
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(fakeLLM)
+	}
+
+	client := e.CreateBridgeClient()
+	result, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "Use the tool"},
+		},
+		AllowedTools: []string{"eligible_tool"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "auto run enabled", result)
+	require.False(t, fakeLLM.LastConfig.ToolsDisabled)
+	require.Equal(t, []string{"eligible_tool"}, fakeLLM.LastConfig.AutoRunTools)
+	require.NotNil(t, fakeLLM.LastConversation.Context)
+	require.NotNil(t, fakeLLM.LastConversation.Context.Tools)
+	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
 }

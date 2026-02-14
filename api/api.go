@@ -134,6 +134,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 	// Discovery endpoints
 	llmBridgeRoute.GET("/agents", a.handleGetAgents)
+	llmBridgeRoute.GET("/agents/:agent/tools", a.handleGetAgentTools)
 	llmBridgeRoute.GET("/services", a.handleGetServices)
 
 	// Completion endpoints

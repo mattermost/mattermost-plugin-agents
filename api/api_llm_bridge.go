@@ -4,20 +4,31 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// convertLLMBridgeRequestToInternal converts the API request format to internal llm.CompletionRequest
-func (a *API) convertLLMBridgeRequestToInternal(req bridgeclient.CompletionRequest) (llm.CompletionRequest, error) {
+const (
+	bridgeSyntheticUserID   = "bridgeclient-service-account"
+	bridgeSyntheticUsername = "bridgeclient"
+)
+
+// convertBridgePostsToInternal converts bridge posts to internal llm posts.
+func (a *API) convertBridgePostsToInternal(req bridgeclient.CompletionRequest) ([]llm.Post, error) {
 	posts := make([]llm.Post, len(req.Posts))
 
 	for i, apiPost := range req.Posts {
@@ -31,7 +42,7 @@ func (a *API) convertLLMBridgeRequestToInternal(req bridgeclient.CompletionReque
 		case "system":
 			role = llm.PostRoleSystem
 		default:
-			return llm.CompletionRequest{}, fmt.Errorf("invalid role: %s", apiPost.Role)
+			return nil, fmt.Errorf("invalid role: %s", apiPost.Role)
 		}
 
 		// Convert files
@@ -40,19 +51,19 @@ func (a *API) convertLLMBridgeRequestToInternal(req bridgeclient.CompletionReque
 			files = make([]llm.File, len(apiPost.FileIDs))
 			for j, fileID := range apiPost.FileIDs {
 				if fileID == "" {
-					return llm.CompletionRequest{}, fmt.Errorf("file ID cannot be empty for file %d in post %d", j, i)
+					return nil, fmt.Errorf("file ID cannot be empty for file %d in post %d", j, i)
 				}
 
 				// Get file info
 				fileInfo, err := a.mmClient.GetFileInfo(fileID)
 				if err != nil {
-					return llm.CompletionRequest{}, fmt.Errorf("failed to get file info for file ID %s: %w", fileID, err)
+					return nil, fmt.Errorf("failed to get file info for file ID %s: %w", fileID, err)
 				}
 
 				// Get file reader
 				fileReader, err := a.mmClient.GetFile(fileID)
 				if err != nil {
-					return llm.CompletionRequest{}, fmt.Errorf("failed to get file for file ID %s: %w", fileID, err)
+					return nil, fmt.Errorf("failed to get file for file ID %s: %w", fileID, err)
 				}
 
 				files[j] = llm.File{
@@ -70,14 +81,208 @@ func (a *API) convertLLMBridgeRequestToInternal(req bridgeclient.CompletionReque
 		}
 	}
 
+	return posts, nil
+}
+
+// convertServiceBridgeRequestToInternal converts the API request format to internal
+// llm.CompletionRequest for service completions.
+func (a *API) convertServiceBridgeRequestToInternal(req bridgeclient.CompletionRequest) (llm.CompletionRequest, error) {
+	posts, err := a.convertBridgePostsToInternal(req)
+	if err != nil {
+		return llm.CompletionRequest{}, err
+	}
+
 	return llm.CompletionRequest{
 		Posts:   posts,
 		Context: &llm.Context{},
 	}, nil
 }
 
-// convertRequestToLLMOptions converts the API request options to llm.LanguageModelOption
-func (a *API) convertRequestToLLMOptions(req bridgeclient.CompletionRequest) ([]llm.LanguageModelOption, error) {
+func (a *API) getBridgeRequestingUser(userID string) *model.User {
+	if userID == "" {
+		return &model.User{
+			Id:       bridgeSyntheticUserID,
+			Username: bridgeSyntheticUsername,
+			Locale:   "en",
+		}
+	}
+	return &model.User{
+		Id:       userID,
+		Username: userID,
+		Locale:   "en",
+	}
+}
+
+func (a *API) buildAgentBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool) *llm.Context {
+	bridgeContext := llm.NewContext()
+	bridgeContext.RequestingUser = a.getBridgeRequestingUser(req.UserID)
+
+	botConfig := bot.GetConfig()
+	bridgeContext.BotName = botConfig.DisplayName
+	bridgeContext.BotUsername = botConfig.Name
+	bridgeContext.CustomInstructions = botConfig.CustomInstructions
+	bridgeContext.BotModel = bot.GetService().DefaultModel
+	if mmbot := bot.GetMMBot(); mmbot != nil {
+		bridgeContext.BotUserID = mmbot.UserId
+	}
+
+	if includeTools && a.contextBuilder != nil {
+		a.contextBuilder.WithLLMContextTools(bot)(bridgeContext)
+	}
+	if a.contextBuilder != nil {
+		a.contextBuilder.WithLLMContextRequestingUser(bridgeContext.RequestingUser)(bridgeContext)
+	}
+
+	return bridgeContext
+}
+
+func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool) (llm.CompletionRequest, error) {
+	posts, err := a.convertBridgePostsToInternal(req)
+	if err != nil {
+		return llm.CompletionRequest{}, err
+	}
+
+	if a.prompts == nil {
+		return llm.CompletionRequest{}, errors.New("prompt manager is unavailable")
+	}
+
+	bridgeContext := a.buildAgentBridgeContext(bot, req, includeTools)
+	systemPrompt, err := a.prompts.Format(prompts.PromptDirectMessageQuestionSystem, bridgeContext)
+	if err != nil {
+		return llm.CompletionRequest{}, fmt.Errorf("failed to format system prompt: %w", err)
+	}
+
+	posts = append([]llm.Post{
+		{
+			Role:    llm.PostRoleSystem,
+			Message: systemPrompt,
+		},
+	}, posts...)
+
+	return llm.CompletionRequest{
+		Posts:   posts,
+		Context: bridgeContext,
+	}, nil
+}
+
+func normalizeAllowedTools(rawTools []string) ([]string, error) {
+	if rawTools == nil {
+		return nil, nil
+	}
+	if len(rawTools) == 0 {
+		return nil, errors.New("allowed_tools cannot be empty when provided")
+	}
+
+	seen := make(map[string]struct{}, len(rawTools))
+	normalized := make([]string, 0, len(rawTools))
+	for _, rawName := range rawTools {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			return nil, errors.New("allowed_tools cannot contain empty tool names")
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		normalized = append(normalized, name)
+	}
+
+	return normalized, nil
+}
+
+func bridgeToolDiscoveryUserID(userID string) string {
+	if userID == "" {
+		return bridgeSyntheticUserID
+	}
+	return userID
+}
+
+func (a *API) discoverBridgeEligibleTools(ctx context.Context, userID string) ([]bridgeclient.BridgeToolInfo, error) {
+	mcpConfig := a.config.MCP()
+	if !mcpConfig.Enabled {
+		return nil, nil
+	}
+	if a.mcpClientManager == nil {
+		return nil, nil
+	}
+
+	oauthManager := a.mcpClientManager.GetOAuthManager()
+	httpClient := a.mcpClientManager.GetHTTPClient()
+	toolsCache := a.mcpClientManager.GetToolsCache()
+	if httpClient == nil {
+		return nil, errors.New("MCP HTTP client is unavailable")
+	}
+
+	toolMap := map[string]bridgeclient.BridgeToolInfo{}
+	for _, serverConfig := range mcpConfig.Servers {
+		if !serverConfig.Enabled || serverConfig.BaseURL == "" || len(serverConfig.Headers) == 0 {
+			continue
+		}
+
+		tools, err := mcp.DiscoverRemoteServerTools(
+			ctx,
+			bridgeToolDiscoveryUserID(userID),
+			serverConfig,
+			a.pluginAPI.Log,
+			oauthManager,
+			httpClient,
+			toolsCache,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed discovering eligible tools for MCP server %s: %w", serverConfig.Name, err)
+		}
+
+		for _, tool := range tools {
+			if _, exists := toolMap[tool.Name]; exists {
+				continue
+			}
+			toolMap[tool.Name] = bridgeclient.BridgeToolInfo{
+				Name:        tool.Name,
+				Description: tool.Description,
+			}
+		}
+	}
+
+	result := make([]bridgeclient.BridgeToolInfo, 0, len(toolMap))
+	for _, tool := range toolMap {
+		result = append(result, tool)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
+
+	return result, nil
+}
+
+func (a *API) filterEligibleToolsForContext(ctx context.Context, userID string, toolStore *llm.ToolStore) ([]bridgeclient.BridgeToolInfo, map[string]llm.Tool, error) {
+	if toolStore == nil {
+		return nil, map[string]llm.Tool{}, nil
+	}
+
+	eligibleDiscoveredTools, err := a.discoverBridgeEligibleTools(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	eligibleTools := make([]bridgeclient.BridgeToolInfo, 0, len(eligibleDiscoveredTools))
+	eligibleToolMap := make(map[string]llm.Tool, len(eligibleDiscoveredTools))
+	for _, discovered := range eligibleDiscoveredTools {
+		tool := toolStore.GetTool(discovered.Name)
+		if tool == nil {
+			continue
+		}
+		eligibleTools = append(eligibleTools, bridgeclient.BridgeToolInfo{
+			Name:        tool.Name,
+			Description: tool.Description,
+		})
+		eligibleToolMap[tool.Name] = *tool
+	}
+
+	return eligibleTools, eligibleToolMap, nil
+}
+
+// convertRequestToLLMOptions converts the API request options to llm.LanguageModelOption.
+func (a *API) convertRequestToLLMOptions(req bridgeclient.CompletionRequest, disableTools bool, autoRunTools []string) ([]llm.LanguageModelOption, error) {
 	var options []llm.LanguageModelOption
 
 	// Add MaxGeneratedTokens option if provided
@@ -104,8 +309,12 @@ func (a *API) convertRequestToLLMOptions(req bridgeclient.CompletionRequest) ([]
 		})
 	}
 
-	// Plugin bridge requests do not allow tools to be enabled
-	options = append(options, llm.WithToolsDisabled())
+	if disableTools {
+		options = append(options, llm.WithToolsDisabled())
+	} else if len(autoRunTools) > 0 {
+		options = append(options, llm.WithAutoRunTools(autoRunTools))
+	}
+
 	return options, nil
 }
 
@@ -246,6 +455,60 @@ func (a *API) handleGetAgents(c *gin.Context) {
 	})
 }
 
+// handleGetAgentTools returns bridge-eligible tools for a specific agent.
+// Only tools that are eligible for allowed_tools execution are returned.
+func (a *API) handleGetAgentTools(c *gin.Context) {
+	agent := c.Param("agent")
+	if agent == "" {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: "agent parameter is required",
+		})
+		return
+	}
+
+	userID := c.Query("user_id")
+
+	bot, err := a.getBotByAgent(agent)
+	if err != nil {
+		c.JSON(http.StatusNotFound, bridgeclient.ErrorResponse{
+			Error: err.Error(),
+		})
+		return
+	}
+
+	// Optional user filtering for usage restrictions.
+	if userID != "" {
+		if err := a.bots.CheckUsageRestrictionsForUser(bot, userID); err != nil {
+			c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
+				Error: fmt.Sprintf("permission denied: %v", err),
+			})
+			return
+		}
+	}
+
+	if bot.GetConfig().DisableTools {
+		c.JSON(http.StatusOK, bridgeclient.AgentToolsResponse{
+			Tools: []bridgeclient.BridgeToolInfo{},
+		})
+		return
+	}
+
+	bridgeContext := a.buildAgentBridgeContext(bot, bridgeclient.CompletionRequest{
+		UserID: userID,
+	}, true)
+	eligibleTools, _, err := a.filterEligibleToolsForContext(c.Request.Context(), userID, bridgeContext.Tools)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
+			Error: fmt.Sprintf("failed to discover eligible tools: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, bridgeclient.AgentToolsResponse{
+		Tools: eligibleTools,
+	})
+}
+
 // handleGetServices returns all available services, optionally filtered by user permissions
 func (a *API) handleGetServices(c *gin.Context) {
 	userID := c.Query("user_id")
@@ -308,6 +571,14 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
+	allowedTools, err := normalizeAllowedTools(req.AllowedTools)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: fmt.Sprintf("invalid allowed_tools: %v", err),
+		})
+		return
+	}
+
 	// Find the bot by ID
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
@@ -327,7 +598,8 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
+	toolsRequested := allowedTools != nil
+	llmRequest, err := a.convertAgentBridgeRequestToInternal(bot, req, toolsRequested)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -335,8 +607,45 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
+	if toolsRequested {
+		if bot.GetConfig().DisableTools {
+			c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+				Error: "agent has tools disabled",
+			})
+			return
+		}
+
+		eligibleTools, eligibleToolMap, err := a.filterEligibleToolsForContext(c.Request.Context(), req.UserID, llmRequest.Context.Tools)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
+				Error: fmt.Sprintf("failed to resolve eligible tools: %v", err),
+			})
+			return
+		}
+
+		if len(eligibleTools) == 0 {
+			c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+				Error: "no eligible tools available for this agent",
+			})
+			return
+		}
+
+		scopedTools := llm.NewToolStore(nil, false)
+		for _, toolName := range allowedTools {
+			tool, ok := eligibleToolMap[toolName]
+			if !ok {
+				c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+					Error: fmt.Sprintf("tool %q is not eligible or not available for this agent", toolName),
+				})
+				return
+			}
+			scopedTools.AddTools([]llm.Tool{tool})
+		}
+		llmRequest.Context.Tools = scopedTools
+	}
+
 	// Convert request options
-	opts, err := a.convertRequestToLLMOptions(req)
+	opts, err := a.convertRequestToLLMOptions(req, !toolsRequested, allowedTools)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid options: %v", err),
@@ -352,7 +661,10 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 	agent := c.Param("agent")
 	if agent == "" {
-		agent = a.config.GetDefaultBotName()
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: "agent parameter is required",
+		})
+		return
 	}
 
 	var req bridgeclient.CompletionRequest
@@ -370,6 +682,14 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		return
 	}
 
+	allowedTools, err := normalizeAllowedTools(req.AllowedTools)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: fmt.Sprintf("invalid allowed_tools: %v", err),
+		})
+		return
+	}
+
 	// Find the bot by ID
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
@@ -389,7 +709,8 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
+	toolsRequested := allowedTools != nil
+	llmRequest, err := a.convertAgentBridgeRequestToInternal(bot, req, toolsRequested)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -397,8 +718,45 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		return
 	}
 
+	if toolsRequested {
+		if bot.GetConfig().DisableTools {
+			c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+				Error: "agent has tools disabled",
+			})
+			return
+		}
+
+		eligibleTools, eligibleToolMap, err := a.filterEligibleToolsForContext(c.Request.Context(), req.UserID, llmRequest.Context.Tools)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
+				Error: fmt.Sprintf("failed to resolve eligible tools: %v", err),
+			})
+			return
+		}
+
+		if len(eligibleTools) == 0 {
+			c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+				Error: "no eligible tools available for this agent",
+			})
+			return
+		}
+
+		scopedTools := llm.NewToolStore(nil, false)
+		for _, toolName := range allowedTools {
+			tool, ok := eligibleToolMap[toolName]
+			if !ok {
+				c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+					Error: fmt.Sprintf("tool %q is not eligible or not available for this agent", toolName),
+				})
+				return
+			}
+			scopedTools.AddTools([]llm.Tool{tool})
+		}
+		llmRequest.Context.Tools = scopedTools
+	}
+
 	// Convert request options
-	opts, err := a.convertRequestToLLMOptions(req)
+	opts, err := a.convertRequestToLLMOptions(req, !toolsRequested, allowedTools)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid options: %v", err),
@@ -454,7 +812,7 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
+	llmRequest, err := a.convertServiceBridgeRequestToInternal(req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -463,7 +821,7 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	}
 
 	// Convert request options
-	opts, err := a.convertRequestToLLMOptions(req)
+	opts, err := a.convertRequestToLLMOptions(req, true, nil)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid options: %v", err),
@@ -500,6 +858,13 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 		return
 	}
 
+	if req.AllowedTools != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: "allowed_tools is only supported for agent completion endpoints",
+		})
+		return
+	}
+
 	// Find a bot that uses the specified service (by ID or name)
 	bot, err := a.getBotByService(service)
 	if err != nil {
@@ -519,7 +884,7 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
+	llmRequest, err := a.convertServiceBridgeRequestToInternal(req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -528,7 +893,7 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	}
 
 	// Convert request options
-	opts, err := a.convertRequestToLLMOptions(req)
+	opts, err := a.convertRequestToLLMOptions(req, true, nil)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid options: %v", err),

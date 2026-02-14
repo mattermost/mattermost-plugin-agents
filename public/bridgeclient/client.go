@@ -41,6 +41,9 @@ type CompletionRequest struct {
 	Posts              []Post                 `json:"posts"`
 	MaxGeneratedTokens int                    `json:"max_generated_tokens,omitempty"`
 	JSONOutputFormat   map[string]interface{} `json:"json_output_format,omitempty"`
+	// AllowedTools is an optional allowlist of tool names for agent completions.
+	// When provided on agent endpoints, only these eligible tools may run without approval.
+	AllowedTools []string `json:"allowed_tools,omitempty"`
 	// UserID is the optional Mattermost user ID making the request.
 	// If provided, the bridge will check user-level permissions.
 	UserID string `json:"user_id,omitempty"`
@@ -76,6 +79,12 @@ type BridgeServiceInfo struct {
 	Type string `json:"type"`
 }
 
+// BridgeToolInfo represents a bridge-eligible tool.
+type BridgeToolInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 // AgentsResponse represents the response for the agents endpoint
 type AgentsResponse struct {
 	Agents []BridgeAgentInfo `json:"agents"`
@@ -84,6 +93,11 @@ type AgentsResponse struct {
 // ServicesResponse represents the response for the services endpoint
 type ServicesResponse struct {
 	Services []BridgeServiceInfo `json:"services"`
+}
+
+// AgentToolsResponse represents the response for the agent tools endpoint.
+type AgentToolsResponse struct {
+	Tools []BridgeToolInfo `json:"tools"`
 }
 
 // NewClient creates a new LLM Bridge API client from a plugin's API interface.

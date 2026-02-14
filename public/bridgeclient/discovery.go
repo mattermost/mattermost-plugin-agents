@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 // GetAgents retrieves all available agents from the bridge API.
@@ -94,4 +95,51 @@ func (c *Client) GetServices(userID string) ([]BridgeServiceInfo, error) {
 	}
 
 	return servicesResp.Services, nil
+}
+
+// GetAgentTools retrieves bridge-eligible tools for a specific agent.
+// If userID is provided, the result is filtered to what that user can access.
+func (c *Client) GetAgentTools(agent string, userID string) ([]BridgeToolInfo, error) {
+	if err := ValidateID(agent); err != nil {
+		return nil, fmt.Errorf("invalid agent ID: %w", err)
+	}
+
+	requestURL := fmt.Sprintf("/%s/bridge/v1/agents/%s/tools", aiPluginID, agent)
+	if userID != "" {
+		if err := ValidateID(userID); err != nil {
+			return nil, fmt.Errorf("invalid user ID: %w", err)
+		}
+		requestURL = fmt.Sprintf("%s?user_id=%s", requestURL, url.QueryEscape(userID))
+	}
+
+	req, err := http.NewRequest("GET", requestURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var errResp ErrorResponse
+		if err := json.Unmarshal(respBody, &errResp); err != nil {
+			return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
+		}
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errResp.Error)
+	}
+
+	var toolsResp AgentToolsResponse
+	if err := json.Unmarshal(respBody, &toolsResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return toolsResp.Tools, nil
 }
