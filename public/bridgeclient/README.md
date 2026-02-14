@@ -168,6 +168,7 @@ values are treated as unset. Non-empty malformed IDs are rejected by the bridge 
 ## Discovery Endpoints
 
 The bridge API provides discovery endpoints to help clients find available agents and services before making completion requests.
+Agent and service discovery results are returned in deterministic sorted order.
 
 ### Get Available Agents
 
