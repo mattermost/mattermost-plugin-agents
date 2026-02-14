@@ -4,6 +4,7 @@
 package bridgeclient
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -347,4 +348,21 @@ func TestGetAgentsErrorResponseWithoutErrorFieldFallsBackToBody(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "request failed with status 400")
 	require.Contains(t, err.Error(), `{"message":"invalid user filter"}`)
+}
+
+func TestGetAgentToolsReturnsReadBodyError(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(&erroringReader{
+				err: errors.New("read failure"),
+			}),
+		}, nil
+	})
+
+	_, err := client.GetAgentTools("abcdefghijklmnopqrstuvwxyz", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to read response body")
 }

@@ -114,6 +114,25 @@ func TestServiceCompletionReturnsErrorFromJSONBodyWithoutErrorField(t *testing.T
 	require.Contains(t, err.Error(), `{"message":"invalid request"}`)
 }
 
+func TestServiceCompletionReturnsReadBodyError(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(&erroringReader{
+				err: errors.New("read failure"),
+			}),
+		}, nil
+	})
+
+	_, err := client.ServiceCompletion("openai", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to read response body")
+}
+
 func TestAgentCompletionStreamParsesSSEEvents(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -315,6 +334,25 @@ func TestServiceCompletionStreamReturnsErrorFromJSONBody(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "request failed with status 403")
 	require.Contains(t, err.Error(), "permission denied")
+}
+
+func TestServiceCompletionStreamStatusWhenErrorBodyUnreadable(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     make(http.Header),
+			Body: io.NopCloser(&erroringReader{
+				err: errors.New("read failure"),
+			}),
+		}, nil
+	})
+
+	_, err := client.ServiceCompletionStream("openai", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.Error(t, err)
+	require.EqualError(t, err, "request failed with status 503")
 }
 
 func TestCompletionEndpointInputValidation(t *testing.T) {
