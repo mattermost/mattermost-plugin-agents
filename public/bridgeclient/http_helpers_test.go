@@ -51,6 +51,24 @@ func TestDoGetJSON(t *testing.T) {
 		require.EqualError(t, err, "request failed with status 403: forbidden")
 	})
 
+	t.Run("read body failure", func(t *testing.T) {
+		client := &Client{}
+		client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(&erroringReader{
+					err: errors.New("read failure"),
+				}),
+			}, nil
+		})
+
+		var response AgentsResponse
+		err := client.doGetJSON("/mattermost-ai/bridge/v1/agents", &response)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to read response body")
+	})
+
 	t.Run("unmarshal failure", func(t *testing.T) {
 		client := &Client{}
 		client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
