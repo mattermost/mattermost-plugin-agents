@@ -1191,6 +1191,100 @@ func TestBridgeGetServices(t *testing.T) {
 	}
 }
 
+func TestBridgeGetBotsSortsByIDWhenDisplayNameMatches(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botA := bots.NewBot(
+		llm.BotConfig{
+			Name:            "bot-a",
+			DisplayName:     "Shared Name",
+			ServiceID:       "service-a",
+			UserAccessLevel: llm.UserAccessLevelAll,
+		},
+		llm.ServiceConfig{ID: "service-a", Name: "service-a", Type: "test"},
+		&model.Bot{
+			UserId:      fmt.Sprintf("%s01", testBotUserID[:24]),
+			Username:    "bot-a",
+			DisplayName: "Shared Name",
+		},
+		nil,
+	)
+	botB := bots.NewBot(
+		llm.BotConfig{
+			Name:            "bot-b",
+			DisplayName:     "Shared Name",
+			ServiceID:       "service-b",
+			UserAccessLevel: llm.UserAccessLevelAll,
+		},
+		llm.ServiceConfig{ID: "service-b", Name: "service-b", Type: "test"},
+		&model.Bot{
+			UserId:      fmt.Sprintf("%s00", testBotUserID[:24]),
+			Username:    "bot-b",
+			DisplayName: "Shared Name",
+		},
+		nil,
+	)
+	e.bots.SetBotsForTesting([]*bots.Bot{botA, botB})
+
+	client := e.CreateBridgeClient()
+	agents, err := client.GetAgents("")
+	require.NoError(t, err)
+	require.Len(t, agents, 2)
+	require.Equal(t, fmt.Sprintf("%s00", testBotUserID[:24]), agents[0].ID)
+	require.Equal(t, fmt.Sprintf("%s01", testBotUserID[:24]), agents[1].ID)
+}
+
+func TestBridgeGetServicesSortsByIDWhenNameMatches(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botA := bots.NewBot(
+		llm.BotConfig{
+			Name:            "bot-a",
+			DisplayName:     "Bot A",
+			ServiceID:       "service-b",
+			UserAccessLevel: llm.UserAccessLevelAll,
+		},
+		llm.ServiceConfig{ID: "service-b", Name: "Shared Service", Type: "test"},
+		&model.Bot{
+			UserId:      fmt.Sprintf("%s01", testBotUserID[:24]),
+			Username:    "bot-a",
+			DisplayName: "Bot A",
+		},
+		nil,
+	)
+	botB := bots.NewBot(
+		llm.BotConfig{
+			Name:            "bot-b",
+			DisplayName:     "Bot B",
+			ServiceID:       "service-a",
+			UserAccessLevel: llm.UserAccessLevelAll,
+		},
+		llm.ServiceConfig{ID: "service-a", Name: "Shared Service", Type: "test"},
+		&model.Bot{
+			UserId:      fmt.Sprintf("%s00", testBotUserID[:24]),
+			Username:    "bot-b",
+			DisplayName: "Bot B",
+		},
+		nil,
+	)
+	e.bots.SetBotsForTesting([]*bots.Bot{botA, botB})
+
+	client := e.CreateBridgeClient()
+	services, err := client.GetServices("")
+	require.NoError(t, err)
+	require.Len(t, services, 2)
+	require.Equal(t, "service-a", services[0].ID)
+	require.Equal(t, "service-b", services[1].ID)
+}
+
 func setupBridgeEligibleMCPServer(t *testing.T, toolNames []string) *httptest.Server {
 	t.Helper()
 
