@@ -67,6 +67,22 @@ func TestDoGetJSON(t *testing.T) {
 		require.EqualError(t, err, "request failed with status 502")
 	})
 
+	t.Run("non-200 blank json error field falls back to body", func(t *testing.T) {
+		client := &Client{}
+		client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"error":"   "}`)),
+			}, nil
+		})
+
+		var response AgentsResponse
+		err := client.doGetJSON("/mattermost-ai/bridge/v1/agents", &response)
+		require.Error(t, err)
+		require.EqualError(t, err, `request failed with status 400: {"error":"   "}`)
+	})
+
 	t.Run("read body failure", func(t *testing.T) {
 		client := &Client{}
 		client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
