@@ -126,6 +126,7 @@ When `AllowedTools` is provided:
 - only tools in the list may run
 - tool execution is auto-run (no approval flow)
 - tools must be bridge-eligible (service-account style / non user-scoped auth)
+- empty lists and blank tool names are rejected by the bridge API
 
 ## Permission Checking
 
