@@ -3187,6 +3187,10 @@ func TestNormalizeBridgeOptionalUserID(t *testing.T) {
 		normalized, err := normalizeBridgeOptionalUserID("  abcdefghijklmnopqrstuvwxyz  ")
 		require.NoError(t, err)
 		require.Equal(t, "abcdefghijklmnopqrstuvwxyz", normalized)
+
+		normalized, err = normalizeBridgeOptionalUserID("\nabcdefghijklmnopqrstuvwxyz\t")
+		require.NoError(t, err)
+		require.Equal(t, "abcdefghijklmnopqrstuvwxyz", normalized)
 	})
 
 	t.Run("invalid user ID returns validation error", func(t *testing.T) {
@@ -3252,6 +3256,10 @@ func TestNormalizeBridgeServiceIdentifier(t *testing.T) {
 		normalized, err := normalizeBridgeServiceIdentifier(" \topenai ")
 		require.NoError(t, err)
 		require.Equal(t, "openai", normalized)
+
+		normalized, err = normalizeBridgeServiceIdentifier("\nservice-id\t")
+		require.NoError(t, err)
+		require.Equal(t, "service-id", normalized)
 	})
 
 	t.Run("empty and whitespace service values are rejected", func(t *testing.T) {
