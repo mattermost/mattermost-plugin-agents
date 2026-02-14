@@ -138,13 +138,13 @@ func (c *Client) doStreamingRequest(requestURL string, request CompletionRequest
 		for scanner.Scan() {
 			line := scanner.Text()
 
-			// SSE lines start with "data: "
-			if !strings.HasPrefix(line, "data: ") {
+			// SSE lines start with "data:"
+			if !strings.HasPrefix(line, "data:") {
 				continue
 			}
 
 			// Extract the data portion
-			data := strings.TrimPrefix(line, "data: ")
+			data := strings.TrimLeft(strings.TrimPrefix(line, "data:"), " ")
 
 			// Check for empty data lines
 			if data == "" {
