@@ -222,6 +222,15 @@ func normalizeBridgeCompletionPrincipalIDs(userID string, channelID string) (str
 	return normalizedUserID, normalizedChannelID, nil
 }
 
+func normalizeBridgeAgentID(agent string) (string, error) {
+	normalizedAgent := strings.TrimSpace(agent)
+	if err := bridgeclient.ValidateID(normalizedAgent); err != nil {
+		return "", fmt.Errorf("invalid agent ID: %w", err)
+	}
+
+	return normalizedAgent, nil
+}
+
 func (a *API) prepareAgentBridgeCompletion(
 	ctx context.Context,
 	agent string,
@@ -578,6 +587,14 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 		return
 	}
 
+	normalizedAgent, err := normalizeBridgeAgentID(agent)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: err.Error(),
+		})
+		return
+	}
+
 	userID, err := normalizeBridgeOptionalUserID(c.Query("user_id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
@@ -586,7 +603,7 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 		return
 	}
 
-	bot, err := a.getBotByAgent(agent)
+	bot, err := a.getBotByAgent(normalizedAgent)
 	if err != nil {
 		c.JSON(http.StatusNotFound, bridgeclient.ErrorResponse{
 			Error: err.Error(),
@@ -687,6 +704,14 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
+	normalizedAgent, err := normalizeBridgeAgentID(agent)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: err.Error(),
+		})
+		return
+	}
+
 	var req bridgeclient.CompletionRequest
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
@@ -702,7 +727,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), agent, req)
+	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), normalizedAgent, req)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),
@@ -724,6 +749,14 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		return
 	}
 
+	normalizedAgent, err := normalizeBridgeAgentID(agent)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: err.Error(),
+		})
+		return
+	}
+
 	var req bridgeclient.CompletionRequest
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
@@ -739,7 +772,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), agent, req)
+	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), normalizedAgent, req)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),

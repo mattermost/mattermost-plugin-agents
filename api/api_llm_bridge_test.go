@@ -2177,6 +2177,26 @@ func TestBridgeGetAgentToolsAgentNotFound(t *testing.T) {
 	require.Contains(t, err.Error(), "bot not found")
 }
 
+func TestBridgeGetAgentToolsRejectsInvalidAgentPath(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	req, err := http.NewRequest(http.MethodGet, "/mattermost-ai/bridge/v1/agents/bad/tools", nil)
+	require.NoError(t, err)
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, readErr)
+	require.Contains(t, string(respBody), "invalid agent ID")
+}
+
 func TestBridgeGetAgentToolsRejectsInvalidUserIDQuery(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -2242,6 +2262,58 @@ func TestBridgeGetServicesRejectsInvalidUserIDQuery(t *testing.T) {
 	respBody, readErr := io.ReadAll(resp.Body)
 	require.NoError(t, readErr)
 	require.Contains(t, string(respBody), "invalid user_id")
+}
+
+func TestBridgeAgentCompletionRejectsInvalidAgentPath(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	rawBody := `{"posts":[{"role":"user","message":"Hello"}]}`
+	req, err := http.NewRequest(
+		http.MethodPost,
+		"/mattermost-ai/bridge/v1/completion/agent/bad/nostream",
+		strings.NewReader(rawBody),
+	)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, readErr)
+	require.Contains(t, string(respBody), "invalid agent ID")
+}
+
+func TestBridgeAgentCompletionStreamRejectsInvalidAgentPath(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	rawBody := `{"posts":[{"role":"user","message":"Hello"}]}`
+	req, err := http.NewRequest(
+		http.MethodPost,
+		"/mattermost-ai/bridge/v1/completion/agent/bad",
+		strings.NewReader(rawBody),
+	)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	respBody, readErr := io.ReadAll(resp.Body)
+	require.NoError(t, readErr)
+	require.Contains(t, string(respBody), "invalid agent ID")
 }
 
 func TestBridgeGetAgentsTreatsWhitespaceUserIDQueryAsUnset(t *testing.T) {
