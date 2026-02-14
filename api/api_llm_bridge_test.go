@@ -1246,6 +1246,87 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
 }
 
+func TestBridgeClientAgentCompletionStreamAllowedToolsEnablesAutoRun(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := setupBridgeEligibleMCPServer(t, []string{"eligible_tool"})
+	defer server.Close()
+
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{
+			{
+				Name:    "service-account-server",
+				Enabled: true,
+				BaseURL: server.URL,
+				Headers: map[string]string{"Authorization": "Bearer test-token"},
+			},
+		},
+	}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		httpClient: &http.Client{
+			Transport: &http.Transport{DisableKeepAlives: true},
+		},
+	}
+
+	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
+		e.client,
+		&testLLMContextToolProvider{
+			tools: []llm.Tool{
+				{
+					Name:        "eligible_tool",
+					Description: "eligible from context",
+					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+						return "ok", nil
+					},
+				},
+			},
+		},
+		nil,
+		&testLLMContextConfigProvider{},
+	)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	fakeLLM := NewFakeLLMWithStreamEvents([]llm.TextStreamEvent{
+		{Type: llm.EventTypeText, Value: "stream"},
+		{Type: llm.EventTypeEnd, Value: nil},
+	})
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(fakeLLM)
+	}
+
+	client := e.CreateBridgeClient()
+	result, err := client.AgentCompletionStream(testBotUserID, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "Use tool in stream"},
+		},
+		AllowedTools: []string{"eligible_tool"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	text, readErr := result.ReadAll()
+	require.NoError(t, readErr)
+	require.Equal(t, "stream", text)
+
+	require.False(t, fakeLLM.LastConfig.ToolsDisabled)
+	require.Equal(t, []string{"eligible_tool"}, fakeLLM.LastConfig.AutoRunTools)
+	require.NotNil(t, fakeLLM.LastConversation.Context)
+	require.NotNil(t, fakeLLM.LastConversation.Context.Tools)
+	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
+}
+
 func TestBridgeGetAgentToolsRespectsUserPermissions(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
