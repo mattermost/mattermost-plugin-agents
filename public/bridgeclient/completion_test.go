@@ -901,3 +901,23 @@ func TestBuildServiceCompletionURL(t *testing.T) {
 		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1%20beta", requestURL)
 	})
 }
+
+func TestBuildAgentCompletionURL(t *testing.T) {
+	t.Run("returns error for invalid agent id", func(t *testing.T) {
+		_, err := buildAgentCompletionURL("bad", false)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid agent ID")
+	})
+
+	t.Run("returns non-stream url", func(t *testing.T) {
+		requestURL, err := buildAgentCompletionURL("abcdefghijklmnopqrstuvwxyz", false)
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz/nostream", requestURL)
+	})
+
+	t.Run("returns stream url", func(t *testing.T) {
+		requestURL, err := buildAgentCompletionURL("abcdefghijklmnopqrstuvwxyz", true)
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz", requestURL)
+	})
+}

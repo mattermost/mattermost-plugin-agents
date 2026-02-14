@@ -22,11 +22,11 @@ const maxSSELineBytes = 1024 * 1024
 // AgentCompletion makes a non-streaming completion request to a specific agent by Bot ID.
 // The agent parameter should be the Mattermost Bot User ID (an immutable identifier).
 func (c *Client) AgentCompletion(agent string, request CompletionRequest) (string, error) {
-	if err := ValidateID(agent); err != nil {
-		return "", fmt.Errorf("invalid agent ID: %w", err)
+	requestURL, err := buildAgentCompletionURL(agent, false)
+	if err != nil {
+		return "", err
 	}
-	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s/nostream", aiPluginID, agent)
-	return c.doCompletionRequest(url, request)
+	return c.doCompletionRequest(requestURL, request)
 }
 
 // ServiceCompletion makes a non-streaming completion request to a specific service.
@@ -43,11 +43,11 @@ func (c *Client) ServiceCompletion(service string, request CompletionRequest) (s
 // The agent parameter should be the Mattermost Bot User ID (an immutable identifier).
 // Returns a TextStreamResult with a Stream channel for processing events.
 func (c *Client) AgentCompletionStream(agent string, request CompletionRequest) (*llm.TextStreamResult, error) {
-	if err := ValidateID(agent); err != nil {
-		return nil, fmt.Errorf("invalid agent ID: %w", err)
+	requestURL, err := buildAgentCompletionURL(agent, true)
+	if err != nil {
+		return nil, err
 	}
-	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", aiPluginID, agent)
-	return c.doStreamingRequest(url, request)
+	return c.doStreamingRequest(requestURL, request)
 }
 
 // ServiceCompletionStream makes a streaming completion request to a specific service.
@@ -248,6 +248,19 @@ func buildServiceCompletionURL(service string, isStreaming bool) (string, error)
 	}
 
 	path := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", aiPluginID, url.PathEscape(service))
+	if !isStreaming {
+		path = fmt.Sprintf("%s/nostream", path)
+	}
+
+	return path, nil
+}
+
+func buildAgentCompletionURL(agent string, isStreaming bool) (string, error) {
+	if err := ValidateID(agent); err != nil {
+		return "", fmt.Errorf("invalid agent ID: %w", err)
+	}
+
+	path := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", aiPluginID, agent)
 	if !isStreaming {
 		path = fmt.Sprintf("%s/nostream", path)
 	}
