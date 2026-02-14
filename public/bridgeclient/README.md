@@ -152,6 +152,9 @@ response, err := client.AgentCompletion("bot-user-id", request)
 
 If not using built-in permission checks, your plugin must verify permissions before making requests.
 
+The bridge API trims surrounding whitespace on `UserID` and `ChannelID` values. Whitespace-only
+values are treated as unset. Non-empty malformed IDs are rejected by the bridge with `400 Bad Request`.
+
 ## Agent vs Service
 
 - **Agent**: Target a specific bot by its Bot ID (the immutable Mattermost Bot User ID)
@@ -247,5 +250,6 @@ The client performs local validation before issuing requests:
 - `AgentCompletion`, `AgentCompletionStream`, and `GetAgentTools` trim surrounding whitespace and require a valid Mattermost Bot User ID format for `agent`.
 - `GetAgents`, `GetServices`, and `GetAgentTools` trim surrounding whitespace and validate optional `userID` when provided. Whitespace-only `userID` values are treated as unset.
 - `ServiceCompletion` and `ServiceCompletionStream` trim surrounding whitespace and reject empty service values.
+- `UserID` and `ChannelID` in completion requests are validated by the bridge API (server-side) when non-empty.
 
 When validation fails, methods return an error immediately without making an HTTP request.
