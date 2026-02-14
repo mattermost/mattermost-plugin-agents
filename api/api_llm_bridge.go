@@ -793,6 +793,13 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 		return
 	}
 
+	if req.AllowedTools != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: "allowed_tools is only supported for agent completion endpoints",
+		})
+		return
+	}
+
 	// Find a bot that uses the specified service (by ID or name)
 	bot, err := a.getBotByService(service)
 	if err != nil {

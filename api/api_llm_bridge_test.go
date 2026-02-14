@@ -472,6 +472,23 @@ func TestBridgeClientServiceCompletionStream(t *testing.T) {
 			expectError:   true,
 			errorMsg:      "no bot found for service",
 		},
+		{
+			name:    "allowed tools not supported on service stream endpoint",
+			service: "openai-service",
+			request: bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "Hello"},
+				},
+				AllowedTools: []string{"eligible_tool"},
+			},
+			serviceConfig: llm.ServiceConfig{
+				ID:   "openai-service",
+				Name: "OpenAI",
+			},
+			fakeLLM:     NewFakeLLM("test"),
+			expectError: true,
+			errorMsg:    "allowed_tools is only supported for agent completion endpoints",
+		},
 	}
 
 	for _, tc := range tests {
