@@ -614,6 +614,34 @@ func TestAgentCompletionTrimsAgentPath(t *testing.T) {
 	require.Equal(t, "ok", completion)
 }
 
+func TestAgentCompletionStreamTrimsAgentPath(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz", req.URL.Path)
+
+		sse := strings.Join([]string{
+			`data: {"Type":1,"Value":null}`,
+			"",
+		}, "\n")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	result, err := client.AgentCompletionStream(" \tabcdefghijklmnopqrstuvwxyz \n", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+
+	text, readErr := result.ReadAll()
+	require.NoError(t, readErr)
+	require.Empty(t, text)
+}
+
 func TestServiceCompletionTrimsServicePath(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -633,6 +661,35 @@ func TestServiceCompletionTrimsServicePath(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "ok", completion)
+}
+
+func TestServiceCompletionStreamTrimsServicePath(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/v1", req.URL.Path)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1", req.URL.EscapedPath())
+
+		sse := strings.Join([]string{
+			`data: {"Type":1,"Value":null}`,
+			"",
+		}, "\n")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	result, err := client.ServiceCompletionStream("  openai/v1\t ", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+
+	text, readErr := result.ReadAll()
+	require.NoError(t, readErr)
+	require.Empty(t, text)
 }
 
 func TestServiceCompletionEscapesServicePath(t *testing.T) {
