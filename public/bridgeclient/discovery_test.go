@@ -367,6 +367,18 @@ func TestGetAgentToolsReturnsReadBodyError(t *testing.T) {
 	require.Contains(t, err.Error(), "failed to read response body")
 }
 
+func TestGetAgentsReturnsExecuteRequestError(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, errors.New("network failure")
+	})
+
+	_, err := client.GetAgents("")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to execute request")
+	require.Contains(t, err.Error(), "network failure")
+}
+
 func TestGetServicesErrorResponseWithEmptyBody(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {

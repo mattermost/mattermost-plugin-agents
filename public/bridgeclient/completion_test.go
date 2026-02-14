@@ -159,6 +159,20 @@ func TestServiceCompletionReturnsReadBodyError(t *testing.T) {
 	require.Contains(t, err.Error(), "failed to read response body")
 }
 
+func TestServiceCompletionReturnsExecuteRequestError(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, errors.New("dial tcp timeout")
+	})
+
+	_, err := client.ServiceCompletion("openai", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to execute request")
+	require.Contains(t, err.Error(), "dial tcp timeout")
+}
+
 func TestServiceCompletionReturnsStatusOnlyWhenErrorBodyEmpty(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -476,6 +490,20 @@ func TestServiceCompletionStreamStatusWhenErrorBodyUnreadable(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.EqualError(t, err, "request failed with status 503")
+}
+
+func TestAgentCompletionStreamReturnsExecuteRequestError(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, errors.New("connection reset")
+	})
+
+	_, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to execute request")
+	require.Contains(t, err.Error(), "connection reset")
 }
 
 func TestCompletionEndpointInputValidation(t *testing.T) {
