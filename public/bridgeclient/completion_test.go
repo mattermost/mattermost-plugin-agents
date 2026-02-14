@@ -895,8 +895,20 @@ func TestBuildServiceCompletionURL(t *testing.T) {
 		require.EqualError(t, err, "service cannot be empty")
 	})
 
+	t.Run("returns error for whitespace-only service", func(t *testing.T) {
+		_, err := buildServiceCompletionURL("   \t ", false)
+		require.Error(t, err)
+		require.EqualError(t, err, "service cannot be empty")
+	})
+
 	t.Run("returns escaped non-stream url", func(t *testing.T) {
 		requestURL, err := buildServiceCompletionURL("openai/v1 beta", false)
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1%20beta/nostream", requestURL)
+	})
+
+	t.Run("trims surrounding service whitespace", func(t *testing.T) {
+		requestURL, err := buildServiceCompletionURL("  openai/v1 beta  ", false)
 		require.NoError(t, err)
 		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1%20beta/nostream", requestURL)
 	})

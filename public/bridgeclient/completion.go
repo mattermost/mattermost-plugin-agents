@@ -247,11 +247,12 @@ func buildCompletionHTTPRequest(requestURL string, request CompletionRequest, is
 }
 
 func buildServiceCompletionURL(service string, isStreaming bool) (string, error) {
-	if service == "" {
+	trimmedService := strings.TrimSpace(service)
+	if trimmedService == "" {
 		return "", fmt.Errorf("service cannot be empty")
 	}
 
-	path := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", aiPluginID, url.PathEscape(service))
+	path := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", aiPluginID, url.PathEscape(trimmedService))
 	if !isStreaming {
 		path = fmt.Sprintf("%s/nostream", path)
 	}
