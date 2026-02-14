@@ -764,6 +764,36 @@ func TestBridgeClientServiceCompletionRejectsInvalidPrincipalIDs(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid channel_id")
 }
 
+func TestBridgeClientServiceCompletionTreatsWhitespacePrincipalIDsAsUnset(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAllow,
+		UserIDs:         []string{testUserID},
+	}
+	e.setupTestBot(botConfig)
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetServiceForTest(llm.ServiceConfig{ID: "service-id", Name: "service-name"})
+		bot.SetLLMForTest(NewFakeLLM("service-ok"))
+	}
+
+	client := e.CreateBridgeClient()
+
+	result, err := client.ServiceCompletion("service-id", bridgeclient.CompletionRequest{
+		Posts:     []bridgeclient.Post{{Role: "user", Message: "hello"}},
+		UserID:    " \t ",
+		ChannelID: " \n ",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "service-ok", result)
+}
+
 func TestBridgeClientAgentCompletionStreamRejectsInvalidPrincipalIDs(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -833,6 +863,42 @@ func TestBridgeClientServiceCompletionStreamRejectsInvalidPrincipalIDs(t *testin
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid channel_id")
+}
+
+func TestBridgeClientServiceCompletionStreamTreatsWhitespacePrincipalIDsAsUnset(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAllow,
+		UserIDs:         []string{testUserID},
+	}
+	e.setupTestBot(botConfig)
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetServiceForTest(llm.ServiceConfig{ID: "service-id", Name: "service-name"})
+		bot.SetLLMForTest(NewFakeLLMWithStreamEvents([]llm.TextStreamEvent{
+			{Type: llm.EventTypeText, Value: "stream-ok"},
+			{Type: llm.EventTypeEnd, Value: nil},
+		}))
+	}
+
+	client := e.CreateBridgeClient()
+
+	result, err := client.ServiceCompletionStream("service-id", bridgeclient.CompletionRequest{
+		Posts:     []bridgeclient.Post{{Role: "user", Message: "hello"}},
+		UserID:    " \t ",
+		ChannelID: " \n ",
+	})
+	require.NoError(t, err)
+
+	text, readErr := result.ReadAll()
+	require.NoError(t, readErr)
+	require.Equal(t, "stream-ok", text)
 }
 
 func TestBridgeGetBots(t *testing.T) {
