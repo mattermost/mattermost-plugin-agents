@@ -96,6 +96,8 @@ for event := range result.Stream {
 }
 ```
 
+For `llm.EventTypeError`, the client normalizes server error payloads into Go `error` values.
+
 ### Multi-turn Conversations
 
 ```go
