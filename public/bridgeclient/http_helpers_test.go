@@ -51,6 +51,22 @@ func TestDoGetJSON(t *testing.T) {
 		require.EqualError(t, err, "request failed with status 403: forbidden")
 	})
 
+	t.Run("non-200 empty body returns status-only error", func(t *testing.T) {
+		client := &Client{}
+		client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusBadGateway,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(" \n\t")),
+			}, nil
+		})
+
+		var response AgentsResponse
+		err := client.doGetJSON("/mattermost-ai/bridge/v1/agents", &response)
+		require.Error(t, err)
+		require.EqualError(t, err, "request failed with status 502")
+	})
+
 	t.Run("read body failure", func(t *testing.T) {
 		client := &Client{}
 		client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -88,6 +104,9 @@ func TestDoGetJSON(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		client := &Client{}
 		client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			require.Equal(t, http.MethodGet, req.Method)
+			require.Equal(t, "/mattermost-ai/bridge/v1/agents", req.URL.Path)
+
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Header:     make(http.Header),
