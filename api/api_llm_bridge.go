@@ -555,6 +555,13 @@ func (a *API) handleGetAgents(c *gin.Context) {
 		})
 	}
 
+	sort.Slice(agents, func(i, j int) bool {
+		if agents[i].DisplayName == agents[j].DisplayName {
+			return agents[i].ID < agents[j].ID
+		}
+		return agents[i].DisplayName < agents[j].DisplayName
+	})
+
 	c.JSON(http.StatusOK, bridgeclient.AgentsResponse{
 		Agents: agents,
 	})
@@ -657,6 +664,13 @@ func (a *API) handleGetServices(c *gin.Context) {
 	for _, service := range servicesMap {
 		services = append(services, service)
 	}
+
+	sort.Slice(services, func(i, j int) bool {
+		if services[i].Name == services[j].Name {
+			return services[i].ID < services[j].ID
+		}
+		return services[i].Name < services[j].Name
+	})
 
 	c.JSON(http.StatusOK, bridgeclient.ServicesResponse{
 		Services: services,

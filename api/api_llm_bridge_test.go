@@ -975,6 +975,30 @@ func TestBridgeGetBots(t *testing.T) {
 				require.Empty(t, agents)
 			},
 		},
+		{
+			name:   "agents are sorted by display name",
+			userID: "",
+			botConfigs: []llm.BotConfig{
+				{
+					Name:            "bot-zulu",
+					DisplayName:     "Zulu Bot",
+					ServiceID:       "service-z",
+					UserAccessLevel: llm.UserAccessLevelAll,
+				},
+				{
+					Name:            "bot-alpha",
+					DisplayName:     "Alpha Bot",
+					ServiceID:       "service-a",
+					UserAccessLevel: llm.UserAccessLevelAll,
+				},
+			},
+			expectBots: 2,
+			validateRes: func(t *testing.T, agents []bridgeclient.BridgeAgentInfo) {
+				require.Len(t, agents, 2)
+				require.Equal(t, "Alpha Bot", agents[0].DisplayName)
+				require.Equal(t, "Zulu Bot", agents[1].DisplayName)
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -1104,6 +1128,30 @@ func TestBridgeGetServices(t *testing.T) {
 			expectServices: 0,
 			validateRes: func(t *testing.T, services []bridgeclient.BridgeServiceInfo) {
 				require.Empty(t, services)
+			},
+		},
+		{
+			name:   "services are sorted by name",
+			userID: "",
+			botConfigs: []llm.BotConfig{
+				{
+					Name:            "bot-zulu",
+					DisplayName:     "Zulu Bot",
+					ServiceID:       "service-zulu",
+					UserAccessLevel: llm.UserAccessLevelAll,
+				},
+				{
+					Name:            "bot-alpha",
+					DisplayName:     "Alpha Bot",
+					ServiceID:       "service-alpha",
+					UserAccessLevel: llm.UserAccessLevelAll,
+				},
+			},
+			expectServices: 2,
+			validateRes: func(t *testing.T, services []bridgeclient.BridgeServiceInfo) {
+				require.Len(t, services, 2)
+				require.Equal(t, "service-alpha", services[0].Name)
+				require.Equal(t, "service-zulu", services[1].Name)
 			},
 		},
 	}
