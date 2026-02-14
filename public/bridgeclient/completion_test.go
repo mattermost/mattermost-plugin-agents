@@ -1073,6 +1073,12 @@ func TestBuildServiceCompletionURL(t *testing.T) {
 		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1%20beta/nostream", requestURL)
 	})
 
+	t.Run("trims newline and tab service whitespace", func(t *testing.T) {
+		requestURL, err := buildServiceCompletionURL("\n\topenai/v1 beta\t\n", false)
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1%20beta/nostream", requestURL)
+	})
+
 	t.Run("returns escaped stream url", func(t *testing.T) {
 		requestURL, err := buildServiceCompletionURL("openai/v1 beta", true)
 		require.NoError(t, err)
@@ -1101,6 +1107,12 @@ func TestBuildAgentCompletionURL(t *testing.T) {
 
 	t.Run("trims surrounding agent id whitespace", func(t *testing.T) {
 		requestURL, err := buildAgentCompletionURL("  abcdefghijklmnopqrstuvwxyz  ", false)
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz/nostream", requestURL)
+	})
+
+	t.Run("trims newline and tab agent id whitespace", func(t *testing.T) {
+		requestURL, err := buildAgentCompletionURL("\n\tabcdefghijklmnopqrstuvwxyz\t\n", false)
 		require.NoError(t, err)
 		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz/nostream", requestURL)
 	})
