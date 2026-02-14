@@ -210,12 +210,16 @@ for _, tool := range tools {
 
 This endpoint returns only tools that are currently eligible for `AllowedTools`.
 In practice, this is limited to service-account style MCP tools configured for bridge eligibility.
+If no eligible tools are available, this returns an empty list.
+Results are returned in a deterministic order by tool name.
 
 You can optionally pass `userID` to apply user-level permission filtering:
 
 ```go
 tools, err := client.GetAgentTools("bot-user-id", userID)
 ```
+
+If `userID` does not have access to the agent, the request fails with a permission error.
 
 ### Discovery with User Permissions
 
