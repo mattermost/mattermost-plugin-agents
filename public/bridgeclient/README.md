@@ -244,8 +244,8 @@ This is useful for showing users only the agents and services they have permissi
 
 The client performs local validation before issuing requests:
 
-- `AgentCompletion`, `AgentCompletionStream`, and `GetAgentTools` require a valid Mattermost Bot User ID format for `agent`.
+- `AgentCompletion`, `AgentCompletionStream`, and `GetAgentTools` trim surrounding whitespace and require a valid Mattermost Bot User ID format for `agent`.
 - `GetAgents`, `GetServices`, and `GetAgentTools` validate optional `userID` when provided.
-- `ServiceCompletion` and `ServiceCompletionStream` reject empty service values.
+- `ServiceCompletion` and `ServiceCompletionStream` trim surrounding whitespace and reject empty service values.
 
 When validation fails, methods return an error immediately without making an HTTP request.
