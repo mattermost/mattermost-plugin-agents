@@ -222,6 +222,25 @@ func TestGetAgentsWithoutUserIDOmitsQuery(t *testing.T) {
 	require.Empty(t, agents)
 }
 
+func TestGetAgentsWithWhitespaceUserIDOmitsQuery(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodGet, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/agents", req.URL.Path)
+		require.Empty(t, req.URL.RawQuery)
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"agents":[]}`)),
+		}, nil
+	})
+
+	agents, err := client.GetAgents(" \t\n ")
+	require.NoError(t, err)
+	require.Empty(t, agents)
+}
+
 func TestGetServicesWithoutUserIDOmitsQuery(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -416,6 +435,12 @@ func TestGetServicesErrorResponseWithEmptyBody(t *testing.T) {
 func TestAppendValidatedUserIDQuery(t *testing.T) {
 	t.Run("empty user id leaves url unchanged", func(t *testing.T) {
 		requestURL, err := appendValidatedUserIDQuery("/mattermost-ai/bridge/v1/agents", "")
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/agents", requestURL)
+	})
+
+	t.Run("whitespace-only user id leaves url unchanged", func(t *testing.T) {
+		requestURL, err := appendValidatedUserIDQuery("/mattermost-ai/bridge/v1/agents", " \t\n ")
 		require.NoError(t, err)
 		require.Equal(t, "/mattermost-ai/bridge/v1/agents", requestURL)
 	})

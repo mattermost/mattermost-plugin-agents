@@ -10,11 +10,11 @@ import (
 )
 
 func appendValidatedUserIDQuery(requestURL string, userID string) (string, error) {
-	if userID == "" {
+	trimmedUserID := strings.TrimSpace(userID)
+	if trimmedUserID == "" {
 		return requestURL, nil
 	}
 
-	trimmedUserID := strings.TrimSpace(userID)
 	if err := ValidateID(trimmedUserID); err != nil {
 		return "", fmt.Errorf("invalid user ID: %w", err)
 	}
