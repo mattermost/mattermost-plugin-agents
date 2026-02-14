@@ -23,10 +23,22 @@ func TestRequestFailedError(t *testing.T) {
 			expectedError: "request failed with status 403: missing permission",
 		},
 		{
+			name:          "json error field is trimmed",
+			statusCode:    403,
+			responseBody:  `{"error":"  missing permission  "}`,
+			expectedError: "request failed with status 403: missing permission",
+		},
+		{
 			name:          "json without error field falls back to body",
 			statusCode:    400,
 			responseBody:  `{"message":"invalid payload"}`,
 			expectedError: `request failed with status 400: {"message":"invalid payload"}`,
+		},
+		{
+			name:          "json empty error field falls back to body",
+			statusCode:    400,
+			responseBody:  `{"error":"   "}`,
+			expectedError: `request failed with status 400: {"error":"   "}`,
 		},
 		{
 			name:          "plain text body falls back to raw message",
