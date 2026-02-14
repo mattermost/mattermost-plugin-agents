@@ -366,3 +366,18 @@ func TestGetAgentToolsReturnsReadBodyError(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to read response body")
 }
+
+func TestGetServicesErrorResponseWithEmptyBody(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadGateway,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(" \n\t ")),
+		}, nil
+	})
+
+	_, err := client.GetServices("")
+	require.Error(t, err)
+	require.EqualError(t, err, "request failed with status 502")
+}

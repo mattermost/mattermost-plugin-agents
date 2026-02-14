@@ -133,6 +133,23 @@ func TestServiceCompletionReturnsReadBodyError(t *testing.T) {
 	require.Contains(t, err.Error(), "failed to read response body")
 }
 
+func TestServiceCompletionReturnsStatusOnlyWhenErrorBodyEmpty(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("   ")),
+		}, nil
+	})
+
+	_, err := client.ServiceCompletion("openai", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.Error(t, err)
+	require.EqualError(t, err, "request failed with status 503")
+}
+
 func TestAgentCompletionStreamParsesSSEEvents(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
