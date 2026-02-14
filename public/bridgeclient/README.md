@@ -169,7 +169,7 @@ For backward compatibility, channel permission checks only run when `UserID` is 
 ## Discovery Endpoints
 
 The bridge API provides discovery endpoints to help clients find available agents and services before making completion requests.
-Agent and service discovery results are returned in deterministic sorted order.
+Agent and service discovery results are returned in deterministic sorted order (`display_name`/`name`, then `id`).
 
 ### Get Available Agents
 
