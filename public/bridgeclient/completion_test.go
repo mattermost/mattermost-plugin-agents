@@ -577,6 +577,14 @@ func TestCompletionEndpointInputValidation(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid agent ID")
 
+	_, err = client.AgentCompletion("\n\t", CompletionRequest{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid agent ID")
+
+	_, err = client.AgentCompletionStream("\n\t", CompletionRequest{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid agent ID")
+
 	_, err = client.ServiceCompletion("", CompletionRequest{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "service cannot be empty")
@@ -585,11 +593,19 @@ func TestCompletionEndpointInputValidation(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "service cannot be empty")
 
+	_, err = client.ServiceCompletion("\n\t", CompletionRequest{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "service cannot be empty")
+
 	_, err = client.ServiceCompletionStream("", CompletionRequest{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "service cannot be empty")
 
 	_, err = client.ServiceCompletionStream(" \t ", CompletionRequest{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "service cannot be empty")
+
+	_, err = client.ServiceCompletionStream("\n\t", CompletionRequest{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "service cannot be empty")
 }
@@ -1130,6 +1146,12 @@ func TestBuildServiceCompletionURL(t *testing.T) {
 func TestBuildAgentCompletionURL(t *testing.T) {
 	t.Run("returns error for invalid agent id", func(t *testing.T) {
 		_, err := buildAgentCompletionURL("bad", false)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid agent ID")
+	})
+
+	t.Run("returns error for whitespace-only agent id", func(t *testing.T) {
+		_, err := buildAgentCompletionURL("\n\t", false)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid agent ID")
 	})
