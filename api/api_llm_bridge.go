@@ -262,7 +262,8 @@ func (a *API) prepareAgentBridgeCompletion(
 		return nil, llm.CompletionRequest{}, nil, http.StatusNotFound, err
 	}
 
-	if err := a.checkBridgePermissions(req.UserID, req.ChannelID, bot); err != nil {
+	err = a.checkBridgePermissions(req.UserID, req.ChannelID, bot)
+	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, http.StatusForbidden, fmt.Errorf("permission denied: %v", err)
 	}
 
@@ -277,7 +278,9 @@ func (a *API) prepareAgentBridgeCompletion(
 			return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, errors.New("agent has tools disabled")
 		}
 
-		eligibleTools, eligibleToolMap, err := a.filterEligibleToolsForContext(ctx, req.UserID, llmRequest.Context.Tools)
+		var eligibleTools []bridgeclient.BridgeToolInfo
+		var eligibleToolMap map[string]llm.Tool
+		eligibleTools, eligibleToolMap, err = a.filterEligibleToolsForContext(ctx, req.UserID, llmRequest.Context.Tools)
 		if err != nil {
 			return nil, llm.CompletionRequest{}, nil, http.StatusInternalServerError, fmt.Errorf("failed to resolve eligible tools: %v", err)
 		}
@@ -622,7 +625,8 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 
 	// Optional user filtering for usage restrictions.
 	if userID != "" {
-		if err := a.bots.CheckUsageRestrictionsForUser(bot, userID); err != nil {
+		err = a.bots.CheckUsageRestrictionsForUser(bot, userID)
+		if err != nil {
 			c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
 				Error: fmt.Sprintf("permission denied: %v", err),
 			})
@@ -722,7 +726,8 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 	}
 
 	var req bridgeclient.CompletionRequest
-	if err := c.BindJSON(&req); err != nil {
+	err = c.BindJSON(&req)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request body: %v", err),
 		})
@@ -767,7 +772,8 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 	}
 
 	var req bridgeclient.CompletionRequest
-	if err := c.BindJSON(&req); err != nil {
+	err = c.BindJSON(&req)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request body: %v", err),
 		})
@@ -804,7 +810,8 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	}
 
 	var req bridgeclient.CompletionRequest
-	if err := c.BindJSON(&req); err != nil {
+	err = c.BindJSON(&req)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request body: %v", err),
 		})
@@ -886,7 +893,8 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	}
 
 	var req bridgeclient.CompletionRequest
-	if err := c.BindJSON(&req); err != nil {
+	err = c.BindJSON(&req)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request body: %v", err),
 		})
