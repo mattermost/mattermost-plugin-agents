@@ -45,6 +45,25 @@ func TestGetAgentToolsTrimsAgentAndUserID(t *testing.T) {
 	require.Empty(t, tools)
 }
 
+func TestGetAgentToolsTrimsNewlineWrappedAgentAndUserID(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodGet, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/agents/abcdefghijklmnopqrstuvwxyz/tools", req.URL.Path)
+		require.Equal(t, "user_id=zyxwvutsrqponmlkjihgfedcba", req.URL.RawQuery)
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"tools":[]}`)),
+		}, nil
+	})
+
+	tools, err := client.GetAgentTools("\n\tabcdefghijklmnopqrstuvwxyz\t\n", "\n\tzyxwvutsrqponmlkjihgfedcba\t\n")
+	require.NoError(t, err)
+	require.Empty(t, tools)
+}
+
 func TestGetAgentsValidation(t *testing.T) {
 	client := &Client{}
 
@@ -491,6 +510,12 @@ func TestAppendValidatedUserIDQuery(t *testing.T) {
 
 	t.Run("valid user id with surrounding whitespace is trimmed", func(t *testing.T) {
 		requestURL, err := appendValidatedUserIDQuery("/mattermost-ai/bridge/v1/services", "  abcdefghijklmnopqrstuvwxyz \t")
+		require.NoError(t, err)
+		require.Equal(t, "/mattermost-ai/bridge/v1/services?user_id=abcdefghijklmnopqrstuvwxyz", requestURL)
+	})
+
+	t.Run("valid user id with newline whitespace is trimmed", func(t *testing.T) {
+		requestURL, err := appendValidatedUserIDQuery("/mattermost-ai/bridge/v1/services", "\n\tabcdefghijklmnopqrstuvwxyz\t\n")
 		require.NoError(t, err)
 		require.Equal(t, "/mattermost-ai/bridge/v1/services?user_id=abcdefghijklmnopqrstuvwxyz", requestURL)
 	})
