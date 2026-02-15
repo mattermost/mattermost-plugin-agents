@@ -614,6 +614,26 @@ func TestAgentCompletionTrimsAgentPath(t *testing.T) {
 	require.Equal(t, "ok", completion)
 }
 
+func TestAgentCompletionTrimsNewlineAgentPath(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz/nostream", req.URL.Path)
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"completion":"ok"}`)),
+		}, nil
+	})
+
+	completion, err := client.AgentCompletion("\n\tabcdefghijklmnopqrstuvwxyz\t\n", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "ok", completion)
+}
+
 func TestAgentCompletionStreamTrimsAgentPath(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -657,6 +677,27 @@ func TestServiceCompletionTrimsServicePath(t *testing.T) {
 	})
 
 	completion, err := client.ServiceCompletion("   openai\t", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "ok", completion)
+}
+
+func TestServiceCompletionTrimsNewlineServicePath(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/v1/nostream", req.URL.Path)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1/nostream", req.URL.EscapedPath())
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"completion":"ok"}`)),
+		}, nil
+	})
+
+	completion, err := client.ServiceCompletion("\n\topenai/v1\t\n", CompletionRequest{
 		Posts: []Post{{Role: "user", Message: "hello"}},
 	})
 	require.NoError(t, err)
