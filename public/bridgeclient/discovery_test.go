@@ -160,6 +160,25 @@ func TestGetAgentsSuccess(t *testing.T) {
 	require.True(t, agents[0].IsDefault)
 }
 
+func TestGetAgentsTrimsNewlineWrappedUserID(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodGet, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/agents", req.URL.Path)
+		require.Equal(t, "user_id=abcdefghijklmnopqrstuvwxyz", req.URL.RawQuery)
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"agents":[]}`)),
+		}, nil
+	})
+
+	agents, err := client.GetAgents("\n\tabcdefghijklmnopqrstuvwxyz\t\n")
+	require.NoError(t, err)
+	require.Empty(t, agents)
+}
+
 func TestGetServicesSuccess(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -188,6 +207,25 @@ func TestGetServicesSuccess(t *testing.T) {
 	require.Equal(t, "svc-anthropic", services[1].ID)
 	require.Equal(t, "Anthropic", services[1].Name)
 	require.Equal(t, "anthropic", services[1].Type)
+}
+
+func TestGetServicesTrimsNewlineWrappedUserID(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodGet, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/services", req.URL.Path)
+		require.Equal(t, "user_id=abcdefghijklmnopqrstuvwxyz", req.URL.RawQuery)
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"services":[]}`)),
+		}, nil
+	})
+
+	services, err := client.GetServices("\n\tabcdefghijklmnopqrstuvwxyz\t\n")
+	require.NoError(t, err)
+	require.Empty(t, services)
 }
 
 func TestGetAgentsErrorResponse(t *testing.T) {
