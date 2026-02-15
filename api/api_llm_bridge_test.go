@@ -816,6 +816,34 @@ func TestBridgeClientServiceCompletionTreatsWhitespacePrincipalIDsAsUnset(t *tes
 	require.Equal(t, "service-ok", result)
 }
 
+func TestBridgeClientAgentCompletionTrimsNewlineWrappedPrincipalIDs(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(NewFakeLLM("agent-principal-trim-ok"))
+	}
+
+	client := e.CreateBridgeClient()
+
+	result, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+		Posts:  []bridgeclient.Post{{Role: "user", Message: "hello"}},
+		UserID: "\n\t" + testUserID + "\t\n",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "agent-principal-trim-ok", result)
+}
+
 func TestBridgeClientAgentCompletionStreamRejectsInvalidPrincipalIDs(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -921,6 +949,102 @@ func TestBridgeClientServiceCompletionStreamTreatsWhitespacePrincipalIDsAsUnset(
 	text, readErr := result.ReadAll()
 	require.NoError(t, readErr)
 	require.Equal(t, "stream-ok", text)
+}
+
+func TestBridgeClientAgentCompletionStreamTrimsNewlineWrappedPrincipalIDs(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(NewFakeLLMWithStreamEvents([]llm.TextStreamEvent{
+			{Type: llm.EventTypeText, Value: "agent-stream-principal-trim-ok"},
+			{Type: llm.EventTypeEnd, Value: nil},
+		}))
+	}
+
+	client := e.CreateBridgeClient()
+
+	result, err := client.AgentCompletionStream(testBotUserID, bridgeclient.CompletionRequest{
+		Posts:  []bridgeclient.Post{{Role: "user", Message: "hello"}},
+		UserID: "\n\t" + testUserID + "\t\n",
+	})
+	require.NoError(t, err)
+
+	text, readErr := result.ReadAll()
+	require.NoError(t, readErr)
+	require.Equal(t, "agent-stream-principal-trim-ok", text)
+}
+
+func TestBridgeClientServiceCompletionTrimsNewlineWrappedPrincipalIDs(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetServiceForTest(llm.ServiceConfig{ID: "service-id", Name: "service-name"})
+		bot.SetLLMForTest(NewFakeLLM("service-principal-trim-ok"))
+	}
+
+	client := e.CreateBridgeClient()
+
+	result, err := client.ServiceCompletion("service-id", bridgeclient.CompletionRequest{
+		Posts:  []bridgeclient.Post{{Role: "user", Message: "hello"}},
+		UserID: "\n\t" + testUserID + "\t\n",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "service-principal-trim-ok", result)
+}
+
+func TestBridgeClientServiceCompletionStreamTrimsNewlineWrappedPrincipalIDs(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetServiceForTest(llm.ServiceConfig{ID: "service-id", Name: "service-name"})
+		bot.SetLLMForTest(NewFakeLLMWithStreamEvents([]llm.TextStreamEvent{
+			{Type: llm.EventTypeText, Value: "service-stream-principal-trim-ok"},
+			{Type: llm.EventTypeEnd, Value: nil},
+		}))
+	}
+
+	client := e.CreateBridgeClient()
+
+	result, err := client.ServiceCompletionStream("service-id", bridgeclient.CompletionRequest{
+		Posts:  []bridgeclient.Post{{Role: "user", Message: "hello"}},
+		UserID: "\n\t" + testUserID + "\t\n",
+	})
+	require.NoError(t, err)
+
+	text, readErr := result.ReadAll()
+	require.NoError(t, readErr)
+	require.Equal(t, "service-stream-principal-trim-ok", text)
 }
 
 func TestBridgeGetBots(t *testing.T) {
