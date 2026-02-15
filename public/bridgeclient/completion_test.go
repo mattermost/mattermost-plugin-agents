@@ -678,6 +678,34 @@ func TestAgentCompletionStreamTrimsAgentPath(t *testing.T) {
 	require.Empty(t, text)
 }
 
+func TestAgentCompletionStreamTrimsNewlineAgentPath(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz", req.URL.Path)
+
+		sse := strings.Join([]string{
+			`data: {"Type":1,"Value":null}`,
+			"",
+		}, "\n")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	result, err := client.AgentCompletionStream("\n\tabcdefghijklmnopqrstuvwxyz\t\n", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+
+	text, readErr := result.ReadAll()
+	require.NoError(t, readErr)
+	require.Empty(t, text)
+}
+
 func TestServiceCompletionTrimsServicePath(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -740,6 +768,35 @@ func TestServiceCompletionStreamTrimsServicePath(t *testing.T) {
 	})
 
 	result, err := client.ServiceCompletionStream("  openai/v1\t ", CompletionRequest{
+		Posts: []Post{{Role: "user", Message: "hello"}},
+	})
+	require.NoError(t, err)
+
+	text, readErr := result.ReadAll()
+	require.NoError(t, readErr)
+	require.Empty(t, text)
+}
+
+func TestServiceCompletionStreamTrimsNewlineServicePath(t *testing.T) {
+	client := &Client{}
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodPost, req.Method)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/v1", req.URL.Path)
+		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1", req.URL.EscapedPath())
+
+		sse := strings.Join([]string{
+			`data: {"Type":1,"Value":null}`,
+			"",
+		}, "\n")
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(sse)),
+		}, nil
+	})
+
+	result, err := client.ServiceCompletionStream("\n\topenai/v1\t\n", CompletionRequest{
 		Posts: []Post{{Role: "user", Message: "hello"}},
 	})
 	require.NoError(t, err)
