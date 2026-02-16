@@ -200,6 +200,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
+	adminRouter.POST("/connection/test", a.handleTestConnection)
 
 	searchRouter := botRequiredRouter.Group("/search")
 	// Only returns search results
@@ -374,6 +375,22 @@ type FetchModelsRequest struct {
 	OrgID       string `json:"orgID"`
 }
 
+type TestConnectionRequest struct {
+	ServiceType        string `json:"serviceType"`
+	APIKey             string `json:"apiKey"`
+	APIURL             string `json:"apiURL"`
+	OrgID              string `json:"orgID"`
+	Region             string `json:"region"`
+	AWSAccessKeyID     string `json:"awsAccessKeyID"`
+	AWSSecretAccessKey string `json:"awsSecretAccessKey"`
+}
+
+type TestConnectionResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Details string `json:"details,omitempty"`
+}
+
 func (a *API) handleFetchModels(c *gin.Context) {
 	var req FetchModelsRequest
 	if err := c.BindJSON(&req); err != nil {
@@ -417,4 +434,79 @@ func (a *API) handleFetchModels(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models)
+}
+
+func (a *API) handleTestConnection(c *gin.Context) {
+	var req TestConnectionRequest
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusOK, TestConnectionResponse{
+			Success: false,
+			Message: "Invalid request body",
+			Details: err.Error(),
+		})
+		return
+	}
+
+	if req.ServiceType == "" {
+		c.JSON(http.StatusOK, TestConnectionResponse{
+			Success: false,
+			Message: "Service type is required",
+		})
+		return
+	}
+
+	// API key is required for most services, but optional for openaicompatible (some don't require auth)
+	if req.APIKey == "" && req.ServiceType != "openaicompatible" {
+		c.JSON(http.StatusOK, TestConnectionResponse{
+			Success: false,
+			Message: "API key is required",
+		})
+		return
+	}
+
+	// For openaicompatible, require at least an API URL if no API key
+	if req.ServiceType == "openaicompatible" && req.APIKey == "" && req.APIURL == "" {
+		c.JSON(http.StatusOK, TestConnectionResponse{
+			Success: false,
+			Message: "API URL is required for OpenAI Compatible when API key is not provided",
+		})
+		return
+	}
+
+	var models []llm.ModelInfo
+	var err error
+
+	switch req.ServiceType {
+	case "anthropic":
+		models, err = anthropic.FetchModels(req.APIKey, a.llmUpstreamHTTPClient)
+	case "openai", "azure", "openaicompatible":
+		models, err = openai.FetchModels(req.APIKey, req.APIURL, req.OrgID, a.llmUpstreamHTTPClient)
+	case "bedrock", "cohere", "mistral", "asage":
+		c.JSON(http.StatusOK, TestConnectionResponse{
+			Success: false,
+			Message: fmt.Sprintf("Connection testing is not yet supported for %s", req.ServiceType),
+		})
+		return
+	default:
+		c.JSON(http.StatusOK, TestConnectionResponse{
+			Success: false,
+			Message: fmt.Sprintf("Unknown service type: %s", req.ServiceType),
+		})
+		return
+	}
+
+	if err != nil {
+		c.JSON(http.StatusOK, TestConnectionResponse{
+			Success: false,
+			Message: "Connection test failed. Please verify your credentials and try again.",
+			Details: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, TestConnectionResponse{
+		Success: true,
+		Message: "Connection successful!",
+		Details: fmt.Sprintf("Found %d models", len(models)),
+	})
 }

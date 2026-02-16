@@ -712,3 +712,103 @@ func TestToolPrivateRequiresRequester(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleTestConnection(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	t.Run("unauthorized user - non admin", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		e.mockAPI.On("HasPermissionTo", "non-admin-user", model.PermissionManageSystem).Return(false)
+		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+		reqBody := `{"serviceType":"anthropic","apiKey":"test-key"}`
+		request := httptest.NewRequest(http.MethodPost, "/admin/connection/test", strings.NewReader(reqBody))
+		request.Header.Add("Mattermost-User-ID", "non-admin-user")
+		request.Header.Add("Content-Type", "application/json")
+
+		recorder := httptest.NewRecorder()
+		e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+		resp := recorder.Result()
+		require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("missing service type", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		e.mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true)
+
+		reqBody := `{"apiKey":"test-key"}`
+		request := httptest.NewRequest(http.MethodPost, "/admin/connection/test", strings.NewReader(reqBody))
+		request.Header.Add("Mattermost-User-ID", "admin-user")
+		request.Header.Add("Content-Type", "application/json")
+
+		recorder := httptest.NewRecorder()
+		e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+		resp := recorder.Result()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var result map[string]interface{}
+		err := json.NewDecoder(resp.Body).Decode(&result)
+		require.NoError(t, err)
+		require.False(t, result["success"].(bool))
+		require.Contains(t, result["message"].(string), "Service type is required")
+	})
+
+	t.Run("missing api key for non-openaicompatible", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		e.mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true)
+
+		reqBody := `{"serviceType":"anthropic"}`
+		request := httptest.NewRequest(http.MethodPost, "/admin/connection/test", strings.NewReader(reqBody))
+		request.Header.Add("Mattermost-User-ID", "admin-user")
+		request.Header.Add("Content-Type", "application/json")
+
+		recorder := httptest.NewRecorder()
+		e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+		resp := recorder.Result()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var result map[string]interface{}
+		err := json.NewDecoder(resp.Body).Decode(&result)
+		require.NoError(t, err)
+		require.False(t, result["success"].(bool))
+		require.Contains(t, result["message"].(string), "API key is required")
+	})
+
+	t.Run("unsupported service type - bedrock", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		e.mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true)
+
+		reqBody := `{"serviceType":"bedrock","apiKey":"test-key"}`
+		request := httptest.NewRequest(http.MethodPost, "/admin/connection/test", strings.NewReader(reqBody))
+		request.Header.Add("Mattermost-User-ID", "admin-user")
+		request.Header.Add("Content-Type", "application/json")
+
+		recorder := httptest.NewRecorder()
+		e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+		resp := recorder.Result()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var result map[string]interface{}
+		err := json.NewDecoder(resp.Body).Decode(&result)
+		require.NoError(t, err)
+		require.False(t, result["success"].(bool))
+		require.Contains(t, result["message"].(string), "not yet supported")
+	})
+
+	t.Run("invalid request body", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		e.mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true)
+		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+		request := httptest.NewRequest(http.MethodPost, "/admin/connection/test", strings.NewReader("invalid json"))
+		request.Header.Add("Mattermost-User-ID", "admin-user")
+		request.Header.Add("Content-Type", "application/json")
+
+		recorder := httptest.NewRecorder()
+		e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+		resp := recorder.Result()
+		// gin's BindJSON returns 400 for invalid JSON, which is caught by the error middleware
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+}

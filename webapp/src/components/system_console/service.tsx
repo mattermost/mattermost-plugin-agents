@@ -9,9 +9,9 @@ import {TrashCanOutlineIcon, ChevronDownIcon, ChevronUpIcon} from '@mattermost/c
 
 import IconAI from '../assets/icon_ai';
 
-import {ButtonIcon} from '../assets/buttons';
+import {ButtonIcon, TertiaryButton} from '../assets/buttons';
 
-import {fetchModels} from '../../client';
+import {fetchModels, testConnection} from '../../client';
 
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ComboboxItem} from './item';
 
@@ -68,6 +68,8 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
+    const [testingConnection, setTestingConnection] = useState(false);
+    const [testResult, setTestResult] = useState<{success: boolean, message: string, details?: string} | null>(null);
 
     // Determine if we should support model fetching for this service type
     const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible';
@@ -81,12 +83,14 @@ const ServiceFields = (props: ServiceFieldsProps) => {
         if (!supportsModelFetching || !hasRequiredCredentials) {
             setAvailableModels([]);
             setModelsFetchError('');
+            setTestResult(null);
             return;
         }
 
         const loadModels = async () => {
             setLoadingModels(true);
             setModelsFetchError('');
+            setTestResult(null);
 
             try {
                 const data: ModelInfo[] = await fetchModels(
@@ -126,6 +130,35 @@ const ServiceFields = (props: ServiceFieldsProps) => {
             loadModelsHelpText = modelsFetchError;
         }
     }
+
+    const handleTestConnection = async () => {
+        setTestingConnection(true);
+        setTestResult(null);
+
+        try {
+            const result = await testConnection(
+                type,
+                props.service.apiKey || '',
+                props.service.apiURL || '',
+                props.service.orgId || '',
+                props.service.region || '',
+                props.service.awsAccessKeyID || '',
+                props.service.awsSecretAccessKey || '',
+            );
+            setTestResult({
+                success: result.success,
+                message: result.message,
+                details: result.details,
+            });
+        } catch (error) {
+            setTestResult({
+                success: false,
+                message: intl.formatMessage({defaultMessage: 'Connection test failed. Please check your credentials and try again.'}),
+            });
+        } finally {
+            setTestingConnection(false);
+        }
+    };
 
     return (
         <>
@@ -192,6 +225,46 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                 // eslint-disable-next-line no-undefined
                 helptext={type === 'bedrock' ? intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'}) : undefined}
             />
+            <TertiaryButton
+                className='test-connection-button'
+                onClick={handleTestConnection}
+                disabled={testingConnection || !props.service.apiKey}
+            >
+                {testingConnection ?
+                    intl.formatMessage({defaultMessage: 'Testing...'}) :
+                    intl.formatMessage({defaultMessage: 'Test Connection'})
+                }
+            </TertiaryButton>
+            {testResult && testResult.success && (
+                <div
+                    style={{
+                        padding: '12px',
+                        marginTop: '8px',
+                        backgroundColor: '#E7F5E9',
+                        border: '1px solid #4CAF50',
+                        borderRadius: '4px',
+                        color: '#2E7D32',
+                    }}
+                >
+                    {testResult.message}
+                    {testResult.details && <div style={{fontSize: '0.9em', marginTop: '4px'}}>{testResult.details}</div>}
+                </div>
+            )}
+            {testResult && !testResult.success && (
+                <div
+                    style={{
+                        padding: '12px',
+                        marginTop: '8px',
+                        backgroundColor: '#FFEBEE',
+                        border: '1px solid #F44336',
+                        borderRadius: '4px',
+                        color: '#C62828',
+                    }}
+                >
+                    {testResult.message}
+                    {testResult.details && <div style={{fontSize: '0.9em', marginTop: '4px'}}>{testResult.details}</div>}
+                </div>
+            )}
             {isOpenAIType && (
                 <>
                     {!isCohere && !isMistral && (

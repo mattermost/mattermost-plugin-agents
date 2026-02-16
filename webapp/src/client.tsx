@@ -511,6 +511,32 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
     });
 }
 
+export async function testConnection(serviceType: string, apiKey: string, apiURL: string, orgID: string, region: string, awsAccessKeyID: string, awsSecretAccessKey: string) {
+    const url = `${baseRoute()}/admin/connection/test`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({
+            serviceType,
+            apiKey,
+            apiURL,
+            orgID,
+            region,
+            awsAccessKeyID,
+            awsSecretAccessKey,
+        }),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function getChannelInterval(
     channelID: string,
     startTime: number,
