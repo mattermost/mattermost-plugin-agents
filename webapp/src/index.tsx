@@ -32,7 +32,6 @@ import AskChannelButton from './components/ask_channel_button';
 import {doSelectPost} from './hooks';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
-import {useBotlist} from './bots';
 import AgentsTour from './components/tutorial/agents_tour';
 
 type WebappStore = Store<GlobalState, Action<Record<string, unknown>>>
@@ -57,17 +56,6 @@ const RHSTitle = () => {
             {'Agents'}
         </RHSTitleContainer>
     );
-};
-
-const ChannelHeaderIcon = () => {
-    const {bots} = useBotlist();
-
-    // Only show icon if user has access to at least one bot
-    if (!bots || bots.length === 0) {
-        return null;
-    }
-
-    return <IconAIContainer src={aiIcon}/>;
 };
 
 export default class Plugin {
@@ -101,7 +89,14 @@ export default class Plugin {
 
         let rhs: any = null;
         if (isRHSCompatable()) {
-            rhs = registry.registerRightHandSidebarComponent(RHS, RHSTitle);
+            const appBarRegistration = registry.registerAppBarComponent({
+                iconUrl: 'assets/bot_icon.png',
+                tooltipText: 'Agents',
+                supportedProductIds: null,
+                rhsComponent: RHS,
+                rhsTitle: RHSTitle,
+            });
+            rhs = appBarRegistration.rhsComponent;
             setOpenRHSAction(rhs.showRHSPlugin);
         }
 
@@ -165,14 +160,6 @@ export default class Plugin {
         }
 
         registry.registerAdminConsoleCustomSetting('Config', Config);
-        if (rhs) {
-            registry.registerChannelHeaderButtonAction(<ChannelHeaderIcon/>, () => {
-                store.dispatch(rhs.toggleRHSPlugin);
-            },
-            'Agents',
-            'Agents',
-            );
-        }
 
         if (registry.registerNewMessagesSeparatorActionComponent) {
             registry.registerNewMessagesSeparatorActionComponent(UnreadsSummarize);
