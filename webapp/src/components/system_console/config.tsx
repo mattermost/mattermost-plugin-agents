@@ -326,7 +326,7 @@ const Config = (props: Props) => {
                 </ItemList>
             </Panel>
             <EmbeddingSearchPanel
-                value={value.embeddingSearchConfig || defaultConfig.embeddingSearchConfig}
+                value={{...defaultConfig.embeddingSearchConfig, ...(value.embeddingSearchConfig || {})}}
                 onChange={(config) => {
                     props.onChange(props.id, {...value, embeddingSearchConfig: config});
                     props.setSaveNeeded();

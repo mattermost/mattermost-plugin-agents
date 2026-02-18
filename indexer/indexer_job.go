@@ -5,10 +5,12 @@ package indexer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
+	"github.com/mattermost/mattermost-plugin-ai/format"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -34,6 +36,7 @@ const (
 type PostRecord struct {
 	ID       string `db:"id"`
 	Message  string `db:"message"`
+	Props    string `db:"props"`
 	UserID   string `db:"userid"`
 	CreateAt int64  `db:"createat"`
 	TeamID   string `db:"teamid"`
@@ -194,6 +197,7 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 		query := `SELECT
 			Posts.Id as id,
 			Posts.Message as message,
+			Posts.Props as props,
 			Posts.UserId as userid,
 			Posts.ChannelId as channelid,
 			Posts.CreateAt as createat,
@@ -202,7 +206,9 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 			Channels.Type as channeltype
 		FROM Posts
 		LEFT JOIN Channels ON Posts.ChannelId = Channels.Id
-		WHERE Posts.DeleteAt = 0 AND Posts.Message != '' AND Posts.Type = ''
+		WHERE Posts.DeleteAt = 0
+			AND (Posts.Message != '' OR Posts.Props::text LIKE '%"attachments"%')
+			AND Posts.Type = ''
 			AND (Posts.CreateAt, Posts.Id) > ($1, $2)
 			AND Posts.CreateAt <= $3
 		ORDER BY Posts.CreateAt ASC, Posts.Id ASC
@@ -298,6 +304,14 @@ func (s *Indexer) filterAndCreateDocs(posts []PostRecord) []embeddings.PostDocum
 			DeleteAt:  0,
 		}
 
+		// Parse Props JSON to populate attachments
+		if post.Props != "" {
+			var props model.StringInterface
+			if err := json.Unmarshal([]byte(post.Props), &props); err == nil {
+				modelPost.SetProps(props)
+			}
+		}
+
 		channel := &model.Channel{
 			Id:     post.ChannelID,
 			TeamId: post.TeamID,
@@ -315,7 +329,7 @@ func (s *Indexer) filterAndCreateDocs(posts []PostRecord) []embeddings.PostDocum
 			TeamID:    post.TeamID,
 			ChannelID: post.ChannelID,
 			UserID:    post.UserID,
-			Content:   post.Message,
+			Content:   format.PostBody(modelPost),
 		})
 	}
 	return docs
@@ -419,6 +433,7 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 		query := `SELECT
 			Posts.Id as id,
 			Posts.Message as message,
+			Posts.Props as props,
 			Posts.UserId as userid,
 			Posts.ChannelId as channelid,
 			Posts.CreateAt as createat,
@@ -427,7 +442,9 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 			Channels.Type as channeltype
 		FROM Posts
 		LEFT JOIN Channels ON Posts.ChannelId = Channels.Id
-		WHERE Posts.DeleteAt = 0 AND Posts.Message != '' AND Posts.Type = ''
+		WHERE Posts.DeleteAt = 0
+			AND (Posts.Message != '' OR Posts.Props::text LIKE '%"attachments"%')
+			AND Posts.Type = ''
 			AND (Posts.CreateAt, Posts.Id) > ($1, $2)
 		ORDER BY Posts.CreateAt ASC, Posts.Id ASC
 		LIMIT $3`

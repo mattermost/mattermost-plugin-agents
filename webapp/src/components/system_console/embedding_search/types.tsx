@@ -61,15 +61,6 @@ export interface ModelCompatibilityType {
     stored_model_name?: string;
 }
 
-// Match the server's IncrementalStats struct
-export interface IncrementalStatsType {
-    error_count: number;
-    last_error?: string;
-    last_error_at?: string;
-    total_indexed: number;
-    last_indexed_at?: string;
-}
-
 // Response from the stale job status endpoint
 export interface StaleJobStatusType {
     stale: boolean;

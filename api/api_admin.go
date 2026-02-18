@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-ai/indexer"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -152,12 +153,16 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 	}
 
 	if a.indexerService == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "search functionality is not configured"})
+		c.JSON(http.StatusOK, a.notConfiguredHealthCheck())
 		return
 	}
 
 	result, err := a.indexerService.CheckIndexHealth(c.Request.Context())
 	if err != nil {
+		if err.Error() == "search functionality is not configured" {
+			c.JSON(http.StatusOK, a.notConfiguredHealthCheck())
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -168,7 +173,10 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 // handleGetModelCompatibility checks if the current model configuration is compatible with the indexed data
 func (a *API) handleGetModelCompatibility(c *gin.Context) {
 	if a.indexerService == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "search functionality is not configured"})
+		c.JSON(http.StatusOK, indexer.ModelCompatibility{
+			Compatible:   true,
+			NeedsReindex: false,
+		})
 		return
 	}
 
@@ -179,40 +187,10 @@ func (a *API) handleGetModelCompatibility(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// handleResetStaleJob resets a stale reindex job that appears to be orphaned
-func (a *API) handleResetStaleJob(c *gin.Context) {
-	if err := a.enforceEmptyBody(c); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err)
-		return
-	}
-
-	if a.indexerService == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "search functionality is not configured"})
-		return
-	}
-
-	jobStatus, err := a.indexerService.ResetStaleJob()
-	if err != nil {
-		switch err.Error() {
-		case "no job found":
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		case "job is not stale":
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		default:
-			c.AbortWithError(http.StatusInternalServerError, err)
-			return
-		}
-	}
-
-	c.JSON(http.StatusOK, jobStatus)
-}
-
-// handleGetStaleJobStatus checks if the current job is stale and auto-resets it if so
+// handleGetStaleJobStatus checks if the current job is stale
 func (a *API) handleGetStaleJobStatus(c *gin.Context) {
 	if a.indexerService == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "search functionality is not configured"})
+		c.JSON(http.StatusOK, gin.H{"stale": false, "status": "not_configured"})
 		return
 	}
 
@@ -227,19 +205,25 @@ func (a *API) handleGetStaleJobStatus(c *gin.Context) {
 		return
 	}
 
-	// Auto-reset stale jobs so the user can immediately resume without a manual reset step
-	if isStale && jobStatus.Status == "running" {
-		resetStatus, resetErr := a.indexerService.ResetStaleJob()
-		if resetErr == nil {
-			jobStatus = &resetStatus
-		}
-		// If reset fails, still return the stale status - user can try manual reset
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"stale":  isStale,
 		"status": jobStatus,
 	})
+}
+
+// notConfiguredHealthCheck returns a HealthCheckResult for when search is not configured,
+// including any initialization error if available.
+func (a *API) notConfiguredHealthCheck() indexer.HealthCheckResult {
+	result := indexer.HealthCheckResult{
+		Status: "not_configured",
+	}
+	if a.getSearchInitError != nil {
+		if errMsg := a.getSearchInitError(); errMsg != "" {
+			result.Status = "init_error"
+			result.Error = errMsg
+		}
+	}
+	return result
 }
 
 func (a *API) mattermostAdminAuthorizationRequired(c *gin.Context) {

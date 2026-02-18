@@ -71,6 +71,11 @@ type EmbeddingSearch interface {
 
 	// Clear removes all documents
 	Clear(ctx context.Context) error
+
+	// DeleteOrphaned removes embeddings whose posts no longer exist or are past retention.
+	// nowTime is the retention cutoff (Unix millis), batchSize limits rows deleted per call.
+	// Returns the number of rows deleted.
+	DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error)
 }
 
 // VectorStore defines the interface for vector storage and search operations
@@ -86,6 +91,11 @@ type VectorStore interface {
 
 	// Clear removes all documents from the vector store
 	Clear(ctx context.Context) error
+
+	// DeleteOrphaned removes embeddings whose posts no longer exist or are past retention.
+	// nowTime is the retention cutoff (Unix millis), batchSize limits rows deleted per call.
+	// Returns the number of rows deleted.
+	DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error)
 }
 
 // EmbeddingProvider defines the interface for embedding generation

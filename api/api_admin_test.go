@@ -40,7 +40,7 @@ func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API) {
 	cfg := &testConfigImpl{}
 	noopMetrics := &metrics.NoopMetrics{}
 
-	api := New(nil, nil, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil)
+	api := New(nil, nil, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil)
 
 	return api, mockAPI
 }
@@ -55,9 +55,10 @@ func TestHandleGetStaleJobStatus(t *testing.T) {
 		expectedStale  bool
 	}{
 		{
-			name:           "returns 400 when indexer not configured",
+			name:           "returns 200 with not_configured when indexer not configured",
 			indexerNil:     true,
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusOK,
+			expectedStale:  false,
 		},
 		{
 			name:           "returns 404 when no job exists",
@@ -127,48 +128,39 @@ func TestHandleGetStaleJobStatus(t *testing.T) {
 	}
 }
 
-func TestHandleResetStaleJob(t *testing.T) {
+func TestHandleIndexHealthCheck(t *testing.T) {
 	tests := []struct {
-		name           string
-		indexerNil     bool
-		isStale        bool
-		jobStatus      *indexer.JobStatus
-		expectedStatus int
-		expectedError  string
+		name                 string
+		indexerNil           bool
+		getSearchInitError   func() string
+		expectedStatus       int
+		expectedResultStatus string
+		expectedError        string
 	}{
 		{
-			name:           "returns 400 when indexer not configured",
-			indexerNil:     true,
-			expectedStatus: http.StatusBadRequest,
+			name:                 "returns 200 with not_configured when indexer is nil",
+			indexerNil:           true,
+			expectedStatus:       http.StatusOK,
+			expectedResultStatus: "not_configured",
 		},
 		{
-			name:           "returns 404 when no job exists",
-			indexerNil:     false,
-			jobStatus:      nil,
-			expectedStatus: http.StatusNotFound,
-			expectedError:  "no job found",
-		},
-		{
-			name:       "returns 400 when job is not stale",
-			indexerNil: false,
-			isStale:    false,
-			jobStatus: &indexer.JobStatus{
-				Status:        indexer.JobStatusRunning,
-				LastUpdatedAt: time.Now().Add(-5 * time.Minute),
-				NodeID:        "test-node",
+			name:       "returns 200 with init_error when indexer is nil and init error exists",
+			indexerNil: true,
+			getSearchInitError: func() string {
+				return "failed to connect to database"
 			},
-			expectedStatus: http.StatusBadRequest,
-			expectedError:  "job is not stale",
+			expectedStatus:       http.StatusOK,
+			expectedResultStatus: "init_error",
+			expectedError:        "failed to connect to database",
 		},
 		{
-			name:    "successfully resets stale job",
-			isStale: true,
-			jobStatus: &indexer.JobStatus{
-				Status:        indexer.JobStatusRunning,
-				LastUpdatedAt: time.Now().Add(-45 * time.Minute),
-				NodeID:        "test-node",
+			name:       "returns 200 with not_configured when init error is empty string",
+			indexerNil: true,
+			getSearchInitError: func() string {
+				return ""
 			},
-			expectedStatus: http.StatusOK,
+			expectedStatus:       http.StatusOK,
+			expectedResultStatus: "not_configured",
 		},
 	}
 
@@ -180,15 +172,11 @@ func TestHandleResetStaleJob(t *testing.T) {
 			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
 			mockAPI.On("LogError", mock.Anything).Return().Maybe()
 
-			if !tt.indexerNil {
-				mockIndexer := &mockIndexerService{
-					isStale:   tt.isStale,
-					jobStatus: tt.jobStatus,
-				}
-				api.indexerService = createMockIndexer(t, mockIndexer)
+			if tt.getSearchInitError != nil {
+				api.getSearchInitError = tt.getSearchInitError
 			}
 
-			req := httptest.NewRequest(http.MethodPost, "/admin/reindex/reset-stale", nil)
+			req := httptest.NewRequest(http.MethodPost, "/admin/reindex/health-check", nil)
 			req.Header.Set("Mattermost-User-Id", "admin-user")
 
 			recorder := httptest.NewRecorder()
@@ -197,14 +185,82 @@ func TestHandleResetStaleJob(t *testing.T) {
 			resp := recorder.Result()
 			require.Equal(t, tt.expectedStatus, resp.StatusCode)
 
+			var result indexer.HealthCheckResult
+			err := json.NewDecoder(resp.Body).Decode(&result)
+			require.NoError(t, err)
+			require.Equal(t, tt.expectedResultStatus, result.Status)
 			if tt.expectedError != "" {
-				var response map[string]string
-				err := json.NewDecoder(resp.Body).Decode(&response)
-				require.NoError(t, err)
-				require.Contains(t, response["error"], tt.expectedError)
+				require.Equal(t, tt.expectedError, result.Error)
 			}
 		})
 	}
+}
+
+func TestHandleGetModelCompatibility(t *testing.T) {
+	tests := []struct {
+		name            string
+		indexerNil      bool
+		expectedStatus  int
+		expectedCompat  bool
+		expectedReindex bool
+	}{
+		{
+			name:            "returns 200 with compatible true when indexer is nil",
+			indexerNil:      true,
+			expectedStatus:  http.StatusOK,
+			expectedCompat:  true,
+			expectedReindex: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, mockAPI := setupAdminTestEnvironment(t)
+			defer mockAPI.AssertExpectations(t)
+
+			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+			mockAPI.On("LogError", mock.Anything).Return().Maybe()
+
+			req := httptest.NewRequest(http.MethodGet, "/admin/reindex/model-compatibility", nil)
+			req.Header.Set("Mattermost-User-Id", "admin-user")
+
+			recorder := httptest.NewRecorder()
+			api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			resp := recorder.Result()
+			require.Equal(t, tt.expectedStatus, resp.StatusCode)
+
+			var result indexer.ModelCompatibility
+			err := json.NewDecoder(resp.Body).Decode(&result)
+			require.NoError(t, err)
+			require.Equal(t, tt.expectedCompat, result.Compatible)
+			require.Equal(t, tt.expectedReindex, result.NeedsReindex)
+		})
+	}
+}
+
+func TestHandleGetStaleJobStatusNotConfiguredField(t *testing.T) {
+	api, mockAPI := setupAdminTestEnvironment(t)
+	defer mockAPI.AssertExpectations(t)
+
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return().Maybe()
+
+	// indexerService is nil by default from setupAdminTestEnvironment
+	req := httptest.NewRequest(http.MethodGet, "/admin/reindex/stale", nil)
+	req.Header.Set("Mattermost-User-Id", "admin-user")
+
+	recorder := httptest.NewRecorder()
+	api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+	resp := recorder.Result()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]interface{}
+	err := json.NewDecoder(resp.Body).Decode(&response)
+	require.NoError(t, err)
+	require.Equal(t, false, response["stale"])
+	require.Equal(t, "not_configured", response["status"])
 }
 
 // notFoundError simulates the "not found" error that the indexer checks for
@@ -238,13 +294,6 @@ func createMockIndexer(t *testing.T, mockService *mockIndexerService) *indexer.I
 			Return(nil).Maybe()
 	}
 
-	// Setup mock for ResetStaleJob KVSet
-	if mockService.jobStatus != nil && mockService.isStale {
-		mockClient.On("KVSet", indexer.ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
-			Return(nil).Maybe()
-	}
-
-	// Setup mutex mocks for ResetStaleJob
 	mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
 	mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
 

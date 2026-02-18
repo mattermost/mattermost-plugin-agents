@@ -90,7 +90,7 @@ func ChunkText(content string, opts Options) []Chunk {
 		splitter := textsplitter.NewRecursiveCharacter(
 			textsplitter.WithChunkSize(opts.ChunkSize),
 			textsplitter.WithChunkOverlap(opts.ChunkOverlap),
-			textsplitter.WithSeparators([]string{". ", "! ", "? ", "\n", " ", ""}),
+			textsplitter.WithSeparators([]string{".", "!", "?", "\n", " ", ""}),
 		)
 		textChunks, err = splitter.SplitText(content)
 	}

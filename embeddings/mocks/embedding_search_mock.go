@@ -83,6 +83,32 @@ func (_c *MockEmbeddingSearch_Clear_Call) RunAndReturn(run func(ctx context.Cont
 	return _c
 }
 
+// DeleteOrphaned provides a mock function for the type MockEmbeddingSearch
+func (_mock *MockEmbeddingSearch) DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error) {
+	ret := _mock.Called(ctx, nowTime, batchSize)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteOrphaned")
+	}
+
+	var r0 int64
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64, int64) (int64, error)); ok {
+		return returnFunc(ctx, nowTime, batchSize)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int64, int64) int64); ok {
+		r0 = returnFunc(ctx, nowTime, batchSize)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, int64, int64) error); ok {
+		r1 = returnFunc(ctx, nowTime, batchSize)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
 // Delete provides a mock function for the type MockEmbeddingSearch
 func (_mock *MockEmbeddingSearch) Delete(ctx context.Context, postIDs []string) error {
 	ret := _mock.Called(ctx, postIDs)

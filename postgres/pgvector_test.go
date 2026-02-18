@@ -2187,6 +2187,148 @@ func TestConcurrentStoreOperations(t *testing.T) {
 	})
 }
 
+func TestDeleteOrphaned(t *testing.T) {
+	setupDeleteOrphanedTest := func(t *testing.T) (context.Context, *PGVector, *sqlx.DB) {
+		db := testDB(t)
+
+		config := PGVectorConfig{
+			Dimensions: 3,
+		}
+		pgVector, err := NewPGVector(db, config)
+		require.NoError(t, err)
+
+		return context.Background(), pgVector, db
+	}
+
+	t.Run("deletes embeddings for soft-deleted posts past retention", func(t *testing.T) {
+		ctx, pgVector, db := setupDeleteOrphanedTest(t)
+		defer cleanupDB(t, db)
+
+		now := model.GetMillis()
+
+		// Create posts: A (active), B (soft-deleted at 1000), C (soft-deleted at 2000)
+		addTestPosts(t, db, []string{"postA"}, []int64{now})
+		addTestDeletedPosts(t, db, []string{"postB", "postC"}, []int64{now, now}, []int64{1000, 2000})
+
+		docs := []embeddings.PostDocument{
+			{PostID: "postA", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "Active post"},
+			{PostID: "postB", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "Deleted early"},
+			{PostID: "postC", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "Deleted later"},
+		}
+		embedVectors := [][]float32{{0.1, 0.2, 0.3}, {0.4, 0.5, 0.6}, {0.7, 0.8, 0.9}}
+
+		err := pgVector.Store(ctx, docs, embedVectors)
+		require.NoError(t, err)
+
+		// nowTime=1500 means only postB (DeleteAt=1000) is past retention
+		deleted, err := pgVector.DeleteOrphaned(ctx, 1500, 100)
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), deleted)
+
+		// Verify postA and postC remain
+		var remaining []string
+		err = db.Select(&remaining, "SELECT post_id FROM llm_posts_embeddings ORDER BY post_id")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"postA", "postC"}, remaining)
+	})
+
+	t.Run("respects batchSize limit", func(t *testing.T) {
+		ctx, pgVector, db := setupDeleteOrphanedTest(t)
+		defer cleanupDB(t, db)
+
+		now := model.GetMillis()
+
+		// Create 5 soft-deleted posts all past retention
+		postIDs := []string{"p1", "p2", "p3", "p4", "p5"}
+		createAts := []int64{now, now, now, now, now}
+		deleteAts := []int64{100, 100, 100, 100, 100}
+		addTestDeletedPosts(t, db, postIDs, createAts, deleteAts)
+
+		docs := make([]embeddings.PostDocument, 5)
+		vecs := make([][]float32, 5)
+		for i, id := range postIDs {
+			docs[i] = embeddings.PostDocument{PostID: id, CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "content"}
+			vecs[i] = []float32{0.1, 0.2, 0.3}
+		}
+
+		err := pgVector.Store(ctx, docs, vecs)
+		require.NoError(t, err)
+
+		// Only delete 2 at a time
+		deleted, err := pgVector.DeleteOrphaned(ctx, 200, 2)
+		require.NoError(t, err)
+		assert.Equal(t, int64(2), deleted)
+
+		// 3 should remain
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings")
+		require.NoError(t, err)
+		assert.Equal(t, 3, count)
+	})
+
+	t.Run("returns zero when no orphaned embeddings", func(t *testing.T) {
+		ctx, pgVector, db := setupDeleteOrphanedTest(t)
+		defer cleanupDB(t, db)
+
+		now := model.GetMillis()
+		addTestPosts(t, db, []string{"active1", "active2"}, []int64{now, now})
+
+		docs := []embeddings.PostDocument{
+			{PostID: "active1", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "content 1"},
+			{PostID: "active2", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "content 2"},
+		}
+		vecs := [][]float32{{0.1, 0.2, 0.3}, {0.4, 0.5, 0.6}}
+
+		err := pgVector.Store(ctx, docs, vecs)
+		require.NoError(t, err)
+
+		deleted, err := pgVector.DeleteOrphaned(ctx, now+1000, 100)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), deleted)
+
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings")
+		require.NoError(t, err)
+		assert.Equal(t, 2, count)
+	})
+
+	t.Run("deletes all chunks for orphaned posts", func(t *testing.T) {
+		ctx, pgVector, db := setupDeleteOrphanedTest(t)
+		defer cleanupDB(t, db)
+
+		now := model.GetMillis()
+		addTestDeletedPosts(t, db, []string{"chunked_post"}, []int64{now}, []int64{500})
+
+		docs := []embeddings.PostDocument{
+			{PostID: "chunked_post", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "chunk 0",
+				ChunkInfo: chunking.ChunkInfo{IsChunk: true, ChunkIndex: 0, TotalChunks: 3}},
+			{PostID: "chunked_post", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "chunk 1",
+				ChunkInfo: chunking.ChunkInfo{IsChunk: true, ChunkIndex: 1, TotalChunks: 3}},
+			{PostID: "chunked_post", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "chunk 2",
+				ChunkInfo: chunking.ChunkInfo{IsChunk: true, ChunkIndex: 2, TotalChunks: 3}},
+		}
+		vecs := [][]float32{{0.1, 0.2, 0.3}, {0.4, 0.5, 0.6}, {0.7, 0.8, 0.9}}
+
+		err := pgVector.Store(ctx, docs, vecs)
+		require.NoError(t, err)
+
+		// Verify 3 chunks stored
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings")
+		require.NoError(t, err)
+		assert.Equal(t, 3, count)
+
+		// Delete orphaned - all 3 chunks should be removed
+		deleted, err := pgVector.DeleteOrphaned(ctx, 1000, 100)
+		require.NoError(t, err)
+		assert.Equal(t, int64(3), deleted)
+
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings")
+		require.NoError(t, err)
+		assert.Equal(t, 0, count)
+	})
+}
+
 func TestSearchScoreCalculation(t *testing.T) {
 	// This test verifies that similarity scores are calculated correctly from L2 distance.
 	// For normalized vectors (unit length), L2 distance relates to cosine similarity:

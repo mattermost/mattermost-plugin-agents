@@ -1,5 +1,5 @@
-{{range .Parameters.Results}}<message index="{{.Index}}" from="{{.Username}}" in="{{.ChannelName}}" relevance="{{printf "%.2f" .Score}}">
-{{.Content}}
+{{range .Parameters.Results}}<message index="{{.Index}}" from="{{escapeContent .Username}}" in="{{escapeContent .ChannelName}}" relevance="{{printf "%.2f" .Score}}">
+{{escapeContent .Content}}
 </message>
 
 {{end}}

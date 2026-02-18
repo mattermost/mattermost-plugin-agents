@@ -95,3 +95,8 @@ func (c *CompositeSearch) Delete(ctx context.Context, postIDs []string) error {
 func (c *CompositeSearch) Clear(ctx context.Context) error {
 	return c.store.Clear(ctx)
 }
+
+// DeleteOrphaned removes embeddings whose posts no longer exist or are past retention.
+func (c *CompositeSearch) DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error) {
+	return c.store.DeleteOrphaned(ctx, nowTime, batchSize)
+}

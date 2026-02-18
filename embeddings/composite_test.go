@@ -75,6 +75,10 @@ func (s *stubVectorStore) Clear(ctx context.Context) error {
 	return nil
 }
 
+func (s *stubVectorStore) DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error) {
+	return 0, nil
+}
+
 // stubEmbeddingProvider is a simple test double for EmbeddingProvider
 type stubEmbeddingProvider struct {
 	createEmbeddingFunc       func(ctx context.Context, text string) ([]float32, error)

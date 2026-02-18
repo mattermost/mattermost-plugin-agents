@@ -195,6 +195,7 @@ func (p *Plugin) OnActivate() error {
 
 	// Atomic pointer for the embedding search - single source of truth
 	var currentSearch atomic.Pointer[embeddings.EmbeddingSearch]
+	var lastSearchInitError atomic.Value // stores string
 
 	// Getter function that reads from the atomic pointer
 	getSearch := func() embeddings.EmbeddingSearch {
@@ -210,6 +211,15 @@ func (p *Plugin) OnActivate() error {
 		return p.configuration.EmbeddingSearchConfig()
 	}
 
+	// Getter for the last search initialization error
+	getSearchInitError := func() string {
+		val := lastSearchInitError.Load()
+		if val == nil {
+			return ""
+		}
+		return val.(string)
+	}
+
 	// Initialize embedding search
 	embeddingsSearch, err := search.InitEmbeddingsSearch(
 		dbClient.DB,
@@ -219,6 +229,7 @@ func (p *Plugin) OnActivate() error {
 	)
 	if err != nil {
 		pluginAPI.Log.Error("failed to initialize search infrastructure", "error", err)
+		lastSearchInitError.Store(err.Error())
 		// Continue without search functionality
 	}
 
@@ -245,6 +256,7 @@ func (p *Plugin) OnActivate() error {
 	// Store initial search in atomic pointer
 	if embeddingsSearch != nil {
 		currentSearch.Store(&embeddingsSearch)
+		lastSearchInitError.Store("") // Clear any previous error
 	}
 
 	// Create search service with getter function
@@ -268,6 +280,7 @@ func (p *Plugin) OnActivate() error {
 			pluginAPI.Log.Error("Failed to reinitialize embedding search on config change", "error", initErr)
 			// Disable search on failure
 			currentSearch.Store(nil)
+			lastSearchInitError.Store(initErr.Error())
 			return
 		}
 
@@ -285,6 +298,7 @@ func (p *Plugin) OnActivate() error {
 		// Update atomic pointer - both services will see the new value
 		if newEmbeddingsSearch != nil {
 			currentSearch.Store(&newEmbeddingsSearch)
+			lastSearchInitError.Store("") // Clear any previous error
 		} else {
 			currentSearch.Store(nil)
 		}
@@ -405,6 +419,7 @@ func (p *Plugin) OnActivate() error {
 		mcpClientManager,
 		mcpHandlers,
 		llmUpstreamHTTPClient,
+		getSearchInitError,
 	)
 
 	// Keep only what we need
@@ -469,6 +484,24 @@ func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
 			p.pluginAPI.Log.Error("Failed to delete post from vector database", "error", err)
 		}
 	}
+}
+
+func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {
+	if p.indexerService == nil {
+		return 0, nil
+	}
+
+	count, err := p.indexerService.RunDataRetention(context.Background(), nowTime, batchSize)
+	if err != nil {
+		p.pluginAPI.Log.Error("Failed to run data retention for embeddings", "error", err)
+		return 0, err
+	}
+
+	if count > 0 {
+		p.pluginAPI.Log.Info("Data retention cleaned up orphaned embeddings", "deleted", count)
+	}
+
+	return count, nil
 }
 
 func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {

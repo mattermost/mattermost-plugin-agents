@@ -13,6 +13,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
+	"github.com/mattermost/mattermost-plugin-ai/format"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
@@ -66,7 +67,7 @@ func (s *Indexer) IndexPost(ctx context.Context, post *model.Post, channel *mode
 		TeamID:    channel.TeamId,
 		ChannelID: post.ChannelId,
 		UserID:    post.UserId,
-		Content:   post.Message,
+		Content:   format.PostBody(post),
 	}
 
 	// Store the document with retry logic
@@ -107,6 +108,19 @@ func (s *Indexer) DeletePost(ctx context.Context, postID string) error {
 	return search.Delete(ctx, []string{postID})
 }
 
+// RunDataRetention deletes orphaned embeddings as part of data retention cleanup.
+func (s *Indexer) RunDataRetention(ctx context.Context, nowTime, batchSize int64) (int64, error) {
+	if s.getSearch == nil {
+		return 0, nil
+	}
+	search := s.getSearch()
+	if search == nil {
+		return 0, nil
+	}
+
+	return search.DeleteOrphaned(ctx, nowTime, batchSize)
+}
+
 // StartReindexJob starts a post reindexing job
 // If clearIndex is true, the existing index will be cleared before reindexing.
 // If clearIndex is false, the job will resume from where it left off (if applicable).
@@ -122,7 +136,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	if err != nil && err.Error() != "not found" {
 		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
 	}
-	if jobStatus.Status == JobStatusRunning {
+	if jobStatus.Status == JobStatusRunning && !s.isJobStale(&jobStatus) {
 		return jobStatus, fmt.Errorf("job already running")
 	}
 
@@ -139,7 +153,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	if err != nil && err.Error() != "not found" {
 		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
 	}
-	if jobStatus.Status == JobStatusRunning {
+	if jobStatus.Status == JobStatusRunning && !s.isJobStale(&jobStatus) {
 		return jobStatus, fmt.Errorf("job already running")
 	}
 
@@ -149,7 +163,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 
 	// Get an estimate of total posts for progress tracking
 	var count int64
-	dbErr := s.db.Get(&count, `SELECT COUNT(*) FROM Posts WHERE DeleteAt = 0 AND Message != '' AND Type = '' AND CreateAt <= $1`, cutoffTimestamp)
+	dbErr := s.db.Get(&count, `SELECT COUNT(*) FROM Posts WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = '' AND CreateAt <= $1`, cutoffTimestamp)
 	if dbErr != nil {
 		s.pluginAPI.LogWarn("Failed to get post count for progress tracking", "error", dbErr)
 		count = 0 // Continue with zero estimate
@@ -246,8 +260,8 @@ func (s *Indexer) CancelJob() (JobStatus, error) {
 
 // shouldIndexPost returns whether a post should be indexed based on consistent criteria
 func (s *Indexer) shouldIndexPost(post *model.Post, channel *model.Channel) bool {
-	// Skip posts that don't have content
-	if post.Message == "" {
+	// Skip posts that don't have content (message or attachments)
+	if post.Message == "" && len(post.Attachments()) == 0 {
 		return false
 	}
 
@@ -308,7 +322,7 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	var count int64
 	err = s.db.Get(&count, `
 		SELECT COUNT(*) FROM Posts
-		WHERE DeleteAt = 0 AND Message != '' AND Type = ''
+		WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = ''
 		AND CreateAt > $1`, lastIndexed)
 	if err != nil {
 		s.pluginAPI.LogWarn("Failed to get catch-up post count", "error", err)
@@ -358,25 +372,26 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 	// - Posts from bots (UserId in botUserIDs)
 	// - Posts in DM channels with bots (channel Type='D' and Name contains bot ID)
 	if len(botUserIDs) > 0 {
-		// Build exclusion for bot DM channels
+		// Build exclusion for bot DM channels using parameterized LIKE conditions
 		// DM channel names contain both user IDs separated by "__"
-		var likeConditions []string
-		for _, botID := range botUserIDs {
-			likeConditions = append(likeConditions, fmt.Sprintf("c.Name LIKE '%%%s%%'", botID))
-		}
-		botDMExclusion := fmt.Sprintf("NOT (c.Type = 'D' AND (%s))", strings.Join(likeConditions, " OR "))
-
 		query, args, err := sqlx.In(`
 			SELECT COUNT(*) FROM Posts p
 			JOIN Channels c ON p.ChannelId = c.Id
-			WHERE p.DeleteAt = 0 AND p.Message != '' AND p.Type = ''
-			AND p.UserId NOT IN (?)
-			AND `+botDMExclusion, botUserIDs)
+			WHERE p.DeleteAt = 0 AND (p.Message != '' OR p.Props::text LIKE '%"attachments"%') AND p.Type = ''
+			AND p.UserId NOT IN (?)`, botUserIDs)
 		if err != nil {
 			result.Error = fmt.Sprintf("failed to build query: %v", err)
 			result.Status = "error"
 			return result, err
 		}
+
+		var likeConditions []string
+		for _, botID := range botUserIDs {
+			likeConditions = append(likeConditions, "c.Name LIKE ?")
+			args = append(args, "%"+botID+"%")
+		}
+		query += " AND NOT (c.Type = 'D' AND (" + strings.Join(likeConditions, " OR ") + "))"
+
 		query = s.db.Rebind(query)
 		err = s.db.GetContext(ctx, &result.DBPostCount, query, args...)
 		if err != nil {
@@ -387,7 +402,7 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 	} else {
 		err := s.db.GetContext(ctx, &result.DBPostCount, `
 			SELECT COUNT(*) FROM Posts
-			WHERE DeleteAt = 0 AND Message != '' AND Type = ''`)
+			WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = ''`)
 		if err != nil {
 			result.Error = fmt.Sprintf("failed to count DB posts: %v", err)
 			result.Status = "error"
@@ -490,6 +505,20 @@ func (s *Indexer) CheckModelCompatibility(currentDimensions int, currentModelNam
 // StaleJobThreshold is the duration after which a running job is considered stale
 const StaleJobThreshold = 10 * time.Minute
 
+// isJobStale checks if a running job's heartbeat is beyond the stale threshold.
+func (s *Indexer) isJobStale(jobStatus *JobStatus) bool {
+	if jobStatus.Status != JobStatusRunning {
+		return false
+	}
+
+	lastUpdate := jobStatus.LastUpdatedAt
+	if lastUpdate.IsZero() {
+		lastUpdate = jobStatus.StartedAt
+	}
+
+	return time.Since(lastUpdate) > StaleJobThreshold
+}
+
 // IsJobStale checks if the currently running job is stale (no heartbeat updates)
 func (s *Indexer) IsJobStale() (bool, *JobStatus, error) {
 	var jobStatus JobStatus
@@ -501,56 +530,7 @@ func (s *Indexer) IsJobStale() (bool, *JobStatus, error) {
 		return false, nil, err
 	}
 
-	// Only running jobs can be stale
-	if jobStatus.Status != JobStatusRunning {
-		return false, &jobStatus, nil
-	}
-
-	// Check if last updated time is beyond threshold
-	// Use StartedAt as fallback if LastUpdatedAt is zero (for jobs started before this feature)
-	lastUpdate := jobStatus.LastUpdatedAt
-	if lastUpdate.IsZero() {
-		lastUpdate = jobStatus.StartedAt
-	}
-
-	isStale := time.Since(lastUpdate) > StaleJobThreshold
-	return isStale, &jobStatus, nil
-}
-
-// ResetStaleJob resets a stale job so it can be restarted
-func (s *Indexer) ResetStaleJob() (JobStatus, error) {
-	// Acquire cluster mutex
-	mtx, err := cluster.NewMutex(s.clusterMutex, "ai_reindex_job")
-	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to create mutex: %w", err)
-	}
-	mtx.Lock()
-	defer mtx.Unlock()
-
-	isStale, jobStatus, err := s.IsJobStale()
-	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
-	}
-
-	if jobStatus == nil {
-		return JobStatus{}, fmt.Errorf("no job found")
-	}
-
-	if !isStale {
-		return *jobStatus, fmt.Errorf("job is not stale")
-	}
-
-	// Mark the job as failed due to stale/orphaned state
-	jobStatus.Status = JobStatusFailed
-	jobStatus.Error = fmt.Sprintf("Job stale: no heartbeat from node %s for over %v", jobStatus.NodeID, StaleJobThreshold)
-	jobStatus.CompletedAt = time.Now()
-
-	err = s.pluginAPI.KVSet(ReindexJobKey, jobStatus)
-	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to update job status: %w", err)
-	}
-
-	return *jobStatus, nil
+	return s.isJobStale(&jobStatus), &jobStatus, nil
 }
 
 // MarkOrphanedJobAsFailed marks any running job on this node as failed.

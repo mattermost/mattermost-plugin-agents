@@ -54,6 +54,26 @@ func TestChunkText(t *testing.T) {
 		}
 	})
 
+	t.Run("sentences strategy without whitespace after punctuation", func(t *testing.T) {
+		content := "This is sentence one.This is sentence two!This is sentence three?This is the fourth sentence."
+		opts := Options{
+			ChunkSize:        25,
+			ChunkOverlap:     0,
+			ChunkingStrategy: "sentences",
+		}
+
+		chunks := ChunkText(content, opts)
+		require.Greater(t, len(chunks), 1, "Should split on punctuation even without trailing space")
+
+		// Verify all chunks are marked correctly
+		for i, chunk := range chunks {
+			assert.True(t, chunk.IsChunk)
+			assert.Equal(t, i, chunk.ChunkIndex)
+			assert.Equal(t, len(chunks), chunk.TotalChunks)
+			assert.LessOrEqual(t, len(chunk.Content), opts.ChunkSize, "Chunk should not exceed max size")
+		}
+	})
+
 	t.Run("paragraphs strategy", func(t *testing.T) {
 		content := "First paragraph here.\n\nSecond paragraph here.\n\nThird paragraph here."
 		opts := Options{

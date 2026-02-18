@@ -311,3 +311,29 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 	}
 	return nil
 }
+
+// DeleteOrphaned removes embeddings whose posts no longer exist or are soft-deleted past retention.
+func (pv *PGVector) DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error) {
+	query := `
+		WITH orphaned AS (
+			SELECT e.id FROM llm_posts_embeddings e
+			LEFT JOIN Posts p ON e.post_id = p.Id
+			WHERE p.Id IS NULL
+			   OR (p.DeleteAt > 0 AND p.DeleteAt <= $1)
+			LIMIT $2
+		)
+		DELETE FROM llm_posts_embeddings
+		WHERE id IN (SELECT id FROM orphaned)`
+
+	result, err := pv.db.ExecContext(ctx, query, nowTime, batchSize)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete orphaned embeddings: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return rowsAffected, nil
+}

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -88,6 +87,50 @@ func TestShouldIndexPost(t *testing.T) {
 				UserId:   "user1",
 				DeleteAt: 0,
 			},
+			channel: &model.Channel{
+				Id:   "channel1",
+				Type: model.ChannelTypeOpen,
+			},
+			expected: false,
+		},
+		{
+			name: "should index post with empty message but with attachments",
+			post: func() *model.Post {
+				p := &model.Post{
+					Id:       "post5",
+					Message:  "",
+					Type:     model.PostTypeDefault,
+					UserId:   "user1",
+					DeleteAt: 0,
+				}
+				p.SetProps(model.StringInterface{
+					"attachments": []interface{}{
+						map[string]interface{}{"text": "attachment content"},
+					},
+				})
+				return p
+			}(),
+			channel: &model.Channel{
+				Id:   "channel1",
+				Type: model.ChannelTypeOpen,
+			},
+			expected: true,
+		},
+		{
+			name: "should not index post with empty message and empty attachments",
+			post: func() *model.Post {
+				p := &model.Post{
+					Id:       "post6",
+					Message:  "",
+					Type:     model.PostTypeDefault,
+					UserId:   "user1",
+					DeleteAt: 0,
+				}
+				p.SetProps(model.StringInterface{
+					"attachments": []interface{}{},
+				})
+				return p
+			}(),
 			channel: &model.Channel{
 				Id:   "channel1",
 				Type: model.ChannelTypeOpen,
@@ -211,6 +254,80 @@ func TestFilterAndCreateDocs(t *testing.T) {
 			assert.Equal(t, tt.expectedCount, len(docs))
 		})
 	}
+
+	t.Run("includes posts with attachments but empty message", func(t *testing.T) {
+		posts := []PostRecord{
+			{
+				ID:          "post1",
+				Message:     "",
+				Props:       `{"attachments":[{"text":"attachment content"}]}`,
+				UserID:      "user1",
+				CreateAt:    100,
+				TeamID:      "team1",
+				ChannelID:   "ch1",
+				ChannelType: "O",
+			},
+		}
+		docs := indexer.filterAndCreateDocs(posts)
+		require.Equal(t, 1, len(docs))
+		assert.Contains(t, docs[0].Content, "attachment content")
+	})
+
+	t.Run("extracts attachment content via PostBody", func(t *testing.T) {
+		posts := []PostRecord{
+			{
+				ID:          "post1",
+				Message:     "Hello",
+				Props:       `{"attachments":[{"title":"T","text":"Body"}]}`,
+				UserID:      "user1",
+				CreateAt:    100,
+				TeamID:      "team1",
+				ChannelID:   "ch1",
+				ChannelType: "O",
+			},
+		}
+		docs := indexer.filterAndCreateDocs(posts)
+		require.Equal(t, 1, len(docs))
+		assert.Contains(t, docs[0].Content, "Hello")
+		assert.Contains(t, docs[0].Content, "T")
+		assert.Contains(t, docs[0].Content, "Body")
+	})
+
+	t.Run("handles invalid Props JSON gracefully", func(t *testing.T) {
+		posts := []PostRecord{
+			{
+				ID:          "post1",
+				Message:     "Hello",
+				Props:       "not-json",
+				UserID:      "user1",
+				CreateAt:    100,
+				TeamID:      "team1",
+				ChannelID:   "ch1",
+				ChannelType: "O",
+			},
+		}
+		docs := indexer.filterAndCreateDocs(posts)
+		require.Equal(t, 1, len(docs))
+		assert.Equal(t, "Hello", docs[0].Content)
+	})
+
+	t.Run("handles empty Props string", func(t *testing.T) {
+		posts := []PostRecord{
+			{
+				ID:          "post1",
+				Message:     "Hello",
+				Props:       "",
+				UserID:      "user1",
+				CreateAt:    100,
+				TeamID:      "team1",
+				ChannelID:   "ch1",
+				ChannelType: "O",
+			},
+		}
+		docs := indexer.filterAndCreateDocs(posts)
+		require.Equal(t, 1, len(docs))
+		assert.Equal(t, "Hello", docs[0].Content)
+	})
 }
 
 func TestCheckModelCompatibility(t *testing.T) {
@@ -611,6 +728,7 @@ func testDB(t *testing.T) *sqlx.DB {
 			CreateAt BIGINT NOT NULL,
 			DeleteAt BIGINT NOT NULL DEFAULT 0,
 			Message TEXT NOT NULL DEFAULT '',
+			Props TEXT NOT NULL DEFAULT '{}',
 			Type TEXT NOT NULL DEFAULT '',
 			ChannelId TEXT DEFAULT '',
 			UserId TEXT DEFAULT ''
@@ -1125,83 +1243,6 @@ func TestIsJobStale(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.True(t, isStale)
-	})
-}
-
-func TestResetStaleJob(t *testing.T) {
-	t.Run("returns error when no job exists", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-		mockMutexAPI := &plugintest.API{}
-
-		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
-		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
-
-		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
-			Return(errors.New("not found"))
-
-		indexer := New(nil, nil, mockClient, nil, nil, mockMutexAPI)
-		_, err := indexer.ResetStaleJob()
-
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "no job found")
-	})
-
-	t.Run("returns error when job is not stale", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-		mockMutexAPI := &plugintest.API{}
-
-		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
-		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
-
-		recentTime := time.Now().Add(-5 * time.Minute)
-		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
-			Run(func(args mock.Arguments) {
-				status := args.Get(1).(*JobStatus)
-				status.Status = JobStatusRunning
-				status.LastUpdatedAt = recentTime
-				status.NodeID = "node-1"
-			}).
-			Return(nil)
-
-		indexer := New(nil, nil, mockClient, nil, nil, mockMutexAPI)
-		_, err := indexer.ResetStaleJob()
-
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "job is not stale")
-	})
-
-	t.Run("marks stale job as failed with descriptive error message", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-		mockMutexAPI := &plugintest.API{}
-
-		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
-		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
-
-		oldTime := time.Now().Add(-45 * time.Minute)
-		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
-			Run(func(args mock.Arguments) {
-				status := args.Get(1).(*JobStatus)
-				status.Status = JobStatusRunning
-				status.LastUpdatedAt = oldTime
-				status.NodeID = "node-1"
-			}).
-			Return(nil)
-
-		mockClient.On("KVSet", ReindexJobKey, mock.MatchedBy(func(v interface{}) bool {
-			status := v.(*JobStatus)
-			return status.Status == JobStatusFailed &&
-				strings.Contains(status.Error, "Job stale") &&
-				strings.Contains(status.Error, "node-1") &&
-				!status.CompletedAt.IsZero()
-		})).Return(nil)
-
-		indexer := New(nil, nil, mockClient, nil, nil, mockMutexAPI)
-		jobStatus, err := indexer.ResetStaleJob()
-
-		require.NoError(t, err)
-		assert.Equal(t, JobStatusFailed, jobStatus.Status)
-		assert.Contains(t, jobStatus.Error, "Job stale")
-		assert.Contains(t, jobStatus.Error, "node-1")
 	})
 }
 
@@ -3081,8 +3122,8 @@ func TestResumePreservation(t *testing.T) {
 		mockBots := &bots.MMBots{}
 		mockMutexAPI := &plugintest.API{}
 
-		// Add posts to the database
-		now := model.GetMillis()
+		// Add posts to the database (use past timestamps to avoid race with cutoff capture)
+		now := model.GetMillis() - 1000
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
 		for i := 0; i < 10; i++ {

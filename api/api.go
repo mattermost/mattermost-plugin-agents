@@ -77,6 +77,7 @@ type API struct {
 	mcpClientManager      MCPClientManager
 	mcpHandlers           *mcpserver.PluginMCPHandlers
 	llmUpstreamHTTPClient *http.Client
+	getSearchInitError    func() string
 }
 
 // New creates a new API instance
@@ -99,6 +100,7 @@ func New(
 	mcpClientManager MCPClientManager,
 	mcpHandlers *mcpserver.PluginMCPHandlers,
 	llmUpstreamHTTPClient *http.Client,
+	getSearchInitError func() string,
 ) *API {
 	return &API{
 		bots:                  bots,
@@ -120,6 +122,7 @@ func New(
 		mcpClientManager:      mcpClientManager,
 		mcpHandlers:           mcpHandlers,
 		llmUpstreamHTTPClient: llmUpstreamHTTPClient,
+		getSearchInitError:    getSearchInitError,
 	}
 }
 
@@ -201,7 +204,6 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/reindex/health-check", a.handleIndexHealthCheck)
 	adminRouter.GET("/reindex/model-compatibility", a.handleGetModelCompatibility)
 	adminRouter.GET("/reindex/stale", a.handleGetStaleJobStatus)
-	adminRouter.POST("/reindex/reset-stale", a.handleResetStaleJob)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)

@@ -39,3 +39,5 @@ node_modules/
 specs/
 
 .cursor/
+
+/.plan

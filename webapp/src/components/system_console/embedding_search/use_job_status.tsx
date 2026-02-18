@@ -4,9 +4,9 @@
 import {useState, useEffect, useCallback} from 'react';
 import {useIntl} from 'react-intl';
 
-import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkIndexHealth, getModelCompatibility, getStaleJobStatus, getIncrementalStats, resetIncrementalStats} from '../../../client';
+import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkIndexHealth, getModelCompatibility, getStaleJobStatus} from '../../../client';
 
-import {JobStatusType, StatusMessageType, HealthCheckResultType, ModelCompatibilityType, IncrementalStatsType} from './types';
+import {JobStatusType, StatusMessageType, HealthCheckResultType, ModelCompatibilityType} from './types';
 
 export const useJobStatus = () => {
     const intl = useIntl();
@@ -18,7 +18,6 @@ export const useJobStatus = () => {
     const [healthCheckLoading, setHealthCheckLoading] = useState(false);
     const [modelCompatibility, setModelCompatibility] = useState<ModelCompatibilityType | null>(null);
     const [isJobStale, setIsJobStale] = useState(false);
-    const [incrementalStats, setIncrementalStats] = useState<IncrementalStatsType | null>(null);
 
     // Function to fetch job status
     const fetchJobStatus = useCallback(async () => {
@@ -86,34 +85,13 @@ export const useJobStatus = () => {
     }, []);
 
     // Function to check if job is stale
-    // The backend auto-resets stale jobs, so we also update the job status from the response
     const checkStaleJob = useCallback(async () => {
         try {
             const result = await getStaleJobStatus();
             setIsJobStale(result.stale || false);
-
-            // Update job status from the response - this reflects the auto-reset if the job was stale
-            if (result.status && typeof result.status === 'object') {
-                setJobStatus(result.status);
-
-                // If job was auto-reset to failed, stop polling and show appropriate message
-                if (result.stale && result.status.status === 'failed') {
-                    setPolling(false);
-                }
-            }
         } catch (error) {
             // Silently fail - stale check is optional
             setIsJobStale(false);
-        }
-    }, []);
-
-    // Function to fetch incremental stats
-    const fetchIncrementalStats = useCallback(async () => {
-        try {
-            const stats = await getIncrementalStats();
-            setIncrementalStats(stats);
-        } catch (error) {
-            // Silently fail - incremental stats are optional
         }
     }, []);
 
@@ -121,10 +99,9 @@ export const useJobStatus = () => {
     useEffect(() => {
         fetchJobStatus();
         fetchModelCompatibility();
-        fetchIncrementalStats();
         handleHealthCheck();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fetchJobStatus, fetchModelCompatibility, fetchIncrementalStats]);
+    }, [fetchJobStatus, fetchModelCompatibility]);
 
     // Check stale status when job is running
     useEffect(() => {
@@ -220,7 +197,20 @@ export const useJobStatus = () => {
 
         try {
             const result = await checkIndexHealth();
-            setHealthCheckResult(result);
+            if (result.status === 'not_configured') {
+                // Search not configured yet - don't show as error
+                setHealthCheckResult(null);
+            } else if (result.status === 'init_error') {
+                setStatusMessage({
+                    success: false,
+                    message: intl.formatMessage(
+                        {defaultMessage: 'Search initialization failed: {error}'},
+                        {error: result.error || intl.formatMessage({defaultMessage: 'Unknown error'})},
+                    ),
+                });
+            } else {
+                setHealthCheckResult(result);
+            }
         } catch (error) {
             setStatusMessage({
                 success: false,
@@ -228,25 +218,6 @@ export const useJobStatus = () => {
             });
         } finally {
             setHealthCheckLoading(false);
-        }
-    };
-
-    const handleResetIncrementalStats = async () => {
-        try {
-            await resetIncrementalStats();
-            setIncrementalStats({
-                error_count: 0,
-                total_indexed: 0,
-            });
-            setStatusMessage({
-                success: true,
-                message: intl.formatMessage({defaultMessage: 'Incremental stats have been reset.'}),
-            });
-        } catch (error) {
-            setStatusMessage({
-                success: false,
-                message: intl.formatMessage({defaultMessage: 'Failed to reset incremental stats.'}),
-            });
         }
     };
 
@@ -259,14 +230,12 @@ export const useJobStatus = () => {
         healthCheckLoading,
         modelCompatibility,
         isJobStale,
-        incrementalStats,
         handleReindexClick,
         handleConfirmReindex,
         handleCancelReindex,
         handleCancelJob,
         handleCatchUpClick,
         handleHealthCheck,
-        handleResetIncrementalStats,
         handleResumeClick,
     };
 };
