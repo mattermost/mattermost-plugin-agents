@@ -3168,3 +3168,140 @@ func TestResumePreservation(t *testing.T) {
 		assert.Equal(t, int64(0), savedJobStatus.ProcessedRows, "ProcessedRows should be 0 for fresh reindex")
 	})
 }
+
+func TestRunDataRetention(t *testing.T) {
+	tests := []struct {
+		name          string
+		getSearch     func() embeddings.EmbeddingSearch
+		nowTime       int64
+		batchSize     int64
+		setupMock     func(*embeddingsmocks.MockEmbeddingSearch)
+		expectedCount int64
+		expectError   bool
+	}{
+		{
+			name:          "nil getSearch returns zero",
+			getSearch:     nil,
+			nowTime:       1000,
+			batchSize:     100,
+			expectedCount: 0,
+			expectError:   false,
+		},
+		{
+			name: "getSearch returns nil returns zero",
+			getSearch: func() embeddings.EmbeddingSearch {
+				return nil
+			},
+			nowTime:       1000,
+			batchSize:     100,
+			expectedCount: 0,
+			expectError:   false,
+		},
+		{
+			name:      "successful deletion returns count",
+			nowTime:   1000,
+			batchSize: 100,
+			setupMock: func(m *embeddingsmocks.MockEmbeddingSearch) {
+				m.On("DeleteOrphaned", mock.Anything, int64(1000), int64(100)).Return(int64(42), nil)
+			},
+			expectedCount: 42,
+			expectError:   false,
+		},
+		{
+			name:      "deletion error is propagated",
+			nowTime:   1000,
+			batchSize: 100,
+			setupMock: func(m *embeddingsmocks.MockEmbeddingSearch) {
+				m.On("DeleteOrphaned", mock.Anything, int64(1000), int64(100)).Return(int64(0), errors.New("db error"))
+			},
+			expectedCount: 0,
+			expectError:   true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			getSearch := tc.getSearch
+			if getSearch == nil && tc.setupMock != nil {
+				mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+				tc.setupMock(mockSearch)
+				getSearch = func() embeddings.EmbeddingSearch { return mockSearch }
+			}
+
+			indexer := New(getSearch, nil, nil, nil, nil, nil)
+			count, err := indexer.RunDataRetention(context.Background(), tc.nowTime, tc.batchSize)
+
+			if tc.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tc.expectedCount, count)
+		})
+	}
+}
+
+func TestGetModelInfoFromConfig(t *testing.T) {
+	tests := []struct {
+		name         string
+		configGetter func() embeddings.EmbeddingSearchConfig
+		expected     *ModelInfo
+	}{
+		{
+			name:         "nil configGetter returns nil",
+			configGetter: nil,
+			expected:     nil,
+		},
+		{
+			name: "valid config returns correct model info",
+			configGetter: func() embeddings.EmbeddingSearchConfig {
+				return embeddings.EmbeddingSearchConfig{
+					EmbeddingProvider: embeddings.UpstreamConfig{
+						Type: "openai",
+						Parameters: func() []byte {
+							return []byte(`{"embeddingModel": "text-embedding-3-small"}`)
+						}(),
+					},
+					Dimensions: 1536,
+				}
+			},
+			expected: &ModelInfo{
+				ProviderType: "openai",
+				ModelName:    "text-embedding-3-small",
+				Dimensions:   1536,
+			},
+		},
+		{
+			name: "config with no parameters returns empty model name",
+			configGetter: func() embeddings.EmbeddingSearchConfig {
+				return embeddings.EmbeddingSearchConfig{
+					EmbeddingProvider: embeddings.UpstreamConfig{
+						Type: "bedrock",
+					},
+					Dimensions: 768,
+				}
+			},
+			expected: &ModelInfo{
+				ProviderType: "bedrock",
+				ModelName:    "",
+				Dimensions:   768,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			indexer := New(nil, tc.configGetter, nil, nil, nil, nil)
+			result := indexer.getModelInfoFromConfig()
+
+			if tc.expected == nil {
+				assert.Nil(t, result)
+			} else {
+				require.NotNil(t, result)
+				assert.Equal(t, tc.expected.ProviderType, result.ProviderType)
+				assert.Equal(t, tc.expected.ModelName, result.ModelName)
+				assert.Equal(t, tc.expected.Dimensions, result.Dimensions)
+			}
+		})
+	}
+}
