@@ -73,6 +73,10 @@ func (b *Builder) WithLLMContextServerInfo() llm.ContextOption {
 			c.ServerName = *b.pluginAPI.Configuration.GetConfig().TeamSettings.SiteName
 		}
 
+		if b.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL != nil {
+			c.SiteURL = *b.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
+		}
+
 		if license := b.pluginAPI.System.GetLicense(); license != nil && license.Customer != nil {
 			c.CompanyName = license.Customer.Company
 		}
@@ -82,7 +86,6 @@ func (b *Builder) WithLLMContextServerInfo() llm.ContextOption {
 func (b *Builder) WithLLMContextChannel(channel *model.Channel) llm.ContextOption {
 	return func(c *llm.Context) {
 		c.Channel = channel
-
 		if channel == nil || (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) {
 			return
 		}

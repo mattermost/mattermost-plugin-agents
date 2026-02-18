@@ -4,6 +4,7 @@
 package bots
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/anthropic"
 	"github.com/mattermost/mattermost-plugin-ai/asage"
+	"github.com/mattermost/mattermost-plugin-ai/assets"
 	"github.com/mattermost/mattermost-plugin-ai/bedrock"
 	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
@@ -224,6 +226,9 @@ func (b *MMBots) EnsureBots() error {
 				continue
 			}
 		}
+
+		b.ensureDefaultProfileImage(bot)
+
 		var err error
 		bot.llm, err = b.getLLM(bot.service, bot.cfg)
 		if err != nil {
@@ -239,6 +244,22 @@ func (b *MMBots) EnsureBots() error {
 	b.botsLock.Unlock()
 
 	return nil
+}
+
+func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
+	user, err := b.pluginAPI.User.Get(bot.mmBot.UserId)
+	if err != nil {
+		b.pluginAPI.Log.Error("Failed to get bot user for profile image check", "bot_name", bot.cfg.Name, "error", err.Error())
+		return
+	}
+
+	if user.LastPictureUpdate != 0 {
+		return
+	}
+
+	if err := b.pluginAPI.User.SetProfileImage(bot.mmBot.UserId, bytes.NewReader(assets.DefaultAgentProfilePicture)); err != nil {
+		b.pluginAPI.Log.Error("Failed to set bot profile image", "bot_name", bot.cfg.Name, "error", err.Error())
+	}
 }
 
 func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (llm.LanguageModel, error) {

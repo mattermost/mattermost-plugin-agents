@@ -45,6 +45,7 @@ type Config interface {
 	MCP() mcp.Config
 	AllowUnsafeLinks() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
+	EnableChannelMentionToolCalling() bool
 }
 
 type MCPClientManager interface {
@@ -189,10 +190,14 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	postRouter.POST("/stop", a.handleStop)
 	postRouter.POST("/regenerate", a.handleRegenerate)
 	postRouter.POST("/tool_call", a.handleToolCall)
+	postRouter.GET("/tool_call_private", a.handleToolCallPrivate)
+	postRouter.GET("/tool_result_private", a.handleToolResultPrivate)
+	postRouter.POST("/tool_result", a.handleToolResult)
 	postRouter.POST("/postback_summary", a.handlePostbackSummary)
 
 	channelRouter := botRequiredRouter.Group("/channel/:channelid")
 	channelRouter.Use(a.channelAuthorizationRequired)
+	channelRouter.POST("/analyze", a.handleChannelAnalysis)
 	channelRouter.POST("/interval", a.handleInterval)
 
 	adminRouter := router.Group("/admin")

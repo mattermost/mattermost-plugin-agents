@@ -39,6 +39,12 @@ type AIThread struct {
 	UpdateAt   int64  `json:"update_at"`
 }
 
+// ConfigProvider provides configuration values for conversation behavior
+type ConfigProvider interface {
+	EnableChannelMentionToolCalling() bool
+	AllowNativeWebSearchInChannels() bool
+}
+
 type Conversations struct {
 	prompts          *llm.Prompts
 	mmClient         mmapi.Client
@@ -49,6 +55,7 @@ type Conversations struct {
 	licenseChecker   *enterprise.LicenseChecker
 	i18n             *i18n.Bundle
 	meetingsService  MeetingsService
+	configProvider   ConfigProvider
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations
@@ -67,6 +74,7 @@ func New(
 	licenseChecker *enterprise.LicenseChecker,
 	i18nBundle *i18n.Bundle,
 	meetingsService MeetingsService,
+	configProvider ConfigProvider,
 ) *Conversations {
 	return &Conversations{
 		prompts:          prompts,
@@ -78,6 +86,7 @@ func New(
 		licenseChecker:   licenseChecker,
 		i18n:             i18nBundle,
 		meetingsService:  meetingsService,
+		configProvider:   configProvider,
 	}
 }
 
@@ -87,14 +96,15 @@ func (c *Conversations) SetMeetingsService(meetingsService MeetingsService) {
 }
 
 // ProcessUserRequestWithContext is an internal helper that uses an existing context to process a message
-func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context) (*llm.TextStreamResult, error) {
+func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
-	var disabledToolsInfo []llm.ToolInfo
-	if !isDM && context != nil && context.Tools != nil {
-		disabledToolsInfo = context.Tools.GetToolsInfo()
-	}
+	toolsDisabled := !isDM && !allowToolsInChannel
 	if context != nil {
-		context.DisabledToolsInfo = disabledToolsInfo
+		if toolsDisabled && context.Tools != nil {
+			context.DisabledToolsInfo = context.Tools.GetToolsInfo()
+		} else {
+			context.DisabledToolsInfo = nil
+		}
 	}
 
 	var posts []llm.Post
@@ -132,9 +142,13 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		Context: context,
 	}
 	var opts []llm.LanguageModelOption
-	if !isDM {
-		// In non-DM channels, disable tools for security but provide info about DM-only tools
+	if toolsDisabled {
+		// Tools are disabled in this context but we still inform the LLM about DM-only tools.
 		opts = append(opts, llm.WithToolsDisabled())
+
+		if c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled() {
+			opts = append(opts, llm.WithNativeWebSearchAllowed())
+		}
 	}
 	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
@@ -160,7 +174,7 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 }
 
 // ProcessUserRequest processes a user request to a bot
-func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post) (*llm.TextStreamResult, error) {
+func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
 	// Extract web search context from conversation history to preserve citations
 	// This ensures citations from previous searches work in follow-up messages
 	webSearchParams := c.extractWebSearchContext(post)
@@ -202,7 +216,7 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 		}
 	}
 
-	return c.ProcessUserRequestWithContext(bot, postingUser, channel, post, llmContext)
+	return c.ProcessUserRequestWithContext(bot, postingUser, channel, post, llmContext, allowToolsInChannel)
 }
 
 func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID string, context *llm.Context) error {
@@ -404,7 +418,12 @@ func (c *Conversations) PostToAIPost(bot *bots.Bot, post *model.Post) llm.Post {
 		if err := json.Unmarshal([]byte(pendingTools), &toolCalls); err != nil {
 			c.mmClient.LogError("Error unmarshalling tool calls", "error", err)
 		} else {
-			tools = toolCalls
+			for _, toolCall := range toolCalls {
+				if toolCall.Status == llm.ToolCallStatusRejected {
+					continue
+				}
+				tools = append(tools, toolCall)
+			}
 		}
 	}
 

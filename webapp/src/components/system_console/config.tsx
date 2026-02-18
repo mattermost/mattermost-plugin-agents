@@ -7,6 +7,8 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {setUserProfilePictureByUsername} from '@/client';
 
+import {Pill} from '../pill';
+
 import Panel, {PanelFooterText} from './panel';
 import Bots, {firstNewBot} from './bots';
 import {LLMBotConfig} from './bot';
@@ -30,6 +32,8 @@ type Config = {
     enableCallSummary: boolean,
     allowedUpstreamHostnames: string,
     allowUnsafeLinks: boolean,
+    enableChannelMentionToolCalling: boolean,
+    allowNativeWebSearchInChannels: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig,
     webSearch: WebSearchSettings,
@@ -82,6 +86,8 @@ const defaultConfig = {
     enableLLMTrace: false,
     enableTokenUsageLogging: false,
     allowUnsafeLinks: false,
+    enableChannelMentionToolCalling: false,
+    allowNativeWebSearchInChannels: false,
     embeddingSearchConfig: {
         type: '',
         vectorStore: {
@@ -303,6 +309,29 @@ const Config = (props: Props) => {
                             props.setSaveNeeded();
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, AI responses may contain clickable links, including potentially malicious destinations. Enable only if you trust the LLM output and have mitigations for exfiltration risks.'})}
+                    />
+                    <BooleanItem
+                        label={
+                            <Horizontal>
+                                <FormattedMessage defaultMessage='Enable Channel Mention Tool Calling'/>
+                                <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
+                            </Horizontal>
+                        }
+                        value={Boolean(value.enableChannelMentionToolCalling)}
+                        onChange={(to) => {
+                            props.onChange(props.id, {...value, enableChannelMentionToolCalling: to});
+                            props.setSaveNeeded();
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, @mentioning a bot in public channels allows tool calling (e.g., web search, integrations). When disabled, channel mentions still work but tools are disabled—only DMs allow tool usage. This is an experimental feature for multi-player tool calling in channels.'})}
+                    />
+                    <BooleanItem
+                        label={<FormattedMessage defaultMessage='Allow native web search in channels'/>}
+                        value={Boolean(value.allowNativeWebSearchInChannels)}
+                        onChange={(to) => {
+                            props.onChange(props.id, {...value, allowNativeWebSearchInChannels: to});
+                            props.setSaveNeeded();
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.'})}
                     />
                 </ItemList>
             </Panel>

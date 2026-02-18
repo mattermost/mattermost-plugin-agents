@@ -191,9 +191,14 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		)
 
 		// Process the user request with the context that has the callback
-		// Note: ProcessUserRequestWithContext internally checks if this is a DM and applies WithToolsDisabled() if not
+		allowToolsInChannel := allowToolsInChannelFromPost(post)
+		// Defense-in-depth: if config flag is off and not a DM, disable tools regardless of post prop
+		isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+		if !isDM && (c.configProvider == nil || !c.configProvider.EnableChannelMentionToolCalling()) {
+			allowToolsInChannel = false
+		}
 		var processErr error
-		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback)
+		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback, allowToolsInChannel)
 		if processErr != nil {
 			return fmt.Errorf("could not continue conversation on regen: %w", processErr)
 		}

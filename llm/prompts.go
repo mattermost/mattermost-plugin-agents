@@ -4,12 +4,11 @@
 package llm
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"strings"
 	"text/template"
-
-	"errors"
 )
 
 type Prompts struct {

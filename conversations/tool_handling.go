@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/mmtools"
@@ -109,6 +110,15 @@ func (c *Conversations) unmarshalWebSearchContext(webSearchContextJSON string, p
 	return params
 }
 
+// responseRootIDFromPost returns the root ID for responding in a thread.
+// If the post is already in a thread, it returns the root; otherwise the post's own ID.
+func responseRootIDFromPost(post *model.Post) string {
+	if post.RootId != "" {
+		return post.RootId
+	}
+	return post.Id
+}
+
 // HandleToolCall handles tool call approval/rejection
 func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
 	bot := c.bots.GetBotByID(post.UserId)
@@ -127,16 +137,49 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	}
 
 	var tools []llm.ToolCall
-	unmarshalErr := json.Unmarshal([]byte(toolsJSON.(string)), &tools)
+	toolsJSONValue, ok := toolsJSON.(string)
+	if !ok {
+		return errors.New("post pending tool calls not valid JSON")
+	}
+	unmarshalErr := json.Unmarshal([]byte(toolsJSONValue), &tools)
 	if unmarshalErr != nil {
 		return errors.New("post pending tool calls not valid JSON")
+	}
+
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	allowToolsInChannel := allowToolsInChannelFromPost(post)
+	requesterID, _ := post.GetProp(streaming.LLMRequesterUserID).(string)
+	toolCallKVKey := ""
+	if !isDM {
+		// Defense-in-depth: block channel tool calls if config flag is off
+		if c.configProvider == nil || !c.configProvider.EnableChannelMentionToolCalling() {
+			return ErrChannelToolCallingDisabled
+		}
+		// Block if the post doesn't have the allow_tools_in_channel prop set
+		if !allowToolsInChannel {
+			return errors.New("tool calling not allowed for this post")
+		}
+		if requesterID == "" {
+			return errors.New("post missing requester id")
+		}
+		if requesterID != userID {
+			return errors.New("only the original requester can approve/reject tool calls")
+		}
+		toolCallKVKey = streaming.ToolCallPrivateKVKey(post.Id, requesterID)
+		if kvErr := c.mmClient.KVGet(toolCallKVKey, &tools); kvErr != nil {
+			if mmapi.IsKVNotFound(kvErr) {
+				return errors.New("post missing pending tool calls")
+			}
+			return fmt.Errorf("failed to load tool calls from KV store: %w", kvErr)
+		}
 	}
 
 	// Extract web search context from conversation history to preserve citations
 	webSearchParams := c.extractWebSearchContext(post)
 
-	var contextOpts []llm.ContextOption
-	contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextDefaultTools(bot))
+	contextOpts := []llm.ContextOption{
+		c.contextBuilder.WithLLMContextDefaultTools(bot),
+	}
 	if len(webSearchParams) > 0 {
 		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
@@ -147,6 +190,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		channel,
 		contextOpts...,
 	)
+	toolsDisabled := applyToolAvailability(llmContext, isDM, allowToolsInChannel)
 
 	for i := range tools {
 		if slices.Contains(acceptedToolIDs, tools[i].ID) {
@@ -167,9 +211,60 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		}
 	}
 
-	responseRootID := post.Id
-	if post.RootId != "" {
-		responseRootID = post.RootId
+	if !isDM {
+		hasReviewableResult := slices.ContainsFunc(tools, func(tc llm.ToolCall) bool {
+			return tc.Status == llm.ToolCallStatusSuccess || tc.Status == llm.ToolCallStatusError
+		})
+		if !hasReviewableResult {
+			redactedTools := streaming.RedactToolCalls(tools)
+			resolvedToolsJSON, marshalErr := json.Marshal(redactedTools)
+			if marshalErr != nil {
+				return fmt.Errorf("failed to marshal tool call results: %w", marshalErr)
+			}
+			post.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
+			post.AddProp(streaming.ToolCallRedactedProp, "true")
+			post.DelProp(streaming.PendingToolResultProp)
+			if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
+				return fmt.Errorf("failed to update post with tool call results: %w", updateErr)
+			}
+			if deleteErr := c.mmClient.KVDelete(toolCallKVKey); deleteErr != nil {
+				c.mmClient.LogError("Failed to delete tool call KV entry", "error", deleteErr, "post_id", post.Id, "kv_key", toolCallKVKey)
+			}
+			return nil
+		}
+
+		resultKVKey := streaming.ToolResultPrivateKVKey(post.Id, requesterID)
+		if kvErr := c.mmClient.KVSet(resultKVKey, tools); kvErr != nil {
+			return fmt.Errorf("failed to store tool call results: %w", kvErr)
+		}
+
+		redactedTools := streaming.RedactToolCalls(tools)
+		resolvedToolsJSON, marshalErr := json.Marshal(redactedTools)
+		if marshalErr != nil {
+			return fmt.Errorf("failed to marshal tool call results: %w", marshalErr)
+		}
+		post.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
+		post.AddProp(streaming.ToolCallRedactedProp, "true")
+		post.AddProp(streaming.PendingToolResultProp, "true")
+		// Persist web search context so HandleToolResult and subsequent messages can find it
+		if params := llmContext.Parameters; len(params) > 0 {
+			if _, hasWebSearch := params[mmtools.WebSearchContextKey]; hasWebSearch {
+				webSearchJSON, marshalErr := json.Marshal(params)
+				if marshalErr != nil {
+					c.mmClient.LogError("Failed to marshal web search context", "error", marshalErr)
+				} else {
+					post.AddProp(streaming.WebSearchContextProp, string(webSearchJSON))
+				}
+			}
+		}
+		if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
+			return fmt.Errorf("failed to update post with tool call results: %w", updateErr)
+		}
+		// Note: toolCallKVKey is NOT deleted here because the UI may still need to fetch
+		// private tool call arguments during the result review stage. It will be deleted
+		// in HandleToolResult after the flow completes.
+
+		return nil
 	}
 
 	// Update post with the tool call results
@@ -187,9 +282,6 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 				c.mmClient.LogError("Failed to marshal web search context", "error", marshalErr)
 			} else {
 				post.AddProp(streaming.WebSearchContextProp, string(webSearchJSON))
-				c.mmClient.LogDebug("Persisted web search context to post props",
-					"post_id", post.Id,
-					"has_results", hasWebSearch)
 			}
 		}
 	}
@@ -198,19 +290,170 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return fmt.Errorf("failed to update post with tool call results: %w", updateErr)
 	}
 
-	// Only continue if at lest one tool call was successful
+	// Only continue if at least one tool call was successful
 	if !slices.ContainsFunc(tools, func(tc llm.ToolCall) bool {
 		return tc.Status == llm.ToolCallStatusSuccess
 	}) {
 		return nil
 	}
 
+	return c.completeAndStreamToolResponse(bot, user, channel, post, llmContext, toolsDisabled, allowToolsInChannel)
+}
+
+// HandleToolResult handles tool result approval after tool execution.
+func (c *Conversations) HandleToolResult(userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+	bot := c.bots.GetBotByID(post.UserId)
+	if bot == nil {
+		return fmt.Errorf("unable to get bot")
+	}
+
+	if post.GetProp(streaming.PendingToolResultProp) == nil {
+		return errors.New("post missing pending tool results")
+	}
+
+	requesterID, ok := post.GetProp(streaming.LLMRequesterUserID).(string)
+	if !ok || requesterID == "" {
+		return errors.New("post missing requester id")
+	}
+	if requesterID != userID {
+		return errors.New("only the original requester can approve/reject tool results")
+	}
+
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	allowToolsInChannel := allowToolsInChannelFromPost(post)
+
+	// Defense-in-depth: block channel tool results if config flag is off
+	if !isDM {
+		if c.configProvider == nil || !c.configProvider.EnableChannelMentionToolCalling() {
+			return ErrChannelToolCallingDisabled
+		}
+		if !allowToolsInChannel {
+			return errors.New("tool calling not allowed for this post")
+		}
+	}
+
+	resultKVKey := streaming.ToolResultPrivateKVKey(post.Id, requesterID)
+	toolCallKVKey := streaming.ToolCallPrivateKVKey(post.Id, requesterID)
+	var tools []llm.ToolCall
+	if kvErr := c.mmClient.KVGet(resultKVKey, &tools); kvErr != nil {
+		if mmapi.IsKVNotFound(kvErr) {
+			return errors.New("post missing pending tool results")
+		}
+		return fmt.Errorf("failed to load tool call results from KV store: %w", kvErr)
+	}
+
+	for i := range tools {
+		if slices.Contains(acceptedToolIDs, tools[i].ID) {
+			continue
+		}
+		tools[i].Result = ""
+		tools[i].Status = llm.ToolCallStatusRejected
+	}
+
+	hasApprovedResults := slices.ContainsFunc(tools, func(tc llm.ToolCall) bool {
+		return tc.Status != llm.ToolCallStatusRejected
+	})
+	if !hasApprovedResults {
+		redactedTools := streaming.RedactToolCalls(tools)
+		redactedToolsJSON, marshalErr := json.Marshal(redactedTools)
+		if marshalErr != nil {
+			return fmt.Errorf("failed to marshal tool call results: %w", marshalErr)
+		}
+		post.AddProp(streaming.ToolCallProp, string(redactedToolsJSON))
+		post.AddProp(streaming.ToolCallRedactedProp, "true")
+		post.DelProp(streaming.PendingToolResultProp)
+		if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
+			return fmt.Errorf("failed to update post after tool result rejection: %w", updateErr)
+		}
+		c.deleteToolCallKVEntries(post.Id, resultKVKey, toolCallKVKey)
+		return nil
+	}
+
+	user, err := c.mmClient.GetUser(userID)
+	if err != nil {
+		return err
+	}
+
+	// Extract web search context from conversation history to preserve citations
+	webSearchParams := c.extractWebSearchContext(post)
+
+	contextOpts := []llm.ContextOption{
+		c.contextBuilder.WithLLMContextDefaultTools(bot),
+	}
+	if len(webSearchParams) > 0 {
+		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
+	}
+
+	llmContext := c.contextBuilder.BuildLLMContextUserRequest(
+		bot,
+		user,
+		channel,
+		contextOpts...,
+	)
+	toolsDisabled := applyToolAvailability(llmContext, isDM, allowToolsInChannel)
+
+	resolvedToolsJSON, err := json.Marshal(tools)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tool call results: %w", err)
+	}
+
+	// Build a copy of the post with full (unredacted) tool results for conversation context.
+	// Clone() shares the Props map, so create a separate copy to avoid mutating the original.
+	toolCallPostCopy := post.Clone()
+	toolCallPostCopy.Props = make(model.StringInterface, len(post.GetProps()))
+	for key, value := range post.GetProps() {
+		toolCallPostCopy.Props[key] = value
+	}
+	toolCallPostCopy.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
+
+	// Update the original post: unredact tool calls and clear pending flags.
+	// This makes the data available after page refresh and in future
+	// conversation context without needing the KV store.
+	post.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
+	post.DelProp(streaming.ToolCallRedactedProp)
+	post.DelProp(streaming.PendingToolResultProp)
+	// Persist web search context so subsequent messages in the thread preserve citations
+	if params := llmContext.Parameters; len(params) > 0 {
+		if _, hasWebSearch := params[mmtools.WebSearchContextKey]; hasWebSearch {
+			webSearchJSON, marshalErr := json.Marshal(params)
+			if marshalErr != nil {
+				c.mmClient.LogError("Failed to marshal web search context", "error", marshalErr)
+			} else {
+				post.AddProp(streaming.WebSearchContextProp, string(webSearchJSON))
+			}
+		}
+	}
+	if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
+		return fmt.Errorf("failed to update post after tool result approval: %w", updateErr)
+	}
+
+	if err := c.completeAndStreamToolResponse(bot, user, channel, toolCallPostCopy, llmContext, toolsDisabled, allowToolsInChannel); err != nil {
+		return err
+	}
+
+	c.deleteToolCallKVEntries(post.Id, resultKVKey, toolCallKVKey)
+	return nil
+}
+
+// completeAndStreamToolResponse builds the conversation history from the thread,
+// runs LLM completion with tool results, and streams the response to a new post.
+func (c *Conversations) completeAndStreamToolResponse(
+	bot *bots.Bot,
+	user *model.User,
+	channel *model.Channel,
+	toolCallPost *model.Post,
+	llmContext *llm.Context,
+	toolsDisabled bool,
+	allowToolsInChannel bool,
+) error {
+	responseRootID := responseRootIDFromPost(toolCallPost)
+
 	previousConversation, err := mmapi.GetThreadData(c.mmClient, responseRootID)
 	if err != nil {
 		return fmt.Errorf("failed to get previous conversation: %w", err)
 	}
-	previousConversation.CutoffBeforePostID(post.Id)
-	previousConversation.Posts = append(previousConversation.Posts, post)
+	previousConversation.CutoffBeforePostID(toolCallPost.Id)
+	previousConversation.Posts = append(previousConversation.Posts, toolCallPost)
 
 	posts, err := c.existingConversationToLLMPosts(bot, previousConversation, llmContext)
 	if err != nil {
@@ -221,17 +464,17 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		Posts:   posts,
 		Context: llmContext,
 	}
-	result, err := bot.LLM().ChatCompletion(completionRequest)
+	var opts []llm.LanguageModelOption
+	if toolsDisabled {
+		opts = append(opts, llm.WithToolsDisabled())
+	}
+	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to get chat completion: %w", err)
 	}
 
 	// Decorate the stream with web search annotations if available
-	webSearchData := mmtools.ConsumeWebSearchContexts(llmContext)
-	c.mmClient.LogDebug("Checking for web search data in HandleToolCall", "has_data", len(webSearchData) > 0, "num_contexts", len(webSearchData))
-	if len(webSearchData) > 0 {
-		flatResults := mmtools.FlattenWebSearchResults(webSearchData)
-		c.mmClient.LogDebug("Flattened web search results", "num_results", len(flatResults))
+	if webSearchData := mmtools.ConsumeWebSearchContexts(llmContext); len(webSearchData) > 0 {
 		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
 	}
 
@@ -239,9 +482,19 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, user.Id, result, responsePost, post.Id); err != nil {
+	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
+	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, user.Id, result, responsePost, toolCallPost.Id); err != nil {
 		return fmt.Errorf("failed to stream result to new post: %w", err)
 	}
 
 	return nil
+}
+
+// deleteToolCallKVEntries cleans up KV store entries, logging any deletion errors.
+func (c *Conversations) deleteToolCallKVEntries(postID string, kvKeys ...string) {
+	for _, key := range kvKeys {
+		if err := c.mmClient.KVDelete(key); err != nil {
+			c.mmClient.LogError("Failed to delete KV entry", "error", err, "post_id", postID, "kv_key", key)
+		}
+	}
 }

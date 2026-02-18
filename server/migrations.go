@@ -152,6 +152,14 @@ func migrateServicesToBots(pluginAPI *pluginapi.Client, cfg config.Config) (bool
 		return false, cfg, nil
 	}
 
+	// If services already use the new schema (type or id set), no migration needed.
+	// This keeps the "services but no bots" state valid in the new config format.
+	for _, service := range existingConfig.Services {
+		if service.ID != "" || service.Type != "" {
+			return false, cfg, nil
+		}
+	}
+
 	oldConfig := BotMigrationConfig{}
 	err := pluginAPI.Configuration.LoadPluginConfiguration(&oldConfig)
 	if err != nil {
@@ -160,6 +168,18 @@ func migrateServicesToBots(pluginAPI *pluginapi.Client, cfg config.Config) (bool
 
 	// If there are no old services to migrate either, nothing to do
 	if len(oldConfig.Config.Services) == 0 {
+		return false, cfg, nil
+	}
+
+	// Only migrate legacy service configs that include legacy fields.
+	hasLegacyServiceFields := false
+	for _, service := range oldConfig.Config.Services {
+		if service.ServiceName != "" || service.URL != "" {
+			hasLegacyServiceFields = true
+			break
+		}
+	}
+	if !hasLegacyServiceFields {
 		return false, cfg, nil
 	}
 

@@ -23,6 +23,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-ai/search"
+	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -50,7 +51,8 @@ type TestEnvironment struct {
 
 // testConfigImpl is a minimal implementation of Config for testing
 type testConfigImpl struct {
-	allowUnsafeLinks bool
+	allowUnsafeLinks                bool
+	enableChannelMentionToolCalling bool
 }
 
 func (tc *testConfigImpl) GetDefaultBotName() string {
@@ -67,6 +69,10 @@ func (tc *testConfigImpl) AllowUnsafeLinks() bool {
 
 func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
 	return embeddings.EmbeddingSearchConfig{}
+}
+
+func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
+	return tc.enableChannelMentionToolCalling
 }
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
@@ -563,6 +569,158 @@ func TestHandleGetAIBots(t *testing.T) {
 				require.Equal(t, test.expectedAllowUnsafeLinks, response.AllowUnsafeLinks, "AllowUnsafeLinks field should match expected value")
 				require.NotEmpty(t, response.Bots, "Should return at least one bot")
 			}
+		})
+	}
+}
+
+func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	// These are the 4 tool-related endpoints that have the EnableChannelMentionToolCalling guard.
+	// They should all pass the isDM check when the post is in a DM with the bot,
+	// even when EnableChannelMentionToolCalling is false.
+	tests := []struct {
+		name     string
+		endpoint string
+		method   string
+		body     string
+	}{
+		{
+			name:     "tool_call in DM is allowed",
+			endpoint: "/post/postid/tool_call",
+			method:   http.MethodPost,
+			body:     `{"accepted_tool_ids": ["tool-1"]}`,
+		},
+		{
+			name:     "tool_call_private in DM is allowed",
+			endpoint: "/post/postid/tool_call_private",
+			method:   http.MethodGet,
+		},
+		{
+			name:     "tool_result_private in DM is allowed",
+			endpoint: "/post/postid/tool_result_private",
+			method:   http.MethodGet,
+		},
+		{
+			name:     "tool_result in DM is allowed",
+			endpoint: "/post/postid/tool_result",
+			method:   http.MethodPost,
+			body:     `{"accepted_tool_ids": ["tool-1"]}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			// Disable channel tool calling — the fix ensures DMs still work.
+			e.config.enableChannelMentionToolCalling = false
+
+			botUserID := testBotUserID
+			userID := testUserID
+
+			e.setupTestBot(llm.BotConfig{Name: "permtest", DisplayName: "Permission Bot"})
+
+			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
+			e.mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+			e.mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+
+			post := &model.Post{
+				Id:        "postid",
+				UserId:    botUserID,
+				ChannelId: "channelid",
+			}
+			post.AddProp(streaming.LLMRequesterUserID, userID)
+
+			// DM channel name contains both user IDs
+			dmChannelName := botUserID + "__" + userID
+
+			e.mockAPI.On("GetPost", "postid").Return(post, nil)
+			e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{
+				Id:   "channelid",
+				Name: dmChannelName,
+				Type: model.ChannelTypeDirect,
+			}, nil)
+			e.mockAPI.On("HasPermissionToChannel", userID, "channelid", model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			var body io.Reader
+			if test.body != "" {
+				body = strings.NewReader(test.body)
+			}
+			request := httptest.NewRequest(test.method, test.endpoint, body)
+			request.Header.Add("Mattermost-User-ID", userID)
+
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+			resp := recorder.Result()
+
+			// Should NOT be 403 — the DM check should pass.
+			// The request may fail later (e.g., 400 or 500 due to missing KV data),
+			// but it must not be blocked by the config guard.
+			require.NotEqual(t, http.StatusForbidden, resp.StatusCode,
+				"DM tool call should not be blocked by EnableChannelMentionToolCalling config")
+		})
+	}
+}
+
+func TestToolPrivateRequiresRequester(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name     string
+		endpoint string
+	}{
+		{
+			name:     "tool call private endpoint rejects non-requester",
+			endpoint: "/post/postid/tool_call_private?botUsername=permtest",
+		},
+		{
+			name:     "tool result private endpoint rejects non-requester",
+			endpoint: "/post/postid/tool_result_private?botUsername=permtest",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			// Enable channel tool calling so the config guard passes and
+			// the handler actually reaches the requester identity check.
+			e.config.enableChannelMentionToolCalling = true
+
+			e.setupTestBot(llm.BotConfig{Name: "permtest", DisplayName: "Permission Bot"})
+
+			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
+			e.mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+			e.mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+
+			post := &model.Post{
+				Id:        "postid",
+				ChannelId: "channelid",
+			}
+			post.AddProp(streaming.LLMRequesterUserID, "requester")
+
+			e.mockAPI.On("GetPost", "postid").Return(post, nil)
+			e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{
+				Id:   "channelid",
+				Type: model.ChannelTypeOpen,
+			}, nil)
+			e.mockAPI.On("HasPermissionToChannel", "other-user", "channelid", model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+			request := httptest.NewRequest(http.MethodGet, test.endpoint, nil)
+			request.Header.Add("Mattermost-User-ID", "other-user")
+
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+			resp := recorder.Result()
+			require.Equal(t, http.StatusForbidden, resp.StatusCode)
 		})
 	}
 }

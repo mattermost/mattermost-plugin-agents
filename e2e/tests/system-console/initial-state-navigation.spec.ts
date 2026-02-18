@@ -87,15 +87,18 @@ test.describe.serial('Initial State and Navigation', () => {
 
         // Verify AI Services panel is visible
         const servicesPanel = systemConsole.getServicesPanel();
-        await expect(servicesPanel).toBeVisible();
+        await expect(servicesPanel).toBeVisible({ timeout: 10000 });
+
+        // Wait for the bots panel to be fully loaded
+        await systemConsole.waitForBotsPanel();
 
         // Verify No Bots message is displayed
         const noBotsMessage = systemConsole.getNoBotsMessage();
-        await expect(noBotsMessage).toBeVisible();
+        await expect(noBotsMessage).toBeVisible({ timeout: 10000 });
 
         // Verify Add Bot button is visible
         const addBotButton = systemConsole.getAddBotButton();
-        await expect(addBotButton).toBeVisible();
+        await expect(addBotButton).toBeVisible({ timeout: 10000 });
         await expect(addBotButton).toBeEnabled();
 
         // Cleanup

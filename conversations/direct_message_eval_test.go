@@ -129,6 +129,7 @@ func TestDirectMessageConversations(t *testing.T) {
 				licenseChecker,
 				i18n.Init(),
 				nil,
+				nil, // configProvider - nil means channel tool calling is disabled (default)
 			)
 
 			// Create a mock bot for DM
@@ -154,7 +155,7 @@ func TestDirectMessageConversations(t *testing.T) {
 			bot := bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
 
 			// Process the DM request
-			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost())
+			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), false)
 			require.NoError(t, err, "Failed to process DM request")
 			require.NotNil(t, textStream, "Expected a non-nil text stream")
 

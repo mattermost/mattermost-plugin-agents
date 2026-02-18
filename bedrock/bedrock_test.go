@@ -295,3 +295,454 @@ func TestCountTokens(t *testing.T) {
 	assert.Equal(t, 2, b.CountTokens("Hello world"))
 	assert.Equal(t, 12, b.CountTokens("This is a longer piece of text with more words"))
 }
+
+func TestExtractToolCallsFromBlocks(t *testing.T) {
+	tests := []struct {
+		name           string
+		toolBlocks     map[int]*toolUseData
+		expectedCalls  []llm.ToolCall
+		expectedLength int
+	}{
+		{
+			name:           "empty blocks returns empty slice",
+			toolBlocks:     map[int]*toolUseData{},
+			expectedCalls:  []llm.ToolCall{},
+			expectedLength: 0,
+		},
+		{
+			name: "single tool block extracts correctly",
+			toolBlocks: map[int]*toolUseData{
+				0: {
+					id:   "tool-1",
+					name: "get_weather",
+					inputJSON: func() strings.Builder {
+						var sb strings.Builder
+						sb.WriteString(`{"location": "Boston"}`)
+						return sb
+					}(),
+				},
+			},
+			expectedCalls: []llm.ToolCall{
+				{
+					ID:          "tool-1",
+					Name:        "get_weather",
+					Description: "",
+					Arguments:   []byte(`{"location": "Boston"}`),
+				},
+			},
+			expectedLength: 1,
+		},
+		{
+			name: "multiple tool blocks extract correctly",
+			toolBlocks: map[int]*toolUseData{
+				0: {
+					id:   "tool-1",
+					name: "get_weather",
+					inputJSON: func() strings.Builder {
+						var sb strings.Builder
+						sb.WriteString(`{"location": "Boston"}`)
+						return sb
+					}(),
+				},
+				1: {
+					id:   "tool-2",
+					name: "search_web",
+					inputJSON: func() strings.Builder {
+						var sb strings.Builder
+						sb.WriteString(`{"query": "news"}`)
+						return sb
+					}(),
+				},
+			},
+			expectedCalls: []llm.ToolCall{
+				{
+					ID:          "tool-1",
+					Name:        "get_weather",
+					Description: "",
+					Arguments:   []byte(`{"location": "Boston"}`),
+				},
+				{
+					ID:          "tool-2",
+					Name:        "search_web",
+					Description: "",
+					Arguments:   []byte(`{"query": "news"}`),
+				},
+			},
+			expectedLength: 2,
+		},
+		{
+			name: "tool with complex JSON arguments",
+			toolBlocks: map[int]*toolUseData{
+				0: {
+					id:   "tool-complex",
+					name: "complex_tool",
+					inputJSON: func() strings.Builder {
+						var sb strings.Builder
+						sb.WriteString(`{"nested": {"key": "value"}, "array": [1, 2, 3], "bool": true}`)
+						return sb
+					}(),
+				},
+			},
+			expectedCalls: []llm.ToolCall{
+				{
+					ID:          "tool-complex",
+					Name:        "complex_tool",
+					Description: "",
+					Arguments:   []byte(`{"nested": {"key": "value"}, "array": [1, 2, 3], "bool": true}`),
+				},
+			},
+			expectedLength: 1,
+		},
+		{
+			name: "tool with empty input gets default empty object",
+			toolBlocks: map[int]*toolUseData{
+				0: {
+					id:        "tool-empty",
+					name:      "no_args_tool",
+					inputJSON: strings.Builder{}, // empty builder
+				},
+			},
+			expectedCalls: []llm.ToolCall{
+				{
+					ID:          "tool-empty",
+					Name:        "no_args_tool",
+					Description: "",
+					Arguments:   []byte(`{}`),
+				},
+			},
+			expectedLength: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractToolCallsFromBlocks(tt.toolBlocks)
+			require.Len(t, result, tt.expectedLength)
+
+			for i, expected := range tt.expectedCalls {
+				assert.Equal(t, expected.ID, result[i].ID)
+				assert.Equal(t, expected.Name, result[i].Name)
+				assert.Equal(t, expected.Description, result[i].Description)
+				assert.JSONEq(t, string(expected.Arguments), string(result[i].Arguments))
+			}
+		})
+	}
+}
+
+func TestBuildBedrockAssistantMessage(t *testing.T) {
+	tests := []struct {
+		name               string
+		textContent        string
+		toolBlocks         map[int]*toolUseData
+		expectedContentLen int
+		validateFn         func(t *testing.T, msg types.Message)
+	}{
+		{
+			name:               "text only (no tool blocks)",
+			textContent:        "Let me help you with that.",
+			toolBlocks:         map[int]*toolUseData{},
+			expectedContentLen: 1,
+			validateFn: func(t *testing.T, msg types.Message) {
+				assert.Equal(t, types.ConversationRoleAssistant, msg.Role)
+				textBlock, ok := msg.Content[0].(*types.ContentBlockMemberText)
+				require.True(t, ok)
+				assert.Equal(t, "Let me help you with that.", textBlock.Value)
+			},
+		},
+		{
+			name:        "tool blocks only (no text)",
+			textContent: "",
+			toolBlocks: map[int]*toolUseData{
+				0: {
+					id:   "tool-1",
+					name: "get_weather",
+					inputJSON: func() strings.Builder {
+						var sb strings.Builder
+						sb.WriteString(`{"location": "Boston"}`)
+						return sb
+					}(),
+				},
+			},
+			expectedContentLen: 1,
+			validateFn: func(t *testing.T, msg types.Message) {
+				assert.Equal(t, types.ConversationRoleAssistant, msg.Role)
+				toolBlock, ok := msg.Content[0].(*types.ContentBlockMemberToolUse)
+				require.True(t, ok)
+				assert.Equal(t, "tool-1", aws.ToString(toolBlock.Value.ToolUseId))
+				assert.Equal(t, "get_weather", aws.ToString(toolBlock.Value.Name))
+			},
+		},
+		{
+			name:        "both text and tool blocks",
+			textContent: "Let me check the weather for you.",
+			toolBlocks: map[int]*toolUseData{
+				0: {
+					id:   "tool-1",
+					name: "get_weather",
+					inputJSON: func() strings.Builder {
+						var sb strings.Builder
+						sb.WriteString(`{"location": "Boston"}`)
+						return sb
+					}(),
+				},
+			},
+			expectedContentLen: 2,
+			validateFn: func(t *testing.T, msg types.Message) {
+				assert.Equal(t, types.ConversationRoleAssistant, msg.Role)
+				require.Len(t, msg.Content, 2)
+
+				// First block should be text
+				textBlock, ok := msg.Content[0].(*types.ContentBlockMemberText)
+				require.True(t, ok)
+				assert.Equal(t, "Let me check the weather for you.", textBlock.Value)
+
+				// Second block should be tool use
+				toolBlock, ok := msg.Content[1].(*types.ContentBlockMemberToolUse)
+				require.True(t, ok)
+				assert.Equal(t, "tool-1", aws.ToString(toolBlock.Value.ToolUseId))
+				assert.Equal(t, "get_weather", aws.ToString(toolBlock.Value.Name))
+			},
+		},
+		{
+			name:               "empty text and empty tool blocks",
+			textContent:        "",
+			toolBlocks:         map[int]*toolUseData{},
+			expectedContentLen: 0,
+			validateFn: func(t *testing.T, msg types.Message) {
+				assert.Equal(t, types.ConversationRoleAssistant, msg.Role)
+				assert.Len(t, msg.Content, 0)
+			},
+		},
+		{
+			name:        "multiple tool blocks",
+			textContent: "I'll use multiple tools to help.",
+			toolBlocks: map[int]*toolUseData{
+				0: {
+					id:   "tool-1",
+					name: "get_weather",
+					inputJSON: func() strings.Builder {
+						var sb strings.Builder
+						sb.WriteString(`{"location": "Boston"}`)
+						return sb
+					}(),
+				},
+				1: {
+					id:   "tool-2",
+					name: "search_web",
+					inputJSON: func() strings.Builder {
+						var sb strings.Builder
+						sb.WriteString(`{"query": "Boston weather"}`)
+						return sb
+					}(),
+				},
+			},
+			expectedContentLen: 3,
+			validateFn: func(t *testing.T, msg types.Message) {
+				assert.Equal(t, types.ConversationRoleAssistant, msg.Role)
+				require.Len(t, msg.Content, 3)
+
+				// First should be text
+				textBlock, ok := msg.Content[0].(*types.ContentBlockMemberText)
+				require.True(t, ok)
+				assert.Equal(t, "I'll use multiple tools to help.", textBlock.Value)
+
+				// Second and third should be tool use blocks
+				toolBlock1, ok := msg.Content[1].(*types.ContentBlockMemberToolUse)
+				require.True(t, ok)
+				assert.Equal(t, "tool-1", aws.ToString(toolBlock1.Value.ToolUseId))
+
+				toolBlock2, ok := msg.Content[2].(*types.ContentBlockMemberToolUse)
+				require.True(t, ok)
+				assert.Equal(t, "tool-2", aws.ToString(toolBlock2.Value.ToolUseId))
+			},
+		},
+		{
+			name:        "tool with invalid JSON gets empty object",
+			textContent: "",
+			toolBlocks: map[int]*toolUseData{
+				0: {
+					id:   "tool-bad",
+					name: "bad_tool",
+					inputJSON: func() strings.Builder {
+						var sb strings.Builder
+						sb.WriteString(`{invalid json}`)
+						return sb
+					}(),
+				},
+			},
+			expectedContentLen: 1,
+			validateFn: func(t *testing.T, msg types.Message) {
+				assert.Equal(t, types.ConversationRoleAssistant, msg.Role)
+				toolBlock, ok := msg.Content[0].(*types.ContentBlockMemberToolUse)
+				require.True(t, ok)
+				assert.Equal(t, "tool-bad", aws.ToString(toolBlock.Value.ToolUseId))
+				assert.Equal(t, "bad_tool", aws.ToString(toolBlock.Value.Name))
+				// Input should be an empty document
+				require.NotNil(t, toolBlock.Value.Input)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildBedrockAssistantMessage(tt.textContent, tt.toolBlocks)
+			assert.Len(t, result.Content, tt.expectedContentLen)
+			tt.validateFn(t, result)
+		})
+	}
+}
+
+func TestBuildBedrockToolResultsMessage(t *testing.T) {
+	tests := []struct {
+		name               string
+		results            []llm.AutoRunResult
+		expectedContentLen int
+		validateFn         func(t *testing.T, msg types.Message)
+	}{
+		{
+			name: "single result",
+			results: []llm.AutoRunResult{
+				{
+					ToolCallID: "tool-1",
+					ToolName:   "get_weather",
+					Result:     "72°F and sunny",
+					IsError:    false,
+				},
+			},
+			expectedContentLen: 1,
+			validateFn: func(t *testing.T, msg types.Message) {
+				assert.Equal(t, types.ConversationRoleUser, msg.Role)
+				require.Len(t, msg.Content, 1)
+
+				resultBlock, ok := msg.Content[0].(*types.ContentBlockMemberToolResult)
+				require.True(t, ok)
+				assert.Equal(t, "tool-1", aws.ToString(resultBlock.Value.ToolUseId))
+				assert.Equal(t, types.ToolResultStatusSuccess, resultBlock.Value.Status)
+				require.Len(t, resultBlock.Value.Content, 1)
+
+				textContent, ok := resultBlock.Value.Content[0].(*types.ToolResultContentBlockMemberText)
+				require.True(t, ok)
+				assert.Equal(t, "72°F and sunny", textContent.Value)
+			},
+		},
+		{
+			name: "multiple results",
+			results: []llm.AutoRunResult{
+				{
+					ToolCallID: "tool-1",
+					ToolName:   "get_weather",
+					Result:     "72°F and sunny",
+					IsError:    false,
+				},
+				{
+					ToolCallID: "tool-2",
+					ToolName:   "search_web",
+					Result:     "Found 5 results",
+					IsError:    false,
+				},
+			},
+			expectedContentLen: 2,
+			validateFn: func(t *testing.T, msg types.Message) {
+				assert.Equal(t, types.ConversationRoleUser, msg.Role)
+				require.Len(t, msg.Content, 2)
+
+				// Check first result
+				resultBlock1, ok := msg.Content[0].(*types.ContentBlockMemberToolResult)
+				require.True(t, ok)
+				assert.Equal(t, "tool-1", aws.ToString(resultBlock1.Value.ToolUseId))
+				assert.Equal(t, types.ToolResultStatusSuccess, resultBlock1.Value.Status)
+
+				// Check second result
+				resultBlock2, ok := msg.Content[1].(*types.ContentBlockMemberToolResult)
+				require.True(t, ok)
+				assert.Equal(t, "tool-2", aws.ToString(resultBlock2.Value.ToolUseId))
+				assert.Equal(t, types.ToolResultStatusSuccess, resultBlock2.Value.Status)
+			},
+		},
+		{
+			name: "result with error status",
+			results: []llm.AutoRunResult{
+				{
+					ToolCallID: "tool-error",
+					ToolName:   "failing_tool",
+					Result:     "Error: connection timeout",
+					IsError:    true,
+				},
+			},
+			expectedContentLen: 1,
+			validateFn: func(t *testing.T, msg types.Message) {
+				assert.Equal(t, types.ConversationRoleUser, msg.Role)
+				require.Len(t, msg.Content, 1)
+
+				resultBlock, ok := msg.Content[0].(*types.ContentBlockMemberToolResult)
+				require.True(t, ok)
+				assert.Equal(t, "tool-error", aws.ToString(resultBlock.Value.ToolUseId))
+				assert.Equal(t, types.ToolResultStatusError, resultBlock.Value.Status)
+
+				textContent, ok := resultBlock.Value.Content[0].(*types.ToolResultContentBlockMemberText)
+				require.True(t, ok)
+				assert.Equal(t, "Error: connection timeout", textContent.Value)
+			},
+		},
+		{
+			name:               "empty results",
+			results:            []llm.AutoRunResult{},
+			expectedContentLen: 0,
+			validateFn: func(t *testing.T, msg types.Message) {
+				assert.Equal(t, types.ConversationRoleUser, msg.Role)
+				assert.Len(t, msg.Content, 0)
+			},
+		},
+		{
+			name: "mixed success and error results",
+			results: []llm.AutoRunResult{
+				{
+					ToolCallID: "tool-1",
+					ToolName:   "working_tool",
+					Result:     "Success result",
+					IsError:    false,
+				},
+				{
+					ToolCallID: "tool-2",
+					ToolName:   "failing_tool",
+					Result:     "Error result",
+					IsError:    true,
+				},
+				{
+					ToolCallID: "tool-3",
+					ToolName:   "another_working_tool",
+					Result:     "Another success",
+					IsError:    false,
+				},
+			},
+			expectedContentLen: 3,
+			validateFn: func(t *testing.T, msg types.Message) {
+				assert.Equal(t, types.ConversationRoleUser, msg.Role)
+				require.Len(t, msg.Content, 3)
+
+				// First result should be success
+				resultBlock1, ok := msg.Content[0].(*types.ContentBlockMemberToolResult)
+				require.True(t, ok)
+				assert.Equal(t, types.ToolResultStatusSuccess, resultBlock1.Value.Status)
+
+				// Second result should be error
+				resultBlock2, ok := msg.Content[1].(*types.ContentBlockMemberToolResult)
+				require.True(t, ok)
+				assert.Equal(t, types.ToolResultStatusError, resultBlock2.Value.Status)
+
+				// Third result should be success
+				resultBlock3, ok := msg.Content[2].(*types.ContentBlockMemberToolResult)
+				require.True(t, ok)
+				assert.Equal(t, types.ToolResultStatusSuccess, resultBlock3.Value.Status)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildBedrockToolResultsMessage(tt.results)
+			assert.Len(t, result.Content, tt.expectedContentLen)
+			tt.validateFn(t, result)
+		})
+	}
+}

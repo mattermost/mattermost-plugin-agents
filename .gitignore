@@ -41,3 +41,7 @@ specs/
 .cursor/
 
 /.plan
+
+.opencode/
+
+opencode.json

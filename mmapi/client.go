@@ -85,6 +85,16 @@ func (m *client) KVGet(key string, value interface{}) error {
 	return m.pluginAPI.KV.Get(key, value)
 }
 
+// IsKVNotFound returns true if the error represents a KV key not found condition.
+// The pluginapi returns ErrNotFound (with message "not found") for 404 status codes,
+// and test mocks use the same error message convention.
+func IsKVNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return err.Error() == "not found"
+}
+
 func (m *client) KVSet(key string, value interface{}) error {
 	_, err := m.pluginAPI.KV.Set(key, value)
 	return err

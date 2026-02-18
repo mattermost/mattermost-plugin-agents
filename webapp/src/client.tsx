@@ -8,6 +8,8 @@ import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
 import manifest from './manifest';
 
+import {ToolCall} from './components/tool_types';
+
 const Client4 = new Client4Class();
 
 export function setSiteURL(siteURL: string) {
@@ -49,6 +51,27 @@ export async function doThreadAnalysis(postid: string, analysisType: string, bot
         method: 'POST',
         body: JSON.stringify({
             analysis_type: analysisType,
+        }),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function doChannelAnalysis(channelId: string, analysisType: string, botUsername: string, options?: any) {
+    const url = `${channelRoute(channelId)}/analyze?botUsername=${botUsername}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({
+            analysis_type: analysisType,
+            ...options,
         }),
     }));
 
@@ -133,6 +156,60 @@ export async function doRegenerate(postid: string) {
 
 export async function doToolCall(postid: string, toolIDs: string[]) {
     const url = `${postRoute(postid)}/tool_call`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({
+            accepted_tool_ids: toolIDs,
+        }),
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getToolCallPrivate(postid: string): Promise<ToolCall[]> {
+    const url = `${postRoute(postid)}/tool_call_private`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json() as Promise<ToolCall[]>;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getToolResultPrivate(postid: string): Promise<ToolCall[]> {
+    const url = `${postRoute(postid)}/tool_result_private`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json() as Promise<ToolCall[]>;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function doToolResult(postid: string, toolIDs: string[]): Promise<void> {
+    const url = `${postRoute(postid)}/tool_result`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({

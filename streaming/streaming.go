@@ -12,6 +12,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -24,6 +25,7 @@ type Client interface {
 	GetUser(userID string) (*model.User, error)
 	GetChannel(channelID string) (*model.Channel, error)
 	GetConfig() *model.Config
+	KVSet(key string, value interface{}) error
 	LogError(msg string, keyValuePairs ...interface{})
 	LogDebug(msg string, keyValuePairs ...interface{})
 }
@@ -33,10 +35,32 @@ const PostStreamingControlEnd = "end"
 const PostStreamingControlStart = "start"
 
 const ToolCallProp = "pending_tool_call"
+const ToolCallRedactedProp = "pending_tool_call_redacted"
+const ToolCallPrivateKeyPrefix = "tool_call_private"
+const ToolResultPrivateKeyPrefix = "tool_result_private"
+const PendingToolResultProp = "pending_tool_result"
 const ReasoningSummaryProp = "reasoning_summary"
 const AnnotationsProp = "annotations"
 const WebSearchContextProp = "web_search_context"
 const ReasoningSignatureProp = "reasoning_signature"
+
+func ToolCallPrivateKVKey(postID, requesterID string) string {
+	return fmt.Sprintf("%s:%s:%s", ToolCallPrivateKeyPrefix, postID, requesterID)
+}
+
+func ToolResultPrivateKVKey(postID, requesterID string) string {
+	return fmt.Sprintf("%s:%s:%s", ToolResultPrivateKeyPrefix, postID, requesterID)
+}
+
+func RedactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
+	redacted := make([]llm.ToolCall, len(toolCalls))
+	for i, toolCall := range toolCalls {
+		redacted[i] = toolCall
+		redacted[i].Arguments = json.RawMessage("{}")
+		redacted[i].Result = ""
+	}
+	return redacted
+}
 
 type Service interface {
 	StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error
@@ -215,6 +239,9 @@ func (p *MMPostStreamService) GetStreamingContext(inCtx context.Context, postID 
 func (p *MMPostStreamService) FinishStreaming(postID string) {
 	p.contextsMutex.Lock()
 	defer p.contextsMutex.Unlock()
+	if streamContext, ok := p.contexts[postID]; ok {
+		streamContext.cancel()
+	}
 	delete(p.contexts, postID)
 }
 
@@ -230,6 +257,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 	var messageBuilder strings.Builder
 	messageBuilder.Grow(4096) // Pre-allocate for typical response size
 	var reasoningBuffer strings.Builder
+	var isDMWithBot bool
 
 	for {
 		select {
@@ -329,8 +357,31 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 						toolCalls[i].SanitizeArguments()
 					}
 
+					channel, err := p.mmClient.GetChannel(post.ChannelId)
+					if err != nil {
+						p.mmClient.LogError("Failed to get channel for tool call redaction", "error", err, "post_id", post.Id, "channel_id", post.ChannelId)
+						return
+					}
+					isDMWithBot = mmapi.IsDMWith(post.UserId, channel)
+
+					toolCallsForPost := toolCalls
+					if !isDMWithBot {
+						requesterID, ok := post.GetProp(LLMRequesterUserID).(string)
+						if !ok || requesterID == "" {
+							p.mmClient.LogError("Missing requester ID for tool call, cannot persist private data", "post_id", post.Id)
+							return
+						}
+						kvKey := ToolCallPrivateKVKey(post.Id, requesterID)
+						if kvErr := p.mmClient.KVSet(kvKey, toolCalls); kvErr != nil {
+							p.mmClient.LogError("Failed to store tool calls in KV store, cannot continue", "error", kvErr, "post_id", post.Id, "kv_key", kvKey)
+							return
+						}
+						toolCallsForPost = RedactToolCalls(toolCalls)
+						post.AddProp(ToolCallRedactedProp, "true")
+					}
+
 					// Add the tool call as a prop to the post
-					toolCallJSON, err := json.Marshal(toolCalls)
+					toolCallJSON, err := json.Marshal(toolCallsForPost)
 					if err != nil {
 						p.mmClient.LogError("Failed to marshal tool call", "error", err)
 					} else {

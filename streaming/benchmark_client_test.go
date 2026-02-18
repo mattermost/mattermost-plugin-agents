@@ -40,6 +40,10 @@ func (c *benchmarkClient) GetConfig() *model.Config {
 	}
 }
 
+func (c *benchmarkClient) KVSet(_ string, _ interface{}) error {
+	return nil
+}
+
 func (c *benchmarkClient) LogError(_ string, _ ...interface{}) {}
 
 func (c *benchmarkClient) LogDebug(_ string, _ ...interface{}) {}
