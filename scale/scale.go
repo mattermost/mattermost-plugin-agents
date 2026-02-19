@@ -44,6 +44,11 @@ func New(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, httpClient *h
 			AccountID: serviceConfig.OrgID,
 		},
 	}
+	if httpClient != nil {
+		scaleClient.Timeout = httpClient.Timeout
+		scaleClient.CheckRedirect = httpClient.CheckRedirect
+		scaleClient.Jar = httpClient.Jar
+	}
 
 	return openai.NewCompatible(cfg, scaleClient)
 }
