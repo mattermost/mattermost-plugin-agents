@@ -39,43 +39,63 @@ export interface PluginConfig {
 
 export class BotConfigHelper {
     private client: Client4;
+    private baseUrl: string;
     private pluginId = 'mattermost-ai';
 
-    constructor(client: Client4) {
+    constructor(client: Client4, baseUrl: string) {
         this.client = client;
+        this.baseUrl = baseUrl;
     }
 
     /**
-     * Get the current plugin configuration
+     * Get the current plugin configuration via the plugin's admin config API.
+     * Configuration is stored in the plugin database when using database-config.
      */
     async getPluginConfig(): Promise<PluginConfig> {
-        // Plugin configuration is stored in the system config under PluginSettings.Plugins
-        const systemConfig = await this.client.getConfig();
-        const pluginConfig = systemConfig.PluginSettings?.Plugins?.[this.pluginId];
+        const url = `${this.baseUrl}/plugins/${this.pluginId}/admin/config`;
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${this.client.getToken()}`,
+            },
+        });
 
-        if (!pluginConfig) {
-            throw new Error(`Plugin ${this.pluginId} configuration not found`);
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Plugin ${this.pluginId} configuration not found: ${response.status} ${text}`);
         }
 
-        return pluginConfig as PluginConfig;
+        const apiConfig = await response.json();
+        // API returns config.Config (flat); helper expects { config: {...} }
+        // Ensure bots and services are arrays (API may return null when empty)
+        const config = {
+            ...apiConfig,
+            bots: apiConfig.bots ?? [],
+            services: apiConfig.services ?? [],
+        };
+        return { config } as PluginConfig;
     }
 
     /**
-     * Update the plugin configuration
+     * Update the plugin configuration via the plugin's admin config API.
      */
     async updatePluginConfig(config: PluginConfig): Promise<void> {
-        // Update plugin configuration by patching the system config
-        const patch = {
-            PluginSettings: {
-                Plugins: {
-                    [this.pluginId]: config
-                }
-            }
-        };
+        const url = `${this.baseUrl}/plugins/${this.pluginId}/admin/config`;
+        const response = await fetch(url, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.client.getToken()}`,
+            },
+            body: JSON.stringify(config.config),
+        });
 
-        await this.client.patchConfig(patch);
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Failed to update plugin config: ${response.status} ${text}`);
+        }
 
-        // Wait a bit for configuration to persist to database
+        // Wait a bit for configuration to persist and update listeners to fire
         await new Promise(resolve => setTimeout(resolve, 500));
     }
 
@@ -178,24 +198,23 @@ export class BotConfigHelper {
     }
 
     /**
-     * Verify bot configuration in database
+     * Verify bot configuration in database.
+     * Config is stored in Agents_ConfigHistory when using database-config.
      */
     async verifyBotInDatabase(mattermost: MattermostContainer, botId: string): Promise<boolean> {
         let db;
         try {
             db = await mattermost.db();
             const result = await db.query(
-                `SELECT pvalue FROM pluginkeyvaluestore
-                 WHERE pluginid = $1 AND pkey = $2`,
-                [this.pluginId, 'config']
+                `SELECT config FROM agents_confighistory WHERE active = true LIMIT 1`
             );
 
             if (result.rows.length === 0) {
                 return false;
             }
 
-            const config = JSON.parse(result.rows[0].pvalue);
-            const bot = config.config?.bots?.find((b: BotConfig) => b.id === botId);
+            const config = JSON.parse(result.rows[0].config);
+            const bot = config.bots?.find((b: BotConfig) => b.id === botId);
 
             return !!bot;
         } catch (error) {
@@ -208,24 +227,23 @@ export class BotConfigHelper {
     }
 
     /**
-     * Get bot configuration from database
+     * Get bot configuration from database.
+     * Config is stored in Agents_ConfigHistory when using database-config.
      */
     async getBotFromDatabase(mattermost: MattermostContainer, botId: string): Promise<BotConfig | null> {
         let db;
         try {
             db = await mattermost.db();
             const result = await db.query(
-                `SELECT pvalue FROM pluginkeyvaluestore
-                 WHERE pluginid = $1 AND pkey = $2`,
-                [this.pluginId, 'config']
+                `SELECT config FROM agents_confighistory WHERE active = true LIMIT 1`
             );
 
             if (result.rows.length === 0) {
                 return null;
             }
 
-            const config = JSON.parse(result.rows[0].pvalue);
-            const bot = config.config?.bots?.find((b: BotConfig) => b.id === botId);
+            const config = JSON.parse(result.rows[0].config);
+            const bot = config.bots?.find((b: BotConfig) => b.id === botId);
 
             return bot || null;
         } catch (error) {
@@ -243,7 +261,7 @@ export class BotConfigHelper {
  */
 export async function createBotConfigHelper(mattermost: MattermostContainer): Promise<BotConfigHelper> {
     const adminClient = await mattermost.getAdminClient();
-    return new BotConfigHelper(adminClient);
+    return new BotConfigHelper(adminClient, mattermost.url());
 }
 
 /**
