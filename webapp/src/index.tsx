@@ -34,6 +34,7 @@ import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands
 import SearchHints from './components/search_hints';
 import {useBotlist} from './bots';
 import AgentsTour from './components/tutorial/agents_tour';
+import {isEnterpriseLicensedOrDevelopment} from './license';
 
 type WebappStore = Store<GlobalState, Action<Record<string, unknown>>>
 
@@ -185,6 +186,11 @@ export default class Plugin {
         // Register slash commands
         if (rhs) {
             registry.registerSlashCommandWillBePostedHook((message: string, args: any) => {
+                if ((message.startsWith('/ask-channel') || message.startsWith('/summarize-channel')) &&
+                    !isEnterpriseLicensedOrDevelopment(store.getState())) {
+                    return {message, args};
+                }
+
                 if (message.startsWith('/ask-channel')) {
                     const query = message.replace('/ask-channel', '').trim();
                     return handleAskChannelCommand(query, args, store, rhs);
