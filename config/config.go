@@ -7,12 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync/atomic"
-	"time"
 
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/openai"
 )
 
 type Config struct {
@@ -190,36 +188,4 @@ func DeepCopyJSON[T any](src T) (T, error) {
 	}
 	err = json.Unmarshal(data, &dst)
 	return dst, err
-}
-
-func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) openai.Config {
-	streamingTimeout := time.Second * 30
-	if serviceConfig.StreamingTimeoutSeconds > 0 {
-		streamingTimeout = time.Duration(serviceConfig.StreamingTimeoutSeconds) * time.Second
-	}
-
-	return openai.Config{
-		APIKey:             serviceConfig.APIKey,
-		APIURL:             serviceConfig.APIURL,
-		OrgID:              serviceConfig.OrgID,
-		DefaultModel:       serviceConfig.DefaultModel,
-		InputTokenLimit:    serviceConfig.InputTokenLimit,
-		OutputTokenLimit:   serviceConfig.OutputTokenLimit,
-		StreamingTimeout:   streamingTimeout,
-		SendUserID:         serviceConfig.SendUserID,
-		UseResponsesAPI:    serviceConfig.UseResponsesAPI,
-		EnabledNativeTools: botConfig.EnabledNativeTools,
-		ReasoningEnabled:   botConfig.ReasoningEnabled,
-		ReasoningEffort:    botConfig.ReasoningEffort,
-	}
-}
-
-// OpenAIConfigFromServiceConfigWithOptions creates an OpenAI config with additional options for OpenAI-compatible APIs
-func OpenAIConfigFromServiceConfigWithOptions(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, disableStreamOptions bool, useMaxTokens bool) openai.Config {
-	cfg := OpenAIConfigFromServiceConfig(serviceConfig, botConfig)
-	cfg.DisableStreamOptions = disableStreamOptions
-	cfg.UseMaxTokens = useMaxTokens
-	// OpenAI-compatible APIs typically don't support the 'user' parameter
-	cfg.SendUserID = false
-	return cfg
 }

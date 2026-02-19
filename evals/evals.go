@@ -6,18 +6,16 @@ package evals
 import (
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-ai/anthropic"
-	"github.com/mattermost/mattermost-plugin-ai/bedrock"
+	"github.com/mattermost/mattermost-plugin-ai/bifrost"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/openai"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 type EvalT struct {
@@ -33,10 +31,9 @@ type Eval struct {
 	runNumber int
 }
 
-// createProvider creates an LLM provider based on the provider name
+// createProvider creates an LLM provider based on the provider name using Bifrost
 // Reads configuration from environment variables with optional model override
 func createProvider(providerName string, modelOverride string) (llm.LanguageModel, error) {
-	httpClient := &http.Client{}
 	timeout := 20 * time.Second
 
 	switch strings.ToLower(providerName) {
@@ -50,19 +47,16 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		if model == "" {
 			model = os.Getenv("OPENAI_MODEL")
 			if model == "" {
-				model = "gpt-5"
+				model = "gpt-4o"
 			}
 		}
 
-		provider := openai.New(openai.Config{
+		return bifrost.New(bifrost.Config{
+			Provider:         schemas.OpenAI,
 			APIKey:           apiKey,
 			DefaultModel:     model,
 			StreamingTimeout: timeout,
-		}, httpClient)
-		if provider == nil {
-			return nil, errors.New("failed to create OpenAI provider")
-		}
-		return provider, nil
+		})
 
 	case "anthropic":
 		apiKey := os.Getenv("ANTHROPIC_API_KEY")
@@ -78,16 +72,13 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 			}
 		}
 
-		provider := anthropic.New(llm.ServiceConfig{
-			APIKey:       apiKey,
-			DefaultModel: model,
-		}, llm.BotConfig{
+		return bifrost.New(bifrost.Config{
+			Provider:         schemas.Anthropic,
+			APIKey:           apiKey,
+			DefaultModel:     model,
+			StreamingTimeout: timeout,
 			ReasoningEnabled: true,
-		}, httpClient)
-		if provider == nil {
-			return nil, errors.New("failed to create Anthropic provider")
-		}
-		return provider, nil
+		})
 
 	case "azure":
 		apiKey := os.Getenv("AZURE_OPENAI_API_KEY")
@@ -104,20 +95,17 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		if model == "" {
 			model = os.Getenv("AZURE_OPENAI_MODEL")
 			if model == "" {
-				model = "gpt-5"
+				model = "gpt-4o"
 			}
 		}
 
-		provider := openai.NewAzure(openai.Config{
+		return bifrost.New(bifrost.Config{
+			Provider:         schemas.Azure,
 			APIKey:           apiKey,
 			APIURL:           apiURL,
 			DefaultModel:     model,
 			StreamingTimeout: timeout,
-		}, httpClient)
-		if provider == nil {
-			return nil, errors.New("failed to create Azure OpenAI provider")
-		}
-		return provider, nil
+		})
 
 	case "openaicompatible":
 		apiURL := os.Getenv("OPENAI_COMPATIBLE_API_URL")
@@ -136,16 +124,13 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		// API key is optional for local LLMs
 		apiKey := os.Getenv("OPENAI_COMPATIBLE_API_KEY")
 
-		provider := openai.NewCompatible(openai.Config{
+		return bifrost.New(bifrost.Config{
+			Provider:         schemas.OpenAI,
 			APIKey:           apiKey,
 			APIURL:           apiURL,
 			DefaultModel:     model,
 			StreamingTimeout: timeout,
-		}, httpClient)
-		if provider == nil {
-			return nil, errors.New("failed to create OpenAI Compatible provider")
-		}
-		return provider, nil
+		})
 
 	case "mistral":
 		apiKey := os.Getenv("MISTRAL_API_KEY")
@@ -161,19 +146,12 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 			}
 		}
 
-		// Mistral uses an OpenAI-compatible API
-		provider := openai.NewCompatible(openai.Config{
-			APIKey:               apiKey,
-			APIURL:               "https://api.mistral.ai/v1",
-			DefaultModel:         model,
-			StreamingTimeout:     timeout,
-			DisableStreamOptions: true,
-			UseMaxTokens:         true,
-		}, httpClient)
-		if provider == nil {
-			return nil, errors.New("failed to create Mistral provider")
-		}
-		return provider, nil
+		return bifrost.New(bifrost.Config{
+			Provider:         schemas.Mistral,
+			APIKey:           apiKey,
+			DefaultModel:     model,
+			StreamingTimeout: timeout,
+		})
 
 	case "bedrock":
 		region := os.Getenv("AWS_BEDROCK_REGION")
@@ -185,24 +163,39 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		if model == "" {
 			model = os.Getenv("AWS_BEDROCK_MODEL")
 			if model == "" {
-				model = "global.anthropic.claude-sonnet-4-20250514-v1:0"
+				model = "anthropic.claude-sonnet-4-20250514-v1:0"
 			}
 		}
 
-		// AWS credentials are picked up from environment via standard AWS SDK chain:
-		// AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (and optionally AWS_SESSION_TOKEN)
-		serviceConfig := llm.ServiceConfig{
-			DefaultModel:       model,
+		return bifrost.New(bifrost.Config{
+			Provider:           schemas.Bedrock,
 			Region:             region,
 			AWSAccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
 			AWSSecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+			DefaultModel:       model,
+			StreamingTimeout:   timeout,
+		})
+
+	case "cohere":
+		apiKey := os.Getenv("COHERE_API_KEY")
+		if apiKey == "" {
+			return nil, errors.New("COHERE_API_KEY environment variable is not set")
 		}
 
-		provider, err := bedrock.New(serviceConfig, httpClient)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Bedrock provider: %w", err)
+		model := modelOverride
+		if model == "" {
+			model = os.Getenv("COHERE_MODEL")
+			if model == "" {
+				model = "command-r-plus"
+			}
 		}
-		return provider, nil
+
+		return bifrost.New(bifrost.Config{
+			Provider:         schemas.Cohere,
+			APIKey:           apiKey,
+			DefaultModel:     model,
+			StreamingTimeout: timeout,
+		})
 
 	default:
 		return nil, fmt.Errorf("unknown provider: %s", providerName)
@@ -242,7 +235,7 @@ func NewEvalWithProvider(providerName string) (*Eval, error) {
 }
 
 // createGraderLLM creates a separate LLM for grading based on environment variables
-// Defaults to OpenAI with gpt-5 model if not specified
+// Defaults to OpenAI with gpt-4o model if not specified
 func createGraderLLM() (llm.LanguageModel, error) {
 	// Get grader provider name from environment, default to "openai"
 	graderProvider := os.Getenv("GRADER_LLM_PROVIDER")
@@ -250,10 +243,10 @@ func createGraderLLM() (llm.LanguageModel, error) {
 		graderProvider = "openai"
 	}
 
-	// Get grader model override, default to gpt-5 for OpenAI
+	// Get grader model override, default to gpt-4o for OpenAI
 	graderModel := os.Getenv("GRADER_LLM_MODEL")
 	if graderModel == "" && graderProvider == "openai" {
-		graderModel = "gpt-5"
+		graderModel = "gpt-4o"
 	}
 
 	// Create grader provider with model override
@@ -313,7 +306,7 @@ func getProvidersToTest() []string {
 
 	// Handle "all" case
 	if providerEnv == "all" {
-		return []string{"openai", "anthropic", "azure", "mistral", "bedrock"}
+		return []string{"openai", "anthropic", "azure", "mistral", "bedrock", "cohere"}
 	}
 
 	// Handle comma-separated list
