@@ -145,13 +145,9 @@ func (a *API) handleCatchUpIndex(c *gin.Context) {
 	c.JSON(http.StatusOK, jobStatus)
 }
 
-// handleIndexHealthCheck performs a health check on the search index
+// handleIndexHealthCheck performs a health check on the search index,
+// including model compatibility information.
 func (a *API) handleIndexHealthCheck(c *gin.Context) {
-	if err := a.enforceEmptyBody(c); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err)
-		return
-	}
-
 	if a.indexerService == nil {
 		c.JSON(http.StatusOK, a.notConfiguredHealthCheck())
 		return
@@ -167,55 +163,24 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, result)
-}
-
-// handleGetModelCompatibility checks if the current model configuration is compatible with the indexed data
-func (a *API) handleGetModelCompatibility(c *gin.Context) {
-	if a.indexerService == nil {
-		c.JSON(http.StatusOK, indexer.ModelCompatibility{
-			Compatible:   true,
-			NeedsReindex: false,
-		})
-		return
-	}
-
-	// Get current embedding config
+	// Include model compatibility in the health check result
 	cfg := a.config.EmbeddingSearchConfig()
+	compat := a.indexerService.CheckModelCompatibility(cfg.Dimensions, cfg.GetModelName())
+	result.ModelCompatible = compat.Compatible
+	result.ModelNeedsReindex = compat.NeedsReindex
+	result.ModelCompatReason = compat.Reason
+	result.StoredDimensions = compat.StoredDimensions
+	result.StoredModelName = compat.StoredModelName
 
-	result := a.indexerService.CheckModelCompatibility(cfg.Dimensions, cfg.GetModelName())
 	c.JSON(http.StatusOK, result)
-}
-
-// handleGetStaleJobStatus checks if the current job is stale
-func (a *API) handleGetStaleJobStatus(c *gin.Context) {
-	if a.indexerService == nil {
-		c.JSON(http.StatusOK, gin.H{"stale": false, "status": "not_configured"})
-		return
-	}
-
-	isStale, jobStatus, err := a.indexerService.IsJobStale()
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
-
-	if jobStatus == nil {
-		c.JSON(http.StatusNotFound, gin.H{"stale": false, "status": "no_job"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"stale":  isStale,
-		"status": jobStatus,
-	})
 }
 
 // notConfiguredHealthCheck returns a HealthCheckResult for when search is not configured,
 // including any initialization error if available.
 func (a *API) notConfiguredHealthCheck() indexer.HealthCheckResult {
 	result := indexer.HealthCheckResult{
-		Status: "not_configured",
+		Status:          "not_configured",
+		ModelCompatible: true,
 	}
 	if a.getSearchInitError != nil {
 		if errMsg := a.getSearchInitError(); errMsg != "" {

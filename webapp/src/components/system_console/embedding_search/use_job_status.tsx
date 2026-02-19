@@ -4,9 +4,9 @@
 import {useState, useEffect, useCallback} from 'react';
 import {useIntl} from 'react-intl';
 
-import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkIndexHealth, getModelCompatibility, getStaleJobStatus} from '../../../client';
+import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkIndexHealth} from '../../../client';
 
-import {JobStatusType, StatusMessageType, HealthCheckResultType, ModelCompatibilityType} from './types';
+import {JobStatusType, StatusMessageType, HealthCheckResultType} from './types';
 
 export const useJobStatus = () => {
     const intl = useIntl();
@@ -16,8 +16,6 @@ export const useJobStatus = () => {
     const [showReindexConfirmation, setShowReindexConfirmation] = useState(false);
     const [healthCheckResult, setHealthCheckResult] = useState<HealthCheckResultType | null>(null);
     const [healthCheckLoading, setHealthCheckLoading] = useState(false);
-    const [modelCompatibility, setModelCompatibility] = useState<ModelCompatibilityType | null>(null);
-    const [isJobStale, setIsJobStale] = useState(false);
 
     // Function to fetch job status
     const fetchJobStatus = useCallback(async () => {
@@ -74,43 +72,12 @@ export const useJobStatus = () => {
         return function noop() { /* No cleanup needed */ };
     }, [polling, fetchJobStatus]);
 
-    // Function to fetch model compatibility
-    const fetchModelCompatibility = useCallback(async () => {
-        try {
-            const result = await getModelCompatibility();
-            setModelCompatibility(result);
-        } catch (error) {
-            // Silently fail - model compatibility is optional info
-        }
-    }, []);
-
-    // Function to check if job is stale
-    const checkStaleJob = useCallback(async () => {
-        try {
-            const result = await getStaleJobStatus();
-            setIsJobStale(result.stale || false);
-        } catch (error) {
-            // Silently fail - stale check is optional
-            setIsJobStale(false);
-        }
-    }, []);
-
     // Check status on component mount
     useEffect(() => {
         fetchJobStatus();
-        fetchModelCompatibility();
         handleHealthCheck();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fetchJobStatus, fetchModelCompatibility]);
-
-    // Check stale status when job is running
-    useEffect(() => {
-        if (jobStatus?.status === 'running') {
-            checkStaleJob();
-        } else {
-            setIsJobStale(false);
-        }
-    }, [jobStatus?.status, checkStaleJob]);
+    }, [fetchJobStatus]);
 
     // Refresh health check when job completes
     useEffect(() => {
@@ -228,8 +195,14 @@ export const useJobStatus = () => {
         showReindexConfirmation,
         healthCheckResult,
         healthCheckLoading,
-        modelCompatibility,
-        isJobStale,
+        modelCompatibility: healthCheckResult ? {
+            compatible: healthCheckResult.model_compatible,
+            needs_reindex: healthCheckResult.model_needs_reindex,
+            reason: healthCheckResult.model_compat_reason,
+            stored_dimensions: healthCheckResult.stored_dimensions,
+            stored_model_name: healthCheckResult.stored_model_name,
+        } : null,
+        isJobStale: jobStatus?.is_stale || false,
         handleReindexClick,
         handleConfirmReindex,
         handleCancelReindex,

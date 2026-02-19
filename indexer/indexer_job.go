@@ -59,6 +59,7 @@ type JobStatus struct {
 	NodeID        string    `json:"node_id,omitempty"`
 	CutoffAt      int64     `json:"cutoff_at,omitempty"`
 	LastUpdatedAt time.Time `json:"last_updated_at,omitempty"`
+	IsStale       bool      `json:"is_stale"`
 }
 
 // Cursor stores the cursor position for resumable indexing
@@ -83,6 +84,13 @@ type HealthCheckResult struct {
 	Status           string    `json:"status"` // "healthy", "needs_reindex", "mismatch"
 	CheckedAt        time.Time `json:"checked_at"`
 	Error            string    `json:"error,omitempty"`
+
+	// Model compatibility fields
+	ModelCompatible   bool   `json:"model_compatible"`
+	ModelNeedsReindex bool   `json:"model_needs_reindex"`
+	ModelCompatReason string `json:"model_compat_reason,omitempty"`
+	StoredDimensions  int    `json:"stored_dimensions,omitempty"`
+	StoredModelName   string `json:"stored_model_name,omitempty"`
 }
 
 // batchProcessor provides shared batch processing logic for reindex and catch-up passes

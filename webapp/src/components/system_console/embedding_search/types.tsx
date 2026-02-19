@@ -35,6 +35,7 @@ export interface JobStatusType {
     node_id?: string;
     cutoff_at?: number;
     last_updated_at?: string;
+    is_stale?: boolean;
 }
 
 export interface StatusMessageType {
@@ -42,7 +43,7 @@ export interface StatusMessageType {
     message?: string;
 }
 
-// Match the server's HealthCheckResult struct
+// Match the server's HealthCheckResult struct (includes model compatibility)
 export interface HealthCheckResultType {
     db_post_count: number;
     indexed_post_count: number;
@@ -50,19 +51,11 @@ export interface HealthCheckResultType {
     status: string; // 'healthy' | 'needs_reindex' | 'mismatch' | 'error'
     checked_at: string;
     error?: string;
-}
 
-// Match the server's ModelCompatibility struct
-export interface ModelCompatibilityType {
-    compatible: boolean;
-    needs_reindex: boolean;
-    reason?: string;
+    // Model compatibility fields
+    model_compatible: boolean;
+    model_needs_reindex: boolean;
+    model_compat_reason?: string;
     stored_dimensions?: number;
     stored_model_name?: string;
-}
-
-// Response from the stale job status endpoint
-export interface StaleJobStatusType {
-    stale: boolean;
-    status: JobStatusType | 'no_job';
 }

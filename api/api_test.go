@@ -267,10 +267,8 @@ func TestAdminRouter(t *testing.T) {
 	gin.DefaultWriter = io.Discard
 
 	for urlName, url := range map[string]string{
-		"reindex_status":      "/admin/reindex/status",
-		"model_compatibility": "/admin/reindex/model-compatibility",
-		"stale_status":        "/admin/reindex/stale",
-		"mcp_tools":           "/admin/mcp/tools",
+		"reindex_status": "/admin/reindex/status",
+		"mcp_tools":      "/admin/mcp/tools",
 	} {
 		for name, test := range map[string]struct {
 			request        *http.Request

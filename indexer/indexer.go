@@ -222,6 +222,7 @@ func (s *Indexer) GetJobStatus() (JobStatus, error) {
 	if err != nil {
 		return JobStatus{}, err
 	}
+	jobStatus.IsStale = s.isJobStale(&jobStatus)
 	return jobStatus, nil
 }
 
@@ -517,20 +518,6 @@ func (s *Indexer) isJobStale(jobStatus *JobStatus) bool {
 	}
 
 	return time.Since(lastUpdate) > StaleJobThreshold
-}
-
-// IsJobStale checks if the currently running job is stale (no heartbeat updates)
-func (s *Indexer) IsJobStale() (bool, *JobStatus, error) {
-	var jobStatus JobStatus
-	err := s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err != nil {
-		if err.Error() == "not found" {
-			return false, nil, nil
-		}
-		return false, nil, err
-	}
-
-	return s.isJobStale(&jobStatus), &jobStatus, nil
 }
 
 // MarkOrphanedJobAsFailed marks any running job on this node as failed.

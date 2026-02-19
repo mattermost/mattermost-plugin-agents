@@ -475,40 +475,6 @@ export async function catchUpIndex() {
 export async function checkIndexHealth() {
     const url = `${baseRoute()}/admin/reindex/health-check`;
     const response = await fetch(url, Client4.getOptions({
-        method: 'POST',
-    }));
-
-    if (response.ok) {
-        return response.json();
-    }
-
-    throw new ClientError(Client4.url, {
-        message: '',
-        status_code: response.status,
-        url,
-    });
-}
-
-export async function getModelCompatibility() {
-    const url = `${baseRoute()}/admin/reindex/model-compatibility`;
-    const response = await fetch(url, Client4.getOptions({
-        method: 'GET',
-    }));
-
-    if (response.ok) {
-        return response.json();
-    }
-
-    throw new ClientError(Client4.url, {
-        message: '',
-        status_code: response.status,
-        url,
-    });
-}
-
-export async function getStaleJobStatus() {
-    const url = `${baseRoute()}/admin/reindex/stale`;
-    const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
 

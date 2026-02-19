@@ -1070,22 +1070,20 @@ func TestStoreWithRetryIncremental(t *testing.T) {
 	})
 }
 
-func TestIsJobStale(t *testing.T) {
-	t.Run("returns false when no job exists", func(t *testing.T) {
+func TestGetJobStatusIncludesStale(t *testing.T) {
+	t.Run("not found returns error", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
 
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Return(errors.New("not found"))
 
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		isStale, jobStatus, err := indexer.IsJobStale()
+		_, err := indexer.GetJobStatus()
 
-		require.NoError(t, err)
-		assert.False(t, isStale)
-		assert.Nil(t, jobStatus)
+		require.Error(t, err)
 	})
 
-	t.Run("returns false for completed job", func(t *testing.T) {
+	t.Run("completed job is not stale", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
 
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
@@ -1096,49 +1094,14 @@ func TestIsJobStale(t *testing.T) {
 			Return(nil)
 
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		isStale, jobStatus, err := indexer.IsJobStale()
+		jobStatus, err := indexer.GetJobStatus()
 
 		require.NoError(t, err)
-		assert.False(t, isStale)
-		assert.NotNil(t, jobStatus)
+		assert.False(t, jobStatus.IsStale)
 		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
 	})
 
-	t.Run("returns false for failed job", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-
-		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
-			Run(func(args mock.Arguments) {
-				status := args.Get(1).(*JobStatus)
-				status.Status = JobStatusFailed
-			}).
-			Return(nil)
-
-		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		isStale, _, err := indexer.IsJobStale()
-
-		require.NoError(t, err)
-		assert.False(t, isStale)
-	})
-
-	t.Run("returns false for canceled job", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-
-		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
-			Run(func(args mock.Arguments) {
-				status := args.Get(1).(*JobStatus)
-				status.Status = JobStatusCanceled
-			}).
-			Return(nil)
-
-		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		isStale, _, err := indexer.IsJobStale()
-
-		require.NoError(t, err)
-		assert.False(t, isStale)
-	})
-
-	t.Run("returns false for running job within threshold", func(t *testing.T) {
+	t.Run("running job within threshold is not stale", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
 
 		recentTime := time.Now().Add(-5 * time.Minute)
@@ -1147,19 +1110,18 @@ func TestIsJobStale(t *testing.T) {
 				status := args.Get(1).(*JobStatus)
 				status.Status = JobStatusRunning
 				status.LastUpdatedAt = recentTime
-				status.NodeID = "node-1"
 			}).
 			Return(nil)
 
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		isStale, jobStatus, err := indexer.IsJobStale()
+		jobStatus, err := indexer.GetJobStatus()
 
 		require.NoError(t, err)
-		assert.False(t, isStale)
+		assert.False(t, jobStatus.IsStale)
 		assert.Equal(t, JobStatusRunning, jobStatus.Status)
 	})
 
-	t.Run("returns true for running job beyond threshold", func(t *testing.T) {
+	t.Run("running job beyond threshold is stale", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
 
 		oldTime := time.Now().Add(-45 * time.Minute)
@@ -1168,15 +1130,14 @@ func TestIsJobStale(t *testing.T) {
 				status := args.Get(1).(*JobStatus)
 				status.Status = JobStatusRunning
 				status.LastUpdatedAt = oldTime
-				status.NodeID = "node-1"
 			}).
 			Return(nil)
 
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		isStale, jobStatus, err := indexer.IsJobStale()
+		jobStatus, err := indexer.GetJobStatus()
 
 		require.NoError(t, err)
-		assert.True(t, isStale)
+		assert.True(t, jobStatus.IsStale)
 		assert.Equal(t, JobStatusRunning, jobStatus.Status)
 	})
 
@@ -1189,16 +1150,14 @@ func TestIsJobStale(t *testing.T) {
 				status := args.Get(1).(*JobStatus)
 				status.Status = JobStatusRunning
 				status.StartedAt = oldStartTime
-				// LastUpdatedAt is zero value
-				status.NodeID = "node-1"
 			}).
 			Return(nil)
 
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		isStale, _, err := indexer.IsJobStale()
+		jobStatus, err := indexer.GetJobStatus()
 
 		require.NoError(t, err)
-		assert.True(t, isStale)
+		assert.True(t, jobStatus.IsStale)
 	})
 }
 
@@ -2268,23 +2227,9 @@ func TestCutoffTimestampHandling(t *testing.T) {
 	})
 }
 
-// TestStaleJobDetectionEdgeCases tests edge cases in stale job detection
+// TestStaleJobDetectionEdgeCases tests edge cases in stale job detection via GetJobStatus
 func TestStaleJobDetectionEdgeCases(t *testing.T) {
-	t.Run("handles KVGet error gracefully", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-
-		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
-			Return(errors.New("database error"))
-
-		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		isStale, jobStatus, err := indexer.IsJobStale()
-
-		require.Error(t, err)
-		assert.False(t, isStale)
-		assert.Nil(t, jobStatus)
-	})
-
-	t.Run("job exactly at threshold boundary is not stale", func(t *testing.T) {
+	t.Run("job exactly at threshold boundary is stale", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
 
 		// Exactly at the threshold
@@ -2298,12 +2243,11 @@ func TestStaleJobDetectionEdgeCases(t *testing.T) {
 			Return(nil)
 
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		isStale, _, err := indexer.IsJobStale()
+		jobStatus, err := indexer.GetJobStatus()
 
 		require.NoError(t, err)
-		// At exact boundary, time.Since will return >= threshold, so isStale should be true
-		// This is a known edge case behavior
-		assert.True(t, isStale)
+		// At exact boundary, time.Since will return >= threshold, so IsStale should be true
+		assert.True(t, jobStatus.IsStale)
 	})
 
 	t.Run("job just under threshold is not stale", func(t *testing.T) {
@@ -2319,10 +2263,10 @@ func TestStaleJobDetectionEdgeCases(t *testing.T) {
 			Return(nil)
 
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		isStale, _, err := indexer.IsJobStale()
+		jobStatus, err := indexer.GetJobStatus()
 
 		require.NoError(t, err)
-		assert.False(t, isStale)
+		assert.False(t, jobStatus.IsStale)
 	})
 }
 
