@@ -133,8 +133,6 @@ func IsValidService(service ServiceConfig) bool {
 		return service.APIKey != "" && service.APIURL != ""
 	case ServiceTypeAnthropic:
 		return service.APIKey != ""
-	case ServiceTypeASage:
-		return service.APIKey != ""
 	case ServiceTypeCohere:
 		return service.APIKey != ""
 	case ServiceTypeBedrock:

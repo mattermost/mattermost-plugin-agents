@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-ai/anthropic"
+	"github.com/mattermost/mattermost-plugin-ai/bifrost"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
@@ -26,7 +26,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/meetings"
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/openai"
 	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -409,19 +408,12 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	var models []llm.ModelInfo
-	var err error
-
-	switch req.ServiceType {
-	case "anthropic":
-		models, err = anthropic.FetchModels(req.APIKey, a.llmUpstreamHTTPClient)
-	case "openai", "azure", "openaicompatible":
-		models, err = openai.FetchModels(req.APIKey, req.APIURL, req.OrgID, a.llmUpstreamHTTPClient)
-	default:
+	if !bifrost.IsSupported(req.ServiceType) {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("model fetching not supported for service type: %s", req.ServiceType))
 		return
 	}
 
+	models, err := bifrost.FetchModelsForServiceType(req.ServiceType, req.APIKey, req.APIURL, req.OrgID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
 		return

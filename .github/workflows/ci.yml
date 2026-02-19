@@ -382,10 +382,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Get Go version from go.mod
+        id: go-version
+        run: echo "version=$(grep '^go ' go.mod | awk '{print $2}')" >> $GITHUB_OUTPUT
       - uses: mattermost/actions/plugin-ci/setup@main
         with:
           golangci-lint-version: "v1.54.2"
-          golang-version: "1.24"
+          golang-version: ${{ steps.go-version.outputs.version }}
       - uses: mattermost/actions/plugin-ci/build@main
 
   upload-s3-pr:

@@ -6,16 +6,16 @@ package search
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/maximhq/bifrost/core/schemas"
+
+	"github.com/mattermost/mattermost-plugin-ai/bifrost"
 	"github.com/mattermost/mattermost-plugin-ai/chunking"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
-	"github.com/mattermost/mattermost-plugin-ai/openai"
 	"github.com/mattermost/mattermost-plugin-ai/postgres"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
@@ -152,13 +152,13 @@ func createRealEmbeddingSearch(t *testing.T, db *sqlx.DB, apiKey string) embeddi
 	const dimensions = 1536
 	const embeddingModel = "text-embedding-3-small"
 
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-
-	provider := openai.NewEmbeddings(openai.Config{
-		APIKey:              apiKey,
-		EmbeddingModel:      embeddingModel,
-		EmbeddingDimensions: dimensions,
-	}, httpClient)
+	provider, err := bifrost.NewEmbeddingProvider(bifrost.EmbeddingConfig{
+		Provider:   schemas.OpenAI,
+		APIKey:     apiKey,
+		Model:      embeddingModel,
+		Dimensions: dimensions,
+	})
+	require.NoError(t, err)
 
 	pgVectorConfig := postgres.PGVectorConfig{
 		Dimensions: dimensions,
