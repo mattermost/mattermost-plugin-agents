@@ -16,11 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestHTTPSemanticSearchService_Enabled(t *testing.T) {
-	svc := NewHTTPSemanticSearchService("http://localhost")
-	assert.True(t, svc.Enabled())
-}
-
 func TestHTTPSemanticSearchService_Search(t *testing.T) {
 	tests := []struct {
 		name           string

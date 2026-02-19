@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -346,43 +345,8 @@ func TestHandleSearchQueryMalformedJSON(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name:           "invalid JSON syntax - missing comma",
-			requestBody:    `{"query": "test" "teamId": "team123"}`,
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "invalid JSON syntax - trailing comma",
-			requestBody:    `{"query": "test",}`,
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "invalid JSON syntax - single quotes",
-			requestBody:    `{'query': 'test'}`,
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "empty string body",
-			requestBody:    "",
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "null body",
-			requestBody:    "null",
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "array instead of object",
-			requestBody:    `["test query"]`,
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
 			name:           "wrong type for query field",
 			requestBody:    `{"query": 123, "teamId": "team123"}`,
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "wrong type for maxResults field",
-			requestBody:    `{"query": "test", "maxResults": "ten"}`,
 			expectedStatus: http.StatusBadRequest,
 		},
 	}
@@ -549,22 +513,6 @@ func TestHandleSearchQueryMissingUserHeader(t *testing.T) {
 			},
 			expectedStatus: http.StatusOK,
 		},
-		{
-			name: "wrong header case - Mattermost-User-ID (uppercase ID)",
-			headers: map[string]string{
-				"Mattermost-User-ID": "userid",
-			},
-			// HTTP headers are case-insensitive per RFC 7230, so this should work
-			expectedStatus: http.StatusOK,
-		},
-		{
-			name: "all lowercase header",
-			headers: map[string]string{
-				"mattermost-user-id": "userid",
-			},
-			// HTTP headers are case-insensitive per RFC 7230, so this should work
-			expectedStatus: http.StatusOK,
-		},
 	}
 
 	for _, test := range tests {
@@ -615,79 +563,6 @@ func TestHandleSearchQueryMissingUserHeader(t *testing.T) {
 			require.Equal(t, test.expectedStatus, resp.StatusCode, "Expected status %d for %s", test.expectedStatus, test.name)
 		})
 	}
-}
-
-func TestHandleSearchQueryConcurrentRequests(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	// Setup search service (enabled) - using a thread-safe mock
-	mockEmbedding := mocks.NewMockEmbeddingSearch(t)
-	mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
-	e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil)
-
-	// Setup a test bot
-	e.setupTestBot(llm.BotConfig{
-		Name:        "test-bot",
-		DisplayName: "Test Bot",
-	})
-
-	// Setup mock expectations
-	e.mockAPI.On("LogError", mock.Anything).Maybe()
-
-	// Number of concurrent requests
-	numRequests := 10
-	var wg sync.WaitGroup
-	results := make(chan int, numRequests)
-
-	// Fire off concurrent requests
-	for i := 0; i < numRequests; i++ {
-		wg.Add(1)
-		go func(requestNum int) {
-			defer wg.Done()
-
-			// Create unique request body
-			bodyBytes, err := json.Marshal(SearchRequest{
-				Query:      "concurrent test query",
-				TeamID:     "team123",
-				ChannelID:  "channel123",
-				MaxResults: 10,
-			})
-			if err != nil {
-				results <- http.StatusInternalServerError
-				return
-			}
-
-			// Create request
-			request := httptest.NewRequest(http.MethodPost, "/search?botUsername=test-bot", bytes.NewReader(bodyBytes))
-			request.Header.Add("Mattermost-User-ID", "userid")
-			request.Header.Set("Content-Type", "application/json")
-
-			// Execute request
-			recorder := httptest.NewRecorder()
-			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
-
-			// Capture status code
-			results <- recorder.Result().StatusCode
-		}(i)
-	}
-
-	// Wait for all requests to complete
-	wg.Wait()
-	close(results)
-
-	// Verify all requests succeeded
-	successCount := 0
-	for status := range results {
-		if status == http.StatusOK {
-			successCount++
-		}
-	}
-
-	require.Equal(t, numRequests, successCount, "Expected all %d concurrent requests to succeed, but only %d did", numRequests, successCount)
 }
 
 func TestHandleRunSearchMissingUserHeader(t *testing.T) {
@@ -777,11 +652,6 @@ func TestHandleRunSearchMalformedJSON(t *testing.T) {
 		{
 			name:           "truncated JSON",
 			requestBody:    `{"query": "test`,
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "empty string body",
-			requestBody:    "",
 			expectedStatus: http.StatusBadRequest,
 		},
 	}

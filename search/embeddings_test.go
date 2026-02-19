@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/chunking"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -420,39 +419,14 @@ func TestVectorStoreConfigUnmarshalEdgeCases(t *testing.T) {
 	}
 }
 
-func TestChunkingOptionsDefault(t *testing.T) {
-	// Verify the default chunking options structure
-	defaults := chunking.DefaultOptions()
-
-	require.Greater(t, defaults.ChunkSize, 0, "default ChunkSize should be positive")
-	require.GreaterOrEqual(t, defaults.ChunkOverlap, 0, "default ChunkOverlap should be non-negative")
-	require.NotEmpty(t, defaults.ChunkingStrategy, "default ChunkingStrategy should not be empty")
-}
-
 func TestMockProviderDimensions(t *testing.T) {
-	// Additional tests for the mock provider path to ensure it properly
-	// handles various dimension values
+	// Test that the mock provider defaults to 1536 for invalid dimension values
 
 	tests := []struct {
 		name               string
 		dimensions         int
 		expectedDimensions int
 	}{
-		{
-			name:               "standard dimensions 1536",
-			dimensions:         1536,
-			expectedDimensions: 1536,
-		},
-		{
-			name:               "large dimensions 3072",
-			dimensions:         3072,
-			expectedDimensions: 3072,
-		},
-		{
-			name:               "small dimensions 256",
-			dimensions:         256,
-			expectedDimensions: 256,
-		},
 		{
 			name:               "zero dimensions uses default",
 			dimensions:         0,

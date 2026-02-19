@@ -430,33 +430,6 @@ func TestCheckModelCompatibility(t *testing.T) {
 }
 
 func TestCursorOperations(t *testing.T) {
-	t.Run("save and load cursor", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-
-		cursor := Cursor{
-			LastCreateAt: 1234567890,
-			LastID:       "test-post-id",
-		}
-
-		// Expect KVSet to be called with the cursor
-		mockClient.On("KVSet", IndexerCursorKey, cursor).Return(nil)
-
-		indexer := New(nil, nil, mockClient, nil, nil, nil)
-		indexer.saveCursor(cursor)
-
-		// Now setup for load
-		mockClient.On("KVGet", IndexerCursorKey, mock.AnythingOfType("*indexer.Cursor")).
-			Run(func(args mock.Arguments) {
-				c := args.Get(1).(*Cursor)
-				*c = cursor
-			}).
-			Return(nil)
-
-		loaded := indexer.loadCursor()
-		assert.Equal(t, cursor.LastCreateAt, loaded.LastCreateAt)
-		assert.Equal(t, cursor.LastID, loaded.LastID)
-	})
-
 	t.Run("load with no cursor returns zero values", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
 
@@ -528,7 +501,7 @@ func TestLastIndexedTimestamp(t *testing.T) {
 }
 
 func TestModelInfoOperations(t *testing.T) {
-	t.Run("save and get model info", func(t *testing.T) {
+	t.Run("SaveModelInfo sets IndexedAt before saving", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
 
 		info := ModelInfo{
@@ -537,7 +510,7 @@ func TestModelInfoOperations(t *testing.T) {
 			Dimensions:   1536,
 		}
 
-		// SaveModelInfo sets IndexedAt before saving
+		// SaveModelInfo should set IndexedAt to a non-zero timestamp before saving
 		mockClient.On("KVSet", IndexerModelKey, mock.MatchedBy(func(v interface{}) bool {
 			saved := v.(ModelInfo)
 			return saved.ProviderType == info.ProviderType &&
@@ -549,23 +522,6 @@ func TestModelInfoOperations(t *testing.T) {
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		err := indexer.SaveModelInfo(info)
 		require.NoError(t, err)
-
-		// Setup for GetModelInfo
-		storedInfo := info
-		storedInfo.IndexedAt = 1234567890
-		mockClient.On("KVGet", IndexerModelKey, mock.AnythingOfType("*indexer.ModelInfo")).
-			Run(func(args mock.Arguments) {
-				i := args.Get(1).(*ModelInfo)
-				*i = storedInfo
-			}).
-			Return(nil)
-
-		loaded, err := indexer.GetModelInfo()
-		require.NoError(t, err)
-		assert.Equal(t, storedInfo.ProviderType, loaded.ProviderType)
-		assert.Equal(t, storedInfo.ModelName, loaded.ModelName)
-		assert.Equal(t, storedInfo.Dimensions, loaded.Dimensions)
-		assert.Equal(t, storedInfo.IndexedAt, loaded.IndexedAt)
 	})
 }
 

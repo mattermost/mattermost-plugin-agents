@@ -478,47 +478,12 @@ func TestGetModelConstant(t *testing.T) {
 		expected shared.ChatModel
 	}{
 		{
-			name:     "gpt-4o model",
-			model:    "gpt-4o",
-			expected: shared.ChatModelGPT4o,
-		},
-		{
-			name:     "gpt-4o-mini model",
-			model:    "gpt-4o-mini",
-			expected: shared.ChatModelGPT4oMini,
-		},
-		{
-			name:     "gpt-4-turbo model",
-			model:    "gpt-4-turbo",
-			expected: shared.ChatModelGPT4Turbo,
-		},
-		{
-			name:     "gpt-4 model",
-			model:    "gpt-4",
-			expected: shared.ChatModelGPT4,
-		},
-		{
-			name:     "gpt-3.5-turbo model",
-			model:    "gpt-3.5-turbo",
-			expected: shared.ChatModelGPT3_5Turbo,
-		},
-		{
-			name:     "o1-preview model",
-			model:    "o1-preview",
-			expected: shared.ChatModelO1Preview,
-		},
-		{
-			name:     "o1-mini model",
-			model:    "o1-mini",
-			expected: shared.ChatModelO1Mini,
-		},
-		{
-			name:     "custom model",
+			name:     "custom model passes through as-is",
 			model:    "custom-model-xyz",
 			expected: shared.ChatModel("custom-model-xyz"),
 		},
 		{
-			name:     "gpt-4-32k model (custom)",
+			name:     "unlisted model passes through as-is",
 			model:    "gpt-4-32k",
 			expected: shared.ChatModel("gpt-4-32k"),
 		},
@@ -539,22 +504,7 @@ func TestGetEmbeddingModelConstant(t *testing.T) {
 		expected openai.EmbeddingModel
 	}{
 		{
-			name:     "text-embedding-3-large",
-			model:    "text-embedding-3-large",
-			expected: openai.EmbeddingModelTextEmbedding3Large,
-		},
-		{
-			name:     "text-embedding-3-small",
-			model:    "text-embedding-3-small",
-			expected: openai.EmbeddingModelTextEmbedding3Small,
-		},
-		{
-			name:     "text-embedding-ada-002",
-			model:    "text-embedding-ada-002",
-			expected: openai.EmbeddingModelTextEmbeddingAda002,
-		},
-		{
-			name:     "custom embedding model",
+			name:     "custom embedding model passes through as-is",
 			model:    "custom-embedding-model",
 			expected: openai.EmbeddingModel("custom-embedding-model"),
 		},

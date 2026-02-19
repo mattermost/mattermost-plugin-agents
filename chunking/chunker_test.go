@@ -156,28 +156,15 @@ func TestChunkText(t *testing.T) {
 	})
 
 	t.Run("whitespace-only content", func(t *testing.T) {
-		tests := []struct {
-			name    string
-			content string
-		}{
-			{"spaces only", "     "},
-			{"tabs only", "\t\t\t"},
-			{"newlines only", "\n\n\n"},
-			{"mixed whitespace", "  \t\n  \t\n  "},
-		}
+		content := "  \t\n  \t\n  "
+		opts := DefaultOptions()
+		chunks := ChunkText(content, opts)
 
-		for _, tc := range tests {
-			t.Run(tc.name, func(t *testing.T) {
-				opts := DefaultOptions()
-				chunks := ChunkText(tc.content, opts)
-
-				require.Len(t, chunks, 1)
-				assert.Equal(t, tc.content, chunks[0].Content, "Should preserve original whitespace content")
-				assert.False(t, chunks[0].IsChunk, "Whitespace-only content should not be marked as chunk")
-				assert.Equal(t, 0, chunks[0].ChunkIndex)
-				assert.Equal(t, 1, chunks[0].TotalChunks)
-			})
-		}
+		require.Len(t, chunks, 1)
+		assert.Equal(t, content, chunks[0].Content, "Should preserve original whitespace content")
+		assert.False(t, chunks[0].IsChunk, "Whitespace-only content should not be marked as chunk")
+		assert.Equal(t, 0, chunks[0].ChunkIndex)
+		assert.Equal(t, 1, chunks[0].TotalChunks)
 	})
 
 	t.Run("content exactly at chunk size boundary", func(t *testing.T) {

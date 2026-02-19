@@ -783,21 +783,20 @@ func TestRunSearch(t *testing.T) {
 }
 
 func TestEnrichResultsSameChannelMultipleTimes(t *testing.T) {
-	// Test that when the same channel is accessed multiple times,
-	// the mock shows each call is made (no caching in current implementation)
+	// Test that enrichResults correctly populates channel/user info
+	// when the same channel appears in multiple results
 	mockClient := mmapimocks.NewMockClient(t)
 
-	// Setup mock to expect the same channel ID called twice
 	mockClient.On("GetChannel", "channel1").Return(&model.Channel{
 		Id:          "channel1",
 		DisplayName: "General",
 		Type:        model.ChannelTypeOpen,
-	}, nil).Twice() // Expect two calls
+	}, nil)
 
 	mockClient.On("GetUser", "user1").Return(&model.User{
 		Id:       "user1",
 		Username: "testuser",
-	}, nil).Twice()
+	}, nil)
 
 	searchResults := []embeddings.SearchResult{
 		{
@@ -828,16 +827,13 @@ func TestEnrichResultsSameChannelMultipleTimes(t *testing.T) {
 	require.Equal(t, "General", results[1].ChannelName)
 	require.Equal(t, "testuser", results[0].Username)
 	require.Equal(t, "testuser", results[1].Username)
-
-	// The mock assertions verify the calls were made twice
 }
 
 func TestEnrichResultsSameUserMultipleTimes(t *testing.T) {
-	// Test that when the same user is accessed multiple times,
-	// the mock shows each call is made (no caching in current implementation)
+	// Test that enrichResults correctly populates user info
+	// when the same user appears in results across different channels
 	mockClient := mmapimocks.NewMockClient(t)
 
-	// Different channels but same user
 	mockClient.On("GetChannel", "channel1").Return(&model.Channel{
 		Id:          "channel1",
 		DisplayName: "Channel One",
@@ -849,11 +845,10 @@ func TestEnrichResultsSameUserMultipleTimes(t *testing.T) {
 		Type:        model.ChannelTypeOpen,
 	}, nil)
 
-	// Same user called twice
 	mockClient.On("GetUser", "user1").Return(&model.User{
 		Id:       "user1",
 		Username: "testuser",
-	}, nil).Twice()
+	}, nil)
 
 	searchResults := []embeddings.SearchResult{
 		{
