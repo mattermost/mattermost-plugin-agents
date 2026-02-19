@@ -334,9 +334,8 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 	s.streamingService.StreamToPost(streamContext, resultStream, responsePost, "")
 }
 
-// ExecuteSearchForMCP performs a search and returns enriched results for MCP servers
-// This is a simplified interface for external MCP servers that need search results
-func (s *Search) ExecuteSearchForMCP(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
+// ExecuteRawSearch performs a search and returns enriched results without LLM processing
+func (s *Search) ExecuteRawSearch(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
 	return s.executeSearch(ctx, query, opts)
 }
 

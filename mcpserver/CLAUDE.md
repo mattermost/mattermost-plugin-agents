@@ -15,7 +15,7 @@
 
 **HTTP/Stdio/PluginHandlers** (external servers):
 - Create their own `HTTPSemanticSearchService` internally
-- This service calls back to the plugin's `/api/v1/mcp-server/semantic-search` endpoint
+- This service calls back to the plugin's `/api/v1/search/raw` endpoint
 
 ### Adding New Optional Capabilities
 1. Define interface in `tools/` package

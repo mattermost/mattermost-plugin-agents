@@ -167,9 +167,6 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 		mcpServerGroup.Any("/mcp", func(gc *gin.Context) {
 			a.delegateToMCPHandler(gc, a.mcpHandlers.MCPHandler)
 		})
-
-		// Semantic search endpoint for external MCP servers to call back to
-		mcpServerGroup.POST("/semantic-search", a.handleMCPSemanticSearch)
 	}
 
 	router.Use(a.MattermostAuthorizationRequired)
@@ -177,6 +174,10 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
+
+	// Raw search endpoint returns enriched semantic search results without LLM processing.
+	// Used by the MCP server for external search callbacks.
+	router.POST("/search/raw", a.handleRawSearch)
 
 	botRequiredRouter := router.Group("")
 	botRequiredRouter.Use(a.aiBotRequired)

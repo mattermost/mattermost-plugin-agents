@@ -81,7 +81,7 @@ func (s *HTTPSemanticSearchService) Search(ctx context.Context, query string, op
 	}
 
 	// Create HTTP request
-	url := s.pluginURL + "/api/v1/mcp-server/semantic-search"
+	url := s.pluginURL + "/api/v1/search/raw"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)

@@ -175,7 +175,7 @@ func TestHTTPSemanticSearchService_Search(t *testing.T) {
 
 			// Verify request went to correct endpoint
 			if lastReq != nil {
-				assert.Equal(t, "/api/v1/mcp-server/semantic-search", lastReq.URL.Path)
+				assert.Equal(t, "/api/v1/search/raw", lastReq.URL.Path)
 				assert.Equal(t, http.MethodPost, lastReq.Method)
 				assert.Equal(t, "application/json", lastReq.Header.Get("Content-Type"))
 			}
