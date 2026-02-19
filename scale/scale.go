@@ -13,6 +13,11 @@ import (
 
 const defaultScaleModel = "openai/gpt-4o"
 
+// placeholderAPIKey is a sentinel value passed to the OpenAI SDK which requires
+// a non-empty API key. Actual authentication is handled by the RoundTripper
+// using Scale's custom x-api-key header.
+const placeholderAPIKey = "scale-auth"
+
 // New creates an OpenAI-compatible client configured for Scale AI (including ScaleGov).
 // It wraps the provided HTTP client's transport with a RoundTripper that replaces
 // the standard Authorization header with Scale's x-api-key and x-selected-account-id headers.
@@ -27,9 +32,7 @@ func New(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, httpClient *h
 	// useMaxTokens=false (use max_completion_tokens)
 	cfg := config.OpenAIConfigFromServiceConfigWithOptions(serviceConfig, botConfig, true, false)
 
-	// The OpenAI SDK requires a non-empty API key. We set a placeholder value
-	// since the actual auth is handled by the RoundTripper.
-	cfg.APIKey = "scale-auth"
+	cfg.APIKey = placeholderAPIKey
 
 	// Wrap the existing HTTP client's transport with Scale's custom auth
 	var baseTransport http.RoundTripper
