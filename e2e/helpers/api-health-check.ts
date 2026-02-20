@@ -35,7 +35,7 @@ async function checkAnthropicHealth(service: LLMService): Promise<HealthCheckRes
             },
             body: JSON.stringify({
                 model: service.defaultModel,
-                max_tokens: 1,
+                max_tokens: 20,
                 messages: [{ role: 'user', content: 'hi' }],
             }),
             signal: AbortSignal.timeout(30000),
@@ -77,7 +77,7 @@ async function checkOpenAIHealth(service: LLMService): Promise<HealthCheckResult
             },
             body: JSON.stringify({
                 model: service.defaultModel,
-                max_tokens: 1,
+                max_completion_tokens: 20,
                 messages: [{ role: 'user', content: 'hi' }],
             }),
             signal: AbortSignal.timeout(30000),
