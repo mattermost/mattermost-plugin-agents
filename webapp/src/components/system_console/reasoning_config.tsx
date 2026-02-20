@@ -126,8 +126,8 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     value={reasoningEffort}
                                     onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
                                 >
-                                    <option value='minimal'>
-                                        {intl.formatMessage({defaultMessage: 'Minimal'})}
+                                    <option value='none'>
+                                        {intl.formatMessage({defaultMessage: 'None'})}
                                     </option>
                                     <option value='low'>
                                         {intl.formatMessage({defaultMessage: 'Low'})}
@@ -138,10 +138,13 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     <option value='high'>
                                         {intl.formatMessage({defaultMessage: 'High'})}
                                     </option>
+                                    <option value='xhigh'>
+                                        {intl.formatMessage({defaultMessage: 'Extra High'})}
+                                    </option>
                                 </FieldSelect>
                                 <HelpText>
                                     {intl.formatMessage({
-                                        defaultMessage: 'Controls how much computational effort the model spends on reasoning. Higher effort levels produce more thorough responses but take longer and cost more. Minimal is fastest, High is most thorough.',
+                                        defaultMessage: 'Controls how much computational effort the model spends on reasoning. Higher effort levels produce more thorough responses but take longer and cost more. None disables reasoning, Extra High is most thorough.',
                                     })}
                                 </HelpText>
                             </ConfigField>
