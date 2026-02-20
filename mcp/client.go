@@ -47,14 +47,6 @@ type Client struct {
 	sessionID      string                // session ID for embedded server reconnection
 }
 
-// ServerConfig contains the configuration for a single MCP server
-type ServerConfig struct {
-	Name    string            `json:"name"`
-	Enabled bool              `json:"enabled"`
-	BaseURL string            `json:"baseURL"`
-	Headers map[string]string `json:"headers,omitempty"`
-}
-
 func NewEmbeddedServerClient(server EmbeddedMCPServer, log pluginapi.LogService, pluginAPI *pluginapi.Client) *EmbeddedServerClient {
 	return &EmbeddedServerClient{
 		server:    server,

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,13 +17,13 @@ import (
 // mockSemanticSearchService is a simple test double for SemanticSearchService
 type mockSemanticSearchService struct {
 	enabled bool
-	results []SemanticSearchResult
+	results []search.RAGResult
 	err     error
 }
 
 func (m *mockSemanticSearchService) Enabled() bool { return m.enabled }
 
-func (m *mockSemanticSearchService) Search(_ context.Context, _ string, _ SemanticSearchOptions) ([]SemanticSearchResult, error) {
+func (m *mockSemanticSearchService) Search(_ context.Context, _ string, _ search.Options) ([]search.RAGResult, error) {
 	return m.results, m.err
 }
 

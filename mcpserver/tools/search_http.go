@@ -12,16 +12,17 @@ import (
 	"net/http"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-ai/search"
 )
 
-// HTTPSemanticSearchService provides semantic search by calling back to the plugin API
-// This allows external MCP servers (HTTP, Stdio) to access semantic search capabilities
+// HTTPSemanticSearchService provides semantic search by calling back to the plugin API.
+// This allows external MCP servers (HTTP, Stdio) to access semantic search capabilities.
 type HTTPSemanticSearchService struct {
 	pluginURL string
 	client    *http.Client
 }
 
-// NewHTTPSemanticSearchService creates a new HTTP-based semantic search service
+// NewHTTPSemanticSearchService creates a new HTTP-based semantic search service.
 // pluginURL should be the base URL to the plugin, e.g., "https://mattermost.example.com/plugins/mattermost-ai"
 func NewHTTPSemanticSearchService(pluginURL string) *HTTPSemanticSearchService {
 	return &HTTPSemanticSearchService{
@@ -32,8 +33,8 @@ func NewHTTPSemanticSearchService(pluginURL string) *HTTPSemanticSearchService {
 	}
 }
 
-// Enabled returns true since this service is always available when created
-// The actual availability check happens at the plugin endpoint
+// Enabled returns true since this service is always available when created.
+// The actual availability check happens at the plugin endpoint.
 func (s *HTTPSemanticSearchService) Enabled() bool {
 	return true
 }
@@ -65,7 +66,7 @@ type httpSearchResponse struct {
 }
 
 // Search performs a semantic search by calling the plugin's MCP semantic search endpoint
-func (s *HTTPSemanticSearchService) Search(ctx context.Context, query string, opts SemanticSearchOptions) ([]SemanticSearchResult, error) {
+func (s *HTTPSemanticSearchService) Search(ctx context.Context, query string, opts search.Options) ([]search.RAGResult, error) {
 	// Build request body
 	reqBody := httpSearchRequest{
 		Query:     query,
@@ -127,10 +128,18 @@ func (s *HTTPSemanticSearchService) Search(ctx context.Context, query string, op
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Convert to SemanticSearchResult
-	results := make([]SemanticSearchResult, 0, len(searchResp.Results))
+	// Convert HTTP DTOs to search.RAGResult
+	results := make([]search.RAGResult, 0, len(searchResp.Results))
 	for _, r := range searchResp.Results {
-		results = append(results, SemanticSearchResult(r))
+		results = append(results, search.RAGResult{
+			PostID:      r.PostID,
+			ChannelID:   r.ChannelID,
+			ChannelName: r.ChannelName,
+			UserID:      r.UserID,
+			Username:    r.Username,
+			Content:     r.Content,
+			Score:       r.Score,
+		})
 	}
 
 	return results, nil

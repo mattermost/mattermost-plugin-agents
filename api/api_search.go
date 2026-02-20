@@ -159,7 +159,7 @@ func (a *API) handleRawSearch(c *gin.Context) {
 		limit = maxRawSearchLimit
 	}
 
-	results, err := a.searchService.ExecuteRawSearch(c.Request.Context(), req.Query, search.Options{
+	results, err := a.searchService.Search(c.Request.Context(), req.Query, search.Options{
 		Limit:     limit,
 		Offset:    req.Offset,
 		TeamID:    req.TeamID,

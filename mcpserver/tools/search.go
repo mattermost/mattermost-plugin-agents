@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -180,7 +181,7 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 
 // executeSemanticSearch runs the semantic search and returns enriched results
 func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs, userID string) ([]searchPostResult, error) {
-	opts := SemanticSearchOptions{
+	opts := search.Options{
 		Limit:     args.SemanticLimit,
 		Offset:    args.SemanticOffset,
 		TeamID:    args.TeamID,

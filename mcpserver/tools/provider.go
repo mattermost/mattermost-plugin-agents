@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
+	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -41,30 +42,12 @@ type ToolProvider interface {
 	ProvideTools(*mcp.Server)
 }
 
-// SemanticSearchService provides semantic search capabilities for the MCP server
+// SemanticSearchService provides semantic search capabilities for the MCP server.
+// *search.Search implements this interface directly for embedded servers.
+// HTTPSemanticSearchService implements it for external servers via HTTP callbacks.
 type SemanticSearchService interface {
 	Enabled() bool
-	Search(ctx context.Context, query string, opts SemanticSearchOptions) ([]SemanticSearchResult, error)
-}
-
-// SemanticSearchOptions configures a semantic search operation
-type SemanticSearchOptions struct {
-	Limit     int
-	Offset    int
-	TeamID    string
-	ChannelID string
-	UserID    string
-}
-
-// SemanticSearchResult represents a single semantic search result
-type SemanticSearchResult struct {
-	PostID      string
-	ChannelID   string
-	ChannelName string
-	UserID      string
-	Username    string
-	Content     string
-	Score       float32
+	Search(ctx context.Context, query string, opts search.Options) ([]search.RAGResult, error)
 }
 
 // MattermostToolProvider provides Mattermost tools following the mmtools pattern

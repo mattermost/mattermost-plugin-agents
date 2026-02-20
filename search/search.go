@@ -88,13 +88,9 @@ func (s *Search) Enabled() bool {
 	return s != nil && s.getSearch != nil && s.getSearch() != nil
 }
 
-// Search performs a semantic search using the underlying embedding search
-func (s *Search) Search(ctx context.Context, query string, opts embeddings.SearchOptions) ([]embeddings.SearchResult, error) {
-	search := s.getSearch()
-	if search == nil {
-		return nil, fmt.Errorf("embedding search not configured")
-	}
-	return search.Search(ctx, query, opts)
+// Search performs a semantic search and returns enriched results with channel/user metadata.
+func (s *Search) Search(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
+	return s.executeSearch(ctx, query, opts)
 }
 
 // enrichResults converts raw search results to RAGResults with channel/user metadata.
@@ -332,11 +328,6 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 	}
 	defer s.streamingService.FinishStreaming(responsePost.Id)
 	s.streamingService.StreamToPost(streamContext, resultStream, responsePost, "")
-}
-
-// ExecuteRawSearch performs a search and returns enriched results without LLM processing
-func (s *Search) ExecuteRawSearch(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
-	return s.executeSearch(ctx, query, opts)
 }
 
 // SearchQuery performs a search and returns results immediately

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,12 +22,12 @@ func TestHTTPSemanticSearchService_Search(t *testing.T) {
 		name           string
 		serverHandler  http.HandlerFunc
 		query          string
-		opts           SemanticSearchOptions
+		opts           search.Options
 		ctxSetup       func(context.Context) context.Context
 		expectedCount  int
 		expectError    bool
 		errorContains  string
-		validateResult func(t *testing.T, results []SemanticSearchResult)
+		validateResult func(t *testing.T, results []search.RAGResult)
 		validateReq    func(t *testing.T, r *http.Request)
 	}{
 		{
@@ -43,7 +44,7 @@ func TestHTTPSemanticSearchService_Search(t *testing.T) {
 			},
 			query:         "hello",
 			expectedCount: 2,
-			validateResult: func(t *testing.T, results []SemanticSearchResult) {
+			validateResult: func(t *testing.T, results []search.RAGResult) {
 				assert.Equal(t, "p1", results[0].PostID)
 				assert.Equal(t, "alice", results[0].Username)
 				assert.InDelta(t, 0.95, float64(results[0].Score), 0.01)
@@ -126,7 +127,7 @@ func TestHTTPSemanticSearchService_Search(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(resp)
 			},
 			query: "search query",
-			opts: SemanticSearchOptions{
+			opts: search.Options{
 				TeamID:    "team1",
 				ChannelID: "chan1",
 				Limit:     20,

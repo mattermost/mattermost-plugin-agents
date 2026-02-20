@@ -10,14 +10,20 @@
 ### Server Types and Search
 
 **InMemoryServer** (embedded in plugin):
-- Takes `searchService SemanticSearchService` directly as a parameter
-- The plugin passes its search service instance
+- Takes `searchService tools.SemanticSearchService` directly as a parameter
+- The plugin passes `*search.Search` which implements `SemanticSearchService` directly
 
 **HTTP/Stdio/PluginHandlers** (external servers):
 - Create their own `HTTPSemanticSearchService` internally
 - This service calls back to the plugin's `/api/v1/search/raw` endpoint
 
+### Type Sharing
+- **Do NOT duplicate types** from the `search` package in `mcpserver/tools`
+- The `SemanticSearchService` interface uses `search.Options` and `search.RAGResult` directly
+- HTTP serialization types (e.g., `httpSearchRequest`, `httpSearchResult` in `search_http.go`) are separate DTOs for the HTTP boundary and should remain in their respective files
+- If you need a subset of fields, accept the full type and ignore unused fields
+
 ### Adding New Optional Capabilities
-1. Define interface in `tools/` package
+1. Define interface in `tools/` package, reusing types from their source package
 2. For embedded servers: add parameter to `NewInMemoryServer`
 3. For external servers: add plugin HTTP endpoint + HTTP client implementation
