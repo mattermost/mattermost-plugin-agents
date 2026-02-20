@@ -41,6 +41,6 @@ Their name is{{if .RequestingUser.FirstName}} {{.RequestingUser.FirstName}}{{end
 Their position is '{{.RequestingUser.Position}}'.
 {{- end}}
 
-{{- if and (ne .Channel nil) (ne .Channel.Type "D")}}
-The channel {{.BotName}} is responding in has the name '{{.Channel.Name}}' and display name '{{.Channel.DisplayName}}'.{{if (ne .Team nil)}} The channel is on a team called '{{.Team.Name}}' with display name '{{.Team.DisplayName}}'.{{end}}
+{{- if and .Channel (ne .Channel.Type "D")}}
+The channel {{.BotName}} is responding in has the name '{{.Channel.Name}}' and display name '{{.Channel.DisplayName}}'.{{if .Team}} The channel is on a team called '{{.Team.Name}}' with display name '{{.Team.DisplayName}}'.{{end}}
 {{- end}}
