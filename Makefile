@@ -323,12 +323,12 @@ evalviewer:
 ## Environment variables:
 ##   LLM_PROVIDER: openai, anthropic, azure, all, or comma-separated (default: all)
 ##   OPENAI_API_KEY: OpenAI API key
-##   OPENAI_MODEL: Model to use for OpenAI (default: gpt-4o)
+##   OPENAI_MODEL: Model to use for OpenAI (overrides code default)
 ##   ANTHROPIC_API_KEY: Anthropic API key
-##   ANTHROPIC_MODEL: Model to use for Anthropic (default: claude-sonnet-4-20250514)
+##   ANTHROPIC_MODEL: Model to use for Anthropic (overrides code default)
 ##   AZURE_OPENAI_API_KEY: Azure OpenAI API key
 ##   AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
-##   AZURE_OPENAI_MODEL: Model to use for Azure OpenAI (default: gpt-4o)
+##   AZURE_OPENAI_MODEL: Model to use for Azure OpenAI (overrides code default)
 .PHONY: evals
 evals: evalviewer
 	@echo Running evaluations interactively...
