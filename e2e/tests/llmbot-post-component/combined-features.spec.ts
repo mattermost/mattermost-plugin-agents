@@ -45,6 +45,8 @@ async function setupTestPage(page, mattermost, provider: ProviderBundle) {
 
 function createProviderTestSuite(provider: ProviderBundle) {
     test.describe(`Combined Features - ${provider.name}`, () => {
+        test.skip(provider.service.type === 'openaicompatible', 'Skipping OpenAI reasoning tests due to flaky upstream reasoning events.');
+
         let mattermost: MattermostContainer;
 
         test.beforeAll(async () => {
@@ -68,7 +70,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
                         thinkingBudget: 1024,
                     }),
                     ...(provider.service.type === 'openaicompatible' && {
-                        reasoningEffort: 'low',
+                        reasoningEffort: 'high',
                     }),
                 }
             };

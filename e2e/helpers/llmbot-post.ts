@@ -38,8 +38,10 @@ export class LLMBotPostHelper {
      */
     getReasoningDisplay(postId?: string): Locator {
         const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        // Look for the minimal reasoning container or expanded reasoning header
-        return baseLocator.locator('[class*="MinimalReasoningContainer"], [class*="ExpandedReasoningHeader"]').first();
+        // Scope to reasoning rows that actually render the Thinking label.
+        // This avoids matching the precontent "Starting..." placeholder row,
+        // which reuses the MinimalReasoningContainer styles.
+        return baseLocator.locator('[class*="MinimalReasoningContainer"], [class*="ExpandedReasoningHeader"]').filter({hasText: 'Thinking'}).first();
     }
 
     /**
@@ -47,9 +49,7 @@ export class LLMBotPostHelper {
      * @param postId - Optional post ID to scope the search
      */
     getReasoningToggle(postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        // Target either minimal or expanded header that contains "Thinking"
-        return baseLocator.locator('[class*="MinimalReasoningContainer"], [class*="ExpandedReasoningHeader"]').first();
+        return this.getReasoningDisplay(postId);
     }
 
     /**
@@ -57,9 +57,9 @@ export class LLMBotPostHelper {
      * @param postId - Optional post ID to scope the search
      */
     getReasoningSpinner(postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        // LoadingSpinner is a styled div, not an SVG
-        return baseLocator.locator('div[class*="LoadingSpinner"]').first();
+        // Scope spinner lookup to the actual reasoning row to avoid matching
+        // the precontent "Starting..." spinner.
+        return this.getReasoningDisplay(postId).locator('div[class*="LoadingSpinner"]').first();
     }
 
     /**

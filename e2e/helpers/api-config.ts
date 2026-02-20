@@ -218,7 +218,7 @@ export function createBotConfig(
             thinkingBudget: 1024,
         }),
         ...(service.useResponsesAPI && {
-            reasoningEffort: 'low',
+            reasoningEffort: 'high',
         }),
         ...overrides,
     };

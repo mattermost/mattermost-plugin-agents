@@ -49,6 +49,8 @@ async function setupTestPage(page, mattermost, provider: ProviderBundle) {
 
 function createProviderTestSuite(provider: ProviderBundle) {
     test.describe(`Reasoning Display - ${provider.name}`, () => {
+        test.skip(provider.service.type === 'openaicompatible', 'Skipping OpenAI reasoning tests due to flaky upstream reasoning events.');
+
         let mattermost: MattermostContainer;
 
         test.beforeAll(async () => {
@@ -66,7 +68,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
                         thinkingBudget: 4096, // Higher budget for robust reasoning
                     }),
                     ...(provider.service.type === 'openaicompatible' && {
-                        reasoningEffort: 'medium', // Medium effort for reliable reasoning
+                        reasoningEffort: 'high', // High effort to reliably surface reasoning events
                     }),
                 }
             };
