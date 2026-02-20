@@ -6,6 +6,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { TestInfo } from '@playwright/test';
 
 const LOG_FILE = path.join(__dirname, '../logs/server-logs.log');
 
@@ -47,7 +48,12 @@ export function scanServerLogs(): LogScanResult {
         return result;
     }
 
-    const content = fs.readFileSync(LOG_FILE, 'utf-8');
+    let content: string;
+    try {
+        content = fs.readFileSync(LOG_FILE, 'utf-8');
+    } catch {
+        return result;
+    }
     const lines = content.split('\n').slice(-200);
 
     for (const line of lines) {
@@ -85,4 +91,32 @@ export function getAPIErrorContext(): string {
         .join('\n');
 
     return `\n\n--- API Error Context from Server Logs ---\n${scan.summary}\n\nRecent errors:\n${errorLines}\n---`;
+}
+
+/**
+ * Scan server logs for API errors on test failure and attach context to the
+ * Playwright HTML report. Call from test.afterEach in real API test suites.
+ *
+ * Only runs for failed or timed-out tests (skipped/interrupted are ignored).
+ */
+export async function attachAPIErrorContext(testInfo: TestInfo): Promise<void> {
+    if (testInfo.status !== 'failed' && testInfo.status !== 'timedOut') {
+        return;
+    }
+
+    const scan = scanServerLogs();
+    if (!scan.hasErrors) {
+        return;
+    }
+
+    console.error(`\n=== API Error Context ===\n${scan.summary}`);
+    for (const error of scan.errors.slice(0, 5)) {
+        console.error(`  [${error.category}] ${error.line}`);
+    }
+    console.error('=========================\n');
+
+    await testInfo.attach('api-error-context', {
+        body: JSON.stringify(scan, null, 2),
+        contentType: 'application/json',
+    });
 }
