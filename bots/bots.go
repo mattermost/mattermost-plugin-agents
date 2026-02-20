@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"sync"
 
 	"github.com/mattermost/mattermost-plugin-ai/anthropic"
@@ -52,9 +53,12 @@ type MMBots struct {
 	botsLock sync.RWMutex
 	bots     []*Bot
 
-	// lastEnsuredBotCfgs stores the bot configs that were last successfully ensured
-	// This is used for optimistic checking to avoid unnecessary cluster mutex acquisition
+	// lastEnsuredBotCfgs stores the bot configs that were last successfully ensured.
+	// This is used for optimistic checking to avoid unnecessary cluster mutex acquisition.
 	lastEnsuredBotCfgs []llm.BotConfig
+	// lastEnsuredServiceCfgs stores the resolved service configs keyed by service ID
+	// that were last successfully ensured, for optimistic change detection.
+	lastEnsuredServiceCfgs map[string]llm.ServiceConfig
 }
 
 func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client, tokenLogger *mlog.Logger, metrics llm.MetricsObserver) *MMBots {
@@ -69,14 +73,29 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 	}
 }
 
-// botConfigsEqual compares two bot config slices for equality
-// This is used for optimistic checking to avoid unnecessary cluster mutex acquisition
+// resolveServiceCfgs builds a map of service configs referenced by the given bot configs.
+func (b *MMBots) resolveServiceCfgs(botCfgs []llm.BotConfig) map[string]llm.ServiceConfig {
+	result := make(map[string]llm.ServiceConfig, len(botCfgs))
+	for _, botCfg := range botCfgs {
+		if _, exists := result[botCfg.ServiceID]; exists {
+			continue
+		}
+		if svc, ok := b.config.GetServiceByID(botCfg.ServiceID); ok {
+			result[botCfg.ServiceID] = svc
+		}
+	}
+	return result
+}
+
+// botConfigsEqual compares two bot config slices for equality.
+// Uses reflect.DeepEqual to compare all fields, ensuring changes to any field
+// (e.g., EnabledNativeTools, CustomInstructions, access levels) are detected.
+// Comparison is order-independent, matching configs by ID.
 func botConfigsEqual(a, b []llm.BotConfig) bool {
 	if len(a) != len(b) {
 		return false
 	}
 
-	// Build a map of bot configs by ID for efficient comparison
 	aMap := make(map[string]llm.BotConfig, len(a))
 	for _, cfg := range a {
 		aMap[cfg.ID] = cfg
@@ -87,11 +106,26 @@ func botConfigsEqual(a, b []llm.BotConfig) bool {
 		if !ok {
 			return false
 		}
-		// Compare all fields that affect bot setup
-		if aCfg.Name != cfg.Name ||
-			aCfg.DisplayName != cfg.DisplayName ||
-			aCfg.ServiceID != cfg.ServiceID ||
-			aCfg.Model != cfg.Model {
+		if !reflect.DeepEqual(aCfg, cfg) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// serviceConfigsEqual compares two service config maps for equality.
+func serviceConfigsEqual(a, b map[string]llm.ServiceConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for id, aCfg := range a {
+		bCfg, ok := b[id]
+		if !ok {
+			return false
+		}
+		if !reflect.DeepEqual(aCfg, bCfg) {
 			return false
 		}
 	}
@@ -100,17 +134,19 @@ func botConfigsEqual(a, b []llm.BotConfig) bool {
 }
 
 func (b *MMBots) EnsureBots() error {
-	// Optimistic check: if bot configuration hasn't changed since last ensure,
+	// Optimistic check: if bot and service configuration hasn't changed since last ensure,
 	// skip the expensive cluster mutex acquisition. This prevents HA timeout issues
 	// when multiple nodes all try to acquire the mutex simultaneously on config changes.
 	currentBotCfgs := b.config.GetBots()
+	currentServiceCfgs := b.resolveServiceCfgs(currentBotCfgs)
 	b.botsLock.RLock()
 	botsAlreadyInitialized := len(b.bots) > 0
-	lastCfgs := b.lastEnsuredBotCfgs
+	lastBotCfgs := b.lastEnsuredBotCfgs
+	lastServiceCfgs := b.lastEnsuredServiceCfgs
 	b.botsLock.RUnlock()
 
-	if botsAlreadyInitialized && botConfigsEqual(lastCfgs, currentBotCfgs) {
-		b.pluginAPI.Log.Debug("EnsureBots: skipping - bot configuration unchanged")
+	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
+		b.pluginAPI.Log.Debug("EnsureBots: skipping - bot and service configuration unchanged")
 		return nil
 	}
 
@@ -123,13 +159,15 @@ func (b *MMBots) EnsureBots() error {
 
 	// Re-check after acquiring lock - another node may have already handled this
 	currentBotCfgs = b.config.GetBots()
+	currentServiceCfgs = b.resolveServiceCfgs(currentBotCfgs)
 	b.botsLock.RLock()
 	botsAlreadyInitialized = len(b.bots) > 0
-	lastCfgs = b.lastEnsuredBotCfgs
+	lastBotCfgs = b.lastEnsuredBotCfgs
+	lastServiceCfgs = b.lastEnsuredServiceCfgs
 	b.botsLock.RUnlock()
 
-	if botsAlreadyInitialized && botConfigsEqual(lastCfgs, currentBotCfgs) {
-		b.pluginAPI.Log.Debug("EnsureBots: skipping after lock - bot configuration unchanged")
+	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
+		b.pluginAPI.Log.Debug("EnsureBots: skipping after lock - bot and service configuration unchanged")
 		return nil
 	}
 
@@ -238,9 +276,16 @@ func (b *MMBots) EnsureBots() error {
 
 	b.botsLock.Lock()
 	b.bots = bots
-	// Store the successfully ensured bot configs for optimistic checking
-	b.lastEnsuredBotCfgs = make([]llm.BotConfig, len(currentBotCfgs))
-	copy(b.lastEnsuredBotCfgs, currentBotCfgs)
+	// Store deep copies of the successfully ensured configs for optimistic checking.
+	// Deep copy is needed because BotConfig contains slice fields (EnabledNativeTools, etc.)
+	// that would otherwise share backing arrays with the live config.
+	copiedBotCfgs, copyErr := config.DeepCopyJSON(currentBotCfgs)
+	if copyErr != nil {
+		b.botsLock.Unlock()
+		return fmt.Errorf("failed to deep copy bot configs for change tracking: %w", copyErr)
+	}
+	b.lastEnsuredBotCfgs = copiedBotCfgs
+	b.lastEnsuredServiceCfgs = currentServiceCfgs
 	b.botsLock.Unlock()
 
 	return nil
