@@ -13,6 +13,7 @@ import {
     getAvailableProviders,
     ProviderBundle,
 } from 'helpers/api-config';
+import { scanServerLogs } from 'helpers/log-scanner';
 
 /**
  * Test Suite: Channel Analysis Real API Verification
@@ -117,6 +118,23 @@ function createProviderTestSuite(provider: ProviderBundle) {
         test.afterAll(async () => {
             if (mattermost) {
                 await mattermost.stop();
+            }
+        });
+
+        test.afterEach(async ({}, testInfo) => {
+            if (testInfo.status !== 'passed') {
+                const scan = scanServerLogs();
+                if (scan.hasErrors) {
+                    console.error(`\n=== API Error Context ===\n${scan.summary}`);
+                    for (const error of scan.errors.slice(0, 5)) {
+                        console.error(`  [${error.category}] ${error.line}`);
+                    }
+                    console.error('=========================\n');
+                    testInfo.attach('api-error-context', {
+                        body: JSON.stringify(scan, null, 2),
+                        contentType: 'application/json',
+                    });
+                }
             }
         });
 
