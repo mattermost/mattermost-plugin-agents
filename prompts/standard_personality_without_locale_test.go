@@ -16,6 +16,7 @@ import (
 
 var (
 	horizontalWhitespaceRun = regexp.MustCompile(`[^\S\r\n]{2,}`)
+	trailingHorizontalWhitespace = regexp.MustCompile(`(?m)[^\S\r\n]+$`)
 	// Paragraph spacing uses a single blank line (\n\n), so we only disallow 3+ consecutive newlines.
 	newlineRun = regexp.MustCompile(`\n{3,}`)
 )
@@ -88,6 +89,7 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 				output, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, context)
 				require.NoError(t, err, label)
 				require.Falsef(t, horizontalWhitespaceRun.MatchString(output), "%s contains repeated horizontal whitespace", label)
+				require.Falsef(t, trailingHorizontalWhitespace.MatchString(output), "%s contains trailing horizontal whitespace", label)
 				require.Falsef(t, newlineRun.MatchString(output), "%s contains repeated newline runs", label)
 			}
 		}
