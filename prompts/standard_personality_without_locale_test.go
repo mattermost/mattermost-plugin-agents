@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	horizontalWhitespaceRun = regexp.MustCompile(`[^\S\r\n]{2,}`)
+	horizontalWhitespaceRun      = regexp.MustCompile(`[^\S\r\n]{2,}`)
 	trailingHorizontalWhitespace = regexp.MustCompile(`(?m)[^\S\r\n]+$`)
 	// Paragraph spacing uses a single blank line (\n\n), so we only disallow 3+ consecutive newlines.
 	newlineRun = regexp.MustCompile(`\n{3,}`)
@@ -53,44 +53,65 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 		{name: "channel_direct", channel: &model.Channel{Type: "D"}},
 		{name: "channel_public", channel: &model.Channel{Type: "O", Name: "town-square", DisplayName: "Town Square"}},
 	}
+	requestingUserModes := []struct {
+		name                string
+		buildRequestingUser func() *model.User
+	}{
+		{name: "requesting_user_set", buildRequestingUser: func() *model.User { return &model.User{Username: "requester"} }},
+		{name: "requesting_user_nil", buildRequestingUser: func() *model.User { return nil }},
+	}
 	mutators := []func(*llm.Context){
 		func(c *llm.Context) { c.CompanyName = "Mattermost" },
-		func(c *llm.Context) { c.DisabledToolsInfo = []llm.ToolInfo{{Name: "Jira", Description: "Read tickets"}} },
+		func(c *llm.Context) {
+			c.DisabledToolsInfo = []llm.ToolInfo{{Name: "Jira", Description: "Read tickets"}}
+		},
 		func(c *llm.Context) { c.CustomInstructions = "Be concise." },
-		func(c *llm.Context) { c.RequestingUser.FirstName = "Pat" },
-		func(c *llm.Context) { c.RequestingUser.LastName = "Lee" },
-		func(c *llm.Context) { c.RequestingUser.Position = "Engineer" },
+		func(c *llm.Context) {
+			if c.RequestingUser != nil {
+				c.RequestingUser.FirstName = "Pat"
+			}
+		},
+		func(c *llm.Context) {
+			if c.RequestingUser != nil {
+				c.RequestingUser.LastName = "Lee"
+			}
+		},
+		func(c *llm.Context) {
+			if c.RequestingUser != nil {
+				c.RequestingUser.Position = "Engineer"
+			}
+		},
 		func(c *llm.Context) { c.Team = &model.Team{Name: "eng", DisplayName: "Engineering"} },
 	}
 
 	for _, toolMode := range toolModes {
 		for _, channelMode := range channelModes {
-			for flags := 0; flags < 1<<len(mutators); flags++ {
-				context := &llm.Context{
-					Time:        "Fri, 20 Feb 2026 18:00:00 UTC",
-					ServerName:  "server",
-					BotName:     "agent",
-					BotUsername: "agent",
-					BotModel:    "model-x",
-					Tools:       toolMode.tools,
-					RequestingUser: &model.User{
-						Username: "requester",
-					},
-					Channel: channelMode.channel,
-				}
-
-				for i, mutate := range mutators {
-					if flags&(1<<i) != 0 {
-						mutate(context)
+			for _, requestingUserMode := range requestingUserModes {
+				for flags := 0; flags < 1<<len(mutators); flags++ {
+					context := &llm.Context{
+						Time:           "Fri, 20 Feb 2026 18:00:00 UTC",
+						ServerName:     "server",
+						BotName:        "agent",
+						BotUsername:    "agent",
+						BotModel:       "model-x",
+						Tools:          toolMode.tools,
+						RequestingUser: requestingUserMode.buildRequestingUser(),
+						Channel:        channelMode.channel,
 					}
-				}
 
-				label := fmt.Sprintf("tools=%s channel=%s flags=%0*b", toolMode.name, channelMode.name, len(mutators), flags)
-				output, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, context)
-				require.NoError(t, err, label)
-				require.Falsef(t, horizontalWhitespaceRun.MatchString(output), "%s contains repeated horizontal whitespace", label)
-				require.Falsef(t, trailingHorizontalWhitespace.MatchString(output), "%s contains trailing horizontal whitespace", label)
-				require.Falsef(t, newlineRun.MatchString(output), "%s contains repeated newline runs", label)
+					for i, mutate := range mutators {
+						if flags&(1<<i) != 0 {
+							mutate(context)
+						}
+					}
+
+					label := fmt.Sprintf("tools=%s channel=%s requesting_user=%s flags=%0*b", toolMode.name, channelMode.name, requestingUserMode.name, len(mutators), flags)
+					output, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, context)
+					require.NoError(t, err, label)
+					require.Falsef(t, horizontalWhitespaceRun.MatchString(output), "%s contains repeated horizontal whitespace", label)
+					require.Falsef(t, trailingHorizontalWhitespace.MatchString(output), "%s contains trailing horizontal whitespace", label)
+					require.Falsef(t, newlineRun.MatchString(output), "%s contains repeated newline runs", label)
+				}
 			}
 		}
 	}
