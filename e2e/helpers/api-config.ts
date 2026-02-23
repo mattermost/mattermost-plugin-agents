@@ -8,6 +8,10 @@
  * import issues with webpack-specific assets in the webapp files.
  */
 
+// Default models for each provider. Update these when bumping model versions.
+export const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6';
+export const DEFAULT_OPENAI_MODEL = 'gpt-5.2';
+
 /**
  * LLM Service Configuration
  * Mirrors webapp/src/components/system_console/service.tsx LLMService type
@@ -114,12 +118,10 @@ export function logAPIConfig(): void {
         return;
     }
 
+    const providers = getAvailableProviders();
     console.log('🔴 LLMBot tests using REAL APIs:');
-    if (config.hasAnthropicKey) {
-        console.log('   - Anthropic: claude-3-7-sonnet-20250219');
-    }
-    if (config.hasOpenAIKey) {
-        console.log('   - OpenAI: gpt-5');
+    for (const p of providers) {
+        console.log(`   - ${p.name}: ${p.service.defaultModel}`);
     }
     console.log('   ⚠️  This will incur API costs (~$0.05 per run)');
 }
@@ -150,7 +152,7 @@ export function createAnthropicService(overrides: ServiceConfigOverrides = {}): 
         apiKey,
         apiURL: 'https://api.anthropic.com',
         orgId: '',
-        defaultModel: 'claude-3-7-sonnet-20250219',
+        defaultModel: process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL,
         tokenLimit: 16384,
         outputTokenLimit: 16384,
         streamingTimeoutSeconds: 0,
@@ -176,7 +178,7 @@ export function createOpenAIService(overrides: ServiceConfigOverrides = {}): LLM
         apiKey,
         apiURL: 'https://api.openai.com/v1',
         orgId: '',
-        defaultModel: 'gpt-5',
+        defaultModel: process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL,
         tokenLimit: 16384,
         outputTokenLimit: 16384,
         streamingTimeoutSeconds: 500,
@@ -216,7 +218,7 @@ export function createBotConfig(
             thinkingBudget: 1024,
         }),
         ...(service.useResponsesAPI && {
-            reasoningEffort: 'minimal',
+            reasoningEffort: 'high',
         }),
         ...overrides,
     };
