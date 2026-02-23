@@ -137,6 +137,8 @@ func IsValidService(service ServiceConfig) bool {
 		return service.Region != ""
 	case ServiceTypeMistral:
 		return service.APIKey != ""
+	case ServiceTypeScale:
+		return service.APIKey != "" && service.APIURL != ""
 	default:
 		return false
 	}

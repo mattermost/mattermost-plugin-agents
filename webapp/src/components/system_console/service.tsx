@@ -41,6 +41,7 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['bedrock', 'AWS Bedrock'],
     ['cohere', 'Cohere'],
     ['mistral', 'Mistral'],
+    ['scale', 'Scale AI'],
     ['asage', 'asksage (Experimental)'],
 ]);
 
@@ -53,6 +54,18 @@ type ModelInfo = {
     displayName: string
 }
 
+const scaleKnownModels: ModelInfo[] = [
+    {id: 'openai/gpt-4o', displayName: 'openai/gpt-4o'},
+    {id: 'bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0', displayName: 'bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0'},
+    {id: 'bedrock/anthropic.claude-3-7-sonnet-20250219-v1:0', displayName: 'bedrock/anthropic.claude-3-7-sonnet-20250219-v1:0'},
+    {id: 'model_zoo/gpt-oss-120b', displayName: 'model_zoo/gpt-oss-120b'},
+    {id: 'model_zoo/llama-3-3-70b-instruct', displayName: 'model_zoo/llama-3-3-70b-instruct'},
+    {id: 'model_zoo/llama-3-1-8b-instruct', displayName: 'model_zoo/llama-3-1-8b-instruct'},
+    {id: 'model_zoo/defense-llama-3-8b-instruct', displayName: 'model_zoo/defense-llama-3-8b-instruct'},
+    {id: 'bedrock/amazon.nova-pro-v1:0', displayName: 'bedrock/amazon.nova-pro-v1:0'},
+    {id: 'bedrock/amazon.nova-lite-v1:0', displayName: 'bedrock/amazon.nova-lite-v1:0'},
+];
+
 type ServiceFieldsProps = {
     service: LLMService
     onChange: (service: LLMService) => void
@@ -61,9 +74,10 @@ type ServiceFieldsProps = {
 const ServiceFields = (props: ServiceFieldsProps) => {
     const type = props.service.type;
     const intl = useIntl();
-    const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral';
+    const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale';
     const isCohere = type === 'cohere';
     const isMistral = type === 'mistral';
+    const isScale = type === 'scale';
 
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
@@ -146,13 +160,15 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                 <SelectionItemOption value='azure'>{'Azure'}</SelectionItemOption>
                 <SelectionItemOption value='cohere'>{'Cohere'}</SelectionItemOption>
                 <SelectionItemOption value='mistral'>{'Mistral'}</SelectionItemOption>
+                <SelectionItemOption value='scale'>{'Scale AI'}</SelectionItemOption>
                 <SelectionItemOption value='asage'>{'asksage (Experimental)'}</SelectionItemOption>
             </SelectionItem>
-            {(type === 'openaicompatible' || type === 'azure' || type === 'asage') && (
+            {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale') && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'API URL'})}
                     value={props.service.apiURL}
                     onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
+                    helptext={isScale ? intl.formatMessage({defaultMessage: 'Scale API endpoint (e.g., https://sgp-api.scalegov.com/v5)'}) : undefined} // eslint-disable-line no-undefined
                 />
             )}
             {type === 'bedrock' && (
@@ -196,17 +212,20 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                 <>
                     {!isCohere && !isMistral && (
                         <TextItem
-                            label={intl.formatMessage({defaultMessage: 'Organization ID'})}
+                            label={isScale ? intl.formatMessage({defaultMessage: 'Account ID'}) : intl.formatMessage({defaultMessage: 'Organization ID'})}
                             value={props.service.orgId}
                             onChange={(e) => props.onChange({...props.service, orgId: e.target.value})}
+                            helptext={isScale ? intl.formatMessage({defaultMessage: 'Scale Account ID (x-selected-account-id header, required for ScaleGov)'}) : undefined} // eslint-disable-line no-undefined
                         />
                     )}
-                    <BooleanItem
-                        label={intl.formatMessage({defaultMessage: 'Send User ID'})}
-                        value={props.service.sendUserId}
-                        onChange={(to: boolean) => props.onChange({...props.service, sendUserId: to})}
-                        helpText={intl.formatMessage({defaultMessage: 'Sends the Mattermost user ID to the upstream LLM.'})}
-                    />
+                    {!isScale && (
+                        <BooleanItem
+                            label={intl.formatMessage({defaultMessage: 'Send User ID'})}
+                            value={props.service.sendUserId}
+                            onChange={(to: boolean) => props.onChange({...props.service, sendUserId: to})}
+                            helpText={intl.formatMessage({defaultMessage: 'Sends the Mattermost user ID to the upstream LLM.'})}
+                        />
+                    )}
                     {(type === 'openai' || type === 'openaicompatible' || type === 'azure') && (
                         <BooleanItem
                             label={intl.formatMessage({defaultMessage: 'Use Responses API'})}
@@ -217,7 +236,18 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     )}
                 </>
             )}
-            {supportsModelFetching && availableModels.length > 0 ? (
+            {isScale && (
+                <ComboboxItem
+                    label={intl.formatMessage({defaultMessage: 'Default model'})}
+                    value={props.service.defaultModel}
+                    options={scaleKnownModels}
+                    placeholder={intl.formatMessage({defaultMessage: 'Select a model or enter custom vendor/model-name'})}
+                    onChange={(e) => props.onChange({...props.service, defaultModel: e.target.value})}
+                    helptext={intl.formatMessage({defaultMessage: 'Select a known model or enter a custom vendor/model-name. See Scale documentation for available models.'})}
+                    isClearable={false}
+                />
+            )}
+            {!isScale && supportsModelFetching && availableModels.length > 0 && (
                 <ComboboxItem
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
@@ -227,7 +257,8 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     helptext={intl.formatMessage({defaultMessage: 'Select from the list or type a custom model name'})}
                     isClearable={false}
                 />
-            ) : (
+            )}
+            {!isScale && !(supportsModelFetching && availableModels.length > 0) && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
