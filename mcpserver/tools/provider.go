@@ -19,7 +19,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// MCPToolContext provides MCP-specific functionality with the authenticated client
+// MCPToolContext provides MCP-specific functionality with the authenticated client.
+// It carries the request context, authenticated Mattermost client, access mode, and
+// optional bot user ID for AI content tracking. Every tool resolver receives this context
+// to perform authenticated API calls against the Mattermost server.
 type MCPToolContext struct {
 	Ctx        context.Context // Request context for proper cancellation and timeout handling
 	Client     *model.Client4
@@ -73,7 +76,10 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 	}
 }
 
-// ProvideTools provides all tools to the MCP server by registering them
+// ProvideTools registers all available MCP tools with the server.
+// Tools are grouped by domain (posts, channels, teams, search) and optionally
+// include dev-only tools when dev mode is enabled. Each tool is registered
+// with its JSON schema and resolver function via registerDynamicTool.
 func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	mcpTools := []MCPTool{}
 
@@ -95,7 +101,13 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	}
 }
 
-// registerDynamicTool registers a single tool with the server using type erasure
+// registerDynamicTool registers a single tool with the MCP server.
+// It wraps the tool's resolver in a handler that:
+//  1. Creates an authenticated MCPToolContext from the request context
+//  2. Validates access restrictions on the incoming arguments
+//  3. Calls the tool resolver and formats the result as MCP content
+//
+// If the tool has no schema, an empty object schema is provided to satisfy the MCP SDK requirement.
 func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool MCPTool) {
 	tool := &mcp.Tool{
 		Name:        mcpTool.Name,
@@ -154,7 +166,6 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		result, err := mcpTool.Resolver(mcpContext, argsGetter)
 		if err != nil {
 			p.logger.Info("MCP tool failed", "tool", mcpTool.Name, "error", err.Error())
-			p.logger.Debug("Tool resolver failed", "tool", mcpTool.Name, "error", err)
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
 					&mcp.TextContent{Text: "Error: " + err.Error()},

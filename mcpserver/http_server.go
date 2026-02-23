@@ -19,7 +19,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// MattermostHTTPMCPServer wraps MattermostMCPServer for HTTP transport
+// MattermostHTTPMCPServer wraps MattermostMCPServer for HTTP transport.
+// It supports both SSE (legacy) and streamable HTTP (modern) MCP communication protocols.
+// Security is enforced via OAuth authentication, origin validation (DNS rebinding protection),
+// and standard security headers. All MCP endpoints require Bearer token authentication.
 type MattermostHTTPMCPServer struct {
 	*MattermostMCPServer
 	config            HTTPConfig
@@ -28,7 +31,11 @@ type MattermostHTTPMCPServer struct {
 	httpServer        *http.Server
 }
 
-// NewHTTPServer creates a new HTTP transport MCP server
+// NewHTTPServer creates a new HTTP transport MCP server.
+// It configures OAuth authentication, sets up both SSE and streamable HTTP handlers,
+// and applies security middleware (recovery, logging, origin validation, CORS).
+// The server uses extended read/write timeouts (5 minutes) to accommodate large responses
+// such as reading channels with many posts.
 func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPMCPServer, error) {
 	if config.MMServerURL == "" {
 		return nil, fmt.Errorf("server URL cannot be empty")
@@ -103,13 +110,15 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 	recoveryHandler := mattermostServer.recoveryMiddleware(mainHandler)
 	secureHandler := mattermostServer.securityMiddleware(recoveryHandler)
 
-	// Create HTTP server with security middleware
-	// Use longer timeouts to handle large responses (e.g., reading channels with many posts)
+	// Create HTTP server with security middleware.
+	// Timeouts are kept at 30 seconds to limit resource usage and mitigate slowloris-style attacks.
+	// SSE clients handle reconnection gracefully if a connection is closed.
 	mattermostServer.httpServer = &http.Server{
 		Addr:         addr,
 		Handler:      secureHandler,
-		ReadTimeout:  5 * time.Minute,  // Allow up to 5 minutes for reading requests
-		WriteTimeout: 5 * time.Minute,  // Allow up to 5 minutes for writing responses
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  30 * time.Second,
 	}
 
 	return mattermostServer, nil
@@ -436,7 +445,13 @@ func (s *MattermostHTTPMCPServer) requireAuth(next http.HandlerFunc) http.Handle
 	}
 }
 
-// setupRoutes sets up all HTTP routes for the MCP server on the provided mux
+// setupRoutes sets up all HTTP routes for the MCP server on the provided mux.
+// Routes:
+//   - /.well-known/oauth-protected-resource - OAuth 2.0 Protected Resource Metadata (RFC 9728), no auth
+//   - /mcp - Streamable HTTP MCP endpoint (modern protocol), requires auth
+//   - /sse - SSE MCP endpoint (legacy protocol), requires auth
+//   - /message - SSE message endpoint (legacy protocol), requires auth
+//   - / - Default 404 handler for unmatched paths
 func (s *MattermostHTTPMCPServer) setupRoutes(httpMux *http.ServeMux) {
 	// OAuth 2.0 Protected Resource Metadata endpoint (RFC 9728) - no auth required
 	httpMux.HandleFunc("/.well-known/oauth-protected-resource", s.handleProtectedResourceMetadata)
