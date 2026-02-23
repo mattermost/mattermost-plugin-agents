@@ -759,12 +759,16 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
 
-	// Set defaults and cap to match schema (consistent with get_channel_members and get_team_members)
-	if args.PerPage == 0 {
+	// Set defaults and cap to match schema (consistent with get_channel_members and get_team_members).
+	// Guard against negative values to prevent slice panics from user input.
+	if args.PerPage <= 0 {
 		args.PerPage = 60
 	}
 	if args.PerPage > 200 {
 		args.PerPage = 200
+	}
+	if args.Page < 0 {
+		args.Page = 0
 	}
 
 	// Get client and context
