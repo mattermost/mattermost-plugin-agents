@@ -337,32 +337,34 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 		mistralCfg := serviceConfig
 		mistralCfg.APIURL = "https://api.mistral.ai/v1"
 		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfigWithOptions(mistralCfg, botConfig, true, true), b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeScale:
-		scaleCfg := serviceConfig
-		if scaleCfg.DefaultModel == "" {
-			scaleCfg.DefaultModel = "openai/gpt-4o"
-		}
-		setHeaders := map[string]string{
-			"x-api-key": scaleCfg.APIKey,
-		}
-		if scaleCfg.OrgID != "" {
-			setHeaders["x-selected-account-id"] = scaleCfg.OrgID
-		}
-		var baseTransport http.RoundTripper
-		if b.llmUpstreamHTTPClient != nil {
-			baseTransport = b.llmUpstreamHTTPClient.Transport
-		}
-		scaleClient := llm.CloneHTTPClientWithTransport(b.llmUpstreamHTTPClient, &llm.CustomAuthTransport{
-			Base:          baseTransport,
-			RemoveHeaders: []string{"Authorization"},
-			SetHeaders:    setHeaders,
-		})
-		openaiCfg := config.OpenAIConfigFromServiceConfigWithOptions(scaleCfg, botConfig, true, false)
-		openaiCfg.APIKey = llm.PlaceholderAPIKey
-		result = openai.NewCompatible(openaiCfg, scaleClient)
 	default:
-		b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
-		return nil, fmt.Errorf("unsupported service type: %s", serviceConfig.Type)
+		if providerCfg, ok := llm.GetOpenAICompatibleProvider(serviceConfig.Type); ok {
+			cfg := serviceConfig
+			if providerCfg.FixedAPIURL != "" {
+				cfg.APIURL = providerCfg.FixedAPIURL
+			}
+			if cfg.DefaultModel == "" && providerCfg.DefaultModel != "" {
+				cfg.DefaultModel = providerCfg.DefaultModel
+			}
+			client := b.llmUpstreamHTTPClient
+			apiKey := cfg.APIKey
+			if providerCfg.CreateTransport != nil {
+				var base http.RoundTripper
+				if client != nil {
+					base = client.Transport
+				}
+				client = llm.CloneHTTPClientWithTransport(client, providerCfg.CreateTransport(cfg, base))
+				apiKey = llm.PlaceholderAPIKey
+			}
+			openaiCfg := config.OpenAIConfigFromServiceConfigWithOptions(
+				cfg, botConfig, providerCfg.DisableStreamOptions, providerCfg.UseMaxTokens,
+			)
+			openaiCfg.APIKey = apiKey
+			result = openai.NewCompatible(openaiCfg, client)
+		} else {
+			b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
+			return nil, fmt.Errorf("unsupported service type: %s", serviceConfig.Type)
+		}
 	}
 
 	// Truncation Support

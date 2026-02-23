@@ -54,18 +54,6 @@ type ModelInfo = {
     displayName: string
 }
 
-const scaleKnownModels: ModelInfo[] = [
-    {id: 'openai/gpt-4o', displayName: 'openai/gpt-4o'},
-    {id: 'bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0', displayName: 'bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0'},
-    {id: 'bedrock/anthropic.claude-3-7-sonnet-20250219-v1:0', displayName: 'bedrock/anthropic.claude-3-7-sonnet-20250219-v1:0'},
-    {id: 'model_zoo/gpt-oss-120b', displayName: 'model_zoo/gpt-oss-120b'},
-    {id: 'model_zoo/llama-3-3-70b-instruct', displayName: 'model_zoo/llama-3-3-70b-instruct'},
-    {id: 'model_zoo/llama-3-1-8b-instruct', displayName: 'model_zoo/llama-3-1-8b-instruct'},
-    {id: 'model_zoo/defense-llama-3-8b-instruct', displayName: 'model_zoo/defense-llama-3-8b-instruct'},
-    {id: 'bedrock/amazon.nova-pro-v1:0', displayName: 'bedrock/amazon.nova-pro-v1:0'},
-    {id: 'bedrock/amazon.nova-lite-v1:0', displayName: 'bedrock/amazon.nova-lite-v1:0'},
-];
-
 type ServiceFieldsProps = {
     service: LLMService
     onChange: (service: LLMService) => void
@@ -84,7 +72,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
 
     // Determine if we should support model fetching for this service type
-    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible';
+    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'scale';
 
     // Fetch models when API key or URL changes for supported service types
     useEffect(() => {
@@ -236,18 +224,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     )}
                 </>
             )}
-            {isScale && (
-                <ComboboxItem
-                    label={intl.formatMessage({defaultMessage: 'Default model'})}
-                    value={props.service.defaultModel}
-                    options={scaleKnownModels}
-                    placeholder={intl.formatMessage({defaultMessage: 'Select a model or enter custom vendor/model-name'})}
-                    onChange={(e) => props.onChange({...props.service, defaultModel: e.target.value})}
-                    helptext={intl.formatMessage({defaultMessage: 'Select a known model or enter a custom vendor/model-name. See Scale documentation for available models.'})}
-                    isClearable={false}
-                />
-            )}
-            {!isScale && supportsModelFetching && availableModels.length > 0 && (
+            {supportsModelFetching && availableModels.length > 0 && (
                 <ComboboxItem
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
@@ -258,7 +235,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     isClearable={false}
                 />
             )}
-            {!isScale && !(supportsModelFetching && availableModels.length > 0) && (
+            {!(supportsModelFetching && availableModels.length > 0) && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}

@@ -387,7 +387,9 @@ func (a *API) handleFetchModels(c *gin.Context) {
 	}
 
 	// API key is required for most services, but optional for openaicompatible (some don't require auth)
-	if req.APIKey == "" && req.ServiceType != "openaicompatible" {
+	// and for registered providers that serve known models statically.
+	_, isRegistered := llm.GetOpenAICompatibleProvider(req.ServiceType)
+	if req.APIKey == "" && req.ServiceType != "openaicompatible" && !isRegistered {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey is required"))
 		return
 	}
@@ -407,8 +409,12 @@ func (a *API) handleFetchModels(c *gin.Context) {
 	case "openai", "azure", "openaicompatible":
 		models, err = openai.FetchModels(req.APIKey, req.APIURL, req.OrgID, a.llmUpstreamHTTPClient)
 	default:
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("model fetching not supported for service type: %s", req.ServiceType))
-		return
+		if providerCfg, ok := llm.GetOpenAICompatibleProvider(req.ServiceType); ok {
+			models = providerCfg.KnownModels
+		} else {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("model fetching not supported for service type: %s", req.ServiceType))
+			return
+		}
 	}
 
 	if err != nil {
