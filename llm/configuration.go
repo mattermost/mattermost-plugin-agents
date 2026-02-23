@@ -20,7 +20,7 @@ type ServiceConfig struct {
 	// Renaming the JSON field to inputTokenLimit would require a migration, leaving as is for now.
 	InputTokenLimit         int  `json:"tokenLimit"`
 	StreamingTimeoutSeconds int  `json:"streamingTimeoutSeconds"`
-	SendUserID              bool `json:"sendUserID"`
+	SendUserID              bool `json:"sendUserId"`
 
 	// Otherwise known as maxTokens
 	OutputTokenLimit int `json:"outputTokenLimit"`
@@ -28,6 +28,10 @@ type ServiceConfig struct {
 	// UseResponsesAPI determines whether to use the new OpenAI Responses API
 	// Only applicable to OpenAI and OpenAI-compatible services
 	UseResponsesAPI bool `json:"useResponsesAPI"`
+
+	// ReasoningEnabled determines whether reasoning/thinking is enabled for this service
+	// Applicable to OpenAI (with ResponsesAPI) and Anthropic
+	ReasoningEnabled bool `json:"reasoningEnabled"`
 }
 
 type ChannelAccessLevel int
