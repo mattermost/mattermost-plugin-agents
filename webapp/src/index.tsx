@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {Store, Action} from 'redux';
+import {Store, UnknownAction} from 'redux';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
@@ -36,7 +36,7 @@ import {useBotlist} from './bots';
 import AgentsTour from './components/tutorial/agents_tour';
 import {isEnterpriseLicensedOrDevelopment} from './license';
 
-type WebappStore = Store<GlobalState, Action<Record<string, unknown>>>
+type WebappStore = Store<GlobalState, UnknownAction>
 
 const IconAIContainer = styled.img`
 	border-radius: 50%;
