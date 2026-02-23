@@ -78,6 +78,8 @@ type Props = {
     activeBot: LLMBot | null
 }
 
+const EMPTY_BOTS: LLMBot[] = [];
+
 const setEditorText = (text: string) => {
     const replyBox = document.getElementById('reply_textbox');
     if (replyBox) {
@@ -96,7 +98,7 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
     const botChannelId = activeBot?.dmChannelID || '';
 
     const currentBots = useSelector((state: any) =>
-        state[`plugins-${manifest.id}`]?.bots || [],
+        state[`plugins-${manifest.id}`]?.bots ?? EMPTY_BOTS,
     );
 
     // State for error handling

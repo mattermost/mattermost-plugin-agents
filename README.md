@@ -37,8 +37,7 @@ Comprehensive documentation is available in the `/docs` directory:
 ### System Requirements
 
 - Mattermost Server versions:
-  - v10.0 or later recommended
-  - v9.11+ (ESR)
+  - v11.1 or later
 - PostgreSQL database with pgvector extension for semantic search capabilities
 - Network access to your chosen LLM provider
 
