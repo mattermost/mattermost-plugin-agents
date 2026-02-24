@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -190,6 +191,10 @@ func (c *testToolCallingConfig) EnableChannelMentionToolCalling() bool {
 
 func (c *testToolCallingConfig) AllowNativeWebSearchInChannels() bool {
 	return false
+}
+
+func (c *testToolCallingConfig) ApprovedMCPServers() *mcp.ApprovedMCPServersConfig {
+	return &mcp.ApprovedMCPServersConfig{}
 }
 
 type toolArgs struct {

@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/mmtools"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
@@ -43,6 +44,7 @@ type AIThread struct {
 type ConfigProvider interface {
 	EnableChannelMentionToolCalling() bool
 	AllowNativeWebSearchInChannels() bool
+	ApprovedMCPServers() *mcp.ApprovedMCPServersConfig
 }
 
 type Conversations struct {
@@ -160,6 +162,15 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 	c.mmClient.LogDebug("Checking for web search data in ProcessUserRequestWithContext", "has_data", len(webSearchData) > 0, "num_contexts", len(webSearchData))
 	if len(webSearchData) > 0 {
 		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
+	}
+
+	// Wrap stream with MCP auto-approval for channel tool calls.
+	// When tools are enabled in channels and an approved servers config exists,
+	// READ-only tools from known MCP servers are auto-executed, skipping the
+	// call-approval UI and proceeding directly to result-sharing.
+	if allowToolsInChannel && context != nil && context.Tools != nil && c.configProvider != nil {
+		approvedServers := c.configProvider.ApprovedMCPServers()
+		result = wrapStreamWithMCPAutoApproval(result, context, approvedServers)
 	}
 
 	go func() {

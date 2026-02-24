@@ -245,6 +245,79 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 	delete(p.contexts, postID)
 }
 
+// hasAutoApprovedToolCalls checks if any tool call in the batch was auto-approved
+// by the MCP approved servers feature. When the auto-approval wrapper executes tools,
+// it sets them to ToolCallStatusAutoApproved — so if any has that status, the
+// entire batch went through auto-approval.
+func hasAutoApprovedToolCalls(toolCalls []llm.ToolCall) bool {
+	for _, tc := range toolCalls {
+		if tc.Status == llm.ToolCallStatusAutoApproved {
+			return true
+		}
+	}
+	return false
+}
+
+// handleAutoApprovedToolCalls handles tool calls that were pre-executed by the
+// MCP auto-approval wrapper. It skips the call-approval UI and sets up the
+// result-sharing stage directly, since the tools have already been executed.
+func (p *MMPostStreamService) handleAutoApprovedToolCalls(post *model.Post, toolCalls []llm.ToolCall, broadcast *model.WebsocketBroadcast) {
+	requesterID, ok := post.GetProp(LLMRequesterUserID).(string)
+	if !ok || requesterID == "" {
+		p.mmClient.LogError("Missing requester ID for auto-approved tool call", "post_id", post.Id)
+		return
+	}
+
+	// Convert AutoApproved status to Success for downstream processing
+	for i := range toolCalls {
+		if toolCalls[i].Status == llm.ToolCallStatusAutoApproved {
+			toolCalls[i].Status = llm.ToolCallStatusSuccess
+		}
+	}
+
+	// Store full results in the result KV key (consumed by HandleToolResult)
+	resultKVKey := ToolResultPrivateKVKey(post.Id, requesterID)
+	if kvErr := p.mmClient.KVSet(resultKVKey, toolCalls); kvErr != nil {
+		p.mmClient.LogError("Failed to store auto-approved tool results", "error", kvErr, "post_id", post.Id)
+		return
+	}
+
+	// Store full tool calls in the call KV key (for cleanup in HandleToolResult)
+	callKVKey := ToolCallPrivateKVKey(post.Id, requesterID)
+	if kvErr := p.mmClient.KVSet(callKVKey, toolCalls); kvErr != nil {
+		p.mmClient.LogError("Failed to store auto-approved tool call data", "error", kvErr, "post_id", post.Id)
+		return
+	}
+
+	// Redact for post display
+	redactedTools := RedactToolCalls(toolCalls)
+	toolCallJSON, err := json.Marshal(redactedTools)
+	if err != nil {
+		p.mmClient.LogError("Failed to marshal auto-approved tool call", "error", err)
+		return
+	}
+
+	// Set up result-sharing stage: the post shows redacted tools with
+	// PendingToolResultProp so the frontend presents the result-approval UI
+	// instead of the call-approval UI.
+	post.AddProp(ToolCallProp, string(toolCallJSON))
+	post.AddProp(ToolCallRedactedProp, "true")
+	post.AddProp(PendingToolResultProp, "true")
+
+	if err := p.mmClient.UpdatePost(post); err != nil {
+		p.mmClient.LogError("Failed to update post with auto-approved tool call", "error", err)
+	}
+
+	// Send websocket event for the result-sharing UI
+	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+		"post_id":   post.Id,
+		"control":   "tool_call",
+		"tool_call": string(toolCallJSON),
+	}, broadcast)
+
+	p.mmClient.LogDebug("Auto-approved MCP tool calls executed", "post_id", post.Id, "tool_count", len(toolCalls))
+}
+
 // StreamToPost streams the result of a TextStreamResult to a post.
 // it will internally handle logging needs and updating the post.
 func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string) {
@@ -351,9 +424,19 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 			case llm.EventTypeToolCalls:
 				// Handle tool call event
 				if toolCalls, ok := event.Value.([]llm.ToolCall); ok {
-					// Ensure all tool calls have Pending status and sanitize arguments
+					// Check if these tool calls were auto-approved by the MCP auto-approval wrapper.
+					// Auto-approved tools have already been executed and have results populated.
+					autoApproved := hasAutoApprovedToolCalls(toolCalls)
+
+					if !autoApproved {
+						// Normal flow: set all to Pending status
+						for i := range toolCalls {
+							toolCalls[i].Status = llm.ToolCallStatusPending
+						}
+					}
+
+					// Sanitize arguments for all tool calls (including auto-approved)
 					for i := range toolCalls {
-						toolCalls[i].Status = llm.ToolCallStatusPending
 						toolCalls[i].SanitizeArguments()
 					}
 
@@ -364,41 +447,47 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					}
 					isDMWithBot = mmapi.IsDMWith(post.UserId, channel)
 
-					toolCallsForPost := toolCalls
-					if !isDMWithBot {
-						requesterID, ok := post.GetProp(LLMRequesterUserID).(string)
-						if !ok || requesterID == "" {
-							p.mmClient.LogError("Missing requester ID for tool call, cannot persist private data", "post_id", post.Id)
-							return
-						}
-						kvKey := ToolCallPrivateKVKey(post.Id, requesterID)
-						if kvErr := p.mmClient.KVSet(kvKey, toolCalls); kvErr != nil {
-							p.mmClient.LogError("Failed to store tool calls in KV store, cannot continue", "error", kvErr, "post_id", post.Id, "kv_key", kvKey)
-							return
-						}
-						toolCallsForPost = RedactToolCalls(toolCalls)
-						post.AddProp(ToolCallRedactedProp, "true")
-					}
-
-					// Add the tool call as a prop to the post
-					toolCallJSON, err := json.Marshal(toolCallsForPost)
-					if err != nil {
-						p.mmClient.LogError("Failed to marshal tool call", "error", err)
+					if autoApproved && !isDMWithBot {
+						// Auto-approved in channel: skip call-approval, set up result-sharing
+						p.handleAutoApprovedToolCalls(post, toolCalls, broadcast)
 					} else {
-						post.AddProp(ToolCallProp, string(toolCallJSON))
-					}
+						// Standard flow: pending approval or DM
+						toolCallsForPost := toolCalls
+						if !isDMWithBot {
+							requesterID, ok := post.GetProp(LLMRequesterUserID).(string)
+							if !ok || requesterID == "" {
+								p.mmClient.LogError("Missing requester ID for tool call, cannot persist private data", "post_id", post.Id)
+								return
+							}
+							kvKey := ToolCallPrivateKVKey(post.Id, requesterID)
+							if kvErr := p.mmClient.KVSet(kvKey, toolCalls); kvErr != nil {
+								p.mmClient.LogError("Failed to store tool calls in KV store, cannot continue", "error", kvErr, "post_id", post.Id, "kv_key", kvKey)
+								return
+							}
+							toolCallsForPost = RedactToolCalls(toolCalls)
+							post.AddProp(ToolCallRedactedProp, "true")
+						}
 
-					// Update the post with the tool call and any reasoning that was previously added
-					if err := p.mmClient.UpdatePost(post); err != nil {
-						p.mmClient.LogError("Failed to update post with tool call", "error", err)
-					}
+						// Add the tool call as a prop to the post
+						toolCallJSON, err := json.Marshal(toolCallsForPost)
+						if err != nil {
+							p.mmClient.LogError("Failed to marshal tool call", "error", err)
+						} else {
+							post.AddProp(ToolCallProp, string(toolCallJSON))
+						}
 
-					// Send websocket event with tool call data
-					p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
-						"post_id":   post.Id,
-						"control":   "tool_call",
-						"tool_call": string(toolCallJSON),
-					}, broadcast)
+						// Update the post with the tool call and any reasoning that was previously added
+						if err := p.mmClient.UpdatePost(post); err != nil {
+							p.mmClient.LogError("Failed to update post with tool call", "error", err)
+						}
+
+						// Send websocket event with tool call data
+						p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+							"post_id":   post.Id,
+							"control":   "tool_call",
+							"tool_call": string(toolCallJSON),
+						}, broadcast)
+					}
 				}
 				return
 			case llm.EventTypeAnnotations:

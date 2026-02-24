@@ -196,6 +196,11 @@ const (
 	ToolCallStatusError
 	// ToolCallStatusSuccess indicates the tool call was accepted and resolved successfully
 	ToolCallStatusSuccess
+	// ToolCallStatusAutoApproved indicates the tool call was auto-approved and executed
+	// by the MCP approved servers feature (READ-only tools on known servers).
+	// This status is set by the stream wrapper and consumed by the streaming layer
+	// to skip the call-approval UI and proceed directly to result-sharing.
+	ToolCallStatusAutoApproved
 )
 
 // ToolCall represents a tool call. An empty result indicates that the tool has not yet been resolved.
