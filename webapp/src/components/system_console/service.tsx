@@ -77,8 +77,9 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     // Fetch models when API key or URL changes for supported service types
     useEffect(() => {
         // For openaicompatible, API key is optional if there's an API URL
+        // For scale (and other registered providers), the backend serves static known models so no key is needed
         // For other types, API key is required
-        const hasRequiredCredentials = type === 'openaicompatible' ? (props.service.apiKey || props.service.apiURL) : props.service.apiKey;
+        const hasRequiredCredentials = type === 'openaicompatible' ? (props.service.apiKey || props.service.apiURL) : (type === 'scale' || props.service.apiKey);
 
         if (!supportsModelFetching || !hasRequiredCredentials) {
             setAvailableModels([]);

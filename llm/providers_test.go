@@ -119,7 +119,10 @@ func TestScaleTransportFactory(t *testing.T) {
 		},
 	}
 
-	p, _ := GetOpenAICompatibleProvider(ServiceTypeScale)
+	p, ok := GetOpenAICompatibleProvider(ServiceTypeScale)
+	if !ok {
+		t.Fatal("Scale provider not found in registry")
+	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -156,7 +159,10 @@ func TestScaleTransportFactory(t *testing.T) {
 }
 
 func TestScaleTransportFactoryNilBase(t *testing.T) {
-	p, _ := GetOpenAICompatibleProvider(ServiceTypeScale)
+	p, ok := GetOpenAICompatibleProvider(ServiceTypeScale)
+	if !ok {
+		t.Fatal("Scale provider not found in registry")
+	}
 
 	transport := p.CreateTransport(ServiceConfig{APIKey: "k"}, nil)
 	cat, ok := transport.(*CustomAuthTransport)

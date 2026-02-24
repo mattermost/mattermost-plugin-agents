@@ -134,10 +134,9 @@ func TestCustomAuthTransport_NilBase(t *testing.T) {
 
 func TestCloneHTTPClientWithTransport(t *testing.T) {
 	tests := []struct {
-		name            string
-		client          *http.Client
-		expectTimeout   time.Duration
-		expectNonNilJar bool
+		name          string
+		client        *http.Client
+		expectTimeout time.Duration
 	}{
 		{
 			name:          "nil client returns new client with transport only",
@@ -168,6 +167,8 @@ func TestCloneHTTPClientWithTransport(t *testing.T) {
 			// Verify it's a different pointer than the original
 			if tt.client != nil {
 				assert.NotSame(t, tt.client, result)
+				assert.Equal(t, tt.client.Jar, result.Jar)
+				assert.Equal(t, tt.client.CheckRedirect == nil, result.CheckRedirect == nil)
 			}
 		})
 	}
