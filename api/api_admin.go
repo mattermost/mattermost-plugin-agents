@@ -194,7 +194,8 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		tools, err := a.discoverRemoteServerTools(c.Request.Context(), userID, serverConfig)
 		if err != nil {
 			var oauthErr *mcp.OAuthNeededError
-			if errors.As(err, &oauthErr) {
+			isOAuthError := errors.As(err, &oauthErr)
+			if isOAuthError {
 				serverInfo.NeethsOAuth = true
 				serverInfo.OAuthURL = oauthErr.AuthURL()
 			} else {

@@ -106,6 +106,10 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 				metadataURL: metadataURL,
 			}
 		}
+		return nil, &mcpUnauthorized{
+			metadataURL: "",
+			err:         fmt.Errorf("received 401 response without WWW-Authenticate header"),
+		}
 	}
 
 	return resp, err
