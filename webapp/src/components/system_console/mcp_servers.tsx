@@ -23,12 +23,19 @@ export type MCPEmbeddedServerConfig = {
     enabled: boolean;
 };
 
+export type ApprovedProvidersConfig = {
+    atlassian: boolean;
+    github: boolean;
+    figma: boolean;
+};
+
 export type MCPConfig = {
     enabled: boolean;
     enablePluginServer: boolean;
     servers: MCPServerConfig[];
     embeddedServer: MCPEmbeddedServerConfig;
     idleTimeoutMinutes?: number;
+    approvedProviders?: ApprovedProvidersConfig;
 };
 
 type Props = {

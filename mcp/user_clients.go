@@ -167,10 +167,11 @@ func (c *UserClients) GetTools() []llm.Tool {
 			seenTools[toolName] = serverID
 
 			tools = append(tools, llm.Tool{
-				Name:        toolName,
-				Description: tool.Description,
-				Schema:      tool.InputSchema,
-				Resolver:    c.createToolResolver(client, toolName),
+				Name:         toolName,
+				Description:  tool.Description,
+				Schema:       tool.InputSchema,
+				Resolver:     c.createToolResolver(client, toolName),
+				ServerOrigin: client.config.BaseURL,
 			})
 		}
 	}

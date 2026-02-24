@@ -27,6 +27,10 @@ type Tool struct {
 	Description string
 	Schema      any
 	Resolver    ToolResolver
+
+	// ServerOrigin identifies the MCP server this tool came from (BaseURL).
+	// Empty for built-in tools. Used for auto-approval decisions.
+	ServerOrigin string
 }
 
 type ToolResolver func(context *Context, argsGetter ToolArgumentGetter) (string, error)
@@ -37,10 +41,11 @@ type ToolResolver func(context *Context, argsGetter ToolArgumentGetter) (string,
 // - Automatically injected when the resolver is called
 func (t Tool) WithBoundParams(params map[string]interface{}) Tool {
 	return Tool{
-		Name:        t.Name,
-		Description: t.Description,
-		Schema:      removeSchemaProperties(t.Schema, params),
-		Resolver:    wrapResolverWithBoundParams(t.Resolver, params),
+		Name:         t.Name,
+		Description:  t.Description,
+		Schema:       removeSchemaProperties(t.Schema, params),
+		Resolver:     wrapResolverWithBoundParams(t.Resolver, params),
+		ServerOrigin: t.ServerOrigin,
 	}
 }
 
@@ -201,6 +206,10 @@ type ToolCall struct {
 	Arguments   json.RawMessage `json:"arguments"`
 	Result      string          `json:"result"`
 	Status      ToolCallStatus  `json:"status"`
+
+	// ServerOrigin identifies the MCP server this tool came from (BaseURL).
+	// Empty for built-in tools. Used for auto-approval decisions.
+	ServerOrigin string `json:"server_origin,omitempty"`
 }
 
 // SanitizeNonPrintableChars replaces non-printable Unicode characters with their

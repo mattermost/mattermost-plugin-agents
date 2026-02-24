@@ -112,6 +112,16 @@ func (c *Container) MCP() mcp.Config {
 	return c.cfg.Load().MCP
 }
 
+// ApprovedMCPServers returns the resolved approved MCP servers config,
+// with each built-in server's Enabled flag driven by the admin toggles.
+func (c *Container) ApprovedMCPServers() *mcp.ApprovedMCPServersConfig {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return &mcp.ApprovedMCPServersConfig{}
+	}
+	return cfg.MCP.ResolveApprovedServers()
+}
+
 func (c *Container) AllowUnsafeLinks() bool {
 	cfg := c.cfg.Load()
 	if cfg == nil {
