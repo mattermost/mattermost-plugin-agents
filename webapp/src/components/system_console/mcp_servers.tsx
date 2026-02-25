@@ -9,6 +9,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {TertiaryButton} from '../assets/buttons';
 
 import MCPToolsViewer from './mcp_tools_viewer';
+import ApprovedServersPanel from './approved_servers_panel';
 
 import {BooleanItem, ItemList, TextItem} from './item';
 
@@ -23,10 +24,12 @@ export type MCPEmbeddedServerConfig = {
     enabled: boolean;
 };
 
-export type ApprovedProvidersConfig = {
-    atlassian: boolean;
-    github: boolean;
-    figma: boolean;
+export type ApprovedMCPServer = {
+    id?: string;
+    name: string;
+    url_patterns: string[];
+    auto_approve_tools: string[];
+    enabled: boolean;
 };
 
 export type MCPConfig = {
@@ -35,7 +38,7 @@ export type MCPConfig = {
     servers: MCPServerConfig[];
     embeddedServer: MCPEmbeddedServerConfig;
     idleTimeoutMinutes?: number;
-    approvedProviders?: ApprovedProvidersConfig;
+    approvedServers?: ApprovedMCPServer[];
 };
 
 type Props = {
@@ -242,7 +245,7 @@ const MCPServer = ({
 // Main component for MCP servers configuration
 const MCPServers = ({mcpConfig, onChange}: Props) => {
     const intl = useIntl();
-    const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
+    const [activeTab, setActiveTab] = useState<'config' | 'tools' | 'approved'>('config');
 
     // Create a properly initialized config object
     const config: MCPConfig = {
@@ -253,6 +256,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
             enabled: !mcpConfig?.enabled,
         },
         idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes || 30,
+        approvedServers: mcpConfig?.approvedServers,
     };
 
     // Generate a server name
@@ -324,6 +328,12 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                             onClick={() => setActiveTab('tools')}
                         >
                             <FormattedMessage defaultMessage='Tools'/>
+                        </TabButton>
+                        <TabButton
+                            active={activeTab === 'approved'}
+                            onClick={() => setActiveTab('approved')}
+                        >
+                            <FormattedMessage defaultMessage='Approved Servers'/>
                         </TabButton>
                     </TabsContainer>
 
@@ -400,6 +410,13 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
                         {activeTab === 'tools' && (
                             <MCPToolsViewer/>
+                        )}
+
+                        {activeTab === 'approved' && (
+                            <ApprovedServersPanel
+                                approvedServers={config.approvedServers || []}
+                                onChange={(approvedServers) => onChange({...config, approvedServers})}
+                            />
                         )}
                     </TabContent>
                 </>

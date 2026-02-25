@@ -112,14 +112,14 @@ func (c *Container) MCP() mcp.Config {
 	return c.cfg.Load().MCP
 }
 
-// ApprovedMCPServers returns the resolved approved MCP servers config,
-// with each built-in server's Enabled flag driven by the admin toggles.
+// ApprovedMCPServers returns the merged approved MCP servers configuration,
+// combining built-in Mattermost-curated servers with any user-defined overrides.
 func (c *Container) ApprovedMCPServers() *mcp.ApprovedMCPServersConfig {
 	cfg := c.cfg.Load()
 	if cfg == nil {
-		return &mcp.ApprovedMCPServersConfig{}
+		return mcp.MergeApprovedServers(mcp.BuiltinApprovedServers(), nil)
 	}
-	return cfg.MCP.ResolveApprovedServers()
+	return mcp.MergeApprovedServers(mcp.BuiltinApprovedServers(), cfg.MCP.ApprovedServers)
 }
 
 func (c *Container) AllowUnsafeLinks() bool {

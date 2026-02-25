@@ -36,15 +36,6 @@ type EmbeddedServerConfig struct {
 	Enabled bool `json:"enabled"`
 }
 
-// ApprovedProviders controls which built-in approved MCP servers have
-// auto-execution enabled for their READ-only tools. Each field maps
-// to a built-in ApprovedMCPServer defined in approved_servers_builtin.go.
-type ApprovedProviders struct {
-	Atlassian bool `json:"atlassian"`
-	GitHub    bool `json:"github"`
-	Figma     bool `json:"figma"`
-}
-
 // Config contains the configuration for the MCP  servers
 type Config struct {
 	Enabled            bool                 `json:"enabled"`
@@ -52,24 +43,7 @@ type Config struct {
 	Servers            []ServerConfig       `json:"servers"`
 	EmbeddedServer     EmbeddedServerConfig `json:"embeddedServer"`
 	IdleTimeoutMinutes int                  `json:"idleTimeoutMinutes"`
-	ApprovedProviders  ApprovedProviders    `json:"approvedProviders"`
-}
-
-// ResolveApprovedServers returns the merged approved servers config with
-// the Enabled flag on each built-in server driven by the ApprovedProviders toggles.
-func (c *Config) ResolveApprovedServers() *ApprovedMCPServersConfig {
-	servers := BuiltinApprovedServers()
-	for i := range servers {
-		switch servers[i].Name {
-		case "Atlassian":
-			servers[i].Enabled = c.ApprovedProviders.Atlassian
-		case "GitHub":
-			servers[i].Enabled = c.ApprovedProviders.GitHub
-		case "Figma":
-			servers[i].Enabled = c.ApprovedProviders.Figma
-		}
-	}
-	return &ApprovedMCPServersConfig{Servers: servers}
+	ApprovedServers    []ApprovedMCPServer  `json:"approvedServers,omitempty"`
 }
 
 // DiscoverRemoteServerTools creates a temporary connection to a remote MCP server and discovers its tools

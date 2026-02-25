@@ -473,6 +473,9 @@ func (c *Conversations) completeAndStreamToolResponse(
 		return fmt.Errorf("failed to get chat completion: %w", err)
 	}
 
+	// Enrich tool calls with server origin for auto-approval decisions
+	result = llm.EnrichToolCallsWithServerOrigin(result, llmContext.Tools)
+
 	// Decorate the stream with web search annotations if available
 	if webSearchData := mmtools.ConsumeWebSearchContexts(llmContext); len(webSearchData) > 0 {
 		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
@@ -488,6 +491,42 @@ func (c *Conversations) completeAndStreamToolResponse(
 	}
 
 	return nil
+}
+
+// AutoExecuteApprovedToolCalls is the callback invoked by the streaming layer
+// when all tool calls in a batch have been auto-approved. It retrieves the
+// tool calls from KV store and calls HandleToolCall with all tool IDs pre-accepted.
+func (c *Conversations) AutoExecuteApprovedToolCalls(postID string, requesterID string) {
+	post, err := c.mmClient.GetPost(postID)
+	if err != nil {
+		c.mmClient.LogError("Auto-execute: failed to get post", "error", err, "post_id", postID)
+		return
+	}
+
+	channel, err := c.mmClient.GetChannel(post.ChannelId)
+	if err != nil {
+		c.mmClient.LogError("Auto-execute: failed to get channel", "error", err, "post_id", postID)
+		return
+	}
+
+	// Read tool calls from KV store to get the full (unredacted) tool call data
+	toolCallKVKey := streaming.ToolCallPrivateKVKey(postID, requesterID)
+	var toolCalls []llm.ToolCall
+	if kvErr := c.mmClient.KVGet(toolCallKVKey, &toolCalls); kvErr != nil {
+		c.mmClient.LogError("Auto-execute: failed to load tool calls from KV store", "error", kvErr, "post_id", postID)
+		return
+	}
+
+	// Collect all tool IDs for pre-acceptance
+	allToolIDs := make([]string, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		allToolIDs = append(allToolIDs, tc.ID)
+	}
+
+	// Call HandleToolCall with all tools pre-accepted
+	if err := c.HandleToolCall(requesterID, post, channel, allToolIDs); err != nil {
+		c.mmClient.LogError("Auto-execute: HandleToolCall failed", "error", err, "post_id", postID)
+	}
 }
 
 // deleteToolCallKVEntries cleans up KV store entries, logging any deletion errors.

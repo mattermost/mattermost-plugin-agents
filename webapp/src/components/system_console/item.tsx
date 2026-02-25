@@ -26,6 +26,8 @@ export type TextItemProps = {
     min?: string,
     max?: string,
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => void,
+    onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void,
+    onFocus?: (e: React.FocusEvent<HTMLInputElement>) => void,
     disabled?: boolean,
 };
 
@@ -40,6 +42,8 @@ export const TextItem = (props: TextItemProps) => {
                     type={props.type ? props.type : 'text'}
                     placeholder={props.placeholder ? props.placeholder : props.label}
                     onChange={props.onChange}
+                    onBlur={props.onBlur}
+                    onFocus={props.onFocus}
                     maxLength={props.maxLength}
                     step={props.step}
                     min={props.min}

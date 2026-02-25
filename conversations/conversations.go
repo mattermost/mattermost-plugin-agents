@@ -152,10 +152,34 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 			opts = append(opts, llm.WithNativeWebSearchAllowed())
 		}
 	}
+
+	// In DMs, auto-run approved MCP tools so they execute without user approval
+	if isDM && c.configProvider != nil && context != nil && context.Tools != nil {
+		approvedConfig := c.configProvider.ApprovedMCPServers()
+		if approvedConfig != nil {
+			allTools := context.Tools.GetTools()
+			toolInfos := make([]struct{ Name, ServerOrigin string }, len(allTools))
+			for i, t := range allTools {
+				toolInfos[i] = struct{ Name, ServerOrigin string }{Name: t.Name, ServerOrigin: t.ServerOrigin}
+			}
+			autoRunNames := approvedConfig.GetAutoApprovedToolNames(toolInfos)
+			if len(autoRunNames) > 0 {
+				opts = append(opts, llm.WithAutoRunTools(autoRunNames))
+			}
+		}
+	}
+
 	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
 		return nil, err
 	}
+
+	// Enrich tool calls with server origin for auto-approval decisions
+	var toolsStore *llm.ToolStore
+	if context != nil && context.Tools != nil {
+		toolsStore = context.Tools
+	}
+	result = llm.EnrichToolCallsWithServerOrigin(result, toolsStore)
 
 	// Decorate the stream with web search annotations if available
 	webSearchData := mmtools.ConsumeWebSearchContexts(context)

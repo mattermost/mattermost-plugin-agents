@@ -268,9 +268,11 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	}
 
 	// Check for OAuth error from Streamable HTTP attempt
-	var mcpAuthErr *mcpUnauthorized
-	if errors.As(errStreamable, &mcpAuthErr) {
-		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, mcpAuthErr.MetadataURL())
+	var streamableAuthErr *mcpUnauthorized
+	streamableAsOAuth := errors.As(errStreamable, &streamableAuthErr)
+	streamableMetadataURL, streamableStringOAuth := extractOAuthMetadataURL(errStreamable)
+	if streamableAsOAuth {
+		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, streamableAuthErr.MetadataURL())
 		if oauthErr != nil {
 			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
 		}
@@ -281,8 +283,8 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 
 	// Temporary workaround: check for OAuth error by string matching since go-sdk does not preserve error chains with %w
 	// remove when go-sdk is updated to support oauth directly.
-	if metadataURL, ok := extractOAuthMetadataURL(errStreamable); ok {
-		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, metadataURL)
+	if streamableStringOAuth {
+		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, streamableMetadataURL)
 		if oauthErr != nil {
 			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
 		}
@@ -302,8 +304,11 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	}
 
 	// Check for OAuth error from SSE attempt
-	if errors.As(errSSE, &mcpAuthErr) {
-		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, mcpAuthErr.MetadataURL())
+	var sseAuthErr *mcpUnauthorized
+	sseAsOAuth := errors.As(errSSE, &sseAuthErr)
+	sseMetadataURL, sseStringOAuth := extractOAuthMetadataURL(errSSE)
+	if sseAsOAuth {
+		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, sseAuthErr.MetadataURL())
 		if oauthErr != nil {
 			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
 		}
@@ -314,8 +319,8 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 
 	// Temporary workaround: check for OAuth error by string matching since go-sdk does not preserve error chains with %w
 	// remove when go-sdk is updated to support oauth directly.
-	if metadataURL, ok := extractOAuthMetadataURL(errSSE); ok {
-		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, metadataURL)
+	if sseStringOAuth {
+		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, sseMetadataURL)
 		if oauthErr != nil {
 			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
 		}

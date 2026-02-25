@@ -5,8 +5,7 @@ package mcp
 
 // BuiltinApprovedServers returns the Mattermost-curated list of approved MCP servers.
 // These are compiled into the plugin and represent Mattermost's assessment of which
-// tools are READ-only on well-known MCP servers. The Enabled field on each is set to
-// false by default; it is overridden at runtime by the ApprovedProviders config toggles.
+// tools are READ-only on well-known MCP servers.
 func BuiltinApprovedServers() []ApprovedMCPServer {
 	return []ApprovedMCPServer{
 		atlassianApprovedServer(),
@@ -15,13 +14,14 @@ func BuiltinApprovedServers() []ApprovedMCPServer {
 	}
 }
 
-// atlassianApprovedServer returns the approved server definition for the Atlassian Rovo MCP Server.
-// Source: ATLASSIAN.md — 20 READ-only tools out of 29 total.
+// atlassianApprovedServer returns the approved server definition for the Atlassian Remote MCP Server.
+// Source: ATLASSIAN.md - 20 READ-only tools out of 29 total.
+// Endpoint: https://mcp.atlassian.com/v1/mcp
 func atlassianApprovedServer() ApprovedMCPServer {
 	return ApprovedMCPServer{
 		Name:        "Atlassian",
 		URLPatterns: []string{"mcp.atlassian.com"},
-		Enabled:     false,
+		Enabled:     true,
 		AutoApproveTools: []string{
 			"search",
 			"fetch",
@@ -47,13 +47,14 @@ func atlassianApprovedServer() ApprovedMCPServer {
 	}
 }
 
-// githubApprovedServer returns the approved server definition for the GitHub MCP Server.
-// Source: GITHUB.md — 56 READ-only tools out of 88 total.
+// githubApprovedServer returns the approved server definition for the GitHub Remote MCP Server.
+// Source: GITHUB.md - 54 READ-only tools out of 88 total.
+// Endpoint: https://api.githubcopilot.com/mcp/
 func githubApprovedServer() ApprovedMCPServer {
 	return ApprovedMCPServer{
 		Name:        "GitHub",
 		URLPatterns: []string{"api.githubcopilot.com"},
-		Enabled:     false,
+		Enabled:     true,
 		AutoApproveTools: []string{
 			"get_me",
 			"get_team_members",
@@ -113,20 +114,20 @@ func githubApprovedServer() ApprovedMCPServer {
 	}
 }
 
-// figmaApprovedServer returns the approved server definition for the Figma MCP Server.
-// Source: FIGMA.md — 9 READ-only tools out of 13 total.
+// figmaApprovedServer returns the approved server definition for the Figma Remote MCP Server.
+// Source: FIGMA.md - 8 READ-only tools out of 13 total (create_design_system_rules excluded).
+// Endpoint: https://mcp.figma.com/mcp
 func figmaApprovedServer() ApprovedMCPServer {
 	return ApprovedMCPServer{
 		Name:        "Figma",
 		URLPatterns: []string{"mcp.figma.com"},
-		Enabled:     false,
+		Enabled:     true,
 		AutoApproveTools: []string{
 			"get_design_context",
 			"get_metadata",
 			"get_screenshot",
 			"get_variable_defs",
 			"get_figjam",
-			"create_design_system_rules",
 			"get_code_connect_map",
 			"get_code_connect_suggestions",
 			"whoami",

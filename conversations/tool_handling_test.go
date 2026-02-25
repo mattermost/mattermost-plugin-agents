@@ -30,6 +30,8 @@ type fakeMMClient struct {
 	kv           map[string]interface{}
 	updatedPosts []*model.Post
 	kvDeletes    []string
+	posts        map[string]*model.Post
+	channels     map[string]*model.Channel
 }
 
 func (c *fakeMMClient) GetUser(userID string) (*model.User, error) {
@@ -87,8 +89,13 @@ func (c *fakeMMClient) AddReaction(*model.Reaction) error {
 	return errors.New("not implemented")
 }
 
-func (c *fakeMMClient) GetPost(string) (*model.Post, error) {
-	return nil, errors.New("not implemented")
+func (c *fakeMMClient) GetPost(postID string) (*model.Post, error) {
+	if c.posts != nil {
+		if post, ok := c.posts[postID]; ok {
+			return post, nil
+		}
+	}
+	return nil, errors.New("post not found")
 }
 
 func (c *fakeMMClient) GetPostsSince(string, int64) (*model.PostList, error) {
@@ -103,8 +110,13 @@ func (c *fakeMMClient) DM(string, string, *model.Post) error {
 	return errors.New("not implemented")
 }
 
-func (c *fakeMMClient) GetChannel(string) (*model.Channel, error) {
-	return nil, errors.New("not implemented")
+func (c *fakeMMClient) GetChannel(channelID string) (*model.Channel, error) {
+	if c.channels != nil {
+		if ch, ok := c.channels[channelID]; ok {
+			return ch, nil
+		}
+	}
+	return nil, errors.New("channel not found")
 }
 
 func (c *fakeMMClient) GetDirectChannel(string, string) (*model.Channel, error) {
@@ -467,4 +479,277 @@ func TestHandleToolCallChannelBlockedWhenPostPropMissing(t *testing.T) {
 	err = conversationService.HandleToolCall(requesterID, post, channel, []string{"tool-1"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "tool calling not allowed for this post")
+}
+
+func TestAutoExecuteApprovedToolCalls(t *testing.T) {
+	const (
+		postID      = "post-id"
+		channelID   = "channel-id"
+		teamID      = "team-id"
+		botID       = "bot-id"
+		requesterID = "requester-id"
+	)
+
+	t.Run("happy path - all tools execute successfully", func(t *testing.T) {
+		mockAPI := &plugintest.API{}
+		client := pluginapi.NewClient(mockAPI, nil)
+		licenseChecker := enterprise.NewLicenseChecker(client)
+
+		siteName := "Mattermost"
+		mockAPI.On("GetConfig").Return(&model.Config{TeamSettings: model.TeamSettings{SiteName: &siteName}}).Maybe()
+		mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+		mockAPI.On("GetTeam", teamID).Return(&model.Team{Id: teamID}, nil).Maybe()
+
+		tool := llm.Tool{
+			Name:        "test_tool",
+			Description: "test tool",
+			Schema:      llm.NewJSONSchemaFromStruct[toolArgs](),
+			Resolver: func(_ *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+				var parsed toolArgs
+				if err := args(&parsed); err != nil {
+					return "", err
+				}
+				return "result:" + parsed.Value, nil
+			},
+		}
+		contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{tool}}, nil, &testConfigProvider{})
+
+		botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+		bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, nil)
+		botService.SetBotsForTesting([]*bots.Bot{bot})
+
+		post := &model.Post{
+			Id:        postID,
+			UserId:    botID,
+			ChannelId: channelID,
+			CreateAt:  1,
+		}
+		post.AddProp(streaming.LLMRequesterUserID, requesterID)
+		post.AddProp(streaming.AllowToolsInChannelProp, "true")
+		post.AddProp(streaming.AutoApprovedToolCallProp, "true")
+
+		toolCalls := []llm.ToolCall{
+			{
+				ID:        "tool-1",
+				Name:      "test_tool",
+				Arguments: json.RawMessage(`{"value":"auto-data"}`),
+			},
+		}
+		// Set redacted tool calls on the post (as would happen in streaming)
+		redactedToolCalls := streaming.RedactToolCalls(toolCalls)
+		redactedJSON, err := json.Marshal(redactedToolCalls)
+		require.NoError(t, err)
+		post.AddProp(streaming.ToolCallProp, string(redactedJSON))
+		post.AddProp(streaming.ToolCallRedactedProp, "true")
+
+		postList := &model.PostList{
+			Order: []string{postID},
+			Posts: map[string]*model.Post{postID: post},
+		}
+
+		channel := &model.Channel{
+			Id:     channelID,
+			Type:   model.ChannelTypeOpen,
+			TeamId: teamID,
+		}
+
+		fakeClient := &fakeMMClient{
+			users: map[string]*model.User{
+				requesterID: {Id: requesterID, Locale: "en"},
+				botID:       {Id: botID, Locale: "en"},
+			},
+			posts:       map[string]*model.Post{postID: post},
+			channels:    map[string]*model.Channel{channelID: channel},
+			postThreads: map[string]*model.PostList{postID: postList},
+			kv:          map[string]interface{}{},
+		}
+
+		// Store tool calls in KV (as streaming would)
+		toolCallKVKey := streaming.ToolCallPrivateKVKey(postID, requesterID)
+		fakeClient.kv[toolCallKVKey] = toolCalls
+
+		toolCallingConfig := &testToolCallingConfig{enableChannelMentionToolCalling: true}
+		conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
+
+		// Call AutoExecuteApprovedToolCalls
+		conversationService.AutoExecuteApprovedToolCalls(postID, requesterID)
+
+		// Verify results stored in KV
+		resultKVKey := streaming.ToolResultPrivateKVKey(postID, requesterID)
+		storedResults, ok := fakeClient.kv[resultKVKey]
+		require.True(t, ok, "tool results should be stored in KV")
+		resultCalls, ok := storedResults.([]llm.ToolCall)
+		require.True(t, ok)
+		require.Len(t, resultCalls, 1)
+		require.Equal(t, "result:auto-data", resultCalls[0].Result)
+		require.Equal(t, llm.ToolCallStatusSuccess, resultCalls[0].Status)
+
+		// Verify post updated with pending_tool_result
+		require.NotEmpty(t, fakeClient.updatedPosts)
+		lastUpdated := fakeClient.updatedPosts[len(fakeClient.updatedPosts)-1]
+		require.Equal(t, "true", lastUpdated.GetProp(streaming.PendingToolResultProp))
+
+		// Verify tool calls on post are still redacted
+		toolCallProp, ok := lastUpdated.GetProp(streaming.ToolCallProp).(string)
+		require.True(t, ok)
+		require.NotContains(t, toolCallProp, "auto-data")
+	})
+
+	t.Run("tool execution error - result still stored", func(t *testing.T) {
+		mockAPI := &plugintest.API{}
+		client := pluginapi.NewClient(mockAPI, nil)
+		licenseChecker := enterprise.NewLicenseChecker(client)
+
+		siteName := "Mattermost"
+		mockAPI.On("GetConfig").Return(&model.Config{TeamSettings: model.TeamSettings{SiteName: &siteName}}).Maybe()
+		mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+		mockAPI.On("GetTeam", teamID).Return(&model.Team{Id: teamID}, nil).Maybe()
+
+		tool := llm.Tool{
+			Name:        "failing_tool",
+			Description: "tool that fails",
+			Schema:      llm.NewJSONSchemaFromStruct[toolArgs](),
+			Resolver: func(_ *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+				return "", errors.New("tool execution failed")
+			},
+		}
+		contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{tool}}, nil, &testConfigProvider{})
+
+		botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+		bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, nil)
+		botService.SetBotsForTesting([]*bots.Bot{bot})
+
+		post := &model.Post{
+			Id:        postID,
+			UserId:    botID,
+			ChannelId: channelID,
+			CreateAt:  1,
+		}
+		post.AddProp(streaming.LLMRequesterUserID, requesterID)
+		post.AddProp(streaming.AllowToolsInChannelProp, "true")
+		post.AddProp(streaming.AutoApprovedToolCallProp, "true")
+
+		toolCalls := []llm.ToolCall{
+			{
+				ID:        "tool-1",
+				Name:      "failing_tool",
+				Arguments: json.RawMessage(`{"value":"test"}`),
+			},
+		}
+		redactedToolCalls := streaming.RedactToolCalls(toolCalls)
+		redactedJSON, err := json.Marshal(redactedToolCalls)
+		require.NoError(t, err)
+		post.AddProp(streaming.ToolCallProp, string(redactedJSON))
+		post.AddProp(streaming.ToolCallRedactedProp, "true")
+
+		postList := &model.PostList{
+			Order: []string{postID},
+			Posts: map[string]*model.Post{postID: post},
+		}
+
+		channel := &model.Channel{
+			Id:     channelID,
+			Type:   model.ChannelTypeOpen,
+			TeamId: teamID,
+		}
+
+		fakeClient := &fakeMMClient{
+			users: map[string]*model.User{
+				requesterID: {Id: requesterID, Locale: "en"},
+				botID:       {Id: botID, Locale: "en"},
+			},
+			posts:       map[string]*model.Post{postID: post},
+			channels:    map[string]*model.Channel{channelID: channel},
+			postThreads: map[string]*model.PostList{postID: postList},
+			kv:          map[string]interface{}{},
+		}
+
+		toolCallKVKey := streaming.ToolCallPrivateKVKey(postID, requesterID)
+		fakeClient.kv[toolCallKVKey] = toolCalls
+
+		toolCallingConfig := &testToolCallingConfig{enableChannelMentionToolCalling: true}
+		conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
+
+		conversationService.AutoExecuteApprovedToolCalls(postID, requesterID)
+
+		// Tool had an error, but results should still be stored
+		resultKVKey := streaming.ToolResultPrivateKVKey(postID, requesterID)
+		storedResults, ok := fakeClient.kv[resultKVKey]
+		require.True(t, ok, "tool results should be stored even on error")
+		resultCalls, ok := storedResults.([]llm.ToolCall)
+		require.True(t, ok)
+		require.Len(t, resultCalls, 1)
+		require.Equal(t, llm.ToolCallStatusError, resultCalls[0].Status)
+		require.Equal(t, "Tool call failed", resultCalls[0].Result)
+	})
+
+	t.Run("missing post - logs error and returns", func(t *testing.T) {
+		mockAPI := &plugintest.API{}
+		client := pluginapi.NewClient(mockAPI, nil)
+		licenseChecker := enterprise.NewLicenseChecker(client)
+
+		siteName := "Mattermost"
+		mockAPI.On("GetConfig").Return(&model.Config{TeamSettings: model.TeamSettings{SiteName: &siteName}}).Maybe()
+		mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+
+		contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{}}, nil, &testConfigProvider{})
+		botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+
+		fakeClient := &fakeMMClient{
+			posts: map[string]*model.Post{}, // empty - post not found
+			kv:    map[string]interface{}{},
+		}
+
+		toolCallingConfig := &testToolCallingConfig{enableChannelMentionToolCalling: true}
+		conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
+
+		// Should not panic, just log error
+		conversationService.AutoExecuteApprovedToolCalls("nonexistent-post", requesterID)
+
+		// No posts updated since post was not found
+		require.Empty(t, fakeClient.updatedPosts)
+	})
+
+	t.Run("missing KV data - logs error and returns", func(t *testing.T) {
+		mockAPI := &plugintest.API{}
+		client := pluginapi.NewClient(mockAPI, nil)
+		licenseChecker := enterprise.NewLicenseChecker(client)
+
+		siteName := "Mattermost"
+		mockAPI.On("GetConfig").Return(&model.Config{TeamSettings: model.TeamSettings{SiteName: &siteName}}).Maybe()
+		mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+
+		contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{}}, nil, &testConfigProvider{})
+		botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+
+		post := &model.Post{
+			Id:        postID,
+			UserId:    botID,
+			ChannelId: channelID,
+			CreateAt:  1,
+		}
+		post.AddProp(streaming.LLMRequesterUserID, requesterID)
+		post.AddProp(streaming.AllowToolsInChannelProp, "true")
+
+		channel := &model.Channel{
+			Id:     channelID,
+			Type:   model.ChannelTypeOpen,
+			TeamId: teamID,
+		}
+
+		fakeClient := &fakeMMClient{
+			posts:    map[string]*model.Post{postID: post},
+			channels: map[string]*model.Channel{channelID: channel},
+			kv:       map[string]interface{}{}, // empty - no tool calls stored
+		}
+
+		toolCallingConfig := &testToolCallingConfig{enableChannelMentionToolCalling: true}
+		conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
+
+		// Should not panic, just log error
+		conversationService.AutoExecuteApprovedToolCalls(postID, requesterID)
+
+		// No posts updated since KV data was missing
+		require.Empty(t, fakeClient.updatedPosts)
+	})
 }

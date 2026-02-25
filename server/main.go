@@ -258,6 +258,12 @@ func (p *Plugin) OnActivate() error {
 	// TODO: Refactor to avoid circular dependency
 	conversationsService.SetMeetingsService(meetingsService)
 
+	// Wire auto-approval for approved MCP server tools in channels
+	streamingService.SetToolAutoApprover(streaming.ToolAutoApprovalFunc(func(serverBaseURL string, toolName string) bool {
+		return p.configuration.ApprovedMCPServers().IsToolAutoApproved(serverBaseURL, toolName)
+	}))
+	streamingService.SetAutoExecuteCallback(conversationsService.AutoExecuteApprovedToolCalls)
+
 	// Initialize embedded MCP server handlers for plugin endpoints
 	var mcpHandlers *mcpserver.PluginMCPHandlers
 	// Create logger adapter to route MCP handler logs through plugin logging

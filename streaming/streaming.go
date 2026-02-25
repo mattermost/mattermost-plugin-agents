@@ -39,6 +39,7 @@ const ToolCallRedactedProp = "pending_tool_call_redacted"
 const ToolCallPrivateKeyPrefix = "tool_call_private"
 const ToolResultPrivateKeyPrefix = "tool_result_private"
 const PendingToolResultProp = "pending_tool_result"
+const AutoApprovedToolCallProp = "auto_approved_tool_call"
 const ReasoningSummaryProp = "reasoning_summary"
 const AnnotationsProp = "annotations"
 const WebSearchContextProp = "web_search_context"
@@ -62,6 +63,23 @@ func RedactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	return redacted
 }
 
+// ToolAutoApprovalChecker checks whether a tool call should be auto-approved.
+type ToolAutoApprovalChecker interface {
+	IsToolAutoApproved(serverBaseURL string, toolName string) bool
+}
+
+// AutoExecuteCallback is called when all tool calls in a batch are auto-approvable.
+// It triggers tool execution without user approval.
+// Parameters: postID, requesterID
+type AutoExecuteCallback func(postID string, requesterID string)
+
+// ToolAutoApprovalFunc is a function adapter that implements ToolAutoApprovalChecker.
+type ToolAutoApprovalFunc func(serverBaseURL string, toolName string) bool
+
+func (f ToolAutoApprovalFunc) IsToolAutoApproved(serverBaseURL string, toolName string) bool {
+	return f(serverBaseURL, toolName)
+}
+
 type Service interface {
 	StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error
 	StreamToNewDM(ctx context.Context, botID string, stream *llm.TextStreamResult, userID string, post *model.Post, respondingToPostID string) error
@@ -78,10 +96,12 @@ type postStreamContext struct {
 var ErrAlreadyStreamingToPost = fmt.Errorf("already streaming to post")
 
 type MMPostStreamService struct {
-	contexts      map[string]postStreamContext
-	contextsMutex sync.Mutex
-	mmClient      Client
-	i18n          *i18n.Bundle
+	contexts            map[string]postStreamContext
+	contextsMutex       sync.Mutex
+	mmClient            Client
+	i18n                *i18n.Bundle
+	toolAutoApprover    ToolAutoApprovalChecker
+	autoExecuteCallback AutoExecuteCallback
 }
 
 func NewMMPostStreamService(mmClient Client, i18n *i18n.Bundle) *MMPostStreamService {
@@ -90,6 +110,43 @@ func NewMMPostStreamService(mmClient Client, i18n *i18n.Bundle) *MMPostStreamSer
 		mmClient: mmClient,
 		i18n:     i18n,
 	}
+}
+
+// SetToolAutoApprover sets the tool auto-approval checker for the streaming service.
+func (p *MMPostStreamService) SetToolAutoApprover(checker ToolAutoApprovalChecker) {
+	p.toolAutoApprover = checker
+}
+
+// SetAutoExecuteCallback sets the callback that will be invoked when all tool calls
+// in a batch are auto-approvable.
+func (p *MMPostStreamService) SetAutoExecuteCallback(callback AutoExecuteCallback) {
+	p.autoExecuteCallback = callback
+}
+
+// areAllToolCallsAutoApprovable checks if all tool calls in the batch
+// can be auto-approved. Returns false if any tool is not auto-approvable,
+// or if the auto-approval checker is not configured.
+func (p *MMPostStreamService) areAllToolCallsAutoApprovable(toolCalls []llm.ToolCall) bool {
+	if p.toolAutoApprover == nil {
+		return false
+	}
+	if len(toolCalls) == 0 {
+		return false
+	}
+	for _, tc := range toolCalls {
+		approved := p.toolAutoApprover.IsToolAutoApproved(tc.ServerOrigin, tc.Name)
+		if p.mmClient != nil {
+			p.mmClient.LogDebug("Auto-approval check",
+				"tool_name", tc.Name,
+				"server_origin", tc.ServerOrigin,
+				"approved", fmt.Sprintf("%t", approved),
+			)
+		}
+		if !approved {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *MMPostStreamService) StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error {
@@ -331,10 +388,18 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 	messageBuilder.Grow(4096) // Pre-allocate for typical response size
 	var reasoningBuffer strings.Builder
 	var isDMWithBot bool
+	var dmToolCalls []llm.ToolCall // accumulated tool calls for DM progress display
 
 	for {
 		select {
-		case event := <-stream.Stream:
+		case event, ok := <-stream.Stream:
+			if !ok {
+				// Stream channel closed - persist final state
+				if err := p.mmClient.UpdatePost(post); err != nil {
+					p.mmClient.LogError("Streaming failed to update post on channel close", "error", err)
+				}
+				return
+			}
 			switch event.Type {
 			case llm.EventTypeText:
 				// Handle text event
@@ -426,70 +491,113 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 				if toolCalls, ok := event.Value.([]llm.ToolCall); ok {
 					// Check if these tool calls were auto-approved by the MCP auto-approval wrapper.
 					// Auto-approved tools have already been executed and have results populated.
-					autoApproved := hasAutoApprovedToolCalls(toolCalls)
+					preExecuted := hasAutoApprovedToolCalls(toolCalls)
 
-					if !autoApproved {
-						// Normal flow: set all to Pending status
+					if !preExecuted {
 						for i := range toolCalls {
 							toolCalls[i].Status = llm.ToolCallStatusPending
 						}
 					}
 
-					// Sanitize arguments for all tool calls (including auto-approved)
 					for i := range toolCalls {
 						toolCalls[i].SanitizeArguments()
 					}
 
-					channel, err := p.mmClient.GetChannel(post.ChannelId)
-					if err != nil {
-						p.mmClient.LogError("Failed to get channel for tool call redaction", "error", err, "post_id", post.Id, "channel_id", post.ChannelId)
+					// Determine channel type once
+					if !isDMWithBot {
+						channel, chErr := p.mmClient.GetChannel(post.ChannelId)
+						if chErr != nil {
+							p.mmClient.LogError("Failed to get channel for tool call handling", "error", chErr, "post_id", post.Id, "channel_id", post.ChannelId)
+							return
+						}
+						isDMWithBot = mmapi.IsDMWith(post.UserId, channel)
+					}
+
+					if preExecuted && !isDMWithBot {
+						// Auto-approved in channel (pre-executed by wrapper): skip call-approval, set up result-sharing
+						p.handleAutoApprovedToolCalls(post, toolCalls, broadcast)
 						return
 					}
-					isDMWithBot = mmapi.IsDMWith(post.UserId, channel)
 
-					if autoApproved && !isDMWithBot {
-						// Auto-approved in channel: skip call-approval, set up result-sharing
-						p.handleAutoApprovedToolCalls(post, toolCalls, broadcast)
-					} else {
-						// Standard flow: pending approval or DM
-						toolCallsForPost := toolCalls
-						if !isDMWithBot {
-							requesterID, ok := post.GetProp(LLMRequesterUserID).(string)
-							if !ok || requesterID == "" {
-								p.mmClient.LogError("Missing requester ID for tool call, cannot persist private data", "post_id", post.Id)
-								return
+					if isDMWithBot {
+						// DM: show tool call progress without stopping the stream.
+						// Merge into accumulated list so all batches stay visible and
+						// pending->resolved transitions update in place.
+						for _, tc := range toolCalls {
+							updated := false
+							for j := range dmToolCalls {
+								if dmToolCalls[j].ID == tc.ID {
+									dmToolCalls[j] = tc
+									updated = true
+									break
+								}
 							}
-							kvKey := ToolCallPrivateKVKey(post.Id, requesterID)
-							if kvErr := p.mmClient.KVSet(kvKey, toolCalls); kvErr != nil {
-								p.mmClient.LogError("Failed to store tool calls in KV store, cannot continue", "error", kvErr, "post_id", post.Id, "kv_key", kvKey)
-								return
+							if !updated {
+								dmToolCalls = append(dmToolCalls, tc)
 							}
-							toolCallsForPost = RedactToolCalls(toolCalls)
-							post.AddProp(ToolCallRedactedProp, "true")
 						}
 
-						// Add the tool call as a prop to the post
-						toolCallJSON, err := json.Marshal(toolCallsForPost)
-						if err != nil {
-							p.mmClient.LogError("Failed to marshal tool call", "error", err)
+						toolCallJSON, jsonErr := json.Marshal(dmToolCalls)
+						if jsonErr != nil {
+							p.mmClient.LogError("Failed to marshal DM tool calls", "error", jsonErr)
+						} else {
+							post.AddProp(ToolCallProp, string(toolCallJSON))
+							if p.areAllToolCallsAutoApprovable(dmToolCalls) {
+								post.AddProp(AutoApprovedToolCallProp, "true")
+							}
+							if updErr := p.mmClient.UpdatePost(post); updErr != nil {
+								p.mmClient.LogError("Failed to update post with tool call", "error", updErr)
+							}
+							p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+								"post_id":   post.Id,
+								"control":   "tool_call",
+								"tool_call": string(toolCallJSON),
+							}, broadcast)
+						}
+						// Continue processing the stream - don't return
+					} else {
+						// Channel/GM: standard approval flow with redaction
+						requesterID, ok := post.GetProp(LLMRequesterUserID).(string)
+						if !ok || requesterID == "" {
+							p.mmClient.LogError("Missing requester ID for tool call, cannot persist private data", "post_id", post.Id)
+							return
+						}
+						kvKey := ToolCallPrivateKVKey(post.Id, requesterID)
+						if kvErr := p.mmClient.KVSet(kvKey, toolCalls); kvErr != nil {
+							p.mmClient.LogError("Failed to store tool calls in KV store, cannot continue", "error", kvErr, "post_id", post.Id, "kv_key", kvKey)
+							return
+						}
+						autoApproved := p.areAllToolCallsAutoApprovable(toolCalls)
+
+						toolCallsForPost := RedactToolCalls(toolCalls)
+						post.AddProp(ToolCallRedactedProp, "true")
+						if autoApproved {
+							post.AddProp(AutoApprovedToolCallProp, "true")
+						}
+
+						toolCallJSON, jsonErr := json.Marshal(toolCallsForPost)
+						if jsonErr != nil {
+							p.mmClient.LogError("Failed to marshal tool call", "error", jsonErr)
 						} else {
 							post.AddProp(ToolCallProp, string(toolCallJSON))
 						}
 
-						// Update the post with the tool call and any reasoning that was previously added
-						if err := p.mmClient.UpdatePost(post); err != nil {
-							p.mmClient.LogError("Failed to update post with tool call", "error", err)
+						if updErr := p.mmClient.UpdatePost(post); updErr != nil {
+							p.mmClient.LogError("Failed to update post with tool call", "error", updErr)
 						}
 
-						// Send websocket event with tool call data
 						p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
 							"post_id":   post.Id,
 							"control":   "tool_call",
 							"tool_call": string(toolCallJSON),
 						}, broadcast)
+
+						if autoApproved && p.autoExecuteCallback != nil {
+							go p.autoExecuteCallback(post.Id, requesterID)
+						}
+						return
 					}
 				}
-				return
 			case llm.EventTypeAnnotations:
 				// Handle annotations - might include cleaned message for web search citations
 				if annotationMap, ok := event.Value.(map[string]interface{}); ok {

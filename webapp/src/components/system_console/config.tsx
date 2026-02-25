@@ -21,7 +21,6 @@ import EmbeddingSearchPanel from './embedding_search/embedding_search_panel';
 import {EmbeddingSearchConfig} from './embedding_search/types';
 import MCPServers, {MCPConfig} from './mcp_servers';
 import WebSearchPanel, {WebSearchConfig as WebSearchSettings} from './web_search/web_search_panel';
-import ApprovedProvidersPanel from './approved_providers_panel';
 
 type Config = {
     services: LLMService[],
@@ -109,13 +108,9 @@ const defaultConfig = {
     },
     mcp: {
         enabled: false,
-        servers: {},
+        servers: [],
         idleTimeout: 30,
-        approvedProviders: {
-            atlassian: false,
-            github: false,
-            figma: false,
-        },
+        approvedServers: [],
     },
     webSearch: {
         enabled: false,
@@ -388,24 +383,13 @@ const Config = (props: Props) => {
                         // Ensure we're creating a valid structure for the server configuration
                         const updatedConfig = {
                             ...config,
-                            servers: config.servers || {},
+                            servers: config.servers || [],
                         };
                         props.onChange(props.id, {...value, mcp: updatedConfig});
                         props.setSaveNeeded();
                     }}
                 />
             </Panel>
-            <ApprovedProvidersPanel
-                value={mcpConfig.approvedProviders || defaultConfig.mcp.approvedProviders}
-                onChange={(approvedProviders) => {
-                    const updatedMcp = {
-                        ...mcpConfig,
-                        approvedProviders,
-                    };
-                    props.onChange(props.id, {...value, mcp: updatedMcp});
-                    props.setSaveNeeded();
-                }}
-            />
         </ConfigContainer>
     );
 };

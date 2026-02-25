@@ -39,6 +39,7 @@ interface ToolApprovalSetProps {
     canExpand: boolean;
     showArguments: boolean;
     showResults: boolean;
+    isAutoApproved?: boolean;
 }
 
 // Define a type for tool decisions
@@ -61,8 +62,11 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     const isCallStage = props.approvalStage === 'call';
 
+    // When auto-approved during call stage, suppress approval buttons
+    const effectiveCanApprove = props.isAutoApproved && isCallStage ? false : props.canApprove;
+
     const decisionToolCalls = useMemo(() => {
-        if (!props.canApprove) {
+        if (!effectiveCanApprove) {
             return [];
         }
 
@@ -74,7 +78,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             call.status === ToolCallStatus.Success ||
             call.status === ToolCallStatus.Error,
         );
-    }, [props.toolCalls, props.canApprove, isCallStage]);
+    }, [props.toolCalls, effectiveCanApprove, isCallStage]);
 
     const decisionToolIDSet = useMemo(() => {
         return new Set(decisionToolCalls.map((call) => call.id));
@@ -114,7 +118,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     }, [isCallStage, props.postID]);
 
     useEffect(() => {
-        if (isCallStage || !props.canApprove) {
+        if (isCallStage || !effectiveCanApprove) {
             return;
         }
 
@@ -133,10 +137,10 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
         autoSubmitRef.current = true;
         submitDecisions([]);
-    }, [decisionToolCalls.length, isCallStage, isSubmitting, props.canApprove, props.postID, props.toolCalls, submitDecisions]);
+    }, [decisionToolCalls.length, isCallStage, isSubmitting, effectiveCanApprove, props.postID, props.toolCalls, submitDecisions]);
 
     const handleToolDecision = async (toolID: string, approved: boolean) => {
-        if (!props.canApprove || isSubmitting || submitInFlightRef.current || !decisionToolIDSet.has(toolID)) {
+        if (!effectiveCanApprove || isSubmitting || submitInFlightRef.current || !decisionToolIDSet.has(toolID)) {
             return;
         }
 
@@ -187,6 +191,11 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     // Helper to compute if a tool should be collapsed
     const isToolCollapsed = (tool: ToolCall) => {
+        // Auto-approved tools are always collapsed by default
+        if (props.isAutoApproved) {
+            return !collapsedTools.includes(tool.id);
+        }
+
         // Pending tools are expanded by default, others are collapsed
         const defaultExpanded = isCallStage ?
             tool.status === ToolCallStatus.Pending :
@@ -215,6 +224,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     showArguments={props.showArguments}
                     showResults={props.showResults}
                     approvalStage={props.approvalStage}
+                    isAutoApproved={props.isAutoApproved}
                 />
             ))}
 
@@ -229,6 +239,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     showArguments={props.showArguments}
                     showResults={props.showResults}
                     approvalStage={props.approvalStage}
+                    isAutoApproved={props.isAutoApproved}
                 />
             ))}
 
