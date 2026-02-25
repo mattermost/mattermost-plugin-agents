@@ -28,13 +28,14 @@ Anthropic requires a one-time use case submission (First Time Use or FTU form) b
 **Via AWS CLI:**
 
 ```bash
-aws bedrock put-use-case-for-model-access --form-data '{
+FORM_DATA=$(printf '%s' '{
     "companyName": "Your Company",
     "companyWebsite": "https://yourcompany.com",
     "intendedUsers": "1",
     "industryOption": "Technology",
     "useCases": "AI-powered chat assistance for internal teams"
-}'
+}' | base64)
+aws bedrock put-use-case-for-model-access --form-data "$FORM_DATA"
 ```
 
 #### Inference profiles for newer Claude models
@@ -190,7 +191,6 @@ Amazon Bedrock provides access to models from multiple providers. Common model i
 | Model | Identifier |
 |-------|------------|
 | Anthropic Claude Sonnet 4.6 | `us.anthropic.claude-sonnet-4-6` |
-| Anthropic Claude Sonnet 4 | `us.anthropic.claude-sonnet-4-0` |
 | Amazon Nova Pro | `amazon.nova-pro-v1:0` |
 | Amazon Nova Lite | `amazon.nova-lite-v1:0` |
 | Amazon Nova Micro | `amazon.nova-micro-v1:0` |
