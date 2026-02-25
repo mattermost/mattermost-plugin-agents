@@ -83,9 +83,9 @@ AWS Bedrock provides access to multiple foundation models through a unified API,
 Before configuring Bedrock:
 
 1. Ensure you have an active AWS account with access to Amazon Bedrock
-2. Enable model access in the AWS Bedrock console for the models you want to use
-3. Have appropriate IAM permissions for `bedrock:Converse` and `bedrock:ConverseStream`
-4. Know which AWS region you'll be using (model availability varies by region)
+2. Enable model access and configure IAM permissions — see the [AWS Bedrock Setup Guide](aws_bedrock_setup.md) for step-by-step instructions, including Anthropic-specific requirements for Claude models
+3. Know which AWS region you'll be using (model availability varies by region)
+4. Verify your on-demand token quotas are non-zero in [AWS Service Quotas](https://docs.aws.amazon.com/bedrock/latest/userguide/quotas.html) — new accounts may start at 0 and require a support request to increase
 
 ### Authentication
 
@@ -138,21 +138,6 @@ For long-term production use with IAM user credentials, there are two ways to co
 
 **Note**: If both IAM credential fields and the API Key are provided, the IAM credential fields take precedence.
 
-#### Option 4: Environment Variables
-
-You can also configure AWS credentials through environment variables on your Mattermost server:
-
-```bash
-export AWS_ACCESS_KEY_ID=your_access_key
-export AWS_SECRET_ACCESS_KEY=your_secret_key
-export AWS_REGION=us-east-1
-```
-
-Then in Mattermost:
-- Enter the region in the **AWS Region** field
-- Leave the **AWS Access Key ID**, **AWS Secret Access Key**, and **API Key** fields blank
-
-**Note**: Environment variables have the lowest precedence. Credentials configured in the System Console (IAM fields or API Key) will take precedence over environment variables.
 
 ### Configuration Options
 
@@ -160,46 +145,54 @@ Then in Mattermost:
 |---------|----------|-------------|
 | **AWS Region** | Yes | AWS region where Bedrock is available (e.g., `us-east-1`, `us-west-2`, `eu-central-1`) |
 | **Custom Endpoint URL** | No | Optional custom endpoint for VPC endpoints or proxies (e.g., `https://bedrock-runtime.vpce-xxx.us-east-1.vpce.amazonaws.com`). Leave blank for standard AWS endpoints. |
-| **AWS Access Key ID** | No | IAM user access key ID for long-term credentials. Takes precedence over API Key if both are set. Can also be set via `AWS_ACCESS_KEY_ID` environment variable. |
-| **AWS Secret Access Key** | No | IAM user secret access key. Required if AWS Access Key ID is provided. Can also be set via `AWS_SECRET_ACCESS_KEY` environment variable. |
-| **API Key** | No | Bedrock console API key (base64 encoded, format: `ABSKQm...`). If IAM credentials above are set, they take precedence. Can also use environment variables or IAM roles. |
-| **Default Model** | Yes | The Bedrock model ID to use (e.g., `anthropic.claude-3-5-sonnet-20241022-v2:0`). See the [AWS Bedrock model IDs documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list of available models and their IDs. Model availability varies by AWS region. |
+| **AWS Access Key ID** | No | IAM user access key ID for long-term credentials. Takes precedence over API Key if both are set. |
+| **AWS Secret Access Key** | No | IAM user secret access key. Required if AWS Access Key ID is provided. |
+| **API Key** | No | Bedrock console API key (base64 encoded, format: `ABSKQm...`). If IAM credentials above are set, they take precedence. |
+| **Default Model** | Yes | The Bedrock model ID to use (e.g., `us.anthropic.claude-sonnet-4-6`). See the [AWS Bedrock model IDs documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list of available models and their IDs. Model availability varies by AWS region. |
 
 ### IAM Policy Example
 
-Here's a minimal IAM policy for Bedrock access using the Converse API:
+Here's the recommended minimal IAM policy for Bedrock access, considering the requirements for Cross-Region Inference Profiles:
 
 ```json
 {
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "bedrock:Converse",
-        "bedrock:ConverseStream"
-      ],
-      "Resource": "arn:aws:bedrock:*::foundation-model/*"
-    }
-  ]
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "MattermostAIBedrockAccess",
+            "Effect": "Allow",
+            "Action": [
+                "bedrock:InvokeModel",
+                "bedrock:InvokeModelWithResponseStream"
+            ],
+            "Resource": [
+                "arn:aws:bedrock:*::foundation-model/*",
+                "arn:aws:bedrock:*:123456789012:inference-profile/*"
+            ]
+        }
+    ]
 }
 ```
 
-For more restrictive access, limit the resource to specific models:
+For more restrictive access, limit the resource to specific models and inference profiles (replace `123456789012` with your AWS Account ID):
 
 ```json
 {
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "bedrock:Converse",
-        "bedrock:ConverseStream"
-      ],
-      "Resource": "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-sonnet-*"
-    }
-  ]
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "MattermostAIBedrockAccess",
+            "Effect": "Allow",
+            "Action": [
+                "bedrock:InvokeModel",
+                "bedrock:InvokeModelWithResponseStream"
+            ],
+            "Resource": [
+                "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-*",
+                "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-*"
+            ]
+        }
+    ]
 }
 ```
 
