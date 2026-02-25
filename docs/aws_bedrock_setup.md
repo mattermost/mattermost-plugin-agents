@@ -41,7 +41,7 @@ aws bedrock put-use-case-for-model-access --form-data '{
 
 Newer Anthropic models (such as Claude Sonnet latest) cannot be invoked using their base model ID — you must use a Cross-Region Inference Profile ID instead. If you attempt to use the raw model ID, you will see:
 
-```
+```text
 ValidationException: Invocation of model ID anthropic.claude-sonnet-4-6 with on-demand
 throughput isn't supported. Retry your request with the ID or ARN of an inference profile
 that contains this model.
@@ -94,7 +94,6 @@ aws iam create-policy \
 Replace `<YOUR_ACCOUNT_ID>` with your 12-digit AWS account ID.
 
 > **Note:** Although the Mattermost Agents plugin uses the Bedrock Converse API internally, the correct IAM action names are `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` — `bedrock:Converse` and `bedrock:ConverseStream` are not valid IAM policy actions. The `inference-profile/*` resource ARN is required for Anthropic Claude models, which use Cross-Region Inference Profiles.
-
 > **Tip:** To restrict access to specific models, replace the wildcard resource ARNs with model-specific ARNs. For example: `arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0`.
 
 ### Create the IAM role and instance profile
