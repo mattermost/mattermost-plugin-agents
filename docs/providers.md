@@ -89,144 +89,24 @@ Before configuring Bedrock:
 
 ### Authentication
 
-AWS Bedrock supports multiple authentication methods:
+AWS Bedrock supports three authentication methods, evaluated in this order of precedence:
 
-#### Option 1: IAM Roles (Recommended for AWS deployments)
+1. **IAM user credentials** (long-term): Enter `AWS Access Key ID` and `AWS Secret Access Key` in the service configuration
+2. **Bedrock console API key** (short-term testing only): Enter in the `API Key` field — keys expire after 12 hours
+3. **Default credential chain** (recommended for AWS deployments): Leave all credential fields blank and set only the AWS Region — the AWS SDK automatically uses instance profiles, ECS task roles, EKS service accounts, or other configured credentials
 
-If your Mattermost server runs on AWS infrastructure (EC2, ECS, EKS), you can use IAM roles:
-
-1. Create an IAM role with Bedrock permissions
-2. Attach the role to your Mattermost infrastructure
-3. In Mattermost, select **AWS Bedrock** in the **Service** dropdown
-4. Enter your AWS region (e.g., `us-east-1`) in the **AWS Region** field
-5. Leave the **API Key** field blank - AWS SDK will use the IAM role automatically
-
-#### Option 2: Bedrock Console API Keys (Short-term)
-
-For quick testing and development (valid for 12 hours):
-
-1. Go to Amazon Bedrock console in your desired region
-2. Click on your profile → **Generate API Key**
-3. Copy the generated API key (format: `bedrock-api-key-...`)
-4. In Mattermost, select **AWS Bedrock** in the **Service** dropdown
-5. Enter your AWS region (e.g., `us-west-2`) in the **AWS Region** field
-6. Paste the Bedrock API key directly in the **API Key** field
-
-**Note**: Short-term API keys expire after 12 hours or when your console session ends. For production use, consider IAM user credentials or IAM roles.
-
-#### Option 3: AWS IAM User Access Keys
-
-For long-term production use with IAM user credentials, there are two ways to configure them:
-
-**Method A: Using dedicated IAM credential fields (Recommended)**
-
-1. Create an IAM user with programmatic access and Bedrock permissions (see IAM Policy Example below)
-2. Generate AWS access keys for the IAM user
-3. In Mattermost, select **AWS Bedrock** in the **Service** dropdown
-4. Enter your AWS region (e.g., `us-west-2`) in the **AWS Region** field
-5. Enter your AWS Access Key ID in the **AWS Access Key ID** field
-6. Enter your AWS Secret Access Key in the **AWS Secret Access Key** field
-7. Leave the **API Key** field blank
-
-**Method B: Using the API Key field (Legacy format)**
-
-1. Create an IAM user with programmatic access and Bedrock permissions
-2. Generate AWS access keys for the IAM user
-3. In Mattermost, select **AWS Bedrock** in the **Service** dropdown
-4. Enter your AWS region (e.g., `us-west-2`) in the **AWS Region** field
-5. Enter your IAM user credentials in the **API Key** field using the format: `access_key_id:secret_access_key`
-
-**Note**: If both IAM credential fields and the API Key are provided, the IAM credential fields take precedence.
-
+For IAM policy setup and step-by-step configuration, see the [AWS Bedrock Setup Guide](aws_bedrock_setup.md).
 
 ### Configuration Options
 
 | Setting | Required | Description |
 |---------|----------|-------------|
 | **AWS Region** | Yes | AWS region where Bedrock is available (e.g., `us-east-1`, `us-west-2`, `eu-central-1`) |
-| **Custom Endpoint URL** | No | Optional custom endpoint for VPC endpoints or proxies (e.g., `https://bedrock-runtime.vpce-xxx.us-east-1.vpce.amazonaws.com`). Leave blank for standard AWS endpoints. |
+| **Custom Endpoint URL** | No | Optional custom endpoint for VPC endpoints or proxies. Leave blank for standard AWS endpoints. |
 | **AWS Access Key ID** | No | IAM user access key ID for long-term credentials. Takes precedence over API Key if both are set. |
 | **AWS Secret Access Key** | No | IAM user secret access key. Required if AWS Access Key ID is provided. |
 | **API Key** | No | Bedrock console API key (base64 encoded, format: `ABSKQm...`). If IAM credentials above are set, they take precedence. |
 | **Default Model** | Yes | The Bedrock model ID to use (e.g., `us.anthropic.claude-sonnet-4-6`). See the [AWS Bedrock model IDs documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list of available models and their IDs. Model availability varies by AWS region. |
-
-### IAM Policy Example
-
-Here's the recommended minimal IAM policy for Bedrock access, considering the requirements for Cross-Region Inference Profiles:
-
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "MattermostAIBedrockAccess",
-            "Effect": "Allow",
-            "Action": [
-                "bedrock:InvokeModel",
-                "bedrock:InvokeModelWithResponseStream"
-            ],
-            "Resource": [
-                "arn:aws:bedrock:*::foundation-model/*",
-                "arn:aws:bedrock:*:123456789012:inference-profile/*"
-            ]
-        }
-    ]
-}
-```
-
-For more restrictive access, limit the resource to specific models and inference profiles (replace `123456789012` with your AWS Account ID):
-
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "MattermostAIBedrockAccess",
-            "Effect": "Allow",
-            "Action": [
-                "bedrock:InvokeModel",
-                "bedrock:InvokeModelWithResponseStream"
-            ],
-            "Resource": [
-                "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-*",
-                "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-*"
-            ]
-        }
-    ]
-}
-```
-
-### Regional Considerations
-
-- **Model Availability**: Not all models are available in all regions. Check AWS documentation for current availability
-- **Latency**: Choose a region close to your Mattermost deployment for optimal performance
-- **Data Residency**: Select regions that meet your data sovereignty requirements
-- **Cost**: Pricing may vary by region
-
-### Supported Features
-
-AWS Bedrock through Mattermost Agents supports:
-
-- Streaming responses for real-time interaction
-- Tool/function calling for integrations
-- Multi-modal capabilities (text and images) with compatible models
-- Token usage tracking for cost management
-- Custom endpoint URLs for VPC endpoints and proxy configurations
-- Bearer token authentication for Bedrock console API keys
-
-### Special Considerations
-
-- **Authentication Priority**: The authentication method is selected in this order:
-  1. IAM credentials (AWS Access Key ID + Secret Access Key fields in System Console)
-  2. Bearer token (API Key field with base64 encoded Bedrock console key)
-  3. Default credential chain (environment variables, IAM roles, etc.)
-- **Model Enablement**: You must explicitly enable models in the AWS Bedrock console before using them
-- **Quotas**: Be aware of AWS Bedrock service quotas and request increases if needed
-- **Cold Starts**: First requests to a model may experience slightly higher latency
-- **Cost Management**: Monitor usage through AWS Cost Explorer and consider setting up billing alerts
-- **API Key Expiration**: Bedrock console API keys (base64 encoded) expire after 12 hours or when your console session ends. For production use, configure IAM user credentials (dedicated fields or API Key field format) or IAM roles for persistent authentication
-- **VPC Endpoints**: If using AWS PrivateLink VPC endpoints, configure the VPC endpoint URL in the Custom Endpoint URL field
-- **Proxy Support**: For proxy configurations, either configure the proxy at the Mattermost server level (environment variables) or use the Custom Endpoint URL field to point to a proxy endpoint
 
 ## Cohere
 
