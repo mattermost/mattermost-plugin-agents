@@ -35,7 +35,7 @@ FORM_DATA=$(printf '%s' '{
     "industryOption": "Technology",
     "useCases": "AI-powered chat assistance for internal teams"
 }' | base64)
-aws bedrock put-use-case-for-model-access --form-data "$FORM_DATA"
+aws bedrock put-use-case-for-model-access --form-data "$FORM_DATA" --region us-east-1
 ```
 
 #### Inference profiles for newer Claude models
@@ -95,7 +95,7 @@ aws iam create-policy \
 Replace `<YOUR_ACCOUNT_ID>` with your 12-digit AWS account ID.
 
 > **Note:** Although the Mattermost Agents plugin uses the Bedrock Converse API internally, the correct IAM action names are `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` — `bedrock:Converse` and `bedrock:ConverseStream` are not valid IAM policy actions. The `inference-profile/*` resource ARN is required for Anthropic Claude models, which use Cross-Region Inference Profiles.
-> **Tip:** To restrict access to specific models, replace the wildcard resource ARNs with model-specific ARNs. For example: `arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0`.
+> **Tip:** To restrict access to specific models, replace the wildcard ARNs with model-specific ARNs. For Anthropic Claude models, you need entries in both the `foundation-model` and `inference-profile` resources. For example: `arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6` and `arn:aws:bedrock:us-east-1:<YOUR_ACCOUNT_ID>:inference-profile/us.anthropic.claude-sonnet-4-6`.
 
 ### Create the IAM role and instance profile
 
