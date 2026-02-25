@@ -70,7 +70,7 @@ Create an IAM policy, role, and instance profile that grants your Mattermost EC2
 
 ### Create the IAM policy
 
-Create a policy that allows the Bedrock Converse API actions:
+Create a policy that allows the required Bedrock API actions:
 
 ```bash
 aws iam create-policy \
