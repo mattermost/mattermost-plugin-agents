@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React, {useState, useEffect, useCallback} from 'react';
-import {useIntl} from 'react-intl';
+import {useIntl, FormattedMessage} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 import styled from 'styled-components';
 
@@ -34,6 +34,16 @@ const RhsContainer = styled.div`
     flex-direction: column;
 `;
 
+const DMsDisabledContainer = styled.div`
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    text-align: center;
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+`;
+
 export interface AIThread {
     id: string;
     message: string;
@@ -52,6 +62,7 @@ export default function RHS() {
     const selectedPostId = useSelector((state: any) => state['plugins-' + manifest.id].selectedPostId);
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const currentTeamId = useSelector<GlobalState, string>((state) => state.entities.teams.currentTeamId);
+    const disableDMs = useSelector<GlobalState, boolean>((state: any) => state['plugins-' + manifest.id].disableDMs);
 
     const [threads, setThreads] = useState<AIThread[] | null>(null);
 
@@ -59,7 +70,7 @@ export default function RHS() {
         const fetchThreads = async () => {
             setThreads(await getAIThreads());
         };
-        if (currentTab === 'threads') {
+        if (currentTab === 'threads' && !disableDMs) {
             fetchThreads();
         } else if (currentTab === 'thread' && Boolean(selectedPostId)) {
             // Update read for the thread to tomorrow. We don't really want the unreads thing to show up.
@@ -71,7 +82,7 @@ export default function RHS() {
                 updateRead(currentUserId, currentTeamId, selectedPostId, Date.now() + twentyFourHoursInMS);
             }
         };
-    }, [currentTab, selectedPostId]);
+    }, [currentTab, selectedPostId, disableDMs]);
 
     const selectPost = useCallback((postId: string) => {
         dispatch({type: 'SELECT_AI_POST', postId});
@@ -82,6 +93,16 @@ export default function RHS() {
     // No bots available - hide the RHS entirely
     if (bots && bots.length === 0) {
         return null;
+    }
+
+    if (disableDMs) {
+        return (
+            <RhsContainer data-testid='mattermost-ai-rhs'>
+                <DMsDisabledContainer>
+                    <FormattedMessage defaultMessage='Direct message features are disabled. Use @mentions in channels to interact with bots.'/>
+                </DMsDisabledContainer>
+            </RhsContainer>
+        );
     }
 
     let content = null;

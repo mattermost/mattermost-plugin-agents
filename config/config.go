@@ -26,6 +26,7 @@ type Config struct {
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
+	DisableDMs                      bool                             `json:"disableDMs"`
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                             mcp.Config                       `json:"mcp"`
 	WebSearch                       WebSearchConfig                  `json:"webSearch"`
@@ -139,6 +140,15 @@ func (c *Container) AllowNativeWebSearchInChannels() bool {
 	}
 
 	return cfg.AllowNativeWebSearchInChannels
+}
+
+func (c *Container) DisableDMs() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return false
+	}
+
+	return cfg.DisableDMs
 }
 
 func (c *Container) RegisterUpdateListener(listener UpdateListener) {

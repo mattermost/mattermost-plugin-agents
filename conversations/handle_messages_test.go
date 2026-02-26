@@ -9,6 +9,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
+	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -16,10 +17,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testConfigProvider struct {
+	enableChannelMentionToolCalling bool
+	allowNativeWebSearchInChannels  bool
+	disableDMs                      bool
+}
+
+func (c *testConfigProvider) EnableChannelMentionToolCalling() bool {
+	return c.enableChannelMentionToolCalling
+}
+
+func (c *testConfigProvider) AllowNativeWebSearchInChannels() bool {
+	return c.allowNativeWebSearchInChannels
+}
+
+func (c *testConfigProvider) DisableDMs() bool {
+	return c.disableDMs
+}
+
 type TestEnvironment struct {
 	conversations *Conversations
 	mockAPI       *plugintest.API
 	bots          *bots.MMBots
+	mmClient      *mocks.MockClient
 }
 
 func (e *TestEnvironment) Cleanup(t *testing.T) {
@@ -45,6 +65,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		conversations: conversations,
 		mockAPI:       mockAPI,
 		bots:          botsService,
+		mmClient:      mmClient,
 	}
 }
 
@@ -81,4 +102,39 @@ func TestHandleMessages(t *testing.T) {
 		err := e.conversations.handleMessages(post)
 		require.ErrorIs(t, err, ErrNoResponse)
 	})
+}
+
+func TestHandleMessagesDMDisabled(t *testing.T) {
+	const userID = "userid"
+	const botUserID = "botuserid"
+	channelID := model.GetDMNameFromIds(userID, botUserID)
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	// Set up config provider with DMs disabled
+	e.conversations.configProvider = &testConfigProvider{disableDMs: true}
+
+	// Set up a bot so GetBotForDMChannel finds it
+	e.bots.SetBotsForTesting([]*bots.Bot{
+		bots.NewBot(llm.BotConfig{Name: "ai"}, llm.ServiceConfig{}, &model.Bot{UserId: botUserID, Username: "ai"}, nil),
+	})
+
+	// Mock the channel as a DM with the bot
+	e.mmClient.EXPECT().GetChannel(channelID).Return(&model.Channel{
+		Id:   channelID,
+		Type: model.ChannelTypeDirect,
+		Name: model.GetDMNameFromIds(userID, botUserID),
+	}, nil)
+
+	// Mock GetUser to return a non-bot user
+	e.mmClient.EXPECT().GetUser(userID).Return(&model.User{
+		Id: userID,
+	}, nil)
+
+	err := e.conversations.handleMessages(&model.Post{
+		UserId:    userID,
+		ChannelId: channelID,
+	})
+	require.ErrorIs(t, err, ErrNoResponse)
 }

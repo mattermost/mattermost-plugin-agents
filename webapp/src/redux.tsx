@@ -20,6 +20,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         selectedPostId,
         searchEnabled,
         allowUnsafeLinks,
+        disableDMs,
     });
     registry.registerReducer(reducer);
 
@@ -79,6 +80,15 @@ function allowUnsafeLinks(state = false, action: any) {
     switch (action.type) {
     case 'SET_ALLOW_UNSAFE_LINKS':
         return action.allowUnsafeLinks;
+    default:
+        return state;
+    }
+}
+
+function disableDMs(state = false, action: any) {
+    switch (action.type) {
+    case 'SET_DISABLE_DMS':
+        return action.disableDMs;
     default:
         return state;
     }

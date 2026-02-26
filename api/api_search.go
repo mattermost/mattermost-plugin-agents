@@ -21,6 +21,11 @@ type SearchRequest struct {
 }
 
 func (a *API) handleRunSearch(c *gin.Context) {
+	if a.config.DisableDMs() {
+		c.AbortWithError(http.StatusForbidden, fmt.Errorf("DM features are disabled"))
+		return
+	}
+
 	userID := c.GetHeader("Mattermost-User-Id")
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 

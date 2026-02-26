@@ -107,6 +107,11 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
+	if a.config.DisableDMs() {
+		c.AbortWithError(http.StatusForbidden, errors.New("DM features are disabled"))
+		return
+	}
+
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
 		return

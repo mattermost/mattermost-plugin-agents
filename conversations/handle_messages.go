@@ -84,6 +84,9 @@ func (c *Conversations) handleMessages(post *model.Post) error {
 
 	// Check if this is post in the DM channel with any bot
 	if bot := c.bots.GetBotForDMChannel(channel); bot != nil {
+		if c.configProvider != nil && c.configProvider.DisableDMs() {
+			return fmt.Errorf("DM features are disabled: %w", ErrNoResponse)
+		}
 		return c.handleDMs(bot, channel, postingUser, post)
 	}
 

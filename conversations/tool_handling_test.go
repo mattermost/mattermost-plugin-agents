@@ -192,6 +192,10 @@ func (c *testToolCallingConfig) AllowNativeWebSearchInChannels() bool {
 	return false
 }
 
+func (c *testToolCallingConfig) DisableDMs() bool {
+	return false
+}
+
 type toolArgs struct {
 	Value string `json:"value"`
 }

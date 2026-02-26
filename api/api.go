@@ -44,6 +44,7 @@ type Config interface {
 	MCP() mcp.Config
 	AllowUnsafeLinks() bool
 	EnableChannelMentionToolCalling() bool
+	DisableDMs() bool
 }
 
 type MCPClientManager interface {
@@ -278,6 +279,11 @@ func (a *API) enforceEmptyBody(c *gin.Context) error {
 }
 
 func (a *API) handleGetAIThreads(c *gin.Context) {
+	if a.config.DisableDMs() {
+		c.JSON(http.StatusOK, []conversations.AIThread{})
+		return
+	}
+
 	userID := c.GetHeader("Mattermost-User-Id")
 
 	threads, err := a.conversationsService.GetAIThreads(userID)
@@ -305,6 +311,7 @@ type AIBotsResponse struct {
 	Bots             []AIBotInfo `json:"bots"`
 	SearchEnabled    bool        `json:"searchEnabled"`
 	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
+	DisableDMs       bool        `json:"disableDMs"`
 }
 
 // getAIBotsForUser returns all AI bots available to a user
@@ -364,6 +371,7 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 		Bots:             bots,
 		SearchEnabled:    searchEnabled,
 		AllowUnsafeLinks: a.config.AllowUnsafeLinks(),
+		DisableDMs:       a.config.DisableDMs(),
 	})
 }
 

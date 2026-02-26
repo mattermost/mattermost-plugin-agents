@@ -43,6 +43,7 @@ type AIThread struct {
 type ConfigProvider interface {
 	EnableChannelMentionToolCalling() bool
 	AllowNativeWebSearchInChannels() bool
+	DisableDMs() bool
 }
 
 type Conversations struct {

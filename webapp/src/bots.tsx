@@ -56,6 +56,11 @@ export const useBotlist = () => {
                 type: 'SET_ALLOW_UNSAFE_LINKS',
                 allowUnsafeLinks: Boolean(response.allowUnsafeLinks),
             });
+
+            dispatch({
+                type: 'SET_DISABLE_DMS',
+                disableDMs: Boolean(response.disableDMs),
+            });
         };
         if (!bots) {
             fetchBots();

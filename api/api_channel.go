@@ -57,6 +57,11 @@ func (a *API) channelAnalysisLicenseRequired(c *gin.Context) {
 }
 
 func (a *API) handleChannelAnalysis(c *gin.Context) {
+	if a.config.DisableDMs() {
+		c.AbortWithError(http.StatusForbidden, fmt.Errorf("DM features are disabled"))
+		return
+	}
+
 	userID := c.GetHeader("Mattermost-User-Id")
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
@@ -182,6 +187,11 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 }
 
 func (a *API) handleInterval(c *gin.Context) {
+	if a.config.DisableDMs() {
+		c.AbortWithError(http.StatusForbidden, fmt.Errorf("DM features are disabled"))
+		return
+	}
+
 	userID := c.GetHeader("Mattermost-User-Id")
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)

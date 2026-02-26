@@ -34,6 +34,7 @@ type Config = {
     allowUnsafeLinks: boolean,
     enableChannelMentionToolCalling: boolean,
     allowNativeWebSearchInChannels: boolean,
+    disableDMs: boolean,
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig,
     webSearch: WebSearchSettings,
@@ -88,6 +89,7 @@ const defaultConfig = {
     allowUnsafeLinks: false,
     enableChannelMentionToolCalling: false,
     allowNativeWebSearchInChannels: false,
+    disableDMs: false,
     embeddingSearchConfig: {
         type: 'disabled',
         vectorStore: {
@@ -332,6 +334,15 @@ const Config = (props: Props) => {
                             props.setSaveNeeded();
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.'})}
+                    />
+                    <BooleanItem
+                        label={<FormattedMessage defaultMessage='Disable direct message features'/>}
+                        value={Boolean(value.disableDMs)}
+                        onChange={(to) => {
+                            props.onChange(props.id, {...value, disableDMs: to});
+                            props.setSaveNeeded();
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, disables all direct message interactions with bots. Users can only interact with bots by @mentioning them in channels. Features that send results to DMs (thread analysis, channel summaries, search) will also be disabled.'})}
                     />
                 </ItemList>
             </Panel>

@@ -70,6 +70,10 @@ func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 	return tc.enableChannelMentionToolCalling
 }
 
+func (tc *testConfigImpl) DisableDMs() bool {
+	return false
+}
+
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct{}
 
