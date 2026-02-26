@@ -1066,8 +1066,8 @@ func (s *OpenAI) convertTools(completionTools []openai.ChatCompletionToolUnionPa
 		for _, nativeTool := range s.config.EnabledNativeTools {
 			if nativeTool == "web_search" {
 				tools = append(tools, responses.ToolUnionParam{
-					OfWebSearchPreview: &responses.WebSearchToolParam{
-						Type: responses.WebSearchToolTypeWebSearchPreview,
+					OfWebSearch: &responses.WebSearchToolParam{
+						Type: responses.WebSearchToolTypeWebSearch,
 					},
 				})
 			}
