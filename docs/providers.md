@@ -74,28 +74,11 @@ Obtain an [Anthropic API key](https://console.anthropic.com/settings/keys), then
 
 ## AWS Bedrock
 
-### Overview
-
-AWS Bedrock provides access to multiple foundation models through a unified API, including models from Anthropic (Claude), Amazon (Titan), and other providers. Bedrock is ideal for organizations already using AWS infrastructure or those requiring sovereign AI deployments.
-
-### Prerequisites
-
-Before configuring Bedrock:
-
-1. Ensure you have an active AWS account with access to Amazon Bedrock
-2. Enable model access and configure IAM permissions — see the [AWS Bedrock Setup Guide](aws_bedrock_setup.md) for step-by-step instructions, including Anthropic-specific requirements for Claude models
-3. Know which AWS region you'll be using (model availability varies by region)
-4. Verify your on-demand token quotas are non-zero in [AWS Service Quotas](https://docs.aws.amazon.com/bedrock/latest/userguide/quotas.html) — new accounts may start at 0 and require a support request to increase
+AWS Bedrock provides access to foundation models from Anthropic (Claude), Amazon (Nova, Titan), and other providers via a unified API. For full setup instructions — including IAM policy configuration and Anthropic-specific Claude requirements — see the [AWS Bedrock Setup Guide](aws_bedrock_setup.md).
 
 ### Authentication
 
-AWS Bedrock supports three authentication methods, evaluated in this order of precedence:
-
-1. **IAM user credentials** (long-term): Enter `AWS Access Key ID` and `AWS Secret Access Key` in the service configuration
-2. **Bedrock console API key** (short-term testing only): Enter in the `API Key` field — keys expire after 12 hours
-3. **Default credential chain** (recommended for AWS deployments): Leave all credential fields blank and set only the AWS Region — the AWS SDK automatically uses instance profiles, ECS task roles, EKS service accounts, or other configured credentials
-
-For IAM policy setup and step-by-step configuration, see the [AWS Bedrock Setup Guide](aws_bedrock_setup.md).
+The plugin uses the [AWS SDK default credential chain](https://docs.aws.amazon.com/sdkref/latest/guide/standardized-credentials.html). For Mattermost servers running on EC2, attach an IAM instance profile to your instance and leave all credential fields blank — the SDK discovers credentials automatically. For non-EC2 deployments, enter an `AWS Access Key ID` and `AWS Secret Access Key`, or a short-term Bedrock console API key.
 
 ### Configuration Options
 

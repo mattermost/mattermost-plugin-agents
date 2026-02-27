@@ -149,7 +149,7 @@ For new deployments, specify the instance profile when launching the EC2 instanc
 The Mattermost Agents plugin may be pre-packaged with your Mattermost installation. Check your current version and upgrade if needed.
 
 1. Go to **System Console > Plugins > Plugin Management**.
-2. If the **Agents** plugin is listed, check its version. Version **1.8.0 or later** is required for native AWS Bedrock support with IAM instance profiles.
+2. If the **Agents** plugin is listed, check its version. Version **1.9.0 or later** is required for native AWS Bedrock support with IAM instance profiles.
 3. If the plugin is not installed or needs upgrading:
    a. Download the latest release from the [Mattermost Agents plugin releases page](https://github.com/mattermost/mattermost-plugin-agents/releases).
    b. Upload the `.tar.gz` file under **Upload Plugin** in Plugin Management.
@@ -159,7 +159,7 @@ Alternatively, install via `mmctl` on the server:
 
 ```bash
 /opt/mattermost/bin/mmctl plugin install-url \
-  https://github.com/mattermost/mattermost-plugin-agents/releases/download/v1.8.1/mattermost-plugin-agents-v1.8.1-linux-amd64.tar.gz
+  https://github.com/mattermost/mattermost-plugin-agents/releases/download/v1.9.0/mattermost-plugin-agents-v1.9.0-linux-amd64.tar.gz
 
 /opt/mattermost/bin/mmctl plugin enable mattermost-ai
 ```
@@ -175,7 +175,7 @@ Alternatively, install via `mmctl` on the server:
 | **Service Name** | A descriptive name (e.g., `AWS Bedrock`) |
 | **Service Type** | Select `AWS Bedrock` |
 | **AWS Region** | The AWS region where Bedrock is available (e.g., `us-east-1`) |
-| **Default Model** | The Bedrock model identifier (e.g., `amazon.nova-pro-v1:0`) |
+| **Default Model** | The Bedrock model identifier (e.g., `us.anthropic.claude-sonnet-4-6`) |
 | **AWS Access Key ID** | Leave empty when using IAM instance profiles |
 | **AWS Secret Access Key** | Leave empty when using IAM instance profiles |
 | **API Key** | Optional. Bedrock console API key (base64 encoded). Suitable for short-term testing only—keys expire after 12 hours. Leave empty when using IAM instance profiles or IAM user credentials, as those methods take precedence. |
