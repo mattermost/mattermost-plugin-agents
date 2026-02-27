@@ -92,15 +92,12 @@ func TestCustomAuthTransport(t *testing.T) {
 			}))
 			defer server.Close()
 
-			var base http.RoundTripper = http.DefaultTransport
-			if tt.useNilBase {
-				base = nil
-			}
-
 			rt := &CustomAuthTransport{
-				Base:          base,
 				RemoveHeaders: tt.removeHeaders,
 				SetHeaders:    tt.setHeaders,
+			}
+			if !tt.useNilBase {
+				rt.Base = http.DefaultTransport
 			}
 
 			req, err := http.NewRequest(http.MethodGet, server.URL, nil)
