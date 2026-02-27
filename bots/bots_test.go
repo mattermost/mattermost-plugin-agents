@@ -46,6 +46,14 @@ func (m *mockConfig) EnableTokenUsageLogging() bool {
 	return false
 }
 
+func (m *mockConfig) EnableTokenUsageLogToPlugin() bool {
+	return true
+}
+
+func (m *mockConfig) EnableTokenUsageLogToFile() bool {
+	return false
+}
+
 func (m *mockConfig) GetTranscriptGenerator() string {
 	return "testbot"
 }

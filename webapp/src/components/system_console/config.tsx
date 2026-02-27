@@ -29,6 +29,8 @@ type Config = {
     transcriptBackend: string,
     enableLLMTrace: boolean,
     enableTokenUsageLogging: boolean,
+    enableTokenUsageLogToPlugin: boolean,
+    enableTokenUsageLogToFile: boolean,
     enableCallSummary: boolean,
     allowedUpstreamHostnames: string,
     allowUnsafeLinks: boolean,
@@ -85,6 +87,8 @@ const defaultConfig = {
     transcriptBackend: '',
     enableLLMTrace: false,
     enableTokenUsageLogging: false,
+    enableTokenUsageLogToPlugin: true,
+    enableTokenUsageLogToFile: false,
     allowUnsafeLinks: false,
     enableChannelMentionToolCalling: false,
     allowNativeWebSearchInChannels: false,
@@ -351,6 +355,18 @@ const Config = (props: Props) => {
                         value={value.enableTokenUsageLogging}
                         onChange={(to) => props.onChange(props.id, {...value, enableTokenUsageLogging: to})}
                         helpText={intl.formatMessage({defaultMessage: 'Enable logging of token usage for all LLM interactions.'})}
+                    />
+                    <BooleanItem
+                        label={intl.formatMessage({defaultMessage: 'Emit token usage to plugin JSON logs'})}
+                        value={value.enableTokenUsageLogToPlugin ?? true}
+                        onChange={(to) => props.onChange(props.id, {...value, enableTokenUsageLogToPlugin: to})}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, token accounting fields (user, agent, model, operation, and token counts) are emitted to the main plugin logs for Loki/Grafana dashboards.'})}
+                    />
+                    <BooleanItem
+                        label={intl.formatMessage({defaultMessage: 'Write token usage to dedicated file log'})}
+                        value={Boolean(value.enableTokenUsageLogToFile)}
+                        onChange={(to) => props.onChange(props.id, {...value, enableTokenUsageLogToFile: to})}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, token accounting is also written to logs/agents/token_usage.log. Recommended for local debugging; containerized deployments should prefer plugin JSON logs.'})}
                     />
                 </ItemList>
             </Panel>

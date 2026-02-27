@@ -310,7 +310,9 @@ func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles
 						Message: chunk,
 					},
 				},
-				Context: context,
+				Context:          context,
+				Operation:        llm.OperationMeetingChunkSummary,
+				OperationSubType: "transcription_chunk",
 			}
 
 			summarizedChunk, err := bot.LLM().ChatCompletionNoStream(request)
@@ -343,7 +345,9 @@ func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles
 				Message: llmFormattedTranscription,
 			},
 		},
-		Context: context,
+		Context:          context,
+		Operation:        llm.OperationMeetingSummary,
+		OperationSubType: fmt.Sprintf("chunked_%t", isChunked),
 	}
 
 	summaryStream, err := bot.LLM().ChatCompletion(completionRequest, llm.WithToolsDisabled())

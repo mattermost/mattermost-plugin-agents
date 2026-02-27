@@ -5,7 +5,6 @@ package llm
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -17,21 +16,28 @@ type MetricsObserver interface {
 	ObserveTokenUsage(botName, teamID, userID string, inputTokens, outputTokens int)
 }
 
+// TokenUsagePluginLogger is the logger interface used for plugin JSON logs.
+type TokenUsagePluginLogger interface {
+	Info(message string, keyValuePairs ...any)
+}
+
 // TokenUsageLoggingWrapper wraps a LanguageModel to log token usage
 type TokenUsageLoggingWrapper struct {
-	wrapped     LanguageModel
-	botUsername string
-	tokenLogger *mlog.Logger
-	metrics     MetricsObserver
+	wrapped      LanguageModel
+	botUsername  string
+	pluginLogger TokenUsagePluginLogger
+	tokenLogger  *mlog.Logger
+	metrics      MetricsObserver
 }
 
 // NewTokenUsageLoggingWrapper creates a new wrapper that logs token usage
-func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, tokenLogger *mlog.Logger, metrics MetricsObserver) *TokenUsageLoggingWrapper {
+func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, pluginLogger TokenUsagePluginLogger, tokenLogger *mlog.Logger, metrics MetricsObserver) *TokenUsageLoggingWrapper {
 	return &TokenUsageLoggingWrapper{
-		wrapped:     wrapped,
-		botUsername: botUsername,
-		tokenLogger: tokenLogger,
-		metrics:     metrics,
+		wrapped:      wrapped,
+		botUsername:  botUsername,
+		pluginLogger: pluginLogger,
+		tokenLogger:  tokenLogger,
+		metrics:      metrics,
 	}
 }
 
@@ -75,71 +81,234 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(request CompletionRequest, opt
 		return nil, err
 	}
 
-	if w.tokenLogger == nil {
-		return nil, errors.New("token logger is nil")
-	}
-
 	interceptedStream := make(chan TextStreamEvent)
+	effectiveModel := extractRequestedModel(opts...)
+	dimensions := extractTokenUsageDimensions(request, w.botUsername, effectiveModel)
 
 	go func() {
 		defer close(interceptedStream)
 
-		for event := range result.Stream {
-			if event.Type != EventTypeUsage {
-				interceptedStream <- event
-				continue
+		var aggregateUsage TokenUsage
+		hasUsage := false
+		flushed := false
+		flushUsage := func() {
+			if flushed || !hasUsage {
+				return
 			}
-
-			usage, ok := event.Value.(TokenUsage)
-			if !ok {
-				continue
-			}
-
-			userID := "unknown"
-			teamID := "unknown"
-			if request.Context != nil {
-				if request.Context.RequestingUser != nil {
-					userID = request.Context.RequestingUser.Id
-				}
-				if request.Context.Team != nil {
-					teamID = request.Context.Team.Id
-				} else if request.Context.Channel != nil {
-					// For DM and Group channels, use a special identifier
-					// instead of "unknown" to distinguish them in metrics
-					switch request.Context.Channel.Type {
-					case model.ChannelTypeDirect:
-						teamID = "dm"
-					case model.ChannelTypeGroup:
-						teamID = "group"
-					default:
-						teamID = "unknown"
-					}
-				}
-			}
-
-			w.tokenLogger.Info("Token Usage",
-				mlog.String("user_id", userID),
-				mlog.String("team_id", teamID),
-				mlog.String("bot_username", w.botUsername),
-				mlog.Int("input_tokens", usage.InputTokens),
-				mlog.Int("output_tokens", usage.OutputTokens),
-				mlog.Int("total_tokens", usage.InputTokens+usage.OutputTokens),
-			)
-
-			// Emit metrics if available (user_id not included in metrics)
-			if w.metrics != nil {
-				w.metrics.ObserveTokenUsage(
-					w.botUsername,
-					teamID,
-					"",
-					int(usage.InputTokens),
-					int(usage.OutputTokens),
-				)
-			}
+			flushed = true
+			w.emitTokenUsage(dimensions, aggregateUsage)
 		}
+
+		for event := range result.Stream {
+			switch event.Type {
+			case EventTypeUsage:
+				usage, ok := event.Value.(TokenUsage)
+				if !ok {
+					continue
+				}
+				hasUsage = true
+				aggregateUsage.InputTokens += usage.InputTokens
+				aggregateUsage.OutputTokens += usage.OutputTokens
+				continue
+			case EventTypeEnd, EventTypeError:
+				flushUsage()
+			}
+			interceptedStream <- event
+		}
+		flushUsage()
 	}()
 
 	return &TextStreamResult{Stream: interceptedStream}, nil
+}
+
+type tokenUsageDimensions struct {
+	userID           string
+	teamID           string
+	channelID        string
+	channelType      string
+	botName          string
+	botUsername      string
+	botUserID        string
+	model            string
+	serviceType      string
+	operation        string
+	operationSubType string
+}
+
+func (w *TokenUsageLoggingWrapper) emitTokenUsage(dimensions tokenUsageDimensions, usage TokenUsage) {
+	totalTokens := usage.InputTokens + usage.OutputTokens
+
+	if w.pluginLogger != nil {
+		w.pluginLogger.Info("LLM token usage",
+			"event", TokenUsageLogEvent,
+			"schema_version", TokenUsageLogSchemaVersion,
+			"user_id", dimensions.userID,
+			"team_id", dimensions.teamID,
+			"channel_id", dimensions.channelID,
+			"channel_type", dimensions.channelType,
+			"agent_name", dimensions.botName,
+			"agent_username", dimensions.botUsername,
+			"agent_user_id", dimensions.botUserID,
+			"model", dimensions.model,
+			"service_type", dimensions.serviceType,
+			"operation", dimensions.operation,
+			"operation_subtype", dimensions.operationSubType,
+			"input_tokens", usage.InputTokens,
+			"output_tokens", usage.OutputTokens,
+			"total_tokens", totalTokens,
+		)
+	}
+
+	if w.tokenLogger != nil {
+		w.tokenLogger.Info("Token Usage",
+			mlog.String("event", TokenUsageLogEvent),
+			mlog.Int("schema_version", TokenUsageLogSchemaVersion),
+			mlog.String("user_id", dimensions.userID),
+			mlog.String("team_id", dimensions.teamID),
+			mlog.String("channel_id", dimensions.channelID),
+			mlog.String("channel_type", dimensions.channelType),
+			mlog.String("agent_name", dimensions.botName),
+			mlog.String("agent_username", dimensions.botUsername),
+			mlog.String("agent_user_id", dimensions.botUserID),
+			mlog.String("model", dimensions.model),
+			mlog.String("service_type", dimensions.serviceType),
+			mlog.String("operation", dimensions.operation),
+			mlog.String("operation_subtype", dimensions.operationSubType),
+			mlog.Int("input_tokens", usage.InputTokens),
+			mlog.Int("output_tokens", usage.OutputTokens),
+			mlog.Int("total_tokens", totalTokens),
+		)
+	}
+
+	if w.metrics != nil {
+		w.metrics.ObserveTokenUsage(
+			dimensions.botUsername,
+			dimensions.teamID,
+			dimensions.userID,
+			int64ToInt(usage.InputTokens),
+			int64ToInt(usage.OutputTokens),
+		)
+	}
+}
+
+func extractTokenUsageDimensions(request CompletionRequest, fallbackBotUsername, optionModel string) tokenUsageDimensions {
+	dimensions := tokenUsageDimensions{
+		userID:           TokenUsageUnknown,
+		teamID:           TokenUsageUnknown,
+		channelID:        TokenUsageUnknown,
+		channelType:      TokenUsageUnknown,
+		botName:          TokenUsageUnknown,
+		botUsername:      fallbackBotUsername,
+		botUserID:        TokenUsageUnknown,
+		model:            TokenUsageUnknown,
+		serviceType:      TokenUsageUnknown,
+		operation:        request.Operation,
+		operationSubType: request.OperationSubType,
+	}
+
+	if dimensions.botUsername == "" {
+		dimensions.botUsername = TokenUsageUnknown
+	}
+	if dimensions.operation == "" {
+		dimensions.operation = TokenUsageUnknown
+	}
+	if dimensions.operationSubType == "" {
+		dimensions.operationSubType = TokenUsageUnknown
+	}
+	if dimensions.botName == TokenUsageUnknown {
+		dimensions.botName = dimensions.botUsername
+	}
+
+	if request.Context == nil {
+		if optionModel != "" {
+			dimensions.model = optionModel
+		}
+		return dimensions
+	}
+
+	if request.Context.RequestingUser != nil && request.Context.RequestingUser.Id != "" {
+		dimensions.userID = request.Context.RequestingUser.Id
+	}
+
+	if request.Context.Team != nil && request.Context.Team.Id != "" {
+		dimensions.teamID = request.Context.Team.Id
+	} else if request.Context.Channel != nil {
+		switch request.Context.Channel.Type {
+		case model.ChannelTypeDirect:
+			dimensions.teamID = "dm"
+		case model.ChannelTypeGroup:
+			dimensions.teamID = "group"
+		}
+	}
+
+	if request.Context.Channel != nil {
+		if request.Context.Channel.Id != "" {
+			dimensions.channelID = request.Context.Channel.Id
+		}
+		dimensions.channelType = normalizeChannelType(request.Context.Channel.Type)
+	}
+
+	if request.Context.BotName != "" {
+		dimensions.botName = request.Context.BotName
+	}
+	if request.Context.BotUsername != "" {
+		dimensions.botUsername = request.Context.BotUsername
+	}
+	if request.Context.BotUserID != "" {
+		dimensions.botUserID = request.Context.BotUserID
+	}
+	if request.Context.BotModel != "" {
+		dimensions.model = request.Context.BotModel
+	}
+	if request.Context.BotServiceType != "" {
+		dimensions.serviceType = request.Context.BotServiceType
+	}
+	if optionModel != "" {
+		dimensions.model = optionModel
+	}
+	if dimensions.botName == TokenUsageUnknown {
+		dimensions.botName = dimensions.botUsername
+	}
+
+	return dimensions
+}
+
+func extractRequestedModel(opts ...LanguageModelOption) string {
+	cfg := &LanguageModelConfig{}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		opt(cfg)
+	}
+	return cfg.Model
+}
+
+func normalizeChannelType(channelType model.ChannelType) string {
+	switch channelType {
+	case model.ChannelTypeOpen:
+		return "open"
+	case model.ChannelTypePrivate:
+		return "private"
+	case model.ChannelTypeDirect:
+		return "direct"
+	case model.ChannelTypeGroup:
+		return "group"
+	default:
+		return TokenUsageUnknown
+	}
+}
+
+func int64ToInt(value int64) int {
+	maxInt := int64(^uint(0) >> 1)
+	minInt := -maxInt - 1
+	if value > maxInt {
+		return int(maxInt)
+	}
+	if value < minInt {
+		return int(minInt)
+	}
+	return int(value)
 }
 
 // ChatCompletionNoStream uses the streaming method internally, so token usage

@@ -40,6 +40,7 @@ type Context struct {
 	BotUsername        string
 	BotUserID          string
 	BotModel           string
+	BotServiceType     string
 	CustomInstructions string
 
 	Tools             *ToolStore

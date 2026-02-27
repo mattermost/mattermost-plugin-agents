@@ -22,6 +22,8 @@ type Config struct {
 	TranscriptGenerator             string                           `json:"transcriptBackend"`
 	EnableLLMTrace                  bool                             `json:"enableLLMTrace"`
 	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
+	EnableTokenUsageLogToPlugin     *bool                            `json:"enableTokenUsageLogToPlugin,omitempty"`
+	EnableTokenUsageLogToFile       *bool                            `json:"enableTokenUsageLogToFile,omitempty"`
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
@@ -108,6 +110,30 @@ func (c *Container) EnableLLMLogging() bool {
 
 func (c *Container) EnableTokenUsageLogging() bool {
 	return c.cfg.Load().EnableTokenUsageLogging
+}
+
+func (c *Container) EnableTokenUsageLogToPlugin() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil || !cfg.EnableTokenUsageLogging {
+		return false
+	}
+
+	// Backward compatibility: configurations created before sink-specific toggles
+	// existed do not have either field set. Preserve old behavior by treating
+	// that state as plugin-log enabled.
+	if cfg.EnableTokenUsageLogToPlugin == nil && cfg.EnableTokenUsageLogToFile == nil {
+		return true
+	}
+
+	return cfg.EnableTokenUsageLogToPlugin != nil && *cfg.EnableTokenUsageLogToPlugin
+}
+
+func (c *Container) EnableTokenUsageLogToFile() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil || !cfg.EnableTokenUsageLogging {
+		return false
+	}
+	return cfg.EnableTokenUsageLogToFile != nil && *cfg.EnableTokenUsageLogToFile
 }
 
 func (c *Container) MCP() mcp.Config {

@@ -49,8 +49,10 @@ func (t *Threads) Analyze(postIDToAnalyze string, context *llm.Context, promptNa
 	}
 
 	completionReqest := llm.CompletionRequest{
-		Posts:   posts,
-		Context: context,
+		Posts:            posts,
+		Context:          context,
+		Operation:        llm.OperationThreadAnalysis,
+		OperationSubType: promptName,
 	}
 	analysisStream, err := t.llm.ChatCompletion(completionReqest, llm.WithToolsDisabled())
 	if err != nil {

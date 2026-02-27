@@ -1,0 +1,210 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+package config
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestEnableTokenUsageSinks(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        *Config
+		wantPlugin bool
+		wantFile   bool
+	}{
+		{
+			name:       "nil config",
+			cfg:        nil,
+			wantPlugin: false,
+			wantFile:   false,
+		},
+		{
+			name: "token usage logging disabled",
+			cfg: &Config{
+				EnableTokenUsageLogging:     false,
+				EnableTokenUsageLogToPlugin: boolPtr(true),
+				EnableTokenUsageLogToFile:   boolPtr(true),
+			},
+			wantPlugin: false,
+			wantFile:   false,
+		},
+		{
+			name: "legacy config falls back to plugin sink",
+			cfg: &Config{
+				EnableTokenUsageLogging: true,
+			},
+			wantPlugin: true,
+			wantFile:   false,
+		},
+		{
+			name: "explicit false plugin sink is honored",
+			cfg: &Config{
+				EnableTokenUsageLogging:     true,
+				EnableTokenUsageLogToPlugin: boolPtr(false),
+				EnableTokenUsageLogToFile:   boolPtr(false),
+			},
+			wantPlugin: false,
+			wantFile:   false,
+		},
+		{
+			name: "explicit true plugin sink is honored",
+			cfg: &Config{
+				EnableTokenUsageLogging:     true,
+				EnableTokenUsageLogToPlugin: boolPtr(true),
+				EnableTokenUsageLogToFile:   boolPtr(false),
+			},
+			wantPlugin: true,
+			wantFile:   false,
+		},
+		{
+			name: "file sink enabled does not imply plugin sink",
+			cfg: &Config{
+				EnableTokenUsageLogging:     true,
+				EnableTokenUsageLogToPlugin: nil,
+				EnableTokenUsageLogToFile:   boolPtr(true),
+			},
+			wantPlugin: false,
+			wantFile:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			container := &Container{}
+			container.Update(tt.cfg)
+
+			if got := container.EnableTokenUsageLogToPlugin(); got != tt.wantPlugin {
+				t.Fatalf("EnableTokenUsageLogToPlugin() = %t, want %t", got, tt.wantPlugin)
+			}
+
+			if got := container.EnableTokenUsageLogToFile(); got != tt.wantFile {
+				t.Fatalf("EnableTokenUsageLogToFile() = %t, want %t", got, tt.wantFile)
+			}
+		})
+	}
+}
+
+func TestTokenUsageSinkConfigUnmarshalCompatibility(t *testing.T) {
+	tests := []struct {
+		name                string
+		payload             string
+		wantPluginNil       bool
+		wantPluginValue     bool
+		wantFileNil         bool
+		wantFileValue       bool
+		wantPluginEnabledBy bool
+	}{
+		{
+			name:                "legacy payload keeps sink pointers nil",
+			payload:             `{"enableTokenUsageLogging":true}`,
+			wantPluginNil:       true,
+			wantFileNil:         true,
+			wantPluginEnabledBy: true,
+		},
+		{
+			name:                "explicit false values are preserved",
+			payload:             `{"enableTokenUsageLogging":true,"enableTokenUsageLogToPlugin":false,"enableTokenUsageLogToFile":false}`,
+			wantPluginNil:       false,
+			wantPluginValue:     false,
+			wantFileNil:         false,
+			wantFileValue:       false,
+			wantPluginEnabledBy: false,
+		},
+		{
+			name:                "explicit true plugin value is preserved",
+			payload:             `{"enableTokenUsageLogging":true,"enableTokenUsageLogToPlugin":true}`,
+			wantPluginNil:       false,
+			wantPluginValue:     true,
+			wantFileNil:         true,
+			wantPluginEnabledBy: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg Config
+			if err := json.Unmarshal([]byte(tt.payload), &cfg); err != nil {
+				t.Fatalf("failed to unmarshal config payload: %v", err)
+			}
+
+			if got := cfg.EnableTokenUsageLogToPlugin == nil; got != tt.wantPluginNil {
+				t.Fatalf("plugin sink nil = %t, want %t", got, tt.wantPluginNil)
+			}
+			if !tt.wantPluginNil && *cfg.EnableTokenUsageLogToPlugin != tt.wantPluginValue {
+				t.Fatalf("plugin sink value = %t, want %t", *cfg.EnableTokenUsageLogToPlugin, tt.wantPluginValue)
+			}
+
+			if got := cfg.EnableTokenUsageLogToFile == nil; got != tt.wantFileNil {
+				t.Fatalf("file sink nil = %t, want %t", got, tt.wantFileNil)
+			}
+			if !tt.wantFileNil && *cfg.EnableTokenUsageLogToFile != tt.wantFileValue {
+				t.Fatalf("file sink value = %t, want %t", *cfg.EnableTokenUsageLogToFile, tt.wantFileValue)
+			}
+
+			container := &Container{}
+			container.Update(&cfg)
+			if got := container.EnableTokenUsageLogToPlugin(); got != tt.wantPluginEnabledBy {
+				t.Fatalf("EnableTokenUsageLogToPlugin() = %t, want %t", got, tt.wantPluginEnabledBy)
+			}
+		})
+	}
+}
+
+func TestTokenUsageSinkConfigMarshal(t *testing.T) {
+	tests := []struct {
+		name              string
+		cfg               Config
+		expectPluginField bool
+		expectFileField   bool
+	}{
+		{
+			name: "unset sink pointers are omitted",
+			cfg: Config{
+				EnableTokenUsageLogging: true,
+			},
+			expectPluginField: false,
+			expectFileField:   false,
+		},
+		{
+			name: "explicit sink values are serialized",
+			cfg: Config{
+				EnableTokenUsageLogging:     true,
+				EnableTokenUsageLogToPlugin: boolPtr(false),
+				EnableTokenUsageLogToFile:   boolPtr(true),
+			},
+			expectPluginField: true,
+			expectFileField:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, err := json.Marshal(tt.cfg)
+			if err != nil {
+				t.Fatalf("failed to marshal config payload: %v", err)
+			}
+
+			var parsed map[string]any
+			if err := json.Unmarshal(raw, &parsed); err != nil {
+				t.Fatalf("failed to parse marshaled config payload: %v", err)
+			}
+
+			_, hasPluginField := parsed["enableTokenUsageLogToPlugin"]
+			if hasPluginField != tt.expectPluginField {
+				t.Fatalf("plugin sink field present = %t, want %t", hasPluginField, tt.expectPluginField)
+			}
+
+			_, hasFileField := parsed["enableTokenUsageLogToFile"]
+			if hasFileField != tt.expectFileField {
+				t.Fatalf("file sink field present = %t, want %t", hasFileField, tt.expectFileField)
+			}
+		})
+	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}

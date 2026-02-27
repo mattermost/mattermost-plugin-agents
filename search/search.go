@@ -207,6 +207,20 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 
 		// Create context for generating answer
 		promptCtx := llm.NewContext()
+		promptCtx.RequestingUser = &model.User{Id: userID}
+		if channelID != "" {
+			promptCtx.Channel = &model.Channel{Id: channelID}
+		}
+		if teamID != "" {
+			promptCtx.Team = &model.Team{Id: teamID}
+		}
+		promptCtx.BotName = bot.GetConfig().DisplayName
+		promptCtx.BotUsername = bot.GetConfig().Name
+		if mmBot := bot.GetMMBot(); mmBot != nil {
+			promptCtx.BotUserID = mmBot.UserId
+		}
+		promptCtx.BotModel = bot.GetService().DefaultModel
+		promptCtx.BotServiceType = bot.GetService().Type
 		promptCtx.Parameters = map[string]interface{}{
 			"Query":   query,
 			"Results": ragResults,
@@ -230,7 +244,9 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 					Message: query,
 				},
 			},
-			Context: promptCtx,
+			Context:          promptCtx,
+			Operation:        llm.OperationSearch,
+			OperationSubType: "streaming",
 		}
 
 		resultStream, err := bot.LLM().ChatCompletion(prompt)
@@ -301,6 +317,20 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 	}
 
 	promptCtx := llm.NewContext()
+	promptCtx.RequestingUser = &model.User{Id: userID}
+	if channelID != "" {
+		promptCtx.Channel = &model.Channel{Id: channelID}
+	}
+	if teamID != "" {
+		promptCtx.Team = &model.Team{Id: teamID}
+	}
+	promptCtx.BotName = bot.GetConfig().DisplayName
+	promptCtx.BotUsername = bot.GetConfig().Name
+	if mmBot := bot.GetMMBot(); mmBot != nil {
+		promptCtx.BotUserID = mmBot.UserId
+	}
+	promptCtx.BotModel = bot.GetService().DefaultModel
+	promptCtx.BotServiceType = bot.GetService().Type
 	promptCtx.Parameters = map[string]interface{}{
 		"Query":   query,
 		"Results": ragResults,
@@ -322,7 +352,9 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 				Message: query,
 			},
 		},
-		Context: promptCtx,
+		Context:          promptCtx,
+		Operation:        llm.OperationSearch,
+		OperationSubType: "nostream",
 	}
 
 	answer, err := bot.LLM().ChatCompletionNoStream(prompt)

@@ -33,6 +33,8 @@ type Config interface {
 	GetDefaultBotName() string
 	EnableLLMLogging() bool
 	EnableTokenUsageLogging() bool
+	EnableTokenUsageLogToPlugin() bool
+	EnableTokenUsageLogToFile() bool
 	GetTranscriptGenerator() string
 }
 
@@ -346,13 +348,26 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	result = llm.NewLLMTruncationWrapper(result)
 
 	// Token Usage Logging
-	if b.tokenLogger != nil && b.config.EnableTokenUsageLogging() {
-		result = llm.NewTokenUsageLoggingWrapper(
-			result,
-			botConfig.Name,
-			b.tokenLogger,
-			b.metrics,
-		)
+	if b.config.EnableTokenUsageLogging() {
+		var pluginTokenLogger llm.TokenUsagePluginLogger
+		if b.config.EnableTokenUsageLogToPlugin() {
+			pluginTokenLogger = &b.pluginAPI.Log
+		}
+
+		var fileTokenLogger *mlog.Logger
+		if b.config.EnableTokenUsageLogToFile() {
+			fileTokenLogger = b.tokenLogger
+		}
+
+		if pluginTokenLogger != nil || fileTokenLogger != nil || b.metrics != nil {
+			result = llm.NewTokenUsageLoggingWrapper(
+				result,
+				botConfig.Name,
+				pluginTokenLogger,
+				fileTokenLogger,
+				b.metrics,
+			)
+		}
 	}
 
 	// Logging

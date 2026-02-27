@@ -57,7 +57,7 @@ func BenchmarkTokenTracking(b *testing.B) {
 		b.Run(sc.Name, func(b *testing.B) {
 			for b.Loop() {
 				fakeLLM := &benchFakeLLM{generator: generator}
-				wrapper := NewTokenUsageLoggingWrapper(fakeLLM, "bench-bot", logger, nil)
+				wrapper := NewTokenUsageLoggingWrapper(fakeLLM, "bench-bot", nil, logger, nil)
 
 				result, err := wrapper.ChatCompletion(CompletionRequest{
 					Context: &Context{

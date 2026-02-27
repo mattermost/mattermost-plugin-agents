@@ -33,6 +33,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/shared/httpservice"
+	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
 func main() {
@@ -124,9 +125,12 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Info("In-memory configuration updated after migrations")
 	}
 
-	tokenLogger, err := llm.CreateTokenLogger()
-	if err != nil {
-		return fmt.Errorf("failed to create token usage logger: %w", err)
+	var tokenLogger *mlog.Logger
+	if p.configuration.EnableTokenUsageLogToFile() {
+		tokenLogger, err = llm.CreateTokenLogger()
+		if err != nil {
+			pluginAPI.Log.Warn("Failed to initialize token usage file logger; continuing without file sink", "error", err)
+		}
 	}
 
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient, tokenLogger, metricsService)

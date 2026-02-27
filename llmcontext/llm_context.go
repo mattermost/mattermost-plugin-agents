@@ -209,5 +209,6 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 			c.BotUserID = mmbot.UserId
 		}
 		c.BotModel = bot.GetService().DefaultModel
+		c.BotServiceType = bot.GetService().Type
 	}
 }
