@@ -31,7 +31,7 @@ Anthropic requires a one-time use case submission (First Time Use or FTU form) b
 FORM_DATA=$(printf '%s' '{
     "companyName": "Your Company",
     "companyWebsite": "https://yourcompany.com",
-    "intendedUsers": "1",
+    "intendedUsers": "internal employees",
     "industryOption": "Technology",
     "useCases": "AI-powered chat assistance for internal teams"
 }' | base64)
