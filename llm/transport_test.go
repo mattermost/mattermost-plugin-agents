@@ -92,7 +92,7 @@ func TestCustomAuthTransport(t *testing.T) {
 			}))
 			defer server.Close()
 
-			base := http.RoundTripper(http.DefaultTransport)
+			var base http.RoundTripper = http.DefaultTransport
 			if tt.useNilBase {
 				base = nil
 			}
