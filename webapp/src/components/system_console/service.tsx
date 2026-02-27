@@ -3,7 +3,7 @@
 
 import React, {useState, useEffect} from 'react';
 import styled from 'styled-components';
-import {useIntl} from 'react-intl';
+import {useIntl, type IntlShape} from 'react-intl';
 
 import {TrashCanOutlineIcon, ChevronDownIcon, ChevronUpIcon} from '@mattermost/compass-icons/components';
 
@@ -41,11 +41,17 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['bedrock', 'AWS Bedrock'],
     ['cohere', 'Cohere'],
     ['mistral', 'Mistral'],
-    ['scale', 'Scale AI'],
     ['asage', 'asksage (Experimental)'],
 ]);
 
-function serviceTypeToDisplayName(serviceType: string): string {
+function scaleAIToDisplayName(intl: IntlShape): string {
+    return intl.formatMessage({defaultMessage: 'Scale AI'});
+}
+
+function serviceTypeToDisplayName(intl: IntlShape, serviceType: string): string {
+    if (serviceType === 'scale') {
+        return scaleAIToDisplayName(intl);
+    }
     return mapServiceTypeToDisplayName.get(serviceType) || serviceType;
 }
 
@@ -149,7 +155,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                 <SelectionItemOption value='azure'>{'Azure'}</SelectionItemOption>
                 <SelectionItemOption value='cohere'>{'Cohere'}</SelectionItemOption>
                 <SelectionItemOption value='mistral'>{'Mistral'}</SelectionItemOption>
-                <SelectionItemOption value='scale'>{'Scale AI'}</SelectionItemOption>
+                <SelectionItemOption value='scale'>{scaleAIToDisplayName(intl)}</SelectionItemOption>
                 <SelectionItemOption value='asage'>{'asksage (Experimental)'}</SelectionItemOption>
             </SelectionItem>
             {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale') && (
@@ -288,6 +294,7 @@ type Props = {
 
 const Service = (props: Props) => {
     const [open, setOpen] = useState(false);
+    const intl = useIntl();
 
     return (
         <ServiceContainer>
@@ -295,10 +302,10 @@ const Service = (props: Props) => {
                 <IconAI/>
                 <Title>
                     <NameText>
-                        {props.service.name || serviceTypeToDisplayName(props.service.type)}
+                        {props.service.name || serviceTypeToDisplayName(intl, props.service.type)}
                     </NameText>
                     <VerticalDivider/>
-                    <ServiceTypeText>{serviceTypeToDisplayName(props.service.type)}</ServiceTypeText>
+                    <ServiceTypeText>{serviceTypeToDisplayName(intl, props.service.type)}</ServiceTypeText>
                     {props.service.defaultModel && (
                         <>
                             <VerticalDivider/>

@@ -16,6 +16,7 @@ import (
 func TestCustomAuthTransport(t *testing.T) {
 	tests := []struct {
 		name            string
+		useNilBase      bool
 		removeHeaders   []string
 		setHeaders      map[string]string
 		initialHeaders  map[string]string
@@ -62,20 +63,42 @@ func TestCustomAuthTransport(t *testing.T) {
 			},
 			expectedAbsent: []string{"Authorization"},
 		},
+		{
+			name:       "nil base falls back to default transport",
+			useNilBase: true,
+			removeHeaders: []string{
+				"Authorization",
+			},
+			setHeaders: map[string]string{
+				"x-api-key": "test-key",
+			},
+			initialHeaders: map[string]string{
+				"Authorization": "Bearer placeholder",
+			},
+			expectedPresent: map[string]string{
+				"x-api-key": "test-key",
+			},
+			expectedAbsent: []string{"Authorization"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var capturedHeaders http.Header
+			headersCh := make(chan http.Header, 1)
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				capturedHeaders = r.Header.Clone()
+				headersCh <- r.Header.Clone()
 				w.WriteHeader(http.StatusOK)
 			}))
 			defer server.Close()
 
+			base := http.RoundTripper(http.DefaultTransport)
+			if tt.useNilBase {
+				base = nil
+			}
+
 			rt := &CustomAuthTransport{
-				Base:          http.DefaultTransport,
+				Base:          base,
 				RemoveHeaders: tt.removeHeaders,
 				SetHeaders:    tt.setHeaders,
 			}
@@ -93,6 +116,8 @@ func TestCustomAuthTransport(t *testing.T) {
 			require.NoError(t, err)
 			resp.Body.Close()
 
+			capturedHeaders := <-headersCh
+
 			for k, v := range tt.expectedPresent {
 				assert.Equal(t, v, capturedHeaders.Get(k), "expected header %s=%s", k, v)
 			}
@@ -103,33 +128,9 @@ func TestCustomAuthTransport(t *testing.T) {
 
 			// Original request must not be mutated
 			assert.Equal(t, originalHeaders, req.Header, "original request headers should not be mutated")
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
 		})
 	}
-}
-
-func TestCustomAuthTransport_NilBase(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "test-key", r.Header.Get("x-api-key"))
-		assert.Empty(t, r.Header.Get("Authorization"))
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	rt := &CustomAuthTransport{
-		Base:          nil, // Should fall back to http.DefaultTransport
-		RemoveHeaders: []string{"Authorization"},
-		SetHeaders:    map[string]string{"x-api-key": "test-key"},
-	}
-
-	req, err := http.NewRequest(http.MethodGet, server.URL, nil)
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer placeholder")
-
-	resp, err := rt.RoundTrip(req)
-	require.NoError(t, err)
-	resp.Body.Close()
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func TestCloneHTTPClientWithTransport(t *testing.T) {
