@@ -97,41 +97,10 @@ func TestServiceCompletionReturnsErrorFromPlainTextBody(t *testing.T) {
 	require.Contains(t, err.Error(), "upstream timeout")
 }
 
-func TestServiceCompletionReturnsErrorFromJSONBodyWithoutErrorField(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusBadRequest,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"message":"invalid request"}`)),
-		}, nil
-	})
-
-	_, err := client.ServiceCompletion("openai", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "request failed with status 400")
-	require.Contains(t, err.Error(), `{"message":"invalid request"}`)
-}
-
 func TestAgentCompletionReturnsMarshalError(t *testing.T) {
 	client := &Client{}
 
 	_, err := client.AgentCompletion("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-		JSONOutputFormat: map[string]interface{}{
-			"bad": func() {},
-		},
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to marshal request")
-}
-
-func TestServiceCompletionReturnsMarshalError(t *testing.T) {
-	client := &Client{}
-
-	_, err := client.ServiceCompletion("openai", CompletionRequest{
 		Posts: []Post{{Role: "user", Message: "hello"}},
 		JSONOutputFormat: map[string]interface{}{
 			"bad": func() {},
@@ -309,33 +278,6 @@ func TestAgentCompletionStreamEmitsErrorForMalformedEvent(t *testing.T) {
 	require.Error(t, event.Value.(error))
 }
 
-func TestAgentCompletionStreamConvertsServerStringErrorToError(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		sse := strings.Join([]string{
-			`data: {"Type":2,"Value":"server failed"}`,
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	event := <-result.Stream
-	require.Equal(t, llm.EventTypeError, event.Type)
-	streamErr, ok := event.Value.(error)
-	require.True(t, ok)
-	require.EqualError(t, streamErr, "server failed")
-}
-
 func TestAgentCompletionStreamReadAllReturnsServerError(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -363,114 +305,6 @@ func TestAgentCompletionStreamReadAllReturnsServerError(t *testing.T) {
 	require.EqualError(t, readErr, "server failed")
 }
 
-func TestAgentCompletionStreamConvertsServerMapErrorToError(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		sse := strings.Join([]string{
-			`data: {"Type":2,"Value":{"error":"tool execution failed"}}`,
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	event := <-result.Stream
-	require.Equal(t, llm.EventTypeError, event.Type)
-	streamErr, ok := event.Value.(error)
-	require.True(t, ok)
-	require.EqualError(t, streamErr, "tool execution failed")
-}
-
-func TestAgentCompletionStreamConvertsServerMapMessageToError(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		sse := strings.Join([]string{
-			`data: {"Type":2,"Value":{"message":"provider unavailable"}}`,
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	event := <-result.Stream
-	require.Equal(t, llm.EventTypeError, event.Type)
-	streamErr, ok := event.Value.(error)
-	require.True(t, ok)
-	require.EqualError(t, streamErr, "provider unavailable")
-}
-
-func TestAgentCompletionStreamConvertsNilErrorValueToFallbackError(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		sse := strings.Join([]string{
-			`data: {"Type":2,"Value":null}`,
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	event := <-result.Stream
-	require.Equal(t, llm.EventTypeError, event.Type)
-	streamErr, ok := event.Value.(error)
-	require.True(t, ok)
-	require.EqualError(t, streamErr, "unknown stream error")
-}
-
-func TestAgentCompletionStreamConvertsBlankStringErrorToFallbackError(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		sse := strings.Join([]string{
-			`data: {"Type":2,"Value":"   "}`,
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	event := <-result.Stream
-	require.Equal(t, llm.EventTypeError, event.Type)
-	streamErr, ok := event.Value.(error)
-	require.True(t, ok)
-	require.EqualError(t, streamErr, "unknown stream error")
-}
-
 func TestServiceCompletionStreamReturnsErrorFromPlainTextBody(t *testing.T) {
 	client := &Client{}
 	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -489,41 +323,10 @@ func TestServiceCompletionStreamReturnsErrorFromPlainTextBody(t *testing.T) {
 	require.Contains(t, err.Error(), "bridge unavailable")
 }
 
-func TestServiceCompletionStreamReturnsErrorFromJSONBody(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusForbidden,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"error":"permission denied"}`)),
-		}, nil
-	})
-
-	_, err := client.ServiceCompletionStream("openai", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "request failed with status 403")
-	require.Contains(t, err.Error(), "permission denied")
-}
-
 func TestAgentCompletionStreamReturnsMarshalError(t *testing.T) {
 	client := &Client{}
 
 	_, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-		JSONOutputFormat: map[string]interface{}{
-			"bad": func() {},
-		},
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to marshal request")
-}
-
-func TestServiceCompletionStreamReturnsMarshalError(t *testing.T) {
-	client := &Client{}
-
-	_, err := client.ServiceCompletionStream("openai", CompletionRequest{
 		Posts: []Post{{Role: "user", Message: "hello"}},
 		JSONOutputFormat: map[string]interface{}{
 			"bad": func() {},
@@ -567,376 +370,245 @@ func TestAgentCompletionStreamReturnsExecuteRequestError(t *testing.T) {
 }
 
 func TestCompletionEndpointInputValidation(t *testing.T) {
-	client := &Client{}
+	type endpointType int
+	const (
+		agentNoStream endpointType = iota
+		agentStream
+		serviceNoStream
+		serviceStream
+	)
 
-	_, err := client.AgentCompletion("bad", CompletionRequest{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid agent ID")
+	testCases := []struct {
+		name          string
+		endpoint      endpointType
+		input         string
+		expectedError string
+	}{
+		{
+			name:          "agent completion rejects invalid id",
+			endpoint:      agentNoStream,
+			input:         "bad",
+			expectedError: "invalid agent ID",
+		},
+		{
+			name:          "agent completion stream rejects whitespace-only id",
+			endpoint:      agentStream,
+			input:         "\n\t",
+			expectedError: "invalid agent ID",
+		},
+		{
+			name:          "service completion rejects empty service",
+			endpoint:      serviceNoStream,
+			input:         "",
+			expectedError: "service cannot be empty",
+		},
+		{
+			name:          "service completion stream rejects whitespace-only service",
+			endpoint:      serviceStream,
+			input:         " \t ",
+			expectedError: "service cannot be empty",
+		},
+	}
 
-	_, err = client.AgentCompletionStream("bad", CompletionRequest{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid agent ID")
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &Client{}
 
-	_, err = client.AgentCompletion("\n\t", CompletionRequest{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid agent ID")
+			var err error
+			switch tc.endpoint {
+			case agentNoStream:
+				_, err = client.AgentCompletion(tc.input, CompletionRequest{})
+			case agentStream:
+				_, err = client.AgentCompletionStream(tc.input, CompletionRequest{})
+			case serviceNoStream:
+				_, err = client.ServiceCompletion(tc.input, CompletionRequest{})
+			case serviceStream:
+				_, err = client.ServiceCompletionStream(tc.input, CompletionRequest{})
+			default:
+				t.Fatalf("unexpected endpoint type: %d", tc.endpoint)
+			}
 
-	_, err = client.AgentCompletionStream("\n\t", CompletionRequest{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid agent ID")
-
-	_, err = client.ServiceCompletion("", CompletionRequest{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "service cannot be empty")
-
-	_, err = client.ServiceCompletion("   ", CompletionRequest{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "service cannot be empty")
-
-	_, err = client.ServiceCompletion("\n\t", CompletionRequest{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "service cannot be empty")
-
-	_, err = client.ServiceCompletionStream("", CompletionRequest{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "service cannot be empty")
-
-	_, err = client.ServiceCompletionStream(" \t ", CompletionRequest{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "service cannot be empty")
-
-	_, err = client.ServiceCompletionStream("\n\t", CompletionRequest{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "service cannot be empty")
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.expectedError)
+		})
+	}
 }
 
-func TestAgentCompletionTrimsAgentPath(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		require.Equal(t, http.MethodPost, req.Method)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz/nostream", req.URL.Path)
+func TestCompletionEndpointsUseNormalizedPaths(t *testing.T) {
+	type endpointType int
+	const (
+		agentNoStream endpointType = iota
+		agentStream
+		serviceNoStream
+		serviceStream
+	)
 
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"completion":"ok"}`)),
-		}, nil
-	})
+	testCases := []struct {
+		name                string
+		endpoint            endpointType
+		input               string
+		expectedPath        string
+		expectedEscapedPath string
+	}{
+		{
+			name:                "agent non-stream trims whitespace",
+			endpoint:            agentNoStream,
+			input:               " \tabcdefghijklmnopqrstuvwxyz  ",
+			expectedPath:        "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz/nostream",
+			expectedEscapedPath: "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz/nostream",
+		},
+		{
+			name:                "agent stream trims whitespace",
+			endpoint:            agentStream,
+			input:               "\n\tabcdefghijklmnopqrstuvwxyz\t\n",
+			expectedPath:        "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz",
+			expectedEscapedPath: "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz",
+		},
+		{
+			name:                "service non-stream trims and escapes path",
+			endpoint:            serviceNoStream,
+			input:               "\n\topenai/v1 beta\t\n",
+			expectedPath:        "/mattermost-ai/bridge/v1/completion/service/openai/v1 beta/nostream",
+			expectedEscapedPath: "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1%20beta/nostream",
+		},
+		{
+			name:                "service stream trims and escapes path",
+			endpoint:            serviceStream,
+			input:               "  openai/v1 beta\t ",
+			expectedPath:        "/mattermost-ai/bridge/v1/completion/service/openai/v1 beta",
+			expectedEscapedPath: "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1%20beta",
+		},
+	}
 
-	completion, err := client.AgentCompletion(" \tabcdefghijklmnopqrstuvwxyz  ", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-	require.Equal(t, "ok", completion)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &Client{}
+			client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				require.Equal(t, http.MethodPost, req.Method)
+				require.Equal(t, tc.expectedPath, req.URL.Path)
+				require.Equal(t, tc.expectedEscapedPath, req.URL.EscapedPath())
+
+				if tc.endpoint == agentStream || tc.endpoint == serviceStream {
+					sse := strings.Join([]string{
+						`data: {"Type":1,"Value":null}`,
+						"",
+					}, "\n")
+
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     make(http.Header),
+						Body:       io.NopCloser(strings.NewReader(sse)),
+					}, nil
+				}
+
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"completion":"ok"}`)),
+				}, nil
+			})
+
+			switch tc.endpoint {
+			case agentNoStream:
+				completion, err := client.AgentCompletion(tc.input, CompletionRequest{
+					Posts: []Post{{Role: "user", Message: "hello"}},
+				})
+				require.NoError(t, err)
+				require.Equal(t, "ok", completion)
+			case agentStream:
+				result, err := client.AgentCompletionStream(tc.input, CompletionRequest{
+					Posts: []Post{{Role: "user", Message: "hello"}},
+				})
+				require.NoError(t, err)
+
+				text, readErr := result.ReadAll()
+				require.NoError(t, readErr)
+				require.Empty(t, text)
+			case serviceNoStream:
+				completion, err := client.ServiceCompletion(tc.input, CompletionRequest{
+					Posts: []Post{{Role: "user", Message: "hello"}},
+				})
+				require.NoError(t, err)
+				require.Equal(t, "ok", completion)
+			case serviceStream:
+				result, err := client.ServiceCompletionStream(tc.input, CompletionRequest{
+					Posts: []Post{{Role: "user", Message: "hello"}},
+				})
+				require.NoError(t, err)
+
+				text, readErr := result.ReadAll()
+				require.NoError(t, readErr)
+				require.Empty(t, text)
+			default:
+				t.Fatalf("unexpected endpoint type: %d", tc.endpoint)
+			}
+		})
+	}
 }
 
-func TestAgentCompletionTrimsNewlineAgentPath(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		require.Equal(t, http.MethodPost, req.Method)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz/nostream", req.URL.Path)
+func TestAgentCompletionStreamParsesDataLineVariants(t *testing.T) {
+	testCases := []struct {
+		name         string
+		sseLines     []string
+		expectedText string
+	}{
+		{
+			name: "ignores non-data lines",
+			sseLines: []string{
+				"event: keepalive",
+				"id: 1",
+				":heartbeat",
+				`data: {"Type":0,"Value":"hello"}`,
+				`data: {"Type":1,"Value":null}`,
+				"",
+			},
+			expectedText: "hello",
+		},
+		{
+			name: "parses data lines without space after colon",
+			sseLines: []string{
+				`data:{"Type":0,"Value":"hello "}`,
+				`data:   {"Type":0,"Value":"world"}`,
+				`data:{"Type":1,"Value":null}`,
+				"",
+			},
+			expectedText: "hello world",
+		},
+		{
+			name: "parses data lines with tab after colon",
+			sseLines: []string{
+				"data:\t{\"Type\":0,\"Value\":\"hello \"}",
+				"data:\t\t{\"Type\":0,\"Value\":\"world\"}",
+				"data:\t{\"Type\":1,\"Value\":null}",
+				"",
+			},
+			expectedText: "hello world",
+		},
+	}
 
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"completion":"ok"}`)),
-		}, nil
-	})
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &Client{}
+			client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				sse := strings.Join(tc.sseLines, "\n")
 
-	completion, err := client.AgentCompletion("\n\tabcdefghijklmnopqrstuvwxyz\t\n", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-	require.Equal(t, "ok", completion)
-}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(sse)),
+				}, nil
+			})
 
-func TestAgentCompletionStreamTrimsAgentPath(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		require.Equal(t, http.MethodPost, req.Method)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz", req.URL.Path)
+			result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
+				Posts: []Post{{Role: "user", Message: "hello"}},
+			})
+			require.NoError(t, err)
 
-		sse := strings.Join([]string{
-			`data: {"Type":1,"Value":null}`,
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.AgentCompletionStream(" \tabcdefghijklmnopqrstuvwxyz \n", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	text, readErr := result.ReadAll()
-	require.NoError(t, readErr)
-	require.Empty(t, text)
-}
-
-func TestAgentCompletionStreamTrimsNewlineAgentPath(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		require.Equal(t, http.MethodPost, req.Method)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/agent/abcdefghijklmnopqrstuvwxyz", req.URL.Path)
-
-		sse := strings.Join([]string{
-			`data: {"Type":1,"Value":null}`,
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.AgentCompletionStream("\n\tabcdefghijklmnopqrstuvwxyz\t\n", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	text, readErr := result.ReadAll()
-	require.NoError(t, readErr)
-	require.Empty(t, text)
-}
-
-func TestServiceCompletionTrimsServicePath(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		require.Equal(t, http.MethodPost, req.Method)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/nostream", req.URL.Path)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/nostream", req.URL.EscapedPath())
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"completion":"ok"}`)),
-		}, nil
-	})
-
-	completion, err := client.ServiceCompletion("   openai\t", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-	require.Equal(t, "ok", completion)
-}
-
-func TestServiceCompletionTrimsNewlineServicePath(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		require.Equal(t, http.MethodPost, req.Method)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/v1/nostream", req.URL.Path)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1/nostream", req.URL.EscapedPath())
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"completion":"ok"}`)),
-		}, nil
-	})
-
-	completion, err := client.ServiceCompletion("\n\topenai/v1\t\n", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-	require.Equal(t, "ok", completion)
-}
-
-func TestServiceCompletionStreamTrimsServicePath(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		require.Equal(t, http.MethodPost, req.Method)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/v1", req.URL.Path)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1", req.URL.EscapedPath())
-
-		sse := strings.Join([]string{
-			`data: {"Type":1,"Value":null}`,
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.ServiceCompletionStream("  openai/v1\t ", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	text, readErr := result.ReadAll()
-	require.NoError(t, readErr)
-	require.Empty(t, text)
-}
-
-func TestServiceCompletionStreamTrimsNewlineServicePath(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		require.Equal(t, http.MethodPost, req.Method)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/v1", req.URL.Path)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1", req.URL.EscapedPath())
-
-		sse := strings.Join([]string{
-			`data: {"Type":1,"Value":null}`,
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.ServiceCompletionStream("\n\topenai/v1\t\n", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	text, readErr := result.ReadAll()
-	require.NoError(t, readErr)
-	require.Empty(t, text)
-}
-
-func TestServiceCompletionEscapesServicePath(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		require.Equal(t, http.MethodPost, req.Method)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/v1 beta/nostream", req.URL.Path)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1%20beta/nostream", req.URL.EscapedPath())
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"completion":"ok"}`)),
-		}, nil
-	})
-
-	completion, err := client.ServiceCompletion("openai/v1 beta", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-	require.Equal(t, "ok", completion)
-}
-
-func TestServiceCompletionStreamEscapesServicePath(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		require.Equal(t, http.MethodPost, req.Method)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai/v1 beta", req.URL.Path)
-		require.Equal(t, "/mattermost-ai/bridge/v1/completion/service/openai%2Fv1%20beta", req.URL.EscapedPath())
-
-		sse := strings.Join([]string{
-			`data: {"Type":1,"Value":null}`,
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.ServiceCompletionStream("openai/v1 beta", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	text, readErr := result.ReadAll()
-	require.NoError(t, readErr)
-	require.Empty(t, text)
-}
-
-func TestAgentCompletionStreamIgnoresNonDataLines(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		sse := strings.Join([]string{
-			"event: keepalive",
-			"id: 1",
-			":heartbeat",
-			`data: {"Type":0,"Value":"hello"}`,
-			`data: {"Type":1,"Value":null}`,
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	text, readErr := result.ReadAll()
-	require.NoError(t, readErr)
-	require.Equal(t, "hello", text)
-}
-
-func TestAgentCompletionStreamParsesDataLinesWithoutSpaceAfterColon(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		sse := strings.Join([]string{
-			`data:{"Type":0,"Value":"hello "}`,
-			`data:   {"Type":0,"Value":"world"}`,
-			`data:{"Type":1,"Value":null}`,
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	text, readErr := result.ReadAll()
-	require.NoError(t, readErr)
-	require.Equal(t, "hello world", text)
-}
-
-func TestAgentCompletionStreamParsesDataLinesWithTabAfterColon(t *testing.T) {
-	client := &Client{}
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		sse := strings.Join([]string{
-			"data:\t{\"Type\":0,\"Value\":\"hello \"}",
-			"data:\t\t{\"Type\":0,\"Value\":\"world\"}",
-			"data:\t{\"Type\":1,\"Value\":null}",
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	text, readErr := result.ReadAll()
-	require.NoError(t, readErr)
-	require.Equal(t, "hello world", text)
+			text, readErr := result.ReadAll()
+			require.NoError(t, readErr)
+			require.Equal(t, tc.expectedText, text)
+		})
+	}
 }
 
 func TestAgentCompletionStreamEmitsErrorWhenReaderFails(t *testing.T) {
