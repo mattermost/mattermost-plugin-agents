@@ -222,6 +222,23 @@ func TestBridgeClientContextEnrichment(t *testing.T) {
 			expectedOperation: llm.OperationBridgeService,
 			expectedSubType:   "streaming",
 		},
+		{
+			name: "agent non-stream request with caller operation override",
+			service: llm.ServiceConfig{
+				ID:           "svc-custom-operation",
+				Name:         "svc-custom-operation",
+				Type:         "openai",
+				DefaultModel: "gpt-4.1",
+			},
+			call: func(client *bridgeclient.Client, req bridgeclient.CompletionRequest) error {
+				req.Operation = "playbooks_summary"
+				req.OperationSubType = "incident_report"
+				_, err := client.AgentCompletion(testBotUserID, req)
+				return err
+			},
+			expectedOperation: "playbooks_summary",
+			expectedSubType:   "incident_report",
+		},
 	}
 
 	for _, tc := range tests {

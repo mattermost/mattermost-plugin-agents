@@ -76,11 +76,20 @@ func (a *API) convertLLMBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.
 		return llm.CompletionRequest{}, err
 	}
 
+	resolvedOperation := operation
+	if req.Operation != "" {
+		resolvedOperation = req.Operation
+	}
+	resolvedOperationSubType := operationSubType
+	if req.OperationSubType != "" {
+		resolvedOperationSubType = req.OperationSubType
+	}
+
 	return llm.CompletionRequest{
 		Posts:            posts,
 		Context:          llmContext,
-		Operation:        operation,
-		OperationSubType: operationSubType,
+		Operation:        resolvedOperation,
+		OperationSubType: resolvedOperationSubType,
 	}, nil
 }
 
