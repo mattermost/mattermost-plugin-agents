@@ -109,7 +109,16 @@ func (a *API) buildLLMBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRe
 		context.RequestingUser = &model.User{Id: req.UserID}
 	}
 	if req.ChannelID != "" {
-		context.Channel = &model.Channel{Id: req.ChannelID}
+		channel, err := a.pluginAPI.Channel.Get(req.ChannelID)
+		if err != nil {
+			a.pluginAPI.Log.Warn("failed to get channel for bridge context; using channel ID only", "channel_id", req.ChannelID, "error", err)
+			context.Channel = &model.Channel{Id: req.ChannelID}
+		} else {
+			context.Channel = channel
+			if channel.TeamId != "" && channel.Type != model.ChannelTypeDirect && channel.Type != model.ChannelTypeGroup {
+				context.Team = &model.Team{Id: channel.TeamId}
+			}
+		}
 	}
 
 	return context, nil

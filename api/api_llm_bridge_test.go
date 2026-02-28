@@ -257,8 +257,11 @@ func TestBridgeClientContextEnrichment(t *testing.T) {
 			require.NotNil(t, lastRequest.Context)
 			require.NotNil(t, lastRequest.Context.RequestingUser)
 			require.NotNil(t, lastRequest.Context.Channel)
+			require.NotNil(t, lastRequest.Context.Team)
 			require.Equal(t, testUserID, lastRequest.Context.RequestingUser.Id)
 			require.Equal(t, testChannelID, lastRequest.Context.Channel.Id)
+			require.Equal(t, model.ChannelTypeOpen, lastRequest.Context.Channel.Type)
+			require.Equal(t, "team-bridge", lastRequest.Context.Team.Id)
 			require.Equal(t, "testbot", lastRequest.Context.BotUsername)
 			require.Equal(t, testBotUserID, lastRequest.Context.BotUserID)
 			require.Equal(t, tc.service.DefaultModel, lastRequest.Context.BotModel)
@@ -669,7 +672,7 @@ func TestBridgeClientPermissions(t *testing.T) {
 					Id:     testChannelID,
 					Type:   model.ChannelTypeOpen,
 					TeamId: "team-123",
-				}, nil).Once()
+				}, nil).Maybe()
 			},
 			expectError: false,
 		},

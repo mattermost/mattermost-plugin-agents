@@ -61,6 +61,11 @@ type MMBots struct {
 	// lastEnsuredServiceCfgs stores the resolved service configs keyed by service ID
 	// that were last successfully ensured, for optimistic change detection.
 	lastEnsuredServiceCfgs map[string]llm.ServiceConfig
+	// lastEnsuredToken* fields track token logging configuration used to build current bot wrappers.
+	lastEnsuredTokenUsageLogging     bool
+	lastEnsuredTokenUsageLogToPlugin bool
+	lastEnsuredTokenUsageLogToFile   bool
+	lastEnsuredHasTokenLogger        bool
 }
 
 func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client, tokenLogger *mlog.Logger, metrics llm.MetricsObserver) *MMBots {
@@ -141,14 +146,27 @@ func (b *MMBots) EnsureBots() error {
 	// when multiple nodes all try to acquire the mutex simultaneously on config changes.
 	currentBotCfgs := b.config.GetBots()
 	currentServiceCfgs := b.resolveServiceCfgs(currentBotCfgs)
+	currentTokenUsageLogging := b.config.EnableTokenUsageLogging()
+	currentTokenUsageLogToPlugin := b.config.EnableTokenUsageLogToPlugin()
+	currentTokenUsageLogToFile := b.config.EnableTokenUsageLogToFile()
 	b.botsLock.RLock()
 	botsAlreadyInitialized := len(b.bots) > 0
 	lastBotCfgs := b.lastEnsuredBotCfgs
 	lastServiceCfgs := b.lastEnsuredServiceCfgs
+	currentHasTokenLogger := b.tokenLogger != nil
+	lastTokenUsageLogging := b.lastEnsuredTokenUsageLogging
+	lastTokenUsageLogToPlugin := b.lastEnsuredTokenUsageLogToPlugin
+	lastTokenUsageLogToFile := b.lastEnsuredTokenUsageLogToFile
+	lastHasTokenLogger := b.lastEnsuredHasTokenLogger
 	b.botsLock.RUnlock()
 
-	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
-		b.pluginAPI.Log.Debug("EnsureBots: skipping - bot and service configuration unchanged")
+	tokenLoggingUnchanged := lastTokenUsageLogging == currentTokenUsageLogging &&
+		lastTokenUsageLogToPlugin == currentTokenUsageLogToPlugin &&
+		lastTokenUsageLogToFile == currentTokenUsageLogToFile &&
+		lastHasTokenLogger == currentHasTokenLogger
+
+	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) && tokenLoggingUnchanged {
+		b.pluginAPI.Log.Debug("EnsureBots: skipping - bot/service/token logging configuration unchanged")
 		return nil
 	}
 
@@ -162,14 +180,27 @@ func (b *MMBots) EnsureBots() error {
 	// Re-check after acquiring lock - another node may have already handled this
 	currentBotCfgs = b.config.GetBots()
 	currentServiceCfgs = b.resolveServiceCfgs(currentBotCfgs)
+	currentTokenUsageLogging = b.config.EnableTokenUsageLogging()
+	currentTokenUsageLogToPlugin = b.config.EnableTokenUsageLogToPlugin()
+	currentTokenUsageLogToFile = b.config.EnableTokenUsageLogToFile()
 	b.botsLock.RLock()
 	botsAlreadyInitialized = len(b.bots) > 0
 	lastBotCfgs = b.lastEnsuredBotCfgs
 	lastServiceCfgs = b.lastEnsuredServiceCfgs
+	currentHasTokenLogger = b.tokenLogger != nil
+	lastTokenUsageLogging = b.lastEnsuredTokenUsageLogging
+	lastTokenUsageLogToPlugin = b.lastEnsuredTokenUsageLogToPlugin
+	lastTokenUsageLogToFile = b.lastEnsuredTokenUsageLogToFile
+	lastHasTokenLogger = b.lastEnsuredHasTokenLogger
 	b.botsLock.RUnlock()
 
-	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
-		b.pluginAPI.Log.Debug("EnsureBots: skipping after lock - bot and service configuration unchanged")
+	tokenLoggingUnchanged = lastTokenUsageLogging == currentTokenUsageLogging &&
+		lastTokenUsageLogToPlugin == currentTokenUsageLogToPlugin &&
+		lastTokenUsageLogToFile == currentTokenUsageLogToFile &&
+		lastHasTokenLogger == currentHasTokenLogger
+
+	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) && tokenLoggingUnchanged {
+		b.pluginAPI.Log.Debug("EnsureBots: skipping after lock - bot/service/token logging configuration unchanged")
 		return nil
 	}
 
@@ -288,6 +319,10 @@ func (b *MMBots) EnsureBots() error {
 	}
 	b.lastEnsuredBotCfgs = copiedBotCfgs
 	b.lastEnsuredServiceCfgs = currentServiceCfgs
+	b.lastEnsuredTokenUsageLogging = currentTokenUsageLogging
+	b.lastEnsuredTokenUsageLogToPlugin = currentTokenUsageLogToPlugin
+	b.lastEnsuredTokenUsageLogToFile = currentTokenUsageLogToFile
+	b.lastEnsuredHasTokenLogger = b.tokenLogger != nil
 	b.botsLock.Unlock()
 
 	return nil
@@ -356,7 +391,9 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 
 		var fileTokenLogger *mlog.Logger
 		if b.config.EnableTokenUsageLogToFile() {
+			b.botsLock.RLock()
 			fileTokenLogger = b.tokenLogger
+			b.botsLock.RUnlock()
 		}
 
 		if pluginTokenLogger != nil || fileTokenLogger != nil || b.metrics != nil {
@@ -376,6 +413,12 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	}
 
 	return result, nil
+}
+
+func (b *MMBots) SetTokenLogger(tokenLogger *mlog.Logger) {
+	b.botsLock.Lock()
+	defer b.botsLock.Unlock()
+	b.tokenLogger = tokenLogger
 }
 
 // TODO: This really doesn't belong here. Figure out where to put this.

@@ -125,16 +125,30 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Info("In-memory configuration updated after migrations")
 	}
 
-	var tokenLogger *mlog.Logger
-	if p.configuration.EnableTokenUsageLogToFile() {
-		tokenLogger, err = llm.CreateTokenLogger()
-		if err != nil {
-			pluginAPI.Log.Warn("Failed to initialize token usage file logger; continuing without file sink", "error", err)
+	reconcileTokenLogger := func(existing *mlog.Logger) *mlog.Logger {
+		if !p.configuration.EnableTokenUsageLogToFile() {
+			return nil
 		}
+		if existing != nil {
+			return existing
+		}
+
+		createdTokenLogger, createErr := llm.CreateTokenLogger()
+		if createErr != nil {
+			pluginAPI.Log.Warn("Failed to initialize token usage file logger; continuing without file sink", "error", createErr)
+			return nil
+		}
+
+		return createdTokenLogger
 	}
+
+	var tokenLogger *mlog.Logger
+	tokenLogger = reconcileTokenLogger(tokenLogger)
 
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient, tokenLogger, metricsService)
 	p.configuration.RegisterUpdateListener(func() {
+		tokenLogger = reconcileTokenLogger(tokenLogger)
+		bots.SetTokenLogger(tokenLogger)
 		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
 			return
