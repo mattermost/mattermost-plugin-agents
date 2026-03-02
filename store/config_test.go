@@ -4,8 +4,12 @@
 package store
 
 import (
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -312,4 +316,119 @@ func TestConfigDataMigration(t *testing.T) {
 	migrated, err = s.IsConfigMigrated()
 	require.NoError(t, err)
 	assert.True(t, migrated, "Should still be migrated on re-check")
+}
+
+func setupSchemaBoundStore(t *testing.T, schemaName string) *Store {
+	t.Helper()
+
+	db, err := sqlx.Connect("postgres", testConnStr)
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+
+	_, err = db.Exec(fmt.Sprintf("SET search_path TO %s", schemaName))
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		db.Close()
+	})
+
+	return New(db)
+}
+
+func TestSaveConfigConcurrent(t *testing.T) {
+	baseStore := setupTestStore(t)
+
+	err := baseStore.RunMigrations()
+	require.NoError(t, err)
+
+	var schemaName string
+	err = baseStore.db.Get(&schemaName, "SELECT current_schema()")
+	require.NoError(t, err)
+
+	const workerCount = 8
+	workerStores := make([]*Store, workerCount)
+	for i := 0; i < workerCount; i++ {
+		workerStores[i] = setupSchemaBoundStore(t, schemaName)
+	}
+
+	start := make(chan struct{})
+	errCh := make(chan error, workerCount)
+	var wg sync.WaitGroup
+
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func(index int, workerStore *Store) {
+			defer wg.Done()
+			<-start
+
+			errCh <- workerStore.SaveConfig(config.Config{DefaultBotName: fmt.Sprintf("bot-%d", index)})
+		}(i, workerStores[i])
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for saveErr := range errCh {
+		require.NoError(t, saveErr)
+	}
+
+	var activeCount int
+	err = baseStore.db.Get(&activeCount, "SELECT COUNT(*) FROM Agents_ConfigHistory WHERE Active = true")
+	require.NoError(t, err)
+	assert.Equal(t, 1, activeCount)
+
+	var totalCount int
+	err = baseStore.db.Get(&totalCount, "SELECT COUNT(*) FROM Agents_ConfigHistory")
+	require.NoError(t, err)
+	assert.Equal(t, workerCount, totalCount)
+}
+
+func TestSaveConfigWaitsForConfigLock(t *testing.T) {
+	baseStore := setupTestStore(t)
+
+	err := baseStore.RunMigrations()
+	require.NoError(t, err)
+
+	var schemaName string
+	err = baseStore.db.Get(&schemaName, "SELECT current_schema()")
+	require.NoError(t, err)
+
+	lockStore := setupSchemaBoundStore(t, schemaName)
+	saveStore := setupSchemaBoundStore(t, schemaName)
+
+	lockTx, err := lockStore.db.Beginx()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = lockTx.Rollback()
+	})
+
+	_, err = lockTx.Exec("SELECT pg_advisory_xact_lock($1, $2)", configSaveLockNamespace, configSaveLockKey)
+	require.NoError(t, err)
+
+	saveDone := make(chan error, 1)
+	go func() {
+		saveDone <- saveStore.SaveConfig(config.Config{DefaultBotName: "bot-after-lock"})
+	}()
+
+	select {
+	case saveErr := <-saveDone:
+		require.FailNow(t, "SaveConfig should wait for advisory lock", "got early result: %v", saveErr)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	err = lockTx.Commit()
+	require.NoError(t, err)
+
+	select {
+	case saveErr := <-saveDone:
+		require.NoError(t, saveErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("SaveConfig did not complete after advisory lock was released")
+	}
+
+	cfg, err := baseStore.GetConfig()
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "bot-after-lock", cfg.DefaultBotName)
 }

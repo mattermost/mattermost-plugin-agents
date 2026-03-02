@@ -13,6 +13,11 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+const (
+	configSaveLockNamespace = int32(12457)
+	configSaveLockKey       = int32(1)
+)
+
 // GetConfig retrieves the currently active configuration from the database.
 // Returns nil, nil if no active config exists (e.g., fresh install before migration).
 func (s *Store) GetConfig() (*config.Config, error) {
@@ -51,6 +56,12 @@ func (s *Store) SaveConfig(cfg config.Config) error {
 			_ = tx.Rollback()
 		}
 	}()
+
+	// Serialize SaveConfig across nodes/processes to avoid races on the partial
+	// unique index for the active row.
+	if _, err = tx.Exec("SELECT pg_advisory_xact_lock($1, $2)", configSaveLockNamespace, configSaveLockKey); err != nil {
+		return fmt.Errorf("failed to lock config save transaction: %w", err)
+	}
 
 	// Deactivate current active config (at most one row, indexed on Active)
 	if _, err = tx.Exec("UPDATE Agents_ConfigHistory SET Active = false WHERE Active = true"); err != nil {

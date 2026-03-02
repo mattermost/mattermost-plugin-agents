@@ -81,8 +81,32 @@ func TestHandleGetConfig(t *testing.T) {
 			storedConfig:   nil,
 			expectedStatus: http.StatusOK,
 			validateBody: func(t *testing.T, body []byte) {
+				var raw map[string]any
+				err := json.Unmarshal(body, &raw)
+				require.NoError(t, err)
+
+				services, ok := raw["services"].([]any)
+				require.True(t, ok, "services should marshal as an empty array")
+				assert.Empty(t, services)
+
+				bots, ok := raw["bots"].([]any)
+				require.True(t, ok, "bots should marshal as an empty array")
+				assert.Empty(t, bots)
+
+				mcpConfig, ok := raw["mcp"].(map[string]any)
+				require.True(t, ok, "mcp should be present in response")
+				servers, ok := mcpConfig["servers"].([]any)
+				require.True(t, ok, "mcp.servers should marshal as an empty array")
+				assert.Empty(t, servers)
+
+				webSearchConfig, ok := raw["webSearch"].(map[string]any)
+				require.True(t, ok, "webSearch should be present in response")
+				domainDenylist, ok := webSearchConfig["domainDenylist"].([]any)
+				require.True(t, ok, "webSearch.domainDenylist should marshal as an empty array")
+				assert.Empty(t, domainDenylist)
+
 				var cfg config.Config
-				err := json.Unmarshal(body, &cfg)
+				err = json.Unmarshal(body, &cfg)
 				require.NoError(t, err)
 				assert.Empty(t, cfg.Services)
 				assert.Empty(t, cfg.Bots)

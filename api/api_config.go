@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-ai/config"
+	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
 )
 
 // handleGetConfig returns the current plugin configuration from the database.
@@ -21,7 +23,16 @@ func (a *API) handleGetConfig(c *gin.Context) {
 	}
 
 	if cfg == nil {
-		c.JSON(http.StatusOK, config.Config{})
+		c.JSON(http.StatusOK, config.Config{
+			Services: []llm.ServiceConfig{},
+			Bots:     []llm.BotConfig{},
+			MCP: mcp.Config{
+				Servers: []mcp.ServerConfig{},
+			},
+			WebSearch: config.WebSearchConfig{
+				DomainDenylist: []string{},
+			},
+		})
 		return
 	}
 

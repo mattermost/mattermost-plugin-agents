@@ -9,6 +9,9 @@ export interface BotConfig {
     serviceID: string;
     enableVision?: boolean;
     disableTools?: boolean;
+    reasoningEnabled?: boolean;
+    reasoningEffort?: string;
+    thinkingBudget?: number;
 }
 
 export interface ServiceConfig {
@@ -21,7 +24,6 @@ export interface ServiceConfig {
     tokenLimit?: number;
     streamingTimeoutSeconds?: number;
     useResponsesAPI?: boolean;
-    reasoningEnabled?: boolean;
 }
 
 export interface PluginConfig {

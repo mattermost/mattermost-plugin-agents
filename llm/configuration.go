@@ -28,10 +28,6 @@ type ServiceConfig struct {
 	// UseResponsesAPI determines whether to use the new OpenAI Responses API
 	// Only applicable to OpenAI and OpenAI-compatible services
 	UseResponsesAPI bool `json:"useResponsesAPI"`
-
-	// ReasoningEnabled determines whether reasoning/thinking is enabled for this service
-	// Applicable to OpenAI (with ResponsesAPI) and Anthropic
-	ReasoningEnabled bool `json:"reasoningEnabled"`
 }
 
 type ChannelAccessLevel int
