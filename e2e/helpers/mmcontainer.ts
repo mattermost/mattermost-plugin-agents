@@ -54,12 +54,18 @@ export default class MattermostContainer {
     }
 
     stop = async () => {
-        if (this.logStream) {
-            this.logStream.end();
+        if (this.pgContainer) {
+            await this.pgContainer.stop()
         }
-        await this.pgContainer.stop()
-        await this.container.stop()
-        await this.network.stop()
+        if (this.container) {
+            await this.container.stop()
+        }
+        if (this.network) {
+            await this.network.stop()
+        }
+        if (this.logStream && !this.logStream.destroyed && !this.logStream.writableEnded) {
+            await new Promise<void>((resolve) => this.logStream.end(resolve));
+        }
     }
 
     createAdmin = async (email: string, username: string, password: string) => {
@@ -234,16 +240,20 @@ export default class MattermostContainer {
                 }
                 this.logStream = fs.createWriteStream(`${logDir}/server-logs.log`, {flags: 'a'});
 
-                stream.on('data', (data: string) => {
+                stream.on('data', (data: string | Buffer) => {
+                    const logLine = String(data);
+
                     // Write all logs to file
-                    this.logStream.write(data + '\n');
+                    if (this.logStream && !this.logStream.destroyed && !this.logStream.writableEnded) {
+                        this.logStream.write(logLine + '\n');
+                    }
 
                     // Only print plugin logs to console in non-CI environments
                     // In CI, this causes interleaving with Playwright test output
                     // Logs are always available in the server-logs.log artifact
-                    if (!process.env.CI && data.includes('"plugin_id":"mattermost-ai"')) {
+                    if (!process.env.CI && logLine.includes('"plugin_id":"mattermost-ai"')) {
                         // Remove API keys and sensitive tokens from logs
-                        let sanitized = data
+                        let sanitized = logLine
                             .replace(/"apiKey":"[^"]+"/g, '"apiKey":"[REDACTED]"')
                             .replace(/"api_key":"[^"]+"/g, '"api_key":"[REDACTED]"')
                             .replace(/Authorization:\s*Bearer\s+\S+/gi, 'Authorization: Bearer [REDACTED]')
