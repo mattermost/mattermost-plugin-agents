@@ -81,6 +81,18 @@ const Horizontal = styled.div`
     gap: 8px;
 `;
 
+// Backend legacy fallback: when EnableTokenUsageLogging=true and both sink pointers
+// are nil, config.Container uses file=true, plugin=false. UI display must match.
+const getTokenUsageSinkDisplay = (v: Config) => {
+    const pluginAbsent = v.enableTokenUsageLogToPlugin == null;
+    const fileAbsent = v.enableTokenUsageLogToFile == null;
+    const isLegacy = v.enableTokenUsageLogging && pluginAbsent && fileAbsent;
+    return {
+        plugin: pluginAbsent ? false : Boolean(v.enableTokenUsageLogToPlugin),
+        file: fileAbsent ? (Boolean(isLegacy)) : Boolean(v.enableTokenUsageLogToFile),
+    };
+};
+
 const defaultConfig = {
     services: [],
     llmBackend: '',
@@ -358,13 +370,13 @@ const Config = (props: Props) => {
                     />
                     <BooleanItem
                         label={intl.formatMessage({defaultMessage: 'Emit token usage to plugin JSON logs'})}
-                        value={value.enableTokenUsageLogToPlugin ?? true}
+                        value={getTokenUsageSinkDisplay(value).plugin}
                         onChange={(to) => props.onChange(props.id, {...value, enableTokenUsageLogToPlugin: to})}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, token accounting fields (user, agent, model, operation, and token counts) are emitted to the main plugin logs for Loki/Grafana dashboards.'})}
                     />
                     <BooleanItem
                         label={intl.formatMessage({defaultMessage: 'Write token usage to dedicated file log'})}
-                        value={Boolean(value.enableTokenUsageLogToFile)}
+                        value={getTokenUsageSinkDisplay(value).file}
                         onChange={(to) => props.onChange(props.id, {...value, enableTokenUsageLogToFile: to})}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, token accounting is also written to logs/agents/token_usage.log. Recommended for local debugging; containerized deployments should prefer plugin JSON logs.'})}
                     />
