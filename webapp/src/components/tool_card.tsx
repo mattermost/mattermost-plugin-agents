@@ -341,7 +341,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
 
     const isPending = tool.status === ToolCallStatus.Pending;
     const isAccepted = tool.status === ToolCallStatus.Accepted;
-    const isSuccess = tool.status === ToolCallStatus.Success;
+    const isSuccess = tool.status === ToolCallStatus.Success || tool.status === ToolCallStatus.AutoApproved;
     const isError = tool.status === ToolCallStatus.Error;
     const isRejected = tool.status === ToolCallStatus.Rejected;
     const showDecisionButtons = Boolean(onApprove && onReject);
@@ -433,7 +433,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
                     {!showProcessingSpinner && isRejected && <SmallRejectedIcon size={16}/>}
                 </StatusIcon>
                 <ToolName>{displayName}</ToolName>
-                {isAutoApproved && (
+                {(tool.status === ToolCallStatus.AutoApproved || isAutoApproved) && (
                     <AutoApprovedBadge>
                         <FormattedMessage
                             id='ai.tool_call.auto_approved'

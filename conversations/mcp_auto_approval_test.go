@@ -196,7 +196,7 @@ func TestWrapStreamWithMCPAutoApproval(t *testing.T) {
 
 		resultToolCalls := events[0].Value.([]llm.ToolCall)
 		assert.Equal(t, llm.ToolCallStatusError, resultToolCalls[0].Status)
-		assert.Equal(t, "Tool call failed", resultToolCalls[0].Result)
+		assert.Equal(t, assert.AnError.Error(), resultToolCalls[0].Result)
 	})
 
 	t.Run("disabled approved server does not auto-approve", func(t *testing.T) {

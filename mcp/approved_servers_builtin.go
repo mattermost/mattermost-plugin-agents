@@ -11,6 +11,7 @@ func BuiltinApprovedServers() []ApprovedMCPServer {
 		atlassianApprovedServer(),
 		githubApprovedServer(),
 		figmaApprovedServer(),
+		mattermostApprovedServer(),
 	}
 }
 
@@ -131,6 +132,27 @@ func figmaApprovedServer() ApprovedMCPServer {
 			"get_code_connect_map",
 			"get_code_connect_suggestions",
 			"whoami",
+		},
+	}
+}
+
+// mattermostApprovedServer returns the approved server definition for Mattermost Embedded MCP Server.
+// Source: MATTERMOST.md - 8 READ-only tools out of 12 total.
+// Endpoint: embedded://mattermost
+func mattermostApprovedServer() ApprovedMCPServer {
+	return ApprovedMCPServer{
+		Name:        "Mattermost",
+		URLPatterns: []string{"mattermost"},
+		Enabled:     true,
+		AutoApproveTools: []string{
+			"read_post",
+			"read_channel",
+			"get_channel_info",
+			"get_channel_members",
+			"get_team_info",
+			"get_team_members",
+			"search_posts",
+			"search_users",
 		},
 	}
 }

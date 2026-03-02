@@ -72,7 +72,7 @@ func wrapStreamWithMCPAutoApproval(
 					return json.Unmarshal(toolCalls[i].Arguments, args)
 				}, llmContext)
 				if err != nil {
-					toolCalls[i].Result = "Tool call failed"
+					toolCalls[i].Result = err.Error()
 					toolCalls[i].Status = llm.ToolCallStatusError
 				} else {
 					toolCalls[i].Result = result

@@ -219,7 +219,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // determine when to fetch private results even after the approval flow completes.
     const hasCompletedToolCalls = useMemo(() => {
         return toolCalls.some((tc) =>
-            tc.status === ToolCallStatus.Success || tc.status === ToolCallStatus.Error,
+            tc.status === ToolCallStatus.Success ||
+            tc.status === ToolCallStatus.Error ||
+            tc.status === ToolCallStatus.AutoApproved,
         );
     }, [toolCalls]);
 

@@ -149,6 +149,24 @@ func (p *MMPostStreamService) areAllToolCallsAutoApprovable(toolCalls []llm.Tool
 	return true
 }
 
+// markAutoApprovedStatuses upgrades successful tool calls to AutoApproved when
+// the tool itself is auto-approvable. This preserves per-tool badge fidelity
+// even in mixed batches where post-level auto_approved_tool_call is false.
+func (p *MMPostStreamService) markAutoApprovedStatuses(toolCalls []llm.ToolCall) {
+	if p.toolAutoApprover == nil {
+		return
+	}
+
+	for i := range toolCalls {
+		if toolCalls[i].Status != llm.ToolCallStatusSuccess {
+			continue
+		}
+		if p.toolAutoApprover.IsToolAutoApproved(toolCalls[i].ServerOrigin, toolCalls[i].Name) {
+			toolCalls[i].Status = llm.ToolCallStatusAutoApproved
+		}
+	}
+}
+
 func (p *MMPostStreamService) StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error {
 	// We use ModifyPostForBot directly here to add the responding to post ID
 	ModifyPostForBot(botID, requesterUserID, post, respondingToPostID)
@@ -302,13 +320,14 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 	delete(p.contexts, postID)
 }
 
-// hasAutoApprovedToolCalls checks if any tool call in the batch was auto-approved
-// by the MCP approved servers feature. When the auto-approval wrapper executes tools,
-// it sets them to ToolCallStatusAutoApproved — so if any has that status, the
-// entire batch went through auto-approval.
+// hasAutoApprovedToolCalls checks if any tool call in the batch was pre-executed
+// by the MCP approved servers wrapper.
+// The wrapper sets ToolCallStatusAutoApproved on success and ToolCallStatusError on
+// execution failure. Either status means the batch was already executed and should
+// not be reset/re-executed by the streaming layer.
 func hasAutoApprovedToolCalls(toolCalls []llm.ToolCall) bool {
 	for _, tc := range toolCalls {
-		if tc.Status == llm.ToolCallStatusAutoApproved {
+		if tc.Status == llm.ToolCallStatusAutoApproved || tc.Status == llm.ToolCallStatusError {
 			return true
 		}
 	}
@@ -493,11 +512,9 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					// Auto-approved tools have already been executed and have results populated.
 					preExecuted := hasAutoApprovedToolCalls(toolCalls)
 
-					if !preExecuted {
-						for i := range toolCalls {
-							toolCalls[i].Status = llm.ToolCallStatusPending
-						}
-					}
+					// Preserve non-pending statuses emitted by wrappers (e.g., auto-run
+					// success/error) so UI state can transition from spinner to final state.
+					// Raw model-emitted tool calls already use zero-value Pending.
 
 					for i := range toolCalls {
 						toolCalls[i].SanitizeArguments()
@@ -536,14 +553,18 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 								dmToolCalls = append(dmToolCalls, tc)
 							}
 						}
+						p.markAutoApprovedStatuses(dmToolCalls)
 
 						toolCallJSON, jsonErr := json.Marshal(dmToolCalls)
 						if jsonErr != nil {
 							p.mmClient.LogError("Failed to marshal DM tool calls", "error", jsonErr)
 						} else {
 							post.AddProp(ToolCallProp, string(toolCallJSON))
-							if p.areAllToolCallsAutoApprovable(dmToolCalls) {
+							allAutoApprovable := p.areAllToolCallsAutoApprovable(dmToolCalls)
+							if allAutoApprovable {
 								post.AddProp(AutoApprovedToolCallProp, "true")
+							} else {
+								post.DelProp(AutoApprovedToolCallProp)
 							}
 							if updErr := p.mmClient.UpdatePost(post); updErr != nil {
 								p.mmClient.LogError("Failed to update post with tool call", "error", updErr)
@@ -567,12 +588,15 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 							p.mmClient.LogError("Failed to store tool calls in KV store, cannot continue", "error", kvErr, "post_id", post.Id, "kv_key", kvKey)
 							return
 						}
+						p.markAutoApprovedStatuses(toolCalls)
 						autoApproved := p.areAllToolCallsAutoApprovable(toolCalls)
 
 						toolCallsForPost := RedactToolCalls(toolCalls)
 						post.AddProp(ToolCallRedactedProp, "true")
 						if autoApproved {
 							post.AddProp(AutoApprovedToolCallProp, "true")
+						} else {
+							post.DelProp(AutoApprovedToolCallProp)
 						}
 
 						toolCallJSON, jsonErr := json.Marshal(toolCallsForPost)

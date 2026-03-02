@@ -951,16 +951,6 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 				},
 			}
 
-			// Add reasoning for thinking-enabled conversations
-			if post.Reasoning != "" {
-				msg.ResponsesReasoning = &schemas.ResponsesReasoning{
-					Summary: []schemas.ResponsesReasoningSummary{{
-						Type: schemas.ResponsesReasoningContentBlockTypeSummaryText,
-						Text: post.Reasoning,
-					}},
-				}
-			}
-
 			messages = append(messages, msg)
 
 			// Handle tool calls in assistant messages
@@ -1184,6 +1174,53 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	// Process stream
 	var toolCalls []llm.ToolCall
 	toolCallsBuffer := make(map[string]*responsesToolCallBuffer)
+	itemIDToCallID := make(map[string]string)
+	outputIndexToCallID := make(map[int]string)
+
+	registerCallMapping := func(callID string, resp *schemas.BifrostResponsesStreamResponse) {
+		if callID == "" || resp == nil {
+			return
+		}
+		if resp.ItemID != nil && *resp.ItemID != "" {
+			itemIDToCallID[*resp.ItemID] = callID
+		}
+		if resp.Item != nil && resp.Item.ID != nil && *resp.Item.ID != "" {
+			itemIDToCallID[*resp.Item.ID] = callID
+		}
+		if resp.OutputIndex != nil {
+			outputIndexToCallID[*resp.OutputIndex] = callID
+		}
+	}
+
+	resolveDoneCallID := func(resp *schemas.BifrostResponsesStreamResponse) string {
+		if resp == nil {
+			return ""
+		}
+		if resp.Item != nil && resp.Item.ResponsesToolMessage != nil && resp.Item.ResponsesToolMessage.CallID != nil && *resp.Item.ResponsesToolMessage.CallID != "" {
+			return *resp.Item.ResponsesToolMessage.CallID
+		}
+		if resp.ItemID != nil && *resp.ItemID != "" {
+			if callID, ok := itemIDToCallID[*resp.ItemID]; ok && callID != "" {
+				return callID
+			}
+		}
+		if resp.Item != nil && resp.Item.ID != nil && *resp.Item.ID != "" {
+			if callID, ok := itemIDToCallID[*resp.Item.ID]; ok && callID != "" {
+				return callID
+			}
+		}
+		if resp.OutputIndex != nil {
+			if callID, ok := outputIndexToCallID[*resp.OutputIndex]; ok && callID != "" {
+				return callID
+			}
+		}
+		if len(toolCallsBuffer) == 1 {
+			for callID := range toolCallsBuffer {
+				return callID
+			}
+		}
+		return ""
+	}
 
 	// Reasoning buffers
 	var reasoningBuffer strings.Builder
@@ -1331,6 +1368,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 						if toolCallsBuffer[callID] == nil {
 							toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
 						}
+						registerCallMapping(callID, resp)
 						if tm.Name != nil {
 							toolCallsBuffer[callID].name = *tm.Name
 						}
@@ -1338,6 +1376,24 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
 						}
 					}
+				}
+
+			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone, schemas.ResponsesStreamResponseTypeMCPCallArgumentsDone:
+				// Some providers send final function arguments only in the `.done` event.
+				callID := resolveDoneCallID(resp)
+				if callID != "" && resp.Arguments != nil {
+					if toolCallsBuffer[callID] == nil {
+						toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
+					}
+					if resp.Item != nil && resp.Item.ResponsesToolMessage != nil {
+						tm := resp.Item.ResponsesToolMessage
+						if tm.Name != nil && *tm.Name != "" {
+							toolCallsBuffer[callID].name = *tm.Name
+						}
+					}
+					toolCallsBuffer[callID].arguments.Reset()
+					toolCallsBuffer[callID].arguments.WriteString(*resp.Arguments)
+					registerCallMapping(callID, resp)
 				}
 
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
@@ -1353,6 +1409,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							if toolCallsBuffer[callID] == nil {
 								toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
 							}
+							registerCallMapping(callID, resp)
 							if tm.Name != nil {
 								toolCallsBuffer[callID].name = *tm.Name
 							}
@@ -1374,6 +1431,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 						}
 						if callID != "" && toolCallsBuffer[callID] != nil {
 							buf := toolCallsBuffer[callID]
+							registerCallMapping(callID, resp)
 							// Update with final values if available
 							if tm.Name != nil && *tm.Name != "" {
 								buf.name = *tm.Name

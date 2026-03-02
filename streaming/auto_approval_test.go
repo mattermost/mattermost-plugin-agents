@@ -158,6 +158,22 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 			expectCallbackInvoked:  true,
 		},
 		{
+			name: "pre-executed error in channel does not trigger callback loop",
+			toolCalls: []llm.ToolCall{
+				{
+					ID:           "tc-err-1",
+					Name:         "get_channel_info",
+					ServerOrigin: "https://api.github.com",
+					Status:       llm.ToolCallStatusError,
+					Result:       "Error: insufficient parameters for channel lookup",
+				},
+			},
+			isDM:                   false,
+			autoApprover:           &mockAutoApprover{approveAll: true},
+			expectAutoApprovedProp: false,
+			expectCallbackInvoked:  false,
+		},
+		{
 			name: "not all tools auto-approvable - standard flow",
 			toolCalls: []llm.ToolCall{
 				{ID: "tc-1", Name: "get_issue", ServerOrigin: "https://api.github.com"},
@@ -311,4 +327,142 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHasAutoApprovedToolCallsTreatsErrorAsPreExecuted(t *testing.T) {
+	require.False(t, hasAutoApprovedToolCalls(nil))
+	require.False(t, hasAutoApprovedToolCalls([]llm.ToolCall{{Status: llm.ToolCallStatusPending}}))
+	require.True(t, hasAutoApprovedToolCalls([]llm.ToolCall{{Status: llm.ToolCallStatusAutoApproved}}))
+	require.True(t, hasAutoApprovedToolCalls([]llm.ToolCall{{Status: llm.ToolCallStatusError}}))
+}
+
+func TestStreamToPostDMPreservesAutoApprovedStatus(t *testing.T) {
+	const (
+		postID      = "post-id"
+		channelID   = "channel-id"
+		botID       = "bot-id"
+		requesterID = "requester-id"
+	)
+
+	toolCalls := []llm.ToolCall{
+		{
+			ID:        "tool-1",
+			Name:      "search",
+			Arguments: json.RawMessage(`{"query":"test"}`),
+			Result:    "search result",
+			Status:    llm.ToolCallStatusAutoApproved,
+		},
+	}
+
+	client := &fakeStreamingClient{
+		channels: map[string]*model.Channel{
+			channelID: {
+				Id:   channelID,
+				Type: model.ChannelTypeDirect,
+				Name: botID + "__" + requesterID,
+			},
+		},
+	}
+	service := NewMMPostStreamService(client, i18n.Init())
+
+	post := &model.Post{
+		Id:        postID,
+		ChannelId: channelID,
+		UserId:    botID,
+	}
+	post.AddProp(LLMRequesterUserID, requesterID)
+
+	streamChannel := make(chan llm.TextStreamEvent, 1)
+	streamChannel <- llm.TextStreamEvent{
+		Type:  llm.EventTypeToolCalls,
+		Value: toolCalls,
+	}
+	close(streamChannel)
+
+	service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+
+	require.GreaterOrEqual(t, len(client.updatedPosts), 1)
+
+	toolCallProp, ok := post.GetProp(ToolCallProp).(string)
+	require.True(t, ok)
+
+	var storedCalls []llm.ToolCall
+	require.NoError(t, json.Unmarshal([]byte(toolCallProp), &storedCalls))
+	require.Len(t, storedCalls, 1)
+	// DM path preserves AutoApproved status so UI can label per-tool auto-approval.
+	require.Equal(t, llm.ToolCallStatusAutoApproved, storedCalls[0].Status)
+
+	toolEvent, found := findToolCallEvent(client.events)
+	require.True(t, found)
+	toolCallPayload, ok := toolEvent.payload["tool_call"].(string)
+	require.True(t, ok)
+	var eventCalls []llm.ToolCall
+	require.NoError(t, json.Unmarshal([]byte(toolCallPayload), &eventCalls))
+	require.Len(t, eventCalls, 1)
+	require.Equal(t, llm.ToolCallStatusAutoApproved, eventCalls[0].Status)
+}
+
+func TestStreamToPostDMMarksSuccessfulAutoApprovableToolsAsAutoApproved(t *testing.T) {
+	const (
+		postID      = "post-id"
+		channelID   = "channel-id"
+		botID       = "bot-id"
+		requesterID = "requester-id"
+	)
+
+	toolCalls := []llm.ToolCall{
+		{
+			ID:           "tool-1",
+			Name:         "get_channel_info",
+			ServerOrigin: "https://api.github.com",
+			Status:       llm.ToolCallStatusSuccess,
+		},
+		{
+			ID:           "tool-2",
+			Name:         "create_post",
+			ServerOrigin: "https://api.github.com",
+			Status:       llm.ToolCallStatusPending,
+		},
+	}
+
+	client := &fakeStreamingClient{
+		channels: map[string]*model.Channel{
+			channelID: {
+				Id:   channelID,
+				Type: model.ChannelTypeDirect,
+				Name: botID + "__" + requesterID,
+			},
+		},
+	}
+	service := NewMMPostStreamService(client, i18n.Init())
+	service.SetToolAutoApprover(&mockAutoApprover{
+		approved: map[string]bool{
+			"get_channel_info": true,
+		},
+	})
+
+	post := &model.Post{
+		Id:        postID,
+		ChannelId: channelID,
+		UserId:    botID,
+	}
+	post.AddProp(LLMRequesterUserID, requesterID)
+
+	streamChannel := make(chan llm.TextStreamEvent, 1)
+	streamChannel <- llm.TextStreamEvent{
+		Type:  llm.EventTypeToolCalls,
+		Value: toolCalls,
+	}
+	close(streamChannel)
+
+	service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+
+	toolCallProp, ok := post.GetProp(ToolCallProp).(string)
+	require.True(t, ok)
+
+	var storedCalls []llm.ToolCall
+	require.NoError(t, json.Unmarshal([]byte(toolCallProp), &storedCalls))
+	require.Len(t, storedCalls, 2)
+	require.Equal(t, llm.ToolCallStatusAutoApproved, storedCalls[0].Status)
+	require.Equal(t, llm.ToolCallStatusPending, storedCalls[1].Status)
 }

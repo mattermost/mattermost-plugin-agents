@@ -80,6 +80,15 @@ const BUILTIN_APPROVED_SERVERS: ApprovedMCPServer[] = [
         ],
         enabled: true,
     },
+    {
+        name: 'Mattermost',
+        url_patterns: ['mattermost'],
+        auto_approve_tools: [
+            'read_post', 'read_channel', 'get_channel_info', 'get_channel_members',
+            'get_team_info', 'get_team_members', 'search_posts', 'search_users',
+        ],
+        enabled: true,
+    },
 ];
 
 const builtinNames = new Set(BUILTIN_APPROVED_SERVERS.map((s) => s.name));

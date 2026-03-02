@@ -489,7 +489,7 @@ func TestMergeApprovedServers(t *testing.T) {
 func TestBuiltinApprovedServers(t *testing.T) {
 	servers := BuiltinApprovedServers()
 
-	require.Len(t, servers, 3, "should have exactly 3 built-in approved servers")
+	require.Len(t, servers, 4, "should have exactly 4 built-in approved servers")
 
 	t.Run("Atlassian server", func(t *testing.T) {
 		s := servers[0]
@@ -550,6 +550,35 @@ func TestBuiltinApprovedServers(t *testing.T) {
 			require.NotContains(t, s.AutoApproveTools, tool, "Figma should not contain WRITE tool: %s", tool)
 		}
 	})
+
+	t.Run("Mattermost server", func(t *testing.T) {
+		s := servers[3]
+		require.Equal(t, "Mattermost", s.Name)
+		require.Equal(t, []string{"mattermost"}, s.URLPatterns)
+		require.True(t, s.Enabled)
+		require.Len(t, s.AutoApproveTools, 8, "Mattermost should have 8 READ tools")
+
+		// Verify permissive READ-only tools are present
+		expectedTools := []string{
+			"read_post",
+			"read_channel",
+			"get_channel_info",
+			"get_channel_members",
+			"get_team_info",
+			"get_team_members",
+			"search_posts",
+			"search_users",
+		}
+		for _, tool := range expectedTools {
+			require.Contains(t, s.AutoApproveTools, tool, "Mattermost should contain READ tool: %s", tool)
+		}
+
+		// Verify write/action tools are NOT present
+		writeTools := []string{"create_post", "create_channel", "dm_self", "add_user_to_channel"}
+		for _, tool := range writeTools {
+			require.NotContains(t, s.AutoApproveTools, tool, "Mattermost should not contain WRITE tool: %s", tool)
+		}
+	})
 }
 
 func TestBuiltinApprovedServersIntegration(t *testing.T) {
@@ -595,6 +624,18 @@ func TestBuiltinApprovedServersIntegration(t *testing.T) {
 			name:          "Figma WRITE tool not auto-approved",
 			serverBaseURL: "https://mcp.figma.com/mcp",
 			toolName:      "generate_diagram",
+			expected:      false,
+		},
+		{
+			name:          "Mattermost READ tool auto-approved",
+			serverBaseURL: "embedded://mattermost",
+			toolName:      "search_users",
+			expected:      true,
+		},
+		{
+			name:          "Mattermost WRITE tool not auto-approved",
+			serverBaseURL: "embedded://mattermost",
+			toolName:      "create_post",
 			expected:      false,
 		},
 		{

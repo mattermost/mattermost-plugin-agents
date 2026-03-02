@@ -193,13 +193,19 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	toolsDisabled := applyToolAvailability(llmContext, isDM, allowToolsInChannel)
 
 	for i := range tools {
+		if tools[i].Status != llm.ToolCallStatusPending && tools[i].Status != llm.ToolCallStatusAccepted {
+			// Preserve previously resolved tool statuses (e.g. auto-approved reads)
+			// when a mixed batch later asks approval for additional pending tools.
+			continue
+		}
+
 		if slices.Contains(acceptedToolIDs, tools[i].ID) {
 			result, resolveErr := llmContext.Tools.ResolveTool(tools[i].Name, func(args any) error {
 				return json.Unmarshal(tools[i].Arguments, args)
 			}, llmContext)
 			if resolveErr != nil {
-				// Maybe in the future we can return this to the user and have a retry. For now just tell the LLM it failed.
-				tools[i].Result = "Tool call failed"
+				// Preserve actionable error message for the LLM to retry or adapt
+				tools[i].Result = resolveErr.Error()
 				tools[i].Status = llm.ToolCallStatusError
 				continue
 			}
@@ -425,6 +431,16 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	}
 	if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
 		return fmt.Errorf("failed to update post after tool result approval: %w", updateErr)
+	}
+
+	// Do not continue streaming when no tool call succeeded (all errors/rejections).
+	// Re-invoking completeAndStreamToolResponse would cause a channel loop.
+	hasSuccessfulResult := slices.ContainsFunc(tools, func(tc llm.ToolCall) bool {
+		return tc.Status == llm.ToolCallStatusSuccess
+	})
+	if !hasSuccessfulResult {
+		c.deleteToolCallKVEntries(post.Id, resultKVKey, toolCallKVKey)
+		return nil
 	}
 
 	if err := c.completeAndStreamToolResponse(bot, user, channel, toolCallPostCopy, llmContext, toolsDisabled, allowToolsInChannel); err != nil {

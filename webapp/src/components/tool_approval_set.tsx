@@ -76,7 +76,8 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
         return props.toolCalls.filter((call) =>
             call.status === ToolCallStatus.Success ||
-            call.status === ToolCallStatus.Error,
+            call.status === ToolCallStatus.Error ||
+            call.status === ToolCallStatus.AutoApproved,
         );
     }, [props.toolCalls, effectiveCanApprove, isCallStage]);
 
@@ -184,22 +185,22 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         return <div className='error'>{error}</div>;
     }
 
-    const nonDecisionToolCalls = props.toolCalls.filter((call) => !decisionToolIDSet.has(call.id));
-
     // Calculate how many tools are left to decide on
     const undecidedCount = decisionToolCalls.filter((call) => !Object.hasOwn(toolDecisions, call.id)).length;
 
     // Helper to compute if a tool should be collapsed
     const isToolCollapsed = (tool: ToolCall) => {
-        // Auto-approved tools are always collapsed by default
-        if (props.isAutoApproved) {
+        // Auto-approved + call stage: collapsed by default
+        if (props.isAutoApproved && isCallStage) {
             return !collapsedTools.includes(tool.id);
         }
 
         // Pending tools are expanded by default, others are collapsed
         const defaultExpanded = isCallStage ?
             tool.status === ToolCallStatus.Pending :
-            tool.status === ToolCallStatus.Success || tool.status === ToolCallStatus.Error;
+            tool.status === ToolCallStatus.Success ||
+            tool.status === ToolCallStatus.Error ||
+            tool.status === ToolCallStatus.AutoApproved;
 
         // Check if user has toggled this tool
         const isCollapsed = collapsedTools.includes(tool.id);
@@ -211,37 +212,25 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     return (
         <ToolCallsContainer>
-            {decisionToolCalls.map((tool) => (
-                <ToolCard
-                    key={tool.id}
-                    tool={tool}
-                    isCollapsed={isToolCollapsed(tool)}
-                    isProcessing={isSubmitting}
-                    onToggleCollapse={() => toggleCollapse(tool.id)}
-                    onApprove={() => handleToolDecision(tool.id, true)}
-                    onReject={() => handleToolDecision(tool.id, false)}
-                    canExpand={props.canExpand}
-                    showArguments={props.showArguments}
-                    showResults={props.showResults}
-                    approvalStage={props.approvalStage}
-                    isAutoApproved={props.isAutoApproved}
-                />
-            ))}
-
-            {nonDecisionToolCalls.map((tool) => (
-                <ToolCard
-                    key={tool.id}
-                    tool={tool}
-                    isCollapsed={isToolCollapsed(tool)}
-                    isProcessing={false}
-                    onToggleCollapse={() => toggleCollapse(tool.id)}
-                    canExpand={props.canExpand}
-                    showArguments={props.showArguments}
-                    showResults={props.showResults}
-                    approvalStage={props.approvalStage}
-                    isAutoApproved={props.isAutoApproved}
-                />
-            ))}
+            {props.toolCalls.map((tool) => {
+                const isDecisionTool = decisionToolIDSet.has(tool.id);
+                return (
+                    <ToolCard
+                        key={tool.id}
+                        tool={tool}
+                        isCollapsed={isToolCollapsed(tool)}
+                        isProcessing={isDecisionTool ? isSubmitting : false}
+                        onToggleCollapse={() => toggleCollapse(tool.id)}
+                        onApprove={isDecisionTool ? () => handleToolDecision(tool.id, true) : undefined}
+                        onReject={isDecisionTool ? () => handleToolDecision(tool.id, false) : undefined}
+                        canExpand={props.canExpand}
+                        showArguments={props.showArguments}
+                        showResults={props.showResults}
+                        approvalStage={props.approvalStage}
+                        isAutoApproved={props.isAutoApproved || tool.status === ToolCallStatus.AutoApproved}
+                    />
+                );
+            })}
 
             {/* Only show status bar for multiple decisions */}
             {decisionToolCalls.length > 1 && isSubmitting && (
