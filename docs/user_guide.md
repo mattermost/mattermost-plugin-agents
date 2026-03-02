@@ -113,13 +113,13 @@ Both call recordings and recorded meeting summarization require a license. See [
 
 The Zoom plugin must be [enabled and configured](https://docs.mattermost.com/integrate/zoom.html) by a Mattermost system admin and Zoom cloud recordings and transcripts must be enabled before you can summarize Zoom meetings.
 
-If the Zoom plugin is enabled and configured, subscribe a Mattermost channel to a Zoom meeting (`/zoom subscribe [meeting ID]`) and record the meeting. Once the recording and transcription are available, they are automatically shared back to the channel.
+If the Zoom plugin is enabled and configured, subscribe a Mattermost channel to a Zoom meeting (`/zoom subscription add [meeting ID]`) and record the meeting. Once the recording and transcription are available, they are automatically shared back to the channel.
 
 Use Mattermost to turn Zoom meeting recordings into actionable AI-generated summaries with any model of your choosing, including your own. By summarizing your Zoom meeting recordings in Mattermost, you can easily share the insights with your team and the broader organization, enhancing communication and productivity without sacrificing data privacy and control.
 
 To summarize a Zoom meeting in Mattermost:
 
-1. Subscribe a Mattermost channel to a recurring Zoom meeting with `/zoom subscribe [meeting ID]` or start a meeting using the Zoom button in the Mattermost RHS.
+1. Subscribe a Mattermost channel to a recurring Zoom meeting with `/zoom subscription add [meeting ID]` or start a meeting using the Zoom button in the Mattermost RHS.
 2. Record the Zoom meeting.
 3. Once the meeting ends and the transcript file is posted to Mattermost, select the **Create meeting summary** option located directly above the file.
 
