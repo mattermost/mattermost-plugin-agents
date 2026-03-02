@@ -86,11 +86,12 @@ type HealthCheckResult struct {
 	Error            string    `json:"error,omitempty"`
 
 	// Model compatibility fields
-	ModelCompatible   bool   `json:"model_compatible"`
-	ModelNeedsReindex bool   `json:"model_needs_reindex"`
-	ModelCompatReason string `json:"model_compat_reason,omitempty"`
-	StoredDimensions  int    `json:"stored_dimensions,omitempty"`
-	StoredModelName   string `json:"stored_model_name,omitempty"`
+	ModelCompatible    bool   `json:"model_compatible"`
+	ModelNeedsReindex  bool   `json:"model_needs_reindex"`
+	ModelCompatReason  string `json:"model_compat_reason,omitempty"`
+	StoredProviderType string `json:"stored_provider_type,omitempty"`
+	StoredDimensions   int    `json:"stored_dimensions,omitempty"`
+	StoredModelName    string `json:"stored_model_name,omitempty"`
 }
 
 // batchProcessor provides shared batch processing logic for reindex and catch-up passes
@@ -132,11 +133,12 @@ func (bp *batchProcessor) processBatch(ctx context.Context, posts []PostRecord) 
 
 // ModelCompatibility represents the result of checking model compatibility
 type ModelCompatibility struct {
-	Compatible       bool   `json:"compatible"`
-	NeedsReindex     bool   `json:"needs_reindex"`
-	Reason           string `json:"reason,omitempty"`
-	StoredDimensions int    `json:"stored_dimensions,omitempty"`
-	StoredModelName  string `json:"stored_model_name,omitempty"`
+	Compatible         bool   `json:"compatible"`
+	NeedsReindex       bool   `json:"needs_reindex"`
+	Reason             string `json:"reason,omitempty"`
+	StoredProviderType string `json:"stored_provider_type,omitempty"`
+	StoredDimensions   int    `json:"stored_dimensions,omitempty"`
+	StoredModelName    string `json:"stored_model_name,omitempty"`
 }
 
 // runReindexJob runs the reindexing process

@@ -169,10 +169,11 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 
 	// Include model compatibility in the health check result
 	cfg := a.config.EmbeddingSearchConfig()
-	compat := a.indexerService.CheckModelCompatibility(cfg.Dimensions, cfg.GetModelName())
+	compat := a.indexerService.CheckModelCompatibility(cfg.GetProviderType(), cfg.Dimensions, cfg.GetModelName())
 	result.ModelCompatible = compat.Compatible
 	result.ModelNeedsReindex = compat.NeedsReindex
 	result.ModelCompatReason = compat.Reason
+	result.StoredProviderType = compat.StoredProviderType
 	result.StoredDimensions = compat.StoredDimensions
 	result.StoredModelName = compat.StoredModelName
 

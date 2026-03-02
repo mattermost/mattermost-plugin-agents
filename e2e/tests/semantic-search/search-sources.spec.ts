@@ -155,7 +155,7 @@ test.describe('Search Sources Display', () => {
         await expect(aiPlugin.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
 
         await openAIMock.addCompletionMock(searchResponseNoResults);
-        await aiPlugin.sendMessage('xyznonexistent12345');
+        await aiPlugin.triggerEmbeddingSearch('xyznonexistent12345');
 
         await aiPlugin.waitForBotResponse(searchResponseNoResultsText);
 

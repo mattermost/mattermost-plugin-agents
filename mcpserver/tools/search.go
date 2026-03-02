@@ -112,17 +112,23 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 	}
 
 	// Set defaults
-	if args.SemanticLimit == 0 {
+	if args.SemanticLimit <= 0 {
 		args.SemanticLimit = 10
 	}
 	if args.SemanticLimit > 50 {
 		args.SemanticLimit = 50
 	}
-	if args.KeywordLimit == 0 {
+	if args.SemanticOffset < 0 {
+		args.SemanticOffset = 0
+	}
+	if args.KeywordLimit <= 0 {
 		args.KeywordLimit = 10
 	}
 	if args.KeywordLimit > 100 {
 		args.KeywordLimit = 100
+	}
+	if args.KeywordOffset < 0 {
+		args.KeywordOffset = 0
 	}
 
 	// Get client from context
@@ -251,6 +257,21 @@ func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, clien
 	for _, post := range searchResults.Posts {
 		posts = append(posts, post)
 	}
+
+	// Apply channel filter if specified
+	if args.ChannelID != "" {
+		filtered := posts[:0]
+		for _, post := range posts {
+			if post.ChannelId == args.ChannelID {
+				filtered = append(filtered, post)
+			}
+		}
+		posts = filtered
+		if len(posts) == 0 {
+			return nil, nil
+		}
+	}
+
 	sort.Slice(posts, func(i, j int) bool {
 		if posts[i].CreateAt != posts[j].CreateAt {
 			return posts[i].CreateAt > posts[j].CreateAt
@@ -435,7 +456,7 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 	}
 
 	// Set defaults
-	if args.Limit == 0 {
+	if args.Limit <= 0 {
 		args.Limit = 20
 	}
 	if args.Limit > 100 {

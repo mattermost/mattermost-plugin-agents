@@ -210,7 +210,7 @@ func (p *Plugin) OnActivate() error {
 	// Check model compatibility and disable search if model has changed
 	if embeddingsSearch != nil {
 		embeddingsCfg := p.configuration.EmbeddingSearchConfig()
-		compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())
+		compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.GetProviderType(), embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())
 		if !compatibility.Compatible {
 			pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
 				"reason", compatibility.Reason)
@@ -252,7 +252,7 @@ func (p *Plugin) OnActivate() error {
 		// Check model compatibility
 		if newEmbeddingsSearch != nil {
 			embeddingsCfg := p.configuration.EmbeddingSearchConfig()
-			compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())
+			compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.GetProviderType(), embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())
 			if !compatibility.Compatible {
 				pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
 					"reason", compatibility.Reason)

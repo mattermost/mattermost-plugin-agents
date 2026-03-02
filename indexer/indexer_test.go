@@ -332,24 +332,26 @@ func TestFilterAndCreateDocs(t *testing.T) {
 
 func TestCheckModelCompatibility(t *testing.T) {
 	tests := []struct {
-		name              string
-		storedInfo        ModelInfo
-		storedInfoErr     error
-		currentDimensions int
-		currentModelName  string
-		expectedCompat    bool
-		expectedReindex   bool
-		expectedReason    string
+		name                string
+		storedInfo          ModelInfo
+		storedInfoErr       error
+		currentProviderType string
+		currentDimensions   int
+		currentModelName    string
+		expectedCompat      bool
+		expectedReindex     bool
+		expectedReason      string
 	}{
 		{
-			name:              "fresh install with no stored info returns compatible",
-			storedInfo:        ModelInfo{},
-			storedInfoErr:     errors.New("not found"),
-			currentDimensions: 1536,
-			currentModelName:  "text-embedding-3-small",
-			expectedCompat:    true,
-			expectedReindex:   false,
-			expectedReason:    "",
+			name:                "fresh install with no stored info returns compatible",
+			storedInfo:          ModelInfo{},
+			storedInfoErr:       errors.New("not found"),
+			currentProviderType: "openai",
+			currentDimensions:   1536,
+			currentModelName:    "text-embedding-3-small",
+			expectedCompat:      true,
+			expectedReindex:     false,
+			expectedReason:      "",
 		},
 		{
 			name: "matching dimensions and empty current model name returns compatible",
@@ -357,12 +359,13 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions: 1536,
 				ModelName:  "text-embedding-3-small",
 			},
-			storedInfoErr:     nil,
-			currentDimensions: 1536,
-			currentModelName:  "",
-			expectedCompat:    true,
-			expectedReindex:   false,
-			expectedReason:    "",
+			storedInfoErr:       nil,
+			currentProviderType: "",
+			currentDimensions:   1536,
+			currentModelName:    "",
+			expectedCompat:      true,
+			expectedReindex:     false,
+			expectedReason:      "",
 		},
 		{
 			name: "dimension mismatch returns incompatible",
@@ -370,12 +373,13 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions: 768,
 				ModelName:  "text-embedding-ada-002",
 			},
-			storedInfoErr:     nil,
-			currentDimensions: 1536,
-			currentModelName:  "text-embedding-3-small",
-			expectedCompat:    false,
-			expectedReindex:   true,
-			expectedReason:    "dimension mismatch: stored=768, current=1536",
+			storedInfoErr:       nil,
+			currentProviderType: "",
+			currentDimensions:   1536,
+			currentModelName:    "text-embedding-3-small",
+			expectedCompat:      false,
+			expectedReindex:     true,
+			expectedReason:      "dimension mismatch: stored=768, current=1536",
 		},
 		{
 			name: "model name mismatch returns incompatible",
@@ -383,12 +387,13 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions: 1536,
 				ModelName:  "text-embedding-ada-002",
 			},
-			storedInfoErr:     nil,
-			currentDimensions: 1536,
-			currentModelName:  "text-embedding-3-small",
-			expectedCompat:    false,
-			expectedReindex:   true,
-			expectedReason:    "model changed: stored=text-embedding-ada-002, current=text-embedding-3-small",
+			storedInfoErr:       nil,
+			currentProviderType: "",
+			currentDimensions:   1536,
+			currentModelName:    "text-embedding-3-small",
+			expectedCompat:      false,
+			expectedReindex:     true,
+			expectedReason:      "model changed: stored=text-embedding-ada-002, current=text-embedding-3-small",
 		},
 		{
 			name: "matching config returns compatible",
@@ -396,12 +401,43 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions: 1536,
 				ModelName:  "text-embedding-3-small",
 			},
-			storedInfoErr:     nil,
-			currentDimensions: 1536,
-			currentModelName:  "text-embedding-3-small",
-			expectedCompat:    true,
-			expectedReindex:   false,
-			expectedReason:    "",
+			storedInfoErr:       nil,
+			currentProviderType: "",
+			currentDimensions:   1536,
+			currentModelName:    "text-embedding-3-small",
+			expectedCompat:      true,
+			expectedReindex:     false,
+			expectedReason:      "",
+		},
+		{
+			name: "provider type mismatch returns incompatible",
+			storedInfo: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+			},
+			storedInfoErr:       nil,
+			currentProviderType: "anthropic",
+			currentDimensions:   1536,
+			currentModelName:    "text-embedding-3-small",
+			expectedCompat:      false,
+			expectedReindex:     true,
+			expectedReason:      "provider changed: stored=openai, current=anthropic",
+		},
+		{
+			name: "matching provider type with same config returns compatible",
+			storedInfo: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+			},
+			storedInfoErr:       nil,
+			currentProviderType: "openai",
+			currentDimensions:   1536,
+			currentModelName:    "text-embedding-3-small",
+			expectedCompat:      true,
+			expectedReindex:     false,
+			expectedReason:      "",
 		},
 	}
 
@@ -420,7 +456,7 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Return(tt.storedInfoErr)
 
 			indexer := New(nil, nil, mockClient, nil, nil, nil)
-			result := indexer.CheckModelCompatibility(tt.currentDimensions, tt.currentModelName)
+			result := indexer.CheckModelCompatibility(tt.currentProviderType, tt.currentDimensions, tt.currentModelName)
 
 			assert.Equal(t, tt.expectedCompat, result.Compatible)
 			assert.Equal(t, tt.expectedReindex, result.NeedsReindex)

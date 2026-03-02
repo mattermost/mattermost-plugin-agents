@@ -197,7 +197,9 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 
 	// Clear cursor if doing a fresh reindex
 	if clearIndex {
-		_ = s.pluginAPI.KVDelete(IndexerCursorKey)
+		if err := s.pluginAPI.KVDelete(IndexerCursorKey); err != nil {
+			return JobStatus{}, fmt.Errorf("failed to clear reindex cursor: %w", err)
+		}
 	}
 
 	// Start the reindexing job in background
@@ -468,7 +470,7 @@ func (s *Indexer) GetModelInfo() (ModelInfo, error) {
 }
 
 // CheckModelCompatibility checks if current config matches the indexed model
-func (s *Indexer) CheckModelCompatibility(currentDimensions int, currentModelName string) ModelCompatibility {
+func (s *Indexer) CheckModelCompatibility(currentProviderType string, currentDimensions int, currentModelName string) ModelCompatibility {
 	storedInfo, err := s.GetModelInfo()
 	if err != nil || (storedInfo.Dimensions == 0 && storedInfo.ModelName == "") {
 		// No stored info means this is a fresh install or no previous index
@@ -480,8 +482,16 @@ func (s *Indexer) CheckModelCompatibility(currentDimensions int, currentModelNam
 
 	// Always include stored values so frontend can do client-side comparison
 	result := ModelCompatibility{
-		StoredDimensions: storedInfo.Dimensions,
-		StoredModelName:  storedInfo.ModelName,
+		StoredProviderType: storedInfo.ProviderType,
+		StoredDimensions:   storedInfo.Dimensions,
+		StoredModelName:    storedInfo.ModelName,
+	}
+
+	if storedInfo.ProviderType != "" && currentProviderType != "" && storedInfo.ProviderType != currentProviderType {
+		result.Compatible = false
+		result.NeedsReindex = true
+		result.Reason = fmt.Sprintf("provider changed: stored=%s, current=%s", storedInfo.ProviderType, currentProviderType)
+		return result
 	}
 
 	if storedInfo.Dimensions != currentDimensions {
