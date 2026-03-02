@@ -20,6 +20,7 @@ type Config struct {
 	TranscriptGenerator             string                           `json:"transcriptBackend"`
 	EnableLLMTrace                  bool                             `json:"enableLLMTrace"`
 	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
+	EnableCallSummary               bool                             `json:"enableCallSummary"`
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`

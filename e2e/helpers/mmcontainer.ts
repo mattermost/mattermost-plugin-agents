@@ -10,6 +10,9 @@ const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
 const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:latest";
 
+type PluginConfig = Record<string, unknown>;
+type PluginConfigInput = PluginConfig | {config: PluginConfig};
+
 // MattermostContainer represents the mattermost container type used in the module
 export default class MattermostContainer {
     container: StartedTestContainer;
@@ -96,7 +99,7 @@ export default class MattermostContainer {
         await this.container.exec(["mmctl", "--local", "config", "set", "ServiceSettings.ListenAddress", `${containerPort}`])
     }
 
-    installPlugin = async (pluginPath: string, pluginID: string, pluginConfig?: any) => {
+    installPlugin = async (pluginPath: string, pluginID: string, pluginConfig?: PluginConfigInput) => {
         await this.container.copyFilesToContainer([{source: pluginPath, target: `/tmp/plugin.tar.gz`}])
 
         await this.container.exec(["mmctl", "--local", "plugin", "add", '/tmp/plugin.tar.gz'])
@@ -106,12 +109,13 @@ export default class MattermostContainer {
         if (pluginConfig) {
             // Callers pass { config: {...} } — extract the inner config object
             // since the admin API expects config.Config directly
-            const configData = pluginConfig.config ?? pluginConfig;
+            const wrappedConfig = pluginConfig as {config?: PluginConfig};
+            const configData: PluginConfig = wrappedConfig.config ?? pluginConfig;
             await this.setPluginConfig(pluginID, configData);
         }
     }
 
-    setPluginConfig = async (pluginID: string, config: any) => {
+    setPluginConfig = async (pluginID: string, config: PluginConfig) => {
         const adminClient = await this.getAdminClient();
         const url = `${this.url()}/plugins/${pluginID}/admin/config`;
         const response = await fetch(url, {
@@ -158,7 +162,7 @@ export default class MattermostContainer {
         return this
     }
 
-    withPlugin = (pluginPath: string, pluginID: string, pluginConfig: any): MattermostContainer => {
+    withPlugin = (pluginPath: string, pluginID: string, pluginConfig: PluginConfigInput): MattermostContainer => {
         this.plugins.push({id: pluginID, path: pluginPath, config: pluginConfig})
 
         return this

@@ -370,8 +370,7 @@ const Config = (props: Props) => {
                         }
                         value={Boolean(value.enableChannelMentionToolCalling)}
                         onChange={(to) => {
-                            props.onChange(props.id, {...value, enableChannelMentionToolCalling: to});
-                            props.setSaveNeeded();
+                            updateConfig({enableChannelMentionToolCalling: to});
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, @mentioning a bot in public channels allows tool calling (e.g., web search, integrations). When disabled, channel mentions still work but tools are disabled—only DMs allow tool usage. This is an experimental feature for multi-player tool calling in channels.'})}
                     />

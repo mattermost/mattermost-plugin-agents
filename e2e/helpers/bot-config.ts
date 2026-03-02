@@ -206,7 +206,7 @@ export class BotConfigHelper {
         try {
             db = await mattermost.db();
             const result = await db.query(
-                `SELECT config FROM agents_confighistory WHERE active = true LIMIT 1`
+                `SELECT Config FROM Agents_ConfigHistory WHERE Active = true LIMIT 1`
             );
 
             if (result.rows.length === 0) {
@@ -235,7 +235,7 @@ export class BotConfigHelper {
         try {
             db = await mattermost.db();
             const result = await db.query(
-                `SELECT config FROM agents_confighistory WHERE active = true LIMIT 1`
+                `SELECT Config FROM Agents_ConfigHistory WHERE Active = true LIMIT 1`
             );
 
             if (result.rows.length === 0) {

@@ -954,7 +954,8 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 			// Add reasoning for thinking-enabled conversations.
 			// Skip reasoning on messages with tool calls — the OpenAI Responses API
 			// rejects the "summary" parameter on assistant messages that precede
-			// function_call items in the input array.
+			// function_call items in the input array. In that case, post.Reasoning
+			// is intentionally omitted from the outgoing ResponsesReasoning payload.
 			if post.Reasoning != "" && len(post.ToolUse) == 0 {
 				msg.ResponsesReasoning = &schemas.ResponsesReasoning{
 					Summary: []schemas.ResponsesReasoningSummary{{
