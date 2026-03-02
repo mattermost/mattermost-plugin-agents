@@ -171,6 +171,7 @@ func (b *MMBots) reconcileTokenUsageSinks() {
 			b.pluginAPI.Log.Warn("Failed to initialize token usage file logger; continuing without file sink", "error", err)
 		}
 		b.tokenUsageSinks.SetFileLogger(nil)
+		b.tokenUsageSinks.SetFileEnabled(false)
 		return
 	}
 	b.tokenUsageSinks.SetFileLogger(tokenLogger)

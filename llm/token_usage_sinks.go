@@ -53,7 +53,10 @@ func (s *TokenUsageSinks) SetFileLogger(logger *mlog.Logger) {
 	if s == nil {
 		return
 	}
-	s.fileLogger.Store(logger)
+	prev := s.fileLogger.Swap(logger)
+	if prev != nil {
+		_ = prev.Shutdown()
+	}
 }
 
 func (s *TokenUsageSinks) LoggingEnabled() bool {

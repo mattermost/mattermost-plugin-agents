@@ -586,7 +586,7 @@ func (s *webSearchService) summarizeContent(bot *bots.Bot, content string) (stri
 	if mmBot := bot.GetMMBot(); mmBot != nil {
 		botUserID = mmBot.UserId
 	}
-	summaryContext.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type)
+	summaryContext.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 
 	req := llm.CompletionRequest{
 		Posts: []llm.Post{

@@ -205,7 +205,6 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 		if mmbot := bot.GetMMBot(); mmbot != nil {
 			botUserID = mmbot.UserId
 		}
-		c.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type)
-		c.CustomInstructions = bot.GetConfig().CustomInstructions
+		c.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 	}
 }

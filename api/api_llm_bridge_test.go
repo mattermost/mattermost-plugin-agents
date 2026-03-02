@@ -265,7 +265,7 @@ func TestBridgeClientContextEnrichment(t *testing.T) {
 				Id:     testChannelID,
 				Type:   model.ChannelTypeOpen,
 				TeamId: "team-bridge",
-			}, nil).Maybe()
+			}, nil).Twice()
 
 			client := e.CreateBridgeClient()
 			require.NoError(t, tc.call(client, request))
@@ -689,7 +689,7 @@ func TestBridgeClientPermissions(t *testing.T) {
 					Id:     testChannelID,
 					Type:   model.ChannelTypeOpen,
 					TeamId: "team-123",
-				}, nil).Maybe()
+				}, nil).Twice()
 			},
 			expectError: false,
 		},

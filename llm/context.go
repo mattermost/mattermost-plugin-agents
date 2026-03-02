@@ -66,12 +66,13 @@ func NewContext(opts ...ContextOption) *Context {
 
 // SetBotFields populates bot-related context fields from config and service values.
 // This avoids duplicating bot field assignment across multiple packages.
-func (c *Context) SetBotFields(displayName, username, userID, defaultModel, serviceType string) {
+func (c *Context) SetBotFields(displayName, username, userID, defaultModel, serviceType, customInstructions string) {
 	c.BotName = displayName
 	c.BotUsername = username
 	c.BotUserID = userID
 	c.BotModel = defaultModel
 	c.BotServiceType = serviceType
+	c.CustomInstructions = customInstructions
 }
 
 func (c Context) String() string {
