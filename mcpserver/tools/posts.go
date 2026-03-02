@@ -243,7 +243,7 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := mcpContext.Ctx // Use request context for proper cancellation and timeout handling
+	ctx := mcpContext.Ctx
 
 	// Validate that the provided display names match the actual channel and team
 	channel, _, err := client.GetChannel(ctx, args.ChannelID, "")
@@ -341,7 +341,7 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 	}
 
 	// Create a new client and login as the specified user
-	ctx := mcpContext.Ctx // Use request context for proper cancellation and timeout handling
+	ctx := mcpContext.Ctx
 	userClient := model.NewAPIv4Client(p.mmInternalServerURL)
 
 	// Login as the specified user

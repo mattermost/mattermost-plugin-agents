@@ -196,7 +196,7 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := mcpContext.Ctx // Use request context for proper cancellation and timeout handling
+	ctx := mcpContext.Ctx
 
 	// Build search options
 	searchOptions := &model.UserSearch{

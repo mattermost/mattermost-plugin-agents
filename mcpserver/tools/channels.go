@@ -104,7 +104,7 @@ func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 
 // toolReadChannel implements the read_channel tool.
 // It reads recent posts from a channel and formats them with author usernames.
-// Uses a user cache to avoid redundant GetUser API calls for repeated authors.
+// Uses GetUsersByIds to fetch all authors in a single API call.
 // Makes a single GetTeam call for the channel's team context (acceptable for one channel).
 func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args ReadChannelArgs
@@ -198,21 +198,31 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 		return "no posts found in the specified timeframe", nil
 	}
 
-	// Build a cache of user IDs to usernames to avoid duplicate API calls
-	userCache := make(map[string]string)
+	// Collect unique user IDs and fetch all at once
+	userIDs := make([]string, 0)
+	seen := make(map[string]bool)
 	for _, post := range filteredPosts {
-		// Check if context is cancelled before each API call
-		if ctx.Err() != nil {
-			return "", fmt.Errorf("request cancelled while fetching user information: %w", ctx.Err())
+		if !seen[post.UserId] {
+			seen[post.UserId] = true
+			userIDs = append(userIDs, post.UserId)
 		}
+	}
 
-		if _, exists := userCache[post.UserId]; !exists {
-			user, _, err := client.GetUser(ctx, post.UserId, "")
-			if err != nil {
-				p.logger.Warn("failed to get user for post", "user_id", post.UserId, "error", err)
-				userCache[post.UserId] = "Unknown User"
-			} else {
-				userCache[post.UserId] = user.Username
+	userCache := make(map[string]string)
+	users, _, err := client.GetUsersByIds(ctx, userIDs)
+	if err != nil {
+		p.logger.Warn("failed to fetch users by IDs", "error", err)
+		for _, id := range userIDs {
+			userCache[id] = "Unknown User"
+		}
+	} else {
+		for _, user := range users {
+			userCache[user.Id] = user.Username
+		}
+		// Mark any IDs not returned as unknown
+		for _, id := range userIDs {
+			if _, exists := userCache[id]; !exists {
+				userCache[id] = "Unknown User"
 			}
 		}
 	}
@@ -286,11 +296,6 @@ func (p *MattermostToolProvider) toolCreateChannel(mcpContext *MCPToolContext, a
 }
 
 // toolGetChannelInfo implements the get_channel_info tool.
-// Supports lookup by channel_id (fastest), channel_display_name, or channel_name.
-// When multiple channels match (e.g., "General" exists in multiple teams), returns all
-// matches with team context so the caller can disambiguate.
-// Prioritizes display_name over name when both are provided, since display_name is what
-// users typically reference in conversation.
 func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args GetChannelInfoArgs
 	err := argsGetter(&args)
@@ -455,9 +460,6 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 
 // formatMultipleChannels formats multiple channel results with team context for disambiguation.
 // It uses a local team cache to avoid redundant GetTeam calls within the same result set.
-// NOTE: This still makes individual GetTeam calls per unique team ID, which is acceptable here
-// because this function is only called for disambiguation (typically 2-5 channels).
-// For larger-scale team resolution, see toolGetUserChannels which uses batch GetTeamsForUser.
 func (p *MattermostToolProvider) formatMultipleChannels(ctx context.Context, client *model.Client4, channels []*model.Channel) (string, error) {
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("Found %d channels with matching name:\n\n", len(channels)))
@@ -508,9 +510,6 @@ func (p *MattermostToolProvider) formatMultipleChannels(ctx context.Context, cli
 
 // toolGetChannelMembers implements the get_channel_members tool.
 // Returns paginated member details for a channel, including username, email, and roles.
-// NOTE: Makes individual GetUser calls per member (N+1 pattern). This is acceptable because
-// the result set is bounded by the pagination limit (max 200) and the Mattermost client
-// does not expose a batch GetUsersByIds method that returns full user profiles.
 func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args GetChannelMembersArgs
 	err := argsGetter(&args)
@@ -820,10 +819,6 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	channels = channels[start:end]
 
 	// Build a map of team IDs to team info for display.
-	// Instead of making individual GetTeam API calls per unique team ID (N+1 query problem),
-	// we fetch all of the user's teams in a single API call via GetTeamsForUser and build
-	// the lookup map from that. This is efficient because these are the user's own channels,
-	// so all referenced teams will be teams the user belongs to.
 	type TeamInfo struct {
 		ID          string
 		Name        string
