@@ -1709,11 +1709,13 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 			}).
 			Return(nil).Once()
 
-		// Return running job
+		// Return running job with recent heartbeat (non-stale)
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Run(func(args mock.Arguments) {
 				status := args.Get(1).(*JobStatus)
 				status.Status = JobStatusRunning
+				status.StartedAt = time.Now()
+				status.LastUpdatedAt = time.Now()
 			}).
 			Return(nil)
 

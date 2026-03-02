@@ -6,6 +6,7 @@ package mcpserver
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
@@ -65,7 +66,7 @@ func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHa
 	}
 
 	// Create HTTP search service for callback to plugin API
-	pluginURL := siteURL + "/plugins/mattermost-ai"
+	pluginURL := strings.TrimRight(siteURL, "/") + "/plugins/mattermost-ai"
 	searchService := tools.NewHTTPSemanticSearchService(pluginURL)
 
 	// Register tools with remote access mode

@@ -257,6 +257,7 @@ func (p *Plugin) OnActivate() error {
 				pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
 					"reason", compatibility.Reason)
 				newEmbeddingsSearch = nil
+				lastSearchInitError.Store("search disabled: " + compatibility.Reason)
 			}
 		}
 

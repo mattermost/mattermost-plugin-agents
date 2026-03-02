@@ -118,7 +118,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                 vectorStore: {type: 'pgvector', parameters: {}},
                                 embeddingProvider: {type: 'openai', parameters: {embeddingModel: '', apiKey: ''}},
                                 parameters: {},
-                                dimensions: 0,
+                                dimensions: 1536,
                                 chunkingOptions: {
                                     chunkSize: 1000,
                                     chunkOverlap: 200,

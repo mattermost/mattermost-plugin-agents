@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -66,7 +66,7 @@ test.afterAll(async () => {
     await mattermost.stop();
 });
 
-async function setupTestPage(page) {
+async function setupTestPage(page: Page) {
     const mmPage = new MattermostPage(page);
     const aiPlugin = new AIPlugin(page);
     const llmBotHelper = new LLMBotPostHelper(page);

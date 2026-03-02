@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -170,9 +171,12 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 		p.logger.Warn("keyword search failed", "error", keywordErr)
 	}
 
-	// If both failed, return error
-	if semanticErr != nil && keywordErr != nil {
-		return "search failed", fmt.Errorf("both search methods failed: semantic: %v, keyword: %v", semanticErr, keywordErr)
+	// If all enabled search methods failed, return error
+	if keywordErr != nil && (!semanticEnabled || semanticErr != nil) {
+		if semanticEnabled {
+			return "search failed", fmt.Errorf("both search methods failed: semantic: %v, keyword: %v", semanticErr, keywordErr)
+		}
+		return "search failed", fmt.Errorf("keyword search failed: %v", keywordErr)
 	}
 
 	// Format and return results
@@ -194,6 +198,23 @@ func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, clie
 		return nil, err
 	}
 
+	// Pre-fetch team info for semantic results
+	channelTeamCache := make(map[string]string) // channelID -> teamName
+	for _, r := range results {
+		if _, exists := channelTeamCache[r.ChannelID]; !exists {
+			channel, _, chErr := client.GetChannel(ctx, r.ChannelID, "")
+			if chErr == nil && channel.TeamId != "" {
+				team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+				if teamErr == nil {
+					channelTeamCache[r.ChannelID] = team.DisplayName
+				}
+			}
+			if _, exists := channelTeamCache[r.ChannelID]; !exists {
+				channelTeamCache[r.ChannelID] = ""
+			}
+		}
+	}
+
 	postResults := make([]searchPostResult, 0, len(results))
 	for _, r := range results {
 		postResults = append(postResults, searchPostResult{
@@ -204,6 +225,7 @@ func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, clie
 				Message:   r.Content,
 			},
 			ChannelName: r.ChannelName,
+			TeamName:    channelTeamCache[r.ChannelID],
 			Username:    r.Username,
 			Score:       r.Score,
 			Source:      "semantic",
@@ -224,11 +246,17 @@ func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, clien
 		return nil, nil
 	}
 
-	// Convert posts map to slice and apply offset/limit
+	// Convert posts map to slice, sort for deterministic pagination, and apply offset/limit
 	posts := make([]*model.Post, 0, len(searchResults.Posts))
 	for _, post := range searchResults.Posts {
 		posts = append(posts, post)
 	}
+	sort.Slice(posts, func(i, j int) bool {
+		if posts[i].CreateAt != posts[j].CreateAt {
+			return posts[i].CreateAt > posts[j].CreateAt
+		}
+		return posts[i].Id > posts[j].Id
+	})
 
 	// Apply offset
 	if args.KeywordOffset > 0 && args.KeywordOffset < len(posts) {
@@ -325,10 +353,14 @@ func (p *MattermostToolProvider) formatCombinedResults(query string, semanticRes
 
 	var result strings.Builder
 
+	noun := "results"
+	if total == 1 {
+		noun = "result"
+	}
 	if semanticEnabled {
-		result.WriteString(fmt.Sprintf("Found %d results for \"%s\" (%d semantic, %d keyword):\n", total, query, totalSemantic, totalKeyword))
+		result.WriteString(fmt.Sprintf("Found %d %s for \"%s\" (%d semantic, %d keyword):\n", total, noun, query, totalSemantic, totalKeyword))
 	} else {
-		result.WriteString(fmt.Sprintf("Found %d results for \"%s\":\n", total, query))
+		result.WriteString(fmt.Sprintf("Found %d %s for \"%s\":\n", total, noun, query))
 	}
 
 	if channelIDFilter != "" {

@@ -29,14 +29,20 @@ var rootDSN = "postgres://mmuser:mostest@localhost:5432/postgres?sslmode=disable
 // testDB creates a test database and returns a connection to it.
 func testDB(t *testing.T) *sqlx.DB {
 	rootDB, err := sqlx.Connect("postgres", rootDSN)
-	require.NoError(t, err, "Failed to connect to PostgreSQL. Is PostgreSQL running?")
+	if err != nil {
+		t.Skipf("Skipping integration test: PostgreSQL not available: %v", err)
+	}
 	defer rootDB.Close()
 
 	// Check if pgvector extension is available
 	var hasVector bool
 	err = rootDB.Get(&hasVector, "SELECT EXISTS(SELECT 1 FROM pg_available_extensions WHERE name = 'vector')")
-	require.NoError(t, err, "Failed to check for vector extension")
-	require.True(t, hasVector, "pgvector extension not available in PostgreSQL. Please install it to run these tests.")
+	if err != nil {
+		t.Skipf("Skipping integration test: failed to check for vector extension: %v", err)
+	}
+	if !hasVector {
+		t.Skip("Skipping integration test: pgvector extension not available in PostgreSQL")
+	}
 
 	// Create a unique database name
 	dbName := fmt.Sprintf("integration_test_%d", model.GetMillis())

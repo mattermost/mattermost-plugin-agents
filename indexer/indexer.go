@@ -309,10 +309,10 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	mtx.Lock()
 	defer mtx.Unlock()
 
-	// Check if job is already running
+	// Check if job is already running (allow restart if stale)
 	var jobStatus JobStatus
 	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err == nil && jobStatus.Status == JobStatusRunning {
+	if err == nil && jobStatus.Status == JobStatusRunning && !s.isJobStale(&jobStatus) {
 		return jobStatus, fmt.Errorf("job already running")
 	}
 

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
@@ -50,7 +50,7 @@ test.afterAll(async () => {
     await mattermost.stop();
 });
 
-async function setupTestPage(page) {
+async function setupTestPage(page: Page) {
     const mmPage = new MattermostPage(page);
     const aiPlugin = new AIPlugin(page);
     const llmBotHelper = new LLMBotPostHelper(page);
@@ -134,18 +134,16 @@ test.describe('Post Citations Display', () => {
         await page.waitForTimeout(500);
 
         // Set up navigation listener before clicking the citation
-        // Post citations navigate to /_redirect/pl/{postId} URLs
-        const navigationPromise = page.waitForURL(/.*\/_redirect\/pl\/.*/, { timeout: 10000 }).catch(() => null);
+        // Post citations navigate to /_redirect/pl/{postId} or /pl/{postId} URLs
+        const navigationPromise = page.waitForURL(
+            (url) => url.pathname.includes('/_redirect/pl/') || url.pathname.includes('/pl/'),
+            { timeout: 10000 },
+        );
 
         // Click the first citation icon
         await llmBotHelper.clickPostCitation(1);
 
         // Verify navigation to the source post
         await navigationPromise;
-        const currentUrl = page.url();
-        const isRedirectUrl = currentUrl.includes('/_redirect/pl/');
-        const isPostPermalink = currentUrl.includes('/pl/');
-
-        expect(isRedirectUrl || isPostPermalink).toBe(true);
     });
 });

@@ -346,7 +346,7 @@ func TestFormatCombinedResults_OnlySemanticResults(t *testing.T) {
 	result, err := provider.formatCombinedResults("test query", semanticResults, nil, true, "")
 	require.NoError(t, err)
 
-	assert.Contains(t, result, "1 results", "should report 1 total result")
+	assert.Contains(t, result, "1 result for", "should report 1 total result (singular)")
 	assert.Contains(t, result, "1 semantic", "should report 1 semantic result")
 	assert.Contains(t, result, "0 keyword", "should report 0 keyword results")
 	assert.Contains(t, result, "Semantic Search Results", "should have semantic section")
@@ -369,7 +369,7 @@ func TestFormatCombinedResults_OnlyKeywordResults(t *testing.T) {
 	result, err := provider.formatCombinedResults("test query", nil, keywordResults, true, "")
 	require.NoError(t, err)
 
-	assert.Contains(t, result, "1 results", "should report 1 total result")
+	assert.Contains(t, result, "1 result for", "should report 1 total result (singular)")
 	assert.Contains(t, result, "0 semantic", "should report 0 semantic results")
 	assert.Contains(t, result, "1 keyword", "should report 1 keyword result")
 	assert.Contains(t, result, "Keyword Search Results", "should have keyword section")

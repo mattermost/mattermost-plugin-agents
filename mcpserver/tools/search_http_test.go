@@ -114,9 +114,9 @@ func TestHTTPSemanticSearchService_Search(t *testing.T) {
 			name: "request body contains search parameters",
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
 				body, err := io.ReadAll(r.Body)
-				require.NoError(t, err)
+				assert.NoError(t, err)
 				var req httpSearchRequest
-				require.NoError(t, json.Unmarshal(body, &req))
+				assert.NoError(t, json.Unmarshal(body, &req))
 				assert.Equal(t, "search query", req.Query)
 				assert.Equal(t, "team1", req.TeamID)
 				assert.Equal(t, "chan1", req.ChannelID)

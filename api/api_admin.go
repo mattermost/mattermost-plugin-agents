@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -27,10 +28,13 @@ func (a *API) handleReindexPosts(c *gin.Context) {
 		return
 	}
 
-	// Parse request body (optional)
+	// Parse request body (optional — empty body uses defaults, malformed JSON returns 400)
 	var req ReindexRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		// If body is empty or invalid, use defaults
+		if !errors.Is(err, io.EOF) {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+			return
+		}
 		req.ClearIndex = nil
 	}
 

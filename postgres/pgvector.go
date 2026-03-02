@@ -78,19 +78,39 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 		return fmt.Errorf("mismatched input lengths: got %d documents but %d embeddings", len(docs), len(embeddings))
 	}
 
+	if len(docs) == 0 {
+		return nil
+	}
+
 	// Collect unique post IDs to clean up before insert
 	// This ensures that when a post is re-indexed with a different chunk count,
 	// old chunks are removed to prevent orphaned data.
-	postIDs := make(map[string]struct{})
+	postIDSet := make(map[string]struct{})
 	for _, doc := range docs {
-		postIDs[doc.PostID] = struct{}{}
+		postIDSet[doc.PostID] = struct{}{}
+	}
+	postIDs := make([]string, 0, len(postIDSet))
+	for id := range postIDSet {
+		postIDs = append(postIDs, id)
 	}
 
-	// Delete existing entries for all posts being updated
-	for postID := range postIDs {
-		if _, err := pv.db.ExecContext(ctx, "DELETE FROM llm_posts_embeddings WHERE post_id = $1", postID); err != nil {
-			return fmt.Errorf("failed to delete existing chunks for post %s: %w", postID, err)
-		}
+	tx, err := pv.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Bulk delete existing entries for all posts being updated
+	deleteQuery, deleteArgs, err := sq.
+		Delete("llm_posts_embeddings").
+		Where(sq.Eq{"post_id": postIDs}).
+		PlaceholderFormat(sq.Dollar).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build delete query: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, deleteQuery, deleteArgs...); err != nil {
+		return fmt.Errorf("failed to delete existing chunks: %w", err)
 	}
 
 	// Insert new entries
@@ -99,7 +119,7 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 		if doc.IsChunk {
 			id = fmt.Sprintf("%s_chunk_%d", doc.PostID, doc.ChunkIndex)
 		}
-		_, err := pv.db.NamedExecContext(ctx, `
+		_, err := tx.NamedExecContext(ctx, `
 			INSERT INTO llm_posts_embeddings (
 				id, post_id, team_id, channel_id, user_id, content, embedding, created_at,
 				is_chunk, chunk_index, total_chunks
@@ -125,6 +145,10 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 		if err != nil {
 			return fmt.Errorf("failed to insert vector: %w", err)
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return nil

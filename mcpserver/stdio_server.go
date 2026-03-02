@@ -6,6 +6,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
@@ -61,7 +62,7 @@ func NewStdioServer(config StdioConfig, logger loggerlib.Logger) (*MattermostStd
 	}
 
 	// Create HTTP search service for callback to plugin API
-	pluginURL := config.GetMMServerURL() + "/plugins/mattermost-ai"
+	pluginURL := strings.TrimRight(config.GetMMServerURL(), "/") + "/plugins/mattermost-ai"
 	searchService := tools.NewHTTPSemanticSearchService(pluginURL)
 
 	// Register tools with local access mode
