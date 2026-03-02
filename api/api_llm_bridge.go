@@ -104,13 +104,11 @@ func (a *API) buildLLMBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRe
 	} else {
 		context = llm.NewContext()
 		if bot != nil {
-			context.BotName = bot.GetConfig().DisplayName
-			context.BotUsername = bot.GetConfig().Name
+			var botUserID string
 			if mmBot := bot.GetMMBot(); mmBot != nil {
-				context.BotUserID = mmBot.UserId
+				botUserID = mmBot.UserId
 			}
-			context.BotModel = bot.GetService().DefaultModel
-			context.BotServiceType = bot.GetService().Type
+			context.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type)
 		}
 	}
 
@@ -384,7 +382,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeAgent, "streaming")
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeAgent, llm.SubTypeStreaming)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -446,7 +444,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeAgent, "nostream")
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeAgent, llm.SubTypeNoStream)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -511,7 +509,7 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeService, "streaming")
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeService, llm.SubTypeStreaming)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -576,7 +574,7 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeService, "nostream")
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeService, llm.SubTypeNoStream)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),

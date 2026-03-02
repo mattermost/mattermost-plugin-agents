@@ -201,7 +201,7 @@ func TestBridgeClientContextEnrichment(t *testing.T) {
 				return err
 			},
 			expectedOperation: llm.OperationBridgeAgent,
-			expectedSubType:   "nostream",
+			expectedSubType:   llm.SubTypeNoStream,
 		},
 		{
 			name: "service stream request",
@@ -220,7 +220,7 @@ func TestBridgeClientContextEnrichment(t *testing.T) {
 				return err
 			},
 			expectedOperation: llm.OperationBridgeService,
-			expectedSubType:   "streaming",
+			expectedSubType:   llm.SubTypeStreaming,
 		},
 		{
 			name: "agent non-stream request with caller operation override",

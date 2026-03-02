@@ -32,12 +32,12 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			wantFile:   false,
 		},
 		{
-			name: "legacy config falls back to plugin sink",
+			name: "legacy config falls back to file sink",
 			cfg: &Config{
 				EnableTokenUsageLogging: true,
 			},
-			wantPlugin: true,
-			wantFile:   false,
+			wantPlugin: false,
+			wantFile:   true,
 		},
 		{
 			name: "explicit false plugin sink is honored",
@@ -96,13 +96,15 @@ func TestTokenUsageSinkConfigUnmarshalCompatibility(t *testing.T) {
 		wantFileNil         bool
 		wantFileValue       bool
 		wantPluginEnabledBy bool
+		wantFileEnabledBy   bool
 	}{
 		{
 			name:                "legacy payload keeps sink pointers nil",
 			payload:             `{"enableTokenUsageLogging":true}`,
 			wantPluginNil:       true,
 			wantFileNil:         true,
-			wantPluginEnabledBy: true,
+			wantPluginEnabledBy: false,
+			wantFileEnabledBy:   true,
 		},
 		{
 			name:                "explicit false values are preserved",
@@ -112,6 +114,7 @@ func TestTokenUsageSinkConfigUnmarshalCompatibility(t *testing.T) {
 			wantFileNil:         false,
 			wantFileValue:       false,
 			wantPluginEnabledBy: false,
+			wantFileEnabledBy:   false,
 		},
 		{
 			name:                "explicit true plugin value is preserved",
@@ -120,6 +123,16 @@ func TestTokenUsageSinkConfigUnmarshalCompatibility(t *testing.T) {
 			wantPluginValue:     true,
 			wantFileNil:         true,
 			wantPluginEnabledBy: true,
+			wantFileEnabledBy:   false,
+		},
+		{
+			name:                "explicit true file value is preserved",
+			payload:             `{"enableTokenUsageLogging":true,"enableTokenUsageLogToFile":true}`,
+			wantPluginNil:       true,
+			wantFileNil:         false,
+			wantFileValue:       true,
+			wantPluginEnabledBy: false,
+			wantFileEnabledBy:   true,
 		},
 	}
 
@@ -148,6 +161,9 @@ func TestTokenUsageSinkConfigUnmarshalCompatibility(t *testing.T) {
 			container.Update(&cfg)
 			if got := container.EnableTokenUsageLogToPlugin(); got != tt.wantPluginEnabledBy {
 				t.Fatalf("EnableTokenUsageLogToPlugin() = %t, want %t", got, tt.wantPluginEnabledBy)
+			}
+			if got := container.EnableTokenUsageLogToFile(); got != tt.wantFileEnabledBy {
+				t.Fatalf("EnableTokenUsageLogToFile() = %t, want %t", got, tt.wantFileEnabledBy)
 			}
 		})
 	}

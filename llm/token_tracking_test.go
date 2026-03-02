@@ -6,8 +6,10 @@ package llm
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/shared/mlog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -113,6 +115,15 @@ func makeStream(events ...TextStreamEvent) *TextStreamResult {
 	return &TextStreamResult{Stream: stream}
 }
 
+func makeTestTokenUsageSinks(loggingEnabled bool, pluginLogger TokenUsagePluginLogger, tokenLogger *mlog.Logger) *TokenUsageSinks {
+	sinks := NewTokenUsageSinks(pluginLogger)
+	sinks.SetLoggingEnabled(loggingEnabled)
+	sinks.SetPluginEnabled(pluginLogger != nil)
+	sinks.SetFileEnabled(tokenLogger != nil)
+	sinks.SetFileLogger(tokenLogger)
+	return sinks
+}
+
 func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 	tests := []struct {
 		name               string
@@ -137,7 +148,7 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 					BotServiceType: "openai",
 				},
 				Operation:        OperationConversation,
-				OperationSubType: "streaming",
+				OperationSubType: SubTypeStreaming,
 			},
 			opts: []LanguageModelOption{
 				WithModel("override-model"),
@@ -171,14 +182,14 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				"model":             "override-model",
 				"service_type":      "openai",
 				"operation":         OperationConversation,
-				"operation_subtype": "streaming",
+				"operation_subtype": SubTypeStreaming,
 				"input_tokens":      int64(12),
 				"output_tokens":     int64(8),
 				"total_tokens":      int64(20),
 			},
 		},
 		{
-			name: "uses unknown defaults for nil context",
+			name: "uses unknown defaults for nil context with stream subtype default",
 			request: CompletionRequest{
 				Operation: "",
 			},
@@ -209,7 +220,7 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				"model":             TokenUsageUnknown,
 				"service_type":      TokenUsageUnknown,
 				"operation":         TokenUsageUnknown,
-				"operation_subtype": TokenUsageUnknown,
+				"operation_subtype": SubTypeStreaming,
 				"input_tokens":      int64(1),
 				"output_tokens":     int64(2),
 				"total_tokens":      int64(3),
@@ -263,7 +274,8 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 			mockLLM := &MockLanguageModel{}
 			metrics := &observedMetrics{}
 			pluginLogger := &observedPluginLogger{}
-			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "fallback-bot", pluginLogger, nil, metrics)
+			sinks := makeTestTokenUsageSinks(true, pluginLogger, nil)
+			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "fallback-bot", sinks, metrics)
 
 			mockLLM.On("ChatCompletion", mock.Anything, mock.Anything).Return(tc.stream, nil).Once()
 
@@ -299,10 +311,116 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 	}
 }
 
+func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
+	dimensions := tokenUsageDimensions{
+		userID:           "user-1",
+		teamID:           "team-1",
+		channelID:        "channel-1",
+		channelType:      "open",
+		botName:          "Agent Bot",
+		botUsername:      "agent",
+		botUserID:        "bot-user-1",
+		model:            "gpt-4.1",
+		serviceType:      "openai",
+		operation:        OperationConversation,
+		operationSubType: SubTypeStreaming,
+	}
+	usage := TokenUsage{InputTokens: 11, OutputTokens: 7}
+
+	expected := []any{
+		"event", TokenUsageLogEvent,
+		"schema_version", TokenUsageLogSchemaVersion,
+		"user_id", "user-1",
+		"team_id", "team-1",
+		"channel_id", "channel-1",
+		"channel_type", "open",
+		"agent_name", "Agent Bot",
+		"agent_username", "agent",
+		"agent_user_id", "bot-user-1",
+		"model", "gpt-4.1",
+		"service_type", "openai",
+		"operation", OperationConversation,
+		"operation_subtype", SubTypeStreaming,
+		"input_tokens", int64(11),
+		"output_tokens", int64(7),
+		"total_tokens", int64(18),
+	}
+
+	actual := buildTokenUsageLogKeyValuePairs(dimensions, usage)
+	assert.Equal(t, expected, actual)
+
+	expectedMlogFields := make([]mlog.Field, 0, len(expected)/2)
+	for i := 0; i+1 < len(expected); i += 2 {
+		expectedMlogFields = append(expectedMlogFields, mlog.Any(expected[i].(string), expected[i+1]))
+	}
+	assert.Equal(t, expectedMlogFields, tokenUsageKeyValuePairsToMlogFields(actual))
+}
+
+func TestTokenTrackingWrapper_DefaultOperationSubType(t *testing.T) {
+	tests := []struct {
+		name               string
+		expectedSubType    string
+		invokeAndDrainFunc func(wrapper *TokenUsageLoggingWrapper, request CompletionRequest) error
+	}{
+		{
+			name:            "ChatCompletion defaults to streaming subtype",
+			expectedSubType: SubTypeStreaming,
+			invokeAndDrainFunc: func(wrapper *TokenUsageLoggingWrapper, request CompletionRequest) error {
+				result, err := wrapper.ChatCompletion(request)
+				if err != nil {
+					return err
+				}
+				_, err = result.ReadAll()
+				return err
+			},
+		},
+		{
+			name:            "ChatCompletionNoStream defaults to nostream subtype",
+			expectedSubType: SubTypeNoStream,
+			invokeAndDrainFunc: func(wrapper *TokenUsageLoggingWrapper, request CompletionRequest) error {
+				_, err := wrapper.ChatCompletionNoStream(request)
+				return err
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mockLLM := &MockLanguageModel{}
+			pluginLogger := &observedPluginLogger{}
+			sinks := makeTestTokenUsageSinks(true, pluginLogger, nil)
+			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "fallback-bot", sinks, nil)
+
+			mockLLM.On("ChatCompletion", mock.Anything, mock.Anything).Return(
+				makeStream(
+					TextStreamEvent{Type: EventTypeText, Value: "hello"},
+					TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 2, OutputTokens: 3}},
+					TextStreamEvent{Type: EventTypeEnd, Value: nil},
+				),
+				nil,
+			).Once()
+
+			err := tc.invokeAndDrainFunc(wrapper, CompletionRequest{
+				Operation: OperationConversation,
+				Context:   &Context{},
+			})
+			require.NoError(t, err)
+
+			require.Eventually(t, func() bool {
+				return len(pluginLogger.Entries()) == 1
+			}, time.Second, 10*time.Millisecond)
+			entries := pluginLogger.Entries()
+			require.Len(t, entries, 1)
+			assert.Equal(t, tc.expectedSubType, entries[0].fields["operation_subtype"])
+		})
+	}
+}
+
 func TestTokenTrackingWrapper_ChatCompletionNoStream(t *testing.T) {
 	t.Run("delegates to streaming method", func(t *testing.T) {
 		mockLLM := &MockLanguageModel{}
-		wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-bot", &observedPluginLogger{}, nil, nil)
+		sinks := makeTestTokenUsageSinks(true, &observedPluginLogger{}, nil)
+		wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-bot", sinks, nil)
 
 		mockStream := make(chan TextStreamEvent, 3)
 		mockStream <- TextStreamEvent{Type: EventTypeText, Value: "Hello world"}
@@ -324,7 +442,8 @@ func TestTokenTrackingWrapper_ChatCompletionNoStream(t *testing.T) {
 
 func TestTokenTrackingWrapper_DelegatedMethods(t *testing.T) {
 	mockLLM := &MockLanguageModel{}
-	wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-llm", &observedPluginLogger{}, nil, nil)
+	sinks := makeTestTokenUsageSinks(true, &observedPluginLogger{}, nil)
+	wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-llm", sinks, nil)
 
 	t.Run("CountTokens delegates to wrapped model", func(t *testing.T) {
 		mockLLM.On("CountTokens", "test text").Return(42)

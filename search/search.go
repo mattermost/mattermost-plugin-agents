@@ -143,13 +143,11 @@ func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query st
 	if teamID != "" {
 		promptCtx.Team = &model.Team{Id: teamID}
 	}
-	promptCtx.BotName = bot.GetConfig().DisplayName
-	promptCtx.BotUsername = bot.GetConfig().Name
+	var botUserID string
 	if mmBot := bot.GetMMBot(); mmBot != nil {
-		promptCtx.BotUserID = mmBot.UserId
+		botUserID = mmBot.UserId
 	}
-	promptCtx.BotModel = bot.GetService().DefaultModel
-	promptCtx.BotServiceType = bot.GetService().Type
+	promptCtx.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type)
 	promptCtx.Parameters = map[string]interface{}{
 		"Query":   query,
 		"Results": ragResults,
@@ -252,7 +250,7 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 			},
 			Context:          promptCtx,
 			Operation:        llm.OperationSearch,
-			OperationSubType: "streaming",
+			OperationSubType: llm.SubTypeStreaming,
 		}
 
 		resultStream, err := bot.LLM().ChatCompletion(prompt)
@@ -342,7 +340,7 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 		},
 		Context:          promptCtx,
 		Operation:        llm.OperationSearch,
-		OperationSubType: "nostream",
+		OperationSubType: llm.SubTypeNoStream,
 	}
 
 	answer, err := bot.LLM().ChatCompletionNoStream(prompt)

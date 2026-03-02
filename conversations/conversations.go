@@ -225,7 +225,7 @@ func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID stri
 		Posts:            []llm.Post{{Role: llm.PostRoleUser, Message: request}},
 		Context:          context,
 		Operation:        llm.OperationTitleGeneration,
-		OperationSubType: llm.OperationConversation,
+		OperationSubType: llm.SubTypeNoStream,
 	}
 
 	conversationTitle, err := bot.LLM().ChatCompletionNoStream(titleRequest, llm.WithMaxGeneratedTokens(25), llm.WithReasoningDisabled())

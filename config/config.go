@@ -118,13 +118,6 @@ func (c *Container) EnableTokenUsageLogToPlugin() bool {
 		return false
 	}
 
-	// Backward compatibility: configurations created before sink-specific toggles
-	// existed do not have either field set. Preserve old behavior by treating
-	// that state as plugin-log enabled.
-	if cfg.EnableTokenUsageLogToPlugin == nil && cfg.EnableTokenUsageLogToFile == nil {
-		return true
-	}
-
 	return cfg.EnableTokenUsageLogToPlugin != nil && *cfg.EnableTokenUsageLogToPlugin
 }
 
@@ -132,6 +125,9 @@ func (c *Container) EnableTokenUsageLogToFile() bool {
 	cfg := c.cfg.Load()
 	if cfg == nil || !cfg.EnableTokenUsageLogging {
 		return false
+	}
+	if cfg.EnableTokenUsageLogToPlugin == nil && cfg.EnableTokenUsageLogToFile == nil {
+		return true
 	}
 	return cfg.EnableTokenUsageLogToFile != nil && *cfg.EnableTokenUsageLogToFile
 }

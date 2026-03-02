@@ -13,6 +13,7 @@ const (
 	TokenUsageUnknown = "unknown"
 )
 
+// operation identifies the high-level feature or action producing token usage.
 const (
 	OperationConversation             = "conversation"
 	OperationConversationToolFollowup = "conversation_tool_followup"
@@ -28,4 +29,16 @@ const (
 	OperationEvalGrading              = "eval_grading"
 	OperationBridgeAgent              = "bridge_agent"
 	OperationBridgeService            = "bridge_service"
+)
+
+// operation_subtype is a low-cardinality detail for the operation.
+// Typical values represent modality or a small scenario class
+// (for example streaming vs non-streaming, tool calls, or chunk modes).
+const (
+	SubTypeStreaming          = "streaming"
+	SubTypeNoStream           = "nostream"
+	SubTypeToolCall           = "tool_call"
+	SubTypeTranscriptionChunk = "transcription_chunk"
+	SubTypeChunkedTrue        = "chunked_true"
+	SubTypeChunkedFalse       = "chunked_false"
 )

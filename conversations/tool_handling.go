@@ -464,7 +464,7 @@ func (c *Conversations) completeAndStreamToolResponse(
 		Posts:            posts,
 		Context:          llmContext,
 		Operation:        llm.OperationConversationToolFollowup,
-		OperationSubType: "tool_call",
+		OperationSubType: llm.SubTypeToolCall,
 	}
 	var opts []llm.LanguageModelOption
 	if toolsDisabled {

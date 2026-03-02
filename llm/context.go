@@ -64,6 +64,16 @@ func NewContext(opts ...ContextOption) *Context {
 	return c
 }
 
+// SetBotFields populates bot-related context fields from config and service values.
+// This avoids duplicating bot field assignment across multiple packages.
+func (c *Context) SetBotFields(displayName, username, userID, defaultModel, serviceType string) {
+	c.BotName = displayName
+	c.BotUsername = username
+	c.BotUserID = userID
+	c.BotModel = defaultModel
+	c.BotServiceType = serviceType
+}
+
 func (c Context) String() string {
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("Time: %v\nServerName: %v\nCompanyName: %v", c.Time, c.ServerName, c.CompanyName))

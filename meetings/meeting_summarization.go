@@ -312,7 +312,7 @@ func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles
 				},
 				Context:          context,
 				Operation:        llm.OperationMeetingChunkSummary,
-				OperationSubType: "transcription_chunk",
+				OperationSubType: llm.SubTypeTranscriptionChunk,
 			}
 
 			summarizedChunk, err := bot.LLM().ChatCompletionNoStream(request)
@@ -334,6 +334,11 @@ func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles
 		return nil, fmt.Errorf("unable to get meeting summary prompt: %w", err)
 	}
 
+	operationSubType := llm.SubTypeChunkedFalse
+	if isChunked {
+		operationSubType = llm.SubTypeChunkedTrue
+	}
+
 	completionRequest := llm.CompletionRequest{
 		Posts: []llm.Post{
 			{
@@ -347,7 +352,7 @@ func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles
 		},
 		Context:          context,
 		Operation:        llm.OperationMeetingSummary,
-		OperationSubType: fmt.Sprintf("chunked_%t", isChunked),
+		OperationSubType: operationSubType,
 	}
 
 	summaryStream, err := bot.LLM().ChatCompletion(completionRequest, llm.WithToolsDisabled())
