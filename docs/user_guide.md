@@ -123,8 +123,8 @@ To summarize a Zoom meeting in Mattermost:
 2. Record the Zoom meeting.
 3. Once the meeting ends and the transcript file is posted to Mattermost, select the **Create meeting summary** option located directly above the file.
 
-![Select the Create meeting summary option to summarize your Zoom meeting in Mattermost.](../../images/create-meeting-summary-zoom.png)
+![Select the Create meeting summary option to summarize your Zoom meeting in Mattermost.](img/create-meeting-summary-zoom.png)
 
 4. The meeting summary is generated and shared as a direct message with the person who requested the meeting summary.
 
-![Easily share the updates from your Zoom meetings with your team and broader organization by turning recordings into detailed summaries at the click of a button.](../../images/copilot-Zoom-Meeting-Summary.png)
+![Easily share the updates from your Zoom meetings with your team and broader organization by turning recordings into detailed summaries at the click of a button.](img/copilot-Zoom-Meeting-Summary.png)
