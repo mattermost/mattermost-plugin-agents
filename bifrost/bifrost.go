@@ -27,6 +27,9 @@ const (
 	DefaultMaxTokens        = 8192
 	MaxToolResolutionDepth  = 10
 	DefaultStreamingTimeout = 5 * time.Minute
+
+	defaultReasoningEffort = "medium"
+	reasoningSummaryAuto   = "auto"
 )
 
 // LLM implements the llm.LanguageModel interface using the Bifrost gateway.
@@ -310,33 +313,7 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 	var reasoningSignature string
 	var reasoningComplete bool
 
-	// Watchdog timer for streaming timeout
-	watchdog := make(chan struct{})
-	var watchdogMu sync.Mutex
-
-	go func() {
-		timer := time.NewTimer(b.streamingTimeout)
-		defer timer.Stop()
-		for {
-			select {
-			case <-timer.C:
-				cancel()
-				return
-			case <-bifrostCtx.Done():
-				return
-			case <-watchdog:
-				watchdogMu.Lock()
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(b.streamingTimeout)
-				watchdogMu.Unlock()
-			}
-		}
-	}()
+	watchdog := b.startStreamingWatchdog(bifrostCtx, cancel)
 
 	for chunk := range streamChan {
 		// Ping watchdog
@@ -523,6 +500,40 @@ type toolCallBuffer struct {
 	arguments strings.Builder
 }
 
+// startStreamingWatchdog starts a goroutine that cancels the context if no
+// activity (pings on the returned channel) is received within the timeout.
+// The caller should send on the returned channel for each received chunk.
+func (b *LLM) startStreamingWatchdog(ctx context.Context, cancel context.CancelFunc) chan<- struct{} {
+	watchdog := make(chan struct{})
+	var mu sync.Mutex
+
+	go func() {
+		timer := time.NewTimer(b.streamingTimeout)
+		defer timer.Stop()
+		for {
+			select {
+			case <-timer.C:
+				cancel()
+				return
+			case <-ctx.Done():
+				return
+			case <-watchdog:
+				mu.Lock()
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(b.streamingTimeout)
+				mu.Unlock()
+			}
+		}
+	}()
+
+	return watchdog
+}
+
 // buildChatReasoning creates a ChatReasoning configuration if reasoning is enabled.
 func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReasoning {
 	if !b.reasoningEnabled || cfg.ReasoningDisabled {
@@ -535,13 +546,13 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
-		reasoning.MaxTokens = Ptr(budget)
+		reasoning.MaxTokens = ptr(budget)
 	} else {
 		effort := b.reasoningEffort
 		if effort == "" {
-			effort = "medium"
+			effort = defaultReasoningEffort
 		}
-		reasoning.Effort = Ptr(effort)
+		reasoning.Effort = ptr(effort)
 	}
 	return reasoning
 }
@@ -570,7 +581,7 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 	// Set parameters
 	params := &schemas.ChatParameters{}
 	if cfg.MaxGeneratedTokens > 0 {
-		params.MaxCompletionTokens = Ptr(cfg.MaxGeneratedTokens)
+		params.MaxCompletionTokens = ptr(cfg.MaxGeneratedTokens)
 	}
 	if len(tools) > 0 {
 		params.Tools = tools
@@ -594,7 +605,7 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 			msg = schemas.ChatMessage{
 				Role: schemas.ChatMessageRoleSystem,
 				Content: &schemas.ChatMessageContent{
-					ContentStr: Ptr(post.Message),
+					ContentStr: ptr(post.Message),
 				},
 			}
 
@@ -612,7 +623,7 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 				msg = schemas.ChatMessage{
 					Role: schemas.ChatMessageRoleUser,
 					Content: &schemas.ChatMessageContent{
-						ContentStr: Ptr(post.Message),
+						ContentStr: ptr(post.Message),
 					},
 				}
 			}
@@ -621,7 +632,7 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 			msg = schemas.ChatMessage{
 				Role: schemas.ChatMessageRoleAssistant,
 				Content: &schemas.ChatMessageContent{
-					ContentStr: Ptr(post.Message),
+					ContentStr: ptr(post.Message),
 				},
 			}
 
@@ -633,8 +644,8 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 				msg.ReasoningDetails = []schemas.ChatReasoningDetails{{
 					Index:     0,
 					Type:      schemas.BifrostReasoningDetailsTypeText,
-					Text:      Ptr(post.Reasoning),
-					Signature: Ptr(post.ReasoningSignature),
+					Text:      ptr(post.Reasoning),
+					Signature: ptr(post.ReasoningSignature),
 				}}
 			}
 
@@ -644,10 +655,10 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 				for i, tc := range post.ToolUse {
 					toolCalls = append(toolCalls, schemas.ChatAssistantMessageToolCall{
 						Index: uint16(i % 65536), //nolint:gosec // index will never exceed uint16 max in practice
-						ID:    Ptr(tc.ID),
-						Type:  Ptr("function"),
+						ID:    ptr(tc.ID),
+						Type:  ptr("function"),
 						Function: schemas.ChatAssistantMessageToolCallFunction{
-							Name:      Ptr(tc.Name),
+							Name:      ptr(tc.Name),
 							Arguments: string(tc.Arguments),
 						},
 					})
@@ -665,10 +676,10 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 					toolResultMsg := schemas.ChatMessage{
 						Role: schemas.ChatMessageRoleTool,
 						Content: &schemas.ChatMessageContent{
-							ContentStr: Ptr(tc.Result),
+							ContentStr: ptr(tc.Result),
 						},
 						ChatToolMessage: &schemas.ChatToolMessage{
-							ToolCallID: Ptr(tc.ID),
+							ToolCallID: ptr(tc.ID),
 						},
 					}
 					messages = append(messages, toolResultMsg)
@@ -751,7 +762,7 @@ func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock 
 	if post.Message != "" {
 		parts = append(parts, schemas.ChatContentBlock{
 			Type: schemas.ChatContentBlockTypeText,
-			Text: Ptr(post.Message),
+			Text: ptr(post.Message),
 		})
 	}
 
@@ -759,7 +770,7 @@ func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock 
 		if !isValidImageType(file.MimeType) {
 			parts = append(parts, schemas.ChatContentBlock{
 				Type: schemas.ChatContentBlockTypeText,
-				Text: Ptr(fmt.Sprintf("[Unsupported image type: %s]", file.MimeType)),
+				Text: ptr(fmt.Sprintf("[Unsupported image type: %s]", file.MimeType)),
 			})
 			continue
 		}
@@ -768,7 +779,7 @@ func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock 
 		if err != nil {
 			parts = append(parts, schemas.ChatContentBlock{
 				Type: schemas.ChatContentBlockTypeText,
-				Text: Ptr("[Error reading image data]"),
+				Text: ptr("[Error reading image data]"),
 			})
 			continue
 		}
@@ -797,39 +808,13 @@ func (b *LLM) convertTools(request llm.CompletionRequest, cfg llm.LanguageModelC
 	result := make([]schemas.ChatTool, 0, len(tools))
 
 	for _, tool := range tools {
-		// Convert schema to ToolFunctionParameters
-		var params *schemas.ToolFunctionParameters
-		if tool.Schema != nil {
-			switch s := tool.Schema.(type) {
-			case map[string]interface{}:
-				params = schemaMapToFunctionParams(s)
-			default:
-				// Marshal and unmarshal to convert to map
-				data, err := json.Marshal(tool.Schema)
-				if err == nil {
-					var schemaMap map[string]interface{}
-					if json.Unmarshal(data, &schemaMap) == nil {
-						params = schemaMapToFunctionParams(schemaMap)
-					}
-				}
-			}
-		}
-
-		// Ensure params has default values
-		if params == nil {
-			params = &schemas.ToolFunctionParameters{
-				Type: "object",
-			}
-		}
-		if params.Type == "" {
-			params.Type = "object"
-		}
+		params := convertSchemaToFunctionParams(tool.Schema)
 
 		bifrostTool := schemas.ChatTool{
 			Type: schemas.ChatToolTypeFunction,
 			Function: &schemas.ChatToolFunction{
 				Name:        tool.Name,
-				Description: Ptr(tool.Description),
+				Description: ptr(tool.Description),
 				Parameters:  params,
 			},
 		}
@@ -837,6 +822,34 @@ func (b *LLM) convertTools(request llm.CompletionRequest, cfg llm.LanguageModelC
 	}
 
 	return result
+}
+
+// convertSchemaToFunctionParams converts a tool schema (of any type) to ToolFunctionParameters.
+// It handles map[string]interface{} directly, and marshals other types through JSON.
+func convertSchemaToFunctionParams(schema interface{}) *schemas.ToolFunctionParameters {
+	if schema == nil {
+		return &schemas.ToolFunctionParameters{Type: "object"}
+	}
+	var params *schemas.ToolFunctionParameters
+	switch s := schema.(type) {
+	case map[string]interface{}:
+		params = schemaMapToFunctionParams(s)
+	default:
+		data, err := json.Marshal(schema)
+		if err == nil {
+			var schemaMap map[string]interface{}
+			if json.Unmarshal(data, &schemaMap) == nil {
+				params = schemaMapToFunctionParams(schemaMap)
+			}
+		}
+	}
+	if params == nil {
+		params = &schemas.ToolFunctionParameters{Type: "object"}
+	}
+	if params.Type == "" {
+		params.Type = "object"
+	}
+	return params
 }
 
 // schemaMapToFunctionParams converts a schema map to ToolFunctionParameters
@@ -869,17 +882,16 @@ func schemaMapToFunctionParams(schemaMap map[string]interface{}) *schemas.ToolFu
 
 // isValidImageType checks if the MIME type is supported.
 func isValidImageType(mimeType string) bool {
-	validTypes := map[string]bool{
-		"image/jpeg": true,
-		"image/png":  true,
-		"image/gif":  true,
-		"image/webp": true,
+	switch mimeType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	default:
+		return false
 	}
-	return validTypes[mimeType]
 }
 
-// Ptr is a helper function to create a pointer to a value.
-func Ptr[T any](v T) *T {
+// ptr is a helper function to create a pointer to a value.
+func ptr[T any](v T) *T {
 	return &v
 }
 
@@ -915,9 +927,9 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 		switch post.Role {
 		case llm.PostRoleSystem:
 			msg := schemas.ResponsesMessage{
-				Role: Ptr(schemas.ResponsesInputMessageRoleSystem),
+				Role: ptr(schemas.ResponsesInputMessageRoleSystem),
 				Content: &schemas.ResponsesMessageContent{
-					ContentStr: Ptr(post.Message),
+					ContentStr: ptr(post.Message),
 				},
 			}
 			messages = append(messages, msg)
@@ -927,7 +939,7 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 				// Multimodal message with images
 				parts := b.createResponsesMultimodalContent(post)
 				msg := schemas.ResponsesMessage{
-					Role: Ptr(schemas.ResponsesInputMessageRoleUser),
+					Role: ptr(schemas.ResponsesInputMessageRoleUser),
 					Content: &schemas.ResponsesMessageContent{
 						ContentBlocks: parts,
 					},
@@ -935,9 +947,9 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 				messages = append(messages, msg)
 			} else {
 				msg := schemas.ResponsesMessage{
-					Role: Ptr(schemas.ResponsesInputMessageRoleUser),
+					Role: ptr(schemas.ResponsesInputMessageRoleUser),
 					Content: &schemas.ResponsesMessageContent{
-						ContentStr: Ptr(post.Message),
+						ContentStr: ptr(post.Message),
 					},
 				}
 				messages = append(messages, msg)
@@ -945,9 +957,9 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 
 		case llm.PostRoleBot:
 			msg := schemas.ResponsesMessage{
-				Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
+				Role: ptr(schemas.ResponsesInputMessageRoleAssistant),
 				Content: &schemas.ResponsesMessageContent{
-					ContentStr: Ptr(post.Message),
+					ContentStr: ptr(post.Message),
 				},
 			}
 
@@ -958,22 +970,22 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 				for _, tc := range post.ToolUse {
 					// Add function call message
 					funcCallMsg := schemas.ResponsesMessage{
-						Type: Ptr(schemas.ResponsesMessageTypeFunctionCall),
+						Type: ptr(schemas.ResponsesMessageTypeFunctionCall),
 						ResponsesToolMessage: &schemas.ResponsesToolMessage{
-							CallID:    Ptr(tc.ID),
-							Name:      Ptr(tc.Name),
-							Arguments: Ptr(string(tc.Arguments)),
+							CallID:    ptr(tc.ID),
+							Name:      ptr(tc.Name),
+							Arguments: ptr(string(tc.Arguments)),
 						},
 					}
 					messages = append(messages, funcCallMsg)
 
 					// Add function call output message
 					funcOutputMsg := schemas.ResponsesMessage{
-						Type: Ptr(schemas.ResponsesMessageTypeFunctionCallOutput),
+						Type: ptr(schemas.ResponsesMessageTypeFunctionCallOutput),
 						ResponsesToolMessage: &schemas.ResponsesToolMessage{
-							CallID: Ptr(tc.ID),
+							CallID: ptr(tc.ID),
 							Output: &schemas.ResponsesToolMessageOutputStruct{
-								ResponsesToolCallOutputStr: Ptr(tc.Result),
+								ResponsesToolCallOutputStr: ptr(tc.Result),
 							},
 						},
 					}
@@ -994,7 +1006,7 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 	if post.Message != "" {
 		parts = append(parts, schemas.ResponsesMessageContentBlock{
 			Type: schemas.ResponsesInputMessageContentBlockTypeText,
-			Text: Ptr(post.Message),
+			Text: ptr(post.Message),
 		})
 	}
 
@@ -1002,7 +1014,7 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 		if !isValidImageType(file.MimeType) {
 			parts = append(parts, schemas.ResponsesMessageContentBlock{
 				Type: schemas.ResponsesInputMessageContentBlockTypeText,
-				Text: Ptr(fmt.Sprintf("[Unsupported image type: %s]", file.MimeType)),
+				Text: ptr(fmt.Sprintf("[Unsupported image type: %s]", file.MimeType)),
 			})
 			continue
 		}
@@ -1011,7 +1023,7 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 		if err != nil {
 			parts = append(parts, schemas.ResponsesMessageContentBlock{
 				Type: schemas.ResponsesInputMessageContentBlockTypeText,
-				Text: Ptr("[Error reading image data]"),
+				Text: ptr("[Error reading image data]"),
 			})
 			continue
 		}
@@ -1022,7 +1034,7 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 		parts = append(parts, schemas.ResponsesMessageContentBlock{
 			Type: schemas.ResponsesInputMessageContentBlockTypeImage,
 			ResponsesInputMessageContentBlockImage: &schemas.ResponsesInputMessageContentBlockImage{
-				ImageURL: Ptr(dataURL),
+				ImageURL: ptr(dataURL),
 			},
 		})
 	}
@@ -1064,32 +1076,12 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 	if !cfg.ToolsDisabled && request.Context != nil && request.Context.Tools != nil {
 		tools := request.Context.Tools.GetTools()
 		for _, tool := range tools {
-			var params *schemas.ToolFunctionParameters
-			if tool.Schema != nil {
-				switch s := tool.Schema.(type) {
-				case map[string]interface{}:
-					params = schemaMapToFunctionParams(s)
-				default:
-					data, err := json.Marshal(tool.Schema)
-					if err == nil {
-						var schemaMap map[string]interface{}
-						if json.Unmarshal(data, &schemaMap) == nil {
-							params = schemaMapToFunctionParams(schemaMap)
-						}
-					}
-				}
-			}
-			if params == nil {
-				params = &schemas.ToolFunctionParameters{Type: "object"}
-			}
-			if params.Type == "" {
-				params.Type = "object"
-			}
+			params := convertSchemaToFunctionParams(tool.Schema)
 
 			responsesTool := schemas.ResponsesTool{
 				Type:        schemas.ResponsesToolTypeFunction,
-				Name:        Ptr(tool.Name),
-				Description: Ptr(tool.Description),
+				Name:        ptr(tool.Name),
+				Description: ptr(tool.Description),
 				ResponsesToolFunction: &schemas.ResponsesToolFunction{
 					Parameters: params,
 				},
@@ -1113,16 +1105,16 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
-		reasoning.MaxTokens = Ptr(budget)
+		reasoning.MaxTokens = ptr(budget)
 	} else {
 		effort := b.reasoningEffort
 		if effort == "" {
-			effort = "medium"
+			effort = defaultReasoningEffort
 		}
-		reasoning.Effort = Ptr(effort)
+		reasoning.Effort = ptr(effort)
 		// Enable reasoning summaries so the provider returns reasoning text in the stream.
 		// Without this, providers like OpenAI will not include reasoning_summary events.
-		reasoning.Summary = Ptr("auto")
+		reasoning.Summary = ptr(reasoningSummaryAuto)
 	}
 	return reasoning
 }
@@ -1141,7 +1133,7 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 	// Set parameters
 	params := &schemas.ResponsesParameters{}
 	if cfg.MaxGeneratedTokens > 0 {
-		params.MaxOutputTokens = Ptr(cfg.MaxGeneratedTokens)
+		params.MaxOutputTokens = ptr(cfg.MaxGeneratedTokens)
 	}
 	if len(tools) > 0 {
 		params.Tools = tools
@@ -1232,33 +1224,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	var textLen int       // cumulative byte length of all streamed text
 	var blockStartPos int // byte position where current text block started
 
-	// Watchdog timer for streaming timeout
-	watchdog := make(chan struct{})
-	var watchdogMu sync.Mutex
-
-	go func() {
-		timer := time.NewTimer(b.streamingTimeout)
-		defer timer.Stop()
-		for {
-			select {
-			case <-timer.C:
-				cancel()
-				return
-			case <-bifrostCtx.Done():
-				return
-			case <-watchdog:
-				watchdogMu.Lock()
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(b.streamingTimeout)
-				watchdogMu.Unlock()
-			}
-		}
-	}()
+	watchdog := b.startStreamingWatchdog(bifrostCtx, cancel)
 
 	for chunk := range streamChan {
 		// Ping watchdog

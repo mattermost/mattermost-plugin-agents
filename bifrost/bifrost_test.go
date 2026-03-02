@@ -78,14 +78,14 @@ func TestBuildChatReasoning(t *testing.T) {
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(2048),
+			checkMaxTokens:   ptr(2048),
 		},
 		{
 			name:             "non-Anthropic uses Effort",
 			provider:         schemas.OpenAI,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("medium"),
+			checkEffort:      ptr("medium"),
 		},
 		{
 			name:             "non-Anthropic with custom effort",
@@ -93,7 +93,7 @@ func TestBuildChatReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("high"),
+			checkEffort:      ptr("high"),
 		},
 		{
 			name:             "ReasoningDisabled returns nil",
@@ -305,7 +305,7 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("hello")},
+					Content: &schemas.ChatMessageContent{ContentStr: ptr("hello")},
 				},
 			},
 			expected: 1,
@@ -315,11 +315,11 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("msg1")},
+					Content: &schemas.ChatMessageContent{ContentStr: ptr("msg1")},
 				},
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("msg2")},
+					Content: &schemas.ChatMessageContent{ContentStr: ptr("msg2")},
 				},
 			},
 			expected: 1,
@@ -334,19 +334,19 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleAssistant,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("resp1")},
+					Content: &schemas.ChatMessageContent{ContentStr: ptr("resp1")},
 					ChatAssistantMessage: &schemas.ChatAssistantMessage{
 						ToolCalls: []schemas.ChatAssistantMessageToolCall{
-							{ID: Ptr("tc1"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: Ptr("tool1")}},
+							{ID: ptr("tc1"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: ptr("tool1")}},
 						},
 					},
 				},
 				{
 					Role:    schemas.ChatMessageRoleAssistant,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("resp2")},
+					Content: &schemas.ChatMessageContent{ContentStr: ptr("resp2")},
 					ChatAssistantMessage: &schemas.ChatAssistantMessage{
 						ToolCalls: []schemas.ChatAssistantMessageToolCall{
-							{ID: Ptr("tc2"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: Ptr("tool2")}},
+							{ID: ptr("tc2"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: ptr("tool2")}},
 						},
 					},
 				},
@@ -363,11 +363,11 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("question")},
+					Content: &schemas.ChatMessageContent{ContentStr: ptr("question")},
 				},
 				{
 					Role:    schemas.ChatMessageRoleAssistant,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("answer")},
+					Content: &schemas.ChatMessageContent{ContentStr: ptr("answer")},
 				},
 			},
 			expected: 2,
@@ -377,16 +377,16 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleTool,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("result1")},
+					Content: &schemas.ChatMessageContent{ContentStr: ptr("result1")},
 					ChatToolMessage: &schemas.ChatToolMessage{
-						ToolCallID: Ptr("tc1"),
+						ToolCallID: ptr("tc1"),
 					},
 				},
 				{
 					Role:    schemas.ChatMessageRoleTool,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("result2")},
+					Content: &schemas.ChatMessageContent{ContentStr: ptr("result2")},
 					ChatToolMessage: &schemas.ChatToolMessage{
-						ToolCallID: Ptr("tc2"),
+						ToolCallID: ptr("tc2"),
 					},
 				},
 			},
@@ -397,11 +397,11 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleSystem,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("system prompt")},
+					Content: &schemas.ChatMessageContent{ContentStr: ptr("system prompt")},
 				},
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("hello")},
+					Content: &schemas.ChatMessageContent{ContentStr: ptr("hello")},
 				},
 			},
 			expected: 2,
@@ -479,8 +479,8 @@ func TestNormalizeOpenAIBaseURL(t *testing.T) {
 	}
 }
 
-func intPtr(i int) *int       { return &i }
-func strPtr(s string) *string { return &s }
+func intptr(i int) *int       { return &i }
+func strptr(s string) *string { return &s }
 
 func TestConvertBifrostAnnotation(t *testing.T) {
 	tests := []struct {
@@ -507,11 +507,11 @@ func TestConvertBifrostAnnotation(t *testing.T) {
 			name: "OpenAI fields used when present",
 			ann: &schemas.ResponsesOutputMessageContentTextAnnotation{
 				Type:       "url_citation",
-				StartIndex: intPtr(10),
-				EndIndex:   intPtr(50),
-				URL:        strPtr("https://example.com"),
-				Title:      strPtr("Example"),
-				Text:       strPtr("cited text"),
+				StartIndex: intptr(10),
+				EndIndex:   intptr(50),
+				URL:        strptr("https://example.com"),
+				Title:      strptr("Example"),
+				Text:       strptr("cited text"),
 			},
 			index: 1,
 			expected: &llm.Annotation{
@@ -528,8 +528,8 @@ func TestConvertBifrostAnnotation(t *testing.T) {
 			name: "nil StartIndex and EndIndex default to zero",
 			ann: &schemas.ResponsesOutputMessageContentTextAnnotation{
 				Type:  "url_citation",
-				URL:   strPtr("https://anthropic.com"),
-				Title: strPtr("Anthropic"),
+				URL:   strptr("https://anthropic.com"),
+				Title: strptr("Anthropic"),
 			},
 			index: 3,
 			expected: &llm.Annotation{
@@ -543,7 +543,7 @@ func TestConvertBifrostAnnotation(t *testing.T) {
 			name: "all position fields nil defaults to zero",
 			ann: &schemas.ResponsesOutputMessageContentTextAnnotation{
 				Type: "url_citation",
-				URL:  strPtr("https://example.com"),
+				URL:  strptr("https://example.com"),
 			},
 			index: 1,
 			expected: &llm.Annotation{

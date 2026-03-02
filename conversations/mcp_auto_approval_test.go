@@ -265,6 +265,13 @@ func TestHasAutoApprovedToolCalls(t *testing.T) {
 			expected: true,
 		},
 		{
+			name: "error status counts as pre-executed",
+			toolCalls: []llm.ToolCall{
+				{Status: llm.ToolCallStatusError},
+			},
+			expected: true,
+		},
+		{
 			name: "success status is not auto-approved",
 			toolCalls: []llm.ToolCall{
 				{Status: llm.ToolCallStatusSuccess},

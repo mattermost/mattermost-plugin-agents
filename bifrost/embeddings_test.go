@@ -34,7 +34,7 @@ func TestEmbeddingDimensions(t *testing.T) {
 			var params *schemas.EmbeddingParameters
 			if tt.dimensions > 0 {
 				params = &schemas.EmbeddingParameters{
-					Dimensions: Ptr(tt.dimensions),
+					Dimensions: ptr(tt.dimensions),
 				}
 			}
 
