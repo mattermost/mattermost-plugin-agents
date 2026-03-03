@@ -91,7 +91,7 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := mcpContext.Ctx // Use request context for proper cancellation and timeout handling
+	ctx := mcpContext.Ctx
 
 	var team *model.Team
 
@@ -192,7 +192,7 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := mcpContext.Ctx // Use request context for proper cancellation and timeout handling
+	ctx := mcpContext.Ctx
 
 	// Get team members
 	members, _, err := client.GetTeamMembers(ctx, args.TeamID, args.Page, args.Limit, "")

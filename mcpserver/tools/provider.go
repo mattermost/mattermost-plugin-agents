@@ -21,7 +21,7 @@ import (
 
 // MCPToolContext provides MCP-specific functionality with the authenticated client.
 type MCPToolContext struct {
-	Ctx        context.Context // Request context for proper cancellation and timeout handling
+	Ctx        context.Context
 	Client     *model.Client4
 	AccessMode AccessMode
 	BotUserID  string // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
@@ -120,7 +120,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 
 	handler := func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Log tool invocation
-		p.logger.Info("MCP tool called", "tool", mcpTool.Name)
+		p.logger.Debug("MCP tool called", "tool", mcpTool.Name)
 
 		// Create MCP context from the authenticated client, passing along any metadata
 		mcpContext, err := p.createMCPToolContext(ctx, req.Params.Meta)
@@ -153,7 +153,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		// Call the tool resolver
 		result, err := mcpTool.Resolver(mcpContext, argsGetter)
 		if err != nil {
-			p.logger.Info("MCP tool failed", "tool", mcpTool.Name, "error", err.Error())
+			p.logger.Debug("MCP tool failed", "tool", mcpTool.Name, "error", err.Error())
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
 					&mcp.TextContent{Text: "Error: " + err.Error()},
@@ -163,7 +163,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		}
 
 		// Log successful completion
-		p.logger.Info("MCP tool completed successfully", "tool", mcpTool.Name)
+		p.logger.Debug("MCP tool completed successfully", "tool", mcpTool.Name)
 
 		// Return successful result
 		return &mcp.CallToolResult{
@@ -186,7 +186,7 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	}
 
 	mcpContext := &MCPToolContext{
-		Ctx:        ctx, // Pass the request context for proper cancellation and timeout handling
+		Ctx:        ctx,
 		Client:     client,
 		AccessMode: p.accessMode,
 	}
