@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	tokenUsageLogToPluginEnvKey = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_PLUGIN"
-	tokenUsageLogToFileEnvKey   = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_FILE"
+	tokenUsageLogToPluginEnvKey = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_PLUGIN" // #nosec G101 -- env var key name, not a credential
+	tokenUsageLogToFileEnvKey   = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_FILE"   // #nosec G101 -- env var key name, not a credential
 )
 
 type Config struct {
