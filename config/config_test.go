@@ -12,6 +12,8 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 	tests := []struct {
 		name       string
 		cfg        *Config
+		pluginEnv  *string
+		fileEnv    *string
 		wantPlugin bool
 		wantFile   bool
 	}{
@@ -22,50 +24,68 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			wantFile:   false,
 		},
 		{
-			name: "token usage logging disabled",
+			name: "token usage logging disabled overrides env settings",
 			cfg: &Config{
 				EnableTokenUsageLogging:     false,
 				EnableTokenUsageLogToPlugin: boolPtr(true),
 				EnableTokenUsageLogToFile:   boolPtr(true),
 			},
+			pluginEnv:  stringPtr("true"),
+			fileEnv:    stringPtr("true"),
 			wantPlugin: false,
 			wantFile:   false,
 		},
 		{
-			name: "legacy config falls back to file sink",
-			cfg: &Config{
-				EnableTokenUsageLogging: true,
-			},
-			wantPlugin: false,
-			wantFile:   true,
-		},
-		{
-			name: "explicit false plugin sink is honored",
-			cfg: &Config{
-				EnableTokenUsageLogging:     true,
-				EnableTokenUsageLogToPlugin: boolPtr(false),
-				EnableTokenUsageLogToFile:   boolPtr(false),
-			},
-			wantPlugin: false,
-			wantFile:   false,
-		},
-		{
-			name: "explicit true plugin sink is honored",
+			name: "legacy defaults apply when env vars are not set",
 			cfg: &Config{
 				EnableTokenUsageLogging:     true,
 				EnableTokenUsageLogToPlugin: boolPtr(true),
 				EnableTokenUsageLogToFile:   boolPtr(false),
 			},
+			wantPlugin: false,
+			wantFile:   true,
+		},
+		{
+			name: "only plugin env var set",
+			cfg: &Config{
+				EnableTokenUsageLogging:     true,
+				EnableTokenUsageLogToPlugin: boolPtr(false),
+				EnableTokenUsageLogToFile:   boolPtr(false),
+			},
+			pluginEnv:  stringPtr("true"),
 			wantPlugin: true,
+			wantFile:   true,
+		},
+		{
+			name: "only file env var set",
+			cfg: &Config{
+				EnableTokenUsageLogging:     true,
+				EnableTokenUsageLogToPlugin: boolPtr(true),
+				EnableTokenUsageLogToFile:   boolPtr(false),
+			},
+			fileEnv:    stringPtr("false"),
+			wantPlugin: false,
 			wantFile:   false,
 		},
 		{
-			name: "file sink enabled does not imply plugin sink",
+			name: "both env vars set",
 			cfg: &Config{
 				EnableTokenUsageLogging:     true,
 				EnableTokenUsageLogToPlugin: nil,
 				EnableTokenUsageLogToFile:   boolPtr(true),
 			},
+			pluginEnv:  stringPtr("true"),
+			fileEnv:    stringPtr("false"),
+			wantPlugin: true,
+			wantFile:   false,
+		},
+		{
+			name: "invalid env var values fall back to legacy defaults",
+			cfg: &Config{
+				EnableTokenUsageLogging: true,
+			},
+			pluginEnv:  stringPtr("notabool"),
+			fileEnv:    stringPtr("notabool"),
 			wantPlugin: false,
 			wantFile:   true,
 		},
@@ -73,6 +93,16 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Clear env vars by default so tests do not depend on host environment.
+			t.Setenv(tokenUsageLogToPluginEnvKey, "")
+			t.Setenv(tokenUsageLogToFileEnvKey, "")
+			if tt.pluginEnv != nil {
+				t.Setenv(tokenUsageLogToPluginEnvKey, *tt.pluginEnv)
+			}
+			if tt.fileEnv != nil {
+				t.Setenv(tokenUsageLogToFileEnvKey, *tt.fileEnv)
+			}
+
 			container := &Container{}
 			container.Update(tt.cfg)
 
@@ -114,7 +144,7 @@ func TestTokenUsageSinkConfigUnmarshalCompatibility(t *testing.T) {
 			wantFileNil:         false,
 			wantFileValue:       false,
 			wantPluginEnabledBy: false,
-			wantFileEnabledBy:   false,
+			wantFileEnabledBy:   true,
 		},
 		{
 			name:                "explicit true plugin value is preserved",
@@ -122,8 +152,8 @@ func TestTokenUsageSinkConfigUnmarshalCompatibility(t *testing.T) {
 			wantPluginNil:       false,
 			wantPluginValue:     true,
 			wantFileNil:         true,
-			wantPluginEnabledBy: true,
-			wantFileEnabledBy:   false,
+			wantPluginEnabledBy: false,
+			wantFileEnabledBy:   true,
 		},
 		{
 			name:                "explicit true file value is preserved",
@@ -138,6 +168,10 @@ func TestTokenUsageSinkConfigUnmarshalCompatibility(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Keep env-based accessor behavior deterministic for compatibility checks.
+			t.Setenv(tokenUsageLogToPluginEnvKey, "")
+			t.Setenv(tokenUsageLogToFileEnvKey, "")
+
 			var cfg Config
 			if err := json.Unmarshal([]byte(tt.payload), &cfg); err != nil {
 				t.Fatalf("failed to unmarshal config payload: %v", err)
@@ -222,5 +256,9 @@ func TestTokenUsageSinkConfigMarshal(t *testing.T) {
 }
 
 func boolPtr(value bool) *bool {
+	return &value
+}
+
+func stringPtr(value string) *string {
 	return &value
 }

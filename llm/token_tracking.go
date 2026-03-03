@@ -167,6 +167,8 @@ func buildTokenUsageLogKeyValuePairs(dimensions tokenUsageDimensions, usage Toke
 		"channel_type", dimensions.channelType,
 		"agent_name", dimensions.botName,
 		"agent_username", dimensions.botUsername,
+		// Temporary compatibility alias for existing dashboards/queries.
+		"bot_username", dimensions.botUsername,
 		"agent_user_id", dimensions.botUserID,
 		"model", dimensions.model,
 		"service_type", dimensions.serviceType,

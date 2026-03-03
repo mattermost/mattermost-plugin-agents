@@ -6,6 +6,8 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -13,6 +15,11 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/openai"
+)
+
+const (
+	tokenUsageLogToPluginEnvKey = "MM_FEATUREFLAGS_AITokenUsageLogToPlugin"
+	tokenUsageLogToFileEnvKey   = "MM_FEATUREFLAGS_AITokenUsageLogToFile"
 )
 
 type Config struct {
@@ -118,7 +125,11 @@ func (c *Container) EnableTokenUsageLogToPlugin() bool {
 		return false
 	}
 
-	return cfg.EnableTokenUsageLogToPlugin != nil && *cfg.EnableTokenUsageLogToPlugin
+	if enabled, ok := parseBooleanEnv(tokenUsageLogToPluginEnvKey); ok {
+		return enabled
+	}
+
+	return false
 }
 
 func (c *Container) EnableTokenUsageLogToFile() bool {
@@ -126,10 +137,26 @@ func (c *Container) EnableTokenUsageLogToFile() bool {
 	if cfg == nil || !cfg.EnableTokenUsageLogging {
 		return false
 	}
-	if cfg.EnableTokenUsageLogToPlugin == nil && cfg.EnableTokenUsageLogToFile == nil {
-		return true
+
+	if enabled, ok := parseBooleanEnv(tokenUsageLogToFileEnvKey); ok {
+		return enabled
 	}
-	return cfg.EnableTokenUsageLogToFile != nil && *cfg.EnableTokenUsageLogToFile
+
+	return true
+}
+
+func parseBooleanEnv(key string) (bool, bool) {
+	raw, ok := os.LookupEnv(key)
+	if !ok {
+		return false, false
+	}
+
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, false
+	}
+
+	return parsed, true
 }
 
 func (c *Container) MCP() mcp.Config {
