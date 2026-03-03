@@ -745,7 +745,7 @@ func (p *MattermostToolProvider) tryFindChannelByName(ctx context.Context, clien
 // toolGetUserChannels implements the get_user_channels tool.
 // It returns all channels the current user is a member of, including DMs, GMs, and team channels.
 // Team information is resolved in a single batch call via GetTeamsForUser to avoid N+1 queries.
-// The response is paginated and returned as JSON with team metadata for each channel.
+// The response is paginated and returned as plain text with team metadata for each channel.
 func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args GetUserChannelsArgs
 	err := argsGetter(&args)
