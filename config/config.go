@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	tokenUsageLogToPluginEnvKey = "MM_FEATUREFLAGS_AITokenUsageLogToPlugin"
-	tokenUsageLogToFileEnvKey   = "MM_FEATUREFLAGS_AITokenUsageLogToFile"
+	tokenUsageLogToPluginEnvKey = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_PLUGIN"
+	tokenUsageLogToFileEnvKey   = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_FILE"
 )
 
 type Config struct {
