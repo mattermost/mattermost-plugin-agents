@@ -78,6 +78,10 @@ export interface APITestConfig {
     shouldRunTests: boolean;
 }
 
+function getAnthropicModel(): string {
+    return process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514';
+}
+
 /**
  * Get API test configuration from environment
  */
@@ -116,7 +120,7 @@ export function logAPIConfig(): void {
 
     console.log('🔴 LLMBot tests using REAL APIs:');
     if (config.hasAnthropicKey) {
-        console.log('   - Anthropic: claude-3-7-sonnet-20250219');
+        console.log(`   - Anthropic: ${getAnthropicModel()}`);
     }
     if (config.hasOpenAIKey) {
         console.log('   - OpenAI: gpt-5');
@@ -150,7 +154,7 @@ export function createAnthropicService(overrides: ServiceConfigOverrides = {}): 
         apiKey,
         apiURL: 'https://api.anthropic.com',
         orgId: '',
-        defaultModel: 'claude-3-7-sonnet-20250219',
+        defaultModel: getAnthropicModel(),
         tokenLimit: 16384,
         outputTokenLimit: 16384,
         streamingTimeoutSeconds: 0,

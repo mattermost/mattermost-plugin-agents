@@ -1188,8 +1188,8 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 		if resp == nil {
 			return ""
 		}
-		if resp.Item != nil && resp.Item.ResponsesToolMessage != nil && resp.Item.ResponsesToolMessage.CallID != nil && *resp.Item.ResponsesToolMessage.CallID != "" {
-			return *resp.Item.ResponsesToolMessage.CallID
+		if resp.Item != nil && resp.Item.ResponsesToolMessage != nil && resp.Item.CallID != nil && *resp.Item.CallID != "" {
+			return *resp.Item.CallID
 		}
 		if resp.ItemID != nil && *resp.ItemID != "" {
 			if callID, ok := itemIDToCallID[*resp.ItemID]; ok && callID != "" {

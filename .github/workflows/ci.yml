@@ -70,6 +70,7 @@ jobs:
     - name: Run LLMBot tests with real APIs
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514' }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: npx playwright test tests/llmbot-post-component --project=chromium --reporter=list
 
@@ -96,6 +97,7 @@ jobs:
     - name: Run Channel Analysis tests with real APIs
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514' }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: npx playwright test tests/channel-analysis/backend-verification/real-api.spec.ts --project=chromium --reporter=list
 
@@ -122,6 +124,7 @@ jobs:
     - name: Run Tool Calling tests with real APIs
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514' }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: npx playwright test tests/multiplayer-tool-calling --project=chromium --reporter=list
 

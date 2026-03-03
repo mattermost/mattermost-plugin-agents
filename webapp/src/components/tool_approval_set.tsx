@@ -214,6 +214,10 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         <ToolCallsContainer>
             {props.toolCalls.map((tool) => {
                 const isDecisionTool = decisionToolIDSet.has(tool.id);
+                const decisionCallbacks = isDecisionTool ? {
+                    onApprove: () => handleToolDecision(tool.id, true),
+                    onReject: () => handleToolDecision(tool.id, false),
+                } : {};
                 return (
                     <ToolCard
                         key={tool.id}
@@ -221,8 +225,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                         isCollapsed={isToolCollapsed(tool)}
                         isProcessing={isDecisionTool ? isSubmitting : false}
                         onToggleCollapse={() => toggleCollapse(tool.id)}
-                        onApprove={isDecisionTool ? () => handleToolDecision(tool.id, true) : undefined}
-                        onReject={isDecisionTool ? () => handleToolDecision(tool.id, false) : undefined}
+                        {...decisionCallbacks}
                         canExpand={props.canExpand}
                         showArguments={props.showArguments}
                         showResults={props.showResults}
