@@ -308,7 +308,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := mcpContext.Ctx // Use request context for proper cancellation and timeout handling
+	ctx := mcpContext.Ctx
 
 	// Validate team ID if provided
 	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
