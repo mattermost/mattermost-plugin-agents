@@ -93,7 +93,6 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 
 	// If channel_id is provided, look up the channel and add in: modifier to search
 	if args.ChannelID != "" {
-		p.logger.Debug("search_posts: looking up channel", "channel_id", args.ChannelID)
 		channel, _, chErr := client.GetChannel(ctx, args.ChannelID, "")
 		if chErr != nil {
 			return "failed to look up channel", fmt.Errorf("error fetching channel %s: %w", args.ChannelID, chErr)
