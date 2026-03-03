@@ -14,10 +14,11 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // convertLLMBridgeRequestToInternal converts the API request format to internal llm.CompletionRequest
-func (a *API) convertLLMBridgeRequestToInternal(req bridgeclient.CompletionRequest) (llm.CompletionRequest, error) {
+func (a *API) convertLLMBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.CompletionRequest, operation, operationSubType string) (llm.CompletionRequest, error) {
 	posts := make([]llm.Post, len(req.Posts))
 
 	for i, apiPost := range req.Posts {
@@ -70,10 +71,64 @@ func (a *API) convertLLMBridgeRequestToInternal(req bridgeclient.CompletionReque
 		}
 	}
 
+	llmContext, err := a.buildLLMBridgeContext(bot, req)
+	if err != nil {
+		return llm.CompletionRequest{}, err
+	}
+
+	resolvedOperation := operation
+	if req.Operation != "" {
+		resolvedOperation = req.Operation
+	}
+	resolvedOperationSubType := operationSubType
+	if req.OperationSubType != "" {
+		resolvedOperationSubType = req.OperationSubType
+	}
+
 	return llm.CompletionRequest{
-		Posts:   posts,
-		Context: &llm.Context{},
+		Posts:            posts,
+		Context:          llmContext,
+		Operation:        resolvedOperation,
+		OperationSubType: resolvedOperationSubType,
 	}, nil
+}
+
+func (a *API) buildLLMBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRequest) (*llm.Context, error) {
+	var context *llm.Context
+	if a.contextBuilder != nil {
+		context = llm.NewContext(
+			a.contextBuilder.WithLLMContextServerInfo(),
+			a.contextBuilder.WithLLMContextBot(bot),
+			a.contextBuilder.WithLLMContextNoTools(),
+		)
+	} else {
+		context = llm.NewContext()
+		if bot != nil {
+			var botUserID string
+			if mmBot := bot.GetMMBot(); mmBot != nil {
+				botUserID = mmBot.UserId
+			}
+			context.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
+		}
+	}
+
+	if req.UserID != "" {
+		context.RequestingUser = &model.User{Id: req.UserID}
+	}
+	if req.ChannelID != "" {
+		channel, err := a.pluginAPI.Channel.Get(req.ChannelID)
+		if err != nil {
+			a.pluginAPI.Log.Warn("failed to get channel for bridge context; using channel ID only", "channel_id", req.ChannelID, "error", err)
+			context.Channel = &model.Channel{Id: req.ChannelID}
+		} else {
+			context.Channel = channel
+			if channel.TeamId != "" && channel.Type != model.ChannelTypeDirect && channel.Type != model.ChannelTypeGroup {
+				context.Team = &model.Team{Id: channel.TeamId}
+			}
+		}
+	}
+
+	return context, nil
 }
 
 // convertRequestToLLMOptions converts the API request options to llm.LanguageModelOption
@@ -327,7 +382,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeAgent, llm.SubTypeStreaming)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -389,7 +444,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeAgent, llm.SubTypeNoStream)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -454,7 +509,7 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeService, llm.SubTypeStreaming)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -519,7 +574,7 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(req)
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeService, llm.SubTypeNoStream)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),

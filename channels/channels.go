@@ -69,6 +69,10 @@ func (c *Channels) AnalyzeChannel(
 
 	// We can use a simple user prompt to trigger the agent
 	userPrompt := "Please summarize the channel activity as requested."
+	operationSubType, _ := analysisData["AnalysisType"].(string)
+	if operationSubType == "" {
+		operationSubType = llm.TokenUsageUnknown
+	}
 
 	// Get tools and bind channel_id so it cannot be manipulated by the LLM
 	readChannel := context.Tools.GetTool("read_channel")
@@ -99,7 +103,9 @@ func (c *Channels) AnalyzeChannel(
 				Message: userPrompt,
 			},
 		},
-		Context: context,
+		Context:          context,
+		Operation:        llm.OperationChannelSummary,
+		OperationSubType: operationSubType,
 	}
 
 	// Auto-run the bound tools
@@ -167,7 +173,9 @@ func (c *Channels) Interval(
 				Message: userPrompt,
 			},
 		},
-		Context: context,
+		Context:          context,
+		Operation:        llm.OperationChannelInterval,
+		OperationSubType: promptName,
 	}
 
 	resultStream, err := c.llm.ChatCompletion(completionRequest, llm.WithToolsDisabled())

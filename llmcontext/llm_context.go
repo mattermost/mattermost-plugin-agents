@@ -201,13 +201,10 @@ func (b *Builder) WithLLMContextParameters(params map[string]interface{}) llm.Co
 
 func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 	return func(c *llm.Context) {
-		c.BotName = bot.GetConfig().DisplayName
-		c.BotUsername = bot.GetConfig().Name
-		c.CustomInstructions = bot.GetConfig().CustomInstructions
-		// Set the bot user ID for AI-generated content tracking
+		var botUserID string
 		if mmbot := bot.GetMMBot(); mmbot != nil {
-			c.BotUserID = mmbot.UserId
+			botUserID = mmbot.UserId
 		}
-		c.BotModel = bot.GetService().DefaultModel
+		c.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 	}
 }
