@@ -78,6 +78,9 @@ export interface APITestConfig {
     shouldRunTests: boolean;
 }
 
+const defaultAnthropicModel = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514';
+const defaultOpenAIModel = process.env.OPENAI_MODEL || 'gpt-5';
+
 /**
  * Get API test configuration from environment
  */
@@ -116,10 +119,10 @@ export function logAPIConfig(): void {
 
     console.log('🔴 LLMBot tests using REAL APIs:');
     if (config.hasAnthropicKey) {
-        console.log('   - Anthropic: claude-3-7-sonnet-20250219');
+        console.log(`   - Anthropic: ${defaultAnthropicModel}`);
     }
     if (config.hasOpenAIKey) {
-        console.log('   - OpenAI: gpt-5');
+        console.log(`   - OpenAI: ${defaultOpenAIModel}`);
     }
     console.log('   ⚠️  This will incur API costs (~$0.05 per run)');
 }
@@ -150,7 +153,7 @@ export function createAnthropicService(overrides: ServiceConfigOverrides = {}): 
         apiKey,
         apiURL: 'https://api.anthropic.com',
         orgId: '',
-        defaultModel: 'claude-3-7-sonnet-20250219',
+        defaultModel: defaultAnthropicModel,
         tokenLimit: 16384,
         outputTokenLimit: 16384,
         streamingTimeoutSeconds: 0,
@@ -176,7 +179,7 @@ export function createOpenAIService(overrides: ServiceConfigOverrides = {}): LLM
         apiKey,
         apiURL: 'https://api.openai.com/v1',
         orgId: '',
-        defaultModel: 'gpt-5',
+        defaultModel: defaultOpenAIModel,
         tokenLimit: 16384,
         outputTokenLimit: 16384,
         streamingTimeoutSeconds: 500,

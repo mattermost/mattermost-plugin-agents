@@ -213,7 +213,9 @@ export default class MattermostContainer {
 
                 stream.on('data', (data: string) => {
                     // Write all logs to file
-                    this.logStream.write(data + '\n');
+                    if (this.logStream?.writable) {
+                        this.logStream.write(data + '\n');
+                    }
 
                     // Still maintain special console logging for AI plugin
                     // SECURITY: Sanitize sensitive data before logging

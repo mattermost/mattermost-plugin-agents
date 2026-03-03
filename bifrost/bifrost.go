@@ -951,16 +951,6 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 				},
 			}
 
-			// Add reasoning for thinking-enabled conversations
-			if post.Reasoning != "" {
-				msg.ResponsesReasoning = &schemas.ResponsesReasoning{
-					Summary: []schemas.ResponsesReasoningSummary{{
-						Type: schemas.ResponsesReasoningContentBlockTypeSummaryText,
-						Text: post.Reasoning,
-					}},
-				}
-			}
-
 			messages = append(messages, msg)
 
 			// Handle tool calls in assistant messages
