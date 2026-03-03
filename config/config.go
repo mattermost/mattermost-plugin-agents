@@ -214,12 +214,12 @@ func OpenAIConfigFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig ll
 	}
 }
 
-// OpenAIConfigFromServiceConfigWithOptions creates an OpenAI config with additional options for OpenAI-compatible APIs
+// OpenAIConfigFromServiceConfigWithOptions creates an OpenAI config with additional options for OpenAI-compatible APIs.
+// SendUserID is preserved from the operator's service config rather than overridden here;
+// providers that don't support it should hide the toggle in the UI so it defaults to false.
 func OpenAIConfigFromServiceConfigWithOptions(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, disableStreamOptions bool, useMaxTokens bool) openai.Config {
 	cfg := OpenAIConfigFromServiceConfig(serviceConfig, botConfig)
 	cfg.DisableStreamOptions = disableStreamOptions
 	cfg.UseMaxTokens = useMaxTokens
-	// OpenAI-compatible APIs typically don't support the 'user' parameter
-	cfg.SendUserID = false
 	return cfg
 }
