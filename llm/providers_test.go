@@ -20,6 +20,16 @@ func TestGetOpenAICompatibleProvider(t *testing.T) {
 			wantFound:   true,
 		},
 		{
+			name:        "cohere returns provider",
+			serviceType: ServiceTypeCohere,
+			wantFound:   true,
+		},
+		{
+			name:        "mistral returns provider",
+			serviceType: ServiceTypeMistral,
+			wantFound:   true,
+		},
+		{
 			name:        "unregistered type returns false",
 			serviceType: "nonexistent",
 			wantFound:   false,
@@ -43,12 +53,9 @@ func TestGetOpenAICompatibleProvider(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			p, ok := GetOpenAICompatibleProvider(tc.serviceType)
+			_, ok := GetOpenAICompatibleProvider(tc.serviceType)
 			if ok != tc.wantFound {
 				t.Fatalf("GetOpenAICompatibleProvider(%q) found=%v, want %v", tc.serviceType, ok, tc.wantFound)
-			}
-			if ok && len(p.KnownModels) == 0 {
-				t.Errorf("expected non-empty KnownModels for %q", tc.serviceType)
 			}
 		})
 	}

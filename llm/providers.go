@@ -10,10 +10,6 @@ import "net/http"
 // the registry is all that is needed to support a new provider — no changes to
 // bots.go or api.go are required.
 type OpenAICompatibleProvider struct {
-	// KnownModels is a static list of models shown in the UI when
-	// dynamic fetching from the provider's /models endpoint isn't available.
-	KnownModels []ModelInfo
-
 	// DefaultModel used when none is configured.
 	DefaultModel string
 
@@ -34,18 +30,15 @@ type OpenAICompatibleProvider struct {
 
 // openAICompatibleProviders is the registry of known OpenAI-compatible providers.
 var openAICompatibleProviders = map[string]OpenAICompatibleProvider{
+	ServiceTypeCohere: {
+		FixedAPIURL: "https://api.cohere.ai/compatibility/v1",
+	},
+	ServiceTypeMistral: {
+		FixedAPIURL:          "https://api.mistral.ai/v1",
+		DisableStreamOptions: true,
+		UseMaxTokens:         true,
+	},
 	ServiceTypeScale: {
-		KnownModels: []ModelInfo{
-			{ID: "openai/gpt-4o", DisplayName: "openai/gpt-4o"},
-			{ID: "bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0", DisplayName: "bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0"},
-			{ID: "bedrock/anthropic.claude-3-7-sonnet-20250219-v1:0", DisplayName: "bedrock/anthropic.claude-3-7-sonnet-20250219-v1:0"},
-			{ID: "model_zoo/gpt-oss-120b", DisplayName: "model_zoo/gpt-oss-120b"},
-			{ID: "model_zoo/llama-3-3-70b-instruct", DisplayName: "model_zoo/llama-3-3-70b-instruct"},
-			{ID: "model_zoo/llama-3-1-8b-instruct", DisplayName: "model_zoo/llama-3-1-8b-instruct"},
-			{ID: "model_zoo/defense-llama-3-8b-instruct", DisplayName: "model_zoo/defense-llama-3-8b-instruct"},
-			{ID: "bedrock/amazon.nova-pro-v1:0", DisplayName: "bedrock/amazon.nova-pro-v1:0"},
-			{ID: "bedrock/amazon.nova-lite-v1:0", DisplayName: "bedrock/amazon.nova-lite-v1:0"},
-		},
 		DefaultModel:         "openai/gpt-4o",
 		DisableStreamOptions: true,
 		CreateTransport: func(cfg ServiceConfig, base http.RoundTripper) http.RoundTripper {

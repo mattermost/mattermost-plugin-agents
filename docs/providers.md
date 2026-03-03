@@ -281,21 +281,9 @@ Obtain your Scale AI API key and account ID from your Scale AI or ScaleGov dashb
 | **Account ID** | No | Your Scale account ID (sent as `x-selected-account-id` header, required for ScaleGov) |
 | **Default Model** | Yes | The model to use by default in `vendor/model-name` format (e.g., `openai/gpt-4o`) |
 
-### Known Models
+### Models
 
-The following models are available through Scale AI:
-
-- `openai/gpt-4o`
-- `bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0`
-- `bedrock/anthropic.claude-3-7-sonnet-20250219-v1:0`
-- `model_zoo/gpt-oss-120b`
-- `model_zoo/llama-3-3-70b-instruct`
-- `model_zoo/llama-3-1-8b-instruct`
-- `model_zoo/defense-llama-3-8b-instruct`
-- `bedrock/amazon.nova-pro-v1:0`
-- `bedrock/amazon.nova-lite-v1:0`
-
-You can also enter a custom `vendor/model-name` if your Scale deployment supports additional models.
+Models use the `vendor/model-name` format (e.g., `openai/gpt-4o`). For the full list of available models, see the [Scale AI documentation](https://scale.com/docs).
 
 ## Azure OpenAI
 

@@ -77,15 +77,11 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
 
-    // Determine if we should support model fetching for this service type
-    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'scale';
+    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible';
 
-    // Fetch models when API key or URL changes for supported service types
     useEffect(() => {
         // For openaicompatible, API key is optional if there's an API URL
-        // For scale (and other registered providers), the backend serves static known models so no key is needed
-        // For other types, API key is required
-        const hasRequiredCredentials = type === 'openaicompatible' ? (props.service.apiKey || props.service.apiURL) : (type === 'scale' || props.service.apiKey);
+        const hasRequiredCredentials = type === 'openaicompatible' ? (props.service.apiKey || props.service.apiURL) : props.service.apiKey;
 
         if (!supportsModelFetching || !hasRequiredCredentials) {
             setAvailableModels([]);
@@ -247,7 +243,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
                     onChange={(e) => props.onChange({...props.service, defaultModel: e.target.value})}
-                    helptext={loadModelsHelpText}
+                    helptext={loadModelsHelpText || (isScale ? intl.formatMessage({defaultMessage: 'Use vendor/model-name format (e.g., openai/gpt-4o). See Scale AI documentation for available models.'}) : '')}
                 />
             )}
             <TextItem

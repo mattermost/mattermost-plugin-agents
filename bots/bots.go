@@ -327,16 +327,6 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 		}
 	case llm.ServiceTypeASage:
 		result = asage.New(serviceConfig, b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeCohere:
-		// Set the Cohere OpenAI compatibility endpoint
-		cohereCfg := serviceConfig
-		cohereCfg.APIURL = "https://api.cohere.ai/compatibility/v1"
-		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfig(cohereCfg, botConfig), b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeMistral:
-		// Set the Mistral OpenAI compatibility endpoint
-		mistralCfg := serviceConfig
-		mistralCfg.APIURL = "https://api.mistral.ai/v1"
-		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfigWithOptions(mistralCfg, botConfig, true, true), b.llmUpstreamHTTPClient)
 	default:
 		if providerCfg, ok := llm.GetOpenAICompatibleProvider(serviceConfig.Type); ok {
 			cfg := serviceConfig
