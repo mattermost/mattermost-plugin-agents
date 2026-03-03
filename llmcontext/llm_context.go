@@ -9,6 +9,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -147,6 +148,11 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 		// Get tools from all connected servers
 		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(userID)
 
+		// Filter out automation tools for users without manage_system permission
+		if !b.pluginAPI.User.HasPermissionTo(userID, model.PermissionManageSystem) {
+			mcpTools = filterOutAutomationTools(mcpTools)
+		}
+
 		// Add tools from successfully connected servers even if some had errors
 		// These will be disabled in non-DM channels via WithToolsDisabled()
 		if len(mcpTools) > 0 {
@@ -210,4 +216,15 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 		}
 		c.BotModel = bot.GetService().DefaultModel
 	}
+}
+
+// filterOutAutomationTools removes automation tools from the tool list.
+func filterOutAutomationTools(allTools []llm.Tool) []llm.Tool {
+	filtered := make([]llm.Tool, 0, len(allTools))
+	for _, t := range allTools {
+		if !tools.IsAutomationTool(t.Name) {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
 }
