@@ -44,6 +44,11 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	}
 }
 
+// buildSearchTermWithChannel prepends an in:channelname modifier to the search query.
+func buildSearchTermWithChannel(query, channelName string) string {
+	return "in:" + channelName + " " + query
+}
+
 // toolSearchPosts implements the search_posts tool
 func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args SearchPostsArgs
@@ -86,20 +91,39 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 	// For team-specific search, include team context. This can be an empty string if not specified.
 	teamID := args.TeamID
 
+	// If channel_id is provided, look up the channel and add in: modifier to search
+	if args.ChannelID != "" {
+		p.logger.Debug("search_posts: looking up channel", "channel_id", args.ChannelID)
+		channel, _, chErr := client.GetChannel(ctx, args.ChannelID, "")
+		if chErr != nil {
+			return "failed to look up channel", fmt.Errorf("error fetching channel %s: %w", args.ChannelID, chErr)
+		}
+		searchTerm = buildSearchTermWithChannel(searchTerm, channel.Name)
+		// Ensure team ID is set so the server can resolve the channel name in the in: filter
+		if teamID == "" {
+			teamID = channel.TeamId
+		}
+	}
+
 	// Perform the search using basic search
 	searchResults, _, err := client.SearchPosts(ctx, teamID, searchTerm, false)
 	if err != nil {
 		return "search failed", fmt.Errorf("error searching posts: %w", err)
 	}
 
-	if len(searchResults.Posts) == 0 {
-		return "no posts found matching the search criteria", nil
-	}
-
-	// Convert posts map to slice
+	// Convert results to slice with channel filtering
 	posts := make([]*model.Post, 0, len(searchResults.Posts))
 	for _, post := range searchResults.Posts {
+		// Client-side channel filtering as a safety net for search backends
+		// that may not fully respect the in: modifier
+		if args.ChannelID != "" && post.ChannelId != args.ChannelID {
+			continue
+		}
 		posts = append(posts, post)
+	}
+
+	if len(posts) == 0 {
+		return "no posts found matching the search criteria", nil
 	}
 
 	// Limit results
@@ -107,28 +131,11 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 		posts = posts[:args.Limit]
 	}
 
-	// Pre-fetch all unique channels and teams to avoid duplicate API calls
+	// Format the response, fetching channel/team/user info with caching
 	channelCache := make(map[string]*model.Channel)
 	teamCache := make(map[string]*model.Team)
+	userCache := make(map[string]*model.User)
 
-	for _, post := range posts {
-		if _, exists := channelCache[post.ChannelId]; !exists {
-			channel, _, err := client.GetChannel(ctx, post.ChannelId, "")
-			if err == nil {
-				channelCache[post.ChannelId] = channel
-
-				// Also fetch the team for this channel if not already cached
-				if _, teamExists := teamCache[channel.TeamId]; !teamExists {
-					team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
-					if teamErr == nil {
-						teamCache[channel.TeamId] = team
-					}
-				}
-			}
-		}
-	}
-
-	// Format the response
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("Found %d posts matching '%s':\n", len(posts), args.Query))
 
@@ -139,16 +146,34 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 	result.WriteString("\n")
 
 	for i, post := range posts {
-		// Get user info for the post
-		user, _, err := client.GetUser(ctx, post.UserId, "")
-		if err != nil {
-			p.logger.Warn("failed to get user for post", "user_id", post.UserId, "error", err)
-			result.WriteString(fmt.Sprintf("**Result %d** by Unknown User:\n", i+1))
-		} else {
+		// Get user info, caching to avoid duplicate API calls
+		if _, exists := userCache[post.UserId]; !exists {
+			user, _, userErr := client.GetUser(ctx, post.UserId, "")
+			if userErr == nil {
+				userCache[post.UserId] = user
+			} else {
+				p.logger.Warn("failed to get user for post", "user_id", post.UserId, "error", userErr)
+			}
+		}
+		if user, exists := userCache[post.UserId]; exists {
 			result.WriteString(fmt.Sprintf("**Result %d** by %s:\n", i+1, user.Username))
+		} else {
+			result.WriteString(fmt.Sprintf("**Result %d** by Unknown User:\n", i+1))
 		}
 
-		// Get channel and team info from cache
+		// Get channel and team info, caching to avoid duplicate API calls
+		if _, exists := channelCache[post.ChannelId]; !exists {
+			channel, _, chErr := client.GetChannel(ctx, post.ChannelId, "")
+			if chErr == nil {
+				channelCache[post.ChannelId] = channel
+				if _, teamExists := teamCache[channel.TeamId]; !teamExists {
+					team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+					if teamErr == nil {
+						teamCache[channel.TeamId] = team
+					}
+				}
+			}
+		}
 		if channel, exists := channelCache[post.ChannelId]; exists {
 			if team, teamExists := teamCache[channel.TeamId]; teamExists {
 				result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channel.DisplayName, team.DisplayName))
