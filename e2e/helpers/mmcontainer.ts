@@ -213,7 +213,9 @@ export default class MattermostContainer {
 
                 stream.on('data', (data: string) => {
                     // Write all logs to file
-                    this.logStream.write(data + '\n');
+                    if (this.logStream?.writable) {
+                        this.logStream.write(data + '\n');
+                    }
 
                     // Only print plugin logs to console in non-CI environments
                     // In CI, this causes interleaving with Playwright test output
