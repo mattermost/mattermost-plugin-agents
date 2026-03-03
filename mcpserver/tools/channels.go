@@ -770,6 +770,11 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 		args.Page = 0
 	}
 
+	maxInt := int(^uint(0) >> 1)
+	if args.Page > maxInt/args.PerPage {
+		return "page value too large", fmt.Errorf("page * per_page overflows int")
+	}
+
 	// Get client and context
 	if mcpContext.Client == nil {
 		return "client not available", fmt.Errorf("client not available in context")
