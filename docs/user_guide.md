@@ -119,7 +119,7 @@ Use Mattermost to turn Zoom meeting recordings into actionable AI-generated summ
 
 To summarize a Zoom meeting in Mattermost:
 
-1. Subscribe a Mattermost channel to a recurring Zoom meeting with `/zoom subscription add [meeting ID]` or start a meeting using the Zoom button in the Mattermost RHS.
+1. Subscribe a Mattermost channel to a recurring Zoom meeting with `/zoom subscription add [meeting ID]` or start a meeting using the Zoom button in the Mattermost right-hand sidebar (RHS).
 2. Record the Zoom meeting.
 3. Once the meeting ends and the transcript file is posted to Mattermost, select the **Create meeting summary** option located directly above the file.
 
