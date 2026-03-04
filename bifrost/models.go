@@ -6,6 +6,7 @@ package bifrost
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -57,12 +58,18 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 
 	models := make([]llm.ModelInfo, 0, len(resp.Data))
 	for _, m := range resp.Data {
-		displayName := m.ID
+		// Bifrost ListModels returns IDs with a provider prefix (e.g. "anthropic/claude-sonnet-4-20250514").
+		// Strip the prefix so the saved config uses plain model names that the provider APIs expect.
+		modelID := m.ID
+		if idx := strings.Index(modelID, "/"); idx >= 0 {
+			modelID = modelID[idx+1:]
+		}
+		displayName := modelID
 		if m.Name != nil && *m.Name != "" {
 			displayName = *m.Name
 		}
 		models = append(models, llm.ModelInfo{
-			ID:          m.ID,
+			ID:          modelID,
 			DisplayName: displayName,
 		})
 	}
