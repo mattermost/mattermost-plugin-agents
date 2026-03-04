@@ -358,9 +358,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                             setIdleTimeoutInputValue(nextValue);
 
                                             if (nextValue.trim() === '') {
+                                                const configWithoutIdleTimeout = {...config};
+                                                delete configWithoutIdleTimeout.idleTimeoutMinutes;
                                                 onChange({
-                                                    ...config,
-                                                    idleTimeoutMinutes: undefined,
+                                                    ...configWithoutIdleTimeout,
                                                 });
                                                 return;
                                             }
