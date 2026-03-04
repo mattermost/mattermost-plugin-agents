@@ -206,6 +206,17 @@ async function ensureBotCardExpanded(botCard: Locator): Promise<void> {
     await expect(displayNameInput).toBeVisible({timeout: 30000});
 }
 
+async function ensureLoggedOut(page: Page, baseURL: string): Promise<void> {
+    await page.context().clearCookies();
+    await page.goto(baseURL, {waitUntil: 'domcontentloaded'});
+    await page.evaluate(() => {
+        window.localStorage.clear();
+        window.sessionStorage.clear();
+    });
+    await page.goto(`${baseURL}/login`, {waitUntil: 'domcontentloaded'});
+    await expect(page.getByText('Log in to your account')).toBeVisible({timeout: 30000});
+}
+
 function isPersistedModelMatch(cardText: string, selectedModel: string): boolean {
     const normalizedCardText = cardText.toLowerCase();
     const normalizedSelectedModel = selectedModel.toLowerCase();
@@ -342,8 +353,8 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         const botUserID = await waitForBotUserID(mattermost, botUsername);
 
         // 3) Login as regular user and verify DM flow with live service.
-        await page.goto(`${mattermost.url()}/logout`);
-        await mmPage.login(mattermost.url(), regularUsername, regularPassword);
+        await ensureLoggedOut(page, mattermost.url());
+        await mmPage.login(`${mattermost.url()}/login`, regularUsername, regularPassword);
 
         const regularClient = await mattermost.getClient(regularUsername, regularPassword);
         const regularUser = await regularClient.getMe();
