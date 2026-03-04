@@ -389,7 +389,7 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         const mentionPrompt = `live mention verification ${Date.now()}`;
         const mentionStartTime = Date.now();
         await mmPage.mentionBot(botUsername, mentionPrompt);
-        await expect(page.getByText(mentionPrompt)).toBeVisible();
+        await expect(page.getByText(`@${botUsername} ${mentionPrompt}`, {exact: true})).toBeVisible();
 
         const mentionPost = await waitForPost(
             regularClient,
