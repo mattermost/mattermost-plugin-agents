@@ -2872,3 +2872,302 @@ func TestBridgeToolDiscoveryUserID(t *testing.T) {
 		require.Equal(t, "abcdefghijklmnopqrstuvwxyz", bridgeToolDiscoveryUserID("  abcdefghijklmnopqrstuvwxyz  "))
 	})
 }
+
+func TestNormalizeToolConstraints(t *testing.T) {
+	tests := []struct {
+		name         string
+		constraints  bridgeclient.ToolConstraints
+		allowedTools []string
+		expectError  bool
+		errorMsg     string
+	}{
+		{
+			name:         "nil constraints returns nil",
+			constraints:  nil,
+			allowedTools: []string{"search_posts"},
+			expectError:  false,
+		},
+		{
+			name: "valid constraints",
+			constraints: bridgeclient.ToolConstraints{
+				"search_posts": {"channel_ids": {"chan12345678901234567890ab"}},
+			},
+			allowedTools: []string{"search_posts"},
+			expectError:  false,
+		},
+		{
+			name: "constraints without allowed_tools rejected",
+			constraints: bridgeclient.ToolConstraints{
+				"search_posts": {"channel_ids": {"chan12345678901234567890ab"}},
+			},
+			allowedTools: nil,
+			expectError:  true,
+			errorMsg:     "tool_constraints requires allowed_tools",
+		},
+		{
+			name: "tool not in allowed_tools rejected",
+			constraints: bridgeclient.ToolConstraints{
+				"unknown_tool": {"param": {"value"}},
+			},
+			allowedTools: []string{"search_posts"},
+			expectError:  true,
+			errorMsg:     "not in allowed_tools",
+		},
+		{
+			name: "empty tool name rejected",
+			constraints: bridgeclient.ToolConstraints{
+				"  ": {"param": {"value"}},
+			},
+			allowedTools: []string{"search_posts"},
+			expectError:  true,
+			errorMsg:     "empty tool names",
+		},
+		{
+			name: "empty parameter name rejected",
+			constraints: bridgeclient.ToolConstraints{
+				"search_posts": {"": {"value"}},
+			},
+			allowedTools: []string{"search_posts"},
+			expectError:  true,
+			errorMsg:     "empty parameter name",
+		},
+		{
+			name: "empty values list rejected",
+			constraints: bridgeclient.ToolConstraints{
+				"search_posts": {"channel_ids": {}},
+			},
+			allowedTools: []string{"search_posts"},
+			expectError:  true,
+			errorMsg:     "empty values list",
+		},
+		{
+			name: "empty param constraints map rejected",
+			constraints: bridgeclient.ToolConstraints{
+				"search_posts": {},
+			},
+			allowedTools: []string{"search_posts"},
+			expectError:  true,
+			errorMsg:     "empty parameter constraints",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := normalizeToolConstraints(tt.constraints, tt.allowedTools)
+			if tt.expectError {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				require.NoError(t, err)
+				if tt.constraints == nil {
+					require.Nil(t, result)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateConstraintParams(t *testing.T) {
+	type testArgs struct {
+		ChannelIDs []string `json:"channel_ids,omitempty"`
+		TeamID     string   `json:"team_id,omitempty"`
+	}
+
+	tests := []struct {
+		name        string
+		schema      any
+		constraints map[string][]string
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "valid param",
+			schema:      llm.NewJSONSchemaFromStruct[testArgs](),
+			constraints: map[string][]string{"channel_ids": {"chan12345678901234567890ab"}},
+			expectError: false,
+		},
+		{
+			name:        "unknown param rejected",
+			schema:      llm.NewJSONSchemaFromStruct[testArgs](),
+			constraints: map[string][]string{"nonexistent": {"value"}},
+			expectError: true,
+			errorMsg:    "no parameter \"nonexistent\"",
+		},
+		{
+			name:        "nil schema rejected",
+			schema:      nil,
+			constraints: map[string][]string{"channel_ids": {"value"}},
+			expectError: true,
+			errorMsg:    "has no schema",
+		},
+		{
+			name:        "non-jsonschema rejected",
+			schema:      "not a schema",
+			constraints: map[string][]string{"channel_ids": {"value"}},
+			expectError: true,
+			errorMsg:    "not a jsonschema",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := llm.Tool{
+				Name:   "test_tool",
+				Schema: tt.schema,
+			}
+			err := validateConstraintParams(tool, tt.constraints)
+			if tt.expectError {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.errorMsg)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestBridgeClientServiceCompletionRejectsToolConstraints(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetServiceForTest(llm.ServiceConfig{ID: "service-id", Name: "service-name"})
+		bot.SetLLMForTest(NewFakeLLM("ignored"))
+	}
+
+	client := e.CreateBridgeClient()
+	_, err := client.ServiceCompletion("service-id", bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "Hi"},
+		},
+		ToolConstraints: bridgeclient.ToolConstraints{
+			"search_posts": {"channel_ids": {"chan12345678901234567890ab"}},
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tool_constraints is only supported for agent completion endpoints")
+}
+
+func TestBridgeClientAgentCompletionToolConstraintsModifiesSchema(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := setupBridgeEligibleMCPServer(t, []string{"search_posts"})
+	defer server.Close()
+
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{
+			{
+				Name:    "service-account-server",
+				Enabled: true,
+				BaseURL: server.URL,
+				Headers: map[string]string{"Authorization": "Bearer test-token"},
+			},
+		},
+	}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		httpClient: &http.Client{
+			Transport: &http.Transport{DisableKeepAlives: true},
+		},
+	}
+
+	type searchArgs struct {
+		ChannelIDs []string `json:"channel_ids,omitempty"`
+		Query      string   `json:"query"`
+	}
+
+	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
+		e.client,
+		&testLLMContextToolProvider{
+			tools: []llm.Tool{
+				{
+					Name:        "search_posts",
+					Description: "search posts",
+					Schema:      llm.NewJSONSchemaFromStruct[searchArgs](),
+					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+						return "ok", nil
+					},
+				},
+			},
+		},
+		nil,
+		&testLLMContextConfigProvider{},
+	)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	fakeLLM := NewFakeLLM("constrained response")
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(fakeLLM)
+	}
+
+	client := e.CreateBridgeClient()
+	result, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "Search for posts"},
+		},
+		AllowedTools: []string{"search_posts"},
+		ToolConstraints: bridgeclient.ToolConstraints{
+			"search_posts": {"channel_ids": {testChannelID}},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "constrained response", result)
+
+	// Verify the tools were constrained — the scoped tool should have enum on channel_ids
+	require.NotNil(t, fakeLLM.LastConversation.Context)
+	require.NotNil(t, fakeLLM.LastConversation.Context.Tools)
+	tools := fakeLLM.LastConversation.Context.Tools.GetTools()
+	require.Len(t, tools, 1)
+	require.Equal(t, "search_posts", tools[0].Name)
+}
+
+func TestBridgeClientAgentCompletionToolConstraintsWithoutAllowedToolsRejected(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(NewFakeLLM("unused"))
+	}
+
+	client := e.CreateBridgeClient()
+	_, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "Hello"},
+		},
+		ToolConstraints: bridgeclient.ToolConstraints{
+			"search_posts": {"channel_ids": {testChannelID}},
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tool_constraints requires allowed_tools")
+}

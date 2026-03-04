@@ -190,6 +190,68 @@ func normalizeAllowedTools(rawTools []string) ([]string, error) {
 	return normalized, nil
 }
 
+func normalizeToolConstraints(constraints bridgeclient.ToolConstraints, allowedTools []string) (bridgeclient.ToolConstraints, error) {
+	if constraints == nil {
+		return nil, nil
+	}
+
+	if allowedTools == nil {
+		return nil, errors.New("tool_constraints requires allowed_tools to also be set")
+	}
+
+	allowedSet := make(map[string]struct{}, len(allowedTools))
+	for _, name := range allowedTools {
+		allowedSet[name] = struct{}{}
+	}
+
+	normalized := make(bridgeclient.ToolConstraints, len(constraints))
+	for toolName, paramConstraints := range constraints {
+		toolName = strings.TrimSpace(toolName)
+		if toolName == "" {
+			return nil, errors.New("tool_constraints cannot contain empty tool names")
+		}
+		if _, ok := allowedSet[toolName]; !ok {
+			return nil, fmt.Errorf("tool_constraints tool %q is not in allowed_tools", toolName)
+		}
+		if len(paramConstraints) == 0 {
+			return nil, fmt.Errorf("tool_constraints for tool %q cannot have empty parameter constraints", toolName)
+		}
+		normalizedParams := make(map[string][]string, len(paramConstraints))
+		for paramName, values := range paramConstraints {
+			paramName = strings.TrimSpace(paramName)
+			if paramName == "" {
+				return nil, fmt.Errorf("tool_constraints for tool %q has empty parameter name", toolName)
+			}
+			if len(values) == 0 {
+				return nil, fmt.Errorf("tool_constraints for tool %q parameter %q has empty values list", toolName, paramName)
+			}
+			normalizedParams[paramName] = values
+		}
+		normalized[toolName] = normalizedParams
+	}
+
+	return normalized, nil
+}
+
+func validateConstraintParams(tool llm.Tool, constraints map[string][]string) error {
+	if tool.Schema == nil {
+		return fmt.Errorf("tool %q has no schema to validate constraints against", tool.Name)
+	}
+	jsonSchema, ok := tool.Schema.(*jsonschema.Schema)
+	if !ok {
+		return fmt.Errorf("tool %q schema is not a jsonschema.Schema", tool.Name)
+	}
+	if jsonSchema.Properties == nil {
+		return fmt.Errorf("tool %q schema has no properties", tool.Name)
+	}
+	for paramName := range constraints {
+		if _, exists := jsonSchema.Properties[paramName]; !exists {
+			return fmt.Errorf("tool %q has no parameter %q in its schema", tool.Name, paramName)
+		}
+	}
+	return nil
+}
+
 func normalizeBridgeOptionalUserID(userID string) (string, error) {
 	normalizedUserID := strings.TrimSpace(userID)
 	if normalizedUserID == "" {
@@ -257,6 +319,11 @@ func (a *API) prepareAgentBridgeCompletion(
 		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid allowed_tools: %w", err)
 	}
 
+	toolConstraints, err := normalizeToolConstraints(req.ToolConstraints, allowedTools)
+	if err != nil {
+		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid tool_constraints: %w", err)
+	}
+
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, http.StatusNotFound, err
@@ -294,6 +361,13 @@ func (a *API) prepareAgentBridgeCompletion(
 			tool, ok := eligibleToolMap[toolName]
 			if !ok {
 				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("tool %q is not eligible or not available for this agent", toolName)
+			}
+			// Apply constraints if defined for this tool
+			if paramConstraints, hasConstraints := toolConstraints[toolName]; hasConstraints {
+				if validateErr := validateConstraintParams(tool, paramConstraints); validateErr != nil {
+					return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid tool_constraints: %w", validateErr)
+				}
+				tool = tool.WithConstrainedParams(paramConstraints)
 			}
 			scopedTools.AddTools([]llm.Tool{tool})
 		}
@@ -832,6 +906,13 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 		return
 	}
 
+	if req.ToolConstraints != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: "tool_constraints is only supported for agent completion endpoints",
+		})
+		return
+	}
+
 	normalizedUserID, normalizedChannelID, err := normalizeBridgeCompletionPrincipalIDs(req.UserID, req.ChannelID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
@@ -911,6 +992,13 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	if req.AllowedTools != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: "allowed_tools is only supported for agent completion endpoints",
+		})
+		return
+	}
+
+	if req.ToolConstraints != nil {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: "tool_constraints is only supported for agent completion endpoints",
 		})
 		return
 	}

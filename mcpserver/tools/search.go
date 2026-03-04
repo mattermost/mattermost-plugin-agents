@@ -14,10 +14,10 @@ import (
 
 // SearchPostsArgs represents arguments for the search_posts tool
 type SearchPostsArgs struct {
-	Query     string `json:"query" jsonschema:"The search query,minLength=1,maxLength=4000"`
-	TeamID    string `json:"team_id,omitempty" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
-	ChannelID string `json:"channel_id,omitempty" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
-	Limit     int    `json:"limit,omitempty" jsonschema:"Number of results to return (default: 20, max: 100),minimum=1,maximum=100"`
+	Query      string   `json:"query" jsonschema:"The search query,minLength=1,maxLength=4000"`
+	TeamID     string   `json:"team_id,omitempty" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
+	ChannelIDs []string `json:"channel_ids,omitempty" jsonschema:"Optional channel IDs to limit search to specific channels"`
+	Limit      int      `json:"limit,omitempty" jsonschema:"Number of results to return (default: 20, max: 100),minimum=1,maximum=100"`
 }
 
 // SearchUsersArgs represents arguments for the search_users tool
@@ -31,7 +31,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name:        "search_posts",
-			Description: "Search for posts in Mattermost. Parameters: query (required search terms), team_id (optional scope), channel_id (optional scope), limit (1-100, default 20). Returns matching posts with content, author, channel, and timestamp. Example: {\"query\": \"bug fix\", \"limit\": 10}",
+			Description: "Search for posts in Mattermost. Parameters: query (required search terms), team_id (optional scope), channel_ids (optional list of channel IDs to filter), limit (1-100, default 20). Returns matching posts with content, author, channel, and timestamp. Example: {\"query\": \"bug fix\", \"limit\": 10}",
 			Schema:      llm.NewJSONSchemaFromStruct[SearchPostsArgs](),
 			Resolver:    p.toolSearchPosts,
 		},
@@ -61,8 +61,10 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
 		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
-	if args.ChannelID != "" && !model.IsValidId(args.ChannelID) {
-		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
+	for _, channelID := range args.ChannelIDs {
+		if !model.IsValidId(channelID) {
+			return "invalid channel_ids format", fmt.Errorf("channel_ids contains invalid ID: %s", channelID)
+		}
 	}
 
 	// Set defaults
@@ -80,8 +82,16 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 	client := mcpContext.Client
 	ctx := context.Background()
 
-	// Build search parameters - use the simpler search method
+	// Build search query with channel filter via in: modifier
 	searchTerm := args.Query
+	channelIDSet := make(map[string]struct{}, len(args.ChannelIDs))
+	for _, channelID := range args.ChannelIDs {
+		channelIDSet[channelID] = struct{}{}
+		channel, _, chErr := client.GetChannel(ctx, channelID, "")
+		if chErr == nil && channel.Name != "" {
+			searchTerm += " in:" + channel.Name
+		}
+	}
 
 	// For team-specific search, include team context. This can be an empty string if not specified.
 	teamID := args.TeamID
@@ -96,10 +106,19 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 		return "no posts found matching the search criteria", nil
 	}
 
-	// Convert posts map to slice
+	// Convert posts map to slice, applying channel post-filter as a safety net
 	posts := make([]*model.Post, 0, len(searchResults.Posts))
 	for _, post := range searchResults.Posts {
+		if len(channelIDSet) > 0 {
+			if _, ok := channelIDSet[post.ChannelId]; !ok {
+				continue
+			}
+		}
 		posts = append(posts, post)
+	}
+
+	if len(posts) == 0 {
+		return "no posts found matching the search criteria", nil
 	}
 
 	// Limit results
@@ -113,8 +132,8 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 
 	for _, post := range posts {
 		if _, exists := channelCache[post.ChannelId]; !exists {
-			channel, _, err := client.GetChannel(ctx, post.ChannelId, "")
-			if err == nil {
+			channel, _, chErr := client.GetChannel(ctx, post.ChannelId, "")
+			if chErr == nil {
 				channelCache[post.ChannelId] = channel
 
 				// Also fetch the team for this channel if not already cached
@@ -132,17 +151,17 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("Found %d posts matching '%s':\n", len(posts), args.Query))
 
-	// If channelID was provided, include it once in the header
-	if args.ChannelID != "" {
-		result.WriteString(fmt.Sprintf("Channel ID: %s\n", args.ChannelID))
+	// If channel IDs were provided, include them once in the header
+	if len(args.ChannelIDs) > 0 {
+		result.WriteString(fmt.Sprintf("Channel IDs: %s\n", strings.Join(args.ChannelIDs, ", ")))
 	}
 	result.WriteString("\n")
 
 	for i, post := range posts {
 		// Get user info for the post
-		user, _, err := client.GetUser(ctx, post.UserId, "")
-		if err != nil {
-			p.logger.Warn("failed to get user for post", "user_id", post.UserId, "error", err)
+		user, _, userErr := client.GetUser(ctx, post.UserId, "")
+		if userErr != nil {
+			p.logger.Warn("failed to get user for post", "user_id", post.UserId, "error", userErr)
 			result.WriteString(fmt.Sprintf("**Result %d** by Unknown User:\n", i+1))
 		} else {
 			result.WriteString(fmt.Sprintf("**Result %d** by %s:\n", i+1, user.Username))
@@ -158,8 +177,8 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 		}
 
 		result.WriteString(fmt.Sprintf("Post ID: %s\n", post.Id))
-		// Only include Channel ID per-post if it wasn't provided as a search parameter
-		if args.ChannelID == "" {
+		// Only include Channel ID per-post if no channel filter was provided
+		if len(args.ChannelIDs) == 0 {
 			result.WriteString(fmt.Sprintf("Channel ID: %s\n", post.ChannelId))
 		}
 		if post.RootId != "" {

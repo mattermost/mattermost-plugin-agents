@@ -36,6 +36,10 @@ type Post struct {
 	FileIDs []string `json:"file_ids,omitempty"` // Mattermost file IDs
 }
 
+// ToolConstraints restricts tool parameters to allowed values.
+// Maps tool name → param name → allowed values.
+type ToolConstraints map[string]map[string][]string
+
 // CompletionRequest represents a completion request
 type CompletionRequest struct {
 	Posts              []Post                 `json:"posts"`
@@ -44,6 +48,9 @@ type CompletionRequest struct {
 	// AllowedTools is an optional allowlist of tool names for agent completions.
 	// When provided on agent endpoints, only these eligible tools may run without approval.
 	AllowedTools []string `json:"allowed_tools,omitempty"`
+	// ToolConstraints restricts tool parameter values to allowed sets.
+	// Requires AllowedTools to also be set; each constrained tool must be in AllowedTools.
+	ToolConstraints ToolConstraints `json:"tool_constraints,omitempty"`
 	// UserID is the optional Mattermost user ID making the request.
 	// If provided, the bridge will check user-level permissions.
 	UserID string `json:"user_id,omitempty"`

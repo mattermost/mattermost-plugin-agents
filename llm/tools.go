@@ -44,6 +44,150 @@ func (t Tool) WithBoundParams(params map[string]interface{}) Tool {
 	}
 }
 
+// WithConstrainedParams creates a new Tool with parameter values restricted to allowed sets.
+// Constrained parameters remain visible to the LLM (with enum hints in the schema)
+// but are validated at execution time to ensure only allowed values are used.
+func (t Tool) WithConstrainedParams(constraints map[string][]string) Tool {
+	return Tool{
+		Name:        t.Name,
+		Description: t.Description,
+		Schema:      addSchemaEnumConstraints(t.Schema, constraints),
+		Resolver:    wrapResolverWithConstrainedParams(t.Resolver, constraints),
+	}
+}
+
+// addSchemaEnumConstraints returns a copy of the schema with Enum constraints on specified properties.
+func addSchemaEnumConstraints(schema any, constraints map[string][]string) any {
+	if schema == nil || len(constraints) == 0 {
+		return schema
+	}
+
+	jsonSchema, ok := schema.(*jsonschema.Schema)
+	if !ok {
+		return schema
+	}
+
+	newSchema := *jsonSchema
+
+	if jsonSchema.Properties != nil {
+		newSchema.Properties = make(map[string]*jsonschema.Schema, len(jsonSchema.Properties))
+		for name, prop := range jsonSchema.Properties {
+			if allowed, hasConstraint := constraints[name]; hasConstraint {
+				// Shallow-copy the property schema and add enum
+				newProp := *prop
+				enumVals := make([]any, len(allowed))
+				for i, v := range allowed {
+					enumVals[i] = v
+				}
+				newProp.Enum = enumVals
+				newSchema.Properties[name] = &newProp
+			} else {
+				newSchema.Properties[name] = prop
+			}
+		}
+	}
+
+	// Copy required as-is
+	if len(jsonSchema.Required) > 0 {
+		newSchema.Required = make([]string, len(jsonSchema.Required))
+		copy(newSchema.Required, jsonSchema.Required)
+	}
+
+	return &newSchema
+}
+
+// wrapResolverWithConstrainedParams wraps a resolver to validate constrained parameter values.
+func wrapResolverWithConstrainedParams(original ToolResolver, constraints map[string][]string) ToolResolver {
+	if original == nil || len(constraints) == 0 {
+		return original
+	}
+
+	return func(context *Context, argsGetter ToolArgumentGetter) (string, error) {
+		wrappedGetter := func(args any) error {
+			if err := argsGetter(args); err != nil {
+				return err
+			}
+			return validateConstrainedParams(args, constraints)
+		}
+		return original(context, wrappedGetter)
+	}
+}
+
+// validateConstrainedParams checks that argument values are within allowed sets.
+func validateConstrainedParams(args any, constraints map[string][]string) error {
+	val := reflect.ValueOf(args)
+	if val.Kind() == reflect.Ptr && !val.IsNil() {
+		val = val.Elem()
+	}
+
+	switch val.Kind() {
+	case reflect.Map:
+		for paramName, allowed := range constraints {
+			mapVal := val.MapIndex(reflect.ValueOf(paramName))
+			if !mapVal.IsValid() {
+				continue // param not provided, skip
+			}
+			if err := checkValueInAllowed(paramName, mapVal.Interface(), allowed); err != nil {
+				return err
+			}
+		}
+	case reflect.Struct:
+		for paramName, allowed := range constraints {
+			field := findFieldByNameOrTag(val, paramName)
+			if !field.IsValid() {
+				continue
+			}
+			// Skip zero-value optional fields
+			if field.IsZero() {
+				continue
+			}
+			if err := checkValueInAllowed(paramName, field.Interface(), allowed); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// checkValueInAllowed checks a single value (string or []string) against an allowed list.
+func checkValueInAllowed(paramName string, value any, allowed []string) error {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, a := range allowed {
+		allowedSet[a] = struct{}{}
+	}
+
+	switch v := value.(type) {
+	case string:
+		if v == "" {
+			return nil
+		}
+		if _, ok := allowedSet[v]; !ok {
+			return fmt.Errorf("parameter %q value %q is not in the allowed set", paramName, v)
+		}
+	case []string:
+		for _, item := range v {
+			if _, ok := allowedSet[item]; !ok {
+				return fmt.Errorf("parameter %q value %q is not in the allowed set", paramName, item)
+			}
+		}
+	case []any:
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("parameter %q contains non-string value of type %T", paramName, item)
+			}
+			if _, ok := allowedSet[s]; !ok {
+				return fmt.Errorf("parameter %q value %q is not in the allowed set", paramName, s)
+			}
+		}
+	default:
+		return fmt.Errorf("parameter %q has unsupported type %T for constraint validation", paramName, value)
+	}
+
+	return nil
+}
+
 // removeSchemaProperties removes the specified properties from a JSON schema.
 // It returns a modified copy of the schema, leaving the original unchanged.
 func removeSchemaProperties(schema any, params map[string]interface{}) any {
