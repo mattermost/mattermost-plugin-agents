@@ -182,6 +182,22 @@ async function selectFirstModelFromDropdown(container: Locator, page: Page): Pro
     return model;
 }
 
+async function ensureServiceCardExpanded(serviceCard: Locator): Promise<void> {
+    const serviceNameInput = serviceCard.getByPlaceholder(/service name/i).or(serviceCard.getByRole('textbox').first());
+    if (!(await serviceNameInput.isVisible().catch(() => false))) {
+        await serviceCard.click();
+    }
+    await expect(serviceNameInput).toBeVisible({timeout: 30000});
+}
+
+async function ensureBotCardExpanded(botCard: Locator): Promise<void> {
+    const displayNameInput = botCard.getByPlaceholder(/display name/i).or(botCard.getByRole('textbox').first());
+    if (!(await displayNameInput.isVisible().catch(() => false))) {
+        await botCard.click();
+    }
+    await expect(displayNameInput).toBeVisible({timeout: 30000});
+}
+
 test.describe.serial('System Console Real Live Service Full Flow', () => {
     test.beforeAll(async () => {
         if (!shouldRunProvider) {
@@ -235,21 +251,21 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
 
         const serviceCard = page.locator('[class*="ServiceContainer"]').last();
         await expect(serviceCard).toBeVisible();
-        await serviceCard.click();
+        await ensureServiceCardExpanded(serviceCard);
 
-        await serviceCard.getByLabel(/service name/i).fill(serviceName);
-        await serviceCard.getByLabel(/service type/i).selectOption(provider.service.type);
-        await serviceCard.getByLabel(/^API Key$/i).fill(provider.service.apiKey);
+        await serviceCard.getByPlaceholder(/service name/i).or(serviceCard.getByRole('textbox').first()).fill(serviceName);
+        await serviceCard.getByRole('combobox').first().selectOption(provider.service.type);
+        await serviceCard.getByPlaceholder(/api key/i).fill(provider.service.apiKey);
 
         if (provider.service.type === 'openaicompatible') {
-            await serviceCard.getByLabel(/api url/i).fill(provider.service.apiURL);
+            await serviceCard.getByPlaceholder(/api url/i).fill(provider.service.apiURL);
         }
 
         const selectedServiceModel = await selectFirstModelFromDropdown(serviceCard, page);
-        await serviceCard.getByLabel(/input token limit/i).fill(String(provider.service.tokenLimit));
-        await serviceCard.getByLabel(/output token limit/i).fill(String(provider.service.outputTokenLimit));
+        await serviceCard.getByPlaceholder(/input token limit/i).fill(String(provider.service.tokenLimit));
+        await serviceCard.getByPlaceholder(/output token limit/i).fill(String(provider.service.outputTokenLimit));
 
-        const streamingTimeoutInput = serviceCard.getByLabel(/streaming timeout seconds/i);
+        const streamingTimeoutInput = serviceCard.getByPlaceholder(/streaming timeout seconds/i);
         if (await streamingTimeoutInput.isVisible().catch(() => false)) {
             await streamingTimeoutInput.fill(String(provider.service.streamingTimeoutSeconds || 30));
         }
@@ -259,13 +275,13 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
 
         const botCard = page.locator('[class*="BotContainer"]').last();
         await expect(botCard).toBeVisible();
-        await botCard.click();
+        await ensureBotCardExpanded(botCard);
 
-        await botCard.getByLabel(/display name/i).fill(botDisplayName);
-        await botCard.getByLabel(/(bot|agent) username/i).fill(botUsername);
-        await botCard.getByLabel(/ai service/i).selectOption({label: serviceName});
+        await botCard.getByPlaceholder(/display name/i).or(botCard.getByRole('textbox').first()).fill(botDisplayName);
+        await botCard.getByPlaceholder(/(bot|agent) username/i).or(botCard.getByRole('textbox').nth(1)).fill(botUsername);
+        await botCard.locator('select').first().selectOption({label: serviceName});
         const selectedBotModel = await selectFirstModelFromDropdown(botCard, page);
-        await botCard.getByLabel(/custom instructions/i).fill(provider.bot.customInstructions);
+        await botCard.getByPlaceholder(/how would you like/i).or(botCard.getByRole('textbox').last()).fill(provider.bot.customInstructions);
 
         await systemConsole.clickSave();
         await page.reload();
