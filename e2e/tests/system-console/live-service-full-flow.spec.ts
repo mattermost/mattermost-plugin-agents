@@ -32,10 +32,12 @@ type Post = {
 };
 
 const knownLLMErrorPatterns = [
-    'sorry! the llm did not return a result.',
-    'sorry! an error occurred while accessing the llm.',
+    'llm did not return a result',
+    'an error occurred while accessing the llm',
     'bifrost error:',
 ];
+
+const maxLiveReplyAttempts = 3;
 
 const selectedProviderType = getSelectedProviderType();
 const apiConfig = getAPIConfig();
@@ -156,6 +158,76 @@ async function waitForPost(
     }).toBe(true);
 
     return matchedPost!;
+}
+
+async function requestNonErrorDMReply(
+    mmPage: MattermostPage,
+    regularClient: any,
+    dmChannelID: string,
+    botUserID: string,
+): Promise<Post> {
+    for (let attempt = 1; attempt <= maxLiveReplyAttempts; attempt++) {
+        const dmPrompt = `Live DM verification ${Date.now()} attempt-${attempt}`;
+        const dmStartTime = Date.now();
+        await mmPage.sendChannelMessage(dmPrompt);
+
+        const dmBotReply = await waitForPost(
+            regularClient,
+            dmChannelID,
+            (post) => post.user_id === botUserID &&
+                post.create_at >= dmStartTime &&
+                post.message.trim().length > 0,
+            180000,
+        );
+
+        if (!isKnownErrorResponse(dmBotReply.message)) {
+            return dmBotReply;
+        }
+    }
+
+    throw new Error(`Bot returned known error reply for all ${maxLiveReplyAttempts} DM attempts.`);
+}
+
+async function requestNonErrorMentionReply(
+    page: Page,
+    mmPage: MattermostPage,
+    regularClient: any,
+    channelID: string,
+    botUsername: string,
+    botUserID: string,
+    regularUserID: string,
+): Promise<Post> {
+    for (let attempt = 1; attempt <= maxLiveReplyAttempts; attempt++) {
+        const mentionPrompt = `live mention verification ${Date.now()} attempt-${attempt}`;
+        const mentionStartTime = Date.now();
+        await mmPage.mentionBot(botUsername, mentionPrompt);
+        await expect(page.getByText(`@${botUsername} ${mentionPrompt}`, {exact: true})).toBeVisible();
+
+        const mentionPost = await waitForPost(
+            regularClient,
+            channelID,
+            (post) => post.user_id === regularUserID &&
+                post.create_at >= mentionStartTime &&
+                post.message.includes(mentionPrompt),
+            60000,
+        );
+
+        const mentionBotReply = await waitForPost(
+            regularClient,
+            channelID,
+            (post) => post.user_id === botUserID &&
+                post.create_at >= mentionStartTime &&
+                post.root_id === mentionPost.id &&
+                post.message.trim().length > 0,
+            180000,
+        );
+
+        if (!isKnownErrorResponse(mentionBotReply.message)) {
+            return mentionBotReply;
+        }
+    }
+
+    throw new Error(`Bot returned known error reply for all ${maxLiveReplyAttempts} mention attempts.`);
 }
 
 async function waitForBotUserID(mattermostInstance: MattermostContainer, botUsername: string): Promise<string> {
@@ -416,17 +488,11 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         await page.goto(`${mattermost.url()}/test/messages/@${botUsername}`);
         await page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 30000});
 
-        const dmPrompt = `Live DM verification ${Date.now()}`;
-        const dmStartTime = Date.now();
-        await mmPage.sendChannelMessage(dmPrompt);
-
-        const dmBotReply = await waitForPost(
+        const dmBotReply = await requestNonErrorDMReply(
+            mmPage,
             regularClient,
             dmChannel.id,
-            (post) => post.user_id === botUserID &&
-                post.create_at >= dmStartTime &&
-                post.message.trim().length > 0,
-            180000,
+            botUserID,
         );
         expect(dmBotReply.user_id).toBe(botUserID);
         expect(isKnownErrorResponse(dmBotReply.message)).toBe(false);
@@ -436,28 +502,14 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         await page.goto(`${mattermost.url()}/test/channels/town-square`);
         await page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 30000});
 
-        const mentionPrompt = `live mention verification ${Date.now()}`;
-        const mentionStartTime = Date.now();
-        await mmPage.mentionBot(botUsername, mentionPrompt);
-        await expect(page.getByText(`@${botUsername} ${mentionPrompt}`, {exact: true})).toBeVisible();
-
-        const mentionPost = await waitForPost(
+        const mentionBotReply = await requestNonErrorMentionReply(
+            page,
+            mmPage,
             regularClient,
             townSquareChannelID,
-            (post) => post.user_id === regularUser.id &&
-                post.create_at >= mentionStartTime &&
-                post.message.includes(mentionPrompt),
-            60000,
-        );
-
-        const mentionBotReply = await waitForPost(
-            regularClient,
-            townSquareChannelID,
-            (post) => post.user_id === botUserID &&
-                post.create_at >= mentionStartTime &&
-                post.root_id === mentionPost.id &&
-                post.message.trim().length > 0,
-            180000,
+            botUsername,
+            botUserID,
+            regularUser.id,
         );
         expect(mentionBotReply.user_id).toBe(botUserID);
         expect(isKnownErrorResponse(mentionBotReply.message)).toBe(false);
