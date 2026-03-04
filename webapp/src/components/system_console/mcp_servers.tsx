@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import styled from 'styled-components';
 import {PlusIcon, TrashCanOutlineIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
@@ -34,6 +34,14 @@ export type MCPConfig = {
 type Props = {
     mcpConfig: MCPConfig;
     onChange: (config: MCPConfig) => void;
+};
+
+const getIdleTimeoutInputValue = (idleTimeoutMinutes?: number): string => {
+    if (typeof idleTimeoutMinutes !== 'number' || idleTimeoutMinutes <= 0) {
+        return '';
+    }
+
+    return idleTimeoutMinutes.toString();
 };
 
 // Default configuration for a new MCP server
@@ -236,6 +244,7 @@ const MCPServer = ({
 const MCPServers = ({mcpConfig, onChange}: Props) => {
     const intl = useIntl();
     const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
+    const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
 
     // Create a properly initialized config object
     const config: MCPConfig = {
@@ -245,8 +254,12 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         embeddedServer: mcpConfig?.embeddedServer || {
             enabled: !mcpConfig?.enabled,
         },
-        idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes || 30,
+        idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
     };
+
+    useEffect(() => {
+        setIdleTimeoutInputValue(getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
+    }, [mcpConfig?.idleTimeoutMinutes]);
 
     // Generate a server name
     const generateServerName = () => {
@@ -338,13 +351,28 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                     />
                                     <TextItem
                                         label={intl.formatMessage({defaultMessage: 'Connection Idle Timeout (minutes)'})}
-                                        value={config.idleTimeoutMinutes?.toString() || '30'}
+                                        value={idleTimeoutInputValue}
                                         type='number'
                                         onChange={(e) => {
-                                            const idleTimeoutMinutes = parseInt(e.target.value, 10);
+                                            const nextValue = e.target.value;
+                                            setIdleTimeoutInputValue(nextValue);
+
+                                            if (nextValue.trim() === '') {
+                                                onChange({
+                                                    ...config,
+                                                    idleTimeoutMinutes: undefined,
+                                                });
+                                                return;
+                                            }
+
+                                            const idleTimeoutMinutes = Number.parseInt(nextValue, 10);
+                                            if (Number.isNaN(idleTimeoutMinutes)) {
+                                                return;
+                                            }
+
                                             onChange({
                                                 ...config,
-                                                idleTimeoutMinutes: isNaN(idleTimeoutMinutes) ? 30 : Math.max(1, idleTimeoutMinutes),
+                                                idleTimeoutMinutes: Math.max(1, idleTimeoutMinutes),
                                             });
                                         }}
                                         helptext={intl.formatMessage({defaultMessage: 'How long to keep an inactive user connection open before closing it automatically. Lower values save resources, higher values improve response times.'})}

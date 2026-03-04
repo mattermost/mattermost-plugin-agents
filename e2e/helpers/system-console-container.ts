@@ -19,6 +19,15 @@ export interface SystemConsolePluginConfig {
     allowUnsafeLinks?: boolean;
     services?: any[];
     bots?: any[];
+    mcp?: {
+        enabled?: boolean;
+        enablePluginServer?: boolean;
+        idleTimeoutMinutes?: number;
+        servers?: any[] | null;
+        embeddedServer?: {
+            enabled?: boolean;
+        };
+    };
 }
 
 const adminUsername = 'sysadmin';
@@ -87,6 +96,15 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
             allowUnsafeLinks: config.allowUnsafeLinks,
             services: config.services ?? [],
             bots: config.bots ?? [],
+            mcp: {
+                enabled: config.mcp?.enabled ?? false,
+                enablePluginServer: config.mcp?.enablePluginServer ?? false,
+                idleTimeoutMinutes: config.mcp?.idleTimeoutMinutes ?? 30,
+                servers: config.mcp?.servers ?? [],
+                embeddedServer: {
+                    enabled: config.mcp?.embeddedServer?.enabled ?? true,
+                },
+            },
         }
     };
 
