@@ -4,7 +4,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import {test, expect} from '@playwright/test';
+import {test, expect, Locator, Page} from '@playwright/test';
 
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
@@ -167,6 +167,21 @@ async function getTownSquareChannelID(client: any): Promise<string> {
     return townSquare.id;
 }
 
+async function selectFirstModelFromDropdown(container: Locator, page: Page): Promise<string> {
+    const dropdownInput = container.locator('input[id^="react-select-"][id$="-input"]').first();
+    await expect(dropdownInput).toBeVisible({timeout: 90000});
+    await dropdownInput.click();
+
+    const options = page.locator('div[id^="react-select-"][id*="-option-"]');
+    await expect(options.first()).toBeVisible({timeout: 90000});
+
+    const model = (await options.first().textContent())?.trim() || '';
+    expect(model.length).toBeGreaterThan(0);
+    await options.first().click();
+
+    return model;
+}
+
 test.describe.serial('System Console Real Live Service Full Flow', () => {
     test.beforeAll(async () => {
         if (!shouldRunProvider) {
@@ -230,7 +245,7 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
             await serviceCard.getByLabel(/api url/i).fill(provider.service.apiURL);
         }
 
-        await serviceCard.getByLabel(/default model/i).fill(provider.service.defaultModel);
+        const selectedServiceModel = await selectFirstModelFromDropdown(serviceCard, page);
         await serviceCard.getByLabel(/input token limit/i).fill(String(provider.service.tokenLimit));
         await serviceCard.getByLabel(/output token limit/i).fill(String(provider.service.outputTokenLimit));
 
@@ -249,6 +264,7 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         await botCard.getByLabel(/display name/i).fill(botDisplayName);
         await botCard.getByLabel(/(bot|agent) username/i).fill(botUsername);
         await botCard.getByLabel(/ai service/i).selectOption({label: serviceName});
+        const selectedBotModel = await selectFirstModelFromDropdown(botCard, page);
         await botCard.getByLabel(/custom instructions/i).fill(provider.bot.customInstructions);
 
         await systemConsole.clickSave();
@@ -257,6 +273,11 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
 
         await expect(page.getByText(serviceName).first()).toBeVisible();
         await expect(page.getByText(botDisplayName).first()).toBeVisible();
+        await expect(page.locator('[class*="ServiceContainer"]').first()).toContainText(selectedServiceModel);
+
+        const reloadedBotCard = page.locator('[class*="BotContainer"]').first();
+        await reloadedBotCard.click();
+        await expect(reloadedBotCard).toContainText(selectedBotModel);
 
         // 2) Validate bot account exists after saving.
         const botUserID = await waitForBotUserID(mattermost, botUsername);
