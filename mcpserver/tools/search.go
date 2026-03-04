@@ -168,16 +168,18 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 			channel, _, chErr := client.GetChannel(ctx, post.ChannelId, "")
 			if chErr == nil {
 				channelCache[post.ChannelId] = channel
-				if _, teamExists := teamCache[channel.TeamId]; !teamExists {
-					team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
-					if teamErr == nil {
-						teamCache[channel.TeamId] = team
-					} else {
-						teamCache[channel.TeamId] = nil // negative cache
-					}
-				}
 			} else {
 				channelCache[post.ChannelId] = nil // negative cache
+			}
+		}
+		if channel := channelCache[post.ChannelId]; channel != nil && channel.TeamId != "" {
+			if _, teamExists := teamCache[channel.TeamId]; !teamExists {
+				team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+				if teamErr == nil {
+					teamCache[channel.TeamId] = team
+				} else {
+					teamCache[channel.TeamId] = nil // negative cache
+				}
 			}
 		}
 		if channel := channelCache[post.ChannelId]; channel != nil {
