@@ -6,29 +6,70 @@
 
 This is the **Mattermost Agents Plugin** (`mattermost-ai`) — a Go server + React webapp plugin that runs inside a Mattermost server instance. It is NOT a standalone application; `make dist` produces a `.tar.gz` bundle for deployment to a Mattermost server.
 
-### Prerequisites (already installed by the update script)
+### Prerequisites (installed by the update script)
 
 - **Go 1.25.5** — required by `go.mod`
-- **Node.js 20.11** — required by `.nvmrc`; use `nvm use 20.11` if switched away
-- Webapp npm dependencies — installed in `webapp/node_modules`
-- Go tools — installed in `./bin/` via `make install-go-tools`
+- **Node.js 20.11** — required by `.nvmrc`; use `nvm use 20.11` if switched
+- Webapp npm dependencies — `webapp/node_modules`
+- Go tools — `./bin/` via `make install-go-tools`
 
 ### Key commands
 
-All standard build/lint/test commands are documented in `CLAUDE.md` and the `README.md` "Development" section. Key ones:
+Standard build/lint/test commands are in `CLAUDE.md` and `README.md`. Key ones:
 
-- `make check-style` — lint (ESLint + golangci-lint + go vet + TypeScript check)
+- `make check-style` — lint (ESLint + golangci-lint + go vet + mattermost-govet + TypeScript check)
 - `make check-style-fix` — lint with auto-fix
-- `make test` — Go unit tests + webapp tests
-- `make dist` — full build (Go server for all platforms + webapp + tar.gz bundle)
-- `make deploy` — build + deploy to a Mattermost server (requires `MM_SERVICESETTINGS_SITEURL`, `MM_ADMIN_USERNAME`, `MM_ADMIN_PASSWORD`)
-- `make e2e` — end-to-end tests via Playwright + testcontainers (requires Docker)
+- `make test` — Go unit + integration tests + webapp tests
+- `make dist` — full build (Go server all platforms + webapp + tar.gz bundle)
+- `make deploy` — build + deploy to Mattermost (requires `MM_SERVICESETTINGS_SITEURL`, `MM_ADMIN_USERNAME`, `MM_ADMIN_PASSWORD`)
+- `make e2e` — Playwright e2e tests via testcontainers (requires Docker)
+
+### Running Mattermost locally with Docker
+
+To test the plugin end-to-end, run Mattermost + PostgreSQL/pgvector in Docker:
+
+```bash
+# Start Docker daemon (required in Cloud VM)
+sudo dockerd &>/tmp/dockerd.log &
+sudo chmod 666 /var/run/docker.sock
+
+# Create network
+sudo docker network create mm-net
+
+# Start PostgreSQL with pgvector (password "mostest" matches test expectations)
+sudo docker run -d --name mm-postgres --network mm-net \
+  -e POSTGRES_DB=mattermost -e POSTGRES_USER=mmuser -e POSTGRES_PASSWORD=mostest \
+  -p 5432:5432 pgvector/pgvector:pg15
+
+# Start Mattermost
+sudo docker run -d --name mattermost --network mm-net \
+  -e MM_SQLSETTINGS_DRIVERNAME=postgres \
+  -e "MM_SQLSETTINGS_DATASOURCE=postgres://mmuser:mostest@mm-postgres:5432/mattermost?sslmode=disable&connect_timeout=10" \
+  -e MM_SERVICESETTINGS_SITEURL=http://localhost:8065 \
+  -e MM_SERVICESETTINGS_ENABLELOCALMODE=true \
+  -e MM_PLUGINSETTINGS_ENABLEUPLOADS=true \
+  -e MM_SERVICESETTINGS_ENABLEDEVELOPER=true \
+  -e MM_TEAMSETTINGS_ENABLEOPENSERVER=true \
+  -p 8065:8065 mattermost/mattermost-enterprise-edition:latest
+
+# Create admin user and team
+sudo docker exec mattermost mmctl user create --email admin@test.com --username admin --password 'Admin1234!' --system-admin --local
+sudo docker exec mattermost mmctl team create --name test-team --display-name "Test Team" --local
+sudo docker exec mattermost mmctl team users add test-team admin --local
+
+# Deploy plugin
+make dist
+sudo docker cp dist/mattermost-ai-*.tar.gz mattermost:/tmp/plugin.tar.gz
+sudo docker exec mattermost mmctl plugin add /tmp/plugin.tar.gz --local
+sudo docker exec mattermost mmctl plugin enable mattermost-ai --local
+```
+
+Mattermost UI is then available at http://localhost:8065 (admin / Admin1234!).
 
 ### Non-obvious gotchas
 
-- **`mattermost-govet`** may fail with "unsupported version" or "package requires newer Go version" errors. This is a known compatibility issue between the tool (compiled against an older Go stdlib) and Go 1.25. It does not indicate code issues; ESLint, golangci-lint, and `go vet` are the primary lint gates.
-- **PostgreSQL integration tests** (`postgres/` package) require a running PostgreSQL instance with pgvector. These fail by default in the Cloud VM since there is no local PostgreSQL; this is expected.
-- **MCP and MCPServer tests** require Docker (testcontainers). Without Docker, these tests panic with "rootless Docker not found". These are integration tests and their failures are expected without Docker.
+- **PostgreSQL test credentials**: The `postgres/` integration tests expect `postgres://mmuser:mostest@localhost:5432/postgres?sslmode=disable`. Use password `mostest` when starting the pgvector container.
+- **Docker socket permissions**: After starting `dockerd`, run `sudo chmod 666 /var/run/docker.sock` so non-root Go tests (MCP/MCPServer testcontainers) can access Docker.
 - **Webapp tests** are currently no-ops (`echo ''` in `package.json`).
-- The build tools (`build/bin/manifest`, `build/bin/pluginctl`) are auto-compiled from Go source when the Makefile runs; you do not need to install them manually.
-- `nvm` is used for Node.js version management. If you get Node.js version errors, run `nvm use 20.11`.
+- Build tools (`build/bin/manifest`, `build/bin/pluginctl`) are auto-compiled from Go source when the Makefile runs.
+- `nvm` is used for Node.js version management. If Node.js version errors occur, run `. ~/.nvm/nvm.sh && nvm use 20.11`.

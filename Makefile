@@ -174,7 +174,7 @@ install-go-tools:
 	@echo Installing go tools
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.0.2
 	$(GO) install gotest.tools/gotestsum@v1.7.0
-	$(GO) install github.com/mattermost/mattermost-govet/v2@3f08281c344327ac09364f196b15f9a81c7eff08
+	$(GO) install github.com/mattermost/mattermost-govet/v2@v2.0.1
 
 ## Runs eslint and golangci-lint
 .PHONY: check-style
