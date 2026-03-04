@@ -125,7 +125,11 @@ function isKnownErrorResponse(message: string): boolean {
 }
 
 function modelTokens(value: string): string[] {
-    return value.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3);
+    return value.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3 || /^[0-9]+$/.test(token));
+}
+
+function canonicalModel(value: string): string {
+    return value.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 async function waitForPost(
@@ -202,16 +206,20 @@ async function selectModelFromDropdown(
 
     const optionTexts = (await options.allTextContents()).map((text) => text.trim());
     const preferredTokens = modelTokens(preferredModel);
+    const canonicalPreferred = canonicalModel(preferredModel);
     const normalizedAvoidTokens = avoidTokens.map((token) => token.toLowerCase());
 
     let selectedIndex = 0;
     let bestScore = Number.NEGATIVE_INFINITY;
     for (const [index, optionText] of optionTexts.entries()) {
         const normalizedOption = optionText.toLowerCase();
+        const canonicalOption = canonicalModel(optionText);
         const optionTokens = modelTokens(optionText);
         const preferredMatchCount = preferredTokens.filter((token) => optionTokens.includes(token) || normalizedOption.includes(token)).length;
+        const isCanonicalPreferredMatch = canonicalPreferred.length > 0 &&
+            (canonicalOption.includes(canonicalPreferred) || canonicalPreferred.includes(canonicalOption));
         const hasAvoidedToken = normalizedAvoidTokens.some((token) => normalizedOption.includes(token));
-        const score = preferredMatchCount * 10 + (hasAvoidedToken ? -100 : 0);
+        const score = (isCanonicalPreferredMatch ? 1000 : 0) + (preferredMatchCount * 10) + (hasAvoidedToken ? -100 : 0);
 
         if (score > bestScore) {
             bestScore = score;
