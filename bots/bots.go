@@ -13,6 +13,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/assets"
 	"github.com/mattermost/mattermost-plugin-ai/bifrost"
+	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
