@@ -122,7 +122,12 @@ async function waitForPost(
     let matchedPost: Post | undefined;
 
     await expect.poll(async () => {
-        const postsResponse = await client.getPostsForChannel(channelID, 0, 200);
+        const getPosts = client.getPostsForChannel || client.getPosts;
+        if (typeof getPosts !== 'function') {
+            throw new Error('Mattermost client does not expose getPostsForChannel or getPosts');
+        }
+
+        const postsResponse = await getPosts.call(client, channelID, 0, 200);
         const posts = getPostsArray(postsResponse);
         matchedPost = posts.find(predicate);
         return Boolean(matchedPost);
