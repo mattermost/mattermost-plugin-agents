@@ -124,6 +124,10 @@ function isKnownErrorResponse(message: string): boolean {
     return knownLLMErrorPatterns.some((pattern) => normalized.includes(pattern));
 }
 
+function modelTokens(value: string): string[] {
+    return value.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3);
+}
+
 async function waitForPost(
     client: any,
     channelID: string,
@@ -183,7 +187,12 @@ async function getTownSquareChannelID(client: any): Promise<string> {
     return townSquare.id;
 }
 
-async function selectFirstModelFromDropdown(container: Locator, page: Page): Promise<string> {
+async function selectModelFromDropdown(
+    container: Locator,
+    page: Page,
+    preferredModel: string,
+    avoidTokens: string[] = [],
+): Promise<string> {
     const dropdownInput = container.locator('input[id^="react-select-"][id$="-input"]').first();
     await expect(dropdownInput).toBeVisible({timeout: 90000});
     await dropdownInput.click();
@@ -191,9 +200,28 @@ async function selectFirstModelFromDropdown(container: Locator, page: Page): Pro
     const options = page.locator('div[id^="react-select-"][id*="-option-"]');
     await expect(options.first()).toBeVisible({timeout: 90000});
 
-    const model = (await options.first().textContent())?.trim() || '';
+    const optionTexts = (await options.allTextContents()).map((text) => text.trim());
+    const preferredTokens = modelTokens(preferredModel);
+    const normalizedAvoidTokens = avoidTokens.map((token) => token.toLowerCase());
+
+    let selectedIndex = 0;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (const [index, optionText] of optionTexts.entries()) {
+        const normalizedOption = optionText.toLowerCase();
+        const optionTokens = modelTokens(optionText);
+        const preferredMatchCount = preferredTokens.filter((token) => optionTokens.includes(token) || normalizedOption.includes(token)).length;
+        const hasAvoidedToken = normalizedAvoidTokens.some((token) => normalizedOption.includes(token));
+        const score = preferredMatchCount * 10 + (hasAvoidedToken ? -100 : 0);
+
+        if (score > bestScore) {
+            bestScore = score;
+            selectedIndex = index;
+        }
+    }
+
+    const model = optionTexts[selectedIndex] || '';
     expect(model.length).toBeGreaterThan(0);
-    await options.first().click();
+    await options.nth(selectedIndex).click();
 
     return model;
 }
@@ -293,6 +321,7 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         const serviceName = provider.service.name;
         const botDisplayName = provider.bot.displayName;
         const botUsername = provider.bot.name;
+        const avoidModelTokens = selectedProviderType === 'anthropic' ? ['haiku'] : [];
         let selectedServiceModel = '';
         let selectedBotModel = '';
 
@@ -316,7 +345,7 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
                 await serviceCard.getByPlaceholder(/api url/i).fill(provider.service.apiURL);
             }
 
-            selectedServiceModel = await selectFirstModelFromDropdown(serviceCard, page);
+            selectedServiceModel = await selectModelFromDropdown(serviceCard, page, provider.service.defaultModel, avoidModelTokens);
             await serviceCard.getByPlaceholder(/input token limit/i).fill(String(provider.service.tokenLimit));
             await serviceCard.getByPlaceholder(/output token limit/i).fill(String(provider.service.outputTokenLimit));
 
@@ -338,7 +367,7 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
             await botCard.getByPlaceholder(/display name/i).fill(botDisplayName);
             await botCard.getByPlaceholder(/(bot|agent) username/i).fill(botUsername);
             await botCard.locator('select').first().selectOption({label: serviceName});
-            selectedBotModel = await selectFirstModelFromDropdown(botCard, page);
+            selectedBotModel = await selectModelFromDropdown(botCard, page, provider.service.defaultModel, avoidModelTokens);
             await botCard.getByPlaceholder(/how would you like/i).fill(provider.bot.customInstructions);
         }
 
