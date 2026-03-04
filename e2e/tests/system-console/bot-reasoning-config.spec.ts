@@ -637,7 +637,7 @@ test.describe.serial('Bot Reasoning Configuration', () => {
 
         // 9. Verify 'Reasoning Effort' dropdown is NOT visible (hidden when disabled)
         // When reasoning is disabled, the dropdown should not exist in the DOM
-        const reasoningEffortLocator = botCard.locator('select').filter({ hasText: /minimal|low|medium|high/i });
+        const reasoningEffortLocator = botCard.locator('select').filter({ hasText: /none|low|medium|high|extra high/i });
         await expect(reasoningEffortLocator).toHaveCount(0);
 
         // 10. Click the 'Enable' checkbox to enable reasoning
@@ -647,7 +647,7 @@ test.describe.serial('Bot Reasoning Configuration', () => {
 
         // 11. Scroll and verify the 'Reasoning Effort' dropdown appears
         // After enabling, the dropdown should appear with the reasoning effort options
-        const reasoningEffortDropdown = botCard.locator('select').filter({ hasText: /minimal|low|medium|high/i }).first();
+        const reasoningEffortDropdown = botCard.locator('select').filter({ hasText: /none|low|medium|high|extra high/i }).first();
         await reasoningEffortDropdown.scrollIntoViewIfNeeded();
         await expect(reasoningEffortDropdown).toBeVisible();
 
@@ -688,7 +688,7 @@ test.describe.serial('Bot Reasoning Configuration', () => {
         await expect(reloadedEnableCheckbox).not.toBeChecked();
 
         // 20. Verify dropdown is not visible (should not exist in DOM)
-        const reloadedDropdownLocator = reloadedBotCard.locator('select').filter({ hasText: /minimal|low|medium|high/i });
+        const reloadedDropdownLocator = reloadedBotCard.locator('select').filter({ hasText: /none|low|medium|high|extra high/i });
         await expect(reloadedDropdownLocator).toHaveCount(0);
 
         await openAIMock.stop();

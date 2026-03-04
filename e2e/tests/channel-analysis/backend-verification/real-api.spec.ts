@@ -13,6 +13,7 @@ import {
     getAvailableProviders,
     ProviderBundle,
 } from 'helpers/api-config';
+import { attachAPIErrorContext } from 'helpers/log-scanner';
 
 /**
  * Test Suite: Channel Analysis Real API Verification
@@ -22,8 +23,8 @@ import {
  * are functioning as expected without testing exhaustive UI edge cases.
  *
  * Environment Variables Required:
- * - ANTHROPIC_API_KEY: To run tests with Anthropic (claude-3-7-sonnet)
- * - OPENAI_API_KEY: To run tests with OpenAI (gpt-5)
+ * - ANTHROPIC_API_KEY: To run tests with Anthropic
+ * - OPENAI_API_KEY: To run tests with OpenAI
  */
 
 const username = 'regularuser';
@@ -118,6 +119,10 @@ function createProviderTestSuite(provider: ProviderBundle) {
             if (mattermost) {
                 await mattermost.stop();
             }
+        });
+
+        test.afterEach(async ({}, testInfo) => {
+            await attachAPIErrorContext(testInfo);
         });
 
         test('Sanity check: Channel analysis produces valid summary', async ({ page }) => {

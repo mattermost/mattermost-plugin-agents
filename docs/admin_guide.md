@@ -75,6 +75,8 @@ Each provider has specific configuration requirements:
 
 For AWS Bedrock, authentication can be configured using AWS credentials in the API Key/Secret fields, or by using IAM roles when running Mattermost on AWS infrastructure.
 
+**Important for Anthropic Claude models**: Before using Claude models via AWS Bedrock, you must submit a one-time First Time Use (FTU) form in the AWS Bedrock Model Catalog, and attach Bedrock API permissions to your Mattermost servers' IAM role. See the [AWS Bedrock setup guide](https://docs.mattermost.com/agents/docs/aws_bedrock_setup.html) for detailed instructions.
+
 See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html) for detailed provider-specific configuration.
 
 ### Agent configuration

@@ -11,6 +11,8 @@ import {
     getAvailableProviders,
     ProviderBundle,
 } from 'helpers/api-config';
+import { checkAPIHealth } from 'helpers/api-health-check';
+import { attachAPIErrorContext } from 'helpers/log-scanner';
 
 /**
  * Test Suite: Multiplayer Tool Calling
@@ -343,6 +345,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
         test.beforeAll(async () => {
             if (!config.shouldRunTests) return;
+            await checkAPIHealth(provider.service);
             mattermost = await setupToolCallingContainer(provider);
         });
 
@@ -350,6 +353,10 @@ function createProviderTestSuite(provider: ProviderBundle) {
             if (mattermost) {
                 await mattermost.stop();
             }
+        });
+
+        test.afterEach(async ({}, testInfo) => {
+            await attachAPIErrorContext(testInfo);
         });
 
         test('Happy path: Accept and Share all tool calls (invoker + onlooker)', async ({ browser }) => {

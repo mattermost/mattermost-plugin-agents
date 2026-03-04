@@ -245,7 +245,7 @@ func TestHandleToolCallChannelStoresInKVAndRedactsProps(t *testing.T) {
 	}
 	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{tool}}, nil, &testConfigProvider{})
 
-	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
 	bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, nil)
 	botService.SetBotsForTesting([]*bots.Bot{bot})
 
@@ -456,7 +456,7 @@ func TestHandleToolCallChannelBlockedWhenConfigDisabled(t *testing.T) {
 
 	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{}}, nil, &testConfigProvider{})
 
-	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
 	bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, nil)
 	botService.SetBotsForTesting([]*bots.Bot{bot})
 
@@ -533,7 +533,7 @@ func TestHandleToolCallChannelBlockedWhenPostPropMissing(t *testing.T) {
 
 	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{}}, nil, &testConfigProvider{})
 
-	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
 	bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, nil)
 	botService.SetBotsForTesting([]*bots.Bot{bot})
 

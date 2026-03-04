@@ -215,9 +215,10 @@ export default class MattermostContainer {
                     // Write all logs to file
                     this.logStream.write(data + '\n');
 
-                    // Still maintain special console logging for AI plugin
-                    // SECURITY: Sanitize sensitive data before logging
-                    if (data.includes('"plugin_id":"mattermost-ai"')) {
+                    // Only print plugin logs to console in non-CI environments
+                    // In CI, this causes interleaving with Playwright test output
+                    // Logs are always available in the server-logs.log artifact
+                    if (!process.env.CI && data.includes('"plugin_id":"mattermost-ai"')) {
                         // Remove API keys and sensitive tokens from logs
                         let sanitized = data
                             .replace(/"apiKey":"[^"]+"/g, '"apiKey":"[REDACTED]"')
