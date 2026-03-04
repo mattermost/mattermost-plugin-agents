@@ -90,7 +90,7 @@ export default class Plugin {
         let rhs: any = null;
         if (isRHSCompatable()) {
             const appBarRegistration = registry.registerAppBarComponent({
-                iconUrl: 'assets/bot_icon.png',
+                iconUrl: aiIcon,
                 tooltipText: 'Agents',
                 supportedProductIds: null,
                 rhsComponent: RHS,
