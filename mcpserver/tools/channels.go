@@ -131,7 +131,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := mcpContext.Ctx // Use request context for proper cancellation and timeout handling
+	ctx := mcpContext.Ctx
 
 	// Parse since timestamp if provided
 	var since int64
