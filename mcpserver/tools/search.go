@@ -105,10 +105,11 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 		searchTerm = buildSearchTermWithChannel(searchTerm, channel.Name)
 		// Pre-populate channel cache to avoid re-fetching during formatting
 		channelCache[args.ChannelID] = channel
-		// Ensure team ID is set so the server can resolve the channel name in the in: filter
-		if teamID == "" {
-			teamID = channel.TeamId
+		// Ensure team ID is set and consistent with the channel
+		if teamID != "" && teamID != channel.TeamId {
+			return "team_id does not match channel", fmt.Errorf("channel %s belongs to team %s, not %s", args.ChannelID, channel.TeamId, teamID)
 		}
+		teamID = channel.TeamId
 	}
 
 	// Perform the search using basic search
