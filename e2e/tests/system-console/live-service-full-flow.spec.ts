@@ -31,6 +31,12 @@ type Post = {
     create_at: number;
 };
 
+const knownLLMErrorPatterns = [
+    'sorry! the llm did not return a result.',
+    'sorry! an error occurred while accessing the llm.',
+    'bifrost error:',
+];
+
 const selectedProviderType = getSelectedProviderType();
 const apiConfig = getAPIConfig();
 const shouldRunProvider = selectedProviderType === 'anthropic' ? apiConfig.hasAnthropicKey : apiConfig.hasOpenAIKey;
@@ -111,6 +117,11 @@ async function installPlugin(mattermostInstance: MattermostContainer): Promise<v
 
 function getPostsArray(postsResponse: {posts?: Record<string, Post>}): Post[] {
     return Object.values(postsResponse.posts || {});
+}
+
+function isKnownErrorResponse(message: string): boolean {
+    const normalized = message.toLowerCase();
+    return knownLLMErrorPatterns.some((pattern) => normalized.includes(pattern));
 }
 
 async function waitForPost(
@@ -372,7 +383,7 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         const dmStartTime = Date.now();
         await mmPage.sendChannelMessage(dmPrompt);
 
-        await waitForPost(
+        const dmBotReply = await waitForPost(
             regularClient,
             dmChannel.id,
             (post) => post.user_id === botUserID &&
@@ -380,6 +391,8 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
                 post.message.trim().length > 0,
             180000,
         );
+        expect(dmBotReply.user_id).toBe(botUserID);
+        expect(isKnownErrorResponse(dmBotReply.message)).toBe(false);
 
         // 4) Verify channel mention flow in town-square.
         const townSquareChannelID = await getTownSquareChannelID(regularClient);
@@ -400,7 +413,7 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
             60000,
         );
 
-        await waitForPost(
+        const mentionBotReply = await waitForPost(
             regularClient,
             townSquareChannelID,
             (post) => post.user_id === botUserID &&
@@ -409,5 +422,7 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
                 post.message.trim().length > 0,
             180000,
         );
+        expect(mentionBotReply.user_id).toBe(botUserID);
+        expect(isKnownErrorResponse(mentionBotReply.message)).toBe(false);
     });
 });
