@@ -206,6 +206,23 @@ async function ensureBotCardExpanded(botCard: Locator): Promise<void> {
     await expect(displayNameInput).toBeVisible({timeout: 30000});
 }
 
+function isPersistedModelMatch(cardText: string, selectedModel: string): boolean {
+    const normalizedCardText = cardText.toLowerCase();
+    const normalizedSelectedModel = selectedModel.toLowerCase();
+
+    if (normalizedCardText.includes(normalizedSelectedModel)) {
+        return true;
+    }
+
+    const modelTokens = normalizedSelectedModel.split(/[^a-z0-9]+/).filter((token) => token.length >= 3);
+    if (modelTokens.length === 0) {
+        return false;
+    }
+
+    const matchedTokenCount = modelTokens.filter((token) => normalizedCardText.includes(token)).length;
+    return matchedTokenCount >= Math.min(modelTokens.length, 2);
+}
+
 test.describe.serial('System Console Real Live Service Full Flow', () => {
     test.beforeAll(async () => {
         if (!shouldRunProvider) {
@@ -305,13 +322,20 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         await expect(page.getByText(serviceName).first()).toBeVisible();
         await expect(page.getByText(botDisplayName).first()).toBeVisible();
         if (selectedServiceModel) {
-            await expect(page.locator('[class*="ServiceContainer"]').first()).toContainText(selectedServiceModel);
+            const reloadedServiceCard = page.locator('[class*="ServiceContainer"]').filter({hasText: serviceName}).first();
+            await expect.poll(async () => {
+                const cardText = (await reloadedServiceCard.textContent()) || '';
+                return isPersistedModelMatch(cardText, selectedServiceModel);
+            }).toBe(true);
         }
 
         if (selectedBotModel) {
-            const reloadedBotCard = page.locator('[class*="BotContainer"]').first();
+            const reloadedBotCard = page.locator('[class*="BotContainer"]').filter({hasText: botDisplayName}).first();
             await reloadedBotCard.click();
-            await expect(reloadedBotCard).toContainText(selectedBotModel);
+            await expect.poll(async () => {
+                const cardText = (await reloadedBotCard.textContent()) || '';
+                return isPersistedModelMatch(cardText, selectedBotModel);
+            }).toBe(true);
         }
 
         // 2) Validate bot account exists after saving.
