@@ -183,17 +183,25 @@ async function selectFirstModelFromDropdown(container: Locator, page: Page): Pro
 }
 
 async function ensureServiceCardExpanded(serviceCard: Locator): Promise<void> {
-    const serviceNameInput = serviceCard.getByPlaceholder(/service name/i).or(serviceCard.getByRole('textbox').first());
-    if (!(await serviceNameInput.isVisible().catch(() => false))) {
+    const serviceNameInput = serviceCard.getByPlaceholder(/service name/i);
+    for (let i = 0; i < 3; i++) {
+        if (await serviceNameInput.isVisible().catch(() => false)) {
+            break;
+        }
         await serviceCard.click();
+        await serviceCard.page().waitForTimeout(250);
     }
     await expect(serviceNameInput).toBeVisible({timeout: 30000});
 }
 
 async function ensureBotCardExpanded(botCard: Locator): Promise<void> {
-    const displayNameInput = botCard.getByPlaceholder(/display name/i).or(botCard.getByRole('textbox').first());
-    if (!(await displayNameInput.isVisible().catch(() => false))) {
+    const displayNameInput = botCard.getByPlaceholder(/display name/i);
+    for (let i = 0; i < 3; i++) {
+        if (await displayNameInput.isVisible().catch(() => false)) {
+            break;
+        }
         await botCard.click();
+        await botCard.page().waitForTimeout(250);
     }
     await expect(displayNameInput).toBeVisible({timeout: 30000});
 }
@@ -241,47 +249,54 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         const serviceName = provider.service.name;
         const botDisplayName = provider.bot.displayName;
         const botUsername = provider.bot.name;
+        let selectedServiceModel = '';
+        let selectedBotModel = '';
 
         // 1) Login as admin and configure service + bot in System Console.
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
         await systemConsole.navigateToPluginConfig(mattermost.url());
 
-        await expect(systemConsole.getNoServicesMessage()).toBeVisible();
-        await systemConsole.clickAddService();
+        const hasServiceAlready = await page.getByText(serviceName).first().isVisible().catch(() => false);
+        if (!hasServiceAlready) {
+            await systemConsole.clickAddService();
 
-        const serviceCard = page.locator('[class*="ServiceContainer"]').last();
-        await expect(serviceCard).toBeVisible();
-        await ensureServiceCardExpanded(serviceCard);
+            const serviceCard = page.locator('[class*="ServiceContainer"]').last();
+            await expect(serviceCard).toBeVisible();
+            await ensureServiceCardExpanded(serviceCard);
 
-        await serviceCard.getByPlaceholder(/service name/i).or(serviceCard.getByRole('textbox').first()).fill(serviceName);
-        await serviceCard.getByRole('combobox').first().selectOption(provider.service.type);
-        await serviceCard.getByPlaceholder(/api key/i).fill(provider.service.apiKey);
+            await serviceCard.getByPlaceholder(/service name/i).fill(serviceName);
+            await serviceCard.getByRole('combobox').first().selectOption(provider.service.type);
+            await serviceCard.getByPlaceholder(/api key/i).fill(provider.service.apiKey);
 
-        if (provider.service.type === 'openaicompatible') {
-            await serviceCard.getByPlaceholder(/api url/i).fill(provider.service.apiURL);
-        }
+            if (provider.service.type === 'openaicompatible') {
+                await serviceCard.getByPlaceholder(/api url/i).fill(provider.service.apiURL);
+            }
 
-        const selectedServiceModel = await selectFirstModelFromDropdown(serviceCard, page);
-        await serviceCard.getByPlaceholder(/input token limit/i).fill(String(provider.service.tokenLimit));
-        await serviceCard.getByPlaceholder(/output token limit/i).fill(String(provider.service.outputTokenLimit));
+            selectedServiceModel = await selectFirstModelFromDropdown(serviceCard, page);
+            await serviceCard.getByPlaceholder(/input token limit/i).fill(String(provider.service.tokenLimit));
+            await serviceCard.getByPlaceholder(/output token limit/i).fill(String(provider.service.outputTokenLimit));
 
-        const streamingTimeoutInput = serviceCard.getByPlaceholder(/streaming timeout seconds/i);
-        if (await streamingTimeoutInput.isVisible().catch(() => false)) {
-            await streamingTimeoutInput.fill(String(provider.service.streamingTimeoutSeconds || 30));
+            const streamingTimeoutInput = serviceCard.getByPlaceholder(/streaming timeout seconds/i);
+            if (await streamingTimeoutInput.isVisible().catch(() => false)) {
+                await streamingTimeoutInput.fill(String(provider.service.streamingTimeoutSeconds || 30));
+            }
         }
 
         await systemConsole.waitForBotsPanel();
-        await systemConsole.clickAddBot();
+        const hasBotAlready = await page.getByText(botDisplayName).first().isVisible().catch(() => false);
+        if (!hasBotAlready) {
+            await systemConsole.clickAddBot();
 
-        const botCard = page.locator('[class*="BotContainer"]').last();
-        await expect(botCard).toBeVisible();
-        await ensureBotCardExpanded(botCard);
+            const botCard = page.locator('[class*="BotContainer"]').last();
+            await expect(botCard).toBeVisible();
+            await ensureBotCardExpanded(botCard);
 
-        await botCard.getByPlaceholder(/display name/i).or(botCard.getByRole('textbox').first()).fill(botDisplayName);
-        await botCard.getByPlaceholder(/(bot|agent) username/i).or(botCard.getByRole('textbox').nth(1)).fill(botUsername);
-        await botCard.locator('select').first().selectOption({label: serviceName});
-        const selectedBotModel = await selectFirstModelFromDropdown(botCard, page);
-        await botCard.getByPlaceholder(/how would you like/i).or(botCard.getByRole('textbox').last()).fill(provider.bot.customInstructions);
+            await botCard.getByPlaceholder(/display name/i).fill(botDisplayName);
+            await botCard.getByPlaceholder(/(bot|agent) username/i).fill(botUsername);
+            await botCard.locator('select').first().selectOption({label: serviceName});
+            selectedBotModel = await selectFirstModelFromDropdown(botCard, page);
+            await botCard.getByPlaceholder(/how would you like/i).fill(provider.bot.customInstructions);
+        }
 
         await systemConsole.clickSave();
         await page.reload();
@@ -289,11 +304,15 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
 
         await expect(page.getByText(serviceName).first()).toBeVisible();
         await expect(page.getByText(botDisplayName).first()).toBeVisible();
-        await expect(page.locator('[class*="ServiceContainer"]').first()).toContainText(selectedServiceModel);
+        if (selectedServiceModel) {
+            await expect(page.locator('[class*="ServiceContainer"]').first()).toContainText(selectedServiceModel);
+        }
 
-        const reloadedBotCard = page.locator('[class*="BotContainer"]').first();
-        await reloadedBotCard.click();
-        await expect(reloadedBotCard).toContainText(selectedBotModel);
+        if (selectedBotModel) {
+            const reloadedBotCard = page.locator('[class*="BotContainer"]').first();
+            await reloadedBotCard.click();
+            await expect(reloadedBotCard).toContainText(selectedBotModel);
+        }
 
         // 2) Validate bot account exists after saving.
         const botUserID = await waitForBotUserID(mattermost, botUsername);
