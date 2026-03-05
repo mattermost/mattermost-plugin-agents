@@ -35,6 +35,8 @@ type Config struct {
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                             mcp.Config                       `json:"mcp"`
 	WebSearch                       WebSearchConfig                  `json:"webSearch"`
+	EnableOpenTelemetry             bool                             `json:"enableOpenTelemetry"`
+	OpenTelemetryEndpoint           string                           `json:"openTelemetryEndpoint"`
 }
 
 type WebSearchConfig struct {

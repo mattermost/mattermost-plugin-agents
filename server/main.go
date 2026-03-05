@@ -29,6 +29,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-ai/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -50,6 +51,7 @@ type Plugin struct {
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
+	telemetryShutdown    telemetry.ShutdownFunc
 }
 
 type pluginLogger struct {
@@ -286,6 +288,18 @@ func (p *Plugin) OnActivate() error {
 		llmUpstreamHTTPClient,
 	)
 
+	// Initialize OpenTelemetry tracing if enabled
+	cfg := p.configuration.Config()
+	if cfg.EnableOpenTelemetry {
+		shutdown, telErr := telemetry.Init(context.Background(), "mattermost-ai-agents", manifest.Version, cfg.OpenTelemetryEndpoint)
+		if telErr != nil {
+			pluginAPI.Log.Error("Failed to initialize OpenTelemetry", "error", telErr)
+		} else {
+			p.telemetryShutdown = shutdown
+			pluginAPI.Log.Info("OpenTelemetry tracing initialized", "endpoint", cfg.OpenTelemetryEndpoint)
+		}
+	}
+
 	// Keep only what we need
 	p.pluginAPI = pluginAPI
 	p.apiService = apiService
@@ -298,6 +312,13 @@ func (p *Plugin) OnActivate() error {
 }
 
 func (p *Plugin) OnDeactivate() error {
+	// Flush pending telemetry spans
+	if p.telemetryShutdown != nil {
+		if err := p.telemetryShutdown(context.Background()); err != nil {
+			p.pluginAPI.Log.Error("Failed to shutdown OpenTelemetry", "error", err)
+		}
+	}
+
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()
 
