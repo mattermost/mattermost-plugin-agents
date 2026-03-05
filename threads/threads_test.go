@@ -102,7 +102,12 @@ func TestThreadsAnalyze(t *testing.T) {
 			}
 
 			if tc.expectedLLMCalls > 0 {
-				mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything).Return(&llm.TextStreamResult{}, tc.llmError)
+				mockLLM.EXPECT().ChatCompletion(mock.MatchedBy(func(req llm.CompletionRequest) bool {
+					require.NotNil(t, req.Context)
+					require.Equal(t, tc.postID, req.Context.Parameters["ThreadRootPostID"])
+					require.Contains(t, req.Context.Parameters, "Thread")
+					return true
+				}), mock.Anything).Return(&llm.TextStreamResult{}, tc.llmError)
 			}
 
 			threadService := threads.New(mockLLM, prompts, mockClient)

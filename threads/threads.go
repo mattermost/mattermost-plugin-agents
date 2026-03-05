@@ -72,7 +72,10 @@ func (t *Threads) createInitalPosts(postIDToAnalyze string, context *llm.Context
 		return nil, err
 	}
 	formattedThread := format.ThreadData(threadData)
-	context.Parameters = map[string]any{"Thread": formattedThread}
+	context.Parameters = map[string]any{
+		"Thread":           formattedThread,
+		"ThreadRootPostID": postIDToAnalyze,
+	}
 
 	systemPromptName := prompts.PromptSummarizeThreadSystem
 	userPromptName := prompts.PromptThreadUser
