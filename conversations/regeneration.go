@@ -172,19 +172,33 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			return fmt.Errorf("could not get post being responded to: %w", getErr)
 		}
 
-		// Create a context with tools for LLM awareness
-		// Security restriction is enforced inside ProcessUserRequestWithContext via WithToolsDisabled based on channel type
+		// Extract web search context from conversation history to preserve citations
+		// This ensures citations from previous searches work in regenerated responses
+		webSearchParams := c.extractWebSearchContext(respondingToPost)
+
+		var contextOpts []llm.ContextOption
+		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextDefaultTools(bot))
+		if len(webSearchParams) > 0 {
+			contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
+		}
+
+		// Create a context with the tool call callback and preserved web search context
 		contextWithCallback := c.contextBuilder.BuildLLMContextUserRequest(
 			bot,
 			user,
 			channel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot),
+			contextOpts...,
 		)
 
 		// Process the user request with the context that has the callback
-		// Note: ProcessUserRequestWithContext internally checks if this is a DM and applies WithToolsDisabled() if not
+		allowToolsInChannel := allowToolsInChannelFromPost(post)
+		// Defense-in-depth: if config flag is off and not a DM, disable tools regardless of post prop
+		isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+		if !isDM && (c.configProvider == nil || !c.configProvider.EnableChannelMentionToolCalling()) {
+			allowToolsInChannel = false
+		}
 		var processErr error
-		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback)
+		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback, allowToolsInChannel)
 		if processErr != nil {
 			return fmt.Errorf("could not continue conversation on regen: %w", processErr)
 		}

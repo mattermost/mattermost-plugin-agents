@@ -8,9 +8,6 @@ export class AIPlugin {
   readonly regenerateButton: Locator;
   readonly chatHistoryButton: Locator;
   readonly threadsListContainer: Locator;
-  readonly promptTemplates: {
-    [key: string]: Locator;
-  };
 
   constructor(page: Page) {
     this.page = page;
@@ -20,11 +17,6 @@ export class AIPlugin {
     this.regenerateButton = page.getByRole('button', { name: 'Regenerate' });
     this.chatHistoryButton = page.getByTestId('chat-history');
     this.threadsListContainer = page.getByTestId('rhs-threads-list');
-    this.promptTemplates = {
-      'brainstorm': page.getByRole('button', { name: 'Brainstorm ideas' }),
-      'todo': page.getByRole('button', { name: 'To-do list' }),
-      'proscons': page.getByRole('button', { name: 'Pros and Cons' }),
-    };
   }
 
   async openRHS() {
@@ -78,10 +70,6 @@ export class AIPlugin {
     await this.rhsSendButton.click();
   }
 
-  async usePromptTemplate(templateName: keyof typeof this.promptTemplates) {
-    await this.promptTemplates[templateName].click();
-  }
-
   async regenerateResponse() {
     await this.regenerateButton.click();
   }
@@ -107,10 +95,6 @@ export class AIPlugin {
     // 3. Ensure Send button is visible (it may be disabled if textarea is empty, but it should be present)
     // The button being present means the UI has switched back from "generating" mode
     await expect(this.rhsSendButton).toBeVisible({ timeout: 30000 });
-  }
-
-  async expectTextInTextarea(text: string) {
-    await expect(this.rhsPostTextarea).toHaveText(text);
   }
 
   async openChatHistory() {
@@ -169,6 +153,67 @@ export class AIPlugin {
     if (await newChatButton.isVisible().catch(() => false)) {
         await newChatButton.click();
     }
+  }
+
+  async openChannelAnalysisPopover() {
+    // Find the "Ask Agents about this channel" button in the channel header
+    // This button has an AI icon and opens a popover with channel analysis options
+    const channelHeaderButtons = this.page.locator('.channel-header__top, [class*="channel-header"]');
+    const agentsButton = channelHeaderButtons.locator('button').filter({ hasText: /Ask Agents/ }).or(
+      channelHeaderButtons.locator('button[aria-label*="Agents"]')
+    ).or(
+      channelHeaderButtons.locator('button:has(svg)').last()
+    );
+
+    await agentsButton.click({ timeout: 10000 });
+
+    // Wait for the popover to appear
+    const popover = this.page.locator('.channel-summarize-popover');
+    await expect(popover).toBeVisible({ timeout: 10000 });
+
+    // CRITICAL: Wait for bots to be loaded before interacting
+    // The bot name appears in the "GENERATE WITH:" section
+    // If activeBot is null, handleSummarize will silently return without doing anything
+    await expect(popover.getByText('Mock Bot')).toBeVisible({ timeout: 15000 });
+  }
+
+  async sendChannelAnalysisMessage(message: string) {
+    // Type in the channel analysis input field and submit
+    const popover = this.page.locator('.channel-summarize-popover');
+    const input = popover.locator('input[type="text"]');
+
+    // Use fill() to set the value and wait for React state to update
+    await input.fill(message);
+
+    // Verify the input has the expected value before submitting
+    await expect(input).toHaveValue(message);
+
+    // Press Enter to submit - this is processed in the same event loop as React state
+    await input.press('Enter');
+
+    // Wait for RHS to open with the response
+    const rhsContainer = this.page.getByTestId('mattermost-ai-rhs');
+    await expect(rhsContainer).toBeVisible({ timeout: 10000 });
+  }
+
+  async clickSummarizeUnreads() {
+    const popover = this.page.locator('.channel-summarize-popover');
+    const unreadsButton = popover.getByText('Summarize unreads');
+    await unreadsButton.click();
+
+    // Wait for RHS to open with the response
+    const rhsContainer = this.page.getByTestId('mattermost-ai-rhs');
+    await expect(rhsContainer).toBeVisible({ timeout: 10000 });
+  }
+
+  async clickSummarizeDays(days: 7 | 14) {
+    const popover = this.page.locator('.channel-summarize-popover');
+    const daysButton = popover.getByText(`Summarize last ${days} days`);
+    await daysButton.click();
+
+    // Wait for RHS to open with the response
+    const rhsContainer = this.page.getByTestId('mattermost-ai-rhs');
+    await expect(rhsContainer).toBeVisible({ timeout: 10000 });
   }
 
 }

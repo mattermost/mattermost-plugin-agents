@@ -26,6 +26,12 @@ default: all
 # Verify environment, and define PLUGIN_ID, PLUGIN_VERSION, HAS_SERVER and HAS_WEBAPP as needed.
 include build/setup.mk
 
+# The public/ directory contains the bridgeclient Go module for external consumption,
+# not HTTP assets. Override HAS_PUBLIC to prevent bundling these files.
+# TODO: Move bridgeclient to a top-level client/ directory for a cleaner import path.
+HAS_PUBLIC :=
+$(info Note: public/ directory contains Go modules, not HTTP assets - skipping bundle)
+
 BUNDLE_NAME ?= $(PLUGIN_ID)-$(PLUGIN_VERSION).tar.gz
 
 # Include custom makefile, if present
@@ -317,12 +323,12 @@ evalviewer:
 ## Environment variables:
 ##   LLM_PROVIDER: openai, anthropic, azure, all, or comma-separated (default: all)
 ##   OPENAI_API_KEY: OpenAI API key
-##   OPENAI_MODEL: Model to use for OpenAI (default: gpt-4o)
+##   OPENAI_MODEL: Model to use for OpenAI (overrides code default)
 ##   ANTHROPIC_API_KEY: Anthropic API key
-##   ANTHROPIC_MODEL: Model to use for Anthropic (default: claude-sonnet-4-20250514)
+##   ANTHROPIC_MODEL: Model to use for Anthropic (overrides code default)
 ##   AZURE_OPENAI_API_KEY: Azure OpenAI API key
 ##   AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
-##   AZURE_OPENAI_MODEL: Model to use for Azure OpenAI (default: gpt-4o)
+##   AZURE_OPENAI_MODEL: Model to use for Azure OpenAI (overrides code default)
 .PHONY: evals
 evals: evalviewer
 	@echo Running evaluations interactively...

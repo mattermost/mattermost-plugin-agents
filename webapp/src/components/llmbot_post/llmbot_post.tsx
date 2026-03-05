@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {FormattedMessage} from 'react-intl';
 import {useSelector} from 'react-redux';
 import styled from 'styled-components';
@@ -9,13 +9,14 @@ import styled from 'styled-components';
 import {WebSocketMessage} from '@mattermost/client';
 import {GlobalState} from '@mattermost/types/store';
 
-import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
+import {doPostbackSummary, doRegenerate, doStopGenerating, getToolCallPrivate, getToolResultPrivate} from '@/client';
 import {useSelectNotAIPost} from '@/hooks';
 import {PostMessagePreview} from '@/mm_webapp';
 
 import {SearchSources} from '../search_sources';
 import PostText from '../post_text';
 import ToolApprovalSet from '../tool_approval_set';
+import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
 
 import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
@@ -30,23 +31,6 @@ export interface PostUpdateWebsocketMessage {
     tool_call?: string
     reasoning?: string
     annotations?: string
-}
-
-export enum ToolCallStatus {
-    Pending = 0,
-    Accepted = 1,
-    Rejected = 2,
-    Error = 3,
-    Success = 4
-}
-
-export interface ToolCall {
-    id: string;
-    name: string;
-    description: string;
-    arguments: any;
-    result?: string;
-    status: ToolCallStatus;
 }
 
 interface LLMBotPostProps {
@@ -76,6 +60,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         }
         return [];
     });
+    const [privateToolCalls, setPrivateToolCalls] = useState<ToolCall[] | null>(null);
+    const [privateToolResults, setPrivateToolResults] = useState<ToolCall[] | null>(null);
 
     // State for annotations/citations - initialize from persisted annotations if available
     const [annotations, setAnnotations] = useState<Annotation[]>(() => {
@@ -116,7 +102,15 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
 
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
+    const channel = useSelector<GlobalState, {type?: string} | undefined>(
+        (state) => state.entities.channels.channels[props.post.channel_id],
+    );
+    const isDM = channel?.type === 'D';
     const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
+    const requesterIsCurrentUser = (props.post.props?.llm_requester_user_id === currentUserId);
+    const isToolCallRedacted = String(props.post.props?.pending_tool_call_redacted).toLowerCase() === 'true';
+    const hasPendingToolResult = Boolean(props.post.props?.pending_tool_result);
+    const toolApprovalStage: ToolApprovalStage = hasPendingToolResult ? 'result' : 'call';
 
     // Initialize reasoning from persisted data when navigating to different posts
     const previousPostIdRef = useRef(props.post.id);
@@ -163,6 +157,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             } else {
                 setToolCalls([]);
             }
+            setPrivateToolCalls(null);
+            setPrivateToolResults(null);
 
             // Set precontent if this is a fresh empty post (no content, no reasoning, no tool calls, no annotations)
             // Otherwise reset to false (historical posts or posts with any content)
@@ -190,6 +186,68 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
         }
     }, [props.post.props?.pending_tool_call]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        if (requesterIsCurrentUser && isToolCallRedacted && toolCalls.length > 0) {
+            getToolCallPrivate(props.post.id).then((data) => {
+                if (cancelled) {
+                    return;
+                }
+
+                // Only update state if data is a non-empty array; preserve
+                // previously fetched data when the server returns null after
+                // the tool call flow completes.
+                if (Array.isArray(data) && data.length > 0) {
+                    setPrivateToolCalls(data);
+                }
+            }).catch(() => {
+                // Don't reset — preserve previously fetched data
+            });
+        } else {
+            setPrivateToolCalls(null);
+        }
+
+        return () => {
+            cancelled = true;
+        };
+    }, [props.post.id, requesterIsCurrentUser, isToolCallRedacted, toolApprovalStage, toolCalls.length, props.post.props?.pending_tool_call]);
+
+    // Check if any tool calls have completed (Success or Error status) - used to
+    // determine when to fetch private results even after the approval flow completes.
+    const hasCompletedToolCalls = useMemo(() => {
+        return toolCalls.some((tc) =>
+            tc.status === ToolCallStatus.Success || tc.status === ToolCallStatus.Error,
+        );
+    }, [toolCalls]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        if (requesterIsCurrentUser && isToolCallRedacted && hasCompletedToolCalls) {
+            getToolResultPrivate(props.post.id).then((data) => {
+                if (cancelled) {
+                    return;
+                }
+
+                // Only update state if data is a non-empty array; preserve
+                // previously fetched data when the server returns null after
+                // the tool call flow completes.
+                if (Array.isArray(data) && data.length > 0) {
+                    setPrivateToolResults(data);
+                }
+            }).catch(() => {
+                // Don't reset — preserve previously fetched data
+            });
+        } else {
+            setPrivateToolResults(null);
+        }
+
+        return () => {
+            cancelled = true;
+        };
+    }, [props.post.id, requesterIsCurrentUser, isToolCallRedacted, hasCompletedToolCalls, props.post.props?.pending_tool_result]);
 
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
@@ -236,6 +294,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     try {
                         const parsedToolCalls = JSON.parse(data.tool_call);
                         setToolCalls(parsedToolCalls);
+                        setPrivateToolCalls(null);
+                        setPrivateToolResults(null);
                         setPrecontent(false); // Clear "Starting..." when tool calls arrive
                     } catch (error) {
                         // Handle error silently
@@ -286,6 +346,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     // Clear tool calls and annotations when starting new generation
                     setToolCalls([]);
                     setAnnotations([]);
+                    setPrivateToolCalls(null);
+                    setPrivateToolResults(null);
 
                     if (!message) {
                         setMessage('');
@@ -320,6 +382,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
         // Clear tool calls when regenerating
         setToolCalls([]);
+        setPrivateToolCalls(null);
+        setPrivateToolResults(null);
 
         doRegenerate(props.post.id);
     };
@@ -336,7 +400,51 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         selectPost(result.rootid, result.channelid);
     };
 
-    const requesterIsCurrentUser = (props.post.props?.llm_requester_user_id === currentUserId);
+    const mergedToolCalls = useMemo(() => {
+        if (!privateToolCalls || privateToolCalls.length === 0) {
+            return toolCalls;
+        }
+
+        const publicById = new Map(toolCalls.map((call) => [call.id, call]));
+        return privateToolCalls.map((call) => {
+            const publicCall = publicById.get(call.id);
+            if (!publicCall) {
+                return call;
+            }
+            return {
+                ...publicCall,
+                arguments: call.arguments,
+            };
+        });
+    }, [privateToolCalls, toolCalls]);
+
+    const resolvedToolCalls = useMemo(() => {
+        if (privateToolResults && privateToolResults.length > 0) {
+            return privateToolResults;
+        }
+        return mergedToolCalls;
+    }, [mergedToolCalls, privateToolResults]);
+
+    const showToolArguments = useMemo(() => {
+        if (!isToolCallRedacted) {
+            return true;
+        }
+        if (!requesterIsCurrentUser) {
+            return false;
+        }
+        return Boolean(privateToolCalls?.length || privateToolResults?.length);
+    }, [isToolCallRedacted, requesterIsCurrentUser, privateToolCalls, privateToolResults]);
+
+    const showToolResults = useMemo(() => {
+        if (!isToolCallRedacted) {
+            return true;
+        }
+        if (!requesterIsCurrentUser) {
+            return false;
+        }
+        return Boolean(privateToolResults?.length);
+    }, [isToolCallRedacted, requesterIsCurrentUser, privateToolResults]);
+
     const isThreadSummaryPost = (props.post.props?.referenced_thread && props.post.props?.referenced_thread !== '');
     const isNoShowRegen = (props.post.props?.no_regen && props.post.props?.no_regen !== '');
     const isTranscriptionResult = rootPost?.props?.referenced_transcript_post_id && rootPost?.props?.referenced_transcript_post_id !== '';
@@ -357,7 +465,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Consider both generating and reasoning loading states for determining if generation is in progress
     const isGenerationInProgress = generating || isReasoningLoading;
 
-    const showRegenerate = !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
+    const showRegenerate = isDM && !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
     const showPostbackButton = !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
     const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
     const hasContent = message !== '' || reasoningSummary !== '';
@@ -383,7 +491,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             )}
             {precontent && (
                 <MinimalReasoningContainer>
-                    <LoadingSpinner/>
+                    <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>
                     <span>
                         <FormattedMessage defaultMessage='Starting...'/>
                     </span>
@@ -401,10 +509,15 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     sources={JSON.parse(props.post.props[SearchResultsPropKey])}
                 />
             )}
-            {toolCalls && toolCalls.length > 0 && (
+            {resolvedToolCalls && resolvedToolCalls.length > 0 && (
                 <ToolApprovalSet
                     postID={props.post.id}
-                    toolCalls={toolCalls}
+                    toolCalls={resolvedToolCalls}
+                    approvalStage={toolApprovalStage}
+                    canApprove={requesterIsCurrentUser}
+                    canExpand={requesterIsCurrentUser}
+                    showArguments={showToolArguments}
+                    showResults={showToolResults}
                 />
             )}
             { showPostbackButton &&
@@ -430,13 +543,20 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 const PostBody = styled.div`
 `;
 
+const SpinnerWrapper = styled.div`
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+`;
+
 const PostSummaryHelpMessage = styled.div`
 	font-size: 14px;
 	font-style: italic;
 	font-weight: 400;
 	line-height: 20px;
 	border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-
 	padding-top: 8px;
 	padding-bottom: 8px;
 	margin-top: 16px;

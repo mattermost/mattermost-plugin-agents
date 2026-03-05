@@ -5,7 +5,9 @@ package mcp
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"golang.org/x/oauth2"
 )
@@ -16,23 +18,33 @@ type authenticationTransport struct {
 	serverName string
 	serverURL  string
 	manager    *OAuthManager
+	base       http.RoundTripper
 }
 
-type mcpUnauthrorized struct {
+type mcpUnauthorized struct {
 	metadataURL string
 	err         error
 }
 
-func (e *mcpUnauthrorized) Error() string {
+func drainAndCloseResponseBody(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+}
+
+func (e *mcpUnauthorized) Error() string {
 	if e.err != nil {
 		return fmt.Sprintf("OAuth authentication needed for resource at %s: Got error: %v", e.metadataURL, e.err)
 	}
 	return fmt.Sprintf("OAuth authentication needed for resource at %s", e.metadataURL)
 }
-func (e *mcpUnauthrorized) MetadataURL() string {
+func (e *mcpUnauthorized) MetadataURL() string {
 	return e.metadataURL
 }
-func (e *mcpUnauthrorized) Unwrap() error {
+func (e *mcpUnauthorized) Unwrap() error {
 	return e.err
 }
 
@@ -52,7 +64,7 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 		return nil, fmt.Errorf("failed to load token: %w", err)
 	}
 
-	transport := http.DefaultTransport
+	transport := t.base
 
 	// Include the token if found
 	if token != nil {
@@ -70,6 +82,20 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 	reqBodyClosed = true
 	resp, err := transport.RoundTrip(req)
 	if err != nil {
+		// Check if this is an OAuth token refresh failure (invalid_grant)
+		// This happens when client credentials changed (e.g., v1 -> v2 migration)
+		// and the old token was issued for different credentials
+		if strings.Contains(err.Error(), "invalid_grant") {
+			// Clear the stale token - it's no longer valid with current credentials
+			if delErr := t.manager.deleteToken(t.userID, t.serverName); delErr != nil {
+				t.manager.pluginAPI.LogWarn("Failed to delete stale token", "error", delErr)
+			}
+			// Return error that will trigger re-authentication
+			return nil, &mcpUnauthorized{
+				metadataURL: "",
+				err:         fmt.Errorf("token refresh failed (credentials may have changed), re-authentication required: %w", err),
+			}
+		}
 		return nil, fmt.Errorf("authenticationTransport round trip failed: %w", err)
 	}
 
@@ -80,15 +106,22 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 		if wwwAuthHeader != "" {
 			metadataURL, parseErr := parseWWWAuthenticateHeader(wwwAuthHeader)
 			if parseErr != nil {
-				return nil, &mcpUnauthrorized{
+				drainAndCloseResponseBody(resp)
+				return nil, &mcpUnauthorized{
 					metadataURL: "",
 					err:         fmt.Errorf("failed to parse WWW-Authenticate header: %w", parseErr),
 				}
 			}
 
-			return nil, &mcpUnauthrorized{
+			drainAndCloseResponseBody(resp)
+			return nil, &mcpUnauthorized{
 				metadataURL: metadataURL,
 			}
+		}
+		drainAndCloseResponseBody(resp)
+		return nil, &mcpUnauthorized{
+			metadataURL: "",
+			err:         fmt.Errorf("received 401 response without WWW-Authenticate header"),
 		}
 	}
 

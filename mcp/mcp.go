@@ -19,6 +19,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -51,10 +52,11 @@ func DiscoverRemoteServerTools(
 	serverConfig ServerConfig,
 	log pluginapi.LogService,
 	oauthManger *OAuthManager,
+	httpClient *http.Client,
 	toolsCache *ToolsCache,
 ) ([]ToolInfo, error) {
 	// Create and connect to the remote server
-	client, err := NewClient(ctx, userID, serverConfig, log, oauthManger, toolsCache)
+	client, err := NewClient(ctx, userID, serverConfig, log, oauthManger, httpClient, toolsCache)
 	if err != nil {
 		return nil, err
 	}

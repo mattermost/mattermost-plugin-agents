@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -288,167 +289,241 @@ func (b *Bedrock) createConfig(opts []llm.LanguageModelOption) llm.LanguageModel
 	return cfg
 }
 
-func (b *Bedrock) streamChatWithTools(state messageState) {
-	if state.depth >= MaxToolResolutionDepth {
-		state.output <- llm.TextStreamEvent{
-			Type:  llm.EventTypeError,
-			Value: fmt.Errorf("max tool resolution depth (%d) exceeded", MaxToolResolutionDepth),
+// toolUseData tracks a tool use block with accumulated input
+type toolUseData struct {
+	id        string
+	name      string
+	inputJSON strings.Builder
+}
+
+// getInputJSON returns the input JSON string, defaulting to "{}" if empty
+func (t *toolUseData) getInputJSON() string {
+	if s := t.inputJSON.String(); s != "" {
+		return s
+	}
+	return "{}"
+}
+
+// extractToolCallsFromBlocks converts tool use blocks into ToolCalls
+func extractToolCallsFromBlocks(toolBlocks map[int]*toolUseData) []llm.ToolCall {
+	keys := make([]int, 0, len(toolBlocks))
+	for k := range toolBlocks {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+
+	toolCalls := make([]llm.ToolCall, 0, len(toolBlocks))
+	for _, k := range keys {
+		toolBlock := toolBlocks[k]
+		toolCalls = append(toolCalls, llm.ToolCall{
+			ID:        toolBlock.id,
+			Name:      toolBlock.name,
+			Arguments: []byte(toolBlock.getInputJSON()),
+		})
+	}
+	return toolCalls
+}
+
+// buildBedrockAssistantMessage creates an assistant message from accumulated content
+func buildBedrockAssistantMessage(textContent string, toolBlocks map[int]*toolUseData) types.Message {
+	content := make([]types.ContentBlock, 0, len(toolBlocks)+1)
+
+	if textContent != "" {
+		content = append(content, &types.ContentBlockMemberText{
+			Value: textContent,
+		})
+	}
+
+	// Sort keys for deterministic ordering
+	indices := make([]int, 0, len(toolBlocks))
+	for idx := range toolBlocks {
+		indices = append(indices, idx)
+	}
+	slices.Sort(indices)
+
+	for _, idx := range indices {
+		toolBlock := toolBlocks[idx]
+		var inputDoc map[string]interface{}
+		if err := json.Unmarshal([]byte(toolBlock.getInputJSON()), &inputDoc); err != nil {
+			inputDoc = make(map[string]interface{})
 		}
-		return
+
+		content = append(content, &types.ContentBlockMemberToolUse{
+			Value: types.ToolUseBlock{
+				ToolUseId: aws.String(toolBlock.id),
+				Name:      aws.String(toolBlock.name),
+				Input:     document.NewLazyDocument(inputDoc),
+			},
+		})
 	}
 
-	// Set up parameters for the Bedrock API
-	params := &bedrockruntime.ConverseStreamInput{
-		ModelId:  aws.String(state.config.Model),
-		Messages: state.messages,
+	return types.Message{
+		Role:    types.ConversationRoleAssistant,
+		Content: content,
+	}
+}
+
+// buildBedrockToolResultsMessage creates a user message containing tool results
+func buildBedrockToolResultsMessage(results []llm.AutoRunResult) types.Message {
+	content := make([]types.ContentBlock, 0, len(results))
+
+	for _, result := range results {
+		content = append(content, &types.ContentBlockMemberToolResult{
+			Value: types.ToolResultBlock{
+				ToolUseId: aws.String(result.ToolCallID),
+				Content: []types.ToolResultContentBlock{
+					&types.ToolResultContentBlockMemberText{
+						Value: result.Result,
+					},
+				},
+				Status: toolResultStatus(result.IsError),
+			},
+		})
 	}
 
-	// Only include system messages if non-empty
-	if len(state.system) > 0 {
-		params.System = state.system
+	return types.Message{
+		Role:    types.ConversationRoleUser,
+		Content: content,
 	}
+}
 
-	// Add inference configuration, check for overflow to avoid int -> int32 conversion issues
-	maxTokens := state.config.MaxGeneratedTokens
-	if maxTokens > 2147483647 { // math.MaxInt32
-		state.output <- llm.TextStreamEvent{
-			Type:  llm.EventTypeError,
-			Value: fmt.Errorf("max token value (%d) exceeds int32 maximum", maxTokens),
-		}
-		return
+func toolResultStatus(isError bool) types.ToolResultStatus {
+	if isError {
+		return types.ToolResultStatusError
 	}
-	params.InferenceConfig = &types.InferenceConfiguration{
-		MaxTokens: aws.Int32(int32(maxTokens)), //nolint:gosec // G115: Overflow checked above
-	}
+	return types.ToolResultStatusSuccess
+}
 
-	// Add tools if present
-	if len(state.tools) > 0 {
-		params.ToolConfig = &types.ToolConfiguration{
-			Tools: convertTools(state.tools),
-		}
-	}
+func (b *Bedrock) streamChatWithTools(initialState messageState) {
+	state := initialState
 
-	stream, err := b.client.ConverseStream(context.Background(), params)
-	if err != nil {
-		state.output <- llm.TextStreamEvent{
-			Type:  llm.EventTypeError,
-			Value: fmt.Errorf("error starting stream: %w", err),
-		}
-		return
+	sendError := func(err error) {
+		state.output <- llm.TextStreamEvent{Type: llm.EventTypeError, Value: err}
 	}
-
-	eventStream := stream.GetStream()
-	defer eventStream.Close()
-
-	var pendingToolCalls []llm.ToolCall
-	// Track tool use blocks with their accumulated input as JSON strings
-	type toolUseData struct {
-		id        string
-		name      string
-		inputJSON strings.Builder
-	}
-	var currentToolUseBlocks []*toolUseData
-	var stopReason types.StopReason
 
 	for {
-		event, ok := <-eventStream.Events()
-		if !ok {
-			break
+		if state.depth >= MaxToolResolutionDepth {
+			sendError(fmt.Errorf("max tool resolution depth (%d) exceeded", MaxToolResolutionDepth))
+			return
 		}
 
-		switch e := event.(type) {
-		case *types.ConverseStreamOutputMemberMessageStart:
-			// Message starting - no action needed
+		params := &bedrockruntime.ConverseStreamInput{
+			ModelId:  aws.String(state.config.Model),
+			Messages: state.messages,
+		}
 
-		case *types.ConverseStreamOutputMemberContentBlockStart:
-			// Content block starting - track if it's a tool use block
-			if e.Value.Start != nil {
-				if start, ok := e.Value.Start.(*types.ContentBlockStartMemberToolUse); ok {
-					currentToolUseBlocks = append(currentToolUseBlocks, &toolUseData{
-						id:   aws.ToString(start.Value.ToolUseId),
-						name: aws.ToString(start.Value.Name),
-					})
-				}
+		if len(state.system) > 0 {
+			params.System = state.system
+		}
+
+		maxTokens := state.config.MaxGeneratedTokens
+		if maxTokens > 2147483647 { // math.MaxInt32
+			sendError(fmt.Errorf("max token value (%d) exceeds int32 maximum", maxTokens))
+			return
+		}
+		params.InferenceConfig = &types.InferenceConfiguration{
+			MaxTokens: aws.Int32(int32(maxTokens)), //nolint:gosec // G115: Overflow checked above
+		}
+
+		if !state.config.ToolsDisabled && len(state.tools) > 0 {
+			params.ToolConfig = &types.ToolConfiguration{
+				Tools: convertTools(state.tools),
 			}
+		}
 
-		case *types.ConverseStreamOutputMemberContentBlockDelta:
-			// Handle delta events
-			if e.Value.Delta != nil {
+		stream, err := b.client.ConverseStream(context.Background(), params)
+		if err != nil {
+			sendError(fmt.Errorf("error starting stream: %w", err))
+			return
+		}
+
+		eventStream := stream.GetStream()
+		currentToolUseBlocks := make(map[int]*toolUseData)
+		var stopReason types.StopReason
+		var accumulatedText strings.Builder
+
+		for event := range eventStream.Events() {
+			switch e := event.(type) {
+			case *types.ConverseStreamOutputMemberContentBlockStart:
+				if e.Value.Start == nil || e.Value.ContentBlockIndex == nil {
+					continue
+				}
+				start, ok := e.Value.Start.(*types.ContentBlockStartMemberToolUse)
+				if !ok {
+					continue
+				}
+				idx := int(*e.Value.ContentBlockIndex)
+				currentToolUseBlocks[idx] = &toolUseData{
+					id:   aws.ToString(start.Value.ToolUseId),
+					name: aws.ToString(start.Value.Name),
+				}
+
+			case *types.ConverseStreamOutputMemberContentBlockDelta:
+				if e.Value.Delta == nil {
+					continue
+				}
 				switch delta := e.Value.Delta.(type) {
 				case *types.ContentBlockDeltaMemberText:
-					state.output <- llm.TextStreamEvent{
-						Type:  llm.EventTypeText,
-						Value: delta.Value,
-					}
+					state.output <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: delta.Value}
+					accumulatedText.WriteString(delta.Value)
 				case *types.ContentBlockDeltaMemberToolUse:
-					// Accumulate tool use input JSON
-					if e.Value.ContentBlockIndex != nil && int(*e.Value.ContentBlockIndex) < len(currentToolUseBlocks) {
-						idx := int(*e.Value.ContentBlockIndex)
-						if delta.Value.Input != nil {
-							currentToolUseBlocks[idx].inputJSON.WriteString(aws.ToString(delta.Value.Input))
-						}
+					if e.Value.ContentBlockIndex == nil || delta.Value.Input == nil {
+						continue
+					}
+					idx := int(*e.Value.ContentBlockIndex)
+					if toolBlock, ok := currentToolUseBlocks[idx]; ok {
+						toolBlock.inputJSON.WriteString(aws.ToString(delta.Value.Input))
+					}
+				}
+
+			case *types.ConverseStreamOutputMemberMessageStop:
+				if e.Value.StopReason != "" {
+					stopReason = e.Value.StopReason
+				}
+
+			case *types.ConverseStreamOutputMemberMetadata:
+				if e.Value.Usage != nil {
+					state.output <- llm.TextStreamEvent{
+						Type: llm.EventTypeUsage,
+						Value: llm.TokenUsage{
+							InputTokens:  int64(aws.ToInt32(e.Value.Usage.InputTokens)),
+							OutputTokens: int64(aws.ToInt32(e.Value.Usage.OutputTokens)),
+						},
 					}
 				}
 			}
+		}
 
-		case *types.ConverseStreamOutputMemberContentBlockStop:
-			// Content block completed
+		eventStream.Close()
 
-		case *types.ConverseStreamOutputMemberMessageStop:
-			// Message completed
-			if e.Value.StopReason != "" {
-				stopReason = e.Value.StopReason
+		if err := eventStream.Err(); err != nil {
+			sendError(fmt.Errorf("error from bedrock stream: %w", err))
+			return
+		}
+
+		if stopReason == types.StopReasonToolUse && len(currentToolUseBlocks) > 0 {
+			pendingToolCalls := extractToolCallsFromBlocks(currentToolUseBlocks)
+
+			if llm.ShouldAutoRunTools(pendingToolCalls, state.config.AutoRunTools) {
+				state.messages = append(state.messages,
+					buildBedrockAssistantMessage(accumulatedText.String(), currentToolUseBlocks))
+
+				toolResults := llm.ExecuteAutoRunTools(
+					pendingToolCalls,
+					state.resolver,
+					state.context,
+				)
+
+				state.messages = append(state.messages, buildBedrockToolResultsMessage(toolResults))
+				state.depth++
+				continue
 			}
 
-		case *types.ConverseStreamOutputMemberMetadata:
-			// Extract token usage
-			if e.Value.Usage != nil {
-				usage := llm.TokenUsage{
-					InputTokens:  int64(aws.ToInt32(e.Value.Usage.InputTokens)),
-					OutputTokens: int64(aws.ToInt32(e.Value.Usage.OutputTokens)),
-				}
-				state.output <- llm.TextStreamEvent{
-					Type:  llm.EventTypeUsage,
-					Value: usage,
-				}
-			}
+			state.output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: pendingToolCalls}
 		}
-	}
 
-	if err := eventStream.Err(); err != nil {
-		state.output <- llm.TextStreamEvent{
-			Type:  llm.EventTypeError,
-			Value: fmt.Errorf("error from bedrock stream: %w", err),
-		}
+		state.output <- llm.TextStreamEvent{Type: llm.EventTypeEnd, Value: nil}
 		return
-	}
-
-	// Check for tool usage
-	if stopReason == types.StopReasonToolUse && len(currentToolUseBlocks) > 0 {
-		for _, toolBlock := range currentToolUseBlocks {
-			inputJSON := toolBlock.inputJSON.String()
-			if inputJSON == "" {
-				inputJSON = "{}"
-			}
-
-			pendingToolCalls = append(pendingToolCalls, llm.ToolCall{
-				ID:          toolBlock.id,
-				Name:        toolBlock.name,
-				Description: "",
-				Arguments:   []byte(inputJSON),
-			})
-		}
-
-		state.output <- llm.TextStreamEvent{
-			Type:  llm.EventTypeToolCalls,
-			Value: pendingToolCalls,
-		}
-	}
-
-	// Send end event
-	state.output <- llm.TextStreamEvent{
-		Type:  llm.EventTypeEnd,
-		Value: nil,
 	}
 }
 
@@ -502,8 +577,8 @@ func (b *Bedrock) CountTokens(text string) int {
 
 // convertTools converts from llm.Tool to Bedrock types.Tool format
 func convertTools(tools []llm.Tool) []types.Tool {
-	converted := make([]types.Tool, len(tools))
-	for i, tool := range tools {
+	converted := make([]types.Tool, 0, len(tools))
+	for _, tool := range tools {
 		// Marshal the schema to a document
 		schemaJSON, err := json.Marshal(tool.Schema)
 		if err != nil {
@@ -515,7 +590,7 @@ func convertTools(tools []llm.Tool) []types.Tool {
 			continue
 		}
 
-		converted[i] = &types.ToolMemberToolSpec{
+		converted = append(converted, &types.ToolMemberToolSpec{
 			Value: types.ToolSpecification{
 				Name:        aws.String(tool.Name),
 				Description: aws.String(tool.Description),
@@ -523,7 +598,7 @@ func convertTools(tools []llm.Tool) []types.Tool {
 					Value: document.NewLazyDocument(schemaDoc),
 				},
 			},
-		}
+		})
 	}
 	return converted
 }

@@ -52,6 +52,38 @@ type Plugin struct {
 	mcpClientManager     *mcp.ClientManager
 }
 
+type pluginLogger struct {
+	service *pluginapi.LogService
+}
+
+func (l *pluginLogger) Debug(message string, keyValuePairs ...any) {
+	if l == nil || l.service == nil {
+		return
+	}
+	l.service.Debug(message, keyValuePairs...)
+}
+
+func (l *pluginLogger) Info(message string, keyValuePairs ...any) {
+	if l == nil || l.service == nil {
+		return
+	}
+	l.service.Info(message, keyValuePairs...)
+}
+
+func (l *pluginLogger) Warn(message string, keyValuePairs ...any) {
+	if l == nil || l.service == nil {
+		return
+	}
+	l.service.Warn(message, keyValuePairs...)
+}
+
+func (l *pluginLogger) Error(message string, keyValuePairs ...any) {
+	if l == nil || l.service == nil {
+		return
+	}
+	l.service.Error(message, keyValuePairs...)
+}
+
 func (p *Plugin) OnActivate() error {
 	pluginAPI := pluginapi.NewClient(p.API, p.Driver)
 	mmClient := mmapi.NewClient(pluginAPI)
@@ -62,6 +94,16 @@ func (p *Plugin) OnActivate() error {
 
 	llmUpstreamHTTPClient := httpservice.MakeHTTPServicePlugin(p.API).MakeClient(true)
 	llmUpstreamHTTPClient.Timeout = time.Minute * 10 // LLM requests can be slow
+
+	// Tune connection pool for LLM streaming: shorter idle timeout to avoid
+	// reusing stale connections after SSE streams close during tool calling,
+	// and more idle connections per host for concurrent LLM requests.
+	if mmTransport, ok := llmUpstreamHTTPClient.Transport.(*httpservice.MattermostTransport); ok {
+		if transport, ok := mmTransport.Transport.(*http.Transport); ok {
+			transport.IdleConnTimeout = 30 * time.Second
+			transport.MaxIdleConnsPerHost = 10
+		}
+	}
 
 	untrustedHTTPClient := httpservice.MakeHTTPServicePlugin(p.API).MakeClient(false)
 
@@ -82,12 +124,7 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Info("In-memory configuration updated after migrations")
 	}
 
-	tokenLogger, err := llm.CreateTokenLogger()
-	if err != nil {
-		return fmt.Errorf("failed to create token usage logger: %w", err)
-	}
-
-	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient, tokenLogger, metricsService)
+	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient, metricsService)
 	p.configuration.RegisterUpdateListener(func() {
 		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
@@ -121,7 +158,7 @@ func (p *Plugin) OnActivate() error {
 		licenseChecker,
 	)
 	if err != nil {
-		pluginAPI.Log.Error("failed to initialize search infrastructure", "error", err)
+		pluginAPI.Log.Warn("failed to initialize search infrastructure", "error", err)
 		// Continue without search functionality
 	}
 
@@ -135,10 +172,15 @@ func (p *Plugin) OnActivate() error {
 		licenseChecker,
 	)
 
+	webSearchService := mmtools.NewWebSearchService(func() *config.Config {
+		return p.configuration.Config()
+	}, &pluginLogger{service: &pluginAPI.Log}, untrustedHTTPClient)
+
 	toolProvider := mmtools.NewMMToolProvider(
 		mmClient,
 		searchService,
 		untrustedHTTPClient,
+		webSearchService,
 	)
 
 	// Build redirect URI
@@ -161,7 +203,7 @@ func (p *Plugin) OnActivate() error {
 		}
 	}
 
-	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL), embeddedMCPServer)
+	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient), embeddedMCPServer, untrustedHTTPClient)
 	p.configuration.RegisterUpdateListener(func() {
 		var embeddedServer mcp.EmbeddedMCPServer
 		var embeddedErr error
@@ -192,6 +234,7 @@ func (p *Plugin) OnActivate() error {
 		licenseChecker,
 		i18nBundle,
 		nil, // meetingsService will be set after it's created
+		&p.configuration,
 	)
 
 	meetingsService := meetings.NewService(

@@ -60,13 +60,12 @@ test.describe('Bot Management UI', () => {
         // Navigate to system console
         await systemConsole.navigateToPluginConfig(mattermost.url());
 
-        // Wait for the page to fully load and any migrations to complete
-        // The "Add an AI Agent" button should be visible when the page is ready
-        const addBotButton = systemConsole.getAddBotButton();
-        await expect(addBotButton).toBeVisible();
+        // Wait for the bots panel to be fully loaded
+        await systemConsole.waitForBotsPanel();
 
-        // Wait a bit for any async operations to complete
-        await page.waitForTimeout(1000);
+        // The "Add an AI Agent" button should be visible when there are no bots
+        const addBotButton = systemConsole.getAddBotButton();
+        await expect(addBotButton).toBeVisible({ timeout: 10000 });
 
         // Count existing bot cards before adding a new one
         const existingBotCards = page.locator('[class*="BotContainer"]');
@@ -122,8 +121,9 @@ test.describe('Bot Management UI', () => {
         // Verify bot appears with configured values in the bots list
         await expect(botsListSection.getByText('Test Assistant')).toBeVisible();
 
-        // Verify the bot also appears in the default agent dropdown
-        const defaultAgentDropdown = page.getByLabel(/default agent/i).or(page.locator('text=Default agent').locator('..').getByRole('combobox'));
-        await expect(defaultAgentDropdown).toContainText('Test Assistant');
+        // Verify the bot also appears in the default bot dropdown
+        const defaultBotDropdown = page.getByText('Default bot').locator('..').getByRole('combobox');
+        await defaultBotDropdown.scrollIntoViewIfNeeded();
+        await expect(defaultBotDropdown).toContainText('Test Assistant');
     });
 });

@@ -71,6 +71,10 @@ func (b *Builder) WithLLMContextServerInfo() llm.ContextOption {
 			c.ServerName = *b.pluginAPI.Configuration.GetConfig().TeamSettings.SiteName
 		}
 
+		if b.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL != nil {
+			c.SiteURL = *b.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
+		}
+
 		if license := b.pluginAPI.System.GetLicense(); license != nil && license.Customer != nil {
 			c.CompanyName = license.Customer.Company
 		}
@@ -80,7 +84,6 @@ func (b *Builder) WithLLMContextServerInfo() llm.ContextOption {
 func (b *Builder) WithLLMContextChannel(channel *model.Channel) llm.ContextOption {
 	return func(c *llm.Context) {
 		c.Channel = channel
-
 		if channel == nil || (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) {
 			return
 		}
@@ -198,13 +201,10 @@ func (b *Builder) WithLLMContextParameters(params map[string]interface{}) llm.Co
 
 func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 	return func(c *llm.Context) {
-		c.BotName = bot.GetConfig().DisplayName
-		c.BotUsername = bot.GetConfig().Name
-		c.CustomInstructions = bot.GetConfig().CustomInstructions
-		// Set the bot user ID for AI-generated content tracking
+		var botUserID string
 		if mmbot := bot.GetMMBot(); mmbot != nil {
-			c.BotUserID = mmbot.UserId
+			botUserID = mmbot.UserId
 		}
-		c.BotModel = bot.GetService().DefaultModel
+		c.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 	}
 }

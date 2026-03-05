@@ -14,17 +14,43 @@ import (
 )
 
 const (
-	ActivateAIProp  = "activate_ai"
-	FromWebhookProp = "from_webhook"
-	FromBotProp     = "from_bot"
-	FromPluginProp  = "from_plugin"
-	WranglerProp    = "wrangler"
+	ActivateAIProp   = "activate_ai"
+	FromWebhookProp  = "from_webhook"
+	FromBotProp      = "from_bot"
+	FromPluginProp   = "from_plugin"
+	FromOAuthAppProp = "from_oauth_app"
+	WranglerProp     = "wrangler"
 )
 
 var (
 	// ErrNoResponse is returned when no response is posted under a normal condition.
 	ErrNoResponse = errors.New("no response")
 )
+
+// isAutomatedInvoker returns true when the post originates from automation (bot, webhook,
+// plugin, or OAuth app). Used to disable channel tool calling for automated invokers
+// since they cannot interactively approve tool calls.
+func isAutomatedInvoker(post *model.Post, postingUser *model.User) bool {
+	if postingUser != nil && postingUser.IsBot {
+		return true
+	}
+	if post == nil {
+		return false
+	}
+	automationProps := []string{FromWebhookProp, FromPluginProp, FromBotProp, FromOAuthAppProp}
+	for _, prop := range automationProps {
+		if post.GetProp(prop) != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// computeAllowToolsInChannel returns whether tools should be allowed for a channel mention,
+// given the config flag and whether the invoker is automated.
+func computeAllowToolsInChannel(configEnabled bool, post *model.Post, postingUser *model.User) bool {
+	return configEnabled && !isAutomatedInvoker(post, postingUser)
+}
 
 func (c *Conversations) MessageHasBeenPosted(ctx *plugin.Context, post *model.Post) {
 	if err := c.handleMessages(post); err != nil {
@@ -95,7 +121,11 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 		return err
 	}
 
-	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post)
+	// Check config to determine if tools should be allowed in channel mentions
+	configEnabled := c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
+	allowToolsInChannel := computeAllowToolsInChannel(configEnabled, post, postingUser)
+
+	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, allowToolsInChannel)
 	if err != nil {
 		return fmt.Errorf("unable to process bot mention: %w", err)
 	}
@@ -109,6 +139,7 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
+	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
 	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, postingUser.Id, stream, responsePost, post.Id); err != nil {
 		return fmt.Errorf("unable to stream response: %w", err)
 	}
@@ -121,7 +152,7 @@ func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, posting
 		return err
 	}
 
-	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post)
+	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, false)
 	if err != nil {
 		return fmt.Errorf("unable to process bot mention: %w", err)
 	}

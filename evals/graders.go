@@ -40,7 +40,8 @@ func (e *Eval) LLMRubric(rubric, output string) (*RubricResult, error) {
 				Message: fmt.Sprintf("<Output>%s</Output>\n<Rubric>%s</Rubric>", output, rubric),
 			},
 		},
-		Context: llm.NewContext(),
+		Context:   llm.NewContext(),
+		Operation: llm.OperationEvalGrading,
 	}
 
 	llmResult, gradeErr := e.GraderLLM.ChatCompletionNoStream(req, llm.WithMaxGeneratedTokens(1000), llm.WithJSONOutput[RubricResult]())

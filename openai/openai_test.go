@@ -745,10 +745,10 @@ func TestReasoningEffortConfiguration(t *testing.T) {
 		shouldSetReasoning bool
 	}{
 		{
-			name:               "reasoning enabled with minimal effort",
+			name:               "reasoning enabled with none effort",
 			reasoningEnabled:   true,
-			reasoningEffort:    "minimal",
-			expectedEffort:     shared.ReasoningEffortMinimal,
+			reasoningEffort:    "none",
+			expectedEffort:     shared.ReasoningEffort("none"),
 			shouldSetReasoning: true,
 		},
 		{
@@ -770,6 +770,13 @@ func TestReasoningEffortConfiguration(t *testing.T) {
 			reasoningEnabled:   true,
 			reasoningEffort:    "high",
 			expectedEffort:     shared.ReasoningEffortHigh,
+			shouldSetReasoning: true,
+		},
+		{
+			name:               "reasoning enabled with xhigh effort",
+			reasoningEnabled:   true,
+			reasoningEffort:    "xhigh",
+			expectedEffort:     shared.ReasoningEffort("xhigh"),
 			shouldSetReasoning: true,
 		},
 		{

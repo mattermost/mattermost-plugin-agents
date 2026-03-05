@@ -4,13 +4,16 @@
 package bots
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"sync"
 
 	"github.com/mattermost/mattermost-plugin-ai/anthropic"
 	"github.com/mattermost/mattermost-plugin-ai/asage"
+	"github.com/mattermost/mattermost-plugin-ai/assets"
 	"github.com/mattermost/mattermost-plugin-ai/bedrock"
 	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
@@ -21,7 +24,6 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
 type Config interface {
@@ -30,6 +32,8 @@ type Config interface {
 	GetDefaultBotName() string
 	EnableLLMLogging() bool
 	EnableTokenUsageLogging() bool
+	EnableTokenUsageLogToPlugin() bool
+	EnableTokenUsageLogToFile() bool
 	GetTranscriptGenerator() string
 }
 
@@ -44,32 +48,176 @@ type MMBots struct {
 	licenseChecker         *enterprise.LicenseChecker
 	config                 Config
 	llmUpstreamHTTPClient  *http.Client
-	tokenLogger            *mlog.Logger
+	tokenUsageSinks        *llm.TokenUsageSinks
 	metrics                llm.MetricsObserver
 
-	botsLock sync.RWMutex
-	bots     []*Bot
+	tokenSinksMu sync.Mutex
+	botsLock     sync.RWMutex
+	bots         []*Bot
+
+	// lastEnsuredBotCfgs stores the bot configs that were last successfully ensured.
+	// This is used for optimistic checking to avoid unnecessary cluster mutex acquisition.
+	lastEnsuredBotCfgs []llm.BotConfig
+	// lastEnsuredServiceCfgs stores the resolved service configs keyed by service ID
+	// that were last successfully ensured, for optimistic change detection.
+	lastEnsuredServiceCfgs map[string]llm.ServiceConfig
 }
 
-func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client, tokenLogger *mlog.Logger, metrics llm.MetricsObserver) *MMBots {
+func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
+	var pluginTokenLogger llm.TokenUsagePluginLogger
+	if pluginAPI != nil {
+		pluginTokenLogger = &pluginAPI.Log
+	}
+
 	return &MMBots{
 		ensureBotsClusterMutex: mutexPluginAPI,
 		pluginAPI:              pluginAPI,
 		licenseChecker:         licenseChecker,
 		config:                 config,
 		llmUpstreamHTTPClient:  llmUpstreamHTTPClient,
-		tokenLogger:            tokenLogger,
+		tokenUsageSinks:        llm.NewTokenUsageSinks(pluginTokenLogger),
 		metrics:                metrics,
 	}
 }
 
+// resolveServiceCfgs builds a map of service configs referenced by the given bot configs.
+func (b *MMBots) resolveServiceCfgs(botCfgs []llm.BotConfig) map[string]llm.ServiceConfig {
+	result := make(map[string]llm.ServiceConfig, len(botCfgs))
+	for _, botCfg := range botCfgs {
+		if _, exists := result[botCfg.ServiceID]; exists {
+			continue
+		}
+		if svc, ok := b.config.GetServiceByID(botCfg.ServiceID); ok {
+			result[botCfg.ServiceID] = svc
+		}
+	}
+	return result
+}
+
+// botConfigsEqual compares two bot config slices for equality.
+// Uses reflect.DeepEqual to compare all fields, ensuring changes to any field
+// (e.g., EnabledNativeTools, CustomInstructions, access levels) are detected.
+// Comparison is order-independent, matching configs by ID.
+func botConfigsEqual(a, b []llm.BotConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	aMap := make(map[string]llm.BotConfig, len(a))
+	for _, cfg := range a {
+		aMap[cfg.ID] = cfg
+	}
+
+	for _, cfg := range b {
+		aCfg, ok := aMap[cfg.ID]
+		if !ok {
+			return false
+		}
+		if !reflect.DeepEqual(aCfg, cfg) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// serviceConfigsEqual compares two service config maps for equality.
+func serviceConfigsEqual(a, b map[string]llm.ServiceConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for id, aCfg := range a {
+		bCfg, ok := b[id]
+		if !ok {
+			return false
+		}
+		if !reflect.DeepEqual(aCfg, bCfg) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (b *MMBots) reconcileTokenUsageSinks() {
+	if b == nil || b.config == nil || b.tokenUsageSinks == nil {
+		return
+	}
+
+	loggingEnabled := b.config.EnableTokenUsageLogging()
+	pluginEnabled := loggingEnabled && b.config.EnableTokenUsageLogToPlugin()
+	fileEnabled := loggingEnabled && b.config.EnableTokenUsageLogToFile()
+
+	b.tokenSinksMu.Lock()
+	defer b.tokenSinksMu.Unlock()
+
+	b.tokenUsageSinks.SetLoggingEnabled(loggingEnabled)
+	b.tokenUsageSinks.SetPluginEnabled(pluginEnabled)
+	b.tokenUsageSinks.SetFileEnabled(fileEnabled)
+
+	if !fileEnabled {
+		b.tokenUsageSinks.SetFileLogger(nil)
+		return
+	}
+
+	if b.tokenUsageSinks.FileLogger() != nil {
+		return
+	}
+
+	tokenLogger, err := llm.CreateTokenLogger()
+	if err != nil {
+		if b.pluginAPI != nil {
+			b.pluginAPI.Log.Warn("Failed to initialize token usage file logger; continuing without file sink", "error", err)
+		}
+		b.tokenUsageSinks.SetFileLogger(nil)
+		b.tokenUsageSinks.SetFileEnabled(false)
+		return
+	}
+	b.tokenUsageSinks.SetFileLogger(tokenLogger)
+}
+
 func (b *MMBots) EnsureBots() error {
+	// Optimistic check: if bot and service configuration hasn't changed since last ensure,
+	// skip the expensive cluster mutex acquisition. This prevents HA timeout issues
+	// when multiple nodes all try to acquire the mutex simultaneously on config changes.
+	b.reconcileTokenUsageSinks()
+
+	currentBotCfgs := b.config.GetBots()
+	currentServiceCfgs := b.resolveServiceCfgs(currentBotCfgs)
+	b.botsLock.RLock()
+	botsAlreadyInitialized := len(b.bots) > 0
+	lastBotCfgs := b.lastEnsuredBotCfgs
+	lastServiceCfgs := b.lastEnsuredServiceCfgs
+	b.botsLock.RUnlock()
+
+	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
+		b.pluginAPI.Log.Debug("EnsureBots: skipping - bot/service configuration unchanged")
+		return nil
+	}
+
 	mtx, err := cluster.NewMutex(b.ensureBotsClusterMutex, "ai_ensure_bots")
 	if err != nil {
 		return fmt.Errorf("failed to create mutex: %w", err)
 	}
 	mtx.Lock()
 	defer mtx.Unlock()
+
+	// Re-check after acquiring lock - another node may have already handled this
+	b.reconcileTokenUsageSinks()
+
+	currentBotCfgs = b.config.GetBots()
+	currentServiceCfgs = b.resolveServiceCfgs(currentBotCfgs)
+	b.botsLock.RLock()
+	botsAlreadyInitialized = len(b.bots) > 0
+	lastBotCfgs = b.lastEnsuredBotCfgs
+	lastServiceCfgs = b.lastEnsuredServiceCfgs
+	b.botsLock.RUnlock()
+
+	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
+		b.pluginAPI.Log.Debug("EnsureBots: skipping after lock - bot/service configuration unchanged")
+		return nil
+	}
 
 	previousMMBots, err := b.pluginAPI.Bot.List(0, 1000, pluginapi.BotOwner("mattermost-ai"), pluginapi.BotIncludeDeleted())
 	if err != nil {
@@ -164,6 +312,9 @@ func (b *MMBots) EnsureBots() error {
 				continue
 			}
 		}
+
+		b.ensureDefaultProfileImage(bot)
+
 		var err error
 		bot.llm, err = b.getLLM(bot.service, bot.cfg)
 		if err != nil {
@@ -173,9 +324,35 @@ func (b *MMBots) EnsureBots() error {
 
 	b.botsLock.Lock()
 	b.bots = bots
+	// Store deep copies of the successfully ensured configs for optimistic checking.
+	// Deep copy is needed because BotConfig contains slice fields (EnabledNativeTools, etc.)
+	// that would otherwise share backing arrays with the live config.
+	copiedBotCfgs, copyErr := config.DeepCopyJSON(currentBotCfgs)
+	if copyErr != nil {
+		b.botsLock.Unlock()
+		return fmt.Errorf("failed to deep copy bot configs for change tracking: %w", copyErr)
+	}
+	b.lastEnsuredBotCfgs = copiedBotCfgs
+	b.lastEnsuredServiceCfgs = currentServiceCfgs
 	b.botsLock.Unlock()
 
 	return nil
+}
+
+func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
+	user, err := b.pluginAPI.User.Get(bot.mmBot.UserId)
+	if err != nil {
+		b.pluginAPI.Log.Error("Failed to get bot user for profile image check", "bot_name", bot.cfg.Name, "error", err.Error())
+		return
+	}
+
+	if user.LastPictureUpdate != 0 {
+		return
+	}
+
+	if err := b.pluginAPI.User.SetProfileImage(bot.mmBot.UserId, bytes.NewReader(assets.DefaultAgentProfilePicture)); err != nil {
+		b.pluginAPI.Log.Error("Failed to set bot profile image", "bot_name", bot.cfg.Name, "error", err.Error())
+	}
 }
 
 func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (llm.LanguageModel, error) {
@@ -217,11 +394,11 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	result = llm.NewLLMTruncationWrapper(result)
 
 	// Token Usage Logging
-	if b.tokenLogger != nil && b.config.EnableTokenUsageLogging() {
+	if b.tokenUsageSinks != nil || b.metrics != nil {
 		result = llm.NewTokenUsageLoggingWrapper(
 			result,
 			botConfig.Name,
-			b.tokenLogger,
+			b.tokenUsageSinks,
 			b.metrics,
 		)
 	}

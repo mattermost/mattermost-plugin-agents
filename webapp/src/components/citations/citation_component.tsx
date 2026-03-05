@@ -37,10 +37,12 @@ export const CitationComponent = (props: CitationComponentProps) => {
             onMouseEnter={() => setShowTooltip(true)}
             onMouseLeave={() => setShowTooltip(false)}
             onClick={handleClick}
+            data-testid='llm-citation'
+            data-citation-index={props.annotation.index}
         >
             <CitationIcon size={12}/>
             {showTooltip && (
-                <TooltipContainer>
+                <TooltipContainer data-testid='llm-citation-tooltip'>
                     <TooltipContent>
                         <FaviconIcon domain={domain}/>
                         <TooltipDomain>{domain}</TooltipDomain>

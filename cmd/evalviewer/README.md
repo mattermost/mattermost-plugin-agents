@@ -87,29 +87,28 @@ The evalviewer and evaluation tests support multiple LLM providers. Configure wh
 ### OpenAI Configuration
 
 - **`OPENAI_API_KEY`**: Your OpenAI API key (required for OpenAI)
-- **`OPENAI_MODEL`**: Model to use (default: `gpt-4o`)
+- **`OPENAI_MODEL`**: Model to use (overrides code default)
 
 ### Anthropic Configuration
 
 - **`ANTHROPIC_API_KEY`**: Your Anthropic API key (required for Anthropic)
-- **`ANTHROPIC_MODEL`**: Model to use (default: `claude-sonnet-4-20250514`)
+- **`ANTHROPIC_MODEL`**: Model to use (overrides code default)
 
 ### Azure OpenAI Configuration
 
 - **`AZURE_OPENAI_API_KEY`**: Your Azure OpenAI API key (required for Azure)
 - **`AZURE_OPENAI_ENDPOINT`**: Your Azure OpenAI endpoint URL (required for Azure)
-- **`AZURE_OPENAI_MODEL`**: Model deployment name to use (default: `gpt-4o`)
+- **`AZURE_OPENAI_MODEL`**: Model deployment name to use (overrides code default)
 
 ### Grader Configuration
 
-The grader LLM is used to evaluate the quality of responses from the main LLM. By default, it uses OpenAI with the `gpt-5` model. You can configure a different provider or model for grading:
+The grader LLM is used to evaluate the quality of responses from the main LLM. By default, it uses OpenAI. You can configure a different provider or model for grading:
 
 - **`GRADER_LLM_PROVIDER`**: Provider to use for grading (e.g., `openai`, `anthropic`, `azure`)
   - Default: `openai`
   - Uses the same API key environment variables as the main LLM (e.g., `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`)
 - **`GRADER_LLM_MODEL`**: Model to use for grading
-  - Default: `gpt-5` (for OpenAI provider)
-  - For other providers, uses their default model unless specified
+  - For each provider, uses its code default model unless specified
 
 ### Examples
 
@@ -129,10 +128,10 @@ evalviewer run ./conversations
 # Use a specific model for OpenAI
 OPENAI_MODEL=gpt-4-turbo evalviewer run ./conversations
 
-# Use Anthropic for the main LLM and OpenAI gpt-5 for grading (default grader)
+# Use Anthropic for the main LLM and OpenAI for grading (default grader)
 LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-ant-... OPENAI_API_KEY=sk-... evalviewer run ./conversations
 
-# Use OpenAI gpt-4o for main LLM and Anthropic for grading
+# Use OpenAI for main LLM and Anthropic for grading
 LLM_PROVIDER=openai GRADER_LLM_PROVIDER=anthropic OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-... evalviewer run ./conversations
 
 # Use a specific model for grading

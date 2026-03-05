@@ -10,6 +10,7 @@ import {
     getAvailableProviders,
     ProviderBundle,
 } from 'helpers/api-config';
+import { attachAPIErrorContext } from 'helpers/log-scanner';
 
 /**
  * Test Suite: Citations and Annotations
@@ -18,8 +19,8 @@ import {
  * Runs once per configured provider (OpenAI and/or Anthropic).
  *
  * Environment Variables Required:
- * - ANTHROPIC_API_KEY: To run tests with Anthropic (claude-3-7-sonnet)
- * - OPENAI_API_KEY: To run tests with OpenAI (gpt-5)
+ * - ANTHROPIC_API_KEY: To run tests with Anthropic
+ * - OPENAI_API_KEY: To run tests with OpenAI
  *
  * Tests:
  * 1. Citation Display - Renders from Real API
@@ -36,6 +37,11 @@ const password = 'regularuser';
 
 const config = getAPIConfig();
 const skipMessage = getSkipMessage();
+const citationInstruction = 'Use the web_search tool and include at least one citation in your response. Do not answer without citations.';
+
+function withCitationInstruction(prompt: string): string {
+    return `${citationInstruction} ${prompt}`;
+}
 
 async function setupTestPage(page, mattermost, provider: ProviderBundle) {
     const mmPage = new MattermostPage(page);
@@ -72,6 +78,10 @@ function createProviderTestSuite(provider: ProviderBundle) {
             }
         });
 
+        test.afterEach(async ({}, testInfo) => {
+            await attachAPIErrorContext(testInfo);
+        });
+
         test('Citation Display - Renders from Real API', async ({ page }) => {
             test.skip(!config.shouldRunTests, skipMessage);
             test.setTimeout(360000); // 6 minutes: allows 5 min streaming + buffer
@@ -89,13 +99,13 @@ function createProviderTestSuite(provider: ProviderBundle) {
                 ? 'Search the web for TypeScript documentation and briefly summarize 2-3 key features'
                 : 'Use web search to find TypeScript best practices and briefly list 2-3 points with citations';
 
-            await aiPlugin.sendMessage(prompt);
+            await aiPlugin.sendMessage(withCitationInstruction(prompt));
 
             // Wait for streaming to complete (smart wait, up to 5 min)
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for at least one citation to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitation(1);
+            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
 
             const citations = llmBotHelper.getAllCitationIcons();
             const count = await citations.count();
@@ -120,13 +130,13 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
             const prompt = 'Search the web for TypeScript documentation and briefly summarize with citations (2-3 sentences)';
 
-            await aiPlugin.sendMessage(prompt);
+            await aiPlugin.sendMessage(withCitationInstruction(prompt));
 
             // Wait for streaming to complete (smart wait, up to 5 min)
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for citation to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitation(1);
+            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
 
             const citations = llmBotHelper.getAllCitationIcons();
             const count = await citations.count();
@@ -160,13 +170,13 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
             const prompt = 'Search the web for TypeScript official website and cite it';
 
-            await aiPlugin.sendMessage(prompt);
+            await aiPlugin.sendMessage(withCitationInstruction(prompt));
 
             // Wait for streaming to complete (smart wait, up to 5 min)
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for citation to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitation(1);
+            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
 
             const citations = llmBotHelper.getAllCitationIcons();
             const count = await citations.count();
@@ -205,14 +215,14 @@ function createProviderTestSuite(provider: ProviderBundle) {
                 ? 'Search the web for TypeScript, JavaScript, and React and briefly compare them with citations (1 paragraph)'
                 : 'Use web search to find TypeScript, JavaScript, React info and briefly compare with citations (1 paragraph)';
 
-            await aiPlugin.sendMessage(prompt);
+            await aiPlugin.sendMessage(withCitationInstruction(prompt));
 
             // Wait for streaming to complete (smart wait, up to 5 min)
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for multiple citations to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitation(1);
-            await llmBotHelper.waitForCitation(2);
+            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
+            await llmBotHelper.waitForCitationWithRetry(2, undefined, 60000);
 
             const citations = llmBotHelper.getAllCitationIcons();
             const count = await citations.count();
@@ -261,13 +271,13 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
             const prompt = 'Search the web for TypeScript documentation and briefly describe it with citations (1 paragraph)';
 
-            await aiPlugin.sendMessage(prompt);
+            await aiPlugin.sendMessage(withCitationInstruction(prompt));
 
             // Wait for streaming to complete (smart wait, up to 5 min)
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for citation to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitation(1);
+            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
 
             const citationsBefore = llmBotHelper.getAllCitationIcons();
             const countBefore = await citationsBefore.count();
@@ -307,13 +317,13 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
             const prompt = 'Search the web for 1-2 TypeScript code examples with markdown formatting and citations (brief)';
 
-            await aiPlugin.sendMessage(prompt);
+            await aiPlugin.sendMessage(withCitationInstruction(prompt));
 
             // Wait for streaming to complete (smart wait, up to 5 min)
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for citation to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitation(1);
+            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
 
             const postText = llmBotHelper.getPostText();
             await expect(postText).toBeVisible();
@@ -340,13 +350,13 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
             const prompt = 'Search the web for TypeScript official documentation and cite it';
 
-            await aiPlugin.sendMessage(prompt);
+            await aiPlugin.sendMessage(withCitationInstruction(prompt));
 
             // Wait for streaming to complete (smart wait, up to 5 min)
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for citation to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitation(1);
+            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
 
             const citations = llmBotHelper.getAllCitationIcons();
             const count = await citations.count();

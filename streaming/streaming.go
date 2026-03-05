@@ -12,6 +12,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -24,6 +25,7 @@ type Client interface {
 	GetUser(userID string) (*model.User, error)
 	GetChannel(channelID string) (*model.Channel, error)
 	GetConfig() *model.Config
+	KVSet(key string, value interface{}) error
 	LogError(msg string, keyValuePairs ...interface{})
 	LogDebug(msg string, keyValuePairs ...interface{})
 }
@@ -33,9 +35,32 @@ const PostStreamingControlEnd = "end"
 const PostStreamingControlStart = "start"
 
 const ToolCallProp = "pending_tool_call"
+const ToolCallRedactedProp = "pending_tool_call_redacted"
+const ToolCallPrivateKeyPrefix = "tool_call_private"
+const ToolResultPrivateKeyPrefix = "tool_result_private"
+const PendingToolResultProp = "pending_tool_result"
 const ReasoningSummaryProp = "reasoning_summary"
-const ReasoningSignatureProp = "reasoning_signature"
 const AnnotationsProp = "annotations"
+const WebSearchContextProp = "web_search_context"
+const ReasoningSignatureProp = "reasoning_signature"
+
+func ToolCallPrivateKVKey(postID, requesterID string) string {
+	return fmt.Sprintf("%s:%s:%s", ToolCallPrivateKeyPrefix, postID, requesterID)
+}
+
+func ToolResultPrivateKVKey(postID, requesterID string) string {
+	return fmt.Sprintf("%s:%s:%s", ToolResultPrivateKeyPrefix, postID, requesterID)
+}
+
+func RedactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
+	redacted := make([]llm.ToolCall, len(toolCalls))
+	for i, toolCall := range toolCalls {
+		redacted[i] = toolCall
+		redacted[i].Arguments = json.RawMessage("{}")
+		redacted[i].Result = ""
+	}
+	return redacted
+}
 
 type Service interface {
 	StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error
@@ -214,6 +239,9 @@ func (p *MMPostStreamService) GetStreamingContext(inCtx context.Context, postID 
 func (p *MMPostStreamService) FinishStreaming(postID string) {
 	p.contextsMutex.Lock()
 	defer p.contextsMutex.Unlock()
+	if streamContext, ok := p.contexts[postID]; ok {
+		streamContext.cancel()
+	}
 	delete(p.contexts, postID)
 }
 
@@ -229,6 +257,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 	var messageBuilder strings.Builder
 	messageBuilder.Grow(4096) // Pre-allocate for typical response size
 	var reasoningBuffer strings.Builder
+	var isDMWithBot bool
 
 	for {
 		select {
@@ -280,7 +309,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 				}
 				p.mmClient.LogError("Streaming result to post failed partway", "error", err)
 				T := i18n.LocalizerFunc(p.i18n, userLocale)
-				post.Message = T("agents.stream_to_post_access_llm_error", "Sorry! An error occurred while accessing the LLM. See server logs for details.")
+				post.Message += T("agents.stream_to_post_access_llm_error", "Sorry! An error occurred while accessing the LLM. See server logs for details.")
 
 				// Persist any accumulated reasoning before erroring out
 				if reasoningBuffer.Len() > 0 {
@@ -322,13 +351,37 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 			case llm.EventTypeToolCalls:
 				// Handle tool call event
 				if toolCalls, ok := event.Value.([]llm.ToolCall); ok {
-					// Ensure all tool calls have Pending status
+					// Ensure all tool calls have Pending status and sanitize arguments
 					for i := range toolCalls {
 						toolCalls[i].Status = llm.ToolCallStatusPending
+						toolCalls[i].SanitizeArguments()
+					}
+
+					channel, err := p.mmClient.GetChannel(post.ChannelId)
+					if err != nil {
+						p.mmClient.LogError("Failed to get channel for tool call redaction", "error", err, "post_id", post.Id, "channel_id", post.ChannelId)
+						return
+					}
+					isDMWithBot = mmapi.IsDMWith(post.UserId, channel)
+
+					toolCallsForPost := toolCalls
+					if !isDMWithBot {
+						requesterID, ok := post.GetProp(LLMRequesterUserID).(string)
+						if !ok || requesterID == "" {
+							p.mmClient.LogError("Missing requester ID for tool call, cannot persist private data", "post_id", post.Id)
+							return
+						}
+						kvKey := ToolCallPrivateKVKey(post.Id, requesterID)
+						if kvErr := p.mmClient.KVSet(kvKey, toolCalls); kvErr != nil {
+							p.mmClient.LogError("Failed to store tool calls in KV store, cannot continue", "error", kvErr, "post_id", post.Id, "kv_key", kvKey)
+							return
+						}
+						toolCallsForPost = RedactToolCalls(toolCalls)
+						post.AddProp(ToolCallRedactedProp, "true")
 					}
 
 					// Add the tool call as a prop to the post
-					toolCallJSON, err := json.Marshal(toolCalls)
+					toolCallJSON, err := json.Marshal(toolCallsForPost)
 					if err != nil {
 						p.mmClient.LogError("Failed to marshal tool call", "error", err)
 					} else {
@@ -349,7 +402,28 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 				}
 				return
 			case llm.EventTypeAnnotations:
-				if annotations, ok := event.Value.([]llm.Annotation); ok {
+				// Handle annotations - might include cleaned message for web search citations
+				if annotationMap, ok := event.Value.(map[string]interface{}); ok {
+					// Web search annotations with cleaned message
+					if annotations, hasAnnotations := annotationMap["annotations"].([]llm.Annotation); hasAnnotations {
+						if cleanedMsg, hasCleaned := annotationMap["cleanedMessage"].(string); hasCleaned {
+							// Replace post message with cleaned version (citation markers removed)
+							post.Message = cleanedMsg
+							p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
+							p.mmClient.LogDebug("Replaced post message with cleaned version", "post_id", post.Id, "original_length", len(post.Message), "cleaned_length", len(cleanedMsg))
+						}
+
+						annotationsJSON, err := json.Marshal(annotations)
+						if err != nil {
+							p.mmClient.LogError("Failed to marshal annotations", "error", err)
+						} else {
+							post.AddProp(AnnotationsProp, string(annotationsJSON))
+							p.mmClient.LogDebug("Added annotations to post props", "post_id", post.Id, "count", len(annotations))
+							p.sendPostStreamingAnnotationsEventWithBroadcast(post, string(annotationsJSON), broadcast)
+						}
+					}
+				} else if annotations, ok := event.Value.([]llm.Annotation); ok {
+					// Regular annotations without cleaned message
 					annotationsJSON, err := json.Marshal(annotations)
 					if err != nil {
 						p.mmClient.LogError("Failed to marshal annotations", "error", err)

@@ -6,6 +6,8 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -15,17 +17,50 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/openai"
 )
 
+const (
+	tokenUsageLogToPluginEnvKey = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_PLUGIN" // #nosec G101 -- env var key name, not a credential
+	tokenUsageLogToFileEnvKey   = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_FILE"   // #nosec G101 -- env var key name, not a credential
+)
+
 type Config struct {
-	Services                 []llm.ServiceConfig              `json:"services"`
-	Bots                     []llm.BotConfig                  `json:"bots"`
-	DefaultBotName           string                           `json:"defaultBotName"`
-	TranscriptGenerator      string                           `json:"transcriptBackend"`
-	EnableLLMTrace           bool                             `json:"enableLLMTrace"`
-	EnableTokenUsageLogging  bool                             `json:"enableTokenUsageLogging"`
-	AllowedUpstreamHostnames string                           `json:"allowedUpstreamHostnames"`
-	AllowUnsafeLinks         bool                             `json:"allowUnsafeLinks"`
-	EmbeddingSearchConfig    embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
-	MCP                      mcp.Config                       `json:"mcp"`
+	Services                        []llm.ServiceConfig              `json:"services"`
+	Bots                            []llm.BotConfig                  `json:"bots"`
+	DefaultBotName                  string                           `json:"defaultBotName"`
+	TranscriptGenerator             string                           `json:"transcriptBackend"`
+	EnableLLMTrace                  bool                             `json:"enableLLMTrace"`
+	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
+	EnableTokenUsageLogToPlugin     *bool                            `json:"enableTokenUsageLogToPlugin,omitempty"`
+	EnableTokenUsageLogToFile       *bool                            `json:"enableTokenUsageLogToFile,omitempty"`
+	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
+	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
+	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
+	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
+	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
+	MCP                             mcp.Config                       `json:"mcp"`
+	WebSearch                       WebSearchConfig                  `json:"webSearch"`
+}
+
+type WebSearchConfig struct {
+	Enabled        bool                  `json:"enabled"`
+	Provider       string                `json:"provider"`
+	Google         WebSearchGoogleConfig `json:"google"`
+	Brave          WebSearchBraveConfig  `json:"brave"`
+	DomainDenylist []string              `json:"domainDenylist"`
+}
+
+type WebSearchGoogleConfig struct {
+	APIKey         string `json:"apiKey"`
+	SearchEngineID string `json:"searchEngineId"`
+	ResultLimit    int    `json:"resultLimit"`
+	APIURL         string `json:"apiURL"`
+}
+
+type WebSearchBraveConfig struct {
+	APIKey       string `json:"apiKey"`
+	APIURL       string `json:"apiURL"`
+	ResultLimit  int    `json:"resultLimit"`
+	PollTimeout  int    `json:"pollTimeout"`
+	PollInterval int    `json:"pollInterval"`
 }
 
 func (c *Config) Clone() *Config {
@@ -84,6 +119,46 @@ func (c *Container) EnableTokenUsageLogging() bool {
 	return c.cfg.Load().EnableTokenUsageLogging
 }
 
+func (c *Container) EnableTokenUsageLogToPlugin() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil || !cfg.EnableTokenUsageLogging {
+		return false
+	}
+
+	if enabled, ok := parseBooleanEnv(tokenUsageLogToPluginEnvKey); ok {
+		return enabled
+	}
+
+	return false
+}
+
+func (c *Container) EnableTokenUsageLogToFile() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil || !cfg.EnableTokenUsageLogging {
+		return false
+	}
+
+	if enabled, ok := parseBooleanEnv(tokenUsageLogToFileEnvKey); ok {
+		return enabled
+	}
+
+	return true
+}
+
+func parseBooleanEnv(key string) (bool, bool) {
+	raw, ok := os.LookupEnv(key)
+	if !ok {
+		return false, false
+	}
+
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, false
+	}
+
+	return parsed, true
+}
+
 func (c *Container) MCP() mcp.Config {
 	return c.cfg.Load().MCP
 }
@@ -95,6 +170,24 @@ func (c *Container) AllowUnsafeLinks() bool {
 	}
 
 	return cfg.AllowUnsafeLinks
+}
+
+func (c *Container) EnableChannelMentionToolCalling() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return false
+	}
+
+	return cfg.EnableChannelMentionToolCalling
+}
+
+func (c *Container) AllowNativeWebSearchInChannels() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return false
+	}
+
+	return cfg.AllowNativeWebSearchInChannels
 }
 
 func (c *Container) RegisterUpdateListener(listener UpdateListener) {

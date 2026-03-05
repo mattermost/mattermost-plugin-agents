@@ -152,6 +152,14 @@ func migrateServicesToBots(pluginAPI *pluginapi.Client, cfg config.Config) (bool
 		return false, cfg, nil
 	}
 
+	// If services already use the new schema (type or id set), no migration needed.
+	// This keeps the "services but no bots" state valid in the new config format.
+	for _, service := range existingConfig.Services {
+		if service.ID != "" || service.Type != "" {
+			return false, cfg, nil
+		}
+	}
+
 	oldConfig := BotMigrationConfig{}
 	err := pluginAPI.Configuration.LoadPluginConfiguration(&oldConfig)
 	if err != nil {
@@ -160,6 +168,18 @@ func migrateServicesToBots(pluginAPI *pluginapi.Client, cfg config.Config) (bool
 
 	// If there are no old services to migrate either, nothing to do
 	if len(oldConfig.Config.Services) == 0 {
+		return false, cfg, nil
+	}
+
+	// Only migrate legacy service configs that include legacy fields.
+	hasLegacyServiceFields := false
+	for _, service := range oldConfig.Config.Services {
+		if service.ServiceName != "" || service.URL != "" {
+			hasLegacyServiceFields = true
+			break
+		}
+	}
+	if !hasLegacyServiceFields {
 		return false, cfg, nil
 	}
 
@@ -201,11 +221,37 @@ func migrateServicesToBots(pluginAPI *pluginapi.Client, cfg config.Config) (bool
 // in multi-instance deployments. Persists the updated configuration and marks migrations as
 // complete only after successful save. Returns the final configuration and any errors encountered.
 func runAllMigrations(mutexAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, cfg config.Config) (config.Config, bool, error) {
+	// Optimistic check: immediately run the migration to determine if it's actually needed, return early to avoid acquiring the cluster mutex.
+
+	servicesToBotsNeeded, _, err := migrateServicesToBots(pluginAPI, cfg)
+	if err != nil {
+		return cfg, false, fmt.Errorf("failed to check services to bots migration: %w", err)
+	}
+
+	separateServicesFromBotsNeeded, _, err := migrateSeparateServicesFromBots(pluginAPI, cfg)
+	if err != nil {
+		return cfg, false, fmt.Errorf("failed to check separate services from bots migration: %w", err)
+	}
+
+	if !servicesToBotsNeeded && !separateServicesFromBotsNeeded {
+		return cfg, false, nil
+	}
+
 	mtx, err := cluster.NewMutex(mutexAPI, "ai_all_migrations")
 	if err != nil {
 		return config.Config{}, false, fmt.Errorf("failed to create migrations mutex: %w", err)
 	}
 	mtx.Lock()
+
+	// Reload configuration inside lock to ensure we have the latest version
+	// This handles the race condition where another node might have finished migration
+	// while we were waiting for the lock.
+	latestConfigWrap := new(configuration)
+	if lErr := pluginAPI.Configuration.LoadPluginConfiguration(latestConfigWrap); lErr != nil {
+		mtx.Unlock()
+		return cfg, false, fmt.Errorf("failed to reload configuration inside lock: %w", lErr)
+	}
+	cfg = latestConfigWrap.Config
 
 	changed := false
 

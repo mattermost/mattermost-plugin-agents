@@ -32,12 +32,41 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 		return nil, errors.New("site URL not configured, cannot initialize embedded MCP server")
 	}
 
+	// Determine the internal server URL for API communication
+	// When running as an embedded server inside the Mattermost process, we should use
+	// the internal listen address rather than the external SiteURL, since the SiteURL
+	// might be mapped to a different port (e.g., in Docker environments).
+	// Default to localhost:8065 which is the standard Mattermost port.
+	internalServerURL := "http://localhost:8065"
+	if config := pluginAPI.Configuration.GetConfig(); config != nil {
+		if config.ServiceSettings.ListenAddress != nil && *config.ServiceSettings.ListenAddress != "" {
+			// ListenAddress is typically ":8065" or "0.0.0.0:8065"
+			listenAddr := *config.ServiceSettings.ListenAddress
+			// If it starts with ":", prepend localhost
+			if len(listenAddr) > 0 && listenAddr[0] == ':' {
+				internalServerURL = "http://localhost" + listenAddr
+			} else {
+				// Handle addresses like "0.0.0.0:8065" - replace with localhost
+				// This is needed because 0.0.0.0 means "all interfaces" but we need a specific one
+				if len(listenAddr) > 7 && listenAddr[:7] == "0.0.0.0" {
+					internalServerURL = "http://localhost" + listenAddr[7:]
+				} else {
+					internalServerURL = "http://" + listenAddr
+				}
+			}
+		}
+	}
+
+	logger.Debug("Embedded MCP server configuration",
+		"siteURL", siteURL,
+		"internalServerURL", internalServerURL)
+
 	// Create configuration for in-memory transport
 	config := mcpserver.InMemoryConfig{
 		BaseConfig: mcpserver.BaseConfig{
 			MMServerURL: siteURL,
-			// Just use siteURL for now. Could make this configurable later
-			MMInternalServerURL: siteURL,
+			// Use the internal server URL for API communication within the container
+			MMInternalServerURL: internalServerURL,
 			DevMode:             false,
 		},
 	}

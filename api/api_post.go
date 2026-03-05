@@ -5,20 +5,26 @@ package api
 
 import (
 	stdcontext "context"
+	"errors"
 	"fmt"
 	"net/http"
-
-	"errors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/render"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/react"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost-plugin-ai/threads"
 	"github.com/mattermost/mattermost/server/public/model"
+)
+
+const (
+	TitleThreadSummary     = "Thread Summary"
+	TitleFindActionItems   = "Action Items"
+	TitleFindOpenQuestions = "Open Questions"
 )
 
 func (a *API) postAuthorizationRequired(c *gin.Context) {
@@ -275,6 +281,15 @@ func (a *API) handleToolCall(c *gin.Context) {
 		return
 	}
 
+	// Defense-in-depth: block channel tool calls if config flag is off.
+	// Use post.UserId (the bot that created the post) to check the DM,
+	// because the botUsername query parameter may resolve to a different bot.
+	isDM := mmapi.IsDMWith(post.UserId, channel)
+	if !isDM && !a.config.EnableChannelMentionToolCalling() {
+		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
+		return
+	}
+
 	// Only the original requester can approve/reject tool calls
 	if post.GetProp(streaming.LLMRequesterUserID) != userID {
 		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can approve/reject tool calls"))
@@ -292,9 +307,139 @@ func (a *API) handleToolCall(c *gin.Context) {
 
 	err := a.conversationsService.HandleToolCall(userID, post, channel, data.AcceptedToolIDs)
 	if err != nil {
-		if err.Error() == "post missing pending tool calls" || err.Error() == "post pending tool calls not valid JSON" {
+		switch {
+		case err.Error() == "post missing pending tool calls" || err.Error() == "post pending tool calls not valid JSON":
 			c.AbortWithError(http.StatusBadRequest, err)
+		case errors.Is(err, conversations.ErrChannelToolCallingDisabled):
+			c.AbortWithError(http.StatusForbidden, err)
+		default:
+			c.AbortWithError(http.StatusInternalServerError, err)
+		}
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+func (a *API) handleToolCallPrivate(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+
+	if !a.licenseChecker.IsBasicsLicensed() {
+		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	// Defense-in-depth: block channel tool call access if config flag is off.
+	// Use post.UserId (the bot that created the post) to check the DM,
+	// because the botUsername query parameter may resolve to a different bot.
+	isDM := mmapi.IsDMWith(post.UserId, channel)
+	if !isDM && !a.config.EnableChannelMentionToolCalling() {
+		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
+		return
+	}
+
+	// Only the original requester can view private tool calls
+	if post.GetProp(streaming.LLMRequesterUserID) != userID {
+		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can view tool calls"))
+		return
+	}
+
+	kvKey := streaming.ToolCallPrivateKVKey(post.Id, userID)
+	var toolCalls []llm.ToolCall
+	if err := a.mmClient.KVGet(kvKey, &toolCalls); err != nil {
+		if mmapi.IsKVNotFound(err) {
+			c.AbortWithError(http.StatusBadRequest, errors.New("post missing pending tool calls"))
 		} else {
+			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load tool calls from KV store: %w", err))
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, toolCalls)
+}
+
+func (a *API) handleToolResultPrivate(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+
+	if !a.licenseChecker.IsBasicsLicensed() {
+		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	// Defense-in-depth: block channel tool result access if config flag is off.
+	// Use post.UserId (the bot that created the post) to check the DM,
+	// because the botUsername query parameter may resolve to a different bot.
+	isDM := mmapi.IsDMWith(post.UserId, channel)
+	if !isDM && !a.config.EnableChannelMentionToolCalling() {
+		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
+		return
+	}
+
+	// Only the original requester can view private tool results
+	if post.GetProp(streaming.LLMRequesterUserID) != userID {
+		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can view tool results"))
+		return
+	}
+
+	kvKey := streaming.ToolResultPrivateKVKey(post.Id, userID)
+	var toolResults []llm.ToolCall
+	if err := a.mmClient.KVGet(kvKey, &toolResults); err != nil {
+		if mmapi.IsKVNotFound(err) {
+			c.AbortWithError(http.StatusBadRequest, errors.New("post missing pending tool results"))
+		} else {
+			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load tool results from KV store: %w", err))
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, toolResults)
+}
+
+func (a *API) handleToolResult(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+
+	if !a.licenseChecker.IsBasicsLicensed() {
+		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	// Defense-in-depth: block channel tool results if config flag is off.
+	// Use post.UserId (the bot that created the post) to check the DM,
+	// because the botUsername query parameter may resolve to a different bot.
+	isDM := mmapi.IsDMWith(post.UserId, channel)
+	if !isDM && !a.config.EnableChannelMentionToolCalling() {
+		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
+		return
+	}
+
+	// Only the original requester can approve/reject tool results
+	if post.GetProp(streaming.LLMRequesterUserID) != userID {
+		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can approve/reject tool results"))
+		return
+	}
+
+	var data struct {
+		AcceptedToolIDs []string `json:"accepted_tool_ids" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&data); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if err := a.conversationsService.HandleToolResult(userID, post, channel, data.AcceptedToolIDs); err != nil {
+		switch {
+		case err.Error() == "post missing pending tool results" || err.Error() == "post pending tool results not valid JSON":
+			c.AbortWithError(http.StatusBadRequest, err)
+		case errors.Is(err, conversations.ErrChannelToolCallingDisabled):
+			c.AbortWithError(http.StatusForbidden, err)
+		default:
 			c.AbortWithError(http.StatusInternalServerError, err)
 		}
 		return

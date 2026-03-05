@@ -42,77 +42,185 @@ If you have an Enterprise, or Enterprise Advanced license, upload it to unlock a
 
 For general settings, you can toggle to enable or disable the plugin system-wide, enable debug logging for troubleshooting (use only when needed), enable token usage logging for tracking LLM interactions, and configure the hostname allowlist for API calls.
 
+### AI response link rendering
+
+Mattermost Agents includes a setting that controls whether AI-generated Markdown links are rendered as clickable links in responses:
+
+- **System Console label**: **Render AI-generated links**
+- **Configuration key**: `allowUnsafeLinks`
+- **Default value**: `false`
+
+When **Render AI-generated links** is set to **False** (default), AI-generated Markdown links are shown as plain text and are not rendered as clickable links.
+
+When this setting is set to **True**, AI-generated links may be rendered as clickable links. This is a security tradeoff: AI output can include malicious destinations, which can increase phishing and data exfiltration risk.
+
+Enable this setting only in trusted or otherwise mitigated environments, such as where users are trained to validate links and your organization has endpoint protections and URL controls in place.
+
+### Service configuration
+
+Configure an LLM provider (Service) for your Agents integration. Services manage the connection to the LLM provider, including authentication and model defaults. You can create multiple services for different providers or configurations, and share them across multiple agents.
+
+Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
+
+| Setting | Description |
+|---------|-------------|
+| **Name** | Internal name for this service configuration |
+| **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Azure OpenAI, OpenAI-compatible) |
+| **API Key** | Your provider's API key (requirements vary by provider) |
+| **Default Model** | Default model to use for this service |
+| **Input Token Limit** | Maximum tokens allowed in input |
+| **Output Token Limit** | Maximum tokens allowed in output |
+| **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
+| **Send User ID** | Whether to send Mattermost user IDs to the LLM provider |
+| **Use Responses API** | (OpenAI/Compatible only) Enable OpenAI's Responses API for richer tool integration |
+
+#### Provider Specific Settings
+
+Each provider has specific configuration requirements:
+
+| Provider | Required Settings | Optional Settings |
+|----------|-------------------|-------------------|
+| **OpenAI** | API Key | Organization ID, API URL (for compatible services) |
+| **Anthropic** | API Key | |
+| **AWS Bedrock** | AWS Region | API Key (can use IAM role), Access/Secret Keys |
+| **Cohere** | API Key | |
+| **Mistral** | API Key | |
+| **Azure OpenAI** | API Key, API URL | |
+
+For AWS Bedrock, authentication can be configured using AWS credentials in the API Key/Secret fields, or by using IAM roles when running Mattermost on AWS infrastructure.
+
+**Important for Anthropic Claude models**: Before using Claude models via AWS Bedrock, you must submit a one-time First Time Use (FTU) form in the AWS Bedrock Model Catalog, and attach Bedrock API permissions to your Mattermost servers' IAM role. See the [AWS Bedrock setup guide](https://docs.mattermost.com/agents/docs/aws_bedrock_setup.html) for detailed instructions.
+
+See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html) for detailed provider-specific configuration.
+
 ### Agent configuration
 
-Configure an LLM for your Agents integration by going to **System Console > Plugins > Agents** and selecting **Add an Agent**. The plugin supports creating multiple Agents with different configurations. See [license requirements](#license-requirements) for details on features that require a license.
+Create an Agent (Bot) that uses a configured Service. Multiple Agents can use the same Service configuration. See [license requirements](#license-requirements) for details on features that require a license.
 
-Select **Add an Agent** to create a new Agent, then configure the agent settings:
+Navigate to **System Console > Plugins > Agents** and select **Add an Agent**.
 
 | Setting | Description |
 |---------|-------------|
 | **Display Name** | User-facing name shown in Mattermost |
 | **Agent Username** | The mattermost username for the agent. @ mentions to the agent will use this name |
 | **Agent Avatar** | Custom image for the agent |
-| **Service** | LLM provider for this agent (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Azure OpenAI, OpenAI-compatible) |
-| **Send User ID** | Whether to send Mattermost user IDs to the LLM provider |
-| **Default Model** | Specific model to use from your chosen provider |
-| **Input Token Limit** | Maximum tokens allowed in input (model-dependent) |
-| **Output Token Limit** | Maximum tokens allowed in output (model-dependent) |
-| **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
+| **Service** | Select a configured Service from the dropdown |
+| **Model** | (Optional) Override the service's default model for this agent |
 | **Custom Instructions** | Custom instructions that define the agent's personality and capabilities |
-| **Enable Vision** | Enable Vision to allow the agent to process images. Requires a compatible model. |
+| **Enable Vision** | Enable Vision to allow the agent to process images. Requires a compatible model and service. |
 | **Enable Tools** | By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools. |
 | **Access Control** | Set which teams, channels, and users can access this agent |
 
-#### LLM Specific Settings
+#### LLM Specific Agent Settings
 
-Some LLMs have additional configuration that can enable rich features, like Web Search. 
-
-##### OpenAI, OpenAI Compatible
+Some capabilities are available depending on the selected Service and its configuration:
 
 | Setting | Description |
 |---------|-------------|
-| **Use Responses API** | OpenAI has introduced a new Responses API to the OpenAI API specification. This API allows for richer tool integration like reasoning, and native tool support like Web Search. |
-| **Enable Web Search** | Enabling web search will allow your Agent to leverage OpenAI's (or compatible) native web search tool, enabling Agents to respond with information more recent than the model's cutoff date. Responses API must be enabled in order to configure this setting. |
-
-##### Anthropic
-
-| Setting | Description |
-|---------|-------------|
-| **Enable Web Search** | Enabling web search will allow your Agent to leverage Anthropic's native web search tool, enabling Agents to respond with information more recent than the model's cutoff date.
-
-##### AWS Bedrock
-
-| Setting | Description |
-|---------|-------------|
-| **AWS Region** | The AWS region where your Bedrock service is available (e.g., us-east-1, us-west-2). |
-| **API Key** | Optional. AWS credentials can be provided via API Key field or through IAM roles, environment variables, or instance profiles. |
-
-AWS Bedrock provides access to multiple foundation models including Claude (Anthropic), Amazon Titan, and other models available through AWS. Authentication can be configured using AWS credentials in the API Key field, or by using IAM roles when running Mattermost on AWS infrastructure.
-
+| **Enable Web Search** | Available for OpenAI (with Responses API enabled on the Service) and Anthropic. Allows the Agent to leverage the provider's native web search tool to respond with recent information. |
+| **Reasoning Enabled** | Available for OpenAI (with Responses API) and Anthropic. Enables "thinking" or reasoning capabilities for complex tasks. |
 
 Select **Save** to create the agent.
-
-### Provider configuration
-
-For each LLM provider you want to use, you'll need to configure authentication. The basic requirements are:
-
-| Provider | Required | Optional |
-|----------|----------|----------|
-| **OpenAI** | API Key | Organization ID |
-| **Anthropic** | API Key | |
-| **AWS Bedrock** | AWS Region | API Key (can use IAM role) |
-| **Cohere** | API Key | |
-| **Mistral** | API Key | |
-| **Azure OpenAI** | API Key, Resource Name, Deployment ID | |
-
-See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html) for detailed provider-specific configuration.
 
 ### Custom instructions
 
 Text input in the custom instructions field is included in the prompt for every request. Use this to give your agents extra context or instructions. 
 
 For example, you could list your organization's specific acronyms so the agent knows your vernacular and users can ask for definitions. Or you could give it specialized instructions like adopting a specific personality or following a certain workflow. By customizing the instructions for each individual agent, you can create a more tailored AI experience for your specific needs.
+
+### Built-in web search configuration
+
+The built-in web search tool allows agents to retrieve current information from the internet when answering user questions. This feature is designed for deployments using LLM models that don't provide their own native web search capabilities.
+
+#### When to use built-in web search
+
+Built-in web search is intended for LLM models that lack native web search functionality. If your chosen model already provides native web search (such as OpenAI with the Responses API or Anthropic's native search tool), it's strongly recommended to use the provider's native implementation instead. Native web search tools typically offer:
+
+- Better integration with the model
+- More reliable search results
+- Optimized performance
+
+For configuration details on native web search with supported providers, see the [LLM Specific Settings](#llm-specific-settings) section above.
+
+#### Provider comparison
+
+Mattermost supports two web search providers, each with varying capabilities:
+
+##### Brave Search (Recommended)
+
+Brave Search offers a superior experience for AI-powered search:
+
+- **Purpose-built for AI**: Brave's Search API is specifically designed and optimized for LLM integrations
+- **Better content extraction**: Returns pre-processed, LLM-ready summaries with citations
+- **Fewer tool calls**: Often provides complete answers without requiring follow-up web page fetches or scraping
+
+**Important**: Administrators must ensure they subscribe to Brave's **Pro AI plan** when using this feature. Using Brave's regular Search API (non-AI tier) violates Brave's Terms of Service and may result in account suspension. The Pro AI plan is specifically licensed for AI/LLM use cases.
+
+##### Google Custom Search
+
+Google Custom Search provides access to Google's search index but has several important limitations:
+
+- **Not a first-party integration**: Mattermost uses Google's Custom Search API, which doesn't provide the same quality of results as searching directly on google.com
+- **Relies on web scraping**: After receiving search results, Mattermost must scrape web pages to extract content for the agent. Many websites block automated scraping or return limited content to bots
+- **Rate limits**: Google Custom Search has strict daily quota limits
+
+Due to these limitations, Google Custom Search may not always provide optimal results for agent queries.
+
+#### Configuration
+
+To enable built-in web search:
+
+1. Navigate to **System Console > Plugins > Agents > Web Search**
+2. Set **Enable Web Search** to **True**
+3. Select your preferred provider from the **Provider** dropdown
+4. Configure provider-specific settings
+
+##### Brave Search configuration
+
+| Setting | Description | Required |
+|---------|-------------|----------|
+| **Brave API Key** | Your Brave Search API key (Pro AI plan) | Yes |
+| **Result Limit** | Maximum number of results to return (1-10) | No (default: 5) |
+| **API URL** | Override the default Brave endpoint if needed | No |
+
+To obtain a Brave Search API key:
+
+1. Visit [Brave Search API](https://brave.com/search/api/)
+2. Sign up for an account
+3. **Subscribe to the Pro AI plan** (required for LLM usage)
+4. Generate an API key from your dashboard
+
+**Warning**: Ensure you subscribe to the Pro AI plan. Using other Brave Search plans for AI/LLM integrations violates their Terms of Service.
+
+##### Google Custom Search configuration
+
+| Setting | Description | Required |
+|---------|-------------|----------|
+| **Google API Key** | Your Google Custom Search API key | Yes |
+| **Search Engine ID** | Custom search engine identifier (cx parameter) | Yes |
+| **Result Limit** | Maximum number of results to return (1-10) | No (default: 5) |
+| **API URL** | Override the default Google endpoint if needed | No |
+
+To obtain Google Custom Search credentials:
+
+1. Create a project in [Google Cloud Console](https://console.cloud.google.com)
+2. Enable the Custom Search API
+3. Create API credentials (API key)
+4. Set up a custom search engine at [Google Programmable Search Engine](https://programmablesearchengine.google.com)
+5. Note the Search Engine ID (cx parameter)
+
+##### Shared configuration
+
+| Setting | Description |
+|---------|-------------|
+| **Domain Denylist** | Comma-separated list of domains to exclude from all search results (e.g., `example.com, spam-site.org`). Results from these domains are filtered out before being sent to the agent. |
+
+#### Usage and limitations
+
+- Agents are limited to **3 web searches per conversation** to manage API costs and prevent LLMs from looping indefinitely
+- Agents cannot repeat the same search query within a conversation
+- Search results include clickable citations that link back to source websites
+- Domain denylisting applies to all providers and is enforced for _web page fetching only_. 
 
 ### Embed search configuration
 
@@ -210,6 +318,7 @@ This separation allows multiple bots to share the same LLM service configuration
     "services": [
       {
         "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": "OpenAI Service",
         "type": "openai",
         "apiKey": "sk-...",
         "defaultModel": "gpt-4o"
@@ -280,25 +389,25 @@ Currently integrations are limited to direct messages between users and the agen
 
 ## Model Context Protocol (MCP) Integration
 
-The Model Context Protocol (MCP) integration allows Agents to connect to external tools and services through standardized MCP servers. This [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature enables expanding AI capabilities with custom integrations.
+The Model Context Protocol (MCP) integration allows Agents to connect to external tools and services through standardized MCP servers. This feature enables expanding AI capabilities with custom integrations.
 
 ### Configuration
 
 1. Navigate to **System Console > Plugins > Agents > MCP Servers**.
 2. Enable MCP integration by setting **Enable MCP** to **True**.
 3. Configure connection settings:
-   
+
    - **Idle Timeout**: Set timeout in minutes for inactive client connections (default: 30 minutes)
 
 ### Add MCP servers
 
 1. Select **Add MCP Server** to configure a new server.
 2. Configure server settings:
-   
+
    - **Server URL**: The endpoint URL for your MCP server.
    - **Custom Headers**: Additional headers required by your MCP server (optional).
    - **Server Name**: Descriptive name for the server (auto-generated if not provided).
-     
+
 4. Select **Save** to add the server.
 
 ### Management
@@ -333,7 +442,105 @@ After adding the domain, wait 1-2 minutes for changes to propagate before users 
 
 For more information, see [Atlassian's documentation on MCP server settings](https://support.atlassian.com/security-and-access-policies/docs/control-atlassian-rovo-mcp-server-settings/).
 
-> **Note:** The plugin currently doesn't render Markdown links (e.g., JIRA ticket links) in bot responses. URLs are displayed in plain text rather than as clickable Markdown-rendered links. This is not a bug but intended security behavior to prevent potential data exfiltration through links. While this limitation exists, improvements to link handling are being considered for future development. 
+> **Note:** By default, the plugin doesn't render AI-generated Markdown links (for example, JIRA ticket links) as clickable links. URLs are displayed in plain text to reduce potential phishing and data exfiltration risk. If an admin enables **Render AI-generated links** (`allowUnsafeLinks`), AI-generated links may become clickable; enable this only with appropriate trust boundaries and security mitigations in place.
+
+## Mattermost MCP Server
+
+The Mattermost MCP Server enables AI agents and external applications to interact with your Mattermost instance through the Model Context Protocol (MCP). This is a standardized protocol that allows AI assistants to read messages, search content, create posts, and manage channels and teams programmatically. 
+
+### Overview
+
+The Mattermost MCP Server provides:
+
+- **Direct Mattermost Integration**: AI agents can access your Mattermost data and functionality through a standardized API
+- **Security and Permissions**: All operations respect Mattermost's permission system - users only access what they're authorized to see
+- **Flexible Deployment**: Available as an embedded server for Mattermost AI agents or as an HTTP server for external MCP clients
+- **Rich Toolset**: Comprehensive tools for reading, searching, and creating content
+
+**Use Cases**
+
+With the Mattermost MCP Server, you can:
+
+- **Automate Channel Summaries**: Ask your AI agent to summarize activity across channels, catching up on discussions while you were away.
+- **Share Updates Across Channels**: Have your agent post status updates to multiple channels simultaneously, keeping distributed teams synchronized.
+- **Search Intelligently**: Search across your entire Mattermost workspace from any MCP-enabled client to find relevant discussions, decisions, or information.
+- **Coordinate Teams**: Get lists of channel or team members to quickly identify who to contact or mention.
+- **Automate Workflows**: Use external MCP clients to automate routine tasks like posting stand-up updates, creating project channels, or notifying teams of important events.
+- **Access Context-Aware Assistance**: AI agents can read conversation threads to understand context before responding or taking action.
+
+### Available Tools
+
+The MCP server provides the following tools to AI agents and external clients:
+
+- **read_post**: Read a specific post and its thread
+- **read_channel**: Retrieve recent posts from a channel
+- **search_posts**: Search across Mattermost content with optional team/channel filters
+- **create_post**: Create new posts or replies in channels
+- **create_channel**: Create new public or private channels
+- **get_channel_info**: Retrieve channel details by ID or name
+- **get_team_info**: Retrieve team details by ID or name
+- **search_users**: Find users by username, email, or name
+- **get_channel_members**: List all members of a channel
+- **get_team_members**: List all members of a team
+
+### Deployment
+
+![MCP Server Configuration](img/system-console-mcp.png)
+
+#### For AI Agents
+
+To set up an embedded MCP server providing Mattermost AI agents with direct access to Mattermost functionality:
+
+1. Go to **System Console > Plugins > Agents > MCP Servers**.
+2. Set **Enable Embedded Server** to **True**.
+3. When enabled, all configured agents can access Mattermost tools.
+
+Agents will automatically use these tools when appropriate to complete user requests.
+
+#### For External Clients
+
+You can enable external MCP clients, such as Claude web, Claude Code, or other MCP-compatible applications, to interact with your Mattermost instance.
+
+**Requirements:**
+- Mattermost Server v11.2 or later
+- Valid authentication method (OAuth or Personal Access Token)
+
+**Note:** The server uses streamable HTTP transport and does not support traditional Server-Sent Events (SSE) transport. External clients must use the streamable HTTP transport available at the `/mcp` endpoint.
+
+To enable an external MCP client:
+
+1. Go to **System Console > Plugins > Agents > MCP Servers**
+2. Set **Enable Mattermost MCP Server (HTTP)** to **True**.
+The MCP server will be available at: `https://your-mattermost-server/plugins/mattermost-ai/mcp-server/mcp`
+
+**Authentication:**
+
+*OAuth 2.0*
+
+The MCP server supports OAuth 2.0 authentication with both manual and automatic client registration.
+
+**Prerequisites:**
+- Enable OAuth 2.0 service provider in **System Console > Integrations > Integration Management**:
+  - Set **Enable OAuth 2.0 Service Provider** to **True**
+  - For automatic client registration, set **Enable OAuth 2.0 Dynamic Client Registration** to **True** (Note: DCR is an unprotected endpoint, meaning it is publicly accessible and does not require authentication—anyone can register OAuth clients if this feature is enabled. See the [OAuth 2.0 documentation](https://developers.mattermost.com/integrate/apps/authentication/oauth2/) for security considerations.)
+
+**Client Registration Methods:**
+- **Dynamic Client Registration (DCR/RFC 7591)**: External clients can automatically register and obtain credentials without manual setup.
+- **Manual Registration**: Create OAuth applications through **Product menu > Integrations > OAuth 2.0 Applications**. See the [OAuth 2.0 documentation](https://developers.mattermost.com/integrate/apps/authentication/oauth2/) for details.
+
+**Additional Details:**
+- Supports both public clients (e.g., desktop applications) and confidential clients (e.g., server applications)
+- Authorization through standard Mattermost OAuth flows
+- OAuth metadata endpoints:
+  - Protected resource metadata: `https://your-mattermost-server/plugins/mattermost-ai/mcp-server/.well-known/oauth-protected-resource`
+  - Authorization server metadata: `https://your-mattermost-server/.well-known/oauth-authorization-server`
+
+*Personal Access Tokens*
+
+You can authenticate using Mattermost Personal Access Tokens (PAT):
+
+1. Create a Personal Access Token in Mattermost (**User Settings > Security > Personal Access Tokens**).
+2. Configure your MCP client to use Bearer token authentication with the PAT.
 
 ### License requirements
 
@@ -353,4 +560,3 @@ The following table outlines which features require a license:
 | AI Actions menu (thread summarization) | Entry, Enterprise, and Enterprise Advanced |
 | Channel summarization (unread messages) | Entry, Enterprise, and Enterprise Advanced |
 | Recorded meeting transcripts and summarization | Entry, Enterprise, and Enterprise Advanced |
-
