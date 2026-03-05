@@ -233,8 +233,8 @@ func (a *Anthropic) buildAPIParams(state *messageState) anthropicSDK.MessageNewP
 		params.System = []anthropicSDK.TextBlockParam{{Text: state.system}}
 	}
 
-	structuredOutputActive := a.structuredOutputEnabled && state.config.JSONOutputFormat != nil
-	if structuredOutputActive {
+	structuredOutputActive := false
+	if a.structuredOutputEnabled && state.config.JSONOutputFormat != nil {
 		schemaBytes, err := json.Marshal(state.config.JSONOutputFormat)
 		if err == nil {
 			var schemaMap map[string]any
@@ -244,6 +244,7 @@ func (a *Anthropic) buildAPIParams(state *messageState) anthropicSDK.MessageNewP
 						Schema: schemaMap,
 					},
 				}
+				structuredOutputActive = true
 			}
 		}
 	}
