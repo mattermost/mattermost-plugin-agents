@@ -4,7 +4,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -116,7 +115,7 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	var posts []*model.Post
 
@@ -244,7 +243,7 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	// Validate that the provided display names match the actual channel and team
 	channel, _, err := client.GetChannel(ctx, args.ChannelID, "")
@@ -342,7 +341,7 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 	}
 
 	// Create a new client and login as the specified user
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 	userClient := model.NewAPIv4Client(p.mmInternalServerURL)
 
 	// Login as the specified user
@@ -395,7 +394,7 @@ func (p *MattermostToolProvider) toolDMSelf(mcpContext *MCPToolContext, argsGett
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	// Get current user information
 	user, _, err := client.GetMe(ctx, "")

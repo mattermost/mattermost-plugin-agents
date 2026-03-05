@@ -4,7 +4,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -78,7 +77,7 @@ func (p *MattermostToolProvider) toolSearchPosts(mcpContext *MCPToolContext, arg
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	// Build search parameters - use the simpler search method
 	searchTerm := args.Query
@@ -197,7 +196,7 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	// Build search options
 	searchOptions := &model.UserSearch{
