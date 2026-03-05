@@ -253,7 +253,10 @@ func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.Co
 	}
 }
 
-// handleNonStreamingLLMResponse handles non-streaming LLM responses
+// handleNonStreamingLLMResponse handles non-streaming LLM responses.
+// Markdown code fencing is always stripped from bridge responses since LLMs
+// frequently wrap JSON (and other structured content) in code blocks despite
+// being instructed not to.
 func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest, opts ...llm.LanguageModelOption) {
 	// Make the non-streaming LLM call
 	response, err := bot.LLM().ChatCompletionNoStream(llmRequest, opts...)
@@ -263,6 +266,8 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRe
 		})
 		return
 	}
+
+	response = llm.StripMarkdownCodeFencing(response)
 
 	c.JSON(http.StatusOK, bridgeclient.CompletionResponse{
 		Completion: response,
