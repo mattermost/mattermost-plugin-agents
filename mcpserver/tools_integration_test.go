@@ -484,21 +484,23 @@ func TestMCPToolsIntegration(t *testing.T) {
 			assert.True(t, found, "Test DM post should be found in DM channel with target user")
 		})
 
-		t.Run("DMToUserByUserID", func(t *testing.T) {
-			targetUser := testhelpers.CreateTestUser(t, client, "dmtargetid", "dmtargetid@example.com", "testpassword")
+		t.Run("DMToSelfByOwnUsername", func(t *testing.T) {
+			// Get current user's username
+			currentUser, _, err := client.GetMe(context.Background(), "")
+			require.NoError(t, err)
 
 			args := map[string]interface{}{
-				"user_id": targetUser.Id,
-				"message": "Hello by user_id!",
+				"username": currentUser.Username,
+				"message":  "DM to myself by username!",
 			}
 
 			result, err := executeToolWithMCP(t, suite, "dm", args)
-			require.NoError(t, err, "dm to user by user_id should succeed")
+			require.NoError(t, err, "dm to self by own username should succeed")
 			assert.NotEmpty(t, result.Content, "dm should return content")
 
 			if len(result.Content) > 0 {
 				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
-					assert.Contains(t, textContent.Text, "Successfully sent DM to @"+targetUser.Username, "Response should indicate DM to target user")
+					assert.Contains(t, textContent.Text, "Successfully sent DM to yourself", "Response should indicate self DM")
 				}
 			}
 		})
@@ -511,37 +513,6 @@ func TestMCPToolsIntegration(t *testing.T) {
 
 			_, err := executeToolWithMCP(t, suite, "dm", args)
 			require.Error(t, err, "dm with nonexistent username should fail")
-		})
-
-		t.Run("InvalidUserID", func(t *testing.T) {
-			args := map[string]interface{}{
-				"user_id": "zzzzzzzzzzzzzzzzzzzzzzzzzz",
-				"message": "This should fail",
-			}
-
-			_, err := executeToolWithMCP(t, suite, "dm", args)
-			require.Error(t, err, "dm with nonexistent user_id should fail")
-		})
-
-		t.Run("BothUserIDAndUsername", func(t *testing.T) {
-			// user_id takes precedence
-			targetUser := testhelpers.CreateTestUser(t, client, "dmboth", "dmboth@example.com", "testpassword")
-
-			args := map[string]interface{}{
-				"user_id":  targetUser.Id,
-				"username": "some-other-username",
-				"message":  "user_id should take precedence",
-			}
-
-			result, err := executeToolWithMCP(t, suite, "dm", args)
-			require.NoError(t, err, "dm with both user_id and username should succeed using user_id")
-			assert.NotEmpty(t, result.Content)
-
-			if len(result.Content) > 0 {
-				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
-					assert.Contains(t, textContent.Text, "Successfully sent DM to @"+targetUser.Username)
-				}
-			}
 		})
 
 		t.Run("EmptyMessage", func(t *testing.T) {
@@ -560,6 +531,60 @@ func TestMCPToolsIntegration(t *testing.T) {
 
 			_, err := executeToolWithMCP(t, suite, "dm", args)
 			require.Error(t, err, "dm without message should fail")
+		})
+	})
+
+	t.Run("GroupMessageTool", func(t *testing.T) {
+		t.Run("HappyPath", func(t *testing.T) {
+			// Create two target users for the group message
+			gmUser1 := testhelpers.CreateTestUser(t, client, "gmuser1", "gmuser1@example.com", "testpassword")
+			gmUser2 := testhelpers.CreateTestUser(t, client, "gmuser2", "gmuser2@example.com", "testpassword")
+
+			args := map[string]interface{}{
+				"usernames": []string{gmUser1.Username, gmUser2.Username},
+				"message":   "Hello group from integration test!",
+			}
+
+			result, err := executeToolWithMCP(t, suite, "group_message", args)
+			require.NoError(t, err, "group_message should succeed")
+			assert.NotEmpty(t, result.Content, "group_message should return content")
+
+			if len(result.Content) > 0 {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
+					assert.Contains(t, textContent.Text, "Successfully sent group message to", "Response should indicate success")
+					assert.Contains(t, textContent.Text, "with ID:", "Response should include post ID")
+				}
+			}
+
+			// Verify the GM channel was created with the right members
+			currentUser, _, err := client.GetMe(context.Background(), "")
+			require.NoError(t, err)
+
+			gmChannel, _, err := client.CreateGroupChannel(context.Background(), []string{currentUser.Id, gmUser1.Id, gmUser2.Id})
+			require.NoError(t, err)
+
+			posts, _, err := client.GetPostsForChannel(context.Background(), gmChannel.Id, 0, 10, "", false, false)
+			require.NoError(t, err)
+			found := false
+			for _, post := range posts.Posts {
+				if post.Message == "Hello group from integration test!" {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found, "Group message post should be found in GM channel")
+		})
+
+		t.Run("TooFewTargets", func(t *testing.T) {
+			gmUser := testhelpers.CreateTestUser(t, client, "gmuser-solo", "gmuser-solo@example.com", "testpassword")
+
+			args := map[string]interface{}{
+				"usernames": []string{gmUser.Username},
+				"message":   "This should fail — only one target",
+			}
+
+			_, err := executeToolWithMCP(t, suite, "group_message", args)
+			require.Error(t, err, "group_message with only 1 target should fail")
 		})
 	})
 }
