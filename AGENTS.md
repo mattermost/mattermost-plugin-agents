@@ -60,6 +60,61 @@ See `CLAUDE.md` and `README.md` for standard build/lint/test commands. Summary:
 - **E2E tests**: `make e2e` (uses Testcontainers/Docker - fully self-contained)
 - **Build only**: `make dist`
 
+### Configuring an Anthropic AI agent via API
+
+After deploying the plugin and starting the Mattermost server, configure an Anthropic service and agent using the `ANTHROPIC_API_KEY` environment variable (must be set as a secret). Authenticate first, then patch the plugin config:
+
+```bash
+# Get auth token
+TOKEN=$(curl -s -X POST http://localhost:8065/api/v4/users/login \
+  -H 'Content-Type: application/json' \
+  -d '{"login_id":"admin","password":"Admin1234!"}' \
+  -D - 2>/dev/null | grep -i '^token:' | tr -d '\r' | awk '{print $2}')
+
+# Patch plugin config with Anthropic service + agent (reads key from env var)
+python3 -c "
+import json, os
+patch = {
+    'PluginSettings': {
+        'Plugins': {
+            'mattermost-ai': {
+                'config': {
+                    'services': [{
+                        'id': 'anthropic-1',
+                        'name': 'Anthropic Claude',
+                        'type': 'anthropic',
+                        'apiKey': os.environ['ANTHROPIC_API_KEY'],
+                        'defaultModel': 'claude-sonnet-4-20250514',
+                        'tokenLimit': 200000,
+                        'outputTokenLimit': 8192,
+                        'streamingTimeoutSeconds': 60
+                    }],
+                    'bots': [{
+                        'id': 'claude-bot-1',
+                        'name': 'claude',
+                        'displayName': 'Claude',
+                        'customInstructions': 'You are a helpful AI assistant.',
+                        'serviceID': 'anthropic-1',
+                        'channelAccessLevel': 0,
+                        'userAccessLevel': 0,
+                        'enableVision': True,
+                        'disableTools': False
+                    }],
+                    'defaultBotName': 'claude'
+                }
+            }
+        }
+    }
+}
+print(json.dumps(patch))
+" | curl -s -X PUT http://localhost:8065/api/v4/config/patch \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d @-
+```
+
+After this, the `@claude` bot is available for @mentions in channels, direct messages, and the Agents RHS panel (purple icon in the right sidebar). The config structure is defined in `llm/configuration.go` (`ServiceConfig`, `BotConfig`).
+
 ### Gotchas
 
 - The `mattermost-govet` tool (used in `make check-style`) may fail with Go version mismatch errors. This is a known tooling issue, not a code problem. The core linting (golangci-lint, ESLint, TypeScript checks) all pass.
