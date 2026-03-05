@@ -39,13 +39,13 @@ func Init(ctx context.Context, serviceName, serviceVersion, endpoint string) (Sh
 		return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
 	}
 
-	res, err := resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
+	res, err := resource.New(ctx,
+		resource.WithAttributes(
 			semconv.ServiceName(serviceName),
 			semconv.ServiceVersion(serviceVersion),
 		),
+		resource.WithTelemetrySDK(),
+		resource.WithHost(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create resource: %w", err)
