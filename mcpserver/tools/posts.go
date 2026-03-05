@@ -421,10 +421,11 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, argsGetter l
 	// Resolve target user
 	var targetUser *model.User
 	dmSelf := false
-	if args.Username != "" {
-		targetUser, _, err = client.GetUserByUsername(ctx, args.Username, "")
+	username := strings.TrimPrefix(args.Username, "@")
+	if username != "" {
+		targetUser, _, err = client.GetUserByUsername(ctx, username, "")
 		if err != nil {
-			return "failed to get target user", fmt.Errorf("error getting user by username %q: %w", args.Username, err)
+			return "failed to get target user", fmt.Errorf("error getting user by username %q: %w", username, err)
 		}
 		dmSelf = targetUser.Id == currentUser.Id
 	} else {
@@ -513,6 +514,7 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 	targets := make(map[string]string)
 
 	for _, uname := range args.Usernames {
+		uname = strings.TrimPrefix(uname, "@")
 		resolvedUser, _, resolveErr := client.GetUserByUsername(ctx, uname, "")
 		if resolveErr != nil {
 			return fmt.Sprintf("failed to resolve username %q", uname), fmt.Errorf("error getting user by username %q: %w", uname, resolveErr)
