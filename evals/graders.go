@@ -4,6 +4,7 @@
 package evals
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -44,7 +45,7 @@ func (e *Eval) LLMRubric(rubric, output string) (*RubricResult, error) {
 		Operation: llm.OperationEvalGrading,
 	}
 
-	llmResult, gradeErr := e.GraderLLM.ChatCompletionNoStream(req, llm.WithMaxGeneratedTokens(1000), llm.WithJSONOutput[RubricResult]())
+	llmResult, gradeErr := e.GraderLLM.ChatCompletionNoStream(context.Background(), req, llm.WithMaxGeneratedTokens(1000), llm.WithJSONOutput[RubricResult]())
 	if gradeErr != nil {
 		return nil, fmt.Errorf("failed to grade with llm: %w", gradeErr)
 	}

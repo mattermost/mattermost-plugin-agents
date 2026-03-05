@@ -62,7 +62,7 @@ func TestReactResolve(t *testing.T) {
 			prompts, err := llm.NewPrompts(prompts.PromptsFolder)
 			assert.NoError(t, err)
 
-			mockLLM.EXPECT().ChatCompletionNoStream(mock.Anything, mock.Anything).Return(tc.llmResponse, tc.llmError)
+			mockLLM.EXPECT().ChatCompletionNoStream(mock.Anything, mock.Anything, mock.Anything).Return(tc.llmResponse, tc.llmError)
 
 			r := react.New(mockLLM, prompts)
 			ctx := llm.NewContext()

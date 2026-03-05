@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -23,7 +24,7 @@ type testResponse struct {
 	events []TextStreamEvent
 }
 
-func (m *testLLM) ChatCompletion(_ CompletionRequest, _ ...LanguageModelOption) (*TextStreamResult, error) {
+func (m *testLLM) ChatCompletion(_ context.Context, _ CompletionRequest, _ ...LanguageModelOption) (*TextStreamResult, error) {
 	if m.callCount >= len(m.responses) {
 		return nil, fmt.Errorf("unexpected call to ChatCompletion (call %d, only %d responses configured)", m.callCount, len(m.responses))
 	}
@@ -39,8 +40,8 @@ func (m *testLLM) ChatCompletion(_ CompletionRequest, _ ...LanguageModelOption) 
 	return &TextStreamResult{Stream: stream}, nil
 }
 
-func (m *testLLM) ChatCompletionNoStream(request CompletionRequest, opts ...LanguageModelOption) (string, error) {
-	result, err := m.ChatCompletion(request, opts...)
+func (m *testLLM) ChatCompletionNoStream(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (string, error) {
+	result, err := m.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return "", err
 	}
@@ -199,7 +200,7 @@ func TestAutoRunToolsWrapper(t *testing.T) {
 				opts = append(opts, WithAutoRunTools(tt.autoRunTools))
 			}
 
-			result, err := wrapper.ChatCompletion(request, opts...)
+			result, err := wrapper.ChatCompletion(context.Background(), request, opts...)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
@@ -246,7 +247,7 @@ func TestAutoRunToolsWrapper_MaxDepthStopsLoop(t *testing.T) {
 		Context: &Context{Tools: newTestToolStore("test_tool", "result")},
 	}
 
-	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{"test_tool"}))
+	result, err := wrapper.ChatCompletion(context.Background(), request, WithAutoRunTools([]string{"test_tool"}))
 	require.NoError(t, err)
 
 	var textCount int
@@ -284,7 +285,7 @@ func TestAutoRunToolsWrapper_ChatCompletionNoStream(t *testing.T) {
 		Context: &Context{Tools: newTestToolStore("test_tool", "result")},
 	}
 
-	text, err := wrapper.ChatCompletionNoStream(request, WithAutoRunTools([]string{"test_tool"}))
+	text, err := wrapper.ChatCompletionNoStream(context.Background(), request, WithAutoRunTools([]string{"test_tool"}))
 	require.NoError(t, err)
 	assert.Equal(t, "thinking...done", text)
 	assert.Equal(t, 2, inner.callCount)
@@ -331,7 +332,7 @@ func TestAutoRunToolsWrapper_ToolResultsInPost(t *testing.T) {
 		Context: &Context{Tools: newTestToolStore("test_tool", "tool output")},
 	}
 
-	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{"test_tool"}))
+	result, err := wrapper.ChatCompletion(context.Background(), request, WithAutoRunTools([]string{"test_tool"}))
 	require.NoError(t, err)
 
 	// Consume stream
@@ -356,16 +357,16 @@ type capturingLLM struct {
 	capturedPosts *[]Post
 }
 
-func (c *capturingLLM) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
+func (c *capturingLLM) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	// Capture posts from each call after the first
 	if c.inner.callCount > 0 {
 		*c.capturedPosts = append([]Post{}, request.Posts...)
 	}
-	return c.inner.ChatCompletion(request, opts...)
+	return c.inner.ChatCompletion(ctx, request, opts...)
 }
 
-func (c *capturingLLM) ChatCompletionNoStream(request CompletionRequest, opts ...LanguageModelOption) (string, error) {
-	return c.inner.ChatCompletionNoStream(request, opts...)
+func (c *capturingLLM) ChatCompletionNoStream(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (string, error) {
+	return c.inner.ChatCompletionNoStream(ctx, request, opts...)
 }
 
 func (c *capturingLLM) CountTokens(text string) int {

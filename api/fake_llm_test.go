@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -30,7 +31,7 @@ type FakeLLM struct {
 }
 
 // ChatCompletion implements streaming completion
-func (f *FakeLLM) ChatCompletion(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (f *FakeLLM) ChatCompletion(_ context.Context, conversation llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	f.mu.Lock()
 	f.lastRequest = conversation
 	f.mu.Unlock()
@@ -70,7 +71,7 @@ func (f *FakeLLM) ChatCompletion(conversation llm.CompletionRequest, opts ...llm
 }
 
 // ChatCompletionNoStream implements non-streaming completion
-func (f *FakeLLM) ChatCompletionNoStream(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+func (f *FakeLLM) ChatCompletionNoStream(_ context.Context, conversation llm.CompletionRequest, _ ...llm.LanguageModelOption) (string, error) {
 	f.mu.Lock()
 	f.lastRequest = conversation
 	f.mu.Unlock()

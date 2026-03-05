@@ -470,7 +470,7 @@ func (c *Conversations) completeAndStreamToolResponse(
 	if toolsDisabled {
 		opts = append(opts, llm.WithToolsDisabled())
 	}
-	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
+	result, err := bot.LLM().ChatCompletion(context.Background(), completionRequest, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to get chat completion: %w", err)
 	}

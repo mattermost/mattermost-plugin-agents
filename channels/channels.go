@@ -4,6 +4,7 @@
 package channels
 
 import (
+	stdcontext "context"
 	"fmt"
 	"slices"
 
@@ -109,7 +110,7 @@ func (c *Channels) AnalyzeChannel(
 	}
 
 	// Auto-run the bound tools
-	resultStream, err := c.llm.ChatCompletion(completionRequest,
+	resultStream, err := c.llm.ChatCompletion(stdcontext.Background(), completionRequest,
 		llm.WithAutoRunTools([]string{"read_channel", "get_channel_info"}),
 		llm.WithReasoningDisabled())
 	if err != nil {
@@ -178,7 +179,7 @@ func (c *Channels) Interval(
 		OperationSubType: promptName,
 	}
 
-	resultStream, err := c.llm.ChatCompletion(completionRequest, llm.WithToolsDisabled())
+	resultStream, err := c.llm.ChatCompletion(stdcontext.Background(), completionRequest, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, err
 	}

@@ -10,7 +10,7 @@ var (
 	LLMProvider  = attribute.Key("ai.llm.provider")
 	LLMModel     = attribute.Key("ai.llm.model")
 	LLMOperation = attribute.Key("ai.llm.operation")
-	LLMStreaming  = attribute.Key("ai.llm.streaming")
+	LLMStreaming = attribute.Key("ai.llm.streaming")
 
 	LLMInputTokens  = attribute.Key("ai.llm.input_tokens")
 	LLMOutputTokens = attribute.Key("ai.llm.output_tokens")

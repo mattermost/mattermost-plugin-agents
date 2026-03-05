@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"fmt"
 	"testing"
 )
@@ -25,14 +26,14 @@ func (w *LanguageModelTestLogWrapper) logInput(request CompletionRequest, opts .
 	w.t.Log(prompt)
 }
 
-func (w *LanguageModelTestLogWrapper) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
+func (w *LanguageModelTestLogWrapper) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	w.logInput(request, opts...)
-	return w.wrapped.ChatCompletion(request, opts...)
+	return w.wrapped.ChatCompletion(ctx, request, opts...)
 }
 
-func (w *LanguageModelTestLogWrapper) ChatCompletionNoStream(request CompletionRequest, opts ...LanguageModelOption) (string, error) {
+func (w *LanguageModelTestLogWrapper) ChatCompletionNoStream(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (string, error) {
 	w.logInput(request, opts...)
-	return w.wrapped.ChatCompletionNoStream(request, opts...)
+	return w.wrapped.ChatCompletionNoStream(ctx, request, opts...)
 }
 
 func (w *LanguageModelTestLogWrapper) CountTokens(text string) int {

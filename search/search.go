@@ -253,7 +253,7 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 			OperationSubType: llm.SubTypeStreaming,
 		}
 
-		resultStream, err := bot.LLM().ChatCompletion(prompt)
+		resultStream, err := bot.LLM().ChatCompletion(context.Background(), prompt)
 		if err != nil {
 			s.mmclient.LogError("Error generating answer", "error", err)
 			processingError = err
@@ -343,7 +343,7 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 		OperationSubType: llm.SubTypeNoStream,
 	}
 
-	answer, err := bot.LLM().ChatCompletionNoStream(prompt)
+	answer, err := bot.LLM().ChatCompletionNoStream(ctx, prompt)
 	if err != nil {
 		return Response{}, fmt.Errorf("failed to generate answer: %w", err)
 	}

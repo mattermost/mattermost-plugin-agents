@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	stdcontext "context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -151,7 +152,7 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 			opts = append(opts, llm.WithNativeWebSearchAllowed())
 		}
 	}
-	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
+	result, err := bot.LLM().ChatCompletion(stdcontext.Background(), completionRequest, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -229,6 +230,7 @@ func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID stri
 	}
 
 	conversationTitle, err := bot.LLM().ChatCompletionNoStream(
+		stdcontext.Background(),
 		titleRequest,
 		llm.WithMaxGeneratedTokens(25),
 		llm.WithReasoningDisabled(),

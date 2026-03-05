@@ -24,8 +24,8 @@ type Config struct {
 	Services                        []llm.ServiceConfig              `json:"services"`
 	Bots                            []llm.BotConfig                  `json:"bots"`
 	DefaultBotName                  string                           `json:"defaultBotName"`
-	TranscriptGenerator     string `json:"transcriptBackend"`
-	EnableTokenUsageLogging bool   `json:"enableTokenUsageLogging"`
+	TranscriptGenerator             string                           `json:"transcriptBackend"`
+	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
 	EnableTokenUsageLogToPlugin     *bool                            `json:"enableTokenUsageLogToPlugin,omitempty"`
 	EnableTokenUsageLogToFile       *bool                            `json:"enableTokenUsageLogToFile,omitempty"`
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`

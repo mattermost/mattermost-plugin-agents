@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"math"
 )
 
@@ -21,16 +22,16 @@ func NewLLMTruncationWrapper(llm LanguageModel) *TruncationWrapper {
 	}
 }
 
-func (w *TruncationWrapper) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
+func (w *TruncationWrapper) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	tokenLimit := int(math.Max(math.Floor(float64(w.wrapped.InputTokenLimit()-FunctionsTokenBudget)*TokenLimitBufferSize), MinTokens))
 	request.Truncate(tokenLimit, w.wrapped.CountTokens)
-	return w.wrapped.ChatCompletion(request, opts...)
+	return w.wrapped.ChatCompletion(ctx, request, opts...)
 }
 
-func (w *TruncationWrapper) ChatCompletionNoStream(request CompletionRequest, opts ...LanguageModelOption) (string, error) {
+func (w *TruncationWrapper) ChatCompletionNoStream(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (string, error) {
 	tokenLimit := int(math.Max(math.Floor(float64(w.wrapped.InputTokenLimit()-FunctionsTokenBudget)*TokenLimitBufferSize), MinTokens))
 	request.Truncate(tokenLimit, w.wrapped.CountTokens)
-	return w.wrapped.ChatCompletionNoStream(request, opts...)
+	return w.wrapped.ChatCompletionNoStream(ctx, request, opts...)
 }
 
 func (w *TruncationWrapper) CountTokens(text string) int {

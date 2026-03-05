@@ -4,6 +4,7 @@
 package threads
 
 import (
+	stdcontext "context"
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-ai/format"
@@ -54,7 +55,7 @@ func (t *Threads) Analyze(postIDToAnalyze string, context *llm.Context, promptNa
 		Operation:        llm.OperationThreadAnalysis,
 		OperationSubType: promptName,
 	}
-	analysisStream, err := t.llm.ChatCompletion(completionRequest, llm.WithToolsDisabled())
+	analysisStream, err := t.llm.ChatCompletion(stdcontext.Background(), completionRequest, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, err
 	}

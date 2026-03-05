@@ -233,16 +233,16 @@ func (b *LLM) createConfig(opts []llm.LanguageModelOption) llm.LanguageModelConf
 }
 
 // ChatCompletion performs a streaming chat completion request.
-func (b *LLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (b *LLM) ChatCompletion(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	cfg := b.createConfig(opts)
 	eventStream := make(chan llm.TextStreamEvent)
 
 	go func() {
 		defer close(eventStream)
 		if b.shouldUseResponsesAPI(cfg) {
-			b.streamResponses(request, cfg, eventStream)
+			b.streamResponses(ctx, request, cfg, eventStream)
 		} else {
-			b.streamChat(request, cfg, eventStream)
+			b.streamChat(ctx, request, cfg, eventStream)
 		}
 	}()
 
@@ -250,8 +250,8 @@ func (b *LLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.Language
 }
 
 // ChatCompletionNoStream performs a non-streaming chat completion request.
-func (b *LLM) ChatCompletionNoStream(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
-	result, err := b.ChatCompletion(request, opts...)
+func (b *LLM) ChatCompletionNoStream(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	result, err := b.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return "", err
 	}
@@ -284,8 +284,8 @@ func (b *LLM) InputTokenLimit() int {
 }
 
 // streamChat handles the streaming chat completion.
-func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
-	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(context.Background(), b.streamingTimeout*10)
+func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
+	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
 	// Convert to Bifrost request
@@ -1164,8 +1164,8 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 }
 
 // streamResponses handles the streaming Responses API completion.
-func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
-	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(context.Background(), b.streamingTimeout*10)
+func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
+	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
 	// Convert to Bifrost Responses API request

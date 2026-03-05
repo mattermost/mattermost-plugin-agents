@@ -3,6 +3,8 @@
 
 package llm
 
+import "context"
+
 // MaxToolResolutionDepth is the maximum number of times the auto-run tools
 // wrapper will re-invoke the LLM to resolve tool calls before stopping.
 const MaxToolResolutionDepth = 10
@@ -22,7 +24,7 @@ func NewAutoRunToolsWrapper(inner LanguageModel) LanguageModel {
 // ChatCompletion implements LanguageModel. When AutoRunTools is configured and tools are
 // available, it will automatically execute matching tool calls and re-invoke the LLM
 // up to MaxToolResolutionDepth times.
-func (w *AutoRunToolsWrapper) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
+func (w *AutoRunToolsWrapper) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	// Build config from opts to check if auto-run is enabled
 	var cfg LanguageModelConfig
 	for _, opt := range opts {
@@ -31,14 +33,14 @@ func (w *AutoRunToolsWrapper) ChatCompletion(request CompletionRequest, opts ...
 
 	// If auto-run is not configured or no tools context, delegate directly
 	if len(cfg.AutoRunTools) == 0 || request.Context == nil || request.Context.Tools == nil {
-		return w.inner.ChatCompletion(request, opts...)
+		return w.inner.ChatCompletion(ctx, request, opts...)
 	}
 
 	output := make(chan TextStreamEvent)
 
 	go func() {
 		defer close(output)
-		w.runToolLoop(request, opts, cfg.AutoRunTools, output)
+		w.runToolLoop(ctx, request, opts, cfg.AutoRunTools, output)
 	}()
 
 	return &TextStreamResult{Stream: output}, nil
@@ -46,9 +48,9 @@ func (w *AutoRunToolsWrapper) ChatCompletion(request CompletionRequest, opts ...
 
 // runToolLoop runs the tool resolution loop, forwarding events and re-invoking
 // the LLM when auto-runnable tool calls are received.
-func (w *AutoRunToolsWrapper) runToolLoop(request CompletionRequest, opts []LanguageModelOption, autoRunTools []string, output chan<- TextStreamEvent) {
+func (w *AutoRunToolsWrapper) runToolLoop(ctx context.Context, request CompletionRequest, opts []LanguageModelOption, autoRunTools []string, output chan<- TextStreamEvent) {
 	for i := 0; i < MaxToolResolutionDepth; i++ {
-		result, err := w.inner.ChatCompletion(request, opts...)
+		result, err := w.inner.ChatCompletion(ctx, request, opts...)
 		if err != nil {
 			output <- TextStreamEvent{Type: EventTypeError, Value: err}
 			return
@@ -122,8 +124,8 @@ func (w *AutoRunToolsWrapper) runToolLoop(request CompletionRequest, opts []Lang
 }
 
 // ChatCompletionNoStream implements LanguageModel by using ChatCompletion and reading all results.
-func (w *AutoRunToolsWrapper) ChatCompletionNoStream(request CompletionRequest, opts ...LanguageModelOption) (string, error) {
-	result, err := w.ChatCompletion(request, opts...)
+func (w *AutoRunToolsWrapper) ChatCompletionNoStream(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (string, error) {
+	result, err := w.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return "", err
 	}
