@@ -371,9 +371,18 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                                 return;
                                             }
 
+                                            if (idleTimeoutMinutes <= 0) {
+                                                const configWithoutIdleTimeout = {...config};
+                                                delete configWithoutIdleTimeout.idleTimeoutMinutes;
+                                                onChange({
+                                                    ...configWithoutIdleTimeout,
+                                                });
+                                                return;
+                                            }
+
                                             onChange({
                                                 ...config,
-                                                idleTimeoutMinutes: Math.max(1, idleTimeoutMinutes),
+                                                idleTimeoutMinutes,
                                             });
                                         }}
                                         helptext={intl.formatMessage({defaultMessage: 'How long to keep an inactive user connection open before closing it automatically. Lower values save resources, higher values improve response times. Default: 30 minutes'})}
