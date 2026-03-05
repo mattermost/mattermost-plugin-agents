@@ -13,7 +13,9 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
+	"github.com/mattermost/mattermost-plugin-ai/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Client defines the minimal client interface needed for streaming operations.
@@ -244,6 +246,14 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 // StreamToPost streams the result of a TextStreamResult to a post.
 // it will internally handle logging needs and updating the post.
 func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string) {
+	ctx, span := telemetry.Tracer().Start(ctx, "stream to post",
+		trace.WithAttributes(
+			telemetry.PostID.String(post.Id),
+			telemetry.ChannelID.String(post.ChannelId),
+		),
+	)
+	defer span.End()
+
 	broadcast := &model.WebsocketBroadcast{ChannelId: post.ChannelId}
 	p.sendPostStreamingControlEventWithBroadcast(post, PostStreamingControlStart, broadcast)
 	defer func() {

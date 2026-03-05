@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-ai/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -158,6 +159,9 @@ func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query st
 
 // RunSearch initiates a search and sends results to a DM
 func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (map[string]string, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "run search")
+	defer span.End()
+
 	if !s.Enabled() {
 		return nil, fmt.Errorf("search functionality is not configured")
 	}
@@ -293,6 +297,9 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 
 // SearchQuery performs a search and returns results immediately
 func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (Response, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "search query")
+	defer span.End()
+
 	if !s.Enabled() {
 		return Response{}, fmt.Errorf("search functionality is not configured")
 	}

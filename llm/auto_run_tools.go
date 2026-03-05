@@ -93,7 +93,7 @@ func (w *AutoRunToolsWrapper) runToolLoop(ctx context.Context, request Completio
 		}
 
 		// Execute auto-run tools
-		results := ExecuteAutoRunTools(toolCalls, request.Context.Tools.ResolveTool, request.Context)
+		results := ExecuteAutoRunTools(ctx, toolCalls, request.Context.Tools.ResolveTool, request.Context)
 
 		// Build resolved tool call entries
 		resolvedToolCalls := make([]ToolCall, len(results))

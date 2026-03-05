@@ -15,7 +15,9 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/mmtools"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-ai/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // extractWebSearchContext retrieves web search context from the thread
@@ -121,6 +123,11 @@ func responseRootIDFromPost(post *model.Post) string {
 
 // HandleToolCall handles tool call approval/rejection
 func (c *Conversations) HandleToolCall(ctx stdcontext.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+	ctx, span := telemetry.Tracer().Start(ctx, "handle tool call",
+		trace.WithAttributes(telemetry.PostID.String(post.Id)),
+	)
+	defer span.End()
+
 	bot := c.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
@@ -194,17 +201,26 @@ func (c *Conversations) HandleToolCall(ctx stdcontext.Context, userID string, po
 
 	for i := range tools {
 		if slices.Contains(acceptedToolIDs, tools[i].ID) {
-			result, resolveErr := llmContext.Tools.ResolveTool(tools[i].Name, func(args any) error {
+			_, resolveSpan := telemetry.Tracer().Start(ctx, "resolve tool",
+				trace.WithAttributes(
+					telemetry.ToolName.String(tools[i].Name),
+					telemetry.ToolID.String(tools[i].ID),
+				),
+			)
+			result, resolveErr := llmContext.Tools.ResolveTool(ctx, tools[i].Name, func(args any) error {
 				return json.Unmarshal(tools[i].Arguments, args)
 			}, llmContext)
 			if resolveErr != nil {
-				// Maybe in the future we can return this to the user and have a retry. For now just tell the LLM it failed.
 				tools[i].Result = "Tool call failed"
 				tools[i].Status = llm.ToolCallStatusError
+				resolveSpan.SetAttributes(telemetry.ToolStatus.String("error"))
+				resolveSpan.End()
 				continue
 			}
 			tools[i].Result = result
 			tools[i].Status = llm.ToolCallStatusSuccess
+			resolveSpan.SetAttributes(telemetry.ToolStatus.String("success"))
+			resolveSpan.End()
 		} else {
 			tools[i].Result = "Tool call rejected by user"
 			tools[i].Status = llm.ToolCallStatusRejected
@@ -302,6 +318,9 @@ func (c *Conversations) HandleToolCall(ctx stdcontext.Context, userID string, po
 
 // HandleToolResult handles tool result approval after tool execution.
 func (c *Conversations) HandleToolResult(ctx stdcontext.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+	ctx, span := telemetry.Tracer().Start(ctx, "handle tool result")
+	defer span.End()
+
 	bot := c.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
@@ -447,6 +466,9 @@ func (c *Conversations) completeAndStreamToolResponse(
 	toolsDisabled bool,
 	allowToolsInChannel bool,
 ) error {
+	ctx, span := telemetry.Tracer().Start(ctx, "tool followup completion")
+	defer span.End()
+
 	responseRootID := responseRootIDFromPost(toolCallPost)
 
 	previousConversation, err := mmapi.GetThreadData(c.mmClient, responseRootID)

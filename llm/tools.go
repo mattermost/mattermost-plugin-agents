@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/mattermost/mattermost-plugin-ai/telemetry"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Tool represents a function that can be called by the language model during a conversation.
@@ -304,16 +307,17 @@ func ShouldAutoRunTools(pendingToolCalls []ToolCall, autoRunTools []string) bool
 // ExecuteAutoRunTools executes the given tool calls using the provided resolver.
 // Returns the results for each tool call.
 func ExecuteAutoRunTools(
+	ctx context.Context,
 	pendingToolCalls []ToolCall,
-	resolver func(name string, argsGetter ToolArgumentGetter, context *Context) (string, error),
-	context *Context,
+	resolver func(ctx context.Context, name string, argsGetter ToolArgumentGetter, context *Context) (string, error),
+	llmCtx *Context,
 ) []AutoRunResult {
 	results := make([]AutoRunResult, 0, len(pendingToolCalls))
 
 	for _, tc := range pendingToolCalls {
 		getter := func(args any) error { return json.Unmarshal(tc.Arguments, args) }
 
-		result, err := resolver(tc.Name, getter, context)
+		result, err := resolver(ctx, tc.Name, getter, llmCtx)
 		isError := err != nil
 		if err != nil {
 			result = fmt.Sprintf("Error executing tool: %v", err)
@@ -366,12 +370,17 @@ func (s *ToolStore) AddTools(tools []Tool) {
 	}
 }
 
-func (s *ToolStore) ResolveTool(name string, argsGetter ToolArgumentGetter, context *Context) (string, error) {
+func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter ToolArgumentGetter, llmCtx *Context) (string, error) {
+	_, span := telemetry.Tracer().Start(ctx, "resolve tool",
+		trace.WithAttributes(telemetry.ToolName.String(name)),
+	)
+	defer span.End()
+
 	tool, ok := s.tools[name]
 	if !ok {
 		return "", errors.New("unknown tool " + name)
 	}
-	return tool.Resolver(context, argsGetter)
+	return tool.Resolver(llmCtx, argsGetter)
 }
 
 func (s *ToolStore) GetTools() []Tool {
