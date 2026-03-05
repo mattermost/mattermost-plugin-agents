@@ -27,7 +27,6 @@ type Config = {
     bots: LLMBotConfig[],
     defaultBotName: string,
     transcriptBackend: string,
-    enableLLMTrace: boolean,
     enableTokenUsageLogging: boolean,
     enableCallSummary: boolean,
     allowedUpstreamHostnames: string,
@@ -83,7 +82,6 @@ const defaultConfig = {
     services: [],
     llmBackend: '',
     transcriptBackend: '',
-    enableLLMTrace: false,
     enableTokenUsageLogging: false,
     allowUnsafeLinks: false,
     enableChannelMentionToolCalling: false,
@@ -340,12 +338,6 @@ const Config = (props: Props) => {
                 subtitle=''
             >
                 <ItemList>
-                    <BooleanItem
-                        label={intl.formatMessage({defaultMessage: 'Enable LLM Trace'})}
-                        value={value.enableLLMTrace}
-                        onChange={(to) => props.onChange(props.id, {...value, enableLLMTrace: to})}
-                        helpText={intl.formatMessage({defaultMessage: 'Enable tracing of LLM requests. Outputs full conversation data to the logs.'})}
-                    />
                     <BooleanItem
                         label={intl.formatMessage({defaultMessage: 'Enable Token Usage Logging'})}
                         value={value.enableTokenUsageLogging}

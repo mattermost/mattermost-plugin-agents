@@ -24,9 +24,8 @@ type Config struct {
 	Services                        []llm.ServiceConfig              `json:"services"`
 	Bots                            []llm.BotConfig                  `json:"bots"`
 	DefaultBotName                  string                           `json:"defaultBotName"`
-	TranscriptGenerator             string                           `json:"transcriptBackend"`
-	EnableLLMTrace                  bool                             `json:"enableLLMTrace"`
-	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
+	TranscriptGenerator     string `json:"transcriptBackend"`
+	EnableTokenUsageLogging bool   `json:"enableTokenUsageLogging"`
 	EnableTokenUsageLogToPlugin     *bool                            `json:"enableTokenUsageLogToPlugin,omitempty"`
 	EnableTokenUsageLogToFile       *bool                            `json:"enableTokenUsageLogToFile,omitempty"`
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
@@ -93,10 +92,6 @@ func (c *Container) Config() *Config {
 	return c.cfg.Load()
 }
 
-func (c *Container) GetEnableLLMTrace() bool {
-	return c.cfg.Load().EnableLLMTrace
-}
-
 func (c *Container) GetTranscriptGenerator() string {
 	return c.cfg.Load().TranscriptGenerator
 }
@@ -107,10 +102,6 @@ func (c *Container) GetBots() []llm.BotConfig {
 
 func (c *Container) GetDefaultBotName() string {
 	return c.cfg.Load().DefaultBotName
-}
-
-func (c *Container) EnableLLMLogging() bool {
-	return c.cfg.Load().EnableLLMTrace
 }
 
 func (c *Container) EnableTokenUsageLogging() bool {

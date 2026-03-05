@@ -54,10 +54,6 @@ func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.
 
 type mockConfigProvider struct{}
 
-func (m *mockConfigProvider) GetEnableLLMTrace() bool {
-	return false
-}
-
 func (m *mockConfigProvider) GetServiceByID(id string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }

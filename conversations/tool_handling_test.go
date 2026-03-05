@@ -171,10 +171,6 @@ func (p *testToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
 
 type testConfigProvider struct{}
 
-func (p *testConfigProvider) GetEnableLLMTrace() bool {
-	return false
-}
-
 func (p *testConfigProvider) GetServiceByID(string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }

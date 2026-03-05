@@ -28,7 +28,6 @@ export interface PluginConfig {
     config: {
         allowPrivateChannels?: boolean;
         disableFunctionCalls?: boolean;
-        enableLLMTrace?: boolean;
         enableUserRestrictions?: boolean;
         defaultBotName?: string;
         enableVectorIndex?: boolean;

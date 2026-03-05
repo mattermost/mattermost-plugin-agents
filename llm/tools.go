@@ -332,13 +332,7 @@ func ExecuteAutoRunTools(
 
 type ToolStore struct {
 	tools      map[string]Tool
-	log        TraceLog
-	doTrace    bool
 	authErrors []ToolAuthError
-}
-
-type TraceLog interface {
-	Info(message string, keyValuePairs ...any)
 }
 
 // NewJSONSchemaFromStruct creates a JSONSchema from a Go struct using generics
@@ -355,17 +349,13 @@ func NewJSONSchemaFromStruct[T any]() *jsonschema.Schema {
 func NewNoTools() *ToolStore {
 	return &ToolStore{
 		tools:      make(map[string]Tool),
-		log:        nil,
-		doTrace:    false,
 		authErrors: []ToolAuthError{},
 	}
 }
 
-func NewToolStore(log TraceLog, doTrace bool) *ToolStore {
+func NewToolStore() *ToolStore {
 	return &ToolStore{
 		tools:      make(map[string]Tool),
-		log:        log,
-		doTrace:    doTrace,
 		authErrors: []ToolAuthError{},
 	}
 }
@@ -379,12 +369,9 @@ func (s *ToolStore) AddTools(tools []Tool) {
 func (s *ToolStore) ResolveTool(name string, argsGetter ToolArgumentGetter, context *Context) (string, error) {
 	tool, ok := s.tools[name]
 	if !ok {
-		s.TraceUnknown(name, argsGetter)
 		return "", errors.New("unknown tool " + name)
 	}
-	results, err := tool.Resolver(context, argsGetter)
-	s.TraceResolved(name, argsGetter, results, err)
-	return results, err
+	return tool.Resolver(context, argsGetter)
 }
 
 func (s *ToolStore) GetTools() []Tool {
@@ -418,32 +405,6 @@ func (s *ToolStore) GetToolsInfo() []ToolInfo {
 		})
 	}
 	return result
-}
-
-func (s *ToolStore) TraceUnknown(name string, argsGetter ToolArgumentGetter) {
-	if s.log != nil && s.doTrace {
-		args := ""
-		var raw json.RawMessage
-		if err := argsGetter(&raw); err != nil {
-			args = fmt.Sprintf("failed to get tool args: %v", err)
-		} else {
-			args = string(raw)
-		}
-		s.log.Info("unknown tool called", "name", name, "args", args)
-	}
-}
-
-func (s *ToolStore) TraceResolved(name string, argsGetter ToolArgumentGetter, result string, err error) {
-	if s.log != nil && s.doTrace {
-		args := ""
-		var raw json.RawMessage
-		if getArgsErr := argsGetter(&raw); getArgsErr != nil {
-			args = fmt.Sprintf("failed to get tool args: %v", getArgsErr)
-		} else {
-			args = string(raw)
-		}
-		s.log.Info("tool resolved", "name", name, "args", args, "result", result, "error", err)
-	}
 }
 
 // AddAuthError adds an authentication error to the tool store
