@@ -9,50 +9,50 @@ import {SystemConsoleHelper} from 'helpers/system-console';
 import {OpenAIMockContainer, RunOpenAIMocks} from 'helpers/openai-mock';
 import RunSystemConsoleContainer, {adminUsername, adminPassword} from 'helpers/system-console-container';
 
-let mattermost: MattermostContainer;
-let openAIMock: OpenAIMockContainer;
+let mattermost: MattermostContainer | undefined;
+let openAIMock: OpenAIMockContainer | undefined;
 
 test.describe.serial('MCP Panel', () => {
     test('should keep Connection Idle Timeout empty when cleared', async ({page}) => {
         test.setTimeout(60000);
 
-        mattermost = await RunSystemConsoleContainer({
-            mcp: {
-                enabled: true,
-                enablePluginServer: false,
-                idleTimeoutMinutes: 30,
-            },
-            services: [
-                {
-                    id: 'test-service',
-                    name: 'Test Service',
-                    type: 'openai',
-                    apiKey: 'test-key',
-                    orgId: '',
-                    defaultModel: 'gpt-4',
-                    tokenLimit: 16384,
-                    streamingTimeoutSeconds: 30,
-                    sendUserId: false,
-                    outputTokenLimit: 4096,
-                    useResponsesAPI: false,
-                },
-            ],
-            bots: [
-                {
-                    id: 'bot-1',
-                    name: 'testbot',
-                    displayName: 'Test Bot',
-                    serviceID: 'test-service',
-                    customInstructions: 'You are a helpful assistant',
-                    enableVision: false,
-                    enableTools: false,
-                },
-            ],
-            defaultBotName: 'testbot',
-        });
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-
         try {
+            mattermost = await RunSystemConsoleContainer({
+                mcp: {
+                    enabled: true,
+                    enablePluginServer: false,
+                    idleTimeoutMinutes: 30,
+                },
+                services: [
+                    {
+                        id: 'test-service',
+                        name: 'Test Service',
+                        type: 'openai',
+                        apiKey: 'test-key',
+                        orgId: '',
+                        defaultModel: 'gpt-4',
+                        tokenLimit: 16384,
+                        streamingTimeoutSeconds: 30,
+                        sendUserId: false,
+                        outputTokenLimit: 4096,
+                        useResponsesAPI: false,
+                    },
+                ],
+                bots: [
+                    {
+                        id: 'bot-1',
+                        name: 'testbot',
+                        displayName: 'Test Bot',
+                        serviceID: 'test-service',
+                        customInstructions: 'You are a helpful assistant',
+                        enableVision: false,
+                        enableTools: false,
+                    },
+                ],
+                defaultBotName: 'testbot',
+            });
+            openAIMock = await RunOpenAIMocks(mattermost.network);
+
             const mmPage = new MattermostPage(page);
             const systemConsole = new SystemConsoleHelper(page);
 
@@ -76,8 +76,12 @@ test.describe.serial('MCP Panel', () => {
             );
             await expect(reloadedTimeoutField).toHaveValue('');
         } finally {
-            await openAIMock.stop();
-            await mattermost.stop();
+            if (openAIMock) {
+                await openAIMock.stop();
+            }
+            if (mattermost) {
+                await mattermost.stop();
+            }
         }
     });
 });
