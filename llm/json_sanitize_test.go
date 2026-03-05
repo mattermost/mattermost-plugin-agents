@@ -65,6 +65,21 @@ func TestStripMarkdownCodeFencing(t *testing.T) {
 			input:    "```json\n{\n  \"highlights\": [\n    \"point 1\"\n  ]\n}\n```",
 			expected: "{\n  \"highlights\": [\n    \"point 1\"\n  ]\n}",
 		},
+		{
+			name:     "single-line javascript fenced",
+			input:    "```javascript {\"a\":1}```",
+			expected: `{"a":1}`,
+		},
+		{
+			name:     "single-line with unknown language tag",
+			input:    "```xml <root/>```",
+			expected: `<root/>`,
+		},
+		{
+			name:     "multiline with non-json language tag",
+			input:    "```typescript\n{\"key\": \"value\"}\n```",
+			expected: `{"key": "value"}`,
+		},
 	}
 
 	for _, tt := range tests {

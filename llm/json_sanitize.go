@@ -12,16 +12,16 @@ func StripMarkdownCodeFencing(s string) string {
 	if !strings.HasPrefix(trimmed, "```") {
 		return s
 	}
-	// Remove opening ``` prefix (and optional language tag like "json")
+	// Remove opening ``` prefix (and optional language tag like "json", "javascript", etc.)
 	content := strings.TrimPrefix(trimmed, "```")
 	if firstNewline := strings.Index(content, "\n"); firstNewline != -1 {
 		content = content[firstNewline+1:]
 	} else {
 		// Single-line fenced payload, e.g. ```json {"a":1}```
 		content = strings.TrimSpace(content)
-		if len(content) >= 4 && strings.EqualFold(content[:4], "json") {
-			if len(content) == 4 || content[4] == ' ' || content[4] == '\t' {
-				content = strings.TrimSpace(content[4:])
+		if spaceIdx := strings.IndexAny(content, " \t"); spaceIdx != -1 {
+			if isLanguageTag(content[:spaceIdx]) {
+				content = strings.TrimSpace(content[spaceIdx:])
 			}
 		}
 	}
@@ -31,4 +31,18 @@ func StripMarkdownCodeFencing(s string) string {
 		content = content[:idx]
 	}
 	return strings.TrimSpace(content)
+}
+
+// isLanguageTag returns true if s looks like a markdown code fence language tag
+// (e.g. "json", "javascript", "go", "c++", "c-sharp").
+func isLanguageTag(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '+') {
+			return false
+		}
+	}
+	return true
 }

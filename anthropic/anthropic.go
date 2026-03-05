@@ -233,6 +233,11 @@ func (a *Anthropic) buildAPIParams(state *messageState) anthropicSDK.MessageNewP
 		params.System = []anthropicSDK.TextBlockParam{{Text: state.system}}
 	}
 
+	// Convert JSONOutputFormat to the SDK's schema map. If marshaling fails,
+	// structured output is silently skipped and the request falls back to
+	// unstructured output. This is intentional: the schema originates from
+	// trusted internal code (jsonschema.Schema), so conversion errors are
+	// not expected in practice.
 	structuredOutputActive := false
 	if a.structuredOutputEnabled && state.config.JSONOutputFormat != nil {
 		schemaBytes, err := json.Marshal(state.config.JSONOutputFormat)
