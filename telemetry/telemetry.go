@@ -67,3 +67,8 @@ func Init(ctx context.Context, serviceName, serviceVersion, endpoint string) (Sh
 func Tracer() trace.Tracer {
 	return otel.Tracer(TracerName)
 }
+
+// SpanFromContext extracts the current span from context.
+func SpanFromContext(ctx context.Context) trace.Span {
+	return trace.SpanFromContext(ctx)
+}

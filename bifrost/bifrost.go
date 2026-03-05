@@ -19,8 +19,10 @@ import (
 
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/telemetry"
 )
 
 const (
@@ -235,10 +237,16 @@ func (b *LLM) createConfig(opts []llm.LanguageModelOption) llm.LanguageModelConf
 // ChatCompletion performs a streaming chat completion request.
 func (b *LLM) ChatCompletion(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	cfg := b.createConfig(opts)
+
+	ctx, span := telemetry.Tracer().Start(ctx, "llm chat completion",
+		telemetry.WithLLMAttributes(string(b.provider), cfg.Model, request.Operation, true),
+	)
+
 	eventStream := make(chan llm.TextStreamEvent)
 
 	go func() {
 		defer close(eventStream)
+		defer span.End()
 		if b.shouldUseResponsesAPI(cfg) {
 			b.streamResponses(ctx, request, cfg, eventStream)
 		} else {
@@ -285,6 +293,7 @@ func (b *LLM) InputTokenLimit() int {
 
 // streamChat handles the streaming chat completion.
 func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
+	span := telemetry.SpanFromContext(ctx)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
@@ -294,9 +303,12 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
+		err := fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message),
+			Value: err,
 		}
 		return
 	}
@@ -346,9 +358,12 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 		}
 
 		if chunk.BifrostError != nil {
+			err := fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message),
+				Value: err,
 			}
 			return
 		}
@@ -465,6 +480,10 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 					OutputTokens: int64(resp.Usage.CompletionTokens),
 				}
 				if usage.InputTokens > 0 || usage.OutputTokens > 0 {
+					span.SetAttributes(
+						telemetry.LLMInputTokens.Int64(usage.InputTokens),
+						telemetry.LLMOutputTokens.Int64(usage.OutputTokens),
+					)
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeUsage,
 						Value: usage,
@@ -1165,6 +1184,7 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 
 // streamResponses handles the streaming Responses API completion.
 func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
+	span := telemetry.SpanFromContext(ctx)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
 
@@ -1174,9 +1194,12 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ResponsesStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
+		err := fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message),
+			Value: err,
 		}
 		return
 	}
@@ -1231,9 +1254,12 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		}
 
 		if chunk.BifrostError != nil {
+			err := fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message),
+				Value: err,
 			}
 			return
 		}
@@ -1440,6 +1466,10 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 						OutputTokens: int64(resp.Response.Usage.OutputTokens),
 					}
 					if usage.InputTokens > 0 || usage.OutputTokens > 0 {
+						span.SetAttributes(
+							telemetry.LLMInputTokens.Int64(usage.InputTokens),
+							telemetry.LLMOutputTokens.Int64(usage.OutputTokens),
+						)
 						output <- llm.TextStreamEvent{
 							Type:  llm.EventTypeUsage,
 							Value: usage,

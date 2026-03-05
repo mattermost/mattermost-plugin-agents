@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+
 	"github.com/mattermost/mattermost-plugin-ai/bifrost"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
@@ -124,6 +126,7 @@ func New(
 // ServeHTTP handles HTTP requests to the plugin
 func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
 	router := gin.Default()
+	router.Use(otelgin.Middleware("mattermost-ai-agents"))
 	router.Use(a.ginlogger)
 	router.Use(a.metricsMiddleware)
 

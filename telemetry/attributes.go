@@ -3,7 +3,10 @@
 
 package telemetry
 
-import "go.opentelemetry.io/otel/attribute"
+import (
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+)
 
 // Attribute keys for LLM operations
 var (
@@ -41,3 +44,13 @@ var (
 	ChannelID = attribute.Key("ai.channel.id")
 	PostID    = attribute.Key("ai.post.id")
 )
+
+// WithLLMAttributes returns a SpanStartOption with standard LLM attributes.
+func WithLLMAttributes(provider, model, operation string, streaming bool) trace.SpanStartOption {
+	return trace.WithAttributes(
+		LLMProvider.String(provider),
+		LLMModel.String(model),
+		LLMOperation.String(operation),
+		LLMStreaming.Bool(streaming),
+	)
+}
