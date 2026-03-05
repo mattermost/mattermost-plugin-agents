@@ -115,6 +115,48 @@ print(json.dumps(patch))
 
 After this, the `@claude` bot is available for @mentions in channels, direct messages, and the Agents RHS panel (purple icon in the right sidebar). The config structure is defined in `llm/configuration.go` (`ServiceConfig`, `BotConfig`).
 
+### Uploading PR artifacts to S3
+
+**All screenshots and walkthrough videos captured during development MUST be uploaded to S3 and linked in the Pull Request description.** This gives reviewers visual evidence of changes. Never include secrets, credentials, or API keys in screenshots or videos.
+
+Required env vars: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET_NAME` (set as secrets).
+
+**Upload artifacts and generate presigned URLs:**
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# Upload all artifacts from /opt/cursor/artifacts/ to S3 under the branch name
+aws s3 cp /opt/cursor/artifacts/ "s3://$AWS_S3_BUCKET_NAME/$BRANCH/" --recursive
+
+# Generate presigned URLs (valid 7 days) for each uploaded file
+for f in /opt/cursor/artifacts/*; do
+  FILENAME=$(basename "$f")
+  URL=$(aws s3 presign "s3://$AWS_S3_BUCKET_NAME/$BRANCH/$FILENAME" --expires-in 604800)
+  echo "- [$FILENAME]($URL)"
+done
+```
+
+**Including in the PR description:**
+
+After uploading, add the presigned links to the PR description in a `## Walkthrough` section. Use markdown image/video syntax:
+- Images: `![description](presigned_url)`
+- Videos: Link directly — `[walkthrough video](presigned_url)`
+
+Example PR description section:
+```markdown
+## Walkthrough
+![before screenshot](https://bucket.s3.amazonaws.com/branch/before.webp?...)
+![after screenshot](https://bucket.s3.amazonaws.com/branch/after.webp?...)
+[Demo video](https://bucket.s3.amazonaws.com/branch/demo.mp4?...)
+```
+
+**Rules:**
+- Upload artifacts BEFORE creating/updating the PR description.
+- Every screenshot or video captured during the session must be uploaded and linked — do not skip any.
+- Presigned URLs expire after 7 days. This is sufficient for PR review cycles.
+- Scrub any visible secrets from screenshots/videos before uploading. If a secret is visible, retake the screenshot with the secret obscured or redacted.
+
 ### Gotchas
 
 - The `mattermost-govet` tool (used in `make check-style`) may fail with Go version mismatch errors. This is a known tooling issue, not a code problem. The core linting (golangci-lint, ESLint, TypeScript checks) all pass.
