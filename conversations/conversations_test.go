@@ -5,6 +5,7 @@ package conversations_test
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -152,7 +153,7 @@ func TestConversationMentionHandling(t *testing.T) {
 
 			bot := bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
 
-			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), true)
+			textStream, err := conv.ProcessUserRequest(context.Background(), bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), true)
 			require.NoError(t, err, "Failed to process user request")
 			require.NotNil(t, textStream, "Expected a non-nil text stream")
 

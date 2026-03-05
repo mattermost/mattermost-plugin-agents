@@ -31,19 +31,19 @@ func New(
 	}
 }
 
-func (t *Threads) Summarize(threadRootID string, context *llm.Context) (*llm.TextStreamResult, error) {
-	return t.Analyze(threadRootID, context, prompts.PromptSummarizeThreadSystem)
+func (t *Threads) Summarize(ctx stdcontext.Context, threadRootID string, context *llm.Context) (*llm.TextStreamResult, error) {
+	return t.Analyze(ctx, threadRootID, context, prompts.PromptSummarizeThreadSystem)
 }
 
-func (t *Threads) FindActionItems(threadRootID string, context *llm.Context) (*llm.TextStreamResult, error) {
-	return t.Analyze(threadRootID, context, prompts.PromptFindActionItemsSystem)
+func (t *Threads) FindActionItems(ctx stdcontext.Context, threadRootID string, context *llm.Context) (*llm.TextStreamResult, error) {
+	return t.Analyze(ctx, threadRootID, context, prompts.PromptFindActionItemsSystem)
 }
 
-func (t *Threads) FindOpenQuestions(threadRootID string, context *llm.Context) (*llm.TextStreamResult, error) {
-	return t.Analyze(threadRootID, context, prompts.PromptFindOpenQuestionsSystem)
+func (t *Threads) FindOpenQuestions(ctx stdcontext.Context, threadRootID string, context *llm.Context) (*llm.TextStreamResult, error) {
+	return t.Analyze(ctx, threadRootID, context, prompts.PromptFindOpenQuestionsSystem)
 }
 
-func (t *Threads) Analyze(postIDToAnalyze string, context *llm.Context, promptName string) (*llm.TextStreamResult, error) {
+func (t *Threads) Analyze(ctx stdcontext.Context, postIDToAnalyze string, context *llm.Context, promptName string) (*llm.TextStreamResult, error) {
 	posts, err := t.createInitalPosts(postIDToAnalyze, context, promptName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create initial posts: %w", err)
@@ -55,7 +55,7 @@ func (t *Threads) Analyze(postIDToAnalyze string, context *llm.Context, promptNa
 		Operation:        llm.OperationThreadAnalysis,
 		OperationSubType: promptName,
 	}
-	analysisStream, err := t.llm.ChatCompletion(stdcontext.Background(), completionRequest, llm.WithToolsDisabled())
+	analysisStream, err := t.llm.ChatCompletion(ctx, completionRequest, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (t *Threads) Analyze(postIDToAnalyze string, context *llm.Context, promptNa
 	return analysisStream, nil
 }
 
-func (t *Threads) FollowUpAnalyze(postIDToAnalyze string, context *llm.Context, promptName string) ([]llm.Post, error) {
+func (t *Threads) FollowUpAnalyze(ctx stdcontext.Context, postIDToAnalyze string, context *llm.Context, promptName string) ([]llm.Post, error) {
 	return t.createInitalPosts(postIDToAnalyze, context, promptName)
 }
 

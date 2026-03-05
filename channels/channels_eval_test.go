@@ -5,6 +5,7 @@ package channels_test
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"path/filepath"
 	"testing"
@@ -74,7 +75,7 @@ func TestChannelSummarization(t *testing.T) {
 			ctx.Team = threadData.Team
 
 			// Perform summarization based on type
-			textStream, err := channelService.Interval(ctx, threadData.Channel.Id, fixedStart, 0, prompts.PromptSummarizeChannelRangeSystem)
+			textStream, err := channelService.Interval(context.Background(), ctx, threadData.Channel.Id, fixedStart, 0, prompts.PromptSummarizeChannelRangeSystem)
 			require.NoError(t, err, "Failed to summarize channel")
 			require.NotNil(t, textStream, "Expected a non-nil text stream")
 

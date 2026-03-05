@@ -4,12 +4,10 @@
 package api
 
 import (
-	stdcontext "context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-
-	"errors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/render"
@@ -154,7 +152,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		"Prompt":       data.Prompt,
 	}
 
-	analysisStream, err := analyzer.AnalyzeChannel(llmContext, channel.Id, analysisData)
+	analysisStream, err := analyzer.AnalyzeChannel(c.Request.Context(), llmContext, channel.Id, analysisData)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to analyze channel: %w", err))
 		return
@@ -168,7 +166,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	}
 	analysisPost := a.makeAnalysisPost(user.Locale, "", data.AnalysisType, *siteURL)
 
-	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), bot.GetMMBot().UserId, analysisStream, user.Id, analysisPost, ""); err != nil {
+	if err := a.streamingService.StreamToNewDM(c.Request.Context(), bot.GetMMBot().UserId, analysisStream, user.Id, analysisPost, ""); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -250,7 +248,7 @@ func (a *API) handleInterval(c *gin.Context) {
 	}
 
 	// Call channels interval processing
-	resultStream, err := channels.New(bot.LLM(), a.prompts, a.mmClient, a.dbClient).Interval(context, channel.Id, data.StartTime, data.EndTime, promptPreset)
+	resultStream, err := channels.New(bot.LLM(), a.prompts, a.mmClient, a.dbClient).Interval(c.Request.Context(), context, channel.Id, data.StartTime, data.EndTime, promptPreset)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -261,7 +259,7 @@ func (a *API) handleInterval(c *gin.Context) {
 	post.AddProp(streaming.NoRegen, "true")
 
 	// Stream result to new DM
-	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), bot.GetMMBot().UserId, resultStream, user.Id, post, ""); err != nil {
+	if err := a.streamingService.StreamToNewDM(c.Request.Context(), bot.GetMMBot().UserId, resultStream, user.Id, post, ""); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}

@@ -206,7 +206,7 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 			maxResults = 5
 		}
 
-		searchResults, err := s.Search(context.Background(), query, embeddings.SearchOptions{
+		searchResults, err := s.Search(ctx, query, embeddings.SearchOptions{
 			Limit:     maxResults,
 			TeamID:    teamID,
 			ChannelID: channelID,
@@ -253,7 +253,7 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 			OperationSubType: llm.SubTypeStreaming,
 		}
 
-		resultStream, err := bot.LLM().ChatCompletion(context.Background(), prompt)
+		resultStream, err := bot.LLM().ChatCompletion(ctx, prompt)
 		if err != nil {
 			s.mmclient.LogError("Error generating answer", "error", err)
 			processingError = err
@@ -275,7 +275,7 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 			return
 		}
 
-		streamContext, err := s.streamingService.GetStreamingContext(context.Background(), responsePost.Id)
+		streamContext, err := s.streamingService.GetStreamingContext(ctx, responsePost.Id)
 		if err != nil {
 			s.mmclient.LogError("Error getting post streaming context", "error", err)
 			processingError = err

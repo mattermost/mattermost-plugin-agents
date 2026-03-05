@@ -4,7 +4,7 @@
 package conversations
 
 import (
-	"context"
+	stdcontext "context"
 	"errors"
 	"fmt"
 
@@ -22,7 +22,7 @@ const (
 )
 
 // HandleRegenerate handles post regeneration requests
-func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channel *model.Channel) error {
+func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, post *model.Post, channel *model.Channel) error {
 	bot := c.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
@@ -41,7 +41,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		return fmt.Errorf("unable to get user to regen post: %w", err)
 	}
 
-	ctx, err := c.streamingService.GetStreamingContext(context.Background(), post.Id)
+	streamCtx, err := c.streamingService.GetStreamingContext(ctx, post.Id)
 	if err != nil {
 		return fmt.Errorf("unable to get post streaming context: %w", err)
 	}
@@ -76,11 +76,11 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		analyzer := threads.New(bot.LLM(), c.prompts, c.mmClient)
 		switch analysisType {
 		case "summarize_thread":
-			result, err = analyzer.Summarize(threadID, llmContext)
+			result, err = analyzer.Summarize(ctx, threadID, llmContext)
 		case "action_items":
-			result, err = analyzer.FindActionItems(threadID, llmContext)
+			result, err = analyzer.FindActionItems(ctx, threadID, llmContext)
 		case "open_questions":
-			result, err = analyzer.FindOpenQuestions(threadID, llmContext)
+			result, err = analyzer.FindOpenQuestions(ctx, threadID, llmContext)
 		default:
 			return fmt.Errorf("invalid analysis type: %s", analysisType)
 		}
@@ -122,7 +122,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			c.contextBuilder.WithLLMContextDefaultTools(bot),
 		)
 		var summaryErr error
-		result, summaryErr = c.meetingsService.SummarizeTranscription(bot, transcription, context)
+		result, summaryErr = c.meetingsService.SummarizeTranscription(ctx, bot, transcription, context)
 		if summaryErr != nil {
 			return fmt.Errorf("could not summarize transcription on regen: %w", summaryErr)
 		}
@@ -155,7 +155,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			c.contextBuilder.WithLLMContextDefaultTools(bot),
 		)
 		var summaryErr error
-		result, summaryErr = c.meetingsService.SummarizeTranscription(bot, transcription, context)
+		result, summaryErr = c.meetingsService.SummarizeTranscription(ctx, bot, transcription, context)
 		if summaryErr != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", summaryErr)
 		}
@@ -198,7 +198,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			allowToolsInChannel = false
 		}
 		var processErr error
-		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback, allowToolsInChannel)
+		result, processErr = c.ProcessUserRequestWithContext(ctx, bot, user, channel, respondingToPost, contextWithCallback, allowToolsInChannel)
 		if processErr != nil {
 			return fmt.Errorf("could not continue conversation on regen: %w", processErr)
 		}
@@ -206,13 +206,13 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 
 	if mmapi.IsDMWith(bot.GetMMBot().UserId, channel) {
 		if channel.Name == bot.GetMMBot().UserId+"__"+user.Id || channel.Name == user.Id+"__"+bot.GetMMBot().UserId {
-			c.streamingService.StreamToPost(ctx, result, post, user.Locale)
+			c.streamingService.StreamToPost(streamCtx, result, post, user.Locale)
 			return nil
 		}
 	}
 
 	config := c.mmClient.GetConfig()
-	c.streamingService.StreamToPost(ctx, result, post, *config.LocalizationSettings.DefaultServerLocale)
+	c.streamingService.StreamToPost(streamCtx, result, post, *config.LocalizationSettings.DefaultServerLocale)
 
 	return nil
 }

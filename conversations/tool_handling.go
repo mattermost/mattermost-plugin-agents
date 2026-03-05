@@ -4,7 +4,7 @@
 package conversations
 
 import (
-	"context"
+	stdcontext "context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -120,7 +120,7 @@ func responseRootIDFromPost(post *model.Post) string {
 }
 
 // HandleToolCall handles tool call approval/rejection
-func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+func (c *Conversations) HandleToolCall(ctx stdcontext.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
 	bot := c.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
@@ -297,11 +297,11 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return nil
 	}
 
-	return c.completeAndStreamToolResponse(bot, user, channel, post, llmContext, toolsDisabled, allowToolsInChannel)
+	return c.completeAndStreamToolResponse(ctx, bot, user, channel, post, llmContext, toolsDisabled, allowToolsInChannel)
 }
 
 // HandleToolResult handles tool result approval after tool execution.
-func (c *Conversations) HandleToolResult(userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+func (c *Conversations) HandleToolResult(ctx stdcontext.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
 	bot := c.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
@@ -427,7 +427,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return fmt.Errorf("failed to update post after tool result approval: %w", updateErr)
 	}
 
-	if err := c.completeAndStreamToolResponse(bot, user, channel, toolCallPostCopy, llmContext, toolsDisabled, allowToolsInChannel); err != nil {
+	if err := c.completeAndStreamToolResponse(ctx, bot, user, channel, toolCallPostCopy, llmContext, toolsDisabled, allowToolsInChannel); err != nil {
 		return err
 	}
 
@@ -438,6 +438,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 // completeAndStreamToolResponse builds the conversation history from the thread,
 // runs LLM completion with tool results, and streams the response to a new post.
 func (c *Conversations) completeAndStreamToolResponse(
+	ctx stdcontext.Context,
 	bot *bots.Bot,
 	user *model.User,
 	channel *model.Channel,
@@ -455,7 +456,7 @@ func (c *Conversations) completeAndStreamToolResponse(
 	previousConversation.CutoffBeforePostID(toolCallPost.Id)
 	previousConversation.Posts = append(previousConversation.Posts, toolCallPost)
 
-	posts, err := c.existingConversationToLLMPosts(bot, previousConversation, llmContext)
+	posts, err := c.existingConversationToLLMPosts(ctx, bot, previousConversation, llmContext)
 	if err != nil {
 		return fmt.Errorf("failed to convert existing conversation to LLM posts: %w", err)
 	}
@@ -470,7 +471,7 @@ func (c *Conversations) completeAndStreamToolResponse(
 	if toolsDisabled {
 		opts = append(opts, llm.WithToolsDisabled())
 	}
-	result, err := bot.LLM().ChatCompletion(context.Background(), completionRequest, opts...)
+	result, err := bot.LLM().ChatCompletion(ctx, completionRequest, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to get chat completion: %w", err)
 	}
@@ -485,7 +486,7 @@ func (c *Conversations) completeAndStreamToolResponse(
 		RootId:    responseRootID,
 	}
 	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
-	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, user.Id, result, responsePost, toolCallPost.Id); err != nil {
+	if err := c.streamingService.StreamToNewPost(ctx, bot.GetMMBot().UserId, user.Id, result, responsePost, toolCallPost.Id); err != nil {
 		return fmt.Errorf("failed to stream result to new post: %w", err)
 	}
 

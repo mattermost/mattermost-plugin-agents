@@ -4,6 +4,7 @@
 package conversations_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -276,7 +277,7 @@ func TestHandleToolCallChannelStoresInKVAndRedactsProps(t *testing.T) {
 		TeamId: teamID,
 	}
 
-	err = conversationService.HandleToolCall(requesterID, post, channel, []string{"tool-1"})
+	err = conversationService.HandleToolCall(context.Background(), requesterID, post, channel, []string{"tool-1"})
 	require.NoError(t, err)
 
 	resultKVKey := streaming.ToolResultPrivateKVKey(postID, requesterID)
@@ -378,7 +379,7 @@ func TestHandleToolCallChannelBlockedWhenConfigDisabled(t *testing.T) {
 	}
 
 	// Should return error because config flag is off
-	err = conversationService.HandleToolCall(requesterID, post, channel, []string{"tool-1"})
+	err = conversationService.HandleToolCall(context.Background(), requesterID, post, channel, []string{"tool-1"})
 	require.Error(t, err)
 	require.ErrorIs(t, err, conversations.ErrChannelToolCallingDisabled)
 }
@@ -455,7 +456,7 @@ func TestHandleToolCallChannelBlockedWhenPostPropMissing(t *testing.T) {
 	}
 
 	// Should return error because post doesn't have the allow_tools_in_channel prop
-	err = conversationService.HandleToolCall(requesterID, post, channel, []string{"tool-1"})
+	err = conversationService.HandleToolCall(context.Background(), requesterID, post, channel, []string{"tool-1"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "tool calling not allowed for this post")
 }

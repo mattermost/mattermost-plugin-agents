@@ -62,7 +62,7 @@ type Conversations struct {
 // MeetingsService defines the interface for meetings functionality needed by conversations
 type MeetingsService interface {
 	GetCaptionsFileIDFromProps(post *model.Post) (fileID string, err error)
-	SummarizeTranscription(bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context) (*llm.TextStreamResult, error)
+	SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context) (*llm.TextStreamResult, error)
 }
 
 func New(
@@ -97,7 +97,7 @@ func (c *Conversations) SetMeetingsService(meetingsService MeetingsService) {
 }
 
 // ProcessUserRequestWithContext is an internal helper that uses an existing context to process a message
-func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
+func (c *Conversations) ProcessUserRequestWithContext(ctx stdcontext.Context, bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 	toolsDisabled := !isDM && !allowToolsInChannel
 	if context != nil {
@@ -130,7 +130,7 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		previousConversation.CutoffBeforePostID(post.Id)
 
 		var err error
-		posts, err = c.existingConversationToLLMPosts(bot, previousConversation, context)
+		posts, err = c.existingConversationToLLMPosts(ctx, bot, previousConversation, context)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert existing conversation to LLM posts: %w", err)
 		}
@@ -152,7 +152,7 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 			opts = append(opts, llm.WithNativeWebSearchAllowed())
 		}
 	}
-	result, err := bot.LLM().ChatCompletion(stdcontext.Background(), completionRequest, opts...)
+	result, err := bot.LLM().ChatCompletion(ctx, completionRequest, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +166,7 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 
 	go func() {
 		request := "Write a short title for the following request. Include only the title and nothing else, no quotations. Request:\n" + post.Message
-		if err := c.GenerateTitle(bot, request, post.Id, context); err != nil {
+		if err := c.GenerateTitle(ctx, bot, request, post.Id, context); err != nil {
 			c.mmClient.LogError("Failed to generate title", "error", err.Error())
 			return
 		}
@@ -176,7 +176,7 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 }
 
 // ProcessUserRequest processes a user request to a bot
-func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
+func (c *Conversations) ProcessUserRequest(ctx stdcontext.Context, bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
 	// Extract web search context from conversation history to preserve citations
 	// This ensures citations from previous searches work in follow-up messages
 	webSearchParams := c.extractWebSearchContext(post)
@@ -218,10 +218,10 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 		}
 	}
 
-	return c.ProcessUserRequestWithContext(bot, postingUser, channel, post, llmContext, allowToolsInChannel)
+	return c.ProcessUserRequestWithContext(ctx, bot, postingUser, channel, post, llmContext, allowToolsInChannel)
 }
 
-func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID string, context *llm.Context) error {
+func (c *Conversations) GenerateTitle(ctx stdcontext.Context, bot *bots.Bot, request string, postID string, context *llm.Context) error {
 	titleRequest := llm.CompletionRequest{
 		Posts:            []llm.Post{{Role: llm.PostRoleUser, Message: request}},
 		Context:          context,
@@ -230,7 +230,7 @@ func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID stri
 	}
 
 	conversationTitle, err := bot.LLM().ChatCompletionNoStream(
-		stdcontext.Background(),
+		ctx,
 		titleRequest,
 		llm.WithMaxGeneratedTokens(25),
 		llm.WithReasoningDisabled(),
@@ -250,7 +250,7 @@ func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID stri
 }
 
 // existingConversationToLLMPosts converts existing conversation to LLM posts format
-func (c *Conversations) existingConversationToLLMPosts(bot *bots.Bot, conversation *mmapi.ThreadData, context *llm.Context) ([]llm.Post, error) {
+func (c *Conversations) existingConversationToLLMPosts(ctx stdcontext.Context, bot *bots.Bot, conversation *mmapi.ThreadData, context *llm.Context) ([]llm.Post, error) {
 	// Handle thread summarization requests
 	originalThreadID, ok := conversation.Posts[0].GetProp(ThreadIDProp).(string)
 	if ok && originalThreadID != "" && conversation.Posts[0].UserId == bot.GetMMBot().UserId {
@@ -282,7 +282,7 @@ func (c *Conversations) existingConversationToLLMPosts(bot *bots.Bot, conversati
 			return nil, fmt.Errorf("missing analysis type")
 		}
 
-		posts, err := threads.New(bot.LLM(), c.prompts, c.mmClient).FollowUpAnalyze(originalThreadID, context, analysisType)
+		posts, err := threads.New(bot.LLM(), c.prompts, c.mmClient).FollowUpAnalyze(ctx, originalThreadID, context, analysisType)
 		if err != nil {
 			return nil, err
 		}

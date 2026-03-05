@@ -4,7 +4,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -220,7 +219,7 @@ func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.Co
 	c.Status(http.StatusOK)
 
 	// Make the streaming LLM call
-	streamResult, err := bot.LLM().ChatCompletion(context.Background(), llmRequest, opts...)
+	streamResult, err := bot.LLM().ChatCompletion(c.Request.Context(), llmRequest, opts...)
 	if err != nil {
 		// If streaming hasn't started, we can still send a JSON error
 		errorEvent := llm.TextStreamEvent{
@@ -257,7 +256,7 @@ func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.Co
 // handleNonStreamingLLMResponse handles non-streaming LLM responses
 func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest, opts ...llm.LanguageModelOption) {
 	// Make the non-streaming LLM call
-	response, err := bot.LLM().ChatCompletionNoStream(context.Background(), llmRequest, opts...)
+	response, err := bot.LLM().ChatCompletionNoStream(c.Request.Context(), llmRequest, opts...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("failed to complete LLM request: %v", err),

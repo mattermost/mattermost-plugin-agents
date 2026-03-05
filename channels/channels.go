@@ -38,6 +38,7 @@ func New(
 
 // AnalyzeChannel uses MCP tools to analyze channel activity based on user request
 func (c *Channels) AnalyzeChannel(
+	ctx stdcontext.Context,
 	context *llm.Context,
 	channelID string,
 	analysisData map[string]any,
@@ -110,7 +111,7 @@ func (c *Channels) AnalyzeChannel(
 	}
 
 	// Auto-run the bound tools
-	resultStream, err := c.llm.ChatCompletion(stdcontext.Background(), completionRequest,
+	resultStream, err := c.llm.ChatCompletion(ctx, completionRequest,
 		llm.WithAutoRunTools([]string{"read_channel", "get_channel_info"}),
 		llm.WithReasoningDisabled())
 	if err != nil {
@@ -121,6 +122,7 @@ func (c *Channels) AnalyzeChannel(
 }
 
 func (c *Channels) Interval(
+	ctx stdcontext.Context,
 	context *llm.Context,
 	channelID string,
 	startTime int64,
@@ -179,7 +181,7 @@ func (c *Channels) Interval(
 		OperationSubType: promptName,
 	}
 
-	resultStream, err := c.llm.ChatCompletion(stdcontext.Background(), completionRequest, llm.WithToolsDisabled())
+	resultStream, err := c.llm.ChatCompletion(ctx, completionRequest, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, err
 	}

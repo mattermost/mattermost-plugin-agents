@@ -4,7 +4,6 @@
 package api
 
 import (
-	stdcontext "context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -83,7 +82,7 @@ func (a *API) handleReact(c *gin.Context) {
 	emojiName, err := react.New(
 		bot.LLM(),
 		a.prompts,
-	).Resolve(post.Message, context)
+	).Resolve(c.Request.Context(), post.Message, context)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -154,13 +153,13 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 	switch data.AnalysisType {
 	case "summarize_thread":
 		title = TitleThreadSummary
-		analysisStream, err = analyzer.Summarize(post.Id, llmContext)
+		analysisStream, err = analyzer.Summarize(c.Request.Context(), post.Id, llmContext)
 	case "action_items":
 		title = TitleFindActionItems
-		analysisStream, err = analyzer.FindActionItems(post.Id, llmContext)
+		analysisStream, err = analyzer.FindActionItems(c.Request.Context(), post.Id, llmContext)
 	case "open_questions":
 		title = TitleFindOpenQuestions
-		analysisStream, err = analyzer.FindOpenQuestions(post.Id, llmContext)
+		analysisStream, err = analyzer.FindOpenQuestions(c.Request.Context(), post.Id, llmContext)
 	}
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to analyze thread: %w", err))
@@ -170,7 +169,7 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 	// Create analysis post
 	siteURL := a.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
 	analysisPost := a.makeAnalysisPost(user.Locale, post.Id, data.AnalysisType, *siteURL)
-	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), bot.GetMMBot().UserId, analysisStream, user.Id, analysisPost, post.Id); err != nil {
+	if err := a.streamingService.StreamToNewDM(c.Request.Context(), bot.GetMMBot().UserId, analysisStream, user.Id, analysisPost, post.Id); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -262,7 +261,7 @@ func (a *API) handleRegenerate(c *gin.Context) {
 		return
 	}
 
-	err := a.conversationsService.HandleRegenerate(userID, post, channel)
+	err := a.conversationsService.HandleRegenerate(c.Request.Context(), userID, post, channel)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to regenerate post: %w", err))
 		return
@@ -305,7 +304,7 @@ func (a *API) handleToolCall(c *gin.Context) {
 		return
 	}
 
-	err := a.conversationsService.HandleToolCall(userID, post, channel, data.AcceptedToolIDs)
+	err := a.conversationsService.HandleToolCall(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs)
 	if err != nil {
 		switch {
 		case err.Error() == "post missing pending tool calls" || err.Error() == "post pending tool calls not valid JSON":
@@ -433,7 +432,7 @@ func (a *API) handleToolResult(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleToolResult(userID, post, channel, data.AcceptedToolIDs); err != nil {
+	if err := a.conversationsService.HandleToolResult(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs); err != nil {
 		switch {
 		case err.Error() == "post missing pending tool results" || err.Error() == "post pending tool results not valid JSON":
 			c.AbortWithError(http.StatusBadRequest, err)

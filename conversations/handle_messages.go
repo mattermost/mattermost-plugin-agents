@@ -4,7 +4,7 @@
 package conversations
 
 import (
-	"context"
+	stdcontext "context"
 	"errors"
 	"fmt"
 
@@ -26,8 +26,9 @@ var (
 	ErrNoResponse = errors.New("no response")
 )
 
-func (c *Conversations) MessageHasBeenPosted(ctx *plugin.Context, post *model.Post) {
-	if err := c.handleMessages(post); err != nil {
+func (c *Conversations) MessageHasBeenPosted(_ *plugin.Context, post *model.Post) {
+	ctx := stdcontext.Background()
+	if err := c.handleMessages(ctx, post); err != nil {
 		if errors.Is(err, ErrNoResponse) {
 			c.mmClient.LogDebug(err.Error())
 		} else {
@@ -36,7 +37,7 @@ func (c *Conversations) MessageHasBeenPosted(ctx *plugin.Context, post *model.Po
 	}
 }
 
-func (c *Conversations) handleMessages(post *model.Post) error {
+func (c *Conversations) handleMessages(ctx stdcontext.Context, post *model.Post) error {
 	// Don't respond to ourselves
 	if c.bots.IsAnyBot(post.UserId) {
 		return fmt.Errorf("not responding to ourselves: %w", ErrNoResponse)
@@ -79,18 +80,18 @@ func (c *Conversations) handleMessages(post *model.Post) error {
 
 	// Check we are mentioned like @ai
 	if bot := c.bots.GetBotMentioned(post.Message); bot != nil {
-		return c.handleMentions(bot, post, postingUser, channel)
+		return c.handleMentions(ctx, bot, post, postingUser, channel)
 	}
 
 	// Check if this is post in the DM channel with any bot
 	if bot := c.bots.GetBotForDMChannel(channel); bot != nil {
-		return c.handleDMs(bot, channel, postingUser, post)
+		return c.handleDMs(ctx, bot, channel, postingUser, post)
 	}
 
 	return nil
 }
 
-func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) error {
+func (c *Conversations) handleMentions(ctx stdcontext.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) error {
 	if err := c.bots.CheckUsageRestrictions(postingUser.Id, bot, channel); err != nil {
 		return err
 	}
@@ -98,7 +99,7 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 	// Check config to determine if tools should be allowed in channel mentions
 	allowToolsInChannel := c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
 
-	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, allowToolsInChannel)
+	stream, err := c.ProcessUserRequest(ctx, bot, postingUser, channel, post, allowToolsInChannel)
 	if err != nil {
 		return fmt.Errorf("unable to process bot mention: %w", err)
 	}
@@ -113,19 +114,19 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 		RootId:    responseRootID,
 	}
 	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
-	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, postingUser.Id, stream, responsePost, post.Id); err != nil {
+	if err := c.streamingService.StreamToNewPost(ctx, bot.GetMMBot().UserId, postingUser.Id, stream, responsePost, post.Id); err != nil {
 		return fmt.Errorf("unable to stream response: %w", err)
 	}
 
 	return nil
 }
 
-func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
+func (c *Conversations) handleDMs(ctx stdcontext.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
 	if err := c.bots.CheckUsageRestrictionsForUser(bot, postingUser.Id); err != nil {
 		return err
 	}
 
-	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, false)
+	stream, err := c.ProcessUserRequest(ctx, bot, postingUser, channel, post, false)
 	if err != nil {
 		return fmt.Errorf("unable to process bot mention: %w", err)
 	}
@@ -139,7 +140,7 @@ func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, posting
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, postingUser.Id, stream, responsePost, post.Id); err != nil {
+	if err := c.streamingService.StreamToNewPost(ctx, bot.GetMMBot().UserId, postingUser.Id, stream, responsePost, post.Id); err != nil {
 		return fmt.Errorf("unable to stream response: %w", err)
 	}
 

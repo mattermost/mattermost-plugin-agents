@@ -4,6 +4,7 @@
 package threads_test
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -108,7 +109,7 @@ func TestThreadsAnalyze(t *testing.T) {
 			threadService := threads.New(mockLLM, prompts, mockClient)
 
 			// Execute
-			result, err := threadService.Analyze(tc.postID, ctx, tc.promptName)
+			result, err := threadService.Analyze(context.Background(), tc.postID, ctx, tc.promptName)
 
 			// Assert
 			if tc.expectedError {
@@ -142,7 +143,7 @@ func runThreadAnalysisEval(t *evals.EvalT, threadData *evals.ThreadExport, promp
 
 	// Do the thread analysis
 	threadService := threads.New(t.LLM, t.Prompts, mockClient)
-	result, err := threadService.Analyze(threadData.RootPost.Id, llmContext, promptName)
+	result, err := threadService.Analyze(context.Background(), threadData.RootPost.Id, llmContext, promptName)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	output, err := result.ReadAll()

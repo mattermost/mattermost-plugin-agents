@@ -100,9 +100,7 @@ func (p *MMPostStreamService) StreamToNewPost(ctx context.Context, botID string,
 		return fmt.Errorf("unable to create post: %w", err)
 	}
 
-	// The callback is already set when creating the context
-
-	ctx, err := p.GetStreamingContext(context.Background(), post.Id)
+	ctx, err := p.GetStreamingContext(ctx, post.Id)
 	if err != nil {
 		return err
 	}
@@ -142,9 +140,7 @@ func (p *MMPostStreamService) StreamToNewDM(ctx context.Context, botID string, s
 		return fmt.Errorf("failed to post DM: %w", err)
 	}
 
-	// The callback is already set when creating the context
-
-	ctx, err := p.GetStreamingContext(context.Background(), post.Id)
+	ctx, err := p.GetStreamingContext(ctx, post.Id)
 	if err != nil {
 		return err
 	}
