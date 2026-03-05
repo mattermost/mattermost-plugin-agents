@@ -376,7 +376,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                                 idleTimeoutMinutes: Math.max(1, idleTimeoutMinutes),
                                             });
                                         }}
-                                        helptext={intl.formatMessage({defaultMessage: 'How long to keep an inactive user connection open before closing it automatically. Lower values save resources, higher values improve response times.'})}
+                                        helptext={intl.formatMessage({defaultMessage: 'How long to keep an inactive user connection open before closing it automatically. Lower values save resources, higher values improve response times. Default: 30 minutes'})}
                                     />
                                     <BooleanItem
                                         label={intl.formatMessage({defaultMessage: 'Enable Embedded Server'})}
