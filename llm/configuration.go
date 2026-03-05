@@ -91,6 +91,12 @@ type BotConfig struct {
 	// Only applicable to Anthropic
 	// Default: 1/4 of OutputTokenLimit, capped at 8192
 	ThinkingBudget int `json:"thinkingBudget"`
+
+	// StructuredOutputEnabled enables structured JSON output for providers that support it.
+	// When enabled, the provider will use the JSONOutputFormat schema from the request config
+	// to constrain the model's output to valid JSON matching the schema.
+	// Only applicable to Anthropic (Claude 4.5/4.6+ models)
+	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
 }
 
 func (c *BotConfig) IsValid() bool {
