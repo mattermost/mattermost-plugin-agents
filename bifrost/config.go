@@ -92,27 +92,7 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		cfg.DefaultModel = botConfig.Model
 	}
 
-	// Strip provider prefix from model name if present.
-	// Bifrost ListModels returns IDs like "anthropic/claude-sonnet-4-20250514" but
-	// chat/streaming requests expect just "claude-sonnet-4-20250514" since the
-	// provider is already specified separately in the request.
-	cfg.DefaultModel = stripProviderPrefix(cfg.DefaultModel)
-
 	return New(cfg)
-}
-
-// stripProviderPrefix removes a leading "provider/" prefix from a model name.
-// Bifrost's ListModels endpoint returns model IDs like "anthropic/claude-sonnet-4-20250514",
-// but provider APIs expect just "claude-sonnet-4-20250514" since the provider is specified
-// separately. This function handles configs saved with the prefix.
-func stripProviderPrefix(model string) string {
-	if idx := strings.Index(model, "/"); idx >= 0 {
-		prefix := model[:idx]
-		if _, err := MapServiceTypeToProvider(prefix); err == nil {
-			return model[idx+1:]
-		}
-	}
-	return model
 }
 
 // normalizeOpenAIBaseURL strips a trailing /v1 suffix from API URLs for OpenAI-type providers.
