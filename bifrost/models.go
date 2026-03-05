@@ -6,6 +6,7 @@ package bifrost
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -57,12 +58,18 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 
 	models := make([]llm.ModelInfo, 0, len(resp.Data))
 	for _, m := range resp.Data {
-		displayName := m.ID
+		// Bifrost ListModels returns IDs with a provider prefix (e.g. "anthropic/claude-sonnet-4-20250514").
+		// Strip the prefix so the saved config uses plain model names that the provider APIs expect.
+		modelID := m.ID
+		if idx := strings.Index(modelID, "/"); idx >= 0 {
+			modelID = modelID[idx+1:]
+		}
+		displayName := modelID
 		if m.Name != nil && *m.Name != "" {
 			displayName = *m.Name
 		}
 		models = append(models, llm.ModelInfo{
-			ID:          m.ID,
+			ID:          modelID,
 			DisplayName: displayName,
 		})
 	}
@@ -77,10 +84,27 @@ func FetchModelsForServiceType(serviceType, apiKey, apiURL, orgID string) ([]llm
 		return nil, fmt.Errorf("model fetching not supported for service type: %s", serviceType)
 	}
 
+	apiURL = normalizeFetchModelsAPIURL(serviceType, provider, apiURL)
+
 	return FetchModels(FetchModelsConfig{
 		Provider: provider,
 		APIKey:   apiKey,
 		APIURL:   apiURL,
 		OrgID:    orgID,
 	})
+}
+
+func normalizeFetchModelsAPIURL(serviceType string, provider schemas.ModelProvider, apiURL string) string {
+	switch serviceType {
+	case llm.ServiceTypeCohere:
+		if apiURL == "" {
+			apiURL = "https://api.cohere.ai/compatibility/v1"
+		}
+	case llm.ServiceTypeMistral:
+		if apiURL == "" {
+			apiURL = "https://api.mistral.ai/v1"
+		}
+	}
+
+	return normalizeOpenAIBaseURL(provider, apiURL)
 }

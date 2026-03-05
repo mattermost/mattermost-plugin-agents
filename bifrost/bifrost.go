@@ -25,7 +25,6 @@ import (
 
 const (
 	DefaultMaxTokens        = 8192
-	MaxToolResolutionDepth  = 10
 	DefaultStreamingTimeout = 5 * time.Minute
 )
 
@@ -949,16 +948,6 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 				Content: &schemas.ResponsesMessageContent{
 					ContentStr: Ptr(post.Message),
 				},
-			}
-
-			// Add reasoning for thinking-enabled conversations
-			if post.Reasoning != "" {
-				msg.ResponsesReasoning = &schemas.ResponsesReasoning{
-					Summary: []schemas.ResponsesReasoningSummary{{
-						Type: schemas.ResponsesReasoningContentBlockTypeSummaryText,
-						Text: post.Reasoning,
-					}},
-				}
 			}
 
 			messages = append(messages, msg)

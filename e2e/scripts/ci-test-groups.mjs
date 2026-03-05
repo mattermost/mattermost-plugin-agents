@@ -17,6 +17,7 @@ const realAPISpecs = new Set([
     'tests/llmbot-post-component/edge-cases.spec.ts',
     'tests/llmbot-post-component/reasoning-display.spec.ts',
     'tests/llmbot-post-component/streaming-persistence.spec.ts',
+    'tests/system-console/live-service-full-flow.spec.ts',
 ]);
 
 const groups = {
@@ -85,6 +86,9 @@ const groups = {
     ],
     'channel-analysis-real': [
         'tests/channel-analysis/backend-verification/real-api.spec.ts',
+    ],
+    'system-console-real': [
+        'tests/system-console/live-service-full-flow.spec.ts',
     ],
 };
 
@@ -172,6 +176,7 @@ function validateCoverage() {
         'llmbot-real-edge-cases',
         'tool-calling-real',
         'channel-analysis-real',
+        'system-console-real',
     ]).sort();
 
     validateExistingFiles(selectedRealSpecs);

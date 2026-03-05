@@ -190,6 +190,53 @@ jobs:
         path: ./e2e/logs/server-logs.log
         retention-days: 30
 
+  e2e-system-console-real-apis:
+    needs: e2e-build-artifact
+    timeout-minutes: 180
+    runs-on: ubuntu-latest
+    env:
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
+    defaults:
+      run:
+        working-directory: ./e2e
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 18
+    - uses: actions/download-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/
+    - name: Install dependencies
+      run: npm ci
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+    - name: Validate CI test groups
+      run: node ./scripts/ci-test-groups.mjs validate
+    - name: Run System Console tests with real APIs
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      shell: bash
+      run: |
+        SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list system-console-real)"
+        [[ -n "${SPEC_OUTPUT}" ]]
+        mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
+        npx playwright test --project=chromium "${SPEC_FILES[@]}"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report-system-console-real-apis
+        path: ./e2e/playwright-report/
+        retention-days: 30
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: server-logs-system-console-real-apis
+        path: ./e2e/logs/server-logs.log
+        retention-days: 30
+
   e2e-tool-calling:
     needs: e2e-build-artifact
     timeout-minutes: 180
@@ -419,7 +466,7 @@ jobs:
           aws s3 cp dist/mattermost-ai-*.tar.gz s3://${{ secrets.AWS_S3_BUCKET }}/mattermost-plugin-agents/mattermost-plugin-agents-${{ steps.short-sha.outputs.sha }}.tar.gz
 
   deploy:
-    needs: [lint, build, plugin-tests, e2e, e2e-llmbot-real-apis, e2e-channel-analysis-real-apis, e2e-tool-calling]
+    needs: [lint, build, plugin-tests, e2e, e2e-llmbot-real-apis, e2e-channel-analysis-real-apis, e2e-system-console-real-apis, e2e-tool-calling]
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
