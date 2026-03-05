@@ -52,6 +52,7 @@ export type LLMBotConfig = {
     reasoningEnabled?: boolean
     reasoningEffort?: string
     thinkingBudget?: number
+    structuredOutputEnabled?: boolean
 }
 
 // Component for configuring native tools (OpenAI/Anthropic)
@@ -348,6 +349,14 @@ const Bot = (props: Props) => {
                                         maxTokens={selectedService?.outputTokenLimit || 4096}
                                         onChange={props.onChange}
                                     />
+                                    {selectedService.type === 'anthropic' && (
+                                        <BooleanItem
+                                            label={intl.formatMessage({defaultMessage: 'Structured Output'})}
+                                            value={props.bot.structuredOutputEnabled ?? false}
+                                            onChange={(to: boolean) => props.onChange({...props.bot, structuredOutputEnabled: to})}
+                                            helpText={intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Structured output and extended thinking cannot be used simultaneously.'})}
+                                        />
+                                    )}
                                 </>
                             );
                         })()}
