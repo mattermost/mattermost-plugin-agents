@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -679,6 +680,124 @@ func TestThinkingBudgetConfiguration(t *testing.T) {
 			assert.True(t, ok, "Thinking config should be enabled")
 			require.NotNil(t, thinkingConfig.OfEnabled, "Thinking config should have OfEnabled set")
 			assert.Equal(t, tt.expectedBudget, thinkingConfig.OfEnabled.BudgetTokens, "Thinking budget should match expected value")
+		})
+	}
+}
+
+func TestJsonSchemaToMap(t *testing.T) {
+	tests := []struct {
+		name       string
+		schema     *jsonschema.Schema
+		wantErr    bool
+		wantFields []string
+	}{
+		{
+			name:    "empty schema returns error (serializes to boolean true)",
+			schema:  &jsonschema.Schema{},
+			wantErr: true,
+		},
+		{
+			name: "schema with properties",
+			schema: func() *jsonschema.Schema {
+				s := &jsonschema.Schema{}
+				s.Properties = map[string]*jsonschema.Schema{
+					"name": {},
+				}
+				return s
+			}(),
+			wantErr:    false,
+			wantFields: []string{"properties"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := jsonSchemaToMap(tt.schema)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			for _, field := range tt.wantFields {
+				assert.Contains(t, result, field)
+			}
+		})
+	}
+}
+
+type TestOutputFormat struct {
+	Score   int    `json:"score" jsonschema:"Score from 1 to 10"`
+	Summary string `json:"summary" jsonschema:"Brief summary of the output"`
+}
+
+func TestBuildAPIParamsStructuredOutput(t *testing.T) {
+	tests := []struct {
+		name               string
+		config             llm.LanguageModelConfig
+		expectOutputConfig bool
+	}{
+		{
+			name: "no JSON output format",
+			config: llm.LanguageModelConfig{
+				Model:              "claude-sonnet-4-20250514",
+				MaxGeneratedTokens: 1024,
+			},
+			expectOutputConfig: false,
+		},
+		{
+			name: "with JSON output format from struct",
+			config: llm.LanguageModelConfig{
+				Model:              "claude-sonnet-4-20250514",
+				MaxGeneratedTokens: 1024,
+				JSONOutputFormat:   llm.NewJSONSchemaFromStruct[TestOutputFormat](),
+			},
+			expectOutputConfig: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &Anthropic{}
+			state := &messageState{
+				config: tt.config,
+				messages: []anthropicSDK.MessageParam{
+					{
+						Role: anthropicSDK.MessageParamRoleUser,
+						Content: []anthropicSDK.ContentBlockParamUnion{
+							anthropicSDK.NewTextBlock("test"),
+						},
+					},
+				},
+			}
+
+			params := a.buildAPIParams(state)
+
+			if !tt.expectOutputConfig {
+				assert.Empty(t, params.OutputConfig.Format.Schema, "OutputConfig.Format.Schema should be empty")
+				return
+			}
+
+			require.NotEmpty(t, params.OutputConfig.Format.Schema, "OutputConfig.Format.Schema should be set")
+
+			schemaMap := params.OutputConfig.Format.Schema
+			assert.Equal(t, "object", schemaMap["type"])
+			properties, ok := schemaMap["properties"].(map[string]any)
+			require.True(t, ok, "schema should have properties")
+			assert.Contains(t, properties, "score")
+			assert.Contains(t, properties, "summary")
+
+			paramsJSON, err := json.Marshal(params)
+			require.NoError(t, err)
+
+			var raw map[string]any
+			require.NoError(t, json.Unmarshal(paramsJSON, &raw))
+			outputConfig, ok := raw["output_config"].(map[string]any)
+			require.True(t, ok, "serialized params should contain output_config")
+			format, ok := outputConfig["format"].(map[string]any)
+			require.True(t, ok, "output_config should contain format")
+			assert.Equal(t, "json_schema", format["type"])
+			assert.NotNil(t, format["schema"])
 		})
 	}
 }
