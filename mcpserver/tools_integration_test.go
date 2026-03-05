@@ -402,15 +402,15 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 	})
 
-	t.Run("DMSelfTool", func(t *testing.T) {
-		t.Run("HappyPath", func(t *testing.T) {
+	t.Run("DMTool", func(t *testing.T) {
+		t.Run("DMToSelf", func(t *testing.T) {
 			args := map[string]interface{}{
 				"message": "Test DM to myself from integration test!",
 			}
 
-			result, err := executeToolWithMCP(t, suite, "dm_self", args)
-			require.NoError(t, err, "dm_self should succeed")
-			assert.NotEmpty(t, result.Content, "dm_self should return content")
+			result, err := executeToolWithMCP(t, suite, "dm", args)
+			require.NoError(t, err, "dm should succeed")
+			assert.NotEmpty(t, result.Content, "dm should return content")
 
 			// Verify the response mentions success
 			if len(result.Content) > 0 {
@@ -435,7 +435,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 			for _, post := range posts.Posts {
 				if post.Message == "Test DM to myself from integration test!" {
 					found = true
-					// Verify props were set
+					// Verify props were set - from_webhook should be set for self DMs
 					assert.Equal(t, "true", post.GetProp("from_webhook"), "Post should have from_webhook prop set")
 					break
 				}
@@ -443,13 +443,114 @@ func TestMCPToolsIntegration(t *testing.T) {
 			assert.True(t, found, "Test DM post should be found in self DM channel")
 		})
 
+		t.Run("DMToUserByUsername", func(t *testing.T) {
+			// Create a target user to DM
+			targetUser := testhelpers.CreateTestUser(t, client, "dmtarget", "dmtarget@example.com", "testpassword")
+
+			args := map[string]interface{}{
+				"username": targetUser.Username,
+				"message":  "Hello from DM integration test!",
+			}
+
+			result, err := executeToolWithMCP(t, suite, "dm", args)
+			require.NoError(t, err, "dm to user by username should succeed")
+			assert.NotEmpty(t, result.Content, "dm should return content")
+
+			if len(result.Content) > 0 {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
+					assert.Contains(t, textContent.Text, "Successfully sent DM to @"+targetUser.Username, "Response should indicate DM to target user")
+				}
+			}
+
+			// Get current user to find DM channel
+			currentUser, _, err := client.GetMe(context.Background(), "")
+			require.NoError(t, err)
+
+			// Verify post was created in the DM channel
+			dmChannel, _, err := client.CreateDirectChannel(context.Background(), currentUser.Id, targetUser.Id)
+			require.NoError(t, err)
+
+			posts, _, err := client.GetPostsForChannel(context.Background(), dmChannel.Id, 0, 10, "", false, false)
+			require.NoError(t, err)
+			found := false
+			for _, post := range posts.Posts {
+				if post.Message == "Hello from DM integration test!" {
+					found = true
+					// from_webhook should NOT be set for DMs to others
+					assert.Nil(t, post.GetProp("from_webhook"), "Post should not have from_webhook prop when DM'ing another user")
+					break
+				}
+			}
+			assert.True(t, found, "Test DM post should be found in DM channel with target user")
+		})
+
+		t.Run("DMToUserByUserID", func(t *testing.T) {
+			targetUser := testhelpers.CreateTestUser(t, client, "dmtargetid", "dmtargetid@example.com", "testpassword")
+
+			args := map[string]interface{}{
+				"user_id": targetUser.Id,
+				"message": "Hello by user_id!",
+			}
+
+			result, err := executeToolWithMCP(t, suite, "dm", args)
+			require.NoError(t, err, "dm to user by user_id should succeed")
+			assert.NotEmpty(t, result.Content, "dm should return content")
+
+			if len(result.Content) > 0 {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
+					assert.Contains(t, textContent.Text, "Successfully sent DM to @"+targetUser.Username, "Response should indicate DM to target user")
+				}
+			}
+		})
+
+		t.Run("InvalidUsername", func(t *testing.T) {
+			args := map[string]interface{}{
+				"username": "nonexistent-user-xyz999",
+				"message":  "This should fail",
+			}
+
+			_, err := executeToolWithMCP(t, suite, "dm", args)
+			require.Error(t, err, "dm with nonexistent username should fail")
+		})
+
+		t.Run("InvalidUserID", func(t *testing.T) {
+			args := map[string]interface{}{
+				"user_id": "zzzzzzzzzzzzzzzzzzzzzzzzzz",
+				"message": "This should fail",
+			}
+
+			_, err := executeToolWithMCP(t, suite, "dm", args)
+			require.Error(t, err, "dm with nonexistent user_id should fail")
+		})
+
+		t.Run("BothUserIDAndUsername", func(t *testing.T) {
+			// user_id takes precedence
+			targetUser := testhelpers.CreateTestUser(t, client, "dmboth", "dmboth@example.com", "testpassword")
+
+			args := map[string]interface{}{
+				"user_id":  targetUser.Id,
+				"username": "some-other-username",
+				"message":  "user_id should take precedence",
+			}
+
+			result, err := executeToolWithMCP(t, suite, "dm", args)
+			require.NoError(t, err, "dm with both user_id and username should succeed using user_id")
+			assert.NotEmpty(t, result.Content)
+
+			if len(result.Content) > 0 {
+				if textContent, ok := result.Content[0].(*mcp.TextContent); ok {
+					assert.Contains(t, textContent.Text, "Successfully sent DM to @"+targetUser.Username)
+				}
+			}
+		})
+
 		t.Run("EmptyMessage", func(t *testing.T) {
 			args := map[string]interface{}{
 				"message": "",
 			}
 
-			_, err := executeToolWithMCP(t, suite, "dm_self", args)
-			require.Error(t, err, "dm_self with empty message should fail")
+			_, err := executeToolWithMCP(t, suite, "dm", args)
+			require.Error(t, err, "dm with empty message should fail")
 		})
 
 		t.Run("MissingMessage", func(t *testing.T) {
@@ -457,8 +558,8 @@ func TestMCPToolsIntegration(t *testing.T) {
 				// missing message field
 			}
 
-			_, err := executeToolWithMCP(t, suite, "dm_self", args)
-			require.Error(t, err, "dm_self without message should fail")
+			_, err := executeToolWithMCP(t, suite, "dm", args)
+			require.Error(t, err, "dm without message should fail")
 		})
 	})
 }
