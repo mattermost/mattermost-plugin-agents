@@ -198,9 +198,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
         const updatedDecisions = {...toolDecisionsRef.current};
         for (const tool of decisionToolCalls) {
-            if (!Object.hasOwn(updatedDecisions, tool.id)) {
-                updatedDecisions[tool.id] = approved;
-            }
+            updatedDecisions[tool.id] = approved;
         }
         toolDecisionsRef.current = updatedDecisions;
         setToolDecisions(updatedDecisions);
@@ -303,13 +301,19 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                         />
                     </div>
                     <BatchButtonContainer>
-                        <BatchButton onClick={() => handleBatchDecision(true)}>
+                        <BatchButton
+                            type='button'
+                            onClick={() => handleBatchDecision(true)}
+                        >
                             <FormattedMessage
                                 id='ai.tool_call.accept_all'
                                 defaultMessage='Accept all'
                             />
                         </BatchButton>
-                        <BatchButton onClick={() => handleBatchDecision(false)}>
+                        <BatchButton
+                            type='button'
+                            onClick={() => handleBatchDecision(false)}
+                        >
                             <FormattedMessage
                                 id='ai.tool_call.reject_all'
                                 defaultMessage='Reject all'

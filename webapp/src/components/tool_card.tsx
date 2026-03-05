@@ -381,20 +381,6 @@ const ToolCard: React.FC<ToolCardProps> = ({
     const hasLocalDecision = localDecision != null;
 
     const renderDecisionButtons = () => {
-        if (isProcessing) {
-            return (
-                <StatusContainer>
-                    <ProcessingSpinnerContainer>
-                        <ProcessingSpinner/>
-                    </ProcessingSpinnerContainer>
-                    <FormattedMessage
-                        id='ai.tool_call.processing'
-                        defaultMessage='Processing...'
-                    />
-                </StatusContainer>
-            );
-        }
-
         if (hasLocalDecision) {
             return (
                 <StatusContainer>
@@ -410,6 +396,20 @@ const ToolCard: React.FC<ToolCardProps> = ({
                             defaultMessage='Rejected'
                         />
                     )}
+                </StatusContainer>
+            );
+        }
+
+        if (isProcessing) {
+            return (
+                <StatusContainer>
+                    <ProcessingSpinnerContainer>
+                        <ProcessingSpinner/>
+                    </ProcessingSpinnerContainer>
+                    <FormattedMessage
+                        id='ai.tool_call.processing'
+                        defaultMessage='Processing...'
+                    />
                 </StatusContainer>
             );
         }
