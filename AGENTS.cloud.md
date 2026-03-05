@@ -71,7 +71,7 @@ TOKEN=$(curl -s -X POST http://localhost:8065/api/v4/users/login \
   -d '{"login_id":"admin","password":"Admin1234!"}' \
   -D - 2>/dev/null | grep -i '^token:' | tr -d '\r' | awk '{print $2}')
 
-# Patch plugin config with Anthropic service + agent (reads key from env var)
+# Patch plugin config with Anthropic service + agent + MCP enabled (reads key from env var)
 python3 -c "
 import json, os
 patch = {
@@ -100,7 +100,17 @@ patch = {
                         'enableVision': True,
                         'disableTools': False
                     }],
-                    'defaultBotName': 'claude'
+                    'defaultBotName': 'claude',
+                    'enableChannelMentionToolCalling': True,
+                    'mcp': {
+                        'enabled': True,
+                        'enablePluginServer': True,
+                        'embeddedServer': {
+                            'enabled': True
+                        },
+                        'servers': [],
+                        'idleTimeoutMinutes': 30
+                    }
                 }
             }
         }
@@ -114,6 +124,33 @@ print(json.dumps(patch))
 ```
 
 After this, the `@claude` bot is available for @mentions in channels, direct messages, and the Agents RHS panel (purple icon in the right sidebar). The config structure is defined in `llm/configuration.go` (`ServiceConfig`, `BotConfig`).
+
+### Embedded MCP Server
+
+The embedded MCP server provides tool-calling capabilities, allowing the AI agent to interact with the Mattermost API (read channels, create posts, search users, etc.) with an explicit user accept/reject approval flow.
+
+**Configuration fields** (under `config.mcp`):
+- `mcp.enabled` — enables MCP admin tools discovery API
+- `mcp.enablePluginServer` — enables the HTTP MCP endpoint for external clients
+- `mcp.embeddedServer.enabled` — enables the in-process MCP server with Mattermost tools
+- `enableChannelMentionToolCalling` — allows tool use when the bot is @mentioned in channels (not just DMs)
+
+**Available embedded MCP tools** (13 tools, defined in `mcpserver/tools/`):
+`create_post`, `read_channel`, `create_channel`, `get_channel_info`, `get_channel_members`, `add_user_to_channel`, `get_user_channels`, `read_post`, `search_posts`, `search_users`, `get_team_info`, `get_team_members`, `list_teams`, `dm_self`
+
+**How tool calls work:**
+1. The user sends a message requesting an action (e.g., "create a post in Town Square")
+2. Claude determines which MCP tools to call and presents them with parameters in the RHS
+3. The user sees Accept/Reject buttons for each tool call and must explicitly approve
+4. After approval, the tool executes against the Mattermost API using the user's session
+5. Results are returned to Claude, which summarizes the outcome
+
+**Key notes:**
+- Tools work in both DMs with the bot and channel @mentions (when `enableChannelMentionToolCalling` is true)
+- The embedded server requires `SiteURL` to be configured on the Mattermost server
+- Tool name conflicts across MCP servers: first server wins, duplicates are skipped with a warning
+- The embedded MCP server uses in-memory transport (no HTTP), initialized at plugin startup
+- Verify tools are discoverable: `GET /plugins/mattermost-ai/admin/mcp/tools` (requires admin auth)
 
 ### Uploading PR artifacts to S3
 
