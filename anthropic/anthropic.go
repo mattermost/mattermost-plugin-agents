@@ -6,6 +6,7 @@ package anthropic
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -233,6 +234,16 @@ func (a *Anthropic) buildAPIParams(state *messageState) anthropicSDK.MessageNewP
 	if !state.config.ReasoningDisabled {
 		if thinkingConfig, ok := a.calculateThinkingConfig(state.config.MaxGeneratedTokens); ok {
 			params.Thinking = thinkingConfig
+		}
+	}
+
+	if state.config.JSONOutputFormat != nil {
+		if schemaMap, err := jsonSchemaToMap(state.config.JSONOutputFormat); err == nil {
+			params.OutputConfig = anthropicSDK.OutputConfigParam{
+				Format: anthropicSDK.JSONOutputFormatParam{
+					Schema: schemaMap,
+				},
+			}
 		}
 	}
 
@@ -535,6 +546,20 @@ func convertTools(tools []llm.Tool) []anthropicSDK.ToolUnionParam {
 		}
 	}
 	return converted
+}
+
+// jsonSchemaToMap converts a jsonschema.Schema to a map[string]any for use with the Anthropic API's
+// structured output feature (output_config.format.schema).
+func jsonSchemaToMap(schema *jsonschema.Schema) (map[string]any, error) {
+	data, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal JSON schema: %w", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON schema to map: %w", err)
+	}
+	return result, nil
 }
 
 func extractInputSchema(schema interface{}) anthropicSDK.ToolInputSchemaParam {

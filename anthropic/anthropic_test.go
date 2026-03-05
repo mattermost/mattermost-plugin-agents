@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -681,4 +682,93 @@ func TestThinkingBudgetConfiguration(t *testing.T) {
 			assert.Equal(t, tt.expectedBudget, thinkingConfig.OfEnabled.BudgetTokens, "Thinking budget should match expected value")
 		})
 	}
+}
+
+func TestBuildAPIParamsStructuredOutput(t *testing.T) {
+	type TestOutput struct {
+		Name  string `json:"name" jsonschema:"description=The name"`
+		Value int    `json:"value" jsonschema:"description=The value"`
+	}
+
+	tests := []struct {
+		name               string
+		jsonOutputFormat   *jsonschema.Schema
+		expectOutputConfig bool
+	}{
+		{
+			name:               "no structured output when JSONOutputFormat is nil",
+			jsonOutputFormat:   nil,
+			expectOutputConfig: false,
+		},
+		{
+			name:               "structured output configured when JSONOutputFormat is set",
+			jsonOutputFormat:   llm.NewJSONSchemaFromStruct[TestOutput](),
+			expectOutputConfig: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &Anthropic{
+				defaultModel:     "claude-sonnet-4-20250514",
+				outputTokenLimit: 4096,
+			}
+
+			state := &messageState{
+				messages: []anthropicSDK.MessageParam{
+					{
+						Role: anthropicSDK.MessageParamRoleUser,
+						Content: []anthropicSDK.ContentBlockParamUnion{
+							anthropicSDK.NewTextBlock("test"),
+						},
+					},
+				},
+				config: llm.LanguageModelConfig{
+					Model:              "claude-sonnet-4-20250514",
+					MaxGeneratedTokens: 4096,
+					JSONOutputFormat:   tt.jsonOutputFormat,
+				},
+			}
+
+			params := a.buildAPIParams(state)
+
+			if tt.expectOutputConfig {
+				assert.NotNil(t, params.OutputConfig.Format.Schema, "OutputConfig.Format.Schema should be set")
+				// Verify the schema contains expected properties
+				props, ok := params.OutputConfig.Format.Schema["properties"]
+				assert.True(t, ok, "Schema should have properties")
+				propsMap, ok := props.(map[string]any)
+				assert.True(t, ok, "Properties should be a map")
+				assert.Contains(t, propsMap, "name", "Schema should contain 'name' property")
+				assert.Contains(t, propsMap, "value", "Schema should contain 'value' property")
+			} else {
+				assert.Nil(t, params.OutputConfig.Format.Schema, "OutputConfig.Format.Schema should not be set")
+			}
+		})
+	}
+}
+
+func TestJsonSchemaToMap(t *testing.T) {
+	type SimpleStruct struct {
+		Name    string `json:"name" jsonschema:"description=The name,required"`
+		Count   int    `json:"count" jsonschema:"description=The count"`
+		Enabled bool   `json:"enabled" jsonschema:"description=Whether enabled"`
+	}
+
+	schema := llm.NewJSONSchemaFromStruct[SimpleStruct]()
+
+	result, err := jsonSchemaToMap(schema)
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+
+	// Verify the map contains expected top-level keys
+	assert.Contains(t, result, "properties")
+	assert.Contains(t, result, "type")
+
+	// Verify properties
+	props, ok := result["properties"].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, props, "name")
+	assert.Contains(t, props, "count")
+	assert.Contains(t, props, "enabled")
 }
