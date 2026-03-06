@@ -5,12 +5,14 @@ package openai
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/responses"
 	"github.com/openai/openai-go/v2/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -834,4 +836,95 @@ func TestReasoningEffortConfiguration(t *testing.T) {
 			assert.Equal(t, shared.ReasoningSummaryAuto, result.Reasoning.Summary, "Reasoning summary should be set to auto")
 		})
 	}
+}
+
+func TestSanitizeProviderError(t *testing.T) {
+	t.Run("preserves unrelated errors", func(t *testing.T) {
+		oai := OpenAI{}
+
+		sanitizedErr := oai.sanitizeProviderError(ErrStreamingTimeout)
+
+		assert.Same(t, ErrStreamingTimeout, sanitizedErr)
+	})
+
+	t.Run("redacts auth material from provider errors", func(t *testing.T) {
+		oai := OpenAI{
+			config: Config{
+				APIKey: "this-is-my-disclosed-api-key",
+			},
+		}
+
+		tests := []struct {
+			name            string
+			input           string
+			wantContains    string
+			wantNotContains []string
+		}{
+			{
+				name:         "incorrect api key message",
+				input:        `{"error":{"message":"Incorrect API key provided: this-is-my-disclosed-api-key. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","code":"invalid_api_key"}}`,
+				wantContains: `Incorrect API key provided: [REDACTED]. You can find your API key`,
+				wantNotContains: []string{
+					"this-is-my-disclosed-api-key",
+				},
+			},
+			{
+				name:         "progressively masked key",
+				input:        `{"error":{"message":"Incorrect API key provided: this-is-****************-key. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","code":"invalid_api_key"}}`,
+				wantContains: `Incorrect API key provided: [REDACTED]. You can find your API key`,
+				wantNotContains: []string{
+					"this-is-****************-key",
+				},
+			},
+			{
+				name:         "authorization header",
+				input:        `upstream failure: Authorization: Bearer sk-proj-1234567890abcdefghijklmnop`,
+				wantContains: `Authorization: Bearer [REDACTED]`,
+				wantNotContains: []string{
+					"sk-proj-1234567890abcdefghijklmnop",
+				},
+			},
+			{
+				name:         "json api key field",
+				input:        `{"apiKey":"this-is-my-disclosed-api-key","detail":"request failed"}`,
+				wantContains: `"apiKey":"[REDACTED]"`,
+				wantNotContains: []string{
+					"this-is-my-disclosed-api-key",
+				},
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				sanitizedErr := oai.sanitizeProviderError(errors.New(tt.input))
+				require.NotNil(t, sanitizedErr)
+				assert.Contains(t, sanitizedErr.Error(), tt.wantContains)
+				for _, secret := range tt.wantNotContains {
+					assert.NotContains(t, sanitizedErr.Error(), secret)
+				}
+			})
+		}
+	})
+}
+
+func TestHandleResponseErrorSanitizesMessage(t *testing.T) {
+	oai := OpenAI{
+		config: Config{
+			APIKey: "this-is-my-disclosed-api-key",
+		},
+	}
+	output := make(chan llm.TextStreamEvent, 1)
+
+	oai.handleResponseError(responses.ResponseStreamEventUnion{
+		Type:    "error",
+		Message: `Incorrect API key provided: this-is-my-disclosed-api-key. You can find your API key at https://platform.openai.com/account/api-keys.`,
+	}, output)
+
+	event := <-output
+	require.Equal(t, llm.EventTypeError, event.Type)
+
+	err, ok := event.Value.(error)
+	require.True(t, ok)
+	assert.Contains(t, err.Error(), "Incorrect API key provided: [REDACTED].")
+	assert.NotContains(t, err.Error(), "this-is-my-disclosed-api-key")
 }

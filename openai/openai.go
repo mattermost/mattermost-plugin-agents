@@ -14,6 +14,7 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -58,6 +59,43 @@ const (
 )
 
 var ErrStreamingTimeout = errors.New("timeout streaming")
+
+const redactedSecret = "[REDACTED]"
+
+var (
+	openAIAuthHeaderPattern   = regexp.MustCompile(`(?i)(Authorization:\s*Bearer\s+)(\S+)`)
+	openAIJSONAPIKeyPattern   = regexp.MustCompile(`(?i)("api(?:_|)key"\s*:\s*")([^"]+)(")`)
+	openAIIncorrectKeyPattern = regexp.MustCompile(`(?i)(Incorrect API key provided:\s*)([^"\r\n]+?)(\.?\s+You can find your API key|["\r\n]|$)`)
+	openAIKeyPattern          = regexp.MustCompile(`\bsk(?:-proj)?-[A-Za-z0-9_-]{10,}\b`)
+	anthropicKeyPattern       = regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}\b`)
+)
+
+func (s *OpenAI) sanitizeProviderError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	sanitized := sanitizeProviderErrorMessage(err.Error())
+	apiKey := strings.TrimSpace(s.config.APIKey)
+	if len(apiKey) >= 8 {
+		sanitized = strings.ReplaceAll(sanitized, apiKey, redactedSecret)
+	}
+
+	if sanitized == err.Error() {
+		return err
+	}
+
+	return errors.New(sanitized)
+}
+
+func sanitizeProviderErrorMessage(message string) string {
+	sanitized := openAIAuthHeaderPattern.ReplaceAllString(message, `${1}`+redactedSecret)
+	sanitized = openAIJSONAPIKeyPattern.ReplaceAllString(sanitized, `${1}`+redactedSecret+`${3}`)
+	sanitized = openAIIncorrectKeyPattern.ReplaceAllString(sanitized, `${1}`+redactedSecret+`${3}`)
+	sanitized = openAIKeyPattern.ReplaceAllString(sanitized, redactedSecret)
+	sanitized = anthropicKeyPattern.ReplaceAllString(sanitized, redactedSecret)
+	return llm.SanitizeNonPrintableChars(sanitized)
+}
 
 func NewAzure(config Config, httpClient *http.Client) *OpenAI {
 	opts := []option.RequestOption{
@@ -578,12 +616,12 @@ func (s *OpenAI) handleStreamEnd(ctx context.Context, stream *ssestream.Stream[o
 		if ctxErr := context.Cause(ctx); ctxErr != nil {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: ctxErr,
+				Value: s.sanitizeProviderError(ctxErr),
 			}
 		} else {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: err,
+				Value: s.sanitizeProviderError(err),
 			}
 		}
 	}
@@ -913,7 +951,7 @@ func (s *OpenAI) handleResponseError(event responses.ResponseStreamEventUnion, o
 	}
 	output <- llm.TextStreamEvent{
 		Type:  llm.EventTypeError,
-		Value: errors.New(errorMsg),
+		Value: s.sanitizeProviderError(errors.New(errorMsg)),
 	}
 }
 
@@ -936,12 +974,12 @@ func (s *OpenAI) handleResponsesStreamEnd(ctx context.Context, stream *ssestream
 		if ctxErr := context.Cause(ctx); ctxErr != nil {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: ctxErr,
+				Value: s.sanitizeProviderError(ctxErr),
 			}
 		} else {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: err,
+				Value: s.sanitizeProviderError(err),
 			}
 		}
 	}
