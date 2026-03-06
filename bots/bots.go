@@ -390,13 +390,13 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 		return nil, fmt.Errorf("unsupported service type: %s", serviceConfig.Type)
 	}
 
-	// Structured output fallback
-	result = llm.NewStructuredOutputFallbackWrapper(result, botConfig.StructuredOutputEnabled)
-
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)
 
 	// Token Usage Logging
+	// NOTE: This wrapper converts ChatCompletionNoStream into a streaming call
+	// internally, so any wrapper that needs to intercept ChatCompletionNoStream
+	// must be placed outside (after) this one.
 	if b.tokenUsageSinks != nil || b.metrics != nil {
 		result = llm.NewTokenUsageLoggingWrapper(
 			result,
@@ -405,6 +405,9 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 			b.metrics,
 		)
 	}
+
+	// Structured output fallback
+	result = llm.NewStructuredOutputFallbackWrapper(result, botConfig.StructuredOutputEnabled)
 
 	// Logging
 	if b.config.EnableLLMLogging() {
