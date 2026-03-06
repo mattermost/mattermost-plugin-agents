@@ -6,6 +6,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -114,6 +115,8 @@ func deriveInternalServerURL(pluginAPI *pluginapi.Client) string {
 				internalServerURL = "http://localhost" + listenAddr
 			case len(listenAddr) > 7 && listenAddr[:7] == "0.0.0.0":
 				internalServerURL = "http://localhost" + listenAddr[7:]
+			case strings.HasPrefix(listenAddr, "[::]:"):
+				internalServerURL = "http://localhost:" + listenAddr[5:]
 			default:
 				internalServerURL = "http://" + listenAddr
 			}
