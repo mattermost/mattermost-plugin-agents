@@ -359,7 +359,7 @@ func TestHandleToolCallPreservesResolvedToolCallsWhenApprovingPendingSubset(t *t
 	}
 	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{tool}}, nil, &testConfigProvider{})
 
-	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
 	bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, nil)
 	botService.SetBotsForTesting([]*bots.Bot{bot})
 
@@ -625,7 +625,7 @@ func TestAutoExecuteApprovedToolCalls(t *testing.T) {
 		}
 		contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{tool}}, nil, &testConfigProvider{})
 
-		botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+		botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
 		bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, nil)
 		botService.SetBotsForTesting([]*bots.Bot{bot})
 
@@ -726,7 +726,7 @@ func TestAutoExecuteApprovedToolCalls(t *testing.T) {
 		}
 		contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{tool}}, nil, &testConfigProvider{})
 
-		botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+		botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
 		bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, nil)
 		botService.SetBotsForTesting([]*bots.Bot{bot})
 
@@ -804,7 +804,7 @@ func TestAutoExecuteApprovedToolCalls(t *testing.T) {
 		mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
 
 		contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{}}, nil, &testConfigProvider{})
-		botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+		botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
 
 		fakeClient := &fakeMMClient{
 			posts: map[string]*model.Post{}, // empty - post not found
@@ -831,7 +831,7 @@ func TestAutoExecuteApprovedToolCalls(t *testing.T) {
 		mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
 
 		contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{}}, nil, &testConfigProvider{})
-		botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+		botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
 
 		post := &model.Post{
 			Id:        postID,
@@ -885,7 +885,7 @@ func TestHandleToolResultDoesNotContinueWhenNoToolCallSucceeded(t *testing.T) {
 
 	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{}}, nil, &testConfigProvider{})
 
-	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
 	bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, nil)
 	botService.SetBotsForTesting([]*bots.Bot{bot})
 
