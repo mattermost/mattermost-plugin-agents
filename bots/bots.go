@@ -390,6 +390,9 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 		return nil, fmt.Errorf("unsupported service type: %s", serviceConfig.Type)
 	}
 
+	// Structured output fallback
+	result = llm.NewStructuredOutputFallbackWrapper(result, botConfig.StructuredOutputEnabled)
+
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)
 
