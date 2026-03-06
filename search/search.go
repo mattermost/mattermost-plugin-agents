@@ -181,17 +181,35 @@ func (s *Search) executeSearch(ctx context.Context, query string, opts Options) 
 	return s.enrichResults(searchResults), nil
 }
 
+func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query string, teamID, channelID string, ragResults []RAGResult) *llm.Context {
+	promptCtx := llm.NewContext()
+	promptCtx.RequestingUser = &model.User{Id: userID}
+	if channelID != "" {
+		promptCtx.Channel = &model.Channel{Id: channelID}
+	}
+	if teamID != "" {
+		promptCtx.Team = &model.Team{Id: teamID}
+	}
+	var botUserID string
+	if mmBot := bot.GetMMBot(); mmBot != nil {
+		botUserID = mmBot.UserId
+	}
+	promptCtx.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
+	promptCtx.Parameters = map[string]interface{}{
+		"Query":   query,
+		"Results": ragResults,
+	}
+
+	return promptCtx
+}
+
 // buildPrompt creates an LLM completion request for answering a search query.
-func (s *Search) buildPrompt(query string, results []RAGResult) (llm.CompletionRequest, error) {
+func (s *Search) buildPrompt(userID string, bot *bots.Bot, query, teamID, channelID string, results []RAGResult, operationSubType string) (llm.CompletionRequest, error) {
 	if s.prompts == nil {
 		return llm.CompletionRequest{}, fmt.Errorf("failed to format prompt: prompts not configured")
 	}
 
-	promptCtx := llm.NewContext()
-	promptCtx.Parameters = map[string]interface{}{
-		"Query":   query,
-		"Results": results,
-	}
+	promptCtx := s.buildSearchPromptContext(userID, bot, query, teamID, channelID, results)
 
 	systemMessage, err := s.prompts.Format("search_system", promptCtx)
 	if err != nil {
@@ -209,7 +227,9 @@ func (s *Search) buildPrompt(query string, results []RAGResult) (llm.CompletionR
 				Message: query,
 			},
 		},
-		Context: promptCtx,
+		Context:          promptCtx,
+		Operation:        llm.OperationSearch,
+		OperationSubType: operationSubType,
 	}, nil
 }
 
@@ -288,7 +308,7 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 		return
 	}
 
-	prompt, err := s.buildPrompt(query, results)
+	prompt, err := s.buildPrompt(userID, bot, query, teamID, channelID, results, llm.SubTypeStreaming)
 	if err != nil {
 		s.mmclient.LogError("Error building prompt", "error", err)
 		processingError = err
@@ -349,7 +369,7 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 		}, nil
 	}
 
-	prompt, err := s.buildPrompt(query, results)
+	prompt, err := s.buildPrompt(userID, bot, query, teamID, channelID, results, llm.SubTypeNoStream)
 	if err != nil {
 		return Response{}, err
 	}

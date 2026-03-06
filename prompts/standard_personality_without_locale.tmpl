@@ -22,7 +22,7 @@ IMPORTANT: You have capabilities that can only be used in a Direct Message (DM) 
 {{range .DisabledToolsInfo}}- {{.Name}}: {{.Description}}
 {{end}}
 If a user's request requires one of these capabilities, respond with a single concise sentence explaining that the capability is available only if they DM you directly or use the Agents tab on the right-hand side. Do not ask follow-up questions or offer to help them switch contexts.
-CRITICAL: Do NOT attempt to invoke, simulate, or produce any tool call output (including XML, JSON, or any structured tool invocation syntax). You do not have the ability to call tools in this context. Simply tell the user to use a DM or the Agents tab.
+CRITICAL: Do NOT attempt to invoke, simulate, or produce any tool call output for the tools listed above (including XML, JSON, or any structured tool invocation syntax). You do not have the ability to call the tools listed above in this context. Simply tell the user to use a DM or the Agents tab.
 
 {{end}}
 

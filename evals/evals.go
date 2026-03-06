@@ -20,6 +20,15 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
 )
 
+// Default models for each provider. Update these when bumping model versions.
+const (
+	DefaultOpenAIModel    = "gpt-5.2"
+	DefaultAnthropicModel = "claude-sonnet-4-6"
+	DefaultAzureModel     = "gpt-5.2"
+	DefaultMistralModel   = "mistral-large-latest"
+	DefaultBedrockModel   = "global.anthropic.claude-sonnet-4-6-v1:0"
+)
+
 type EvalT struct {
 	*testing.T
 	*Eval
@@ -50,7 +59,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		if model == "" {
 			model = os.Getenv("OPENAI_MODEL")
 			if model == "" {
-				model = "gpt-5"
+				model = DefaultOpenAIModel
 			}
 		}
 
@@ -74,7 +83,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		if model == "" {
 			model = os.Getenv("ANTHROPIC_MODEL")
 			if model == "" {
-				model = "claude-sonnet-4-5-20250929"
+				model = DefaultAnthropicModel
 			}
 		}
 
@@ -104,7 +113,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		if model == "" {
 			model = os.Getenv("AZURE_OPENAI_MODEL")
 			if model == "" {
-				model = "gpt-5"
+				model = DefaultAzureModel
 			}
 		}
 
@@ -157,7 +166,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		if model == "" {
 			model = os.Getenv("MISTRAL_MODEL")
 			if model == "" {
-				model = "mistral-large-latest"
+				model = DefaultMistralModel
 			}
 		}
 
@@ -185,7 +194,7 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		if model == "" {
 			model = os.Getenv("AWS_BEDROCK_MODEL")
 			if model == "" {
-				model = "global.anthropic.claude-sonnet-4-20250514-v1:0"
+				model = DefaultBedrockModel
 			}
 		}
 
@@ -241,19 +250,17 @@ func NewEvalWithProvider(providerName string) (*Eval, error) {
 	}, nil
 }
 
-// createGraderLLM creates a separate LLM for grading based on environment variables
-// Defaults to OpenAI with gpt-5 model if not specified
+// createGraderLLM creates a separate LLM for grading based on environment variables.
+// Defaults to OpenAI if not specified.
 func createGraderLLM() (llm.LanguageModel, error) {
-	// Get grader provider name from environment, default to "openai"
 	graderProvider := os.Getenv("GRADER_LLM_PROVIDER")
 	if graderProvider == "" {
 		graderProvider = "openai"
 	}
 
-	// Get grader model override, default to gpt-5 for OpenAI
 	graderModel := os.Getenv("GRADER_LLM_MODEL")
 	if graderModel == "" && graderProvider == "openai" {
-		graderModel = "gpt-5"
+		graderModel = DefaultOpenAIModel
 	}
 
 	// Create grader provider with model override

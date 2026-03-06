@@ -71,7 +71,19 @@ jobs:
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      run: npx playwright test tests/llmbot-post-component --project=chromium --reporter=list
+      run: npx playwright test tests/llmbot-post-component --project=chromium
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report-llmbot-real-apis
+        path: ./e2e/playwright-report/
+        retention-days: 30
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: server-logs-llmbot-real-apis
+        path: ./e2e/logs/server-logs.log
+        retention-days: 30
 
   e2e-channel-analysis-real-apis:
     timeout-minutes: 180
@@ -97,7 +109,19 @@ jobs:
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      run: npx playwright test tests/channel-analysis/backend-verification/real-api.spec.ts --project=chromium --reporter=list
+      run: npx playwright test tests/channel-analysis/backend-verification/real-api.spec.ts --project=chromium
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report-channel-analysis-real-apis
+        path: ./e2e/playwright-report/
+        retention-days: 30
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: server-logs-channel-analysis-real-apis
+        path: ./e2e/logs/server-logs.log
+        retention-days: 30
 
   e2e-tool-calling:
     timeout-minutes: 180
@@ -123,7 +147,19 @@ jobs:
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      run: npx playwright test tests/multiplayer-tool-calling --project=chromium --reporter=list
+      run: npx playwright test tests/multiplayer-tool-calling --project=chromium
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report-tool-calling
+        path: ./e2e/playwright-report/
+        retention-days: 30
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: server-logs-tool-calling
+        path: ./e2e/logs/server-logs.log
+        retention-days: 30
 
   plugin-tests:
     runs-on: ubuntu-latest
@@ -188,14 +224,14 @@ jobs:
           LLM_PROVIDER: ${{ matrix.provider.name }}
           # OpenAI
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o' }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.2' }}
           # Anthropic
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514' }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-6' }}
           # Azure
           AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
           AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_MODEL || 'gpt-4o' }}
+          AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_MODEL || 'gpt-5.2' }}
           # Mistral
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL || 'mistral-large-latest' }}
@@ -203,7 +239,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_SECRET }}
           AWS_BEDROCK_REGION: ${{ vars.AWS_BEDROCK_REGION || 'us-east-1' }}
-          AWS_BEDROCK_MODEL: ${{ vars.AWS_BEDROCK_MODEL || 'global.anthropic.claude-sonnet-4-20250514-v1:0' }}
+          AWS_BEDROCK_MODEL: ${{ vars.AWS_BEDROCK_MODEL || 'global.anthropic.claude-sonnet-4-6-v1:0' }}
         run: |
           # Run evals - evalviewer writes directly to comment.md
           make evals-comment || true

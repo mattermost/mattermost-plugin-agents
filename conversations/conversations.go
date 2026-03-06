@@ -138,8 +138,9 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 	posts = append(posts, c.PostToAIPost(bot, post))
 
 	completionRequest := llm.CompletionRequest{
-		Posts:   posts,
-		Context: context,
+		Posts:     posts,
+		Context:   context,
+		Operation: llm.OperationConversation,
 	}
 	var opts []llm.LanguageModelOption
 	if toolsDisabled {
@@ -221,11 +222,18 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 
 func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID string, context *llm.Context) error {
 	titleRequest := llm.CompletionRequest{
-		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: request}},
-		Context: context,
+		Posts:            []llm.Post{{Role: llm.PostRoleUser, Message: request}},
+		Context:          context,
+		Operation:        llm.OperationTitleGeneration,
+		OperationSubType: llm.SubTypeNoStream,
 	}
 
-	conversationTitle, err := bot.LLM().ChatCompletionNoStream(titleRequest, llm.WithMaxGeneratedTokens(25), llm.WithReasoningDisabled())
+	conversationTitle, err := bot.LLM().ChatCompletionNoStream(
+		titleRequest,
+		llm.WithMaxGeneratedTokens(25),
+		llm.WithReasoningDisabled(),
+		llm.WithToolsDisabled(),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to get title: %w", err)
 	}

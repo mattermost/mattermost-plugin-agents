@@ -471,7 +471,7 @@ func TestBuildPrompt(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s := New(nil, nil, promptsObj, nil, nil)
-			req, err := s.buildPrompt(tc.query, tc.results)
+			req, err := s.buildPrompt("", nil, tc.query, "", "", tc.results, "")
 
 			if tc.expectError {
 				require.Error(t, err)
@@ -798,7 +798,7 @@ func TestEnrichResultsSameUserMultipleTimes(t *testing.T) {
 func TestBuildPromptWithNilPrompts(t *testing.T) {
 	// Test that buildPrompt fails gracefully when prompts are nil
 	s := New(nil, nil, nil, nil, nil)
-	_, err := s.buildPrompt("test query", []RAGResult{})
+	_, err := s.buildPrompt("", nil, "test query", "", "", []RAGResult{}, "")
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to format prompt")
@@ -824,7 +824,7 @@ func TestBuildPromptWithLargeResults(t *testing.T) {
 	}
 
 	s := New(nil, nil, promptsObj, nil, nil)
-	req, err := s.buildPrompt("test query with many results", largeResults)
+	req, err := s.buildPrompt("", nil, "test query with many results", "", "", largeResults, "")
 
 	// Should succeed - prompt size is handled by the template
 	require.NoError(t, err)

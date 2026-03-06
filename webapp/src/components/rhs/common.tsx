@@ -46,6 +46,7 @@ export const RHSText = styled.div`
     font-weight: 500;
     font-size: 14px;
 	line-height: 20px;
+	margin-bottom: 24px;
 `;
 
 export const RHSPaddingContainer = styled.div`

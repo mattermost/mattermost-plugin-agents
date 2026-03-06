@@ -136,7 +136,7 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	// Get user ID for semantic search permissions
 	user, _, err := client.GetMe(ctx, "")
@@ -468,7 +468,7 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	// Build search options
 	searchOptions := &model.UserSearch{
