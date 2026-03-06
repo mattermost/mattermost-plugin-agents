@@ -885,6 +885,22 @@ func TestSanitizeProviderError(t *testing.T) {
 				},
 			},
 			{
+				name:         "standalone openai key token",
+				input:        `provider error: leaked sk-1234567890abcdefghij token`,
+				wantContains: `provider error: leaked [REDACTED] token`,
+				wantNotContains: []string{
+					"sk-1234567890abcdefghij",
+				},
+			},
+			{
+				name:         "standalone anthropic key token",
+				input:        `provider error: leaked sk-ant-1234567890abcdefghijklmnop`,
+				wantContains: `provider error: leaked [REDACTED]`,
+				wantNotContains: []string{
+					"sk-ant-1234567890abcdefghijklmnop",
+				},
+			},
+			{
 				name:         "json api key field",
 				input:        `{"apiKey":"this-is-my-disclosed-api-key","detail":"request failed"}`,
 				wantContains: `"apiKey":"[REDACTED]"`,
@@ -904,6 +920,18 @@ func TestSanitizeProviderError(t *testing.T) {
 				}
 			})
 		}
+	})
+
+	t.Run("redacts short configured api keys", func(t *testing.T) {
+		oai := OpenAI{
+			config: Config{
+				APIKey: "short",
+			},
+		}
+
+		sanitizedErr := oai.sanitizeProviderError(errors.New(`provider error: short`))
+		require.NotNil(t, sanitizedErr)
+		assert.Equal(t, "provider error: [REDACTED]", sanitizedErr.Error())
 	})
 }
 

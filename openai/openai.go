@@ -77,7 +77,7 @@ func (s *OpenAI) sanitizeProviderError(err error) error {
 
 	sanitized := sanitizeProviderErrorMessage(err.Error())
 	apiKey := strings.TrimSpace(s.config.APIKey)
-	if len(apiKey) >= 8 {
+	if apiKey != "" {
 		sanitized = strings.ReplaceAll(sanitized, apiKey, redactedSecret)
 	}
 
