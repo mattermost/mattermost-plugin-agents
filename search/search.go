@@ -190,11 +190,13 @@ func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query st
 	if teamID != "" {
 		promptCtx.Team = &model.Team{Id: teamID}
 	}
-	var botUserID string
-	if mmBot := bot.GetMMBot(); mmBot != nil {
-		botUserID = mmBot.UserId
+	if bot != nil {
+		var botUserID string
+		if mmBot := bot.GetMMBot(); mmBot != nil {
+			botUserID = mmBot.UserId
+		}
+		promptCtx.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 	}
-	promptCtx.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 	promptCtx.Parameters = map[string]interface{}{
 		"Query":   query,
 		"Results": ragResults,
