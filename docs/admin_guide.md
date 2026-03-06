@@ -281,6 +281,97 @@ Post indexing occurs automatically during initial setup and when changing embedd
    - Trigger reindexing when changing embedding providers.
    - Check indexing status.
 
+### OpenTelemetry tracing
+
+The plugin supports distributed tracing via [OpenTelemetry](https://opentelemetry.io/) to provide visibility into request latency, LLM call performance, tool execution, and error diagnosis.
+
+#### What gets traced
+
+When enabled, the plugin creates spans for:
+
+- **HTTP requests**: Every API call to the plugin, with method, route, and status code (via otelgin middleware)
+- **LLM completions**: Provider, model, operation type, streaming status, input/output token counts, and errors
+- **Tool execution**: Tool name, ID, resolution status, and errors for both built-in and MCP tools
+- **MCP tool calls**: Remote MCP server and tool name
+- **Semantic search**: Search queries and result retrieval
+- **Web search**: Brave and Google search API calls
+- **Post streaming**: Duration and context for streaming LLM responses to posts
+
+Spans are organized in a parent-child hierarchy that follows the request flow, so a single user message produces a trace like:
+
+```
+HTTP POST /post/:postid/react
+  └── process user request
+       ├── llm chat completion (provider=openai, model=gpt-4o, tokens=150/42)
+       ├── resolve tool (tool=web_search)
+       └── stream to post
+```
+
+#### Enabling OpenTelemetry
+
+1. Set **Enable OpenTelemetry** to `true` in the plugin configuration
+2. Set **OpenTelemetry Endpoint** to your OTLP gRPC collector address (e.g., `localhost:4317`)
+
+These settings can be configured via the System Console plugin settings page or directly in the plugin configuration JSON:
+
+```json
+{
+  "enableOpenTelemetry": true,
+  "openTelemetryEndpoint": "your-collector:4317"
+}
+```
+
+When the endpoint is empty or the feature is disabled, the plugin uses a no-op tracer with zero overhead.
+
+#### Local development with Jaeger
+
+For local development and debugging, use the included Docker Compose file to run [Jaeger](https://www.jaegertracing.io/) as an all-in-one trace collector and UI:
+
+```bash
+docker compose -f dev/docker-compose.otel.yml up -d
+```
+
+This starts:
+- **OTLP gRPC receiver** on port `4317`
+- **OTLP HTTP receiver** on port `4318`
+- **Jaeger UI** at `http://localhost:16686`
+
+Configure the plugin with endpoint `localhost:4317`, then interact with the bot. Traces will appear in the Jaeger UI under the `mattermost-ai-agents` service.
+
+To stop Jaeger:
+
+```bash
+docker compose -f dev/docker-compose.otel.yml down
+```
+
+#### Production deployment
+
+For production, send traces to your existing OpenTelemetry Collector or directly to a backend:
+
+- **OpenTelemetry Collector**: Point the endpoint to your collector's OTLP gRPC address. The collector can then export to Jaeger, Zipkin, Datadog, Grafana Tempo, AWS X-Ray, or any other supported backend.
+- **Direct export**: Point the endpoint directly to a backend that supports OTLP gRPC (e.g., Grafana Tempo at `tempo:4317`).
+
+The connection currently uses insecure (non-TLS) gRPC. For TLS-terminated endpoints, route through an OpenTelemetry Collector with TLS configured.
+
+#### Custom span attributes
+
+Traces include these semantic attributes for filtering and analysis:
+
+| Attribute | Description | Example |
+|-----------|-------------|---------|
+| `ai.llm.provider` | LLM provider name | `openai`, `anthropic` |
+| `ai.llm.model` | Model identifier | `gpt-4o`, `claude-3-opus` |
+| `ai.llm.operation` | Operation type | `conversation`, `title_generation` |
+| `ai.llm.input_tokens` | Input token count | `150` |
+| `ai.llm.output_tokens` | Output token count | `42` |
+| `ai.tool.name` | Tool being called | `web_search`, `read_channel` |
+| `ai.tool.id` | Tool call identifier | `call_abc123` |
+| `ai.mcp.server` | MCP server name | `github-server` |
+| `ai.mcp.tool` | MCP tool name | `search_issues` |
+| `ai.user.id` | Requesting user ID | `abc123def456` |
+| `ai.channel.id` | Channel ID | `abc123def456` |
+| `ai.post.id` | Post ID | `abc123def456` |
+
 ### Backup and restore
 
 The plugin configuration is stored in the Mattermost database. To backup:
