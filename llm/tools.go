@@ -13,8 +13,10 @@ import (
 	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/mattermost/mattermost-plugin-ai/telemetry"
+	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/mattermost/mattermost-plugin-ai/telemetry"
 )
 
 // Tool represents a function that can be called by the language model during a conversation.
@@ -378,9 +380,17 @@ func (s *ToolStore) ResolveTool(ctx context.Context, name string, argsGetter Too
 
 	tool, ok := s.tools[name]
 	if !ok {
-		return "", errors.New("unknown tool " + name)
+		err := errors.New("unknown tool " + name)
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+		return "", err
 	}
-	return tool.Resolver(llmCtx, argsGetter)
+	result, err := tool.Resolver(llmCtx, argsGetter)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+	}
+	return result, err
 }
 
 func (s *ToolStore) GetTools() []Tool {
