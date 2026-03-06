@@ -92,7 +92,7 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 	// Create streamable HTTP handler for modern MCP communication
 	mattermostServer.streamableHandler = mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		return mattermostServer.mcpServer
-	}, nil)
+	}, &mcp.StreamableHTTPOptions{Stateless: true})
 
 	// Create HTTP mux router and setup all routes
 	httpMux := http.NewServeMux()
