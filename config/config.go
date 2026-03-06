@@ -6,11 +6,18 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"sync/atomic"
 
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
+)
+
+const (
+	tokenUsageLogToPluginEnvKey = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_PLUGIN" // #nosec G101 -- env var key name, not a credential
+	tokenUsageLogToFileEnvKey   = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_FILE"   // #nosec G101 -- env var key name, not a credential
 )
 
 type Config struct {
@@ -21,6 +28,8 @@ type Config struct {
 	EnableLLMTrace                  bool                             `json:"enableLLMTrace"`
 	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
 	EnableCallSummary               bool                             `json:"enableCallSummary"`
+	EnableTokenUsageLogToPlugin     *bool                            `json:"enableTokenUsageLogToPlugin,omitempty"`
+	EnableTokenUsageLogToFile       *bool                            `json:"enableTokenUsageLogToFile,omitempty"`
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
@@ -107,6 +116,46 @@ func (c *Container) EnableLLMLogging() bool {
 
 func (c *Container) EnableTokenUsageLogging() bool {
 	return c.cfg.Load().EnableTokenUsageLogging
+}
+
+func (c *Container) EnableTokenUsageLogToPlugin() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil || !cfg.EnableTokenUsageLogging {
+		return false
+	}
+
+	if enabled, ok := parseBooleanEnv(tokenUsageLogToPluginEnvKey); ok {
+		return enabled
+	}
+
+	return false
+}
+
+func (c *Container) EnableTokenUsageLogToFile() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil || !cfg.EnableTokenUsageLogging {
+		return false
+	}
+
+	if enabled, ok := parseBooleanEnv(tokenUsageLogToFileEnvKey); ok {
+		return enabled
+	}
+
+	return true
+}
+
+func parseBooleanEnv(key string) (bool, bool) {
+	raw, ok := os.LookupEnv(key)
+	if !ok {
+		return false, false
+	}
+
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, false
+	}
+
+	return parsed, true
 }
 
 func (c *Container) MCP() mcp.Config {

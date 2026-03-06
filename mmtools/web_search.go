@@ -581,6 +581,13 @@ func (s *webSearchService) summarizeContent(bot *bots.Bot, content string) (stri
 		content = content[:100000] + "... (truncated)"
 	}
 
+	summaryContext := llm.NewContext()
+	var botUserID string
+	if mmBot := bot.GetMMBot(); mmBot != nil {
+		botUserID = mmBot.UserId
+	}
+	summaryContext.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
+
 	req := llm.CompletionRequest{
 		Posts: []llm.Post{
 			{
@@ -592,7 +599,9 @@ func (s *webSearchService) summarizeContent(bot *bots.Bot, content string) (stri
 				Message: content,
 			},
 		},
-		Context: llm.NewContext(),
+		Context:          summaryContext,
+		Operation:        llm.OperationWebSearchSummarization,
+		OperationSubType: llm.SubTypeNoStream,
 	}
 
 	// Use a reasonable token limit for the summary (e.g. 4000 tokens)

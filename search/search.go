@@ -134,6 +134,28 @@ func (s *Search) convertToRAGResults(searchResults []embeddings.SearchResult) []
 	return ragResults
 }
 
+func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query string, teamID, channelID string, ragResults []RAGResult) *llm.Context {
+	promptCtx := llm.NewContext()
+	promptCtx.RequestingUser = &model.User{Id: userID}
+	if channelID != "" {
+		promptCtx.Channel = &model.Channel{Id: channelID}
+	}
+	if teamID != "" {
+		promptCtx.Team = &model.Team{Id: teamID}
+	}
+	var botUserID string
+	if mmBot := bot.GetMMBot(); mmBot != nil {
+		botUserID = mmBot.UserId
+	}
+	promptCtx.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
+	promptCtx.Parameters = map[string]interface{}{
+		"Query":   query,
+		"Results": ragResults,
+	}
+
+	return promptCtx
+}
+
 // RunSearch initiates a search and sends results to a DM
 func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (map[string]string, error) {
 	if !s.Enabled() {
@@ -206,11 +228,7 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 		}
 
 		// Create context for generating answer
-		promptCtx := llm.NewContext()
-		promptCtx.Parameters = map[string]interface{}{
-			"Query":   query,
-			"Results": ragResults,
-		}
+		promptCtx := s.buildSearchPromptContext(userID, bot, query, teamID, channelID, ragResults)
 
 		systemMessage, err := s.prompts.Format("search_system", promptCtx)
 		if err != nil {
@@ -230,7 +248,9 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 					Message: query,
 				},
 			},
-			Context: promptCtx,
+			Context:          promptCtx,
+			Operation:        llm.OperationSearch,
+			OperationSubType: llm.SubTypeStreaming,
 		}
 
 		resultStream, err := bot.LLM().ChatCompletion(prompt)
@@ -300,11 +320,7 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 		}, nil
 	}
 
-	promptCtx := llm.NewContext()
-	promptCtx.Parameters = map[string]interface{}{
-		"Query":   query,
-		"Results": ragResults,
-	}
+	promptCtx := s.buildSearchPromptContext(userID, bot, query, teamID, channelID, ragResults)
 
 	systemMessage, err := s.prompts.Format("search_system", promptCtx)
 	if err != nil {
@@ -322,7 +338,9 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 				Message: query,
 			},
 		},
-		Context: promptCtx,
+		Context:          promptCtx,
+		Operation:        llm.OperationSearch,
+		OperationSubType: llm.SubTypeNoStream,
 	}
 
 	answer, err := bot.LLM().ChatCompletionNoStream(prompt)

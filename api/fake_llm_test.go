@@ -5,6 +5,7 @@ package api
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
@@ -23,10 +24,17 @@ type FakeLLM struct {
 	TokenCount int
 	// TokenLimit to return from InputTokenLimit
 	TokenLimit int
+
+	mu          sync.RWMutex
+	lastRequest llm.CompletionRequest
 }
 
 // ChatCompletion implements streaming completion
 func (f *FakeLLM) ChatCompletion(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+	f.mu.Lock()
+	f.lastRequest = conversation
+	f.mu.Unlock()
+
 	if f.Error != nil {
 		return nil, f.Error
 	}
@@ -63,6 +71,10 @@ func (f *FakeLLM) ChatCompletion(conversation llm.CompletionRequest, opts ...llm
 
 // ChatCompletionNoStream implements non-streaming completion
 func (f *FakeLLM) ChatCompletionNoStream(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	f.mu.Lock()
+	f.lastRequest = conversation
+	f.mu.Unlock()
+
 	if f.Error != nil {
 		return "", f.Error
 	}
@@ -84,6 +96,12 @@ func (f *FakeLLM) InputTokenLimit() int {
 		return f.TokenLimit
 	}
 	return 100000 // Default reasonable limit
+}
+
+func (f *FakeLLM) LastRequest() llm.CompletionRequest {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.lastRequest
 }
 
 // NewFakeLLM creates a FakeLLM with a simple text response

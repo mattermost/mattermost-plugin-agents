@@ -50,7 +50,8 @@ func (r *React) Resolve(message string, context *llm.Context) (string, error) {
 				Message: message,
 			},
 		},
-		Context: context,
+		Context:   context,
+		Operation: llm.OperationEmojiSelection,
 	}
 
 	// Get emoji from LLM

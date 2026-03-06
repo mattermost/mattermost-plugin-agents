@@ -46,6 +46,14 @@ func (m *mockConfig) EnableTokenUsageLogging() bool {
 	return false
 }
 
+func (m *mockConfig) EnableTokenUsageLogToPlugin() bool {
+	return true
+}
+
+func (m *mockConfig) EnableTokenUsageLogToFile() bool {
+	return false
+}
+
 func (m *mockConfig) GetTranscriptGenerator() string {
 	return "testbot"
 }
@@ -556,7 +564,7 @@ func TestEnsureBots(t *testing.T) {
 				bots:     tc.cfgBots,
 				services: tc.cfgServices,
 			}
-			mmBots := New(mockAPI, client, licenseChecker, cfg, &http.Client{}, nil, nil)
+			mmBots := New(mockAPI, client, licenseChecker, cfg, &http.Client{}, nil)
 
 			defer mockAPI.AssertExpectations(t)
 

@@ -19,7 +19,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// MattermostHTTPMCPServer wraps MattermostMCPServer for HTTP transport
+// MattermostHTTPMCPServer wraps MattermostMCPServer for HTTP transport.
 type MattermostHTTPMCPServer struct {
 	*MattermostMCPServer
 	config            HTTPConfig
@@ -28,7 +28,7 @@ type MattermostHTTPMCPServer struct {
 	httpServer        *http.Server
 }
 
-// NewHTTPServer creates a new HTTP transport MCP server
+// NewHTTPServer creates a new HTTP transport MCP server.
 func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPMCPServer, error) {
 	if config.MMServerURL == "" {
 		return nil, fmt.Errorf("server URL cannot be empty")
@@ -103,12 +103,14 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 	recoveryHandler := mattermostServer.recoveryMiddleware(mainHandler)
 	secureHandler := mattermostServer.securityMiddleware(recoveryHandler)
 
-	// Create HTTP server with security middleware
+	// Create HTTP server with security middleware.
+	// Timeouts are kept at 30 seconds to limit resource usage and mitigate slowloris-style attacks.
 	mattermostServer.httpServer = &http.Server{
 		Addr:         addr,
 		Handler:      secureHandler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  30 * time.Second,
 	}
 
 	return mattermostServer, nil
@@ -435,7 +437,7 @@ func (s *MattermostHTTPMCPServer) requireAuth(next http.HandlerFunc) http.Handle
 	}
 }
 
-// setupRoutes sets up all HTTP routes for the MCP server on the provided mux
+// setupRoutes sets up all HTTP routes for the MCP server on the provided mux.
 func (s *MattermostHTTPMCPServer) setupRoutes(httpMux *http.ServeMux) {
 	// OAuth 2.0 Protected Resource Metadata endpoint (RFC 9728) - no auth required
 	httpMux.HandleFunc("/.well-known/oauth-protected-resource", s.handleProtectedResourceMetadata)
