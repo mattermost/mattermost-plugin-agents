@@ -42,6 +42,7 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['cohere', 'Cohere'],
     ['mistral', 'Mistral'],
     ['asage', 'asksage (Experimental)'],
+    ['openclaw', 'OpenClaw'],
 ]);
 
 function scaleAIToDisplayName(intl: IntlShape): string {
@@ -68,7 +69,7 @@ type ServiceFieldsProps = {
 const ServiceFields = (props: ServiceFieldsProps) => {
     const type = props.service.type;
     const intl = useIntl();
-    const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale';
+    const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale' || type === 'openclaw';
     const isCohere = type === 'cohere';
     const isMistral = type === 'mistral';
     const isScale = type === 'scale';
@@ -153,8 +154,9 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                 <SelectionItemOption value='mistral'>{'Mistral'}</SelectionItemOption>
                 <SelectionItemOption value='scale'>{scaleAIToDisplayName(intl)}</SelectionItemOption>
                 <SelectionItemOption value='asage'>{'asksage (Experimental)'}</SelectionItemOption>
+                <SelectionItemOption value='openclaw'>{'OpenClaw'}</SelectionItemOption>
             </SelectionItem>
-            {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale') && (
+            {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale' || type === 'openclaw') && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'API URL'})}
                     value={props.service.apiURL}

@@ -30,6 +30,11 @@ func TestGetOpenAICompatibleProvider(t *testing.T) {
 			wantFound:   true,
 		},
 		{
+			name:        "openclaw returns provider",
+			serviceType: ServiceTypeOpenClaw,
+			wantFound:   true,
+		},
+		{
 			name:        "unregistered type returns false",
 			serviceType: "nonexistent",
 			wantFound:   false,
@@ -58,6 +63,29 @@ func TestGetOpenAICompatibleProvider(t *testing.T) {
 				t.Fatalf("GetOpenAICompatibleProvider(%q) found=%v, want %v", tc.serviceType, ok, tc.wantFound)
 			}
 		})
+	}
+}
+
+func TestOpenClawProviderConfig(t *testing.T) {
+	p, ok := GetOpenAICompatibleProvider(ServiceTypeOpenClaw)
+	if !ok {
+		t.Fatal("OpenClaw provider not found in registry")
+	}
+
+	if p.DefaultModel != "anthropic/claude-sonnet-4-6" {
+		t.Errorf("DefaultModel = %q, want %q", p.DefaultModel, "anthropic/claude-sonnet-4-6")
+	}
+
+	if p.FixedAPIURL != "" {
+		t.Errorf("FixedAPIURL = %q, want empty (user-configurable URL)", p.FixedAPIURL)
+	}
+
+	if p.CreateTransport != nil {
+		t.Error("expected CreateTransport to be nil (standard Bearer auth)")
+	}
+
+	if p.DisableStreamOptions {
+		t.Error("expected DisableStreamOptions to be false for OpenClaw")
 	}
 }
 

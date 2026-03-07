@@ -145,6 +145,9 @@ func IsValidService(service ServiceConfig) bool {
 		return service.APIKey != ""
 	case ServiceTypeScale:
 		return service.APIKey != "" && service.APIURL != ""
+	case ServiceTypeOpenClaw:
+		// OpenClaw requires an API URL (the gateway address) and an API key (gateway auth token)
+		return service.APIURL != ""
 	default:
 		return false
 	}

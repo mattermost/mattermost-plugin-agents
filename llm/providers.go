@@ -30,6 +30,9 @@ type OpenAICompatibleProvider struct {
 
 // openAICompatibleProviders is the registry of known OpenAI-compatible providers.
 var openAICompatibleProviders = map[string]OpenAICompatibleProvider{
+	ServiceTypeOpenClaw: {
+		DefaultModel: "anthropic/claude-sonnet-4-6",
+	},
 	ServiceTypeCohere: {
 		FixedAPIURL: "https://api.cohere.ai/compatibility/v1",
 	},
