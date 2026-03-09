@@ -941,6 +941,25 @@ func TestSanitizeProviderError(t *testing.T) {
 		require.NotNil(t, sanitizedErr)
 		assert.Equal(t, "provider error: [REDACTED]", sanitizedErr.Error())
 	})
+
+	t.Run("preserves wrapped provider error chain", func(t *testing.T) {
+		oai := OpenAI{
+			config: Config{
+				APIKey: "short",
+			},
+		}
+		originalErr := errors.New("provider error: short")
+
+		sanitizedErr := oai.sanitizeProviderError(originalErr)
+		require.NotNil(t, sanitizedErr)
+		assert.Equal(t, "provider error: [REDACTED]", sanitizedErr.Error())
+		assert.ErrorIs(t, sanitizedErr, originalErr)
+
+		var wrapped *sanitizedError
+		require.ErrorAs(t, sanitizedErr, &wrapped)
+		assert.Equal(t, "provider error: [REDACTED]", wrapped.Error())
+		assert.Equal(t, originalErr, wrapped.Unwrap())
+	})
 }
 
 func TestHandleResponseErrorSanitizesMessage(t *testing.T) {

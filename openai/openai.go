@@ -70,6 +70,19 @@ var (
 	anthropicKeyPattern       = regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}\b`)
 )
 
+type sanitizedError struct {
+	message string
+	err     error
+}
+
+func (e *sanitizedError) Error() string {
+	return e.message
+}
+
+func (e *sanitizedError) Unwrap() error {
+	return e.err
+}
+
 func (s *OpenAI) sanitizeProviderError(err error) error {
 	if err == nil {
 		return nil
@@ -85,7 +98,10 @@ func (s *OpenAI) sanitizeProviderError(err error) error {
 		return err
 	}
 
-	return errors.New(sanitized)
+	return &sanitizedError{
+		message: sanitized,
+		err:     err,
+	}
 }
 
 func sanitizeProviderErrorMessage(message string) string {
