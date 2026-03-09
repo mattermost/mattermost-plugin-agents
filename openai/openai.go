@@ -1448,7 +1448,7 @@ func FetchModels(apiKey string, apiURL string, orgID string, httpClient *http.Cl
 
 	// Check if there was an error during iteration
 	if err := autoPager.Err(); err != nil {
-		return nil, err
+		return nil, (&OpenAI{config: Config{APIKey: apiKey}}).sanitizeProviderError(err)
 	}
 
 	return models, nil

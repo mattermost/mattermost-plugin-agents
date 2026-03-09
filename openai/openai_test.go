@@ -6,7 +6,9 @@ package openai
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -17,6 +19,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestPostsToChatCompletionMessages(t *testing.T) {
 	tests := []struct {
@@ -955,4 +963,28 @@ func TestHandleResponseErrorSanitizesMessage(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, err.Error(), "Incorrect API key provided: [REDACTED].")
 	assert.NotContains(t, err.Error(), "this-is-my-disclosed-api-key")
+}
+
+func TestFetchModelsSanitizesProviderErrors(t *testing.T) {
+	httpClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			assert.Equal(t, http.MethodGet, req.Method)
+
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+				Body:    io.NopCloser(strings.NewReader(`{"error":{"message":"Incorrect API key provided: this-is-****************-key. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","code":"invalid_api_key"}}`)),
+				Request: req,
+			}, nil
+		}),
+	}
+
+	models, err := FetchModels("this-is-my-disclosed-api-key", "https://example.invalid", "", httpClient)
+
+	require.Nil(t, models)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Incorrect API key provided: [REDACTED]. You can find your API key")
+	assert.NotContains(t, err.Error(), "this-is-****************-key")
 }
