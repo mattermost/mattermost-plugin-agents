@@ -1,968 +1,487 @@
-# Implementation Plan: Mattermost Approved MCP Servers
+# Implementation Plan: Per-Tool Admin Filtering & User Tool API
 
-## Problem Statement
-
-Currently, every MCP tool call in the Mattermost Agents plugin requires explicit user approval before execution. In multiplayer (channel) scenarios, there is an additional approval step for sharing the tool result. This two-step approval is important for security but creates friction, especially for READ-only operations that don't modify any external data.
-
-MCP (Model Context Protocol) has no standard mechanism to classify tools as READ vs WRITE. We want to introduce a **Mattermost Approved MCP Server** concept where we pre-classify tools from known MCP servers, automatically allowing READ-only tools to execute without user approval.
-
-## Design Goals
-
-1. **Auto-approve READ-only tools** from Mattermost-approved MCP servers (skip tool-call approval)
-2. **Preserve result-sharing approval** in multiplayer channels (data leakage prevention)
-3. **Ship with three built-in approved servers**: Atlassian, GitHub, Figma
-4. **Enable end-user extensibility** via a JSON-based configuration format
-5. **Minimize blast radius** of changes to the existing approval flow
+> **Source Spec:** `/Users/nickmisasi/workspace/planning/projects/mattermost-plugin-agents/ideas/003-per-tool-admin-filtering/spec.md`
+> **Worktree:** `~/workspace/worktrees/mattermost-plugin-ai-mattermost-vetted-tools`
+>
+> **This is a REWRITE of PR #520.** The existing `ApprovedMCPServer` struct, approved servers panel, and related code are removed and replaced with a unified per-tool config model on `ServerConfig`. Preserve: `ServerOrigin` on Tool/ToolCall, `ToolCallStatusAutoApproved`, streaming auto-approval infrastructure, vetted tool classifications (as seed data).
 
 ---
 
-## Architecture Overview
+## Global Requirements
 
-### New Concept: `ApprovedMCPServer`
+### Frontend Implementation: Figma-Driven Development (MANDATORY)
 
-An `ApprovedMCPServer` is a configuration object that declares which tools on a specific MCP server are classified as READ-only and can be auto-executed without user approval.
+**All frontend tasks MUST use the `/figma-implement-design` skill** when implementing UI components. This is non-negotiable. The skill translates Figma nodes into production-ready code with 1:1 visual fidelity.
 
-```json
-{
-  "approved_mcp_servers": [
-    {
-      "name": "GitHub",
-      "url_patterns": ["api.githubcopilot.com"],
-      "auto_approve_tools": [
-        "get_me",
-        "get_file_contents",
-        "list_branches",
-        "issue_read",
-        "pull_request_read"
-      ],
-      "enabled": true
-    }
-  ]
-}
-```
+For every frontend task:
+1. **Implementation Engineers** must invoke `/figma-implement-design` with the Figma URL and node ID specified in the task
+2. Use the Figma MCP tools (`get_design_context`, `get_screenshot`) to extract exact design tokens, spacing, typography, and component structure
+3. Adapt the Figma output to the project's existing conventions: **styled-components**, **CSS variables** (`var(--center-channel-bg)`, `var(--button-bg)`, etc.), **React 17**, **TypeScript**
+4. Reuse existing plugin components where specified (see Component Reuse section)
 
-### Flow Change Summary
+### Visual QA: Browser Screenshot Comparison (MANDATORY)
 
-#### DM Flow (Current: No approval needed → No change)
-DM tool calls already execute immediately. No changes needed.
+**QA Team Members** must perform visual comparison for every frontend task:
+1. Take browser screenshots of the implemented UI using Chrome DevTools MCP tools (`take_screenshot`)
+2. Fetch the corresponding Figma screenshot using the Figma MCP tool (`get_screenshot`) with the node ID specified in the task
+3. Compare side-by-side: layout, spacing, typography, colors, component sizing, alignment
+4. File bugs for any visual deviation
 
-#### Channel Flow - Non-Approved Tool (Current: Two-step approval → No change)
-```
-LLM requests tool → User approves execution → Tool runs → User approves sharing result → Bot continues
-```
+### Component Reuse Reference
 
-#### Channel Flow - Approved READ Tool (NEW: Skip step 1, keep step 2)
-```
-LLM requests tool → Tool auto-executes → User approves sharing result → Bot continues
-```
+Existing plugin components to leverage (do NOT rebuild):
+- **Tabs:** `TabsContainer`, `TabButton`, `TabContent` from `system_console/mcp_servers.tsx`
+- **Form fields:** `TextItem`, `SelectionItem`, `ComboboxItem`, `BooleanItem` from `system_console/item.tsx`
+- **Buttons:** `PrimaryButton`, `TertiaryButton`, `DestructiveButton`, `Button`, `ButtonIcon` from `assets/buttons.tsx`
+- **Other:** `Pill`/`GrayPill`, `Panel`, `ToolCard`, `Checkbox`, `Dropdown`, `DotMenu`, `LoadingSpinner`
+- **MCP Tools Viewer (existing):** `mcp_tools_viewer.tsx` — current read-only tool list. Will be heavily refactored but use as starting point.
+- **Bot Selector Dropdown:** `bot_selector.tsx` — pattern for RHS header dropdowns/popovers
 
-The key insight: we skip the "approve execution" step but **keep the "approve sharing result" step** in channels, because even READ data from external systems could contain sensitive information that shouldn't be leaked to a public channel without the requester's consent.
+### Figma Design Registry
 
----
+| ID | Name | Figma URL | Node ID | Used In |
+|----|------|-----------|---------|---------|
+| Design A | System Console — Per-Tool Admin Options | https://www.figma.com/design/7IQdy7Kujc13gWNLbRAUBC/AI-Copilot---Agents-UX?node-id=2258-95245&m=dev | `2258:95245` | Phase 2 |
+| Design B | User Tool Provider Toggles (Copilot RHS) | https://www.figma.com/design/7IQdy7Kujc13gWNLbRAUBC/AI-Copilot---Agents-UX?node-id=3029-131086&m=dev | `3029:131086` | Phase 3 |
 
-## Detailed Implementation Plan
+Figma file key: `7IQdy7Kujc13gWNLbRAUBC`
 
-### Phase 1: Data Model & Configuration
+### Technical Context
 
-#### Step 1.1: Define `ApprovedMCPServer` Configuration Type
-
-**File: `mcp/approved_servers.go` (new)**
-
-Create the data model for approved MCP server configurations:
-
-```go
-package mcp
-
-// ToolAccessLevel defines the access level of a tool
-type ToolAccessLevel string
-
-const (
-    ToolAccessRead   ToolAccessLevel = "read"
-    ToolAccessWrite  ToolAccessLevel = "write"
-    ToolAccessDelete ToolAccessLevel = "delete"
-    ToolAccessMixed  ToolAccessLevel = "mixed"
-)
-
-// ApprovedMCPServer defines a pre-approved MCP server with classified tools
-type ApprovedMCPServer struct {
-    // Name is a human-readable identifier for this approved server
-    Name string `json:"name"`
-
-    // URLPatterns are URL substrings used to match MCP server BaseURLs.
-    // A configured MCP server matches if its BaseURL contains any of these patterns.
-    URLPatterns []string `json:"url_patterns"`
-
-    // AutoApproveTools lists tool names that are READ-only and can be
-    // auto-executed without user approval in channel contexts.
-    AutoApproveTools []string `json:"auto_approve_tools"`
-
-    // Enabled controls whether this approved server config is active
-    Enabled bool `json:"enabled"`
-}
-
-// ApprovedMCPServersConfig holds the list of all approved server configurations
-type ApprovedMCPServersConfig struct {
-    Servers []ApprovedMCPServer `json:"servers"`
-}
-
-// IsToolAutoApproved checks if a given tool from a given MCP server URL
-// is pre-approved for auto-execution (i.e., it's a READ-only tool).
-func (c *ApprovedMCPServersConfig) IsToolAutoApproved(serverBaseURL string, toolName string) bool {
-    for _, server := range c.Servers {
-        if !server.Enabled {
-            continue
-        }
-        if !matchesURLPattern(serverBaseURL, server.URLPatterns) {
-            continue
-        }
-        for _, approvedTool := range server.AutoApproveTools {
-            if approvedTool == toolName {
-                return true
-            }
-        }
-    }
-    return false
-}
-
-// matchesURLPattern checks if a base URL matches any of the given patterns
-func matchesURLPattern(baseURL string, patterns []string) bool {
-    for _, pattern := range patterns {
-        if strings.Contains(baseURL, pattern) {
-            return true
-        }
-    }
-    return false
-}
-```
-
-#### Step 1.2: Add Built-in Approved Server Definitions
-
-**File: `mcp/approved_servers_builtin.go` (new)**
-
-Embed the three Mattermost-approved server definitions as compile-time defaults. These are the baseline; user config can override or add to them.
-
-```go
-package mcp
-
-// BuiltinApprovedServers returns the Mattermost-curated list of approved MCP servers.
-// These are compiled into the plugin and represent Mattermost's assessment of which
-// tools are READ-only on well-known MCP servers.
-func BuiltinApprovedServers() []ApprovedMCPServer {
-    return []ApprovedMCPServer{
-        atlassianApprovedServer(),
-        githubApprovedServer(),
-        figmaApprovedServer(),
-    }
-}
-```
-
-This file would contain `atlassianApprovedServer()`, `githubApprovedServer()`, and `figmaApprovedServer()` functions each returning the full `ApprovedMCPServer` with all READ tool names from the companion docs (ATLASSIAN.md, GITHUB.md, FIGMA.md).
-
-#### Step 1.3: Extend Plugin Configuration
-
-**File: `mcp/mcp.go`** - Extend the existing `Config` struct:
-
-```go
-type Config struct {
-    Enabled            bool                    `json:"enabled"`
-    EnablePluginServer bool                    `json:"enablePluginServer"`
-    Servers            []ServerConfig          `json:"servers"`
-    EmbeddedServer     EmbeddedServerConfig    `json:"embeddedServer"`
-    IdleTimeoutMinutes int                     `json:"idleTimeoutMinutes"`
-    // NEW: User-defined approved MCP servers (merged with built-in list)
-    ApprovedServers    []ApprovedMCPServer     `json:"approvedServers,omitempty"`
-}
-```
-
-**File: `config/config.go`** - Add accessor to the `Container`:
-
-```go
-func (c *Container) ApprovedMCPServers() *mcp.ApprovedMCPServersConfig {
-    cfg := c.cfg.Load()
-    if cfg == nil {
-        return &mcp.ApprovedMCPServersConfig{}
-    }
-    // Merge built-in + user-defined approved servers
-    return mcp.MergeApprovedServers(
-        mcp.BuiltinApprovedServers(),
-        cfg.MCP.ApprovedServers,
-    )
-}
-```
-
-#### Step 1.4: Merge Logic for Built-in + User-Defined Approved Servers
-
-**File: `mcp/approved_servers.go`** - Add merge function:
-
-```go
-// MergeApprovedServers combines built-in and user-defined approved server configs.
-// User-defined configs with the same name as built-in ones override the built-in version.
-// User-defined configs with new names are appended.
-func MergeApprovedServers(builtin []ApprovedMCPServer, userDefined []ApprovedMCPServer) *ApprovedMCPServersConfig {
-    merged := make(map[string]ApprovedMCPServer)
-
-    // Start with built-in servers
-    for _, s := range builtin {
-        merged[s.Name] = s
-    }
-
-    // Override/extend with user-defined servers
-    for _, s := range userDefined {
-        merged[s.Name] = s
-    }
-
-    servers := make([]ApprovedMCPServer, 0, len(merged))
-    for _, s := range merged {
-        servers = append(servers, s)
-    }
-
-    return &ApprovedMCPServersConfig{Servers: servers}
-}
-```
+- **This rewrites PR #520** — remove `ApprovedMCPServer`, `approved_servers.go`, `approved_servers_builtin.go`, `approved_servers_panel.tsx`, `approved_servers_test.go`. Keep `ServerOrigin`, `ToolCallStatusAutoApproved`, streaming auto-approval infrastructure.
+- **Styling:** styled-components 6.x with CSS variable theming
+- **State:** Redux 4.x with react-redux 8.x
+- **Build:** Webpack 5, TypeScript 4.9, React 17
+- **Icons:** `@mattermost/compass-icons`
+- **Tests (backend):** Go standard testing
+- **Tests (E2E):** Playwright + testcontainers + Smocker (LLM mocks)
 
 ---
 
-### Phase 2: Tool Metadata Propagation
+## Phase 1: Backend — Data Model & API
 
-The key challenge is that when a tool call arrives for approval, we need to know **which MCP server** it came from to check if it's auto-approvable. Currently, `llm.ToolCall` only has `Name` - it doesn't carry server origin information.
+**Goal:** New per-tool config model on `ServerConfig`, tool filtering in discovery, user-facing tool list API, and refactored auto-approval. Remove all `ApprovedMCPServer` code.
 
-#### Step 2.1: Add Server Origin to Tool Registration
+### Tasks
 
-**File: `llm/tools.go`** - Extend the `Tool` struct:
+#### 1.1 — Remove `ApprovedMCPServer` Code
+Delete the following files and all references:
+- `/mcp/approved_servers.go` — `ApprovedMCPServer` struct, `ApprovedMCPServersConfig`, `IsToolAutoApproved()`, `GetAutoApprovedToolNames()`, `MergeApprovedServers()`, `matchesURLPattern()`
+- `/mcp/approved_servers_builtin.go` — `BuiltinApprovedServers()`, hardcoded server definitions
+- `/mcp/approved_servers_test.go` — all tests
+- Remove `ApprovedServers []ApprovedMCPServer` field from MCP config
+- Remove `ApprovedMCPServers()` method from config container
+- Remove wiring in `/server/main.go` that sets `ToolAutoApprover` using `ApprovedMCPServers()`
+- Remove `conversations/mcp_auto_approval.go` (will be rebuilt in 1.4)
+- Update imports everywhere
 
+#### 1.2 — Add `MCPToolConfig` and `ToolConfigs` to `ServerConfig`
+In `/mcp/mcp.go`:
 ```go
-type Tool struct {
-    Name        string
-    Description string
-    Schema      any
-    Resolver    ToolResolver
-    // ServerOrigin identifies the MCP server this tool came from.
-    // Empty for built-in tools.
-    ServerOrigin string
+type MCPToolConfig struct {
+    Name    string `json:"name"`
+    Policy  string `json:"policy"`  // "auto_run" | "ask"
+    Enabled bool   `json:"enabled"`
+}
+
+type ServerConfig struct {
+    Name        string            `json:"name"`
+    Enabled     bool              `json:"enabled"`
+    BaseURL     string            `json:"baseURL"`
+    Headers     map[string]string `json:"headers,omitempty"`
+    ToolConfigs []MCPToolConfig   `json:"tool_configs,omitempty"`
 }
 ```
 
-**File: `mcp/user_clients.go`** - When building `llm.Tool` from MCP tools, populate `ServerOrigin` with the server's BaseURL:
+Add helper methods:
+- `GetToolPolicy(toolName string) (policy string, enabled bool)` on `ServerConfig` — returns policy + enabled for a tool, defaults to `"ask"`, `false` if not found
+- `IsToolAutoRun(toolName string) bool` — convenience: returns true if policy == "auto_run" && enabled
 
-```go
-// In GetTools() method, around line 169
-tools = append(tools, llm.Tool{
-    Name:         toolName,
-    Description:  tool.Description,
-    Schema:       tool.InputSchema,
-    Resolver:     c.createToolResolver(client, toolName),
-    ServerOrigin: client.config.BaseURL, // NEW: propagate server origin
-})
-```
+#### 1.3 — Vetted Tool Seed Function
+Create `/mcp/vetted_tools.go`:
+- `SeedVettedToolConfigs(baseURL string) []MCPToolConfig` — if `baseURL` matches a known vetted host (Atlassian, GitHub, Figma, Mattermost embedded), return pre-populated `ToolConfigs` with READ-only tools as `policy: "auto_run", enabled: true`. All other known tools as `policy: "ask", enabled: true`.
+- Move the vetted tool classification lists here (from the deleted `approved_servers_builtin.go`)
+- `IsVettedHost(baseURL string) bool` — hostname matching helper
+- This is called **once at server creation time** in the admin UI (or API), not at runtime
 
-#### Step 2.2: Add Server Origin to ToolCall
+#### 1.4 — Refactor Auto-Approval in Streaming
+Refactor `/streaming/streaming.go` and related code:
+- Replace `ToolAutoApprovalChecker` interface:
+  ```go
+  type ToolPolicyChecker interface {
+      GetToolPolicy(serverBaseURL string, toolName string) (policy string, enabled bool)
+  }
+  ```
+- `areAllToolCallsAutoApprovable()` → check `GetToolPolicy()` returns `"auto_run"` for each tool
+- Wire in `/server/main.go`: implement `ToolPolicyChecker` by looking up `ServerConfig` by matching `BaseURL`, then calling `serverConfig.GetToolPolicy(toolName)`
+- Rebuild `conversations/mcp_auto_approval.go` to use the new interface
 
-**File: `llm/tools.go`** - Extend `ToolCall`:
+#### 1.5 — Tool Filtering in Discovery
+In `/mcp/client_manager.go` or context building (`/llmcontext/`):
+- After `GetToolsForUser()` returns tools, filter by `ServerConfig.ToolConfigs`:
+  - If tool has config entry with `enabled: false` → exclude
+  - If tool has NO config entry → exclude (new unconfigured tools are disabled by default)
+- This ensures only admin-enabled tools reach the LLM context
 
-```go
-type ToolCall struct {
-    ID          string          `json:"id"`
-    Name        string          `json:"name"`
-    Description string          `json:"description"`
-    Arguments   json.RawMessage `json:"arguments"`
-    Result      string          `json:"result"`
-    Status      ToolCallStatus  `json:"status"`
-    // ServerOrigin identifies the MCP server this tool came from.
-    // Empty for built-in tools. Used for auto-approval decisions.
-    ServerOrigin string         `json:"server_origin,omitempty"`
-}
-```
+#### 1.6 — User-Facing Tool List API
+Add `GET /api/mcp/tools` endpoint in `/api/api_mcp.go` (new file):
+- Requires authenticated user (`MattermostAuthorizationRequired`)
+- Calls `GetToolsForUser(requesterUserID)` to discover tools
+- Groups tools by `ServerOrigin`
+- For each server, looks up OAuth status from KV store (`mcp_oauth_token_v1_{userID}_{serverID}`)
+- Applies admin filtering (exclude disabled tools)
+- Returns response shape:
+  ```json
+  {
+    "servers": [{
+      "name": "Jira",
+      "serverOrigin": "https://mcp.atlassian.com",
+      "authenticated": true,
+      "authEmail": "user@example.com",
+      "tools": [
+        {"name": "get_jira", "description": "...", "enabled": true, "policy": "auto_run"}
+      ]
+    }]
+  }
+  ```
 
-#### Step 2.3: Populate ServerOrigin During Streaming
+#### 1.7 — User Provider Toggle State
+- Store per-user provider preferences in KV: key `user_tool_providers_{userID}`, value JSON `{"disabled_servers": ["https://mcp.atlassian.com"]}`
+- Add `GET /api/mcp/user-preferences` and `PUT /api/mcp/user-preferences` endpoints
+- Apply in tool filtering: if user has disabled a server, exclude all its tools from LLM context (Copilot RHS only — in-channel uses agent's `EnabledTools`)
 
-**File: `streaming/streaming.go`** - In the `EventTypeToolCalls` handler (around line 351), after the tool calls are received from the LLM, look up each tool's `ServerOrigin` from the tool store before storing them. This requires the tool store to be accessible during streaming.
+#### 1.8 — Backend Tests
+- Unit tests for `MCPToolConfig`, `GetToolPolicy()`, `IsToolAutoRun()`
+- Unit tests for `SeedVettedToolConfigs()` — all 4 vetted hosts, non-vetted host returns nil
+- Unit tests for tool filtering (enabled/disabled/unconfigured tools)
+- Unit tests for refactored auto-approval (auto_run policy triggers auto-approval, ask policy doesn't)
+- Integration tests for `GET /api/mcp/tools` endpoint (auth status, grouping, filtering)
+- Integration tests for user provider preferences (save, load, apply in filtering)
 
-The approach: The stream event already contains `ToolCall` objects. We need to enrich them with `ServerOrigin` before they reach the approval flow. The best place to do this is at the point where tool calls are received, by looking up the tool name in the tools store.
-
-We need to pass the tool store (or a lookup function) into `StreamToPost`. Since `StreamToPost` doesn't currently have access to the tool store, we'll add a `ToolServerOriginLookup` function:
-
-```go
-// New type for looking up server origin
-type ToolServerOriginLookup func(toolName string) string
-```
-
-This function will be passed as a parameter or set as a field on the streaming service context. The `BuildLLMContextUserRequest` already creates the tool store, so we can extract a lookup from it.
+**Checkpoint:** Full backend working. Auto-approval uses `ServerConfig.ToolConfigs`. Tool filtering applied. User-facing API returns correct data. All `ApprovedMCPServer` code removed. All tests pass.
 
 ---
 
-### Phase 3: Core Auto-Approval Logic
+## Phase 2: Admin UI — Merged Tools Tab
 
-#### Step 3.1: Add Auto-Approval Check to HandleToolCall
+**Goal:** Replace the 3-tab layout (Configuration | Tools | Approved Servers) with 2 tabs (Configuration | Tools). The merged Tools tab shows expandable MCP server rows with per-tool policy dropdowns and enable/disable toggles.
 
-**File: `conversations/tool_handling.go`** - This is the primary hook point. Modify `HandleToolCall` to auto-approve READ tools from approved servers.
+### Tasks
 
-The current flow in `HandleToolCall` (line 195-212):
+#### 2.1 — Remove Approved Servers Tab & Panel
+- Delete `/webapp/src/components/system_console/approved_servers_panel.tsx`
+- In `/webapp/src/components/system_console/mcp_servers.tsx`: remove the "Approved Servers" tab from the tab bar and its content rendering
+- Remove `BUILTIN_APPROVED_SERVERS` constant from frontend (no longer needed — seed happens on backend)
 
-```go
-for i := range tools {
-    if slices.Contains(acceptedToolIDs, tools[i].ID) {
-        // Execute tool...
-    } else {
-        tools[i].Result = "Tool call rejected by user"
-        tools[i].Status = llm.ToolCallStatusRejected
-    }
-}
-```
+#### 2.2 — MCP Server Row Component
+**MUST use `/figma-implement-design` with Design A (node `2258:95245`).**
 
-The new flow adds a pre-check: before presenting tools for approval, auto-approve any tools that are READ-only on approved servers:
+Create `/webapp/src/components/system_console/mcp_tool_row.tsx`:
+- **MCP server row (collapsed):** avatar/icon, server name, "X/Y tools enabled" subtitle, gear icon button, main toggle switch (SwitchSelector), expand/collapse chevron
+- **MCP server row (expanded):** reveals per-tool rows below on light gray background
+- Follow the `MCP Row` component pattern from Design A
 
-```go
-// NEW: Determine which tools can be auto-approved
-approvedServers := c.configProvider.ApprovedMCPServers()
-autoApprovedIDs := make([]string, 0)
-for _, tc := range tools {
-    if approvedServers.IsToolAutoApproved(tc.ServerOrigin, tc.Name) {
-        autoApprovedIDs = append(autoApprovedIDs, tc.ID)
-    }
-}
+#### 2.3 — Per-Tool Row Component
+**MUST use `/figma-implement-design` with Design A (node `2258:95245`).**
 
-// Merge auto-approved IDs with user-accepted IDs
-allAcceptedIDs := append(acceptedToolIDs, autoApprovedIDs...)
+Create `/webapp/src/components/system_console/mcp_tool_config_row.tsx`:
+- Tool name in monospace (`Menlo`, 13px) + description below
+- **Execution policy dropdown:** "Auto Run" / "Ask Everytime" — use `Dropdown` component
+- **Enabled toggle:** Small `SwitchSelector`
+- Expand/collapse chevron (for future tool schema display)
+- Follow the `MCP Parameter Row` component pattern from Design A
 
-for i := range tools {
-    if slices.Contains(allAcceptedIDs, tools[i].ID) {
-        // Execute tool...
-    } else {
-        tools[i].Result = "Tool call rejected by user"
-        tools[i].Status = llm.ToolCallStatusRejected
-    }
-}
-```
+#### 2.4 — Merged Tools Tab
+**MUST use `/figma-implement-design` with Design A (node `2258:95245`).**
 
-However, this approach has a problem: `HandleToolCall` is only called **after** the user has already been prompted for approval and responded. The real hook point needs to be earlier.
+Refactor `/webapp/src/components/system_console/mcp_tools_viewer.tsx`:
+- Replace read-only tool list with interactive MCP server rows (2.2) containing per-tool config rows (2.3)
+- Fetch tool discovery from `GET /admin/mcp/tools` (existing endpoint)
+- Join discovered tools with `ServerConfig.ToolConfigs` from the config store
+- For each discovered tool: show its config (policy + enabled) or defaults ("ask" / disabled) if unconfigured
+- "Refresh" and "Clear Cache" buttons preserved
+- "+" Add an MCP Connector" button at bottom
 
-#### Step 3.2: Add Auto-Approval in the Streaming Layer (Primary Hook Point)
+#### 2.5 — Vetted Server Seed on Server Add
+When an admin adds a new MCP server in the Configuration tab:
+- After saving, check if the server's BaseURL matches a vetted host
+- If so, call the backend to seed `ToolConfigs` (or seed client-side using a shared vetted tool list)
+- Pre-populated tools appear immediately in the Tools tab
+- Add frontend client method: `seedVettedTools(serverBaseURL)` or include in config save response
 
-**File: `streaming/streaming.go`** - The real decision point is in `StreamToPost`, around line 365-381, where the code decides whether to show the approval UI or not.
+#### 2.6 — Config Persistence
+- On save: serialize `ServerConfig.ToolConfigs` as part of the config blob
+- Use existing `savePluginConfig()` client method
+- Verify round-trip: save → reload page → config persists correctly
 
-Currently, when tool calls arrive in a channel (non-DM), they are:
-1. Stored in KV store with full args (private)
-2. Redacted on the post (public)
-3. The post gets the `pending_tool_call` prop, triggering the approval UI
-
-For auto-approvable tools, we need a different path. The approach:
-
-**If ALL tools in the batch are auto-approvable**: Skip the approval UI entirely, execute them immediately, then go to result approval stage.
-
-**If SOME tools are auto-approvable**: Still show the approval UI, but mark the auto-approvable ones as pre-accepted. The user only needs to approve the non-auto-approvable ones.
-
-**Recommended approach**: For simplicity and security, go with the "all-or-nothing" approach first. If ALL tools in a batch are auto-approvable, auto-execute them all and skip to result approval. If ANY tool is not auto-approvable, fall back to the full approval flow for the entire batch.
-
-The implementation requires `StreamToPost` to:
-1. Have access to the approved servers config
-2. Have access to a way to resolve/execute tools
-3. Be able to transition directly to the "result approval" stage
-
-Since `StreamToPost` currently doesn't have tool execution capability (it only handles post streaming), the cleaner approach is:
-
-#### Step 3.3: Implement Auto-Approval via a New Post Property
-
-Instead of modifying `StreamToPost` to execute tools, add a new post property that signals "these tools are pre-approved for execution." Then modify `HandleToolCall` to recognize this signal.
-
-**New approach:**
-
-1. **In `StreamToPost`** (streaming.go, EventTypeToolCalls handler): After determining the tool calls, check if all tools are auto-approvable. If so, instead of setting `pending_tool_call` and waiting for user action, set a new property `auto_approved_tool_call` and immediately trigger the tool call handler via a callback/event.
-
-2. **Add a callback mechanism**: The streaming service already has a `Client` interface. Add a new method or use the existing websocket event system to trigger auto-execution:
-
-```go
-// In the EventTypeToolCalls handler, after line 365
-isDMWithBot = mmapi.IsDMWith(post.UserId, channel)
-
-if !isDMWithBot {
-    // NEW: Check if all tools are auto-approvable
-    allAutoApprovable := true
-    if toolAutoApprover != nil {
-        for _, tc := range toolCalls {
-            if !toolAutoApprover.IsToolAutoApproved(tc.ServerOrigin, tc.Name) {
-                allAutoApprovable = false
-                break
-            }
-        }
-    }
-
-    if allAutoApprovable {
-        // Store full tool calls in KV (still private)
-        kvKey := ToolCallPrivateKVKey(post.Id, requesterID)
-        p.mmClient.KVSet(kvKey, toolCalls)
-
-        // Mark as auto-approved (instead of pending approval)
-        post.AddProp("auto_approved_tool_call", "true")
-        toolCallJSON, _ := json.Marshal(RedactToolCalls(toolCalls))
-        post.AddProp(ToolCallProp, string(toolCallJSON))
-        post.AddProp(ToolCallRedactedProp, "true")
-        p.mmClient.UpdatePost(post)
-
-        // Trigger auto-execution via callback
-        if autoExecuteCallback != nil {
-            go autoExecuteCallback(post.Id, requesterID)
-        }
-        return
-    }
-
-    // ... existing non-auto-approvable flow ...
-}
-```
-
-3. **The auto-execute callback** calls into `HandleToolCall` with all tool IDs pre-accepted:
-
-```go
-// In conversations or a new handler
-func (c *Conversations) AutoExecuteApprovedToolCalls(postID string, requesterID string) error {
-    post, err := c.mmClient.GetPost(postID)
-    // ... get channel, extract tool IDs ...
-
-    // Call HandleToolCall with all tools pre-accepted
-    allToolIDs := extractAllToolIDs(tools)
-    return c.HandleToolCall(requesterID, post, channel, allToolIDs)
-}
-```
-
-This reuses the existing `HandleToolCall` flow, which already handles:
-- Executing tools
-- Storing results in KV store
-- Setting `pending_tool_result` for the result approval stage
-- Sending websocket events
-
-The result: **tools auto-execute, and the user still sees the result approval UI** (step 2 of the channel flow).
+**Checkpoint:** System Console shows 2 tabs. Tools tab has interactive per-tool configuration. Vetted servers pre-fill on creation. Config persists correctly. Visual QA against Design A.
 
 ---
 
-### Phase 4: Frontend Changes
+## Phase 3: User-Facing Tool Provider Toggles (Copilot RHS)
 
-#### Step 4.1: Update Tool Approval UI for Auto-Approved Tools
+**Goal:** Users can toggle MCP providers on/off in the Copilot sidebar via a popover triggered from the RHS header.
 
-**File: `webapp/src/components/tool_approval_set.tsx`**
+### Tasks
 
-When tools have been auto-approved, the frontend should:
-1. Skip showing the "Approve / Reject" UI for tool execution (stage 'call')
-2. Show the tools as "Auto-approved (READ)" with a distinct visual indicator
-3. Still show the result approval UI (stage 'result') as normal
+#### 3.1 — Tool Provider Button in RHS Header
+In `/webapp/src/components/rhs/rhs_header.tsx`:
+- Add a button (icon: wrench/tool or similar from compass-icons) next to the existing bot selector dropdown
+- Button shows active provider count badge (e.g., "3" for 3 enabled providers)
+- Clicking opens the tool provider popover (3.2)
 
-Detect the auto-approved state from the post properties:
-```typescript
-const isAutoApproved = post.props?.auto_approved_tool_call === 'true';
-```
+#### 3.2 — Tool Provider Popover
+**MUST use `/figma-implement-design` with Design B (node `3029:131086`).**
 
-When auto-approved, skip the 'call' stage rendering and show an informational message like:
-> "These READ-only tools were auto-executed by Mattermost-approved policy. Review the results before sharing."
+Create `/webapp/src/components/rhs/tool_provider_popover.tsx`:
+- Floating popover (262x~196px, white, 4px border-radius, elevation shadow)
+- List of MCP server providers, each row: 24px avatar, provider name (14px), small toggle switch
+- Toggles call `PUT /api/mcp/user-preferences` to persist
+- Fetch initial state from `GET /api/mcp/user-preferences`
+- Only shows servers that have at least one enabled tool (per admin config)
 
-#### Step 4.2: Update Tool Card for Auto-Approved Status
+#### 3.3 — Redux Integration
+- Add state for user tool provider preferences
+- Actions: `FETCH_USER_TOOL_PREFERENCES`, `UPDATE_USER_TOOL_PREFERENCES`
+- API client methods: `getUserToolPreferences()`, `updateUserToolPreferences(prefs)`
+- Selector: `getDisabledServers(state)` — returns list of servers the user has toggled off
 
-**File: `webapp/src/components/tool_card.tsx`**
+#### 3.4 — Apply User Toggles in Copilot Requests
+When the Copilot sends a message:
+- Include user's disabled servers in the request context
+- Backend filters tools accordingly (from 1.7)
+- Note: this only applies to Copilot RHS. In-channel @mentions use agent's `EnabledTools` — no user toggle applied.
 
-Add a visual badge/indicator for auto-approved tools. When a tool was auto-approved, show a small "Auto-approved" tag or icon instead of the approve/reject buttons.
-
-#### Step 4.3: Add New Tool Call Status (Optional)
-
-**File: `webapp/src/components/tool_types.ts`**
-
-Consider adding a new status to distinguish auto-approved from manually approved:
-
-```typescript
-export enum ToolCallStatus {
-    Pending = 0,
-    Accepted = 1,
-    Rejected = 2,
-    Error = 3,
-    Success = 4,
-    AutoApproved = 5,  // NEW
-}
-```
+**Checkpoint:** Users can toggle providers on/off in Copilot sidebar. Preferences persist across sessions. Disabled providers' tools excluded from Copilot LLM context. Visual QA against Design B.
 
 ---
 
-### Phase 5: Admin Configuration UI — "Approved Tool Providers" Panel
+## Phase 4: E2E Testing
 
-A new **Panel** card is added to the bottom of the system console settings page (after the MCP panel), following the exact same visual and structural patterns used by the existing panels in `config.tsx`.
+**Goal:** Comprehensive Playwright tests for system console tool config flow AND real API tests verifying auto-run/ask-every-time policies actually work at tool call time.
 
-#### Step 5.1: Overview
+### Test Infrastructure
 
-The panel is titled **"Approved Tool Providers"** and contains one `BooleanItem` toggle per built-in approved MCP server (Atlassian, GitHub, Figma). Each toggle controls whether that provider's READ-only tools are auto-executed or go through the normal accept/reject approval flow.
+#### 4.1 — Test Helpers
+Create `/e2e/helpers/tool-config.ts`:
+- `ToolConfigHelper` page object: locators for Tools tab, MCP server rows, per-tool rows, policy dropdowns, toggles
+- `navigateToToolsTab()`, `expandServer(name)`, `setToolPolicy(toolName, policy)`, `toggleTool(toolName, enabled)`, `getToolPolicy(toolName)`
+- API helper: programmatic tool config read/write via plugin config API
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Approved Tool Providers                                    │
-│  Mattermost-vetted MCP servers whose read-only tools can    │
-│  run automatically without per-call user approval.          │
-│                                                             │
-│  Atlassian (Jira & Confluence)         ○ true  ○ false      │
-│  When enabled, 20 read-only tools from the Atlassian MCP    │
-│  server auto-execute in channels without approval.          │
-│                                                             │
-│  GitHub                                ○ true  ○ false      │
-│  When enabled, 56 read-only tools from the GitHub MCP       │
-│  server auto-execute in channels without approval.          │
-│                                                             │
-│  Figma                                 ○ true  ○ false      │
-│  When enabled, 9 read-only tools from the Figma MCP         │
-│  server auto-execute in channels without approval.          │
-│                                                             │
-│  Turning a provider OFF restores the standard accept/reject │
-│  tool calling flow for all tools from that server.          │
-│  Result sharing in channels always requires approval.       │
-└─────────────────────────────────────────────────────────────┘
-```
+#### 4.2 — Test Container Setup
+Create `/e2e/helpers/tool-config-container.ts`:
+- `RunToolConfigTestContainer()` factory
+- Provisions MM server with: plugin installed, 2+ mock MCP servers with known tools, 1 mock server matching vetted host pattern (for seed testing)
+- Mock MCP servers expose predictable tool lists
 
-#### Step 5.2: Data Model Changes
+### System Console E2E Tests (Mocked LLM)
 
-**File: `mcp/mcp.go`** — Add `ApprovedProviders` to the MCP `Config`:
+#### 4.3 — Tools Tab Displays Servers & Tools
+`/e2e/tests/tool-config/tools-tab-display.spec.ts`:
+- Navigate to System Console → Agents → Tools tab
+- Verify MCP servers listed with correct tool counts
+- Expand a server → verify individual tools shown with name + description
+- Verify policy dropdown shows "Auto Run" or "Ask Everytime"
+- Verify toggle reflects enabled/disabled state
 
-```go
-// Config contains the configuration for the MCP servers
-type Config struct {
-    Enabled            bool                  `json:"enabled"`
-    EnablePluginServer bool                  `json:"enablePluginServer"`
-    Servers            []ServerConfig        `json:"servers"`
-    EmbeddedServer     EmbeddedServerConfig  `json:"embeddedServer"`
-    IdleTimeoutMinutes int                   `json:"idleTimeoutMinutes"`
-    // NEW: Per-provider toggles for built-in approved tool providers
-    ApprovedProviders  ApprovedProviders     `json:"approvedProviders"`
-}
+#### 4.4 — Per-Tool Policy Change
+`/e2e/tests/tool-config/policy-change.spec.ts`:
+- Expand server → change tool policy from "Ask Everytime" to "Auto Run" → save
+- Reload page → verify policy persisted
+- Change back → save → verify
 
-// ApprovedProviders controls which built-in approved MCP servers have
-// auto-execution enabled for their READ-only tools. Each field maps
-// to a built-in ApprovedMCPServer defined in approved_servers_builtin.go.
-type ApprovedProviders struct {
-    Atlassian bool `json:"atlassian"`
-    GitHub    bool `json:"github"`
-    Figma     bool `json:"figma"`
-}
-```
+#### 4.5 — Per-Tool Enable/Disable
+`/e2e/tests/tool-config/tool-toggle.spec.ts`:
+- Expand server → disable a tool → save
+- Reload → verify tool shows as disabled
+- Verify disabled tool does NOT appear in `GET /api/mcp/tools` response (check via API helper)
 
-The `ApprovedProviders` struct is flat and simple — one boolean per built-in provider. This avoids complex nested arrays and makes the system console UI straightforward.
+#### 4.6 — Vetted Server Seed
+`/e2e/tests/tool-config/vetted-seed.spec.ts`:
+- Add new MCP server with BaseURL matching a vetted host (e.g., mock server aliased to `mcp.atlassian.com`)
+- Navigate to Tools tab → expand server → verify tools pre-filled with "Auto Run" policy for READ-only tools
+- Verify non-vetted server shows tools as "Ask Everytime" / disabled by default
 
-When building the merged `ApprovedMCPServersConfig`, each built-in server's `Enabled` field is driven by the corresponding toggle:
+#### 4.7 — Tab Merge Verification
+`/e2e/tests/tool-config/tab-layout.spec.ts`:
+- Navigate to System Console → Agents
+- Verify only 2 tabs: "Configuration" and "Tools"
+- Verify NO "Approved Servers" tab exists
 
-```go
-func (c *Config) ResolveApprovedServers() *ApprovedMCPServersConfig {
-    servers := BuiltinApprovedServers()
-    for i := range servers {
-        switch servers[i].Name {
-        case "Atlassian":
-            servers[i].Enabled = c.ApprovedProviders.Atlassian
-        case "GitHub":
-            servers[i].Enabled = c.ApprovedProviders.GitHub
-        case "Figma":
-            servers[i].Enabled = c.ApprovedProviders.Figma
-        }
-    }
-    return &ApprovedMCPServersConfig{Servers: servers}
-}
-```
+### Real API Tool Calling Tests (API Key Gated)
 
-#### Step 5.3: TypeScript Type Changes
+#### 4.8 — Auto Run Policy Works
+`/e2e/tests/tool-config/real-api/auto-run-policy.spec.ts`:
+- Skip if no API keys configured
+- Configure a tool as `policy: "auto_run", enabled: true`
+- Trigger a bot interaction that invokes that tool in a DM
+- Verify tool executes WITHOUT user approval prompt (auto-run behavior)
+- Verify `ToolCallStatusAutoApproved` in post props
 
-**File: `webapp/src/components/system_console/mcp_servers.tsx`** — Extend `MCPConfig`:
+#### 4.9 — Ask Every Time Policy Works
+`/e2e/tests/tool-config/real-api/ask-policy.spec.ts`:
+- Skip if no API keys configured
+- Configure a tool as `policy: "ask", enabled: true`
+- Trigger a bot interaction that invokes that tool in a DM
+- Verify tool shows as PENDING (requires user approval)
+- Approve the tool call → verify execution completes
 
-```typescript
-export type ApprovedProviders = {
-    atlassian: boolean;
-    github: boolean;
-    figma: boolean;
-};
+#### 4.10 — Disabled Tool Excluded
+`/e2e/tests/tool-config/real-api/disabled-tool.spec.ts`:
+- Skip if no API keys configured
+- Configure a tool as `enabled: false`
+- Trigger a bot interaction → verify the disabled tool is NOT called by the LLM (not in tool list provided to model)
+- Verify via mock request inspection or post content
 
-export type MCPConfig = {
-    enabled: boolean;
-    enablePluginServer: boolean;
-    servers: MCPServerConfig[];
-    embeddedServer: MCPEmbeddedServerConfig;
-    idleTimeoutMinutes?: number;
-    approvedProviders?: ApprovedProviders;  // NEW
-};
-```
+#### 4.11 — Auto Run in Channel (Two-Stage)
+`/e2e/tests/tool-config/real-api/channel-auto-run.spec.ts`:
+- Skip if no API keys configured
+- Configure a tool as `policy: "auto_run", enabled: true`
+- @mention bot in a channel (not DM)
+- Verify tool call skips call approval (auto-approved)
+- Verify tool results still require result-sharing approval (channel safety)
+- Approve results → verify LLM continuation
 
-**File: `webapp/src/components/system_console/config.tsx`** — Extend `defaultConfig.mcp`:
+#### 4.12 — User Provider Toggle (Copilot RHS)
+`/e2e/tests/tool-config/user-toggle.spec.ts`:
+- Open Copilot RHS → open tool provider popover
+- Verify providers listed with toggles
+- Disable a provider → send message → verify that provider's tools are NOT used
+- Re-enable provider → send message → verify tools available again
 
-```typescript
-const defaultConfig = {
-    // ... existing fields ...
-    mcp: {
-        enabled: false,
-        servers: {},
-        idleTimeout: 30,
-        approvedProviders: {    // NEW defaults: all OFF
-            atlassian: false,
-            github: false,
-            figma: false,
-        },
-    },
-    // ...
-};
-```
+### Mocked LLM Tool Interaction Tests
 
-#### Step 5.4: New Panel Component
+#### 4.13 — Tool Call with Policy Verification (Mocked)
+`/e2e/tests/tool-config/mock-api/tool-call-policies.spec.ts`:
+- Configure mock LLM to return tool calls
+- Tool A: `auto_run` policy → verify auto-executes
+- Tool B: `ask` policy → verify shows pending approval
+- Tool C: `enabled: false` → verify not in tool list at all
+- Verify correct WebSocket events and post prop updates for each case
 
-**File: `webapp/src/components/system_console/approved_providers_panel.tsx`** (new)
-
-This is a self-contained component that renders the "Approved Tool Providers" panel. It follows the exact same patterns as the existing panels (uses `Panel`, `ItemList`, `BooleanItem` from the existing component library).
-
-```typescript
-// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
-// See LICENSE.txt for license information.
-
-import React from 'react';
-import {FormattedMessage, useIntl} from 'react-intl';
-
-import Panel, {PanelFooterText} from './panel';
-import {BooleanItem, ItemList} from './item';
-import {ApprovedProviders} from './mcp_servers';
-
-type Props = {
-    value: ApprovedProviders;
-    onChange: (value: ApprovedProviders) => void;
-};
-
-const ApprovedProvidersPanel = ({value, onChange}: Props) => {
-    const intl = useIntl();
-
-    return (
-        <Panel
-            title={intl.formatMessage({defaultMessage: 'Approved Tool Providers'})}
-            subtitle={intl.formatMessage({
-                defaultMessage:
-                    'Mattermost-vetted MCP servers whose read-only tools can run automatically without per-call user approval.',
-            })}
-        >
-            <ItemList>
-                <BooleanItem
-                    label={
-                        <FormattedMessage defaultMessage='Atlassian (Jira & Confluence)'/>
-                    }
-                    value={Boolean(value.atlassian)}
-                    onChange={(to) => onChange({...value, atlassian: to})}
-                    helpText={intl.formatMessage({
-                        defaultMessage:
-                            'When enabled, 20 read-only Atlassian tools (search, getJiraIssue, getConfluencePage, etc.) auto-execute in channels without approval. Write tools like createJiraIssue still require approval. Result sharing in channels always requires approval.',
-                    })}
-                />
-                <BooleanItem
-                    label={
-                        <FormattedMessage defaultMessage='GitHub'/>
-                    }
-                    value={Boolean(value.github)}
-                    onChange={(to) => onChange({...value, github: to})}
-                    helpText={intl.formatMessage({
-                        defaultMessage:
-                            'When enabled, 56 read-only GitHub tools (issue_read, pull_request_read, search_code, etc.) auto-execute in channels without approval. Write tools like create_pull_request still require approval. Result sharing in channels always requires approval.',
-                    })}
-                />
-                <BooleanItem
-                    label={
-                        <FormattedMessage defaultMessage='Figma'/>
-                    }
-                    value={Boolean(value.figma)}
-                    onChange={(to) => onChange({...value, figma: to})}
-                    helpText={intl.formatMessage({
-                        defaultMessage:
-                            'When enabled, 9 read-only Figma tools (get_design_context, get_screenshot, get_metadata, etc.) auto-execute in channels without approval. Write tools like generate_diagram still require approval. Result sharing in channels always requires approval.',
-                    })}
-                />
-            </ItemList>
-            <PanelFooterText>
-                <FormattedMessage
-                    defaultMessage='Turning a provider off restores the standard accept/reject approval flow for all tools from that server. These settings only affect channel @mentions — DM tool calls are unaffected.'
-                />
-            </PanelFooterText>
-        </Panel>
-    );
-};
-
-export default ApprovedProvidersPanel;
-```
-
-#### Step 5.5: Wire the Panel into config.tsx
-
-**File: `webapp/src/components/system_console/config.tsx`**
-
-Add the import at the top (after the existing MCP import):
-
-```typescript
-import ApprovedProvidersPanel from './approved_providers_panel';
-```
-
-Add the panel as the **last child** of `<ConfigContainer>`, after the MCP panel (after line 391 in the current file):
-
-```typescript
-            {/* Existing MCP Panel ends here */}
-            </Panel>
-
-            {/* NEW: Approved Tool Providers Panel */}
-            <ApprovedProvidersPanel
-                value={mcpConfig.approvedProviders || defaultConfig.mcp.approvedProviders}
-                onChange={(approvedProviders) => {
-                    const updatedMcp = {
-                        ...mcpConfig,
-                        approvedProviders,
-                    };
-                    props.onChange(props.id, {...value, mcp: updatedMcp});
-                    props.setSaveNeeded();
-                }}
-            />
-        </ConfigContainer>
-```
-
-This follows the exact same `onChange` → `props.onChange` → `props.setSaveNeeded()` pattern used by every other panel in the config page.
-
-#### Step 5.6: Rendering Behavior
-
-The panel is **always visible** when the full config page is shown (i.e., when `hasServiceConfigured && hasBotConfigured` are both true). It does not depend on MCP being enabled — the toggles simply have no effect if no MCP servers matching those URL patterns are configured.
-
-The panel order on the system console page becomes:
-1. AI Services
-2. AI Bots
-3. AI Functions
-4. Debug
-5. Embedding Search
-6. Web Search
-7. Model Context Protocol (MCP)
-8. **Approved Tool Providers** ← NEW
-
-#### Step 5.7: Persistence & Server-Side Access
-
-The `ApprovedProviders` struct is part of `mcp.Config`, which is already persisted as JSON in the plugin settings via `config.Config.MCP`. No new KV store entries or DB schema changes are needed.
-
-On the server side, the `config.Container` already exposes `MCP() mcp.Config`. The approved providers are accessed via:
-
-```go
-mcpCfg := configContainer.MCP()
-approvedServers := mcpCfg.ResolveApprovedServers()
-
-// Then in streaming or tool handling:
-if approvedServers.IsToolAutoApproved(tc.ServerOrigin, tc.Name) {
-    // auto-execute
-}
-```
-
-#### Step 5.8: i18n
-
-All user-facing strings use `intl.formatMessage()` or `<FormattedMessage>` for proper i18n, consistent with the rest of the codebase. The following strings need translation:
-
-| Key | Default Message |
-|-----|----------------|
-| Panel title | `"Approved Tool Providers"` |
-| Panel subtitle | `"Mattermost-vetted MCP servers whose read-only tools can run automatically without per-call user approval."` |
-| Atlassian label | `"Atlassian (Jira & Confluence)"` |
-| Atlassian help | `"When enabled, 20 read-only Atlassian tools (search, getJiraIssue, getConfluencePage, etc.) auto-execute in channels without approval. Write tools like createJiraIssue still require approval. Result sharing in channels always requires approval."` |
-| GitHub label | `"GitHub"` |
-| GitHub help | `"When enabled, 56 read-only GitHub tools (issue_read, pull_request_read, search_code, etc.) auto-execute in channels without approval. Write tools like create_pull_request still require approval. Result sharing in channels always requires approval."` |
-| Figma label | `"Figma"` |
-| Figma help | `"When enabled, 9 read-only Figma tools (get_design_context, get_screenshot, get_metadata, etc.) auto-execute in channels without approval. Write tools like generate_diagram still require approval. Result sharing in channels always requires approval."` |
-| Footer | `"Turning a provider off restores the standard accept/reject approval flow for all tools from that server. These settings only affect channel @mentions — DM tool calls are unaffected."` |
+**Checkpoint:** Full E2E test suite covers system console UI, config persistence, policy enforcement (auto-run vs ask), disabled tool exclusion, channel two-stage flow, and user provider toggles. CI green.
 
 ---
 
-### Phase 6: Testing
+## Phase 5: In-Browser QA
 
-#### Step 6.1: Unit Tests
+**Goal:** Manual QA against a live Mattermost instance. Validate against Figma designs. File bugs back into earlier phases.
 
-**File: `mcp/approved_servers_test.go` (new)**
+### Environment
 
-- Test `IsToolAutoApproved` with various combinations:
-  - Tool from approved server, in auto-approve list → true
-  - Tool from approved server, NOT in auto-approve list → false
-  - Tool from non-approved server → false
-  - Disabled approved server → false
-  - Empty URL patterns → false
-  - Multiple URL patterns matching → true
+- **Mattermost server:** `http://localhost:8065`
+- **Credentials:** `nickmisasi` / `Password123@`
+- **Deploy plugin:** `MM_SERVICESETTINGS_SITEURL=http://localhost:8065 make deploy`
+- **QA agents** should use Chrome DevTools MCP tools for screenshots and interaction
 
-- Test `MergeApprovedServers`:
-  - Built-in only → returns built-in
-  - User override of built-in → user version wins
-  - User adds new server → appended
-  - User disables built-in → disabled
+### Setup
 
-**File: `conversations/tool_handling_test.go`**
+#### 5.1 — Deploy & Verify
+- Run `MM_SERVICESETTINGS_SITEURL=http://localhost:8065 make deploy` from the worktree root
+- Navigate to `http://localhost:8065` → login as `nickmisasi` / `Password123@`
+- Navigate to System Console → Agents plugin → verify plugin is active
+- Verify MCP section shows "Configuration" and "Tools" tabs (NO "Approved Servers" tab)
 
-- Test auto-approval in HandleToolCall:
-  - All tools auto-approvable → all execute without user approval
-  - Some tools auto-approvable → full approval flow for all
-  - No tools auto-approvable → standard approval flow
+### System Console QA
 
-**File: `streaming/streaming_test.go`**
+#### 5.2 — Tools Tab Layout
+- Navigate to Tools tab
+- Verify MCP servers listed with correct tool counts
+- Verify expandable rows (click chevron → tools appear on gray background)
+- **Visual comparison:** Take screenshot via Chrome DevTools, compare against Figma Design A ([node 2258:95245](https://www.figma.com/design/7IQdy7Kujc13gWNLbRAUBC/AI-Copilot---Agents-UX?node-id=2258-95245&m=dev)) using `get_screenshot`
 
-- Test auto-approval detection in streaming:
-  - Auto-approvable tools trigger callback
-  - Non-auto-approvable tools follow standard flow
-  - Mixed batch follows standard flow
+#### 5.3 — Per-Tool Policy Configuration
+- Expand a server → verify each tool shows policy dropdown and toggle
+- Change a tool from "Ask Everytime" to "Auto Run" → save
+- Reload page → verify policy persisted
+- Change back → save → verify round-trip
 
-#### Step 6.2: Integration Tests
+#### 5.4 — Per-Tool Enable/Disable
+- Disable a tool via toggle → save → reload → verify disabled
+- Re-enable → save → verify enabled
+- Verify disabled tools do NOT appear in user-facing tool list (check via Copilot RHS or API)
 
-- Test full end-to-end flow with a mock MCP server:
-  - Configure an approved server
-  - Trigger a READ tool call in a channel
-  - Verify tool executes without approval prompt
-  - Verify result approval is still required
-  - Verify the result approval flow works normally
+#### 5.5 — Vetted Server Seed
+- If a vetted server (Atlassian, GitHub, Figma, or Mattermost embedded) is configured:
+  - Navigate to Tools tab → expand server
+  - Verify READ-only tools pre-filled as "Auto Run"
+  - Verify WRITE tools pre-filled as "Ask Everytime"
 
-#### Step 6.3: E2E Tests
+#### 5.6 — New Unconfigured Tools
+- If a server exposes a tool not yet in `ToolConfigs` (e.g., server added a new tool since last config):
+  - Verify it appears as disabled / "Ask Everytime" by default
+  - Verify admin must explicitly enable it
 
-- Add Playwright tests for the frontend:
-  - Auto-approved tool shows auto-approved badge
-  - Result approval UI still appears for auto-approved tools
-  - Standard approval flow unchanged for non-approved tools
+### Copilot RHS QA
 
----
+#### 5.7 — Tool Provider Popover
+- Open Copilot RHS (channel header button)
+- Locate tool provider button in RHS header (next to bot selector)
+- Click → verify popover appears with provider list
+- **Visual comparison:** Screenshot vs Figma Design B ([node 3029:131086](https://www.figma.com/design/7IQdy7Kujc13gWNLbRAUBC/AI-Copilot---Agents-UX?node-id=3029-131086&m=dev))
 
-## Implementation Order
+#### 5.8 — User Provider Toggle Functionality
+- Toggle a provider OFF in the popover
+- Send a message that would invoke that provider's tools
+- Verify the disabled provider's tools are NOT used
+- Toggle provider back ON → send another message → verify tools available again
 
-| # | Task | Priority | Depends On |
-|---|------|----------|------------|
-| 1 | Define `ApprovedMCPServer` data model (`mcp/approved_servers.go`) | High | - |
-| 2 | Create built-in approved server definitions (`mcp/approved_servers_builtin.go`) | High | 1 |
-| 3 | Add `ApprovedProviders` struct & toggle fields to `mcp.Config` (`mcp/mcp.go`) | High | 1 |
-| 4 | Add `ResolveApprovedServers()` to wire toggles to built-in definitions | High | 1, 2, 3 |
-| 5 | Add `ServerOrigin` to `Tool` and `ToolCall` (`llm/tools.go`) | High | 1 |
-| 6 | Propagate `ServerOrigin` during MCP tool registration (`mcp/user_clients.go`) | High | 5 |
-| 7 | Add auto-approval check in streaming layer (`streaming/streaming.go`) | High | 4, 6 |
-| 8 | Add auto-execute callback mechanism | High | 7 |
-| 9 | Modify `HandleToolCall` for auto-approval (`conversations/tool_handling.go`) | High | 7, 8 |
-| 10 | Admin UI: Add `ApprovedProviders` type to `MCPConfig` (`mcp_servers.tsx`) | High | 3 |
-| 11 | Admin UI: Create `ApprovedProvidersPanel` component (`approved_providers_panel.tsx`) | High | 10 |
-| 12 | Admin UI: Wire panel into `config.tsx` as last panel, extend `defaultConfig` | High | 11 |
-| 13 | Frontend: Update tool approval UI for auto-approved tools | Medium | 9 |
-| 14 | Frontend: Add auto-approved badge/indicator on tool cards | Medium | 13 |
-| 15 | Unit tests for approved servers config (`mcp/approved_servers_test.go`) | High | 1-4 |
-| 16 | Unit tests for auto-approval flow | High | 7-9 |
-| 17 | Integration tests | Medium | 9 |
-| 18 | E2E tests (including admin panel toggles) | Medium | 12, 14 |
+#### 5.9 — Provider Toggle Persistence
+- Toggle a provider OFF → close the popover → close RHS → reopen RHS → reopen popover
+- Verify the toggle state persisted
 
----
+### Tool Calling QA (Live)
 
-## JSON Schema for End-User Custom Approved MCP Servers
+#### 5.10 — Auto Run Policy (DM)
+- Ensure a tool is configured as "Auto Run" + enabled
+- Open Copilot RHS → send a prompt that triggers that tool
+- Verify tool executes automatically without approval prompt
 
-End users (system admins) can define their own approved MCP servers using this JSON structure in the plugin settings:
+#### 5.11 — Ask Every Time Policy (DM)
+- Ensure a tool is configured as "Ask Everytime" + enabled
+- Open Copilot RHS → send a prompt that triggers that tool
+- Verify tool shows as pending, requiring user approval
+- Approve → verify tool executes and LLM continues
 
-```json
-{
-  "approvedServers": [
-    {
-      "name": "string - Human-readable name for this approved server",
-      "url_patterns": [
-        "string - URL substring to match against MCP server BaseURL"
-      ],
-      "auto_approve_tools": [
-        "string - Tool name that is READ-only and can be auto-executed"
-      ],
-      "enabled": true
-    }
-  ]
-}
-```
+#### 5.12 — Auto Run in Channel (Two-Stage)
+- Ensure a tool is configured as "Auto Run" + enabled
+- @mention the bot in a channel
+- Verify tool call auto-approved (skips call approval)
+- Verify tool RESULTS still require sharing approval (channel safety)
+- Approve results → verify response posted
 
-### Full Example Configuration
+#### 5.13 — Disabled Tool Not Called
+- Disable a tool in System Console → save
+- Trigger a prompt that would normally use that tool
+- Verify the tool is NOT invoked (not in LLM context)
 
-```json
-{
-  "approvedServers": [
-    {
-      "name": "GitHub",
-      "url_patterns": ["api.githubcopilot.com"],
-      "auto_approve_tools": [
-        "get_me", "get_file_contents", "list_branches", "list_commits",
-        "get_commit", "search_code", "search_repositories", "issue_read",
-        "list_issues", "search_issues", "pull_request_read",
-        "list_pull_requests", "search_pull_requests", "search_users",
-        "get_label", "list_issue_types", "get_tag", "list_tags",
-        "get_latest_release", "get_release_by_tag", "list_releases",
-        "actions_get", "actions_list", "get_job_logs",
-        "get_code_scanning_alert", "list_code_scanning_alerts",
-        "get_dependabot_alert", "list_dependabot_alerts",
-        "get_discussion", "get_discussion_comments",
-        "list_discussion_categories", "list_discussions",
-        "get_gist", "list_gists", "get_repository_tree", "list_label",
-        "get_notification_details", "list_notifications", "search_orgs",
-        "projects_get", "projects_list",
-        "get_secret_scanning_alert", "list_secret_scanning_alerts",
-        "get_global_security_advisory", "list_global_security_advisories",
-        "list_org_repository_security_advisories",
-        "list_repository_security_advisories",
-        "list_starred_repositories",
-        "get_copilot_job_status", "get_copilot_space", "list_copilot_spaces",
-        "github_support_docs_search"
-      ],
-      "enabled": true
-    },
-    {
-      "name": "Atlassian",
-      "url_patterns": ["mcp.atlassian.com"],
-      "auto_approve_tools": [
-        "search", "fetch", "atlassianUserInfo",
-        "getAccessibleAtlassianResources",
-        "getConfluenceSpaces", "getConfluencePage",
-        "getPagesInConfluenceSpace", "getConfluencePageAncestors",
-        "getConfluencePageDescendants", "getConfluencePageFooterComments",
-        "getConfluencePageInlineComments", "searchConfluenceUsingCql",
-        "getJiraIssue", "getJiraIssueRemoteIssueLinks",
-        "getTransitionsForJiraIssue", "getVisibleJiraProjects",
-        "getJiraProjectIssueTypesMetadata", "getJiraIssueTypeMetaWithFields",
-        "lookupJiraAccountId", "searchJiraIssuesUsingJql"
-      ],
-      "enabled": true
-    },
-    {
-      "name": "Figma",
-      "url_patterns": ["mcp.figma.com"],
-      "auto_approve_tools": [
-        "get_design_context", "get_metadata", "get_screenshot",
-        "get_variable_defs", "get_figjam", "create_design_system_rules",
-        "get_code_connect_map", "get_code_connect_suggestions", "whoami"
-      ],
-      "enabled": true
-    }
-  ]
-}
-```
+### Cross-Browser & Visual QA
+
+#### 5.14 — Visual Comparison (All Screens)
+- Screenshot every key screen and compare against Figma:
+  - Tools tab (collapsed servers) vs Design A
+  - Tools tab (expanded server with per-tool rows) vs Design A
+  - Tool provider popover vs Design B
+- Flag any spacing, color, typography, or layout deviations
+
+#### 5.15 — Cross-Browser
+- Spot check in Firefox (in addition to Chrome) for layout/styling consistency
+
+**Checkpoint:** All QA items pass or bugs filed and remediated. Sign-off for merge.
 
 ---
 
-## Security Considerations
+## Phase 6: Polish & Edge Cases
 
-1. **Result approval preserved in channels**: Even auto-approved READ tools still require result approval before data is shared in channels. This prevents data leakage.
+**Goal:** Refinements after QA pass. Fix bugs found in Phase 5.
 
-2. **Server identity verification**: URL pattern matching is the primary mechanism. Admins should use specific enough patterns to avoid false matches. Consider adding server certificate or fingerprint verification in future iterations.
+### Tasks
 
-3. **Tool name spoofing**: A malicious MCP server could name its tools identically to an approved server's tools. The URL pattern check prevents this - the tool must come from a URL matching the approved server's pattern.
-
-4. **DM behavior unchanged**: DMs already auto-execute all tools. This change only affects channel (multiplayer) scenarios.
-
-5. **Admin control**: Only system admins can configure approved servers. Users cannot override this at the individual level.
-
-6. **Audit trail**: All auto-approved tool executions are still logged and stored on posts, so they are auditable.
-
-7. **Defense in depth**: The `all-or-nothing` approach for mixed batches (where some tools are auto-approvable and some aren't) defaults to requiring full approval, preventing partial auto-execution that could confuse users.
-
----
-
-## Key Files Modified
-
-| File | Change |
-|------|--------|
-| `mcp/approved_servers.go` | **NEW** - Data model (`ApprovedMCPServer`, `ApprovedMCPServersConfig`), matching logic, merge function |
-| `mcp/approved_servers_builtin.go` | **NEW** - Built-in Atlassian/GitHub/Figma definitions with all READ tool names |
-| `mcp/approved_servers_test.go` | **NEW** - Unit tests for matching and merging logic |
-| `mcp/mcp.go` | **MODIFY** - Add `ApprovedProviders` struct and field to `Config`; add `ResolveApprovedServers()` method |
-| `mcp/user_clients.go` | **MODIFY** - Add `ServerOrigin` (BaseURL) when building `llm.Tool` from MCP tools |
-| `llm/tools.go` | **MODIFY** - Add `ServerOrigin` field to `Tool` and `ToolCall` structs |
-| `config/config.go` | **MODIFY** - Add accessor to resolve approved servers from config |
-| `streaming/streaming.go` | **MODIFY** - Add auto-approval detection in `StreamToPost` EventTypeToolCalls handler |
-| `conversations/tool_handling.go` | **MODIFY** - Handle auto-approved tool execution via callback |
-| `webapp/src/components/system_console/approved_providers_panel.tsx` | **NEW** - "Approved Tool Providers" panel with per-provider BooleanItem toggles |
-| `webapp/src/components/system_console/config.tsx` | **MODIFY** - Import and render `ApprovedProvidersPanel` as last panel; extend `defaultConfig.mcp` |
-| `webapp/src/components/system_console/mcp_servers.tsx` | **MODIFY** - Add `ApprovedProviders` type and `approvedProviders` field to `MCPConfig` |
-| `webapp/src/components/tool_approval_set.tsx` | **MODIFY** - Skip call-stage UI for auto-approved tools |
-| `webapp/src/components/tool_card.tsx` | **MODIFY** - Add auto-approved visual indicator/badge |
-| `webapp/src/components/tool_types.ts` | **MODIFY** - Add `AutoApproved` status (optional) |
-
----
-
-## Companion Documents
-
-- **[ATLASSIAN.md](./ATLASSIAN.md)** - Full tool classification for the Atlassian Remote MCP Server (29 tools, 20 READ)
-- **[GITHUB.md](./GITHUB.md)** - Full tool classification for the GitHub Remote MCP Server (88 tools, 56 READ)
-- **[FIGMA.md](./FIGMA.md)** - Full tool classification for the Figma Remote MCP Server (13 tools, 9 READ)
+- **6.1** Tool discovery error handling: server unreachable, OAuth expired, connection timeout — show clear status in Tools tab
+- **6.2** Loading states: spinner while tools are being discovered, skeleton rows during load
+- **6.3** Empty states: no MCP servers configured, server has no tools, all tools disabled
+- **6.4** Search/filter in Tools tab (if many tools across servers)
+- **6.5** Tooltip on policy dropdown explaining "Auto Run" vs "Ask Everytime" behavior
+- **6.6** Edge case: server removed from Configuration tab while Tools tab is open
+- **6.7** Edge case: tool discovered on first load but not on subsequent (server changed tools) — handle gracefully, don't lose config for missing tools
+- **6.8** Fix any bugs filed during Phase 5 QA
