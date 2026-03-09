@@ -311,6 +311,7 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 		return "failed to create post", fmt.Errorf("error creating post: %w", err)
 	}
 
+	mcpContext.ResultMeta = map[string]any{"post_id": createdPost.Id}
 	return fmt.Sprintf("Successfully created post in channel '%s' (Team: %s) with ID: %s%s",
 		channel.DisplayName, team.DisplayName, createdPost.Id, attachmentMessage), nil
 }

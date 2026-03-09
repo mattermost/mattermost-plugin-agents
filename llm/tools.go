@@ -188,6 +188,180 @@ func checkValueInAllowed(paramName string, value any, allowed []string) error {
 	return nil
 }
 
+// ResolvedBinding maps a source tool/field to a target tool/param for dynamic constraint expansion.
+type ResolvedBinding struct {
+	SourceTool  string // source tool that emits _meta
+	TargetTool  string // target tool being constrained
+	TargetParam string // parameter on target tool
+	Field       string // key in source tool's _meta
+}
+
+// DynamicConstraintStore checks both static allowed values and dynamically captured _meta values.
+type DynamicConstraintStore struct {
+	static    map[string]map[string]map[string]struct{} // tool -> param -> allowed values set
+	metaStore *ToolResultMetaStore
+	bindings  []ResolvedBinding
+}
+
+// NewDynamicConstraintStore creates a store for dynamic constraint checking.
+func NewDynamicConstraintStore(
+	staticConstraints map[string]map[string][]string,
+	metaStore *ToolResultMetaStore,
+	bindings []ResolvedBinding,
+) *DynamicConstraintStore {
+	static := make(map[string]map[string]map[string]struct{}, len(staticConstraints))
+	for tool, params := range staticConstraints {
+		paramMap := make(map[string]map[string]struct{}, len(params))
+		for param, values := range params {
+			valSet := make(map[string]struct{}, len(values))
+			for _, v := range values {
+				valSet[v] = struct{}{}
+			}
+			paramMap[param] = valSet
+		}
+		static[tool] = paramMap
+	}
+	return &DynamicConstraintStore{
+		static:    static,
+		metaStore: metaStore,
+		bindings:  bindings,
+	}
+}
+
+// IsAllowed checks if a value is allowed for the given tool/param.
+// It first checks static values, then dynamic _meta values via bindings.
+func (s *DynamicConstraintStore) IsAllowed(toolName, paramName, value string) bool {
+	// Check static set
+	if params, ok := s.static[toolName]; ok {
+		if allowed, ok := params[paramName]; ok {
+			if _, ok := allowed[value]; ok {
+				return true
+			}
+		}
+	}
+
+	// Check dynamic bindings
+	for _, b := range s.bindings {
+		if b.TargetTool != toolName || b.TargetParam != paramName {
+			continue
+		}
+		for _, meta := range s.metaStore.GetAll(b.SourceTool) {
+			if metaVal, ok := meta[b.Field]; ok {
+				if strVal, ok := metaVal.(string); ok && strVal == value {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// WithDynamicConstrainedParams creates a new Tool with dynamic constraint checking.
+// The schema uses only static allowed values for LLM hints;
+// dynamic values are validated at execution time via the store.
+func (t Tool) WithDynamicConstrainedParams(store *DynamicConstraintStore, toolName string, constrainedParams []string, staticEnums map[string][]string) Tool {
+	return Tool{
+		Name:        t.Name,
+		Description: t.Description,
+		Schema:      addSchemaEnumConstraints(t.Schema, staticEnums),
+		Resolver:    wrapResolverWithDynamicConstraints(t.Resolver, store, toolName, constrainedParams),
+	}
+}
+
+// wrapResolverWithDynamicConstraints wraps a resolver to validate parameters against
+// both static allowed values and dynamically captured _meta values.
+func wrapResolverWithDynamicConstraints(
+	original ToolResolver,
+	store *DynamicConstraintStore,
+	toolName string,
+	constrainedParams []string,
+) ToolResolver {
+	if original == nil || store == nil || len(constrainedParams) == 0 {
+		return original
+	}
+
+	return func(context *Context, argsGetter ToolArgumentGetter) (string, error) {
+		wrappedGetter := func(args any) error {
+			if err := argsGetter(args); err != nil {
+				return err
+			}
+			return validateDynamicConstraints(args, store, toolName, constrainedParams)
+		}
+		return original(context, wrappedGetter)
+	}
+}
+
+// validateDynamicConstraints checks argument values against the dynamic constraint store.
+func validateDynamicConstraints(args any, store *DynamicConstraintStore, toolName string, constrainedParams []string) error {
+	val := reflect.ValueOf(args)
+	if val.Kind() == reflect.Ptr && !val.IsNil() {
+		val = val.Elem()
+	}
+
+	paramSet := make(map[string]struct{}, len(constrainedParams))
+	for _, p := range constrainedParams {
+		paramSet[p] = struct{}{}
+	}
+
+	switch val.Kind() {
+	case reflect.Map:
+		for paramName := range paramSet {
+			mapVal := val.MapIndex(reflect.ValueOf(paramName))
+			if !mapVal.IsValid() {
+				continue
+			}
+			if err := checkDynamicValue(store, toolName, paramName, mapVal.Interface()); err != nil {
+				return err
+			}
+		}
+	case reflect.Struct:
+		for paramName := range paramSet {
+			field := findFieldByNameOrTag(val, paramName)
+			if !field.IsValid() || field.IsZero() {
+				continue
+			}
+			if err := checkDynamicValue(store, toolName, paramName, field.Interface()); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// checkDynamicValue checks a single value against the dynamic constraint store.
+func checkDynamicValue(store *DynamicConstraintStore, toolName, paramName string, value any) error {
+	switch v := value.(type) {
+	case string:
+		if v == "" {
+			return nil
+		}
+		if !store.IsAllowed(toolName, paramName, v) {
+			return fmt.Errorf("parameter %q value %q is not in the allowed set", paramName, v)
+		}
+	case []string:
+		for _, item := range v {
+			if !store.IsAllowed(toolName, paramName, item) {
+				return fmt.Errorf("parameter %q value %q is not in the allowed set", paramName, item)
+			}
+		}
+	case []any:
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("parameter %q contains non-string value of type %T", paramName, item)
+			}
+			if !store.IsAllowed(toolName, paramName, s) {
+				return fmt.Errorf("parameter %q value %q is not in the allowed set", paramName, s)
+			}
+		}
+	default:
+		return fmt.Errorf("parameter %q has unsupported type %T for constraint validation", paramName, value)
+	}
+	return nil
+}
+
 // removeSchemaProperties removes the specified properties from a JSON schema.
 // It returns a modified copy of the schema, leaving the original unchanged.
 func removeSchemaProperties(schema any, params map[string]interface{}) any {

@@ -93,9 +93,10 @@ func (p *testLLMContextConfigProvider) GetServiceByID(_ string) (llm.ServiceConf
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager *mcp.OAuthManager
-	toolsCache   *mcp.ToolsCache
-	httpClient   *http.Client
+	oauthManager   *mcp.OAuthManager
+	toolsCache     *mcp.ToolsCache
+	httpClient     *http.Client
+	embeddedServer mcp.EmbeddedMCPServer
 }
 
 func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
@@ -111,7 +112,7 @@ func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedI
 }
 
 func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
-	return nil
+	return m.embeddedServer
 }
 
 func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error) {

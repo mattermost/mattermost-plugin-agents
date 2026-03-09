@@ -19,10 +19,49 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// mockEmbeddedMCPServer implements mcp.EmbeddedMCPServer for testing.
+// It creates a simple in-memory MCP server with predefined tools.
+type mockEmbeddedMCPServer struct {
+	mcpServer *gosdkmcp.Server
+}
+
+func newMockEmbeddedMCPServer(toolNames []string) *mockEmbeddedMCPServer {
+	server := gosdkmcp.NewServer(
+		&gosdkmcp.Implementation{
+			Name:    "test-embedded-server",
+			Version: "1.0.0",
+		},
+		nil,
+	)
+	for _, name := range toolNames {
+		tool := &gosdkmcp.Tool{
+			Name:        name,
+			Description: "embedded " + name,
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		}
+		server.AddTool(tool, func(ctx context.Context, req *gosdkmcp.CallToolRequest) (*gosdkmcp.CallToolResult, error) {
+			return &gosdkmcp.CallToolResult{}, nil
+		})
+	}
+	return &mockEmbeddedMCPServer{mcpServer: server}
+}
+
+func (m *mockEmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*gosdkmcp.InMemoryTransport, error) {
+	serverTransport, clientTransport := gosdkmcp.NewInMemoryTransports()
+	go func() {
+		_ = m.mcpServer.Run(context.Background(), serverTransport)
+	}()
+	return clientTransport, nil
+}
 
 // Full-stack integration tests using bridge client → real API → fake LLM
 
@@ -1468,6 +1507,61 @@ func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 	require.Equal(t, "eligible from context", tools[0].Description)
 }
 
+func TestBridgeGetAgentToolsReturnsEmbeddedServerTools(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	embeddedServer := newMockEmbeddedMCPServer([]string{"embedded_tool"})
+
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		EmbeddedServer: mcp.EmbeddedServerConfig{
+			Enabled: true,
+		},
+	}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		httpClient: &http.Client{
+			Transport: &http.Transport{DisableKeepAlives: true},
+		},
+		embeddedServer: embeddedServer,
+	}
+
+	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
+		e.client,
+		&testLLMContextToolProvider{
+			tools: []llm.Tool{
+				{
+					Name:        "embedded_tool",
+					Description: "tool from embedded server",
+					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+						return "ok", nil
+					},
+				},
+			},
+		},
+		nil,
+		&testLLMContextConfigProvider{},
+	)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	client := e.CreateBridgeClient()
+	tools, err := client.GetAgentTools(testBotUserID, "")
+	require.NoError(t, err)
+	require.Len(t, tools, 1)
+	require.Equal(t, "embedded_tool", tools[0].Name)
+	require.Equal(t, "tool from embedded server", tools[0].Description)
+}
+
 func TestBridgeGetAgentToolsSkipsUnreachableEligibleServer(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -2874,6 +2968,10 @@ func TestBridgeToolDiscoveryUserID(t *testing.T) {
 }
 
 func TestNormalizeToolConstraints(t *testing.T) {
+	pc := func(vals ...string) bridgeclient.ParamConstraint {
+		return bridgeclient.ParamConstraint{AllowedValues: vals}
+	}
+
 	tests := []struct {
 		name         string
 		constraints  bridgeclient.ToolConstraints
@@ -2890,7 +2988,7 @@ func TestNormalizeToolConstraints(t *testing.T) {
 		{
 			name: "valid constraints",
 			constraints: bridgeclient.ToolConstraints{
-				"search_posts": {"channel_ids": {"chan12345678901234567890ab"}},
+				"search_posts": {"channel_ids": pc("chan12345678901234567890ab")},
 			},
 			allowedTools: []string{"search_posts"},
 			expectError:  false,
@@ -2898,7 +2996,7 @@ func TestNormalizeToolConstraints(t *testing.T) {
 		{
 			name: "constraints without allowed_tools rejected",
 			constraints: bridgeclient.ToolConstraints{
-				"search_posts": {"channel_ids": {"chan12345678901234567890ab"}},
+				"search_posts": {"channel_ids": pc("chan12345678901234567890ab")},
 			},
 			allowedTools: nil,
 			expectError:  true,
@@ -2907,7 +3005,7 @@ func TestNormalizeToolConstraints(t *testing.T) {
 		{
 			name: "tool not in allowed_tools rejected",
 			constraints: bridgeclient.ToolConstraints{
-				"unknown_tool": {"param": {"value"}},
+				"unknown_tool": {"param": pc("value")},
 			},
 			allowedTools: []string{"search_posts"},
 			expectError:  true,
@@ -2916,7 +3014,7 @@ func TestNormalizeToolConstraints(t *testing.T) {
 		{
 			name: "empty tool name rejected",
 			constraints: bridgeclient.ToolConstraints{
-				"  ": {"param": {"value"}},
+				"  ": {"param": pc("value")},
 			},
 			allowedTools: []string{"search_posts"},
 			expectError:  true,
@@ -2925,20 +3023,20 @@ func TestNormalizeToolConstraints(t *testing.T) {
 		{
 			name: "empty parameter name rejected",
 			constraints: bridgeclient.ToolConstraints{
-				"search_posts": {"": {"value"}},
+				"search_posts": {"": pc("value")},
 			},
 			allowedTools: []string{"search_posts"},
 			expectError:  true,
 			errorMsg:     "empty parameter name",
 		},
 		{
-			name: "empty values list rejected",
+			name: "empty param constraint rejected",
 			constraints: bridgeclient.ToolConstraints{
-				"search_posts": {"channel_ids": {}},
+				"search_posts": {"channel_ids": bridgeclient.ParamConstraint{}},
 			},
 			allowedTools: []string{"search_posts"},
 			expectError:  true,
-			errorMsg:     "empty values list",
+			errorMsg:     "must have allowed_values or from_tool_output",
 		},
 		{
 			name: "empty param constraints map rejected",
@@ -2948,6 +3046,97 @@ func TestNormalizeToolConstraints(t *testing.T) {
 			allowedTools: []string{"search_posts"},
 			expectError:  true,
 			errorMsg:     "empty parameter constraints",
+		},
+		{
+			name: "from_tool_output valid",
+			constraints: bridgeclient.ToolConstraints{
+				"create_post": {"channel_id": {
+					FromToolOutput: []bridgeclient.OutputBinding{
+						{Tool: "create_channel", Field: "channel_id"},
+					},
+				}},
+			},
+			allowedTools: []string{"create_post", "create_channel"},
+			expectError:  false,
+		},
+		{
+			name: "from_tool_output with static values",
+			constraints: bridgeclient.ToolConstraints{
+				"create_post": {"channel_id": {
+					AllowedValues: []string{"existing_abc"},
+					FromToolOutput: []bridgeclient.OutputBinding{
+						{Tool: "create_channel", Field: "channel_id"},
+					},
+				}},
+			},
+			allowedTools: []string{"create_post", "create_channel"},
+			expectError:  false,
+		},
+		{
+			name: "from_tool_output tool not in allowed_tools",
+			constraints: bridgeclient.ToolConstraints{
+				"create_post": {"channel_id": {
+					FromToolOutput: []bridgeclient.OutputBinding{
+						{Tool: "unknown_tool", Field: "channel_id"},
+					},
+				}},
+			},
+			allowedTools: []string{"create_post"},
+			expectError:  true,
+			errorMsg:     "not in allowed_tools",
+		},
+		{
+			name: "from_tool_output self-reference rejected",
+			constraints: bridgeclient.ToolConstraints{
+				"create_post": {"channel_id": {
+					FromToolOutput: []bridgeclient.OutputBinding{
+						{Tool: "create_post", Field: "channel_id"},
+					},
+				}},
+			},
+			allowedTools: []string{"create_post"},
+			expectError:  true,
+			errorMsg:     "cannot reference itself",
+		},
+		{
+			name: "from_tool_output empty tool rejected",
+			constraints: bridgeclient.ToolConstraints{
+				"create_post": {"channel_id": {
+					FromToolOutput: []bridgeclient.OutputBinding{
+						{Tool: "", Field: "channel_id"},
+					},
+				}},
+			},
+			allowedTools: []string{"create_post"},
+			expectError:  true,
+			errorMsg:     "empty tool",
+		},
+		{
+			name: "from_tool_output empty field rejected",
+			constraints: bridgeclient.ToolConstraints{
+				"create_post": {"channel_id": {
+					FromToolOutput: []bridgeclient.OutputBinding{
+						{Tool: "create_channel", Field: ""},
+					},
+				}},
+			},
+			allowedTools: []string{"create_post", "create_channel"},
+			expectError:  true,
+			errorMsg:     "empty field",
+		},
+		{
+			name: "from_tool_output duplicate binding rejected",
+			constraints: bridgeclient.ToolConstraints{
+				"create_post": {"channel_id": {
+					FromToolOutput: []bridgeclient.OutputBinding{
+						{Tool: "create_channel", Field: "channel_id"},
+						{Tool: "create_channel", Field: "channel_id"},
+					},
+				}},
+			},
+			allowedTools: []string{"create_post", "create_channel"},
+			expectError:  true,
+			errorMsg:     "duplicate from_tool_output binding",
 		},
 	}
 
@@ -2973,37 +3162,41 @@ func TestValidateConstraintParams(t *testing.T) {
 		TeamID     string   `json:"team_id,omitempty"`
 	}
 
+	pc := func(vals ...string) bridgeclient.ParamConstraint {
+		return bridgeclient.ParamConstraint{AllowedValues: vals}
+	}
+
 	tests := []struct {
 		name        string
 		schema      any
-		constraints map[string][]string
+		constraints map[string]bridgeclient.ParamConstraint
 		expectError bool
 		errorMsg    string
 	}{
 		{
 			name:        "valid param",
 			schema:      llm.NewJSONSchemaFromStruct[testArgs](),
-			constraints: map[string][]string{"channel_ids": {"chan12345678901234567890ab"}},
+			constraints: map[string]bridgeclient.ParamConstraint{"channel_ids": pc("chan12345678901234567890ab")},
 			expectError: false,
 		},
 		{
 			name:        "unknown param rejected",
 			schema:      llm.NewJSONSchemaFromStruct[testArgs](),
-			constraints: map[string][]string{"nonexistent": {"value"}},
+			constraints: map[string]bridgeclient.ParamConstraint{"nonexistent": pc("value")},
 			expectError: true,
 			errorMsg:    "no parameter \"nonexistent\"",
 		},
 		{
 			name:        "nil schema rejected",
 			schema:      nil,
-			constraints: map[string][]string{"channel_ids": {"value"}},
+			constraints: map[string]bridgeclient.ParamConstraint{"channel_ids": pc("value")},
 			expectError: true,
 			errorMsg:    "has no schema",
 		},
 		{
 			name:        "non-jsonschema rejected",
 			schema:      "not a schema",
-			constraints: map[string][]string{"channel_ids": {"value"}},
+			constraints: map[string]bridgeclient.ParamConstraint{"channel_ids": pc("value")},
 			expectError: true,
 			errorMsg:    "not a jsonschema",
 		},
@@ -3051,7 +3244,7 @@ func TestBridgeClientServiceCompletionRejectsToolConstraints(t *testing.T) {
 			{Role: "user", Message: "Hi"},
 		},
 		ToolConstraints: bridgeclient.ToolConstraints{
-			"search_posts": {"channel_ids": {"chan12345678901234567890ab"}},
+			"search_posts": {"channel_ids": {AllowedValues: []string{"chan12345678901234567890ab"}}},
 		},
 	})
 	require.Error(t, err)
@@ -3127,7 +3320,7 @@ func TestBridgeClientAgentCompletionToolConstraintsModifiesSchema(t *testing.T) 
 		},
 		AllowedTools: []string{"search_posts"},
 		ToolConstraints: bridgeclient.ToolConstraints{
-			"search_posts": {"channel_ids": {testChannelID}},
+			"search_posts": {"channel_ids": {AllowedValues: []string{testChannelID}}},
 		},
 	})
 	require.NoError(t, err)
@@ -3165,7 +3358,7 @@ func TestBridgeClientAgentCompletionToolConstraintsWithoutAllowedToolsRejected(t
 			{Role: "user", Message: "Hello"},
 		},
 		ToolConstraints: bridgeclient.ToolConstraints{
-			"search_posts": {"channel_ids": {testChannelID}},
+			"search_posts": {"channel_ids": {AllowedValues: []string{testChannelID}}},
 		},
 	})
 	require.Error(t, err)

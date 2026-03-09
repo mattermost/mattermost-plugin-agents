@@ -253,6 +253,7 @@ func (p *MattermostToolProvider) toolCreateChannel(mcpContext *MCPToolContext, a
 		return "failed to create channel", fmt.Errorf("error creating channel: %w", err)
 	}
 
+	mcpContext.ResultMeta = map[string]any{"channel_id": createdChannel.Id}
 	return fmt.Sprintf("Successfully created channel '%s' with ID: %s", createdChannel.DisplayName, createdChannel.Id), nil
 }
 

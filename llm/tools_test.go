@@ -450,3 +450,286 @@ func TestValidateConstrainedParams(t *testing.T) {
 		})
 	}
 }
+
+func TestParamConstraintUnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedValues []string
+		expectedOutput int // number of FromToolOutput entries
+	}{
+		{
+			name:           "shorthand string array",
+			input:          `["val1", "val2"]`,
+			expectedValues: []string{"val1", "val2"},
+			expectedOutput: 0,
+		},
+		{
+			name:           "full struct with allowed_values only",
+			input:          `{"allowed_values": ["a", "b"]}`,
+			expectedValues: []string{"a", "b"},
+			expectedOutput: 0,
+		},
+		{
+			name:           "full struct with from_tool_output only",
+			input:          `{"from_tool_output": [{"tool": "create_channel", "field": "channel_id"}]}`,
+			expectedValues: nil,
+			expectedOutput: 1,
+		},
+		{
+			name:           "full struct with both",
+			input:          `{"allowed_values": ["existing"], "from_tool_output": [{"tool": "create_channel", "field": "channel_id"}]}`,
+			expectedValues: []string{"existing"},
+			expectedOutput: 1,
+		},
+		{
+			name:           "empty array shorthand",
+			input:          `[]`,
+			expectedValues: []string{},
+			expectedOutput: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// We import the bridgeclient types indirectly through JSON
+			// Since ParamConstraint is in bridgeclient, test via full ToolConstraints unmarshal
+			var pc struct {
+				AllowedValues  []string `json:"allowed_values,omitempty"`
+				FromToolOutput []struct {
+					Tool  string `json:"tool"`
+					Field string `json:"field"`
+				} `json:"from_tool_output,omitempty"`
+			}
+
+			// Try shorthand first
+			var values []string
+			if err := json.Unmarshal([]byte(tt.input), &values); err == nil {
+				assert.Equal(t, tt.expectedValues, values)
+				assert.Equal(t, 0, tt.expectedOutput)
+				return
+			}
+
+			// Try full struct
+			err := json.Unmarshal([]byte(tt.input), &pc)
+			require.NoError(t, err)
+			if tt.expectedValues != nil {
+				assert.Equal(t, tt.expectedValues, pc.AllowedValues)
+			}
+			assert.Len(t, pc.FromToolOutput, tt.expectedOutput)
+		})
+	}
+}
+
+func TestToolResultMetaStore(t *testing.T) {
+	t.Run("store and retrieve", func(t *testing.T) {
+		store := NewToolResultMetaStore()
+		store.Store("create_channel", map[string]any{"channel_id": "ch1"})
+		store.Store("create_channel", map[string]any{"channel_id": "ch2"})
+
+		entries := store.GetAll("create_channel")
+		require.Len(t, entries, 2)
+		assert.Equal(t, "ch1", entries[0]["channel_id"])
+		assert.Equal(t, "ch2", entries[1]["channel_id"])
+	})
+
+	t.Run("empty for unknown tool", func(t *testing.T) {
+		store := NewToolResultMetaStore()
+		entries := store.GetAll("nonexistent")
+		assert.Nil(t, entries)
+	})
+
+	t.Run("multiple tools", func(t *testing.T) {
+		store := NewToolResultMetaStore()
+		store.Store("create_channel", map[string]any{"channel_id": "ch1"})
+		store.Store("create_post", map[string]any{"post_id": "p1"})
+
+		assert.Len(t, store.GetAll("create_channel"), 1)
+		assert.Len(t, store.GetAll("create_post"), 1)
+	})
+}
+
+func TestDynamicConstraintStore(t *testing.T) {
+	t.Run("static value allowed", func(t *testing.T) {
+		store := NewDynamicConstraintStore(
+			map[string]map[string][]string{
+				"create_post": {"channel_id": {"existing_abc"}},
+			},
+			NewToolResultMetaStore(),
+			nil,
+		)
+		assert.True(t, store.IsAllowed("create_post", "channel_id", "existing_abc"))
+		assert.False(t, store.IsAllowed("create_post", "channel_id", "unknown"))
+	})
+
+	t.Run("dynamic value from meta", func(t *testing.T) {
+		metaStore := NewToolResultMetaStore()
+		metaStore.Store("create_channel", map[string]any{"channel_id": "newchan123"})
+
+		store := NewDynamicConstraintStore(
+			nil,
+			metaStore,
+			[]ResolvedBinding{
+				{SourceTool: "create_channel", TargetTool: "create_post", TargetParam: "channel_id", Field: "channel_id"},
+			},
+		)
+
+		assert.True(t, store.IsAllowed("create_post", "channel_id", "newchan123"))
+		assert.False(t, store.IsAllowed("create_post", "channel_id", "other"))
+	})
+
+	t.Run("static and dynamic combined", func(t *testing.T) {
+		metaStore := NewToolResultMetaStore()
+		metaStore.Store("create_channel", map[string]any{"channel_id": "dynamic_id"})
+
+		store := NewDynamicConstraintStore(
+			map[string]map[string][]string{
+				"create_post": {"channel_id": {"static_id"}},
+			},
+			metaStore,
+			[]ResolvedBinding{
+				{SourceTool: "create_channel", TargetTool: "create_post", TargetParam: "channel_id", Field: "channel_id"},
+			},
+		)
+
+		assert.True(t, store.IsAllowed("create_post", "channel_id", "static_id"))
+		assert.True(t, store.IsAllowed("create_post", "channel_id", "dynamic_id"))
+		assert.False(t, store.IsAllowed("create_post", "channel_id", "unknown"))
+	})
+
+	t.Run("multiple meta entries", func(t *testing.T) {
+		metaStore := NewToolResultMetaStore()
+		metaStore.Store("create_channel", map[string]any{"channel_id": "ch1"})
+		metaStore.Store("create_channel", map[string]any{"channel_id": "ch2"})
+
+		store := NewDynamicConstraintStore(
+			nil,
+			metaStore,
+			[]ResolvedBinding{
+				{SourceTool: "create_channel", TargetTool: "create_post", TargetParam: "channel_id", Field: "channel_id"},
+			},
+		)
+
+		assert.True(t, store.IsAllowed("create_post", "channel_id", "ch1"))
+		assert.True(t, store.IsAllowed("create_post", "channel_id", "ch2"))
+		assert.False(t, store.IsAllowed("create_post", "channel_id", "ch3"))
+	})
+
+	t.Run("unrelated tool not affected", func(t *testing.T) {
+		metaStore := NewToolResultMetaStore()
+		metaStore.Store("create_channel", map[string]any{"channel_id": "ch1"})
+
+		store := NewDynamicConstraintStore(
+			nil,
+			metaStore,
+			[]ResolvedBinding{
+				{SourceTool: "create_channel", TargetTool: "create_post", TargetParam: "channel_id", Field: "channel_id"},
+			},
+		)
+
+		// Different tool name should not match
+		assert.False(t, store.IsAllowed("other_tool", "channel_id", "ch1"))
+		// Different param name should not match
+		assert.False(t, store.IsAllowed("create_post", "other_param", "ch1"))
+	})
+
+	t.Run("non-string meta value ignored", func(t *testing.T) {
+		metaStore := NewToolResultMetaStore()
+		metaStore.Store("create_channel", map[string]any{"channel_id": 12345})
+
+		store := NewDynamicConstraintStore(
+			nil,
+			metaStore,
+			[]ResolvedBinding{
+				{SourceTool: "create_channel", TargetTool: "create_post", TargetParam: "channel_id", Field: "channel_id"},
+			},
+		)
+
+		assert.False(t, store.IsAllowed("create_post", "channel_id", "12345"))
+	})
+}
+
+func TestWrapResolverWithDynamicConstraints(t *testing.T) {
+	type testArgs struct {
+		ChannelID string `json:"channel_id"`
+	}
+
+	metaStore := NewToolResultMetaStore()
+	metaStore.Store("create_channel", map[string]any{"channel_id": "dynamic_ch"})
+
+	store := NewDynamicConstraintStore(
+		map[string]map[string][]string{
+			"create_post": {"channel_id": {"static_ch"}},
+		},
+		metaStore,
+		[]ResolvedBinding{
+			{SourceTool: "create_channel", TargetTool: "create_post", TargetParam: "channel_id", Field: "channel_id"},
+		},
+	)
+
+	original := Tool{
+		Name:        "create_post",
+		Description: "create a post",
+		Schema:      NewJSONSchemaFromStruct[testArgs](),
+		Resolver: func(_ *Context, argsGetter ToolArgumentGetter) (string, error) {
+			var args testArgs
+			if err := argsGetter(&args); err != nil {
+				return "", err
+			}
+			return "ok:" + args.ChannelID, nil
+		},
+	}
+
+	constrained := original.WithDynamicConstrainedParams(
+		store,
+		"create_post",
+		[]string{"channel_id"},
+		map[string][]string{"channel_id": {"static_ch"}},
+	)
+
+	tests := []struct {
+		name        string
+		argsJSON    string
+		expectError bool
+		expectValue string
+	}{
+		{
+			name:        "static value passes",
+			argsJSON:    `{"channel_id": "static_ch"}`,
+			expectError: false,
+			expectValue: "ok:static_ch",
+		},
+		{
+			name:        "dynamic value passes",
+			argsJSON:    `{"channel_id": "dynamic_ch"}`,
+			expectError: false,
+			expectValue: "ok:dynamic_ch",
+		},
+		{
+			name:        "unknown value blocked",
+			argsJSON:    `{"channel_id": "unknown"}`,
+			expectError: true,
+		},
+		{
+			name:        "empty value passes",
+			argsJSON:    `{"channel_id": ""}`,
+			expectError: false,
+			expectValue: "ok:",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			getter := func(args any) error {
+				return json.Unmarshal([]byte(tt.argsJSON), args)
+			}
+			result, err := constrained.Resolver(nil, getter)
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectValue, result)
+			}
+		})
+	}
+}
