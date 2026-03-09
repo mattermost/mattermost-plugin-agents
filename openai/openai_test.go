@@ -5,7 +5,9 @@ package openai
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"image"
 	"io"
 	"net/http"
 	"strings"
@@ -1006,4 +1008,80 @@ func TestFetchModelsSanitizesProviderErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Incorrect API key provided: [REDACTED]. You can find your API key")
 	assert.NotContains(t, err.Error(), "this-is-****************-key")
+}
+
+func TestNonStreamingHelpersSanitizeProviderErrors(t *testing.T) {
+	const apiKey = "this-is-my-disclosed-api-key"
+	const maskedKey = "this-is-****************-key"
+
+	httpClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+				Body:    io.NopCloser(strings.NewReader(`{"error":{"message":"Incorrect API key provided: ` + maskedKey + `. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","code":"invalid_api_key"}}`)),
+				Request: req,
+			}, nil
+		}),
+	}
+
+	newOpenAI := func() *OpenAI {
+		return NewCompatible(Config{
+			APIKey:         apiKey,
+			APIURL:         "https://example.invalid",
+			EmbeddingModel: "text-embedding-3-small",
+		}, httpClient)
+	}
+
+	tests := []struct {
+		name string
+		call func(t *testing.T, oai *OpenAI) error
+	}{
+		{
+			name: "transcribe",
+			call: func(t *testing.T, oai *OpenAI) error {
+				t.Helper()
+				_, err := oai.Transcribe(strings.NewReader("fake audio"))
+				return err
+			},
+		},
+		{
+			name: "generate image",
+			call: func(t *testing.T, oai *OpenAI) error {
+				t.Helper()
+				var zeroImage image.Image
+				zeroImage, err := oai.GenerateImage("draw a cat")
+				assert.Nil(t, zeroImage)
+				return err
+			},
+		},
+		{
+			name: "create embedding",
+			call: func(t *testing.T, oai *OpenAI) error {
+				t.Helper()
+				_, err := oai.CreateEmbedding(context.Background(), "hello")
+				return err
+			},
+		},
+		{
+			name: "batch create embeddings",
+			call: func(t *testing.T, oai *OpenAI) error {
+				t.Helper()
+				_, err := oai.BatchCreateEmbeddings(context.Background(), []string{"hello", "world"})
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call(t, newOpenAI())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "Incorrect API key provided: [REDACTED]. You can find your API key")
+			assert.NotContains(t, err.Error(), apiKey)
+			assert.NotContains(t, err.Error(), maskedKey)
+		})
+	}
 }

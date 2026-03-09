@@ -1265,7 +1265,7 @@ func (s *OpenAI) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
 
 	resp, err := s.client.Audio.Transcriptions.New(context.Background(), params)
 	if err != nil {
-		return nil, fmt.Errorf("unable to create whisper transcription: %w", err)
+		return nil, fmt.Errorf("unable to create whisper transcription: %w", s.sanitizeProviderError(err))
 	}
 
 	// The response for VTT format is the Text field
@@ -1287,7 +1287,7 @@ func (s *OpenAI) GenerateImage(prompt string) (image.Image, error) {
 
 	resp, err := s.client.Images.Generate(context.Background(), params)
 	if err != nil {
-		return nil, err
+		return nil, s.sanitizeProviderError(err)
 	}
 
 	if len(resp.Data) == 0 {
@@ -1363,7 +1363,7 @@ func (s *OpenAI) CreateEmbedding(ctx context.Context, text string) ([]float32, e
 
 	resp, err := s.client.Embeddings.New(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create embedding: %w", err)
+		return nil, fmt.Errorf("failed to create embedding: %w", s.sanitizeProviderError(err))
 	}
 
 	if len(resp.Data) == 0 {
@@ -1394,7 +1394,7 @@ func (s *OpenAI) BatchCreateEmbeddings(ctx context.Context, texts []string) ([][
 
 	resp, err := s.client.Embeddings.New(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create embeddings batch: %w", err)
+		return nil, fmt.Errorf("failed to create embeddings batch: %w", s.sanitizeProviderError(err))
 	}
 
 	embeddings := make([][]float32, len(resp.Data))
