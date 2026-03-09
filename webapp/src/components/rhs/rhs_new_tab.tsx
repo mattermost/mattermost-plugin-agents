@@ -45,16 +45,6 @@ type Props = {
 
 const EMPTY_BOTS: LLMBot[] = [];
 
-const setEditorText = (text: string) => {
-    const replyBox = document.getElementById('reply_textbox');
-    if (replyBox) {
-        replyBox.innerHTML = text;
-        replyBox.dispatchEvent(new Event('input', {bubbles: true}));
-        replyBox.focus();
-    }
-};
-
-
 const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
     const intl = useIntl();
     const dispatch = useDispatch();
