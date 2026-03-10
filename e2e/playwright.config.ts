@@ -19,6 +19,7 @@ const getTestIgnorePatterns = (): string[] => {
     patterns.push('**/llmbot-post-component/**');
     patterns.push('**/backend-verification/real-api.spec.ts');
     patterns.push('**/tool-config/real-api/**');
+    patterns.push('**/system-console/live-service-full-flow.spec.ts');
   }
 
   return patterns;

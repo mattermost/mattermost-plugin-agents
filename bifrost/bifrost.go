@@ -25,7 +25,6 @@ import (
 
 const (
 	DefaultMaxTokens        = 8192
-	MaxToolResolutionDepth  = 10
 	DefaultStreamingTimeout = 5 * time.Minute
 
 	defaultReasoningEffort = "medium"
