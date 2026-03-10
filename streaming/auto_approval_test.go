@@ -188,7 +188,7 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 			},
 			isDM:                   false,
 			policyChecker:          &mockPolicyChecker{approveAll: true},
-			expectAutoApprovedProp: false,
+			expectAutoApprovedProp: true,
 			expectCallbackInvoked:  false,
 		},
 		{

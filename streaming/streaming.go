@@ -389,6 +389,7 @@ func (p *MMPostStreamService) handleAutoApprovedToolCalls(post *model.Post, tool
 	post.AddProp(ToolCallProp, string(toolCallJSON))
 	post.AddProp(ToolCallRedactedProp, "true")
 	post.AddProp(PendingToolResultProp, "true")
+	post.AddProp(AutoApprovedToolCallProp, "true")
 
 	if err := p.mmClient.UpdatePost(post); err != nil {
 		p.mmClient.LogError("Failed to update post with auto-approved tool call", "error", err)
