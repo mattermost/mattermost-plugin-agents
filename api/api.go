@@ -386,7 +386,7 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	// API key is required for most services, but optional for openaicompatible (some don't require auth)
+	// API key is required for most services, but optional for openaicompatible (some don't require auth).
 	if req.APIKey == "" && req.ServiceType != "openaicompatible" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey is required"))
 		return

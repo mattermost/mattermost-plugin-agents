@@ -9,11 +9,107 @@ import (
 	"testing"
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
+
+func TestBuildAPIParamsStructuredOutput(t *testing.T) {
+	testSchema := &jsonschema.Schema{
+		Type: "object",
+	}
+
+	tests := []struct {
+		name                    string
+		structuredOutputEnabled bool
+		jsonOutputFormat        *jsonschema.Schema
+		reasoningEnabled        bool
+		expectOutputConfig      bool
+		expectThinking          bool
+	}{
+		{
+			name:                    "structured output enabled with schema",
+			structuredOutputEnabled: true,
+			jsonOutputFormat:        testSchema,
+			reasoningEnabled:        false,
+			expectOutputConfig:      true,
+			expectThinking:          false,
+		},
+		{
+			name:                    "structured output enabled without schema",
+			structuredOutputEnabled: true,
+			jsonOutputFormat:        nil,
+			reasoningEnabled:        false,
+			expectOutputConfig:      false,
+			expectThinking:          false,
+		},
+		{
+			name:                    "structured output disabled with schema",
+			structuredOutputEnabled: false,
+			jsonOutputFormat:        testSchema,
+			reasoningEnabled:        false,
+			expectOutputConfig:      false,
+			expectThinking:          false,
+		},
+		{
+			name:                    "structured output disables thinking",
+			structuredOutputEnabled: true,
+			jsonOutputFormat:        testSchema,
+			reasoningEnabled:        true,
+			expectOutputConfig:      true,
+			expectThinking:          false,
+		},
+		{
+			name:                    "thinking enabled without structured output",
+			structuredOutputEnabled: false,
+			jsonOutputFormat:        nil,
+			reasoningEnabled:        true,
+			expectOutputConfig:      false,
+			expectThinking:          true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &Anthropic{
+				defaultModel:            "claude-sonnet-4-20250514",
+				structuredOutputEnabled: tt.structuredOutputEnabled,
+				reasoningEnabled:        tt.reasoningEnabled,
+				thinkingBudget:          1024,
+			}
+
+			state := &messageState{
+				config: llm.LanguageModelConfig{
+					Model:              "claude-sonnet-4-20250514",
+					MaxGeneratedTokens: 8192,
+					JSONOutputFormat:   tt.jsonOutputFormat,
+				},
+				messages: []anthropicSDK.MessageParam{
+					{
+						Role:    anthropicSDK.MessageParamRoleUser,
+						Content: []anthropicSDK.ContentBlockParamUnion{anthropicSDK.NewTextBlock("test")},
+					},
+				},
+			}
+
+			params := a.buildAPIParams(state)
+
+			if tt.expectOutputConfig {
+				assert.NotNil(t, params.OutputConfig.Format.Schema, "OutputConfig.Format.Schema should be set")
+			} else {
+				assert.Nil(t, params.OutputConfig.Format.Schema, "OutputConfig.Format.Schema should not be set")
+			}
+
+			if tt.expectThinking {
+				assert.NotNil(t, params.Thinking.OfEnabled, "Thinking should be enabled")
+			} else {
+				assert.Nil(t, params.Thinking.OfEnabled, "Thinking should not be enabled")
+			}
+		})
+	}
+}
 
 // Helper function to create a test message from JSON
 func createMessageFromJSON(t *testing.T, jsonStr string) anthropicSDK.Message {

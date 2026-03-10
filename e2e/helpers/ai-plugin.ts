@@ -8,9 +8,6 @@ export class AIPlugin {
   readonly regenerateButton: Locator;
   readonly chatHistoryButton: Locator;
   readonly threadsListContainer: Locator;
-  readonly promptTemplates: {
-    [key: string]: Locator;
-  };
 
   constructor(page: Page) {
     this.page = page;
@@ -20,11 +17,6 @@ export class AIPlugin {
     this.regenerateButton = page.getByRole('button', { name: 'Regenerate' });
     this.chatHistoryButton = page.getByTestId('chat-history');
     this.threadsListContainer = page.getByTestId('rhs-threads-list');
-    this.promptTemplates = {
-      'brainstorm': page.getByRole('button', { name: 'Brainstorm ideas' }),
-      'todo': page.getByRole('button', { name: 'To-do list' }),
-      'proscons': page.getByRole('button', { name: 'Pros and Cons' }),
-    };
   }
 
   async openRHS() {
@@ -78,10 +70,6 @@ export class AIPlugin {
     await this.rhsSendButton.click();
   }
 
-  async usePromptTemplate(templateName: keyof typeof this.promptTemplates) {
-    await this.promptTemplates[templateName].click();
-  }
-
   async regenerateResponse() {
     await this.regenerateButton.click();
   }
@@ -107,10 +95,6 @@ export class AIPlugin {
     // 3. Ensure Send button is visible (it may be disabled if textarea is empty, but it should be present)
     // The button being present means the UI has switched back from "generating" mode
     await expect(this.rhsSendButton).toBeVisible({ timeout: 30000 });
-  }
-
-  async expectTextInTextarea(text: string) {
-    await expect(this.rhsPostTextarea).toHaveText(text);
   }
 
   async openChatHistory() {
