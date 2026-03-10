@@ -71,8 +71,8 @@ type ToolPolicyChecker interface {
 
 // AutoExecuteCallback is called when all tool calls in a batch are auto-approvable.
 // It triggers tool execution without user approval.
-// Parameters: postID, requesterID
-type AutoExecuteCallback func(postID string, requesterID string)
+// Parameters: postID, requesterID, approvedToolIDs (the exact IDs approved in this batch)
+type AutoExecuteCallback func(postID string, requesterID string, approvedToolIDs []string)
 
 // ToolPolicyFunc is a function adapter that implements ToolPolicyChecker.
 type ToolPolicyFunc func(serverBaseURL string, toolName string) (string, bool)
@@ -330,20 +330,6 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 	delete(p.contexts, postID)
 }
 
-// hasAutoApprovedToolCalls checks if any tool call in the batch was pre-executed
-// by the MCP approved servers wrapper.
-// The wrapper sets ToolCallStatusAutoApproved on success and ToolCallStatusError on
-// execution failure. Either status means the batch was already executed and should
-// not be reset/re-executed by the streaming layer.
-func hasAutoApprovedToolCalls(toolCalls []llm.ToolCall) bool {
-	for _, tc := range toolCalls {
-		if tc.Status == llm.ToolCallStatusAutoApproved || tc.Status == llm.ToolCallStatusError {
-			return true
-		}
-	}
-	return false
-}
-
 // handleAutoApprovedToolCalls handles tool calls that were pre-executed by the
 // MCP auto-approval wrapper. It skips the call-approval UI and sets up the
 // result-sharing stage directly, since the tools have already been executed.
@@ -418,6 +404,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 	messageBuilder.Grow(4096) // Pre-allocate for typical response size
 	var reasoningBuffer strings.Builder
 	var isDMWithBot bool
+	var checkedChannelType bool
 	var dmToolCalls []llm.ToolCall // accumulated tool calls for DM progress display
 
 	for {
@@ -521,7 +508,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 				if toolCalls, ok := event.Value.([]llm.ToolCall); ok {
 					// Check if these tool calls were auto-approved by the MCP auto-approval wrapper.
 					// Auto-approved tools have already been executed and have results populated.
-					preExecuted := hasAutoApprovedToolCalls(toolCalls)
+					preExecuted := llm.HasPreExecutedToolCalls(toolCalls)
 
 					// Preserve non-pending statuses emitted by wrappers (e.g., auto-run
 					// success/error) so UI state can transition from spinner to final state.
@@ -532,13 +519,14 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					}
 
 					// Determine channel type once
-					if !isDMWithBot {
+					if !checkedChannelType {
 						channel, chErr := p.mmClient.GetChannel(post.ChannelId)
 						if chErr != nil {
 							p.mmClient.LogError("Failed to get channel for tool call handling", "error", chErr, "post_id", post.Id, "channel_id", post.ChannelId)
 							return
 						}
 						isDMWithBot = mmapi.IsDMWith(post.UserId, channel)
+						checkedChannelType = true
 					}
 
 					if preExecuted && !isDMWithBot {
@@ -626,7 +614,11 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 						}, broadcast)
 
 						if autoApproved && p.autoExecuteCallback != nil {
-							go p.autoExecuteCallback(post.Id, requesterID)
+							approvedIDs := make([]string, len(toolCalls))
+							for idx := range toolCalls {
+								approvedIDs[idx] = toolCalls[idx].ID
+							}
+							go p.autoExecuteCallback(post.Id, requesterID, approvedIDs)
 						}
 						return
 					}

@@ -54,29 +54,25 @@ for (const provider of providers) {
             const botName = provider.bot.name;
             await mmPage.mentionBot(botName, 'What channels exist in this team? Please look them up.');
 
-            // Wait for reply to appear in thread
-            await page.waitForTimeout(15000);
-
-            // Check for reply indicator
+            // Wait for the bot to reply in the thread
             const replyIndicator = page.getByText(/\d+ repl/);
-            const hasReply = await replyIndicator.isVisible().catch(() => false);
+            await expect(replyIndicator).toBeVisible({ timeout: 90000 });
 
-            if (hasReply) {
-                // Click to open thread
-                await replyIndicator.click();
-                await page.waitForTimeout(3000);
+            // Open the reply thread
+            await replyIndicator.click();
+            await page.waitForTimeout(2000);
 
-                // In channel mode with auto_run:
-                // - Call approval is skipped (auto-approved)
-                // - Result sharing may require approval (Share/Keep private buttons)
-                const shareButton = page.getByRole('button', { name: /share/i });
-                const isShareVisible = await shareButton.isVisible().catch(() => false);
+            // In channel mode with auto_run:
+            // - Call approval is skipped (auto-approved)
+            // - Result sharing may require approval (Share/Keep private buttons)
+            const shareButton = page.getByRole('button', { name: /share/i });
+            const isShareVisible = await shareButton.isVisible().catch(() => false);
 
-                if (isShareVisible) {
-                    // Click Share to approve result sharing
-                    await shareButton.click();
-                    await page.waitForTimeout(5000);
-                }
+            if (isShareVisible) {
+                await shareButton.click();
+                await page.waitForTimeout(5000);
+            } else {
+                test.info().annotations.push({ type: 'note', description: 'Share button not visible; two-stage channel approval was not exercised' });
             }
 
             await context.close();

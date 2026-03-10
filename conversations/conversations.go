@@ -245,26 +245,44 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
 	}
 
-	// Check for auth errors in the tool store
+	// Apply user-disabled-provider filtering for DM/group channels only (Copilot RHS).
+	// In-channel @mentions use the agent's EnabledTools and do not apply user toggles.
+	// This must happen before auth-error notifications so users don't receive OAuth
+	// prompts for providers they have explicitly disabled.
+	var disabledOrigins map[string]bool
+	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
+		if err != nil {
+			c.mmClient.LogWarn("Failed to load user tool preferences, proceeding without filtering", "error", err.Error(), "userID", postingUser.Id)
+		} else if len(prefs.DisabledServers) > 0 {
+			disabledOrigins = make(map[string]bool, len(prefs.DisabledServers))
+			for _, origin := range prefs.DisabledServers {
+				disabledOrigins[origin] = true
+			}
+			if llmContext.Tools != nil {
+				llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
+			}
+		}
+	}
+
+	// Check for auth errors in the tool store, excluding disabled providers.
 	if llmContext.Tools != nil {
 		authErrors := llmContext.Tools.GetAuthErrors()
+		if len(disabledOrigins) > 0 {
+			filtered := authErrors[:0]
+			for _, ae := range authErrors {
+				if !disabledOrigins[ae.ServerOrigin] {
+					filtered = append(filtered, ae)
+				}
+			}
+			authErrors = filtered
+		}
 		if len(authErrors) > 0 {
 			rootID := post.RootId
 			if rootID == "" {
 				rootID = post.Id
 			}
 			c.sendOAuthNotifications(bot, postingUser.Id, channel.Id, rootID, authErrors)
-		}
-	}
-
-	// Apply user-disabled-provider filtering for DM/group channels only (Copilot RHS).
-	// In-channel @mentions use the agent's EnabledTools and do not apply user toggles.
-	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
-		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
-		if err != nil {
-			c.mmClient.LogWarn("Failed to load user tool preferences, proceeding without filtering", "error", err.Error(), "userID", postingUser.Id)
-		} else if len(prefs.DisabledServers) > 0 && llmContext.Tools != nil {
-			llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
 		}
 	}
 

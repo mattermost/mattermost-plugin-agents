@@ -109,7 +109,7 @@ const defaultConfig = {
     mcp: {
         enabled: false,
         servers: [],
-        idleTimeout: 30,
+        idleTimeoutMinutes: 30,
     },
     webSearch: {
         enabled: false,

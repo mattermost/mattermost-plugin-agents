@@ -266,7 +266,7 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 
 			service := NewMMPostStreamService(client, i18n.Init())
 			service.SetToolPolicyChecker(tc.policyChecker)
-			service.SetAutoExecuteCallback(func(pID string, rID string) {
+			service.SetAutoExecuteCallback(func(pID string, rID string, _ []string) {
 				callbackMu.Lock()
 				defer callbackMu.Unlock()
 				callbackInvoked = true
@@ -348,10 +348,10 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 }
 
 func TestHasAutoApprovedToolCallsTreatsErrorAsPreExecuted(t *testing.T) {
-	require.False(t, hasAutoApprovedToolCalls(nil))
-	require.False(t, hasAutoApprovedToolCalls([]llm.ToolCall{{Status: llm.ToolCallStatusPending}}))
-	require.True(t, hasAutoApprovedToolCalls([]llm.ToolCall{{Status: llm.ToolCallStatusAutoApproved}}))
-	require.True(t, hasAutoApprovedToolCalls([]llm.ToolCall{{Status: llm.ToolCallStatusError}}))
+	require.False(t, llm.HasPreExecutedToolCalls(nil))
+	require.False(t, llm.HasPreExecutedToolCalls([]llm.ToolCall{{Status: llm.ToolCallStatusPending}}))
+	require.True(t, llm.HasPreExecutedToolCalls([]llm.ToolCall{{Status: llm.ToolCallStatusAutoApproved}}))
+	require.True(t, llm.HasPreExecutedToolCalls([]llm.ToolCall{{Status: llm.ToolCallStatusError}}))
 }
 
 func TestStreamToPostDMPreservesAutoApprovedStatus(t *testing.T) {

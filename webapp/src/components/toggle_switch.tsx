@@ -77,9 +77,10 @@ type ToggleSwitchProps = {
     onChange: (checked: boolean) => void;
     disabled?: boolean;
     size?: ToggleSwitchSize;
+    ariaLabel?: string;
 };
 
-export const ToggleSwitch = ({checked, onChange, disabled, size = 'medium'}: ToggleSwitchProps) => (
+export const ToggleSwitch = ({checked, onChange, disabled, size = 'medium', ariaLabel}: ToggleSwitchProps) => (
     <ToggleSwitchContainer $size={size}>
         <ToggleSwitchInput
             $size={size}
@@ -87,6 +88,7 @@ export const ToggleSwitch = ({checked, onChange, disabled, size = 'medium'}: Tog
             checked={checked}
             onChange={(e) => onChange(e.target.checked)}
             disabled={disabled}
+            aria-label={ariaLabel}
         />
         <ToggleSwitchSlider $size={size}/>
     </ToggleSwitchContainer>

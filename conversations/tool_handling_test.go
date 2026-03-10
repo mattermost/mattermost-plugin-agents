@@ -682,8 +682,8 @@ func TestAutoExecuteApprovedToolCalls(t *testing.T) {
 		toolCallingConfig := &testToolCallingConfig{enableChannelMentionToolCalling: true}
 		conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
 
-		// Call AutoExecuteApprovedToolCalls
-		conversationService.AutoExecuteApprovedToolCalls(postID, requesterID)
+		// Call AutoExecuteApprovedToolCalls with pre-approved tool IDs
+		conversationService.AutoExecuteApprovedToolCalls(postID, requesterID, []string{"tool-1"})
 
 		// Verify results stored in KV
 		resultKVKey := streaming.ToolResultPrivateKVKey(postID, requesterID)
@@ -781,7 +781,7 @@ func TestAutoExecuteApprovedToolCalls(t *testing.T) {
 		toolCallingConfig := &testToolCallingConfig{enableChannelMentionToolCalling: true}
 		conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
 
-		conversationService.AutoExecuteApprovedToolCalls(postID, requesterID)
+		conversationService.AutoExecuteApprovedToolCalls(postID, requesterID, []string{"tool-1"})
 
 		// Tool had an error, but results should still be stored
 		resultKVKey := streaming.ToolResultPrivateKVKey(postID, requesterID)
@@ -815,7 +815,7 @@ func TestAutoExecuteApprovedToolCalls(t *testing.T) {
 		conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
 
 		// Should not panic, just log error
-		conversationService.AutoExecuteApprovedToolCalls("nonexistent-post", requesterID)
+		conversationService.AutoExecuteApprovedToolCalls("nonexistent-post", requesterID, []string{"tool-1"})
 
 		// No posts updated since post was not found
 		require.Empty(t, fakeClient.updatedPosts)
@@ -858,7 +858,7 @@ func TestAutoExecuteApprovedToolCalls(t *testing.T) {
 		conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
 
 		// Should not panic, just log error
-		conversationService.AutoExecuteApprovedToolCalls(postID, requesterID)
+		conversationService.AutoExecuteApprovedToolCalls(postID, requesterID, []string{"tool-1"})
 
 		// No posts updated since KV data was missing
 		require.Empty(t, fakeClient.updatedPosts)

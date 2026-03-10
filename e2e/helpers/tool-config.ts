@@ -76,21 +76,23 @@ export class ToolConfigUIHelper {
 
     /** Get the tool count text for a server (e.g. "8/8 tools enabled") */
     getServerToolCount(serverName: string): Locator {
-        return this.page.getByText(/\d+\/\d+ tools? enabled/);
+        return this.page.locator('div')
+            .filter({ hasText: new RegExp(serverName) })
+            .getByText(/\d+\/\d+ tools? enabled/)
+            .first();
     }
 
     /** Get all tool name elements visible in the expanded tools list */
     getToolNames(): Locator {
-        // Tool names use monospace font in ToolName styled component
-        // They appear inside the expanded tools container
-        return this.page.locator('div').filter({ has: this.page.locator('select') }).locator('div').filter({ hasText: /^[a-z_]+$/ });
+        return this.page.locator('div').filter({ has: this.page.locator('select') }).locator('div').filter({ hasText: /^[A-Za-z_][A-Za-z0-9_]*$/ });
     }
 
     /** Get the policy dropdown (select element) for a specific tool */
     getToolPolicyDropdown(toolName: string): Locator {
-        // Each tool row contains the tool name and a select dropdown
-        // Find the row containing the tool name, then find the select within it
-        const toolRow = this.page.locator('div').filter({ hasText: toolName }).filter({ has: this.page.locator('select') });
+        const toolRow = this.page.locator('div')
+            .filter({ has: this.page.getByText(toolName, { exact: true }) })
+            .filter({ has: this.page.locator('select') })
+            .last();
         return toolRow.locator('select').first();
     }
 
@@ -108,9 +110,10 @@ export class ToolConfigUIHelper {
 
     /** Get the enable/disable toggle (checkbox input) for a tool */
     getToolToggle(toolName: string): Locator {
-        // The ToggleSwitch renders an input[type="checkbox"]
-        // Find the row containing the tool name, then the checkbox
-        const toolRow = this.page.locator('div').filter({ hasText: toolName }).filter({ has: this.page.locator('select') });
+        const toolRow = this.page.locator('div')
+            .filter({ has: this.page.getByText(toolName, { exact: true }) })
+            .filter({ has: this.page.locator('select') })
+            .last();
         return toolRow.locator('input[type="checkbox"]').first();
     }
 

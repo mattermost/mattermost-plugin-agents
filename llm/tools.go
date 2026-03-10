@@ -203,6 +203,19 @@ const (
 	ToolCallStatusAutoApproved
 )
 
+// HasPreExecutedToolCalls checks if any tool call in the batch was pre-executed
+// by the MCP auto-approval wrapper. The wrapper sets ToolCallStatusAutoApproved
+// on success and ToolCallStatusError on execution failure. Either status means
+// the batch was already executed and should not be reset/re-executed.
+func HasPreExecutedToolCalls(toolCalls []ToolCall) bool {
+	for _, tc := range toolCalls {
+		if tc.Status == ToolCallStatusAutoApproved || tc.Status == ToolCallStatusError {
+			return true
+		}
+	}
+	return false
+}
+
 // ToolCall represents a tool call. An empty result indicates that the tool has not yet been resolved.
 type ToolCall struct {
 	ID          string          `json:"id"`
@@ -285,9 +298,10 @@ type ToolArgumentGetter func(args any) error
 
 // ToolAuthError represents an authentication error that occurred during tool creation
 type ToolAuthError struct {
-	ServerName string `json:"server_name"`
-	AuthURL    string `json:"auth_url"`
-	Error      error  `json:"error"`
+	ServerName   string `json:"server_name"`
+	ServerOrigin string `json:"server_origin"`
+	AuthURL      string `json:"auth_url"`
+	Error        error  `json:"error"`
 }
 
 // AutoRunResult represents the result of executing an auto-run tool

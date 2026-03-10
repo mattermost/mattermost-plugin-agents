@@ -69,9 +69,10 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 			isOAuthError := errors.As(err, &oauthErr)
 			if isOAuthError {
 				mcpErrors.ToolAuthErrors = append(mcpErrors.ToolAuthErrors, llm.ToolAuthError{
-					ServerName: serverConfig.Name,
-					AuthURL:    oauthErr.AuthURL(),
-					Error:      err,
+					ServerName:   serverConfig.Name,
+					ServerOrigin: serverConfig.BaseURL,
+					AuthURL:      oauthErr.AuthURL(),
+					Error:        err,
 				})
 			} else {
 				c.log.Error("Failed to connect to MCP server", "userID", c.userID, "serverID", serverConfig.Name, "error", err)

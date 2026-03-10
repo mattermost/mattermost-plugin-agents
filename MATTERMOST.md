@@ -5,8 +5,8 @@
 
 ## Summary
 
-- Total regular tools: 12
-- READ-only tools: 8
+- Total regular tools: 13
+- READ-only tools: 9
 - WRITE/action tools: 4
 - Dev-mode-only tools: 4 (all WRITE)
 
@@ -22,6 +22,7 @@
 | `get_team_members` | READ | Fetches team member list. |
 | `search_posts` | READ | Searches posts. |
 | `search_users` | READ | Searches users. |
+| `get_user_channels` | READ | Fetches channels the user is a member of. |
 
 ## WRITE/Action Tools (Not Auto-Approved)
 

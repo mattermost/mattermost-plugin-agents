@@ -82,7 +82,11 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 		// Get tool config for this server
 		var sc *mcp.ServerConfig
 		if origin == mcp.EmbeddedClientKey {
-			sc = &mcp.ServerConfig{ToolConfigs: mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)}
+			toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
+			if len(toolConfigs) == 0 {
+				toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
+			}
+			sc = &mcp.ServerConfig{ToolConfigs: toolConfigs}
 		} else {
 			for i := range mcpCfg.Servers {
 				if mcpCfg.Servers[i].BaseURL == origin {

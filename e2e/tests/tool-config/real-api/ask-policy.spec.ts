@@ -52,28 +52,29 @@ for (const provider of providers) {
             // Open Copilot RHS
             await aiPlugin.openRHS();
 
-            // Send a message that might trigger a tool call
-            // The LLM may or may not invoke a tool - this depends on the model
+            // Send a message that should trigger a tool call requiring approval
             await aiPlugin.sendMessage('Can you create a new post in town-square saying "hello from bot"?');
 
-            // Wait for response with generous timeout
-            await page.waitForTimeout(15000);
+            // Wait for streaming to complete rather than using a fixed timeout
+            await page.waitForTimeout(2000);
+            const stopButton = page.getByRole('button', { name: /stop/i });
+            await expect(stopButton).not.toBeVisible({ timeout: 90000 });
 
-            // Verify the bot responded
+            // Verify the bot responded with some content in the RHS
             const rhsContainer = page.getByTestId('mattermost-ai-rhs');
             await expect(rhsContainer).toBeVisible();
 
-            // If a tool with "ask" policy was invoked, Accept/Reject buttons should appear
-            // Note: With real LLMs, tool invocation is non-deterministic
+            // Check for Accept/Reject buttons — these appear when an "ask" tool is invoked
             const acceptButton = page.getByRole('button', { name: /accept/i });
             const isAcceptVisible = await acceptButton.isVisible().catch(() => false);
 
             if (isAcceptVisible) {
-                // Click Accept to approve the tool call
                 await acceptButton.click();
-
-                // Wait for tool execution and LLM continuation
-                await page.waitForTimeout(10000);
+                // Wait for tool execution and continuation
+                await expect(stopButton).not.toBeVisible({ timeout: 60000 });
+            } else {
+                // LLM did not invoke a tool — annotate but don't fail since behavior is non-deterministic
+                test.info().annotations.push({ type: 'note', description: 'LLM did not invoke a tool; ask-policy approval flow was not exercised' });
             }
         });
     });

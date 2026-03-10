@@ -76,6 +76,26 @@ const VETTED_HOSTS: VettedHost[] = [
 ];
 
 /**
+ * Returns the vetted host pattern that matches the given URL, or null if no match.
+ * Used to detect when the vetted host identity changes between URL edits.
+ */
+export function getVettedHostIdentity(baseURL: string): string | null {
+    if (!baseURL) {
+        return null;
+    }
+
+    const lower = baseURL.toLowerCase();
+    for (const host of VETTED_HOSTS) {
+        for (const pattern of host.patterns) {
+            if (lower.includes(pattern.toLowerCase())) {
+                return pattern;
+            }
+        }
+    }
+    return null;
+}
+
+/**
  * Returns pre-seeded tool configs if the baseURL matches a known vetted host.
  * Returns null for non-vetted hosts.
  */

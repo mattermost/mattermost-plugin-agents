@@ -12,7 +12,7 @@ import {getMCPTools} from '../../client';
 import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
 
 import {BooleanItem, ItemList, TextItem} from './item';
-import {seedVettedToolConfigs} from './vetted_tool_configs';
+import {getVettedHostIdentity, seedVettedToolConfigs} from './vetted_tool_configs';
 
 export type MCPToolConfig = {
     name: string;
@@ -79,22 +79,25 @@ const MCPServer = ({
         tool_configs: serverConfig.tool_configs,
     };
 
-    // Update server URL
+    // Update server URL, only re-seeding tool configs when the vetted host identity changes
     const updateServerURL = (baseURL: string) => {
-        const updatedConfig: MCPServerConfig = {
-            ...config,
-            baseURL,
-        };
+        const oldIdentity = getVettedHostIdentity(config.baseURL);
+        const newIdentity = getVettedHostIdentity(baseURL);
 
-        // Seed vetted tool configs if URL matches a known host and no tool_configs yet
-        if (!config.tool_configs || config.tool_configs.length === 0) {
-            const seeded = seedVettedToolConfigs(baseURL);
-            if (seeded) {
-                updatedConfig.tool_configs = seeded;
+        let toolConfigs = config.tool_configs;
+        if (oldIdentity !== newIdentity) {
+            if (newIdentity) {
+                toolConfigs = seedVettedToolConfigs(baseURL) || toolConfigs;
+            } else {
+                toolConfigs = [];
             }
         }
 
-        onChange(serverIndex, updatedConfig);
+        onChange(serverIndex, {
+            ...config,
+            baseURL,
+            tool_configs: toolConfigs,
+        });
     };
 
     // Update server enabled state

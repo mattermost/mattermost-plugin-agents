@@ -52,26 +52,30 @@ for (const provider of providers) {
             // Open Copilot RHS
             await aiPlugin.openRHS();
 
-            // Send a message that should trigger an embedded tool
-            // read_post and get_channel_info are auto_run vetted tools
+            // Send a message that should trigger an embedded auto_run tool
+            // (e.g. get_channel_info is a vetted auto_run tool)
             await aiPlugin.sendMessage('What channels are available in this team?');
 
-            // Wait for response - the tool should auto-execute
-            // With auto_run policy, no Accept/Reject prompt should appear
-            await page.waitForTimeout(10000);
+            // Wait for streaming to complete
+            await page.waitForTimeout(2000);
+            const stopButton = page.getByRole('button', { name: /stop/i });
+            await expect(stopButton).not.toBeVisible({ timeout: 90000 });
 
-            // Verify the bot responded (wait generously for real API)
+            // Verify the bot responded with content in the RHS
             const rhsContainer = page.getByTestId('mattermost-ai-rhs');
             await expect(rhsContainer).toBeVisible();
 
-            // The response should contain channel information
-            // If auto_run worked, no approval prompt should be visible
+            // auto_run in DM means no approval prompt should appear
             const acceptButton = page.getByRole('button', { name: /accept/i });
             const isAcceptVisible = await acceptButton.isVisible().catch(() => false);
-
-            // For auto_run in DM, no approval should be needed
-            // Note: this may vary if the LLM does not invoke the tool
             expect(isAcceptVisible).toBe(false);
+
+            // Check for evidence that a tool actually auto-ran
+            const autoApprovedBadge = rhsContainer.getByText('Auto-approved');
+            const didAutoRun = await autoApprovedBadge.first().isVisible().catch(() => false);
+            if (!didAutoRun) {
+                test.info().annotations.push({ type: 'note', description: 'LLM did not invoke a tool; auto_run flow was not exercised' });
+            }
         });
     });
 }

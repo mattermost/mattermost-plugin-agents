@@ -485,9 +485,10 @@ func (c *Conversations) completeAndStreamToolResponse(
 }
 
 // AutoExecuteApprovedToolCalls is the callback invoked by the streaming layer
-// when all tool calls in a batch have been auto-approved. It retrieves the
-// tool calls from KV store and calls HandleToolCall with all tool IDs pre-accepted.
-func (c *Conversations) AutoExecuteApprovedToolCalls(postID string, requesterID string) {
+// when all tool calls in a batch have been auto-approved. The approved tool IDs
+// are passed directly from the batch that was checked, avoiding a KV re-read
+// that could race with a newer batch overwriting the same key.
+func (c *Conversations) AutoExecuteApprovedToolCalls(postID string, requesterID string, approvedToolIDs []string) {
 	post, err := c.mmClient.GetPost(postID)
 	if err != nil {
 		c.mmClient.LogError("Auto-execute: failed to get post", "error", err, "post_id", postID)
@@ -500,22 +501,7 @@ func (c *Conversations) AutoExecuteApprovedToolCalls(postID string, requesterID 
 		return
 	}
 
-	// Read tool calls from KV store to get the full (unredacted) tool call data
-	toolCallKVKey := streaming.ToolCallPrivateKVKey(postID, requesterID)
-	var toolCalls []llm.ToolCall
-	if kvErr := c.mmClient.KVGet(toolCallKVKey, &toolCalls); kvErr != nil {
-		c.mmClient.LogError("Auto-execute: failed to load tool calls from KV store", "error", kvErr, "post_id", postID)
-		return
-	}
-
-	// Collect all tool IDs for pre-acceptance
-	allToolIDs := make([]string, 0, len(toolCalls))
-	for _, tc := range toolCalls {
-		allToolIDs = append(allToolIDs, tc.ID)
-	}
-
-	// Call HandleToolCall with all tools pre-accepted
-	if err := c.HandleToolCall(requesterID, post, channel, allToolIDs); err != nil {
+	if err := c.HandleToolCall(requesterID, post, channel, approvedToolIDs); err != nil {
 		c.mmClient.LogError("Auto-execute: HandleToolCall failed", "error", err, "post_id", postID)
 	}
 }

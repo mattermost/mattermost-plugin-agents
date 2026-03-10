@@ -4,7 +4,7 @@
 import React, {useState} from 'react';
 import styled from 'styled-components';
 import {ChevronDownIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton} from '../assets/buttons';
 import {ToggleSwitch} from '../toggle_switch';
@@ -21,6 +21,7 @@ type MCPServerToolRowProps = {
 
 const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServerToolRowProps) => {
     const [expanded, setExpanded] = useState(false);
+    const intl = useIntl();
 
     const getToolConfig = (toolName: string): MCPToolConfig => {
         const existing = serverConfig?.tool_configs?.find((tc) => tc.name === toolName);
@@ -63,8 +64,12 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
 
     return (
         <ServerRowContainer>
-            <ServerRowHeader onClick={() => setExpanded(!expanded)}>
-                <ServerRowHeaderLeft>
+            <ServerRowHeader>
+                <ServerRowExpandButton
+                    type='button'
+                    onClick={() => setExpanded(!expanded)}
+                    aria-expanded={expanded}
+                >
                     <ServerAvatar>
                         {server.name.charAt(0).toUpperCase()}
                     </ServerAvatar>
@@ -92,23 +97,25 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                             )}
                         </ServerMeta>
                     </ServerInfo>
-                </ServerRowHeaderLeft>
-                <ServerRowHeaderRight>
-                    {serverConfig && (
-                        <span onClick={(e) => e.stopPropagation()}>
-                            <ToggleSwitch
-                                checked={serverEnabled}
-                                onChange={handleServerToggle}
-                                size='medium'
-                            />
-                        </span>
-                    )}
                     <ExpandChevron>
                         <StyledChevron $expanded={expanded}>
                             <ChevronDownIcon size={16}/>
                         </StyledChevron>
                     </ExpandChevron>
-                </ServerRowHeaderRight>
+                </ServerRowExpandButton>
+                {serverConfig && (
+                    <ToggleWrapper>
+                        <ToggleSwitch
+                            checked={serverEnabled}
+                            onChange={handleServerToggle}
+                            size='medium'
+                            ariaLabel={intl.formatMessage(
+                                {defaultMessage: 'Enable {serverName}'},
+                                {serverName: server.name},
+                            )}
+                        />
+                    </ToggleWrapper>
+                )}
             </ServerRowHeader>
 
             {expanded && (
@@ -175,28 +182,28 @@ const ServerRowContainer = styled.div`
 
 const ServerRowHeader = styled.div`
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
+    gap: 8px;
+    padding-right: 16px;
+`;
+
+const ServerRowExpandButton = styled.button`
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    padding: 12px 8px 12px 16px;
     cursor: pointer;
     gap: 8px;
+    border: none;
+    background: none;
+    text-align: left;
+    font: inherit;
+    color: inherit;
 
     &:hover {
         background-color: rgba(var(--center-channel-color-rgb), 0.04);
     }
-`;
-
-const ServerRowHeaderLeft = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex: 1;
-`;
-
-const ServerRowHeaderRight = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 8px;
 `;
 
 const ServerAvatar = styled.div`
@@ -216,6 +223,8 @@ const ServerAvatar = styled.div`
 const ServerInfo = styled.div`
     display: flex;
     flex-direction: column;
+    flex: 1;
+    min-width: 0;
     gap: 2px;
 `;
 
@@ -240,14 +249,19 @@ const ToolCount = styled.span`
     color: rgba(var(--center-channel-color-rgb), 0.75);
 `;
 
+const ToggleWrapper = styled.div`
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+`;
+
 const ExpandChevron = styled.div`
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
+    margin-left: auto;
     padding: 8px;
-    border-radius: 4px;
-    overflow: hidden;
+    flex-shrink: 0;
 `;
 
 const StyledChevron = styled.div<{$expanded: boolean}>`

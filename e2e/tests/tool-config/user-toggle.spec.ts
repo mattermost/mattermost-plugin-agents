@@ -49,12 +49,15 @@ test.describe('User Provider Toggle', () => {
             disabled_servers: ['test-server-to-disable'],
         });
 
+        // Verify the write response reflects what we sent
+        expect(updatedPrefs).toBeDefined();
+        expect(updatedPrefs.disabled_servers).toContain('test-server-to-disable');
+
         // Verify the preference was saved by reading it back
         const prefsAfter = await apiHelper.getUserPreferences(baseUrl, token);
-
-        // The response should reflect the updated preferences
-        // (exact shape depends on backend implementation)
         expect(prefsAfter).toBeDefined();
+        expect(prefsAfter.disabled_servers).toBeDefined();
+        expect(prefsAfter.disabled_servers).toContain('test-server-to-disable');
 
         // Clean up by restoring empty preferences
         await apiHelper.setUserPreferences(baseUrl, token, {
@@ -73,17 +76,32 @@ test.describe('User Provider Toggle', () => {
         const token = adminClient.getToken();
         const baseUrl = mattermost.url();
 
-        // Get the full tool list first
+        // Get the full tool list with all providers enabled
         const toolsBefore = await apiHelper.getUserMCPTools(baseUrl, token);
         expect(toolsBefore.servers).toBeDefined();
         const serverCountBefore = toolsBefore.servers?.length || 0;
+        expect(serverCountBefore).toBeGreaterThan(0);
 
-        // The tool list API should return servers with their tools
-        // This verifies the basic API contract works
-        if (serverCountBefore > 0) {
-            const firstServer = toolsBefore.servers[0];
-            expect(firstServer.name).toBeDefined();
-            expect(firstServer.tools).toBeDefined();
-        }
+        const firstServer = toolsBefore.servers[0];
+        expect(firstServer.name).toBeDefined();
+        expect(firstServer.tools).toBeDefined();
+
+        // Disable the first provider via user preferences
+        await apiHelper.setUserPreferences(baseUrl, token, {
+            disabled_servers: [firstServer.name],
+        });
+
+        // Verify the tool list no longer includes the disabled provider
+        const toolsAfter = await apiHelper.getUserMCPTools(baseUrl, token);
+        expect(toolsAfter.servers).toBeDefined();
+        const disabledServer = toolsAfter.servers?.find(
+            (s: any) => s.name === firstServer.name,
+        );
+        expect(disabledServer).toBeUndefined();
+
+        // Restore: re-enable all providers
+        await apiHelper.setUserPreferences(baseUrl, token, {
+            disabled_servers: [],
+        });
     });
 });

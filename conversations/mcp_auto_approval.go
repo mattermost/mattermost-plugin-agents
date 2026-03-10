@@ -88,16 +88,3 @@ func wrapStreamWithMCPAutoApproval(
 
 	return &llm.TextStreamResult{Stream: output}
 }
-
-// hasAutoApprovedToolCalls checks if any tool call in the batch was pre-executed
-// by the MCP auto-approval wrapper.
-// The wrapper sets ToolCallStatusAutoApproved on success and ToolCallStatusError on
-// execution failure. Either status means the batch was already executed.
-func hasAutoApprovedToolCalls(toolCalls []llm.ToolCall) bool {
-	for _, tc := range toolCalls {
-		if tc.Status == llm.ToolCallStatusAutoApproved || tc.Status == llm.ToolCallStatusError {
-			return true
-		}
-	}
-	return false
-}
