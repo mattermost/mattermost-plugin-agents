@@ -122,7 +122,7 @@ export class ToolConfigUIHelper {
         const toggle = this.getToolToggle(toolName);
         const isCurrentlyChecked = await toggle.isChecked();
         if (isCurrentlyChecked !== enabled) {
-            await toggle.click({ force: true });
+            await toggle.evaluate((el) => (el as HTMLInputElement).click());
         }
     }
 
@@ -206,10 +206,10 @@ export class ToolConfigAPIHelper {
         return mcpConfig.servers?.[serverIndex]?.tool_configs || [];
     }
 
-    /** Call the user-facing GET /api/mcp/tools endpoint */
+    /** Call the user-facing GET /mcp/tools endpoint */
     async getUserMCPTools(baseUrl: string, authToken: string): Promise<any> {
         const response = await fetch(
-            `${baseUrl}/plugins/mattermost-ai/api/mcp/tools`,
+            `${baseUrl}/plugins/mattermost-ai/mcp/tools`,
             {
                 headers: {
                     Authorization: `Bearer ${authToken}`,
@@ -219,10 +219,10 @@ export class ToolConfigAPIHelper {
         return response.json();
     }
 
-    /** Call GET /api/mcp/user-preferences */
+    /** Call GET /mcp/user-preferences */
     async getUserPreferences(baseUrl: string, authToken: string): Promise<any> {
         const response = await fetch(
-            `${baseUrl}/plugins/mattermost-ai/api/mcp/user-preferences`,
+            `${baseUrl}/plugins/mattermost-ai/mcp/user-preferences`,
             {
                 headers: {
                     Authorization: `Bearer ${authToken}`,
@@ -232,14 +232,14 @@ export class ToolConfigAPIHelper {
         return response.json();
     }
 
-    /** Call PUT /api/mcp/user-preferences */
+    /** Call PUT /mcp/user-preferences */
     async setUserPreferences(
         baseUrl: string,
         authToken: string,
         prefs: any,
     ): Promise<any> {
         const response = await fetch(
-            `${baseUrl}/plugins/mattermost-ai/api/mcp/user-preferences`,
+            `${baseUrl}/plugins/mattermost-ai/mcp/user-preferences`,
             {
                 method: 'PUT',
                 headers: {

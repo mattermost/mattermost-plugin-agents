@@ -65,7 +65,7 @@ test.describe('User Provider Toggle', () => {
         });
     });
 
-    test('should verify tool list changes when provider is disabled', async ({ page }) => {
+    test('should keep disabled provider visible in tool list so user can re-enable it', async ({ page }) => {
         test.setTimeout(60000);
 
         const mmPage = new MattermostPage(page);
@@ -79,8 +79,7 @@ test.describe('User Provider Toggle', () => {
         // Get the full tool list with all providers enabled
         const toolsBefore = await apiHelper.getUserMCPTools(baseUrl, token);
         expect(toolsBefore.servers).toBeDefined();
-        const serverCountBefore = toolsBefore.servers?.length || 0;
-        expect(serverCountBefore).toBeGreaterThan(0);
+        expect(toolsBefore.servers.length).toBeGreaterThan(0);
 
         const firstServer = toolsBefore.servers[0];
         expect(firstServer.name).toBeDefined();
@@ -91,13 +90,19 @@ test.describe('User Provider Toggle', () => {
             disabled_servers: [firstServer.name],
         });
 
-        // Verify the tool list no longer includes the disabled provider
+        // The tool list should still include the disabled server so the user
+        // can see it and re-enable it from the UI.
         const toolsAfter = await apiHelper.getUserMCPTools(baseUrl, token);
         expect(toolsAfter.servers).toBeDefined();
-        const disabledServer = toolsAfter.servers?.find(
+        expect(toolsAfter.servers.length).toBe(toolsBefore.servers.length);
+        const serverStillPresent = toolsAfter.servers.find(
             (s: any) => s.name === firstServer.name,
         );
-        expect(disabledServer).toBeUndefined();
+        expect(serverStillPresent).toBeDefined();
+
+        // Verify the preference itself was persisted correctly
+        const prefs = await apiHelper.getUserPreferences(baseUrl, token);
+        expect(prefs.disabled_servers).toContain(firstServer.name);
 
         // Restore: re-enable all providers
         await apiHelper.setUserPreferences(baseUrl, token, {
