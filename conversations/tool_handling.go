@@ -253,7 +253,16 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		post.AddProp(streaming.ToolCallRedactedProp, "true")
 		post.AddProp(streaming.PendingToolResultProp, "true")
 		// Persist web search context so HandleToolResult and subsequent messages can find it
-		c.persistWebSearchContext(post, llmContext.Parameters)
+		if params := llmContext.Parameters; len(params) > 0 {
+			if _, hasWebSearch := params[mmtools.WebSearchContextKey]; hasWebSearch {
+				webSearchJSON, marshalErr := json.Marshal(params)
+				if marshalErr != nil {
+					c.mmClient.LogError("Failed to marshal web search context", "error", marshalErr)
+				} else {
+					post.AddProp(streaming.WebSearchContextProp, string(webSearchJSON))
+				}
+			}
+		}
 		if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
 			return fmt.Errorf("failed to update post with tool call results: %w", updateErr)
 		}
@@ -272,7 +281,16 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	post.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
 
 	// Persist web search context if it exists (so it's available for subsequent tool calls)
-	c.persistWebSearchContext(post, llmContext.Parameters)
+	if webSearchParams := llmContext.Parameters; len(webSearchParams) > 0 {
+		if _, hasWebSearch := webSearchParams[mmtools.WebSearchContextKey]; hasWebSearch {
+			webSearchJSON, marshalErr := json.Marshal(webSearchParams)
+			if marshalErr != nil {
+				c.mmClient.LogError("Failed to marshal web search context", "error", marshalErr)
+			} else {
+				post.AddProp(streaming.WebSearchContextProp, string(webSearchJSON))
+			}
+		}
+	}
 
 	if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
 		return fmt.Errorf("failed to update post with tool call results: %w", updateErr)
@@ -401,7 +419,16 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	post.DelProp(streaming.ToolCallRedactedProp)
 	post.DelProp(streaming.PendingToolResultProp)
 	// Persist web search context so subsequent messages in the thread preserve citations
-	c.persistWebSearchContext(post, llmContext.Parameters)
+	if params := llmContext.Parameters; len(params) > 0 {
+		if _, hasWebSearch := params[mmtools.WebSearchContextKey]; hasWebSearch {
+			webSearchJSON, marshalErr := json.Marshal(params)
+			if marshalErr != nil {
+				c.mmClient.LogError("Failed to marshal web search context", "error", marshalErr)
+			} else {
+				post.AddProp(streaming.WebSearchContextProp, string(webSearchJSON))
+			}
+		}
+	}
 	if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
 		return fmt.Errorf("failed to update post after tool result approval: %w", updateErr)
 	}
@@ -504,22 +531,6 @@ func (c *Conversations) AutoExecuteApprovedToolCalls(postID string, requesterID 
 	if err := c.HandleToolCall(requesterID, post, channel, approvedToolIDs); err != nil {
 		c.mmClient.LogError("Auto-execute: HandleToolCall failed", "error", err, "post_id", postID)
 	}
-}
-
-// persistWebSearchContext marshals and stores web search context on a post prop.
-func (c *Conversations) persistWebSearchContext(post *model.Post, params map[string]interface{}) {
-	if len(params) == 0 {
-		return
-	}
-	if _, hasWebSearch := params[mmtools.WebSearchContextKey]; !hasWebSearch {
-		return
-	}
-	webSearchJSON, err := json.Marshal(params)
-	if err != nil {
-		c.mmClient.LogError("Failed to marshal web search context", "error", err)
-		return
-	}
-	post.AddProp(streaming.WebSearchContextProp, string(webSearchJSON))
 }
 
 // deleteToolCallKVEntries cleans up KV store entries, logging any deletion errors.

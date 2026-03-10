@@ -66,8 +66,7 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 
 			// Check if this is an OAuth authentication error
 			var oauthErr *OAuthNeededError
-			isOAuthError := errors.As(err, &oauthErr)
-			if isOAuthError {
+			if errors.As(err, &oauthErr) {
 				mcpErrors.ToolAuthErrors = append(mcpErrors.ToolAuthErrors, llm.ToolAuthError{
 					ServerName:   serverConfig.Name,
 					ServerOrigin: serverConfig.BaseURL,
