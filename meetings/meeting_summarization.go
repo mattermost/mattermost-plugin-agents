@@ -195,7 +195,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			bot,
 			requestingUser,
 			channel,
-			s.contextBuilder.WithLLMContextDefaultTools(bot),
+			s.contextBuilder.WithLLMContextNoTools(),
 		)
 		summaryStream, err := s.SummarizeTranscription(bot, text, requestContext)
 		if err != nil {
@@ -256,7 +256,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			bot,
 			requestingUser,
 			channel,
-			s.contextBuilder.WithLLMContextDefaultTools(bot),
+			s.contextBuilder.WithLLMContextNoTools(),
 		)
 		summaryStream, err := s.SummarizeTranscription(bot, transcription, llmContext)
 		if err != nil {
