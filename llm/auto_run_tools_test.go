@@ -96,7 +96,7 @@ func TestAutoRunToolsWrapper(t *testing.T) {
 		},
 		{
 			name:         "no context delegates directly",
-			autoRunTools: []string{"test_tool"},
+			autoRunTools: []string{ToolAutoRunKey("", "test_tool")},
 			context:      nil,
 			responses: []testResponse{
 				{events: []TextStreamEvent{
@@ -110,7 +110,7 @@ func TestAutoRunToolsWrapper(t *testing.T) {
 		},
 		{
 			name:         "no tools in context delegates directly",
-			autoRunTools: []string{"test_tool"},
+			autoRunTools: []string{ToolAutoRunKey("", "test_tool")},
 			context:      &Context{},
 			responses: []testResponse{
 				{events: []TextStreamEvent{
@@ -124,7 +124,7 @@ func TestAutoRunToolsWrapper(t *testing.T) {
 		},
 		{
 			name:         "auto-run executes tools and re-invokes LLM",
-			autoRunTools: []string{"test_tool"},
+			autoRunTools: []string{ToolAutoRunKey("", "test_tool")},
 			context:      &Context{Tools: newTestToolStore("test_tool", "tool_result")},
 			responses: []testResponse{
 				{events: []TextStreamEvent{
@@ -145,7 +145,7 @@ func TestAutoRunToolsWrapper(t *testing.T) {
 		},
 		{
 			name:         "non-auto-run tools forwarded to output",
-			autoRunTools: []string{"other_tool"},
+			autoRunTools: []string{ToolAutoRunKey("", "other_tool")},
 			context:      &Context{Tools: newTestToolStore("test_tool", "result")},
 			responses: []testResponse{
 				{events: []TextStreamEvent{
@@ -162,7 +162,7 @@ func TestAutoRunToolsWrapper(t *testing.T) {
 		},
 		{
 			name:         "events forwarded during iterations",
-			autoRunTools: []string{"test_tool"},
+			autoRunTools: []string{ToolAutoRunKey("", "test_tool")},
 			context:      &Context{Tools: newTestToolStore("test_tool", "result")},
 			responses: []testResponse{
 				{events: []TextStreamEvent{
@@ -246,7 +246,7 @@ func TestAutoRunToolsWrapper_MaxDepthStopsLoop(t *testing.T) {
 		Context: &Context{Tools: newTestToolStore("test_tool", "result")},
 	}
 
-	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{"test_tool"}))
+	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{ToolAutoRunKey("", "test_tool")}))
 	require.NoError(t, err)
 
 	var textCount int
@@ -284,7 +284,7 @@ func TestAutoRunToolsWrapper_ChatCompletionNoStream(t *testing.T) {
 		Context: &Context{Tools: newTestToolStore("test_tool", "result")},
 	}
 
-	text, err := wrapper.ChatCompletionNoStream(request, WithAutoRunTools([]string{"test_tool"}))
+	text, err := wrapper.ChatCompletionNoStream(request, WithAutoRunTools([]string{ToolAutoRunKey("", "test_tool")}))
 	require.NoError(t, err)
 	assert.Equal(t, "thinking...done", text)
 	assert.Equal(t, 2, inner.callCount)
@@ -331,7 +331,7 @@ func TestAutoRunToolsWrapper_ToolResultsInPost(t *testing.T) {
 		Context: &Context{Tools: newTestToolStore("test_tool", "tool output")},
 	}
 
-	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{"test_tool"}))
+	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{ToolAutoRunKey("", "test_tool")}))
 	require.NoError(t, err)
 
 	// Consume stream
@@ -416,7 +416,7 @@ func TestAutoRunToolsPreservesServerOrigin(t *testing.T) {
 		Context: &Context{Tools: store},
 	}
 
-	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{"mcp_tool"}))
+	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{ToolAutoRunKey(serverOrigin, "mcp_tool")}))
 	require.NoError(t, err)
 
 	// Consume stream

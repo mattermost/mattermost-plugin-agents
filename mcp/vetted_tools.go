@@ -206,4 +206,5 @@ var mattermostVettedToolConfigs = autoRunToolConfigs([]string{
 	"get_team_members",
 	"search_posts",
 	"search_users",
+	"get_user_channels",
 })

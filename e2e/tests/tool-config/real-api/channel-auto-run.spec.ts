@@ -60,20 +60,32 @@ for (const provider of providers) {
 
             // Open the reply thread
             await replyIndicator.click();
-            await page.waitForTimeout(2000);
 
-            // In channel mode with auto_run:
-            // - Call approval is skipped (auto-approved)
-            // - Result sharing may require approval (Share/Keep private buttons)
+            // Wait for the bot to finish streaming its reply in the thread.
+            // Poll for the Share button with a generous timeout to account for
+            // tool invocation + LLM streaming latency.
             const shareButton = page.getByRole('button', { name: /share/i });
-            const isShareVisible = await shareButton.isVisible().catch(() => false);
+            const keepPrivateButton = page.getByRole('button', { name: /keep private/i });
 
-            if (isShareVisible) {
-                await shareButton.click();
-                await page.waitForTimeout(5000);
-            } else {
-                test.info().annotations.push({ type: 'note', description: 'Share button not visible; two-stage channel approval was not exercised' });
+            let isShareVisible = false;
+            try {
+                await expect(shareButton.or(keepPrivateButton)).toBeVisible({ timeout: 120000 });
+                isShareVisible = true;
+            } catch {
+                isShareVisible = false;
             }
+
+            // If the LLM didn't invoke a tool, skip so the result clearly
+            // signals the two-stage channel flow was not exercised (avoids a
+            // false-green pass).
+            if (!isShareVisible) {
+                test.skip(true, 'LLM did not invoke a tool; two-stage channel approval flow was not exercised');
+            }
+
+            // The share/keep-private prompt appeared — the two-stage flow is active.
+            await expect(shareButton).toBeVisible();
+            await shareButton.click();
+            await page.waitForTimeout(5000);
 
             await context.close();
         });

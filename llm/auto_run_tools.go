@@ -62,6 +62,7 @@ func (w *AutoRunToolsWrapper) runToolLoop(request CompletionRequest, opts []Lang
 			switch event.Type {
 			case EventTypeToolCalls:
 				if tc, ok := event.Value.([]ToolCall); ok {
+					enrichToolCallOrigins(tc, request.Context)
 					toolCalls = append(toolCalls, tc...)
 					receivedToolCalls = true
 				}
@@ -145,4 +146,18 @@ func (w *AutoRunToolsWrapper) CountTokens(text string) int {
 // InputTokenLimit delegates to the inner model.
 func (w *AutoRunToolsWrapper) InputTokenLimit() int {
 	return w.inner.InputTokenLimit()
+}
+
+// enrichToolCallOrigins populates ServerOrigin on tool calls from the ToolStore
+// so that composite-key auto-run checks can distinguish identically-named tools
+// from different servers.
+func enrichToolCallOrigins(toolCalls []ToolCall, ctx *Context) {
+	if ctx == nil || ctx.Tools == nil {
+		return
+	}
+	for i := range toolCalls {
+		if toolCalls[i].ServerOrigin == "" {
+			toolCalls[i].ServerOrigin = ctx.Tools.GetServerOrigin(toolCalls[i].Name)
+		}
+	}
 }

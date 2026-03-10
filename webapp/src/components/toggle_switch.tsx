@@ -39,6 +39,11 @@ const ToggleSwitchInput = styled.input<{$size: ToggleSwitchSize}>`
     width: 0;
     height: 0;
 
+    &:focus-visible + span {
+        outline: 2px solid var(--button-bg);
+        outline-offset: 2px;
+    }
+
     &:checked + span {
         background-color: var(--button-bg);
     }

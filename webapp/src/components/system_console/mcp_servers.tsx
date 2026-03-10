@@ -267,8 +267,9 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         if (mcpConfig?.enabled) {
             getMCPTools().then((response) => {
                 setPreloadedToolsData(response);
-            }).catch(() => {
-                // Silently fail - tools will load when tab is clicked
+            }).catch((error) => {
+                // eslint-disable-next-line no-console
+                console.error('Failed to preload MCP tools:', error);
             });
         }
     }, [mcpConfig?.enabled]);

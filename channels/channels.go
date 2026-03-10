@@ -110,7 +110,10 @@ func (c *Channels) AnalyzeChannel(
 
 	// Auto-run the bound tools
 	resultStream, err := c.llm.ChatCompletion(completionRequest,
-		llm.WithAutoRunTools([]string{"read_channel", "get_channel_info"}),
+		llm.WithAutoRunTools([]string{
+			llm.ToolAutoRunKey(boundReadChannel.ServerOrigin, "read_channel"),
+			llm.ToolAutoRunKey(boundGetChannelInfo.ServerOrigin, "get_channel_info"),
+		}),
 		llm.WithReasoningDisabled())
 	if err != nil {
 		return nil, err

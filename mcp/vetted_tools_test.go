@@ -102,9 +102,9 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			wantCount: 8,
 		},
 		{
-			name:      "Mattermost seeds 8 read tools",
+			name:      "Mattermost seeds 9 read tools",
 			baseURL:   EmbeddedClientKey,
-			wantCount: 8,
+			wantCount: 9,
 		},
 		{
 			name:    "unknown host returns nil",

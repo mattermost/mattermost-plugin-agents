@@ -312,20 +312,28 @@ type AutoRunResult struct {
 	IsError    bool
 }
 
+// ToolAutoRunKey builds a composite key for auto-run tool identification
+// that includes the server origin, preventing cross-server name collisions.
+func ToolAutoRunKey(serverOrigin, toolName string) string {
+	return serverOrigin + "\x00" + toolName
+}
+
 // ShouldAutoRunTools checks if all pending tool calls are configured for auto-run.
 // Returns true only if AutoRunTools is configured and ALL tool calls are in the auto-run list.
+// Auto-run entries and tool calls are matched by composite key (ServerOrigin + Name)
+// so that identically-named tools from different servers are distinguished.
 func ShouldAutoRunTools(pendingToolCalls []ToolCall, autoRunTools []string) bool {
 	if len(autoRunTools) == 0 || len(pendingToolCalls) == 0 {
 		return false
 	}
 
 	autoRunSet := make(map[string]bool, len(autoRunTools))
-	for _, name := range autoRunTools {
-		autoRunSet[name] = true
+	for _, key := range autoRunTools {
+		autoRunSet[key] = true
 	}
 
 	for _, tc := range pendingToolCalls {
-		if !autoRunSet[tc.Name] {
+		if !autoRunSet[ToolAutoRunKey(tc.ServerOrigin, tc.Name)] {
 			return false
 		}
 	}

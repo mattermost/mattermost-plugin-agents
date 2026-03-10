@@ -168,7 +168,7 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		for _, t := range allTools {
 			policy, enabled := c.toolPolicyChecker.GetToolPolicy(t.ServerOrigin, t.Name)
 			if policy == mcp.ToolPolicyAutoRun && enabled {
-				autoRunNames = append(autoRunNames, t.Name)
+				autoRunNames = append(autoRunNames, llm.ToolAutoRunKey(t.ServerOrigin, t.Name))
 			}
 		}
 		if len(autoRunNames) > 0 {
