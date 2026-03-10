@@ -873,7 +873,7 @@ func TestSanitizeProviderError(t *testing.T) {
 			{
 				name:         "incorrect api key message",
 				input:        `{"error":{"message":"Incorrect API key provided: this-is-my-disclosed-api-key. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","code":"invalid_api_key"}}`,
-				wantContains: `Incorrect API key provided: [REDACTED]. You can find your API key`,
+				wantContains: `Incorrect API key provided. You can find your API key`,
 				wantNotContains: []string{
 					"this-is-my-disclosed-api-key",
 				},
@@ -881,7 +881,7 @@ func TestSanitizeProviderError(t *testing.T) {
 			{
 				name:         "progressively masked key",
 				input:        `{"error":{"message":"Incorrect API key provided: this-is-****************-key. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","code":"invalid_api_key"}}`,
-				wantContains: `Incorrect API key provided: [REDACTED]. You can find your API key`,
+				wantContains: `Incorrect API key provided. You can find your API key`,
 				wantNotContains: []string{
 					"this-is-****************-key",
 				},
@@ -944,6 +944,20 @@ func TestSanitizeProviderError(t *testing.T) {
 		assert.Equal(t, "provider error: [REDACTED]", sanitizedErr.Error())
 	})
 
+	t.Run("does not corrupt unrelated words for one character keys", func(t *testing.T) {
+		oai := OpenAI{
+			config: Config{
+				APIKey: "t",
+			},
+		}
+
+		sanitizedErr := oai.sanitizeProviderError(errors.New(`Unauthorized: Incorrect API key provided: t. You can find your API key at https://platform.openai.com/account/api-keys.`))
+		require.NotNil(t, sanitizedErr)
+		assert.Equal(t, "Unauthorized: Incorrect API key provided. You can find your API key at https://platform.openai.com/account/api-keys.", sanitizedErr.Error())
+		assert.NotContains(t, sanitizedErr.Error(), "Unau[REDACTED]horized")
+		assert.NotContains(t, sanitizedErr.Error(), "Incorrect API key provided: t")
+	})
+
 	t.Run("preserves wrapped provider error chain", func(t *testing.T) {
 		oai := OpenAI{
 			config: Config{
@@ -982,7 +996,7 @@ func TestHandleResponseErrorSanitizesMessage(t *testing.T) {
 
 	err, ok := event.Value.(error)
 	require.True(t, ok)
-	assert.Contains(t, err.Error(), "Incorrect API key provided: [REDACTED].")
+	assert.Contains(t, err.Error(), "Incorrect API key provided.")
 	assert.NotContains(t, err.Error(), "this-is-my-disclosed-api-key")
 }
 
@@ -1006,7 +1020,7 @@ func TestFetchModelsSanitizesProviderErrors(t *testing.T) {
 
 	require.Nil(t, models)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Incorrect API key provided: [REDACTED]. You can find your API key")
+	assert.Contains(t, err.Error(), "Incorrect API key provided. You can find your API key")
 	assert.NotContains(t, err.Error(), "this-is-****************-key")
 }
 
@@ -1079,7 +1093,7 @@ func TestNonStreamingHelpersSanitizeProviderErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.call(t, newOpenAI())
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "Incorrect API key provided: [REDACTED]. You can find your API key")
+			assert.Contains(t, err.Error(), "Incorrect API key provided. You can find your API key")
 			assert.NotContains(t, err.Error(), apiKey)
 			assert.NotContains(t, err.Error(), maskedKey)
 		})

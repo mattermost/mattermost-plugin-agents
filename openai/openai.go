@@ -65,7 +65,7 @@ const redactedSecret = "[REDACTED]"
 var (
 	openAIAuthHeaderPattern   = regexp.MustCompile(`(?i)(Authorization:\s*Bearer\s+)(\S+)`)
 	openAIJSONAPIKeyPattern   = regexp.MustCompile(`(?i)("api(?:_|)key"\s*:\s*")([^"]+)(")`)
-	openAIIncorrectKeyPattern = regexp.MustCompile(`(?i)(Incorrect API key provided:\s*)([^"\r\n]+?)(\.?\s+You can find your API key|["\r\n]|$)`)
+	openAIIncorrectKeyPattern = regexp.MustCompile(`(?i)(Incorrect API key provided)(?::\s*[^"\r\n]+?)?(\.?\s+You can find your API key|["\r\n]|$)`)
 	openAIKeyPattern          = regexp.MustCompile(`\bsk(?:-proj)?-[A-Za-z0-9_-]{10,}\b`)
 	anthropicKeyPattern       = regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}\b`)
 )
@@ -91,7 +91,7 @@ func (s *OpenAI) sanitizeProviderError(err error) error {
 	sanitized := sanitizeProviderErrorMessage(err.Error())
 	apiKey := strings.TrimSpace(s.config.APIKey)
 	if apiKey != "" {
-		sanitized = strings.ReplaceAll(sanitized, apiKey, redactedSecret)
+		sanitized = replaceConfiguredAPIKey(sanitized, apiKey)
 	}
 
 	if sanitized == err.Error() {
@@ -107,10 +107,15 @@ func (s *OpenAI) sanitizeProviderError(err error) error {
 func sanitizeProviderErrorMessage(message string) string {
 	sanitized := openAIAuthHeaderPattern.ReplaceAllString(message, `${1}`+redactedSecret)
 	sanitized = openAIJSONAPIKeyPattern.ReplaceAllString(sanitized, `${1}`+redactedSecret+`${3}`)
-	sanitized = openAIIncorrectKeyPattern.ReplaceAllString(sanitized, `${1}`+redactedSecret+`${3}`)
+	sanitized = openAIIncorrectKeyPattern.ReplaceAllString(sanitized, `${1}`+`${2}`)
 	sanitized = openAIKeyPattern.ReplaceAllString(sanitized, redactedSecret)
 	sanitized = anthropicKeyPattern.ReplaceAllString(sanitized, redactedSecret)
 	return llm.SanitizeNonPrintableChars(sanitized)
+}
+
+func replaceConfiguredAPIKey(message string, apiKey string) string {
+	pattern := regexp.MustCompile(`(^|[^A-Za-z0-9_-])(` + regexp.QuoteMeta(apiKey) + `)([^A-Za-z0-9_-]|$)`)
+	return pattern.ReplaceAllString(message, `${1}`+redactedSecret+`${3}`)
 }
 
 func NewAzure(config Config, httpClient *http.Client) *OpenAI {
