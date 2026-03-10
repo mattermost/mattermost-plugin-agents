@@ -20,32 +20,89 @@ const automationPluginAPIPath = "/plugins/com.mattermost.channel-automation/api/
 // the plugin is installed and reachable. Returns true if the plugin responds (even
 // with an auth error), false if it 404s or is unreachable.
 func (p *MattermostToolProvider) isAutomationPluginInstalled() bool {
-	resp, err := http.Get(p.automationAPIURL("/flows")) //nolint:gosec
+	url := p.automationAPIURL("/flows")
+	resp, err := http.Get(url) //nolint:gosec
 	if err != nil {
+		p.logger.Warn("Automation plugin check failed: connection error", "url", url, "error", err.Error())
 		return false
 	}
 	resp.Body.Close()
 
 	// A 404 from the Mattermost server means the plugin route doesn't exist.
 	// Any other status (200, 401, 403, etc.) means the plugin is installed.
-	return resp.StatusCode != http.StatusNotFound
+	installed := resp.StatusCode != http.StatusNotFound
+	return installed
 }
 
-// AutomationAction mirrors the channel-automation plugin's Action model.
-type AutomationAction struct {
-	ID            string         `json:"id,omitempty"`
-	Name          string         `json:"name"`
-	Type          string         `json:"type"`
-	ChannelID     string         `json:"channel_id,omitempty"`
-	ReplyToPostID string         `json:"reply_to_post_id,omitempty"`
-	Body          string         `json:"body,omitempty"`
-	Config        map[string]any `json:"config,omitempty"`
-}
+// --- Trigger types (union: exactly one pointer field should be non-nil) ---
 
-// AutomationTrigger mirrors the channel-automation plugin's Trigger model.
+// AutomationTrigger defines when a flow fires. Exactly one config pointer should be set.
 type AutomationTrigger struct {
-	Type      string `json:"type"`
+	MessagePosted     *MessagePostedConfig     `json:"message_posted,omitempty"`
+	Schedule          *ScheduleConfig          `json:"schedule,omitempty"`
+	MembershipChanged *MembershipChangedConfig `json:"membership_changed,omitempty"`
+	ChannelCreated    *ChannelCreatedConfig    `json:"channel_created,omitempty"`
+}
+
+// MessagePostedConfig holds trigger config for the message_posted trigger type.
+type MessagePostedConfig struct {
 	ChannelID string `json:"channel_id"`
+}
+
+// ScheduleConfig holds trigger config for the schedule trigger type.
+type ScheduleConfig struct {
+	ChannelID string `json:"channel_id"`
+	Interval  string `json:"interval" jsonschema:"Go duration string, minimum 5m. Examples: 1h (hourly) 24h (daily) 168h (weekly)"`
+	StartAt   int64  `json:"start_at,omitempty" jsonschema:"Unix timestamp in milliseconds for the first run. Repeats every interval after this time."`
+}
+
+// MembershipChangedConfig holds trigger config for the membership_changed trigger type.
+type MembershipChangedConfig struct {
+	ChannelID string `json:"channel_id"`
+}
+
+// ChannelCreatedConfig holds trigger config for the channel_created trigger type.
+type ChannelCreatedConfig struct{}
+
+// --- Action types (union: exactly one config pointer should be non-nil) ---
+
+// AutomationAction defines a single step in a flow. Exactly one config pointer should be set.
+type AutomationAction struct {
+	ID          string                   `json:"id"`
+	SendMessage *SendMessageActionConfig `json:"send_message,omitempty"`
+	AIPrompt    *AIPromptActionConfig    `json:"ai_prompt,omitempty"`
+}
+
+// SendMessageActionConfig holds config for the send_message action type.
+type SendMessageActionConfig struct {
+	ChannelID     string `json:"channel_id"`
+	ReplyToPostID string `json:"reply_to_post_id,omitempty"`
+	Body          string `json:"body"`
+}
+
+// AIPromptActionConfig holds config for the ai_prompt action type.
+type AIPromptActionConfig struct {
+	SystemPrompt    string          `json:"system_prompt,omitempty"`
+	Prompt          string          `json:"prompt"`
+	ProviderType    string          `json:"provider_type"`
+	ProviderID      string          `json:"provider_id"`
+	AllowedTools    []string        `json:"allowed_tools,omitempty"`
+	ToolConstraints ToolConstraints `json:"tool_constraints,omitempty"`
+}
+
+// ToolConstraints maps tool names to their parameter constraints.
+type ToolConstraints map[string]map[string]ParamConstraint
+
+// ParamConstraint defines allowed values for a tool parameter.
+type ParamConstraint struct {
+	AllowedValues  []string        `json:"allowed_values,omitempty"`
+	FromToolOutput []OutputBinding `json:"from_tool_output,omitempty"`
+}
+
+// OutputBinding declares that values from a source tool's output should be accepted.
+type OutputBinding struct {
+	Tool  string `json:"tool"`
+	Field string `json:"field"`
 }
 
 // AutomationFlow mirrors the channel-automation plugin's Flow model.
@@ -77,21 +134,19 @@ type ListAutomationsArgs struct {
 
 // CreateAutomationArgs represents arguments for the create_automation tool.
 type CreateAutomationArgs struct {
-	Name             string             `json:"name" jsonschema:"The name of the automation,minLength=1"`
-	Enabled          bool               `json:"enabled" jsonschema:"Whether the automation is enabled"`
-	TriggerType      string             `json:"trigger_type" jsonschema:"The trigger type (e.g. 'new_message'),minLength=1"`
-	TriggerChannelID string             `json:"trigger_channel_id" jsonschema:"The channel ID that triggers this automation,minLength=26,maxLength=26"`
-	Actions          []AutomationAction `json:"actions" jsonschema:"List of actions to perform when triggered"`
+	Name    string             `json:"name" jsonschema:"The name of the automation,minLength=1"`
+	Enabled bool               `json:"enabled" jsonschema:"Whether the automation is enabled"`
+	Trigger AutomationTrigger  `json:"trigger" jsonschema:"Set exactly one trigger type"`
+	Actions []AutomationAction `json:"actions" jsonschema:"Ordered list of actions to perform when triggered"`
 }
 
 // UpdateAutomationArgs represents arguments for the update_automation tool.
 type UpdateAutomationArgs struct {
-	AutomationID     string             `json:"automation_id" jsonschema:"The ID of the automation to update,minLength=1"`
-	Name             string             `json:"name" jsonschema:"The name of the automation,minLength=1"`
-	Enabled          bool               `json:"enabled" jsonschema:"Whether the automation is enabled"`
-	TriggerType      string             `json:"trigger_type" jsonschema:"The trigger type (e.g. 'new_message'),minLength=1"`
-	TriggerChannelID string             `json:"trigger_channel_id" jsonschema:"The channel ID that triggers this automation,minLength=26,maxLength=26"`
-	Actions          []AutomationAction `json:"actions" jsonschema:"List of actions to perform when triggered"`
+	AutomationID string             `json:"automation_id" jsonschema:"The ID of the automation to update,minLength=1"`
+	Name         string             `json:"name" jsonschema:"The name of the automation,minLength=1"`
+	Enabled      bool               `json:"enabled" jsonschema:"Whether the automation is enabled"`
+	Trigger      AutomationTrigger  `json:"trigger" jsonschema:"Set exactly one trigger type"`
+	Actions      []AutomationAction `json:"actions" jsonschema:"Ordered list of actions to perform when triggered"`
 }
 
 // DeleteAutomationArgs represents arguments for the delete_automation tool.
@@ -125,41 +180,53 @@ Returns automation details including trigger configuration and action pipeline.`
 		},
 		{
 			Name: "create_automation",
-			Description: `Create a channel automation — a trigger-action workflow that fires when events occur in a channel.
+			Description: `Create a channel automation — a trigger-action workflow that fires when events occur.
+Requires channel admin (or system admin) permission for the trigger channel.
 
-TRIGGERS: Set trigger_type and trigger_channel_id.
-- "message_posted": fires when any message is posted in the trigger channel.
+TRIGGERS: Set exactly one trigger type inside the "trigger" object.
+- "message_posted": fires when any message is posted in the channel.
+  {"trigger": {"message_posted": {"channel_id": "<channel-id>"}}}
+- "schedule": fires on a recurring schedule.
+  - interval: Go duration string (minimum "5m"). Examples: "1h" (hourly), "24h" (daily), "168h" (weekly).
+  - start_at (optional): unix timestamp in milliseconds for the first run. The automation fires at this time, then repeats every interval. If omitted or in the past, the first run happens immediately. Use this to schedule a daily recap at e.g. 9am.
+  {"trigger": {"schedule": {"channel_id": "<channel-id>", "interval": "24h", "start_at": 1741615200000}}}
+- "membership_changed": fires when a member joins or leaves the channel.
+  {"trigger": {"membership_changed": {"channel_id": "<channel-id>"}}}
+- "channel_created": fires when any new public channel is created.
+  {"trigger": {"channel_created": {}}}
 
-ACTIONS: Ordered array executed sequentially. Each action has a unique "id", "name", and "type".
+ACTIONS: Ordered array executed sequentially. Each action has a unique "id" and exactly one action config.
 Action types:
 1. "send_message": Posts a message as the bot.
-   - channel_id: target channel ID (can differ from trigger channel)
-   - body: message content (Go text/template, see below)
-   - reply_to_post_id (optional): post ID to reply to, creating a thread
-2. "ai_prompt": Sends a prompt to an AI agent/service via the AI plugin and stores the response. Does NOT post a message — chain a send_message action after to post it.
-   - config.prompt: the prompt text (Go text/template)
-   - config.provider_type: "agent" (a bot) or "service" (a raw LLM service)
-   - config.provider_id: the agent's Mattermost user ID (26-char ID). Call list_agents to discover available agents and their IDs.
+   {"id": "post", "send_message": {"channel_id": "<ch>", "body": "Hello!", "reply_to_post_id": "<optional post id>"}}
+2. "ai_prompt": Sends a prompt to an AI agent/service and stores the response. Does NOT post a message — chain a send_message action after to post it.
+   {"id": "ask", "ai_prompt": {"prompt": "...", "provider_type": "agent", "provider_id": "<agent-user-id>", "system_prompt": "...", "allowed_tools": ["tool1"], "tool_constraints": {"tool1": {"param1": {"allowed_values": ["a","b"]}}}}}
+   - provider_type: "agent" (a bot) or "service" (a raw LLM service)
+   - provider_id: the agent's Mattermost user ID (26-char ID). Call list_agents to discover available agents and their IDs.
+   - system_prompt (optional): system instructions for the AI
+   - allowed_tools: list of tools the AI agent is allowed to call. WITHOUT this, the agent has NO tool access and can only generate text — it cannot search posts, read channels, or take any actions. For useful automations, always include the tools the agent needs. Look at your own available tools to decide which ones the automation's AI agent will need to accomplish its task.
+   - tool_constraints (optional): restrict tool parameters — map of tool name → param name → constraint with allowed_values and/or from_tool_output
 
-TEMPLATE SYNTAX: body, channel_id, reply_to_post_id, and config.prompt support Go text/template with this context:
+TEMPLATE SYNTAX: body, channel_id, reply_to_post_id, prompt, and system_prompt support Go text/template with this context:
 - {{.Trigger.Post.Message}}, {{.Trigger.Post.Id}}, {{.Trigger.Post.ChannelId}}
 - {{.Trigger.Channel.Id}}, {{.Trigger.Channel.Name}}, {{.Trigger.Channel.DisplayName}}
 - {{.Trigger.User.Id}}, {{.Trigger.User.Username}}, {{.Trigger.User.FirstName}}, {{.Trigger.User.LastName}}
 - {{(index .Steps "prev-action-id").Message}}, {{(index .Steps "prev-action-id").PostID}} — output from a previous action
 
 EXAMPLE: AI-powered triage — when a message is posted in #support, summarize it with AI, then post the summary in #triage:
-{"name":"Support Triage","enabled":true,"trigger_type":"message_posted","trigger_channel_id":"<support-ch-id>",
+{"name":"Support Triage","enabled":true,
+ "trigger":{"message_posted":{"channel_id":"<support-ch-id>"}},
  "actions":[
-   {"id":"summarize","name":"Summarize","type":"ai_prompt","config":{"prompt":"Summarize: {{.Trigger.Post.Message}}","provider_type":"agent","provider_id":"otto"}},
-   {"id":"post","name":"Post Summary","type":"send_message","channel_id":"<triage-ch-id>","body":"From @{{.Trigger.User.Username}}:\n{{(index .Steps \"summarize\").Message}}"}
+   {"id":"summarize","ai_prompt":{"prompt":"Summarize: {{.Trigger.Post.Message}}","provider_type":"agent","provider_id":"<agent-id>","allowed_tools":["search_posts"]}},
+   {"id":"post","send_message":{"channel_id":"<triage-ch-id>","body":"From @{{.Trigger.User.Username}}:\n{{(index .Steps \"summarize\").Message}}"}}
  ]}`,
 			Schema:   llm.NewJSONSchemaFromStruct[CreateAutomationArgs](),
 			Resolver: p.toolCreateAutomation,
 		},
 		{
 			Name: "update_automation",
-			Description: `Update an existing channel automation. Replaces the full automation definition — provide all fields, not just changed ones. Same trigger types, action types, and template syntax as create_automation.
-Use list_automations first to get the current definition, then modify and pass the full updated flow.`,
+			Description: `Update an existing channel automation. Replaces the full automation definition — provide all fields, not just changed ones. Same trigger types, action types, template syntax, and allowed_tools guidance as create_automation.
+Use list_automations first to get the current definition, then modify and pass the full updated flow. Remember: ai_prompt actions need allowed_tools to be useful.`,
 			Schema:   llm.NewJSONSchemaFromStruct[UpdateAutomationArgs](),
 			Resolver: p.toolUpdateAutomation,
 		},
@@ -235,11 +302,8 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 	if args.Name == "" {
 		return "name is required", fmt.Errorf("name cannot be empty")
 	}
-	if args.TriggerType == "" {
-		return "trigger_type is required", fmt.Errorf("trigger_type cannot be empty")
-	}
-	if args.TriggerChannelID == "" {
-		return "trigger_channel_id is required", fmt.Errorf("trigger_channel_id cannot be empty")
+	if err := validateTrigger(args.Trigger); err != nil {
+		return err.Error(), err
 	}
 
 	if mcpContext.Client == nil {
@@ -250,10 +314,7 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 	flow := AutomationFlow{
 		Name:    args.Name,
 		Enabled: args.Enabled,
-		Trigger: AutomationTrigger{
-			Type:      args.TriggerType,
-			ChannelID: args.TriggerChannelID,
-		},
+		Trigger: args.Trigger,
 		Actions: args.Actions,
 	}
 
@@ -295,10 +356,7 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 		ID:      args.AutomationID,
 		Name:    args.Name,
 		Enabled: args.Enabled,
-		Trigger: AutomationTrigger{
-			Type:      args.TriggerType,
-			ChannelID: args.TriggerChannelID,
-		},
+		Trigger: args.Trigger,
 		Actions: args.Actions,
 	}
 
@@ -347,6 +405,72 @@ func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext
 
 // --- Helpers ---
 
+// validateTrigger ensures exactly one trigger variant is set.
+func validateTrigger(t AutomationTrigger) error {
+	count := 0
+	if t.MessagePosted != nil {
+		count++
+	}
+	if t.Schedule != nil {
+		count++
+	}
+	if t.MembershipChanged != nil {
+		count++
+	}
+	if t.ChannelCreated != nil {
+		count++
+	}
+	if count == 0 {
+		return fmt.Errorf("trigger is required: set exactly one of message_posted, schedule, membership_changed, or channel_created")
+	}
+	if count > 1 {
+		return fmt.Errorf("trigger must have exactly one type set, but %d were provided", count)
+	}
+	return nil
+}
+
+// triggerChannelID extracts the channel ID from any trigger variant.
+func triggerChannelID(t AutomationTrigger) string {
+	if t.MessagePosted != nil {
+		return t.MessagePosted.ChannelID
+	}
+	if t.Schedule != nil {
+		return t.Schedule.ChannelID
+	}
+	if t.MembershipChanged != nil {
+		return t.MembershipChanged.ChannelID
+	}
+	return ""
+}
+
+// triggerTypeName returns the trigger type name based on which config is present.
+func triggerTypeName(t AutomationTrigger) string {
+	if t.MessagePosted != nil {
+		return "message_posted"
+	}
+	if t.Schedule != nil {
+		return "schedule"
+	}
+	if t.MembershipChanged != nil {
+		return "membership_changed"
+	}
+	if t.ChannelCreated != nil {
+		return "channel_created"
+	}
+	return "unknown"
+}
+
+// actionTypeName returns the action type name based on which config is present.
+func actionTypeName(a AutomationAction) string {
+	if a.SendMessage != nil {
+		return "send_message"
+	}
+	if a.AIPrompt != nil {
+		return "ai_prompt"
+	}
+	return "unknown"
+}
+
 // handleAutomationHTTPError returns a user-friendly error message for automation API failures.
 func handleAutomationHTTPError(resp *http.Response, err error, automationID string) (string, error) {
 	if resp == nil {
@@ -361,8 +485,14 @@ func handleAutomationHTTPError(resp *http.Response, err error, automationID stri
 	}
 
 	switch resp.StatusCode {
+	case http.StatusBadRequest:
+		detail := strings.TrimSpace(string(body))
+		if detail == "" {
+			detail = "invalid request"
+		}
+		return fmt.Sprintf("Bad request: %s", detail), fmt.Errorf("automation API returned 400: %s", detail)
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return "You don't have permission to manage automations. This requires SystemAdmin permission.", fmt.Errorf("automation API returned %d: %s", resp.StatusCode, string(body))
+		return "You don't have permission to manage automations for this channel.", fmt.Errorf("automation API returned %d: %s", resp.StatusCode, string(body))
 	case http.StatusNotFound:
 		if automationID != "" {
 			return fmt.Sprintf("Automation not found with ID '%s'.", automationID), fmt.Errorf("automation API returned 404 for ID %s", automationID)
@@ -383,7 +513,7 @@ func filterAutomationFlows(flows []AutomationFlow, channelID, query string, enab
 	filtered := make([]AutomationFlow, 0, len(flows))
 
 	for _, f := range flows {
-		if channelID != "" && f.Trigger.ChannelID != channelID {
+		if channelID != "" && triggerChannelID(f.Trigger) != channelID {
 			continue
 		}
 		if query != "" && !strings.Contains(strings.ToLower(f.Name), queryLower) {
@@ -416,17 +546,45 @@ func formatAutomationFlow(f AutomationFlow) string {
 	result.WriteString(fmt.Sprintf("Name: %s\n", f.Name))
 	result.WriteString(fmt.Sprintf("ID: %s\n", f.ID))
 	result.WriteString(fmt.Sprintf("Enabled: %t\n", f.Enabled))
-	result.WriteString(fmt.Sprintf("Trigger: type=%s, channel=%s\n", f.Trigger.Type, f.Trigger.ChannelID))
+
+	typeName := triggerTypeName(f.Trigger)
+	chID := triggerChannelID(f.Trigger)
+	if chID != "" {
+		result.WriteString(fmt.Sprintf("Trigger: type=%s, channel=%s", typeName, chID))
+	} else {
+		result.WriteString(fmt.Sprintf("Trigger: type=%s", typeName))
+	}
+	if f.Trigger.Schedule != nil && f.Trigger.Schedule.Interval != "" {
+		result.WriteString(fmt.Sprintf(", interval=%s", f.Trigger.Schedule.Interval))
+	}
+	result.WriteString("\n")
 
 	if len(f.Actions) > 0 {
 		result.WriteString("Actions:\n")
 		for j, a := range f.Actions {
-			result.WriteString(fmt.Sprintf("  %d. %s (type=%s", j+1, a.Name, a.Type))
-			if a.ChannelID != "" {
-				result.WriteString(fmt.Sprintf(", channel=%s", a.ChannelID))
+			typName := actionTypeName(a)
+			result.WriteString(fmt.Sprintf("  %d. id=%s (type=%s", j+1, a.ID, typName))
+			if a.SendMessage != nil {
+				if a.SendMessage.ChannelID != "" {
+					result.WriteString(fmt.Sprintf(", channel=%s", a.SendMessage.ChannelID))
+				}
+				if a.SendMessage.Body != "" {
+					result.WriteString(fmt.Sprintf(", body=%s", a.SendMessage.Body))
+				}
 			}
-			if a.Body != "" {
-				result.WriteString(fmt.Sprintf(", body=%s", a.Body))
+			if a.AIPrompt != nil {
+				if a.AIPrompt.Prompt != "" {
+					result.WriteString(fmt.Sprintf(", prompt=%s", a.AIPrompt.Prompt))
+				}
+				if a.AIPrompt.SystemPrompt != "" {
+					result.WriteString(fmt.Sprintf(", system_prompt=%s", a.AIPrompt.SystemPrompt))
+				}
+				if len(a.AIPrompt.AllowedTools) > 0 {
+					result.WriteString(fmt.Sprintf(", allowed_tools=%v", a.AIPrompt.AllowedTools))
+				}
+				if len(a.AIPrompt.ToolConstraints) > 0 {
+					result.WriteString(", tool_constraints=<configured>")
+				}
 			}
 			result.WriteString(")\n")
 		}

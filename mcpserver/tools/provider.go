@@ -85,7 +85,8 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	mcpTools = append(mcpTools, p.getAgentTools()...)
 
 	// Only add automation tools if the channel automation plugin is installed
-	if p.isAutomationPluginInstalled() {
+	automationInstalled := p.isAutomationPluginInstalled()
+	if automationInstalled {
 		mcpTools = append(mcpTools, p.getAutomationTools()...)
 	}
 

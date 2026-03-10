@@ -148,8 +148,9 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 		// Get tools from all connected servers
 		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(userID)
 
-		// Filter out automation tools for users without manage_system permission
-		if !b.pluginAPI.User.HasPermissionTo(userID, model.PermissionManageSystem) {
+		// Filter out automation tools for users without channel admin (or sysadmin) permission
+		showAutomation := shouldShowAutomationTools(b.pluginAPI, userID, c.Channel)
+		if !showAutomation {
 			mcpTools = filterOutAutomationTools(mcpTools)
 		}
 
@@ -213,6 +214,31 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 		}
 		c.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 	}
+}
+
+// shouldShowAutomationTools determines if automation tools should be visible.
+// Sysadmins always see tools. In DMs/group channels, tools are shown and the
+// automation backend enforces per-channel. In public/private channels, the user
+// must be a channel admin (SchemeAdmin on the channel membership).
+func shouldShowAutomationTools(pluginAPI *pluginapi.Client, userID string, channel *model.Channel) bool {
+	// Sysadmins always see automation tools.
+	if pluginAPI.User.HasPermissionTo(userID, model.PermissionManageSystem) {
+		return true
+	}
+	if channel == nil {
+		return true
+	}
+	// In DMs/group channels, we can't know the target channel upfront.
+	// Show tools and let the automation plugin backend enforce per-channel.
+	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+		return true
+	}
+	// In public/private channels, check if user is a channel admin via membership.
+	member, err := pluginAPI.Channel.GetMember(channel.Id, userID)
+	if err != nil {
+		return false
+	}
+	return member.SchemeAdmin
 }
 
 // filterOutAutomationTools removes automation tools from the tool list.
