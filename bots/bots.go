@@ -375,25 +375,43 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 		}
 	case llm.ServiceTypeASage:
 		result = asage.New(serviceConfig, b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeCohere:
-		// Set the Cohere OpenAI compatibility endpoint
-		cohereCfg := serviceConfig
-		cohereCfg.APIURL = "https://api.cohere.ai/compatibility/v1"
-		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfig(cohereCfg, botConfig), b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeMistral:
-		// Set the Mistral OpenAI compatibility endpoint
-		mistralCfg := serviceConfig
-		mistralCfg.APIURL = "https://api.mistral.ai/v1"
-		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfigWithOptions(mistralCfg, botConfig, true, true), b.llmUpstreamHTTPClient)
 	default:
-		b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
-		return nil, fmt.Errorf("unsupported service type: %s", serviceConfig.Type)
+		if providerCfg, ok := llm.GetOpenAICompatibleProvider(serviceConfig.Type); ok {
+			cfg := serviceConfig
+			if providerCfg.FixedAPIURL != "" {
+				cfg.APIURL = providerCfg.FixedAPIURL
+			}
+			if cfg.DefaultModel == "" && providerCfg.DefaultModel != "" {
+				cfg.DefaultModel = providerCfg.DefaultModel
+			}
+			client := b.llmUpstreamHTTPClient
+			apiKey := cfg.APIKey
+			if providerCfg.CreateTransport != nil {
+				var base http.RoundTripper
+				if client != nil {
+					base = client.Transport
+				}
+				client = llm.CloneHTTPClientWithTransport(client, providerCfg.CreateTransport(cfg, base))
+				apiKey = llm.PlaceholderAPIKey
+			}
+			openaiCfg := config.OpenAIConfigFromServiceConfigWithOptions(
+				cfg, botConfig, providerCfg.DisableStreamOptions, providerCfg.UseMaxTokens,
+			)
+			openaiCfg.APIKey = apiKey
+			result = openai.NewCompatible(openaiCfg, client)
+		} else {
+			b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
+			return nil, fmt.Errorf("unsupported service type: %s", serviceConfig.Type)
+		}
 	}
 
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)
 
 	// Token Usage Logging
+	// NOTE: This wrapper converts ChatCompletionNoStream into a streaming call
+	// internally, so any wrapper that needs to intercept ChatCompletionNoStream
+	// must be placed outside (after) this one.
 	if b.tokenUsageSinks != nil || b.metrics != nil {
 		result = llm.NewTokenUsageLoggingWrapper(
 			result,
@@ -402,6 +420,9 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 			b.metrics,
 		)
 	}
+
+	// Structured output fallback
+	result = llm.NewStructuredOutputFallbackWrapper(result, botConfig.StructuredOutputEnabled)
 
 	// Logging
 	if b.config.EnableLLMLogging() {

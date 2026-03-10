@@ -6,6 +6,7 @@ package anthropic
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,13 +36,14 @@ type messageState struct {
 }
 
 type Anthropic struct {
-	client             anthropicSDK.Client
-	defaultModel       string
-	inputTokenLimit    int
-	outputTokenLimit   int
-	enabledNativeTools []string
-	reasoningEnabled   bool
-	thinkingBudget     int
+	client                  anthropicSDK.Client
+	defaultModel            string
+	inputTokenLimit         int
+	outputTokenLimit        int
+	enabledNativeTools      []string
+	reasoningEnabled        bool
+	thinkingBudget          int
+	structuredOutputEnabled bool
 }
 
 func New(llmService llm.ServiceConfig, botConfig llm.BotConfig, httpClient *http.Client) *Anthropic {
@@ -51,13 +53,14 @@ func New(llmService llm.ServiceConfig, botConfig llm.BotConfig, httpClient *http
 	)
 
 	return &Anthropic{
-		client:             client,
-		defaultModel:       llmService.DefaultModel,
-		inputTokenLimit:    llmService.InputTokenLimit,
-		outputTokenLimit:   llmService.OutputTokenLimit,
-		enabledNativeTools: botConfig.EnabledNativeTools,
-		reasoningEnabled:   botConfig.ReasoningEnabled,
-		thinkingBudget:     botConfig.ThinkingBudget,
+		client:                  client,
+		defaultModel:            llmService.DefaultModel,
+		inputTokenLimit:         llmService.InputTokenLimit,
+		outputTokenLimit:        llmService.OutputTokenLimit,
+		enabledNativeTools:      botConfig.EnabledNativeTools,
+		reasoningEnabled:        botConfig.ReasoningEnabled,
+		thinkingBudget:          botConfig.ThinkingBudget,
+		structuredOutputEnabled: botConfig.StructuredOutputEnabled,
 	}
 }
 
@@ -230,7 +233,29 @@ func (a *Anthropic) buildAPIParams(state *messageState) anthropicSDK.MessageNewP
 		params.System = []anthropicSDK.TextBlockParam{{Text: state.system}}
 	}
 
-	if !state.config.ReasoningDisabled {
+	// Convert JSONOutputFormat to the SDK's schema map. If marshaling fails,
+	// structured output is silently skipped and the request falls back to
+	// unstructured output. This is intentional: the schema originates from
+	// trusted internal code (jsonschema.Schema), so conversion errors are
+	// not expected in practice.
+	structuredOutputActive := false
+	if a.structuredOutputEnabled && state.config.JSONOutputFormat != nil {
+		schemaBytes, err := json.Marshal(state.config.JSONOutputFormat)
+		if err == nil {
+			var schemaMap map[string]any
+			if err := json.Unmarshal(schemaBytes, &schemaMap); err == nil {
+				params.OutputConfig = anthropicSDK.OutputConfigParam{
+					Format: anthropicSDK.JSONOutputFormatParam{
+						Schema: schemaMap,
+					},
+				}
+				structuredOutputActive = true
+			}
+		}
+	}
+
+	// Anthropic does not allow thinking and structured output simultaneously
+	if !state.config.ReasoningDisabled && !structuredOutputActive {
 		if thinkingConfig, ok := a.calculateThinkingConfig(state.config.MaxGeneratedTokens); ok {
 			params.Thinking = thinkingConfig
 		}
