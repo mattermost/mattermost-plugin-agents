@@ -511,6 +511,58 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
     });
 }
 
+export async function getUserMCPTools(): Promise<{servers: any[]}> {
+    const url = `${baseRoute()}/mcp/tools`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getUserToolPreferences(): Promise<{disabled_servers: string[]}> {
+    const url = `${baseRoute()}/mcp/user-preferences`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function updateUserToolPreferences(prefs: {disabled_servers: string[]}): Promise<{disabled_servers: string[]}> {
+    const url = `${baseRoute()}/mcp/user-preferences`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify(prefs),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function getChannelInterval(
     channelID: string,
     startTime: number,

@@ -1,35 +1,36 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import styled from 'styled-components';
 import {PlusIcon, TrashCanOutlineIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton} from '../assets/buttons';
+import {getMCPTools} from '../../client';
 
-import MCPToolsViewer from './mcp_tools_viewer';
-import ApprovedServersPanel from './approved_servers_panel';
+import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
 
 import {BooleanItem, ItemList, TextItem} from './item';
+import {seedVettedToolConfigs} from './vetted_tool_configs';
+
+export type MCPToolConfig = {
+    name: string;
+    policy: 'auto_run' | 'ask';
+    enabled: boolean;
+};
 
 export type MCPServerConfig = {
     name: string;
     enabled: boolean;
     baseURL: string;
     headers: {[key: string]: string};
+    tool_configs?: MCPToolConfig[];
 };
 
 export type MCPEmbeddedServerConfig = {
     enabled: boolean;
-};
-
-export type ApprovedMCPServer = {
-    id?: string;
-    name: string;
-    url_patterns: string[];
-    auto_approve_tools: string[];
-    enabled: boolean;
+    tool_configs?: MCPToolConfig[];
 };
 
 export type MCPConfig = {
@@ -38,7 +39,6 @@ export type MCPConfig = {
     servers: MCPServerConfig[];
     embeddedServer: MCPEmbeddedServerConfig;
     idleTimeoutMinutes?: number;
-    approvedServers?: ApprovedMCPServer[];
 };
 
 type Props = {
@@ -76,14 +76,25 @@ const MCPServer = ({
         enabled: serverConfig.enabled ?? false,
         baseURL: serverConfig.baseURL || '',
         headers: serverConfig.headers || {},
+        tool_configs: serverConfig.tool_configs,
     };
 
     // Update server URL
     const updateServerURL = (baseURL: string) => {
-        onChange(serverIndex, {
+        const updatedConfig: MCPServerConfig = {
             ...config,
             baseURL,
-        });
+        };
+
+        // Seed vetted tool configs if URL matches a known host and no tool_configs yet
+        if (!config.tool_configs || config.tool_configs.length === 0) {
+            const seeded = seedVettedToolConfigs(baseURL);
+            if (seeded) {
+                updatedConfig.tool_configs = seeded;
+            }
+        }
+
+        onChange(serverIndex, updatedConfig);
     };
 
     // Update server enabled state
@@ -245,7 +256,19 @@ const MCPServer = ({
 // Main component for MCP servers configuration
 const MCPServers = ({mcpConfig, onChange}: Props) => {
     const intl = useIntl();
-    const [activeTab, setActiveTab] = useState<'config' | 'tools' | 'approved'>('config');
+    const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
+    const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
+
+    // Pre-fetch tools data when the component mounts so they're ready when the Tools tab is clicked
+    useEffect(() => {
+        if (mcpConfig?.enabled) {
+            getMCPTools().then((response) => {
+                setPreloadedToolsData(response);
+            }).catch(() => {
+                // Silently fail - tools will load when tab is clicked
+            });
+        }
+    }, [mcpConfig?.enabled]);
 
     // Create a properly initialized config object
     const config: MCPConfig = {
@@ -256,7 +279,6 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
             enabled: !mcpConfig?.enabled,
         },
         idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes || 30,
-        approvedServers: mcpConfig?.approvedServers,
     };
 
     // Generate a server name
@@ -328,12 +350,6 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                             onClick={() => setActiveTab('tools')}
                         >
                             <FormattedMessage defaultMessage='Tools'/>
-                        </TabButton>
-                        <TabButton
-                            active={activeTab === 'approved'}
-                            onClick={() => setActiveTab('approved')}
-                        >
-                            <FormattedMessage defaultMessage='Approved Servers'/>
                         </TabButton>
                     </TabsContainer>
 
@@ -409,13 +425,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                         )}
 
                         {activeTab === 'tools' && (
-                            <MCPToolsViewer/>
-                        )}
-
-                        {activeTab === 'approved' && (
-                            <ApprovedServersPanel
-                                approvedServers={config.approvedServers || []}
-                                onChange={(approvedServers) => onChange({...config, approvedServers})}
+                            <MCPToolsViewer
+                                mcpConfig={config}
+                                onConfigChange={(updatedConfig) => onChange(updatedConfig)}
+                                initialToolsData={preloadedToolsData}
                             />
                         )}
                     </TabContent>

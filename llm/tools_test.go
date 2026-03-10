@@ -374,6 +374,103 @@ func TestWithBoundParamsPreservesServerOrigin(t *testing.T) {
 	assert.Equal(t, original.Name, bound.Name)
 }
 
+func TestRemoveToolsByServerOrigin(t *testing.T) {
+	tests := []struct {
+		name            string
+		tools           []Tool
+		disabledOrigins []string
+		expectedTools   []string
+	}{
+		{
+			name:            "nil ToolStore does not panic",
+			tools:           nil,
+			disabledOrigins: []string{"https://example.com"},
+			expectedTools:   nil,
+		},
+		{
+			name: "empty disabledOrigins is a no-op",
+			tools: []Tool{
+				{Name: "tool_a", ServerOrigin: "https://server-a.com"},
+				{Name: "tool_b", ServerOrigin: "https://server-b.com"},
+			},
+			disabledOrigins: []string{},
+			expectedTools:   []string{"tool_a", "tool_b"},
+		},
+		{
+			name: "removes all tools from a single disabled origin",
+			tools: []Tool{
+				{Name: "tool_a1", ServerOrigin: "https://server-a.com"},
+				{Name: "tool_a2", ServerOrigin: "https://server-a.com"},
+				{Name: "tool_b", ServerOrigin: "https://server-b.com"},
+			},
+			disabledOrigins: []string{"https://server-a.com"},
+			expectedTools:   []string{"tool_b"},
+		},
+		{
+			name: "removes tools from multiple disabled origins",
+			tools: []Tool{
+				{Name: "tool_a", ServerOrigin: "https://server-a.com"},
+				{Name: "tool_b", ServerOrigin: "https://server-b.com"},
+				{Name: "tool_c", ServerOrigin: "https://server-c.com"},
+			},
+			disabledOrigins: []string{"https://server-a.com", "https://server-c.com"},
+			expectedTools:   []string{"tool_b"},
+		},
+		{
+			name: "preserves tools from non-disabled origins",
+			tools: []Tool{
+				{Name: "tool_a", ServerOrigin: "https://server-a.com"},
+				{Name: "tool_b", ServerOrigin: "https://server-b.com"},
+			},
+			disabledOrigins: []string{"https://server-x.com"},
+			expectedTools:   []string{"tool_a", "tool_b"},
+		},
+		{
+			name: "empty ServerOrigin on a tool is not matched by any disabled origin",
+			tools: []Tool{
+				{Name: "builtin_tool", ServerOrigin: ""},
+				{Name: "mcp_tool", ServerOrigin: "https://server-a.com"},
+			},
+			disabledOrigins: []string{"https://server-a.com"},
+			expectedTools:   []string{"builtin_tool"},
+		},
+		{
+			name: "all tools removed when all origins are disabled",
+			tools: []Tool{
+				{Name: "tool_a", ServerOrigin: "https://server-a.com"},
+				{Name: "tool_b", ServerOrigin: "https://server-b.com"},
+			},
+			disabledOrigins: []string{"https://server-a.com", "https://server-b.com"},
+			expectedTools:   []string{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var store *ToolStore
+			if tc.tools != nil {
+				store = NewToolStore(nil, false)
+				store.AddTools(tc.tools)
+			}
+
+			store.RemoveToolsByServerOrigin(tc.disabledOrigins)
+
+			if store == nil {
+				assert.Nil(t, tc.expectedTools)
+				return
+			}
+
+			remaining := store.GetTools()
+			remainingNames := make([]string, 0, len(remaining))
+			for _, tool := range remaining {
+				remainingNames = append(remainingNames, tool.Name)
+			}
+
+			assert.ElementsMatch(t, tc.expectedTools, remainingNames)
+		})
+	}
+}
+
 func TestEnrichToolCallsPassesThroughNonToolEvents(t *testing.T) {
 	inputCh := make(chan TextStreamEvent, 4)
 	inputCh <- TextStreamEvent{Type: EventTypeText, Value: "hello"}

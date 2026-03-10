@@ -20,7 +20,17 @@ const (
 	MMUserIDHeader     = "X-Mattermost-UserID"
 	EmbeddedServerName = "Mattermost"
 	EmbeddedClientKey  = "embedded://mattermost"
+
+	ToolPolicyAsk     = "ask"
+	ToolPolicyAutoRun = "auto_run"
 )
+
+// ToolConfig represents the per-tool configuration for an MCP server.
+type ToolConfig struct {
+	Name    string `json:"name"`
+	Policy  string `json:"policy"` // "auto_run" | "ask"
+	Enabled bool   `json:"enabled"`
+}
 
 // EmbeddedMCPServer interface for dependency injection
 type EmbeddedMCPServer interface {
@@ -49,10 +59,50 @@ type Client struct {
 
 // ServerConfig contains the configuration for a single MCP server
 type ServerConfig struct {
-	Name    string            `json:"name"`
-	Enabled bool              `json:"enabled"`
-	BaseURL string            `json:"baseURL"`
-	Headers map[string]string `json:"headers,omitempty"`
+	Name        string            `json:"name"`
+	Enabled     bool              `json:"enabled"`
+	BaseURL     string            `json:"baseURL"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	ToolConfigs []ToolConfig      `json:"tool_configs,omitempty"`
+}
+
+// GetToolPolicy returns the policy and enabled state for a tool.
+// If the receiver is nil or the tool name is empty, it returns ("ask", false).
+// If no matching config entry exists, it returns ("ask", true) — unconfigured
+// tools default to enabled with ask policy. Invalid or empty policies are
+// normalized to "ask". When duplicate entries exist the last matching entry wins.
+func (s *ServerConfig) GetToolPolicy(toolName string) (string, bool) {
+	if s == nil || toolName == "" {
+		return ToolPolicyAsk, false
+	}
+
+	found := false
+	policy := ToolPolicyAsk
+	enabled := false
+
+	for _, tc := range s.ToolConfigs {
+		if tc.Name == toolName {
+			found = true
+			policy = tc.Policy
+			enabled = tc.Enabled
+		}
+	}
+
+	if !found {
+		return ToolPolicyAsk, true
+	}
+
+	if policy != ToolPolicyAutoRun && policy != ToolPolicyAsk {
+		policy = ToolPolicyAsk
+	}
+
+	return policy, enabled
+}
+
+// IsToolAutoRun returns true only when the tool has policy "auto_run" and is enabled.
+func (s *ServerConfig) IsToolAutoRun(toolName string) bool {
+	policy, enabled := s.GetToolPolicy(toolName)
+	return policy == ToolPolicyAutoRun && enabled
 }
 
 func NewEmbeddedServerClient(server EmbeddedMCPServer, log pluginapi.LogService, pluginAPI *pluginapi.Client) *EmbeddedServerClient {

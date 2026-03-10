@@ -253,11 +253,27 @@ func (p *Plugin) OnActivate() error {
 	// TODO: Refactor to avoid circular dependency
 	conversationsService.SetMeetingsService(meetingsService)
 
-	// Wire auto-approval for approved MCP server tools in channels
-	streamingService.SetToolAutoApprover(streaming.ToolAutoApprovalFunc(func(serverBaseURL string, toolName string) bool {
-		return p.configuration.ApprovedMCPServers().IsToolAutoApproved(serverBaseURL, toolName)
-	}))
+	// Wire per-tool policy checker for auto-approval in streaming and conversations
+	policyChecker := streaming.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
+		mcpCfg := p.configuration.MCP()
+		if serverBaseURL == mcp.EmbeddedClientKey && mcpCfg.EmbeddedServer.Enabled {
+			toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
+			if len(toolConfigs) == 0 {
+				toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
+			}
+			embeddedCfg := &mcp.ServerConfig{ToolConfigs: toolConfigs}
+			return embeddedCfg.GetToolPolicy(toolName)
+		}
+		for i := range mcpCfg.Servers {
+			if mcpCfg.Servers[i].BaseURL == serverBaseURL {
+				return mcpCfg.Servers[i].GetToolPolicy(toolName)
+			}
+		}
+		return "ask", false
+	})
+	streamingService.SetToolPolicyChecker(policyChecker)
 	streamingService.SetAutoExecuteCallback(conversationsService.AutoExecuteApprovedToolCalls)
+	conversationsService.SetToolPolicyChecker(policyChecker)
 
 	// Initialize embedded MCP server handlers for plugin endpoints
 	var mcpHandlers *mcpserver.PluginMCPHandlers

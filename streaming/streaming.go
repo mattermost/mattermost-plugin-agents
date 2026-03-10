@@ -63,9 +63,9 @@ func RedactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	return redacted
 }
 
-// ToolAutoApprovalChecker checks whether a tool call should be auto-approved.
-type ToolAutoApprovalChecker interface {
-	IsToolAutoApproved(serverBaseURL string, toolName string) bool
+// ToolPolicyChecker looks up the per-tool policy for a given MCP server/tool.
+type ToolPolicyChecker interface {
+	GetToolPolicy(serverBaseURL string, toolName string) (policy string, enabled bool)
 }
 
 // AutoExecuteCallback is called when all tool calls in a batch are auto-approvable.
@@ -73,10 +73,10 @@ type ToolAutoApprovalChecker interface {
 // Parameters: postID, requesterID
 type AutoExecuteCallback func(postID string, requesterID string)
 
-// ToolAutoApprovalFunc is a function adapter that implements ToolAutoApprovalChecker.
-type ToolAutoApprovalFunc func(serverBaseURL string, toolName string) bool
+// ToolPolicyFunc is a function adapter that implements ToolPolicyChecker.
+type ToolPolicyFunc func(serverBaseURL string, toolName string) (string, bool)
 
-func (f ToolAutoApprovalFunc) IsToolAutoApproved(serverBaseURL string, toolName string) bool {
+func (f ToolPolicyFunc) GetToolPolicy(serverBaseURL string, toolName string) (string, bool) {
 	return f(serverBaseURL, toolName)
 }
 
@@ -100,7 +100,7 @@ type MMPostStreamService struct {
 	contextsMutex       sync.Mutex
 	mmClient            Client
 	i18n                *i18n.Bundle
-	toolAutoApprover    ToolAutoApprovalChecker
+	toolPolicyChecker   ToolPolicyChecker
 	autoExecuteCallback AutoExecuteCallback
 }
 
@@ -112,9 +112,9 @@ func NewMMPostStreamService(mmClient Client, i18n *i18n.Bundle) *MMPostStreamSer
 	}
 }
 
-// SetToolAutoApprover sets the tool auto-approval checker for the streaming service.
-func (p *MMPostStreamService) SetToolAutoApprover(checker ToolAutoApprovalChecker) {
-	p.toolAutoApprover = checker
+// SetToolPolicyChecker sets the tool policy checker for the streaming service.
+func (p *MMPostStreamService) SetToolPolicyChecker(checker ToolPolicyChecker) {
+	p.toolPolicyChecker = checker
 }
 
 // SetAutoExecuteCallback sets the callback that will be invoked when all tool calls
@@ -124,25 +124,26 @@ func (p *MMPostStreamService) SetAutoExecuteCallback(callback AutoExecuteCallbac
 }
 
 // areAllToolCallsAutoApprovable checks if all tool calls in the batch
-// can be auto-approved. Returns false if any tool is not auto-approvable,
-// or if the auto-approval checker is not configured.
+// can be auto-approved. Returns false if any tool is not auto_run + enabled,
+// or if the policy checker is not configured.
 func (p *MMPostStreamService) areAllToolCallsAutoApprovable(toolCalls []llm.ToolCall) bool {
-	if p.toolAutoApprover == nil {
+	if p.toolPolicyChecker == nil {
 		return false
 	}
 	if len(toolCalls) == 0 {
 		return false
 	}
 	for _, tc := range toolCalls {
-		approved := p.toolAutoApprover.IsToolAutoApproved(tc.ServerOrigin, tc.Name)
+		policy, enabled := p.toolPolicyChecker.GetToolPolicy(tc.ServerOrigin, tc.Name)
+		autoRun := policy == "auto_run" && enabled
 		if p.mmClient != nil {
 			p.mmClient.LogDebug("Auto-approval check",
 				"tool_name", tc.Name,
 				"server_origin", tc.ServerOrigin,
-				"approved", fmt.Sprintf("%t", approved),
+				"approved", fmt.Sprintf("%t", autoRun),
 			)
 		}
-		if !approved {
+		if !autoRun {
 			return false
 		}
 	}
@@ -150,10 +151,10 @@ func (p *MMPostStreamService) areAllToolCallsAutoApprovable(toolCalls []llm.Tool
 }
 
 // markAutoApprovedStatuses upgrades successful tool calls to AutoApproved when
-// the tool itself is auto-approvable. This preserves per-tool badge fidelity
+// the tool itself is auto_run + enabled. This preserves per-tool badge fidelity
 // even in mixed batches where post-level auto_approved_tool_call is false.
 func (p *MMPostStreamService) markAutoApprovedStatuses(toolCalls []llm.ToolCall) {
-	if p.toolAutoApprover == nil {
+	if p.toolPolicyChecker == nil {
 		return
 	}
 
@@ -161,7 +162,8 @@ func (p *MMPostStreamService) markAutoApprovedStatuses(toolCalls []llm.ToolCall)
 		if toolCalls[i].Status != llm.ToolCallStatusSuccess {
 			continue
 		}
-		if p.toolAutoApprover.IsToolAutoApproved(toolCalls[i].ServerOrigin, toolCalls[i].Name) {
+		policy, enabled := p.toolPolicyChecker.GetToolPolicy(toolCalls[i].ServerOrigin, toolCalls[i].Name)
+		if policy == "auto_run" && enabled {
 			toolCalls[i].Status = llm.ToolCallStatusAutoApproved
 		}
 	}

@@ -16,27 +16,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type mockAutoApprover struct {
+type mockPolicyChecker struct {
 	approveAll bool
 	approved   map[string]bool
 }
 
-func (m *mockAutoApprover) IsToolAutoApproved(serverBaseURL string, toolName string) bool {
+func (m *mockPolicyChecker) GetToolPolicy(serverBaseURL string, toolName string) (string, bool) {
 	if m == nil {
-		return false
+		return "ask", false
 	}
 	if m.approveAll {
 		// Still reject empty server origins (built-in tools)
-		return serverBaseURL != ""
+		if serverBaseURL == "" {
+			return "ask", false
+		}
+		return "auto_run", true
 	}
-	return m.approved[toolName]
+	if m.approved[toolName] {
+		return "auto_run", true
+	}
+	return "ask", true
 }
 
 func TestAreAllToolCallsAutoApprovable(t *testing.T) {
 	tests := []struct {
 		name      string
 		toolCalls []llm.ToolCall
-		checker   ToolAutoApprovalChecker
+		checker   ToolPolicyChecker
 		expected  bool
 	}{
 		{
@@ -48,7 +54,7 @@ func TestAreAllToolCallsAutoApprovable(t *testing.T) {
 		{
 			name:      "empty tool calls returns false",
 			toolCalls: []llm.ToolCall{},
-			checker:   &mockAutoApprover{approveAll: true},
+			checker:   &mockPolicyChecker{approveAll: true},
 			expected:  false,
 		},
 		{
@@ -57,7 +63,7 @@ func TestAreAllToolCallsAutoApprovable(t *testing.T) {
 				{Name: "get_issue", ServerOrigin: "https://api.github.com"},
 				{Name: "list_repos", ServerOrigin: "https://api.github.com"},
 			},
-			checker:  &mockAutoApprover{approveAll: true},
+			checker:  &mockPolicyChecker{approveAll: true},
 			expected: true,
 		},
 		{
@@ -66,7 +72,7 @@ func TestAreAllToolCallsAutoApprovable(t *testing.T) {
 				{Name: "get_issue", ServerOrigin: "https://api.github.com"},
 				{Name: "create_issue", ServerOrigin: "https://api.github.com"},
 			},
-			checker:  &mockAutoApprover{approved: map[string]bool{"get_issue": true}},
+			checker:  &mockPolicyChecker{approved: map[string]bool{"get_issue": true}},
 			expected: false,
 		},
 		{
@@ -74,7 +80,7 @@ func TestAreAllToolCallsAutoApprovable(t *testing.T) {
 			toolCalls: []llm.ToolCall{
 				{Name: "builtin_tool", ServerOrigin: ""},
 			},
-			checker:  &mockAutoApprover{approveAll: true},
+			checker:  &mockPolicyChecker{approveAll: true},
 			expected: false,
 		},
 		{
@@ -83,7 +89,7 @@ func TestAreAllToolCallsAutoApprovable(t *testing.T) {
 				{Name: "get_issue", ServerOrigin: "https://api.github.com"},
 				{Name: "getJiraIssue", ServerOrigin: "https://mcp.atlassian.com"},
 			},
-			checker:  &mockAutoApprover{approveAll: true},
+			checker:  &mockPolicyChecker{approveAll: true},
 			expected: true,
 		},
 		{
@@ -91,7 +97,7 @@ func TestAreAllToolCallsAutoApprovable(t *testing.T) {
 			toolCalls: []llm.ToolCall{
 				{Name: "get_issue", ServerOrigin: "https://api.github.com"},
 			},
-			checker:  &mockAutoApprover{approveAll: true},
+			checker:  &mockPolicyChecker{approveAll: true},
 			expected: true,
 		},
 	}
@@ -99,7 +105,7 @@ func TestAreAllToolCallsAutoApprovable(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			service := &MMPostStreamService{
-				toolAutoApprover: tc.checker,
+				toolPolicyChecker: tc.checker,
 			}
 			result := service.areAllToolCallsAutoApprovable(tc.toolCalls)
 			require.Equal(t, tc.expected, result)
@@ -107,17 +113,28 @@ func TestAreAllToolCallsAutoApprovable(t *testing.T) {
 	}
 }
 
-func TestToolAutoApprovalFunc(t *testing.T) {
+func TestToolPolicyFunc(t *testing.T) {
 	called := false
-	fn := ToolAutoApprovalFunc(func(serverBaseURL string, toolName string) bool {
+	fn := ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
 		called = true
-		return serverBaseURL == "https://example.com" && toolName == "read_tool"
+		if serverBaseURL == "https://example.com" && toolName == "read_tool" {
+			return "auto_run", true
+		}
+		return "ask", true
 	})
 
-	require.True(t, fn.IsToolAutoApproved("https://example.com", "read_tool"))
+	policy, enabled := fn.GetToolPolicy("https://example.com", "read_tool")
 	require.True(t, called)
-	require.False(t, fn.IsToolAutoApproved("https://example.com", "write_tool"))
-	require.False(t, fn.IsToolAutoApproved("https://other.com", "read_tool"))
+	require.Equal(t, "auto_run", policy)
+	require.True(t, enabled)
+
+	policy, enabled = fn.GetToolPolicy("https://example.com", "write_tool")
+	require.Equal(t, "ask", policy)
+	require.True(t, enabled)
+
+	policy, enabled = fn.GetToolPolicy("https://other.com", "read_tool")
+	require.Equal(t, "ask", policy)
+	require.True(t, enabled)
 }
 
 func TestStreamToPostAutoApproval(t *testing.T) {
@@ -132,7 +149,7 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 		name                   string
 		toolCalls              []llm.ToolCall
 		isDM                   bool
-		autoApprover           ToolAutoApprovalChecker
+		policyChecker          ToolPolicyChecker
 		expectAutoApprovedProp bool
 		expectCallbackInvoked  bool
 	}{
@@ -142,7 +159,7 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 				{ID: "tc-1", Name: "get_issue", ServerOrigin: "https://api.github.com"},
 			},
 			isDM:                   false,
-			autoApprover:           &mockAutoApprover{approveAll: true},
+			policyChecker:          &mockPolicyChecker{approveAll: true},
 			expectAutoApprovedProp: true,
 			expectCallbackInvoked:  true,
 		},
@@ -153,7 +170,7 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 				{ID: "tc-2", Name: "list_repos", ServerOrigin: "https://api.github.com"},
 			},
 			isDM:                   false,
-			autoApprover:           &mockAutoApprover{approveAll: true},
+			policyChecker:          &mockPolicyChecker{approveAll: true},
 			expectAutoApprovedProp: true,
 			expectCallbackInvoked:  true,
 		},
@@ -169,7 +186,7 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 				},
 			},
 			isDM:                   false,
-			autoApprover:           &mockAutoApprover{approveAll: true},
+			policyChecker:          &mockPolicyChecker{approveAll: true},
 			expectAutoApprovedProp: false,
 			expectCallbackInvoked:  false,
 		},
@@ -180,7 +197,7 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 				{ID: "tc-2", Name: "create_issue", ServerOrigin: "https://api.github.com"},
 			},
 			isDM:                   false,
-			autoApprover:           &mockAutoApprover{approved: map[string]bool{"get_issue": true}},
+			policyChecker:          &mockPolicyChecker{approved: map[string]bool{"get_issue": true}},
 			expectAutoApprovedProp: false,
 			expectCallbackInvoked:  false,
 		},
@@ -190,7 +207,7 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 				{ID: "tc-1", Name: "get_issue", ServerOrigin: "https://api.github.com"},
 			},
 			isDM:                   true,
-			autoApprover:           &mockAutoApprover{approveAll: true},
+			policyChecker:          &mockPolicyChecker{approveAll: true},
 			expectAutoApprovedProp: true,
 			expectCallbackInvoked:  false,
 		},
@@ -201,7 +218,7 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 				{ID: "tc-2", Name: "create_issue", ServerOrigin: "https://api.github.com"},
 			},
 			isDM:                   true,
-			autoApprover:           &mockAutoApprover{approved: map[string]bool{"get_issue": true}},
+			policyChecker:          &mockPolicyChecker{approved: map[string]bool{"get_issue": true}},
 			expectAutoApprovedProp: false,
 			expectCallbackInvoked:  false,
 		},
@@ -211,7 +228,7 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 				{ID: "tc-1", Name: "get_issue", ServerOrigin: "https://api.github.com"},
 			},
 			isDM:                   false,
-			autoApprover:           nil,
+			policyChecker:          nil,
 			expectAutoApprovedProp: false,
 			expectCallbackInvoked:  false,
 		},
@@ -221,7 +238,7 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 				{ID: "tc-1", Name: "builtin_tool", ServerOrigin: ""},
 			},
 			isDM:                   false,
-			autoApprover:           &mockAutoApprover{approveAll: true},
+			policyChecker:          &mockPolicyChecker{approveAll: true},
 			expectAutoApprovedProp: false,
 			expectCallbackInvoked:  false,
 		},
@@ -247,7 +264,7 @@ func TestStreamToPostAutoApproval(t *testing.T) {
 			var callbackPostID, callbackRequesterID string
 
 			service := NewMMPostStreamService(client, i18n.Init())
-			service.SetToolAutoApprover(tc.autoApprover)
+			service.SetToolPolicyChecker(tc.policyChecker)
 			service.SetAutoExecuteCallback(func(pID string, rID string) {
 				callbackMu.Lock()
 				defer callbackMu.Unlock()
@@ -435,7 +452,7 @@ func TestStreamToPostDMMarksSuccessfulAutoApprovableToolsAsAutoApproved(t *testi
 		},
 	}
 	service := NewMMPostStreamService(client, i18n.Init())
-	service.SetToolAutoApprover(&mockAutoApprover{
+	service.SetToolPolicyChecker(&mockPolicyChecker{
 		approved: map[string]bool{
 			"get_channel_info": true,
 		},

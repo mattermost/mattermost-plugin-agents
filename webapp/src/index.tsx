@@ -110,7 +110,7 @@ export default class Plugin {
         if (currentUserId) {
             getAIDirectChannel(currentUserId).then((botChannelId) => {
                 store.dispatch({type: 'SET_AI_BOT_CHANNEL', botChannelId} as any);
-            });
+            }).catch(() => { /* bot user may not exist yet */ });
         }
 
         store.subscribe(() => {
@@ -120,7 +120,7 @@ export default class Plugin {
                 if (currentUserId) {
                     getAIDirectChannel(currentUserId).then((botChannelId) => {
                         store.dispatch({type: 'SET_AI_BOT_CHANNEL', botChannelId} as any);
-                    });
+                    }).catch(() => { /* bot user may not exist yet */ });
                 } else {
                     store.dispatch({type: 'SET_AI_BOT_CHANNEL', botChannelId: ''} as any);
                 }

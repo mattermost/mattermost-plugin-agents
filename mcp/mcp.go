@@ -33,7 +33,8 @@ type Errors struct {
 
 // EmbeddedServerConfig contains configuration for the embedded MCP server
 type EmbeddedServerConfig struct {
-	Enabled bool `json:"enabled"`
+	Enabled     bool         `json:"enabled"`
+	ToolConfigs []ToolConfig `json:"tool_configs,omitempty"`
 }
 
 // Config contains the configuration for the MCP  servers
@@ -43,7 +44,6 @@ type Config struct {
 	Servers            []ServerConfig       `json:"servers"`
 	EmbeddedServer     EmbeddedServerConfig `json:"embeddedServer"`
 	IdleTimeoutMinutes int                  `json:"idleTimeoutMinutes"`
-	ApprovedServers    []ApprovedMCPServer  `json:"approvedServers,omitempty"`
 }
 
 // DiscoverRemoteServerTools creates a temporary connection to a remote MCP server and discovers its tools

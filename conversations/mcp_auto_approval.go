@@ -7,13 +7,13 @@ import (
 	"encoding/json"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-ai/streaming"
 )
 
 // wrapStreamWithMCPAutoApproval wraps a text stream to automatically execute
-// MCP tool calls that are pre-approved (READ-only tools on known servers).
+// MCP tool calls whose per-tool policy is "auto_run" + enabled.
 //
-// When ALL tool calls in a batch are auto-approvable, the wrapper:
+// When ALL tool calls in a batch are auto-runnable, the wrapper:
 //  1. Executes each tool via the ToolStore
 //  2. Sets the status to ToolCallStatusAutoApproved (or ToolCallStatusError on failure)
 //  3. Includes the results in the emitted event
@@ -21,14 +21,14 @@ import (
 // The streaming layer detects the auto-approved status and skips the
 // call-approval UI, proceeding directly to result-sharing.
 //
-// When ANY tool call is NOT auto-approvable, the batch passes through
+// When ANY tool call is NOT auto-runnable, the batch passes through
 // unchanged for the normal approval flow.
 func wrapStreamWithMCPAutoApproval(
 	stream *llm.TextStreamResult,
 	llmContext *llm.Context,
-	approvedServers *mcp.ApprovedMCPServersConfig,
+	policyChecker streaming.ToolPolicyChecker,
 ) *llm.TextStreamResult {
-	if stream == nil || llmContext == nil || llmContext.Tools == nil || approvedServers == nil {
+	if stream == nil || llmContext == nil || llmContext.Tools == nil || policyChecker == nil {
 		return stream
 	}
 
@@ -49,24 +49,25 @@ func wrapStreamWithMCPAutoApproval(
 			}
 
 			// Enrich each tool call with ServerOrigin from the ToolStore
-			// and check whether all are auto-approvable.
-			allAutoApproved := true
+			// and check whether all are auto-runnable.
+			allAutoRun := true
 			for i := range toolCalls {
 				if tool := llmContext.Tools.GetTool(toolCalls[i].Name); tool != nil {
 					toolCalls[i].ServerOrigin = tool.ServerOrigin
 				}
-				if !approvedServers.IsToolAutoApproved(toolCalls[i].ServerOrigin, toolCalls[i].Name) {
-					allAutoApproved = false
+				policy, enabled := policyChecker.GetToolPolicy(toolCalls[i].ServerOrigin, toolCalls[i].Name)
+				if policy != "auto_run" || !enabled {
+					allAutoRun = false
 				}
 			}
 
-			if !allAutoApproved {
-				// At least one tool is not auto-approvable — pass through unchanged
+			if !allAutoRun {
+				// At least one tool is not auto-runnable — pass through unchanged
 				output <- event
 				continue
 			}
 
-			// All tools are auto-approvable: execute them
+			// All tools are auto-runnable: execute them
 			for i := range toolCalls {
 				result, err := llmContext.Tools.ResolveTool(toolCalls[i].Name, func(args any) error {
 					return json.Unmarshal(toolCalls[i].Arguments, args)
@@ -88,7 +89,7 @@ func wrapStreamWithMCPAutoApproval(
 }
 
 // hasAutoApprovedToolCalls checks if any tool call in the batch was pre-executed
-// by the MCP approved servers wrapper.
+// by the MCP auto-approval wrapper.
 // The wrapper sets ToolCallStatusAutoApproved on success and ToolCallStatusError on
 // execution failure. Either status means the batch was already executed.
 func hasAutoApprovedToolCalls(toolCalls []llm.ToolCall) bool {

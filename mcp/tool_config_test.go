@@ -1,0 +1,206 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+package mcp
+
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestServerConfigGetToolPolicy(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      *ServerConfig
+		toolName    string
+		wantPolicy  string
+		wantEnabled bool
+	}{
+		{
+			name:        "nil config returns ask false",
+			config:      nil,
+			toolName:    "search",
+			wantPolicy:  ToolPolicyAsk,
+			wantEnabled: false,
+		},
+		{
+			name:        "empty tool name returns ask false",
+			config:      &ServerConfig{},
+			toolName:    "",
+			wantPolicy:  ToolPolicyAsk,
+			wantEnabled: false,
+		},
+		{
+			name:        "missing tool config returns ask true",
+			config:      &ServerConfig{},
+			toolName:    "search",
+			wantPolicy:  ToolPolicyAsk,
+			wantEnabled: true,
+		},
+		{
+			name: "ask enabled",
+			config: &ServerConfig{
+				ToolConfigs: []ToolConfig{
+					{Name: "search", Policy: ToolPolicyAsk, Enabled: true},
+				},
+			},
+			toolName:    "search",
+			wantPolicy:  ToolPolicyAsk,
+			wantEnabled: true,
+		},
+		{
+			name: "auto run enabled",
+			config: &ServerConfig{
+				ToolConfigs: []ToolConfig{
+					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
+				},
+			},
+			toolName:    "search",
+			wantPolicy:  ToolPolicyAutoRun,
+			wantEnabled: true,
+		},
+		{
+			name: "auto run disabled",
+			config: &ServerConfig{
+				ToolConfigs: []ToolConfig{
+					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: false},
+				},
+			},
+			toolName:    "search",
+			wantPolicy:  ToolPolicyAutoRun,
+			wantEnabled: false,
+		},
+		{
+			name: "invalid policy normalizes to ask",
+			config: &ServerConfig{
+				ToolConfigs: []ToolConfig{
+					{Name: "search", Policy: "invalid", Enabled: true},
+				},
+			},
+			toolName:    "search",
+			wantPolicy:  ToolPolicyAsk,
+			wantEnabled: true,
+		},
+		{
+			name: "empty policy normalizes to ask",
+			config: &ServerConfig{
+				ToolConfigs: []ToolConfig{
+					{Name: "search", Policy: "", Enabled: true},
+				},
+			},
+			toolName:    "search",
+			wantPolicy:  ToolPolicyAsk,
+			wantEnabled: true,
+		},
+		{
+			name: "duplicate tool configs last matching entry wins",
+			config: &ServerConfig{
+				ToolConfigs: []ToolConfig{
+					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
+					{Name: "search", Policy: ToolPolicyAsk, Enabled: false},
+				},
+			},
+			toolName:    "search",
+			wantPolicy:  ToolPolicyAsk,
+			wantEnabled: false,
+		},
+		{
+			name: "exact name match only",
+			config: &ServerConfig{
+				ToolConfigs: []ToolConfig{
+					{Name: "get_me", Policy: ToolPolicyAutoRun, Enabled: true},
+				},
+			},
+			toolName:    "GET_ME",
+			wantPolicy:  ToolPolicyAsk,
+			wantEnabled: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policy, enabled := tt.config.GetToolPolicy(tt.toolName)
+			require.Equal(t, tt.wantPolicy, policy)
+			require.Equal(t, tt.wantEnabled, enabled)
+		})
+	}
+}
+
+func TestServerConfigIsToolAutoRun(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   *ServerConfig
+		toolName string
+		want     bool
+	}{
+		{
+			name:     "nil config",
+			config:   nil,
+			toolName: "search",
+			want:     false,
+		},
+		{
+			name:     "missing tool config",
+			config:   &ServerConfig{},
+			toolName: "search",
+			want:     false,
+		},
+		{
+			name: "ask enabled",
+			config: &ServerConfig{
+				ToolConfigs: []ToolConfig{
+					{Name: "search", Policy: ToolPolicyAsk, Enabled: true},
+				},
+			},
+			toolName: "search",
+			want:     false,
+		},
+		{
+			name: "auto run disabled",
+			config: &ServerConfig{
+				ToolConfigs: []ToolConfig{
+					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: false},
+				},
+			},
+			toolName: "search",
+			want:     false,
+		},
+		{
+			name: "auto run enabled",
+			config: &ServerConfig{
+				ToolConfigs: []ToolConfig{
+					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
+				},
+			},
+			toolName: "search",
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, tt.config.IsToolAutoRun(tt.toolName))
+		})
+	}
+}
+
+func TestServerConfigJSONOmitEmptyToolConfigs(t *testing.T) {
+	cfg := ServerConfig{
+		Name:    "GitHub",
+		Enabled: true,
+		BaseURL: "https://api.githubcopilot.com/mcp/",
+	}
+
+	data, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "tool_configs")
+}
+
+func TestServerConfigJSONUnmarshalWithoutToolConfigs(t *testing.T) {
+	var cfg ServerConfig
+	err := json.Unmarshal([]byte(`{"name":"GitHub","enabled":true,"baseURL":"https://api.githubcopilot.com/mcp/"}`), &cfg)
+	require.NoError(t, err)
+	require.Nil(t, cfg.ToolConfigs)
+}

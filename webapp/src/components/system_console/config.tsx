@@ -110,7 +110,6 @@ const defaultConfig = {
         enabled: false,
         servers: [],
         idleTimeout: 30,
-        approvedServers: [],
     },
     webSearch: {
         enabled: false,

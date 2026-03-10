@@ -161,16 +161,6 @@ func (c *Container) MCP() mcp.Config {
 	return c.cfg.Load().MCP
 }
 
-// ApprovedMCPServers returns the merged approved MCP servers configuration,
-// combining built-in Mattermost-curated servers with any user-defined overrides.
-func (c *Container) ApprovedMCPServers() *mcp.ApprovedMCPServersConfig {
-	cfg := c.cfg.Load()
-	if cfg == nil {
-		return mcp.MergeApprovedServers(mcp.BuiltinApprovedServers(), nil)
-	}
-	return mcp.MergeApprovedServers(mcp.BuiltinApprovedServers(), cfg.MCP.ApprovedServers)
-}
-
 func (c *Container) AllowUnsafeLinks() bool {
 	cfg := c.cfg.Load()
 	if cfg == nil {

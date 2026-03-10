@@ -205,8 +205,8 @@ func (c *testToolCallingConfig) AllowNativeWebSearchInChannels() bool {
 	return false
 }
 
-func (c *testToolCallingConfig) ApprovedMCPServers() *mcp.ApprovedMCPServersConfig {
-	return &mcp.ApprovedMCPServersConfig{}
+func (c *testToolCallingConfig) MCP() mcp.Config {
+	return mcp.Config{}
 }
 
 type toolArgs struct {

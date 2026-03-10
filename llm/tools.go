@@ -429,6 +429,24 @@ func (s *ToolStore) GetServerOrigin(toolName string) string {
 	return ""
 }
 
+// RemoveToolsByServerOrigin removes all tools whose ServerOrigin matches
+// any of the provided origins. This is used for user-disabled provider
+// filtering in Copilot DM contexts.
+func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
+	if s == nil || len(disabledOrigins) == 0 {
+		return
+	}
+	disabledSet := make(map[string]bool, len(disabledOrigins))
+	for _, origin := range disabledOrigins {
+		disabledSet[origin] = true
+	}
+	for name, tool := range s.tools {
+		if disabledSet[tool.ServerOrigin] {
+			delete(s.tools, name)
+		}
+	}
+}
+
 // GetToolsInfo returns basic information (name and description) about all tools in the store.
 // This is useful for informing LLMs about tools that are available in other contexts
 // (e.g., DM-only tools when in a channel).

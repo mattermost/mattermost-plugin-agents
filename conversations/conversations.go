@@ -44,20 +44,21 @@ type AIThread struct {
 type ConfigProvider interface {
 	EnableChannelMentionToolCalling() bool
 	AllowNativeWebSearchInChannels() bool
-	ApprovedMCPServers() *mcp.ApprovedMCPServersConfig
+	MCP() mcp.Config
 }
 
 type Conversations struct {
-	prompts          *llm.Prompts
-	mmClient         mmapi.Client
-	streamingService streaming.Service
-	contextBuilder   *llmcontext.Builder
-	bots             *bots.MMBots
-	db               *mmapi.DBClient
-	licenseChecker   *enterprise.LicenseChecker
-	i18n             *i18n.Bundle
-	meetingsService  MeetingsService
-	configProvider   ConfigProvider
+	prompts           *llm.Prompts
+	mmClient          mmapi.Client
+	streamingService  streaming.Service
+	contextBuilder    *llmcontext.Builder
+	bots              *bots.MMBots
+	db                *mmapi.DBClient
+	licenseChecker    *enterprise.LicenseChecker
+	i18n              *i18n.Bundle
+	meetingsService   MeetingsService
+	configProvider    ConfigProvider
+	toolPolicyChecker streaming.ToolPolicyChecker
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations
@@ -95,6 +96,12 @@ func New(
 // SetMeetingsService sets the meetings service (used to break circular dependency during initialization)
 func (c *Conversations) SetMeetingsService(meetingsService MeetingsService) {
 	c.meetingsService = meetingsService
+}
+
+// SetToolPolicyChecker sets the per-tool policy checker used for auto-approval
+// and DM auto-run decisions.
+func (c *Conversations) SetToolPolicyChecker(checker streaming.ToolPolicyChecker) {
+	c.toolPolicyChecker = checker
 }
 
 // ProcessUserRequestWithContext is an internal helper that uses an existing context to process a message
@@ -154,19 +161,18 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		}
 	}
 
-	// In DMs, auto-run approved MCP tools so they execute without user approval
-	if isDM && c.configProvider != nil && context != nil && context.Tools != nil {
-		approvedConfig := c.configProvider.ApprovedMCPServers()
-		if approvedConfig != nil {
-			allTools := context.Tools.GetTools()
-			toolInfos := make([]struct{ Name, ServerOrigin string }, len(allTools))
-			for i, t := range allTools {
-				toolInfos[i] = struct{ Name, ServerOrigin string }{Name: t.Name, ServerOrigin: t.ServerOrigin}
+	// In DMs, auto-run tools whose per-tool policy is "auto_run" + enabled
+	if isDM && c.toolPolicyChecker != nil && context != nil && context.Tools != nil {
+		allTools := context.Tools.GetTools()
+		var autoRunNames []string
+		for _, t := range allTools {
+			policy, enabled := c.toolPolicyChecker.GetToolPolicy(t.ServerOrigin, t.Name)
+			if policy == "auto_run" && enabled {
+				autoRunNames = append(autoRunNames, t.Name)
 			}
-			autoRunNames := approvedConfig.GetAutoApprovedToolNames(toolInfos)
-			if len(autoRunNames) > 0 {
-				opts = append(opts, llm.WithAutoRunTools(autoRunNames))
-			}
+		}
+		if len(autoRunNames) > 0 {
+			opts = append(opts, llm.WithAutoRunTools(autoRunNames))
 		}
 	}
 
@@ -190,12 +196,11 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 	}
 
 	// Wrap stream with MCP auto-approval for channel tool calls.
-	// When tools are enabled in channels and an approved servers config exists,
-	// READ-only tools from known MCP servers are auto-executed, skipping the
-	// call-approval UI and proceeding directly to result-sharing.
-	if allowToolsInChannel && context != nil && context.Tools != nil && c.configProvider != nil {
-		approvedServers := c.configProvider.ApprovedMCPServers()
-		result = wrapStreamWithMCPAutoApproval(result, context, approvedServers)
+	// When tools are enabled in channels and a per-tool policy checker exists,
+	// auto_run tools are auto-executed, skipping the call-approval UI and
+	// proceeding directly to result-sharing.
+	if allowToolsInChannel && context != nil && context.Tools != nil && c.toolPolicyChecker != nil {
+		result = wrapStreamWithMCPAutoApproval(result, context, c.toolPolicyChecker)
 	}
 
 	go func() {
@@ -249,6 +254,17 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 				rootID = post.Id
 			}
 			c.sendOAuthNotifications(bot, postingUser.Id, channel.Id, rootID, authErrors)
+		}
+	}
+
+	// Apply user-disabled-provider filtering for DM/group channels only (Copilot RHS).
+	// In-channel @mentions use the agent's EnabledTools and do not apply user toggles.
+	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
+		if err != nil {
+			c.mmClient.LogWarn("Failed to load user tool preferences, proceeding without filtering", "error", err.Error(), "userID", postingUser.Id)
+		} else if len(prefs.DisabledServers) > 0 && llmContext.Tools != nil {
+			llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
 		}
 	}
 

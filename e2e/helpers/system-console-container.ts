@@ -19,6 +19,13 @@ export interface SystemConsolePluginConfig {
     allowUnsafeLinks?: boolean;
     services?: any[];
     bots?: any[];
+    mcp?: {
+        enabled?: boolean;
+        enablePluginServer?: boolean;
+        embeddedServer?: { enabled: boolean };
+        idleTimeoutMinutes?: number;
+        servers?: any[];
+    };
 }
 
 const adminUsername = 'sysadmin';
@@ -74,7 +81,7 @@ async function setupAdminUser(mattermost: MattermostContainer): Promise<void> {
 export async function RunSystemConsoleContainer(config: SystemConsolePluginConfig): Promise<MattermostContainer> {
     const filename = findPluginFile();
 
-    const pluginConfig = {
+    const pluginConfig: Record<string, any> = {
         config: {
             allowPrivateChannels: config.allowPrivateChannels ?? true,
             disableFunctionCalls: config.disableFunctionCalls ?? false,
@@ -89,6 +96,10 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
             bots: config.bots ?? [],
         }
     };
+
+    if (config.mcp) {
+        pluginConfig.config.mcp = config.mcp;
+    }
 
     const mattermost = await new MattermostContainer()
         .withPlugin(filename, 'mattermost-ai', pluginConfig)
