@@ -950,8 +950,9 @@ func TestSanitizeProviderError(t *testing.T) {
 				APIKey: "t",
 			},
 		}
+		providerErrorMessage := `Unauthorized: Incorrect API key provided: t. You can find your API key at https://platform.openai.com/account/api-keys.`
 
-		sanitizedErr := oai.sanitizeProviderError(errors.New(`Unauthorized: Incorrect API key provided: t. You can find your API key at https://platform.openai.com/account/api-keys.`))
+		sanitizedErr := oai.sanitizeProviderError(errors.New(providerErrorMessage))
 		require.NotNil(t, sanitizedErr)
 		assert.Equal(t, "Unauthorized: Incorrect API key provided. You can find your API key at https://platform.openai.com/account/api-keys.", sanitizedErr.Error())
 		assert.NotContains(t, sanitizedErr.Error(), "Unau[REDACTED]horized")
