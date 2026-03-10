@@ -49,15 +49,17 @@ func (a *API) channelAuthorizationRequired(c *gin.Context) {
 	}
 }
 
-func (a *API) handleChannelAnalysis(c *gin.Context) {
-	userID := c.GetHeader("Mattermost-User-Id")
-	channel := c.MustGet(ContextChannelKey).(*model.Channel)
-	bot := c.MustGet(ContextBotKey).(*bots.Bot)
-
+func (a *API) channelAnalysisLicenseRequired(c *gin.Context) {
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
 		return
 	}
+}
+
+func (a *API) handleChannelAnalysis(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
 	var data struct {
 		AnalysisType string `json:"analysis_type" binding:"required"`
@@ -183,12 +185,6 @@ func (a *API) handleInterval(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
-
-	// Check license
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
-		return
-	}
 
 	// Parse request data
 	data := struct {

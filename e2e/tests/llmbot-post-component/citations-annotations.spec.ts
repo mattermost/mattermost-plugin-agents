@@ -10,6 +10,7 @@ import {
     getAvailableProviders,
     ProviderBundle,
 } from 'helpers/api-config';
+import { attachAPIErrorContext } from 'helpers/log-scanner';
 
 /**
  * Test Suite: Citations and Annotations
@@ -18,8 +19,8 @@ import {
  * Runs once per configured provider (OpenAI and/or Anthropic).
  *
  * Environment Variables Required:
- * - ANTHROPIC_API_KEY: To run tests with Anthropic (claude-3-7-sonnet)
- * - OPENAI_API_KEY: To run tests with OpenAI (gpt-5)
+ * - ANTHROPIC_API_KEY: To run tests with Anthropic
+ * - OPENAI_API_KEY: To run tests with OpenAI
  *
  * Tests:
  * 1. Citation Display - Renders from Real API
@@ -75,6 +76,10 @@ function createProviderTestSuite(provider: ProviderBundle) {
             if (mattermost) {
                 await mattermost.stop();
             }
+        });
+
+        test.afterEach(async ({}, testInfo) => {
+            await attachAPIErrorContext(testInfo);
         });
 
         test('Citation Display - Renders from Real API', async ({ page }) => {

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import MattermostContainer from './mmcontainer';
 import { LLMService, LLMBotConfig } from './api-config';
+import { checkAPIHealth } from './api-health-check';
 
 /**
  * Container setup for LLMBot tests using REAL APIs
@@ -13,6 +14,10 @@ export interface ContainerConfig {
 }
 
 export async function RunRealAPIContainer(config: ContainerConfig): Promise<MattermostContainer> {
+  // Pre-flight check: verify API is reachable with the configured model
+  // Cached per service ID, so only runs once per provider per process
+  await checkAPIHealth(config.service);
+
   let filename = "";
   fs.readdirSync("../dist/").forEach(file => {
     if (file.endsWith(".tar.gz")) {

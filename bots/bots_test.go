@@ -50,6 +50,356 @@ func (m *mockConfig) GetTranscriptGenerator() string {
 	return "testbot"
 }
 
+func TestBotConfigsEqual(t *testing.T) {
+	baseBotConfig := func() llm.BotConfig {
+		return llm.BotConfig{
+			ID:                 "bot1",
+			Name:               "testbot",
+			DisplayName:        "Test Bot",
+			CustomInstructions: "Be helpful",
+			ServiceID:          "svc1",
+			Model:              "gpt-4o",
+			EnableVision:       true,
+			DisableTools:       false,
+			ChannelAccessLevel: llm.ChannelAccessLevelAll,
+			ChannelIDs:         []string{"ch1", "ch2"},
+			UserAccessLevel:    llm.UserAccessLevelAll,
+			UserIDs:            []string{"u1"},
+			TeamIDs:            []string{"t1"},
+			MaxFileSize:        1024,
+			EnabledNativeTools: []string{"web_search"},
+			ReasoningEnabled:   true,
+			ReasoningEffort:    "medium",
+			ThinkingBudget:     4096,
+		}
+	}
+
+	testCases := []struct {
+		name     string
+		a        []llm.BotConfig
+		b        []llm.BotConfig
+		expected bool
+	}{
+		{
+			name:     "both empty",
+			a:        []llm.BotConfig{},
+			b:        []llm.BotConfig{},
+			expected: true,
+		},
+		{
+			name:     "both nil",
+			a:        nil,
+			b:        nil,
+			expected: true,
+		},
+		{
+			name:     "identical configs",
+			a:        []llm.BotConfig{baseBotConfig()},
+			b:        []llm.BotConfig{baseBotConfig()},
+			expected: true,
+		},
+		{
+			name:     "different lengths",
+			a:        []llm.BotConfig{baseBotConfig()},
+			b:        []llm.BotConfig{},
+			expected: false,
+		},
+		{
+			name: "different Name",
+			a:    []llm.BotConfig{baseBotConfig()},
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.Name = "otherbot"
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different EnabledNativeTools",
+			a:    []llm.BotConfig{baseBotConfig()},
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.EnabledNativeTools = []string{}
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "EnabledNativeTools added",
+			a: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.EnabledNativeTools = nil
+				return []llm.BotConfig{c}
+			}(),
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.EnabledNativeTools = []string{"web_search"}
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different CustomInstructions",
+			a:    []llm.BotConfig{baseBotConfig()},
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.CustomInstructions = "Be concise"
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different EnableVision",
+			a:    []llm.BotConfig{baseBotConfig()},
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.EnableVision = false
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different DisableTools",
+			a:    []llm.BotConfig{baseBotConfig()},
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.DisableTools = true
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different ChannelAccessLevel",
+			a:    []llm.BotConfig{baseBotConfig()},
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.ChannelAccessLevel = llm.ChannelAccessLevelBlock
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different ChannelIDs",
+			a:    []llm.BotConfig{baseBotConfig()},
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.ChannelIDs = []string{"ch3"}
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different UserIDs",
+			a:    []llm.BotConfig{baseBotConfig()},
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.UserIDs = []string{"u2", "u3"}
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different TeamIDs",
+			a:    []llm.BotConfig{baseBotConfig()},
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.TeamIDs = []string{"t2"}
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different MaxFileSize",
+			a:    []llm.BotConfig{baseBotConfig()},
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.MaxFileSize = 2048
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different ReasoningEnabled",
+			a:    []llm.BotConfig{baseBotConfig()},
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.ReasoningEnabled = false
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different ReasoningEffort",
+			a:    []llm.BotConfig{baseBotConfig()},
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.ReasoningEffort = "high"
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different ThinkingBudget",
+			a:    []llm.BotConfig{baseBotConfig()},
+			b: func() []llm.BotConfig {
+				c := baseBotConfig()
+				c.ThinkingBudget = 8192
+				return []llm.BotConfig{c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different order same configs",
+			a: func() []llm.BotConfig {
+				c1 := baseBotConfig()
+				c2 := baseBotConfig()
+				c2.ID = "bot2"
+				c2.Name = "testbot2"
+				return []llm.BotConfig{c1, c2}
+			}(),
+			b: func() []llm.BotConfig {
+				c1 := baseBotConfig()
+				c2 := baseBotConfig()
+				c2.ID = "bot2"
+				c2.Name = "testbot2"
+				return []llm.BotConfig{c2, c1}
+			}(),
+			expected: true,
+		},
+		{
+			name: "missing bot ID in second slice",
+			a: func() []llm.BotConfig {
+				c1 := baseBotConfig()
+				c2 := baseBotConfig()
+				c2.ID = "bot2"
+				return []llm.BotConfig{c1, c2}
+			}(),
+			b: func() []llm.BotConfig {
+				c1 := baseBotConfig()
+				c3 := baseBotConfig()
+				c3.ID = "bot3"
+				return []llm.BotConfig{c1, c3}
+			}(),
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := botConfigsEqual(tc.a, tc.b)
+			require.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestServiceConfigsEqual(t *testing.T) {
+	baseServiceConfig := func() llm.ServiceConfig {
+		return llm.ServiceConfig{
+			ID:                      "svc1",
+			Name:                    "OpenAI Service",
+			Type:                    llm.ServiceTypeOpenAI,
+			APIKey:                  "sk-test",
+			DefaultModel:            "gpt-4o",
+			APIURL:                  "https://api.openai.com/v1",
+			InputTokenLimit:         128000,
+			OutputTokenLimit:        4096,
+			StreamingTimeoutSeconds: 30,
+			UseResponsesAPI:         true,
+		}
+	}
+
+	testCases := []struct {
+		name     string
+		a        map[string]llm.ServiceConfig
+		b        map[string]llm.ServiceConfig
+		expected bool
+	}{
+		{
+			name:     "both empty",
+			a:        map[string]llm.ServiceConfig{},
+			b:        map[string]llm.ServiceConfig{},
+			expected: true,
+		},
+		{
+			name:     "both nil",
+			a:        nil,
+			b:        nil,
+			expected: true,
+		},
+		{
+			name:     "identical configs",
+			a:        map[string]llm.ServiceConfig{"svc1": baseServiceConfig()},
+			b:        map[string]llm.ServiceConfig{"svc1": baseServiceConfig()},
+			expected: true,
+		},
+		{
+			name:     "different lengths",
+			a:        map[string]llm.ServiceConfig{"svc1": baseServiceConfig()},
+			b:        map[string]llm.ServiceConfig{},
+			expected: false,
+		},
+		{
+			name: "different APIURL",
+			a:    map[string]llm.ServiceConfig{"svc1": baseServiceConfig()},
+			b: func() map[string]llm.ServiceConfig {
+				c := baseServiceConfig()
+				c.APIURL = "https://custom.api.com/v1"
+				return map[string]llm.ServiceConfig{"svc1": c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different OutputTokenLimit",
+			a:    map[string]llm.ServiceConfig{"svc1": baseServiceConfig()},
+			b: func() map[string]llm.ServiceConfig {
+				c := baseServiceConfig()
+				c.OutputTokenLimit = 8192
+				return map[string]llm.ServiceConfig{"svc1": c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different UseResponsesAPI",
+			a:    map[string]llm.ServiceConfig{"svc1": baseServiceConfig()},
+			b: func() map[string]llm.ServiceConfig {
+				c := baseServiceConfig()
+				c.UseResponsesAPI = false
+				return map[string]llm.ServiceConfig{"svc1": c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "different APIKey",
+			a:    map[string]llm.ServiceConfig{"svc1": baseServiceConfig()},
+			b: func() map[string]llm.ServiceConfig {
+				c := baseServiceConfig()
+				c.APIKey = "sk-new-key"
+				return map[string]llm.ServiceConfig{"svc1": c}
+			}(),
+			expected: false,
+		},
+		{
+			name: "missing service ID",
+			a: map[string]llm.ServiceConfig{
+				"svc1": baseServiceConfig(),
+				"svc2": baseServiceConfig(),
+			},
+			b: map[string]llm.ServiceConfig{
+				"svc1": baseServiceConfig(),
+				"svc3": baseServiceConfig(),
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := serviceConfigsEqual(tc.a, tc.b)
+			require.Equal(t, tc.expected, result)
+		})
+	}
+}
+
 func TestEnsureBots(t *testing.T) {
 	testCases := []struct {
 		name               string

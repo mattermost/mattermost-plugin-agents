@@ -1132,12 +1132,15 @@ func (s *OpenAI) completionRequestFromConfig(cfg llm.LanguageModelConfig) openai
 	return params
 }
 
-// reasoningEffortMap maps string effort levels to SDK constants
+// reasoningEffortMap maps string effort levels to SDK constants.
+// Note: 'minimal' was removed as it is not supported by newer models (e.g. gpt-5.2).
+// Supported values: none, low, medium, high, xhigh.
 var reasoningEffortMap = map[string]shared.ReasoningEffort{
-	"minimal": shared.ReasoningEffortMinimal,
-	"low":     shared.ReasoningEffortLow,
-	"medium":  shared.ReasoningEffortMedium,
-	"high":    shared.ReasoningEffortHigh,
+	"none":   shared.ReasoningEffort("none"),
+	"low":    shared.ReasoningEffortLow,
+	"medium": shared.ReasoningEffortMedium,
+	"high":   shared.ReasoningEffortHigh,
+	"xhigh":  shared.ReasoningEffort("xhigh"),
 }
 
 // getReasoningEffort converts a string effort level to the SDK constant, defaulting to medium

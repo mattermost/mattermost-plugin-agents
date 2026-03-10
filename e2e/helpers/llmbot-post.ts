@@ -1,4 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { getAPIErrorContext } from './log-scanner';
 
 /**
  * LLMBotPostHelper - Page object for LLMBot post component interactions
@@ -37,8 +38,10 @@ export class LLMBotPostHelper {
      */
     getReasoningDisplay(postId?: string): Locator {
         const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        // Look for the minimal reasoning container or expanded reasoning header
-        return baseLocator.locator('[class*="MinimalReasoningContainer"], [class*="ExpandedReasoningHeader"]').first();
+        // Scope to reasoning rows that actually render the Thinking label.
+        // This avoids matching the precontent "Starting..." placeholder row,
+        // which reuses the MinimalReasoningContainer styles.
+        return baseLocator.locator('[class*="MinimalReasoningContainer"], [class*="ExpandedReasoningHeader"]').filter({hasText: 'Thinking'}).first();
     }
 
     /**
@@ -46,9 +49,7 @@ export class LLMBotPostHelper {
      * @param postId - Optional post ID to scope the search
      */
     getReasoningToggle(postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        // Target either minimal or expanded header that contains "Thinking"
-        return baseLocator.locator('[class*="MinimalReasoningContainer"], [class*="ExpandedReasoningHeader"]').first();
+        return this.getReasoningDisplay(postId);
     }
 
     /**
@@ -56,9 +57,9 @@ export class LLMBotPostHelper {
      * @param postId - Optional post ID to scope the search
      */
     getReasoningSpinner(postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        // LoadingSpinner is a styled div, not an SVG
-        return baseLocator.locator('div[class*="LoadingSpinner"]').first();
+        // Scope spinner lookup to the actual reasoning row to avoid matching
+        // the precontent "Starting..." spinner.
+        return this.getReasoningDisplay(postId).locator('div[class*="LoadingSpinner"]').first();
     }
 
     /**
@@ -350,8 +351,8 @@ export class LLMBotPostHelper {
             await this.page.waitForTimeout(500);
         }
 
-        // If we hit max timeout, throw error
-        throw new Error(`Timeout waiting for post text to contain: ${text}`);
+        // If we hit max timeout, throw error with API context if available
+        throw new Error(`Timeout waiting for post text to contain: ${text}${getAPIErrorContext()}`);
     }
 
     /**
@@ -363,7 +364,11 @@ export class LLMBotPostHelper {
     async waitForReasoning(postId?: string, maxTimeout: number = 300000): Promise<void> {
         // First wait for reasoning display to appear (shorter timeout for initial appearance)
         const reasoning = this.getReasoningDisplay(postId);
-        await expect(reasoning).toBeVisible({ timeout: 60000 });
+        try {
+            await expect(reasoning).toBeVisible({ timeout: 60000 });
+        } catch (err) {
+            throw new Error(`Timeout waiting for reasoning display to appear${getAPIErrorContext()}`);
+        }
 
         // Then poll until reasoning spinner disappears (reasoning complete)
         const spinner = this.getReasoningSpinner(postId);
@@ -408,9 +413,9 @@ export class LLMBotPostHelper {
             await this.page.waitForTimeout(500);
         }
 
-        // If we hit max timeout, throw error
+        // If we hit max timeout, throw error with API context if available
         const count = await allCitations.count().catch(() => 0);
-        throw new Error(`Timeout waiting for citation ${index} to appear (found ${count})`);
+        throw new Error(`Timeout waiting for citation ${index} to appear (found ${count})${getAPIErrorContext()}`);
     }
 
     /**
@@ -451,7 +456,11 @@ export class LLMBotPostHelper {
         // Wait for post text to appear
         const postText = this.getPostText();
         const remainingTime = maxTimeout - (Date.now() - startTime);
-        await expect(postText).toBeVisible({ timeout: remainingTime });
+        try {
+            await expect(postText).toBeVisible({ timeout: remainingTime });
+        } catch (err) {
+            throw new Error(`Timeout waiting for bot post text to appear${getAPIErrorContext()}`);
+        }
 
         // Wait for "Stop Generating" button to disappear (streaming complete)
         const stopButton = this.getStopGeneratingButton();
