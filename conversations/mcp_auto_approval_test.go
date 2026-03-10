@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,7 +36,7 @@ func (c *testPolicyChecker) GetToolPolicy(serverBaseURL string, toolName string)
 		for _, p := range s.urlPatterns {
 			if matchesTestURL(serverBaseURL, p) {
 				if s.autoRun[toolName] {
-					return "auto_run", true
+					return mcp.ToolPolicyAutoRun, true
 				}
 				return "ask", true
 			}

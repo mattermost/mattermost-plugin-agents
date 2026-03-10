@@ -12,6 +12,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )
@@ -30,10 +31,10 @@ func (m *mockPolicyChecker) GetToolPolicy(serverBaseURL string, toolName string)
 		if serverBaseURL == "" {
 			return "ask", false
 		}
-		return "auto_run", true
+		return mcp.ToolPolicyAutoRun, true
 	}
 	if m.approved[toolName] {
-		return "auto_run", true
+		return mcp.ToolPolicyAutoRun, true
 	}
 	return "ask", true
 }
@@ -118,14 +119,14 @@ func TestToolPolicyFunc(t *testing.T) {
 	fn := ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
 		called = true
 		if serverBaseURL == "https://example.com" && toolName == "read_tool" {
-			return "auto_run", true
+			return mcp.ToolPolicyAutoRun, true
 		}
 		return "ask", true
 	})
 
 	policy, enabled := fn.GetToolPolicy("https://example.com", "read_tool")
 	require.True(t, called)
-	require.Equal(t, "auto_run", policy)
+	require.Equal(t, mcp.ToolPolicyAutoRun, policy)
 	require.True(t, enabled)
 
 	policy, enabled = fn.GetToolPolicy("https://example.com", "write_tool")

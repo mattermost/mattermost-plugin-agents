@@ -161,13 +161,13 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		}
 	}
 
-	// In DMs, auto-run tools whose per-tool policy is "auto_run" + enabled
+	// In DMs, auto-run tools whose per-tool policy is ToolPolicyAutoRun + enabled
 	if isDM && c.toolPolicyChecker != nil && context != nil && context.Tools != nil {
 		allTools := context.Tools.GetTools()
 		var autoRunNames []string
 		for _, t := range allTools {
 			policy, enabled := c.toolPolicyChecker.GetToolPolicy(t.ServerOrigin, t.Name)
-			if policy == "auto_run" && enabled {
+			if policy == mcp.ToolPolicyAutoRun && enabled {
 				autoRunNames = append(autoRunNames, t.Name)
 			}
 		}

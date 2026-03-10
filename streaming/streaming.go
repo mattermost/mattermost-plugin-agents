@@ -12,6 +12,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -135,7 +136,7 @@ func (p *MMPostStreamService) areAllToolCallsAutoApprovable(toolCalls []llm.Tool
 	}
 	for _, tc := range toolCalls {
 		policy, enabled := p.toolPolicyChecker.GetToolPolicy(tc.ServerOrigin, tc.Name)
-		autoRun := policy == "auto_run" && enabled
+		autoRun := policy == mcp.ToolPolicyAutoRun && enabled
 		if p.mmClient != nil {
 			p.mmClient.LogDebug("Auto-approval check",
 				"tool_name", tc.Name,
@@ -150,23 +151,30 @@ func (p *MMPostStreamService) areAllToolCallsAutoApprovable(toolCalls []llm.Tool
 	return true
 }
 
-// markAutoApprovedStatuses upgrades successful tool calls to AutoApproved when
-// the tool itself is auto_run + enabled. This preserves per-tool badge fidelity
-// even in mixed batches where post-level auto_approved_tool_call is false.
-func (p *MMPostStreamService) markAutoApprovedStatuses(toolCalls []llm.ToolCall) {
-	if p.toolPolicyChecker == nil {
-		return
+// markAutoApprovedStatusesAndCheck combines status marking and
+// areAllToolCallsAutoApprovable in a single pass over the tool calls.
+// It upgrades successful tools to AutoApproved when the policy allows,
+// and returns true only if ALL tools are auto_run + enabled.
+func (p *MMPostStreamService) markAutoApprovedStatusesAndCheck(toolCalls []llm.ToolCall) bool {
+	if p.toolPolicyChecker == nil || len(toolCalls) == 0 {
+		return false
 	}
 
+	allAutoApprovable := true
 	for i := range toolCalls {
-		if toolCalls[i].Status != llm.ToolCallStatusSuccess {
-			continue
-		}
 		policy, enabled := p.toolPolicyChecker.GetToolPolicy(toolCalls[i].ServerOrigin, toolCalls[i].Name)
-		if policy == "auto_run" && enabled {
+		isAutoRun := policy == mcp.ToolPolicyAutoRun && enabled
+
+		if toolCalls[i].Status == llm.ToolCallStatusSuccess && isAutoRun {
 			toolCalls[i].Status = llm.ToolCallStatusAutoApproved
 		}
+
+		if !isAutoRun {
+			allAutoApprovable = false
+		}
 	}
+
+	return allAutoApprovable
 }
 
 func (p *MMPostStreamService) StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error {
@@ -555,14 +563,13 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 								dmToolCalls = append(dmToolCalls, tc)
 							}
 						}
-						p.markAutoApprovedStatuses(dmToolCalls)
+						allAutoApprovable := p.markAutoApprovedStatusesAndCheck(dmToolCalls)
 
 						toolCallJSON, jsonErr := json.Marshal(dmToolCalls)
 						if jsonErr != nil {
 							p.mmClient.LogError("Failed to marshal DM tool calls", "error", jsonErr)
 						} else {
 							post.AddProp(ToolCallProp, string(toolCallJSON))
-							allAutoApprovable := p.areAllToolCallsAutoApprovable(dmToolCalls)
 							if allAutoApprovable {
 								post.AddProp(AutoApprovedToolCallProp, "true")
 							} else {
@@ -590,8 +597,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 							p.mmClient.LogError("Failed to store tool calls in KV store, cannot continue", "error", kvErr, "post_id", post.Id, "kv_key", kvKey)
 							return
 						}
-						p.markAutoApprovedStatuses(toolCalls)
-						autoApproved := p.areAllToolCallsAutoApprovable(toolCalls)
+						autoApproved := p.markAutoApprovedStatusesAndCheck(toolCalls)
 
 						toolCallsForPost := RedactToolCalls(toolCalls)
 						post.AddProp(ToolCallRedactedProp, "true")
