@@ -6,6 +6,7 @@ package anthropic
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,7 +14,6 @@ import (
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
@@ -538,15 +538,30 @@ func convertTools(tools []llm.Tool) []anthropicSDK.ToolUnionParam {
 }
 
 func extractInputSchema(schema interface{}) anthropicSDK.ToolInputSchemaParam {
-	switch s := schema.(type) {
-	case map[string]interface{}:
-		if props, ok := s["properties"].(map[string]interface{}); ok {
-			return anthropicSDK.ToolInputSchemaParam{Properties: props}
-		}
-	case *jsonschema.Schema:
-		return anthropicSDK.ToolInputSchemaParam{Properties: s.Properties}
+	defaultSchema := anthropicSDK.ToolInputSchemaParam{
+		Properties: map[string]interface{}{},
 	}
-	return anthropicSDK.ToolInputSchemaParam{}
+
+	if schema == nil {
+		return defaultSchema
+	}
+
+	data, err := json.Marshal(schema)
+	if err != nil {
+		return defaultSchema
+	}
+
+	var result anthropicSDK.ToolInputSchemaParam
+	if err := json.Unmarshal(data, &result); err != nil {
+		return defaultSchema
+	}
+
+	// Ensure Properties is non-nil so the struct is non-zero and omitzero doesn't drop input_schema.
+	if result.Properties == nil {
+		result.Properties = map[string]interface{}{}
+	}
+
+	return result
 }
 
 func (a *Anthropic) InputTokenLimit() int {
