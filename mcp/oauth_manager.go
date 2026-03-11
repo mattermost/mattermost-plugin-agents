@@ -57,8 +57,25 @@ func NewOAuthManager(pluginAPI mmapi.Client, callbackURL string, httpClient *htt
 	}
 }
 
-// loadOrCreateClientCredentials gets existing client credentials or creates new ones using dynamic client registration
-func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, serverURL string) (*ClientCredentials, error) {
+// StaticOAuthCredentials holds pre-configured OAuth client credentials from server config.
+// When set, these bypass Dynamic Client Registration (RFC 7591) for providers that
+// require a pre-registered OAuth application.
+type StaticOAuthCredentials struct {
+	ClientID     string
+	ClientSecret string
+}
+
+// loadOrCreateClientCredentials gets existing client credentials or creates new ones using dynamic client registration.
+// If staticCreds is non-nil and has a ClientID, those credentials are used directly (skipping DCR).
+func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, serverURL string, staticCreds *StaticOAuthCredentials) (*ClientCredentials, error) {
+	if staticCreds != nil && staticCreds.ClientID != "" {
+		return &ClientCredentials{
+			ClientID:     staticCreds.ClientID,
+			ClientSecret: staticCreds.ClientSecret,
+			ServerURL:    serverURL,
+		}, nil
+	}
+
 	// Try to load existing credentials
 	creds, err := m.loadClientCredentials(serverURL)
 	if err != nil {
@@ -92,7 +109,7 @@ func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, server
 	return newCreds, nil
 }
 
-func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadataURL string) (*oauth2.Config, error) {
+func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (*oauth2.Config, error) {
 	parsedURL, err := url.Parse(serverURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse server URL: %w", err)
@@ -103,9 +120,13 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	authURL := baseURL + "/authorize" // Fallback
 	tokenURL := baseURL + "/token"    // Fallback
 	authServerURL := baseURL          // Fallback - use protected resource as auth server
+	var scopes []string
 
-	// Attempt discovery (best effort, fall back to hardcoded endpoints if it fails)
-	if protectedMetadata, discErr := discoverProtectedResourceMetadata(ctx, m.httpClient, baseURL, metadataURL); discErr == nil {
+	// Attempt discovery (best effort, fall back to hardcoded endpoints if it fails).
+	// Pass serverURL (not baseURL) so the well-known URL preserves any path component
+	// per RFC 9728 Section 3.1 (e.g. /base/path -> /.well-known/oauth-protected-resource/base/path).
+	if protectedMetadata, discErr := discoverProtectedResourceMetadata(ctx, m.httpClient, serverURL, metadataURL); discErr == nil {
+		scopes = protectedMetadata.ScopesSupported
 		if len(protectedMetadata.AuthorizationServers) > 0 {
 			// Use first authorization server
 			authServerIssuer := protectedMetadata.AuthorizationServers[0]
@@ -128,8 +149,9 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 
 	// Get client credentials for the authorization server (not the protected resource)
 	// Per OAuth 2.0 best practices, client credentials are registered with and belong to
-	// the authorization server, not the protected resource
-	clientCreds, err := m.loadOrCreateClientCredentials(ctx, authServerURL)
+	// the authorization server, not the protected resource.
+	// If static credentials are provided, they are used directly (skipping DCR).
+	clientCreds, err := m.loadOrCreateClientCredentials(ctx, authServerURL, staticCreds)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client credentials: %w", err)
 	}
@@ -138,7 +160,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 		ClientID:     clientCreds.ClientID,
 		ClientSecret: clientCreds.ClientSecret,
 		RedirectURL:  m.callbackURL,
-		Scopes:       []string{},
+		Scopes:       scopes,
 		Endpoint: oauth2.Endpoint{
 			AuthURL:  authURL,
 			TokenURL: tokenURL,
@@ -146,7 +168,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	}, nil
 }
 
-func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, serverURL, metadataURL string) (string, error) {
+func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (string, error) {
 	// Generate PKCE parameters
 	codeVerifier := oauth2.GenerateVerifier()
 
@@ -157,7 +179,7 @@ func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, 
 	}
 
 	// Get OAuth config
-	oauthConfig, err := m.createOAuthConfig(ctx, serverURL, metadataURL)
+	oauthConfig, err := m.createOAuthConfig(ctx, serverURL, metadataURL, staticCreds)
 	if err != nil {
 		return "", fmt.Errorf("failed to create OAuth config: %w", err)
 	}
@@ -165,7 +187,7 @@ func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, 
 	// Build authorization URL with PKCE
 	authURL := oauthConfig.AuthCodeURL(state, oauth2.S256ChallengeOption(codeVerifier))
 
-	// Store OAuth session
+	// Store OAuth session (including static credentials so ProcessCallback can reuse them)
 	if err := m.storeSession(&OAuthSession{
 		UserID:            userID,
 		ServerID:          serverID,
@@ -173,12 +195,28 @@ func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, 
 		ServerMetadataURL: metadataURL,
 		CodeVerifier:      codeVerifier,
 		State:             state,
+		StaticClientID:    staticCredsClientID(staticCreds),
+		StaticClientSecret: staticCredsClientSecret(staticCreds),
 		CreatedAt:         time.Now(),
 	}); err != nil {
 		return "", fmt.Errorf("failed to store OAuth session: %w", err)
 	}
 
 	return authURL, nil
+}
+
+func staticCredsClientID(creds *StaticOAuthCredentials) string {
+	if creds == nil {
+		return ""
+	}
+	return creds.ClientID
+}
+
+func staticCredsClientSecret(creds *StaticOAuthCredentials) string {
+	if creds == nil {
+		return ""
+	}
+	return creds.ClientSecret
 }
 
 func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, state, code string) (*OAuthSession, error) {
@@ -197,8 +235,17 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 		return nil, fmt.Errorf("user ID mismatch: expected %s, got %s", session.UserID, loggedInUserID)
 	}
 
+	// Reconstruct static credentials from the stored session
+	var staticCreds *StaticOAuthCredentials
+	if session.StaticClientID != "" {
+		staticCreds = &StaticOAuthCredentials{
+			ClientID:     session.StaticClientID,
+			ClientSecret: session.StaticClientSecret,
+		}
+	}
+
 	// Get OAuth config
-	oauthConfig, err := m.createOAuthConfig(ctx, session.ServerURL, session.ServerMetadataURL)
+	oauthConfig, err := m.createOAuthConfig(ctx, session.ServerURL, session.ServerMetadataURL, staticCreds)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OAuth config: %w", err)
 	}

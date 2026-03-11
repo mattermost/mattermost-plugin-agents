@@ -3,7 +3,7 @@
 
 import React, {useEffect, useState} from 'react';
 import styled from 'styled-components';
-import {PlusIcon, TrashCanOutlineIcon} from '@mattermost/compass-icons/components';
+import {PlusIcon, TrashCanOutlineIcon, ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton} from '../assets/buttons';
@@ -17,6 +17,8 @@ export type MCPServerConfig = {
     enabled: boolean;
     baseURL: string;
     headers: {[key: string]: string};
+    clientID?: string;
+    clientSecret?: string;
 };
 
 export type MCPEmbeddedServerConfig = {
@@ -67,6 +69,7 @@ const MCPServer = ({
     const intl = useIntl();
     const [isEditingName, setIsEditingName] = useState(false);
     const [serverName, setServerName] = useState(serverConfig.name);
+    const [isOAuthExpanded, setIsOAuthExpanded] = useState(Boolean(serverConfig.clientID));
 
     // Ensure server config has all required properties
     const config = {
@@ -74,6 +77,8 @@ const MCPServer = ({
         enabled: serverConfig.enabled ?? false,
         baseURL: serverConfig.baseURL || '',
         headers: serverConfig.headers || {},
+        clientID: serverConfig.clientID || '',
+        clientSecret: serverConfig.clientSecret || '',
     };
 
     // Update server URL
@@ -236,6 +241,60 @@ const MCPServer = ({
                     <FormattedMessage defaultMessage='Add Header'/>
                 </AddHeaderButton>
             </HeadersSection>
+
+            <OAuthSection>
+                <OAuthSectionHeader
+                    role='button'
+                    tabIndex={0}
+                    aria-expanded={isOAuthExpanded}
+                    aria-controls={`oauth-section-content-${serverIndex}`}
+                    onClick={() => setIsOAuthExpanded(!isOAuthExpanded)}
+                    onKeyDown={(e: React.KeyboardEvent) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setIsOAuthExpanded(!isOAuthExpanded);
+                        }
+                    }}
+                >
+                    <OAuthSectionHeaderLeft>
+                        {isOAuthExpanded ? <ChevronDownIcon size={16}/> : <ChevronRightIcon size={16}/>}
+                        <OAuthSectionTitle>
+                            {intl.formatMessage({defaultMessage: 'OAuth Credentials (Optional)'})}
+                        </OAuthSectionTitle>
+                    </OAuthSectionHeaderLeft>
+                    {!isOAuthExpanded && config.clientID && (
+                        <OAuthConfiguredBadge>
+                            <FormattedMessage defaultMessage='Configured'/>
+                        </OAuthConfiguredBadge>
+                    )}
+                </OAuthSectionHeader>
+                {isOAuthExpanded && (
+                    <OAuthSectionContent id={`oauth-section-content-${serverIndex}`}>
+                        <OAuthHelpText>
+                            {intl.formatMessage({defaultMessage: 'For MCP servers that require a pre-registered OAuth application (e.g. GitHub). Leave empty if the server supports automatic registration.'})}
+                        </OAuthHelpText>
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Client ID'})}
+                            value={config.clientID}
+                            onChange={(e) => onChange(serverIndex, {
+                                ...config,
+                                clientID: e.target.value,
+                            })}
+                            helptext={intl.formatMessage({defaultMessage: 'The OAuth application client ID.'})}
+                        />
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Client Secret'})}
+                            value={config.clientSecret}
+                            type='password'
+                            onChange={(e) => onChange(serverIndex, {
+                                ...config,
+                                clientSecret: e.target.value,
+                            })}
+                            helptext={intl.formatMessage({defaultMessage: 'The OAuth application client secret.'})}
+                        />
+                    </OAuthSectionContent>
+                )}
+            </OAuthSection>
         </ServerContainer>
     );
 };
@@ -534,6 +593,63 @@ const HeadersSectionTitle = styled.div`
     font-weight: 600;
     font-size: 14px;
     color: var(--center-channel-color);
+    margin-bottom: 4px;
+`;
+
+const OAuthSection = styled.div`
+    display: flex;
+    flex-direction: column;
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+    border-radius: 4px;
+    overflow: hidden;
+`;
+
+const OAuthSectionHeader = styled.div`
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    cursor: pointer;
+    background-color: rgba(var(--center-channel-color-rgb), 0.02);
+
+    &:hover {
+        background-color: rgba(var(--center-channel-color-rgb), 0.04);
+    }
+`;
+
+const OAuthSectionHeaderLeft = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+`;
+
+const OAuthSectionTitle = styled.div`
+    font-weight: 600;
+    font-size: 13px;
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+`;
+
+const OAuthConfiguredBadge = styled.div`
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--online-indicator);
+    padding: 2px 8px;
+    background-color: rgba(var(--online-indicator-rgb), 0.08);
+    border-radius: 10px;
+`;
+
+const OAuthSectionContent = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+`;
+
+const OAuthHelpText = styled.div`
+    font-size: 12px;
+    color: rgba(var(--center-channel-color-rgb), 0.64);
     margin-bottom: 4px;
 `;
 

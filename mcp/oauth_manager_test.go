@@ -125,13 +125,137 @@ func TestLoadOrCreateClientCredentials_ExistingCredentials(t *testing.T) {
 	}).Return(nil)
 
 	ctx := context.Background()
-	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL)
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, creds)
 	require.Equal(t, existingCreds.ClientID, creds.ClientID)
 	require.Equal(t, existingCreds.ClientSecret, creds.ClientSecret)
 	require.Equal(t, existingCreds.ServerURL, creds.ServerURL)
+}
+
+func TestLoadOrCreateClientCredentials_StaticCredentials(t *testing.T) {
+	manager, _ := setupTestOAuthManager(t)
+
+	serverURL := "https://github.com/login/oauth"
+	staticCreds := &StaticOAuthCredentials{
+		ClientID:     "static-github-client-id",
+		ClientSecret: "static-github-client-secret",
+	}
+
+	ctx := context.Background()
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds)
+
+	require.NoError(t, err)
+	require.NotNil(t, creds)
+	require.Equal(t, "static-github-client-id", creds.ClientID)
+	require.Equal(t, "static-github-client-secret", creds.ClientSecret)
+	require.Equal(t, serverURL, creds.ServerURL)
+}
+
+func TestLoadOrCreateClientCredentials_StaticCredentialsSkipKVStore(t *testing.T) {
+	manager, _ := setupTestOAuthManager(t)
+
+	serverURL := "https://github.com/login/oauth"
+	staticCreds := &StaticOAuthCredentials{
+		ClientID:     "static-client-id",
+		ClientSecret: "static-client-secret",
+	}
+
+	ctx := context.Background()
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, staticCreds)
+
+	require.NoError(t, err)
+	require.NotNil(t, creds)
+	require.Equal(t, "static-client-id", creds.ClientID)
+	require.Equal(t, "static-client-secret", creds.ClientSecret)
+}
+
+func TestLoadOrCreateClientCredentials_NilStaticCredsFallsBackToKVStore(t *testing.T) {
+	manager, mockClient := setupTestOAuthManager(t)
+
+	serverURL := "https://api.example.com"
+	existingCreds := &ClientCredentials{
+		ClientID:     "kv-client-id",
+		ClientSecret: "kv-client-secret",
+		ServerURL:    serverURL,
+		CreatedAt:    time.Now(),
+	}
+
+	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials")).Run(func(args mock.Arguments) {
+		creds := args.Get(1).(*ClientCredentials)
+		*creds = *existingCreds
+	}).Return(nil)
+
+	ctx := context.Background()
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, creds)
+	require.Equal(t, "kv-client-id", creds.ClientID)
+	require.Equal(t, "kv-client-secret", creds.ClientSecret)
+}
+
+func TestLoadOrCreateClientCredentials_EmptyStaticCredsFallsBackToKVStore(t *testing.T) {
+	manager, mockClient := setupTestOAuthManager(t)
+
+	serverURL := "https://api.example.com"
+	existingCreds := &ClientCredentials{
+		ClientID:     "kv-client-id",
+		ClientSecret: "kv-client-secret",
+		ServerURL:    serverURL,
+		CreatedAt:    time.Now(),
+	}
+
+	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials")).Run(func(args mock.Arguments) {
+		creds := args.Get(1).(*ClientCredentials)
+		*creds = *existingCreds
+	}).Return(nil)
+
+	ctx := context.Background()
+	creds, err := manager.loadOrCreateClientCredentials(ctx, serverURL, &StaticOAuthCredentials{})
+
+	require.NoError(t, err)
+	require.NotNil(t, creds)
+	require.Equal(t, "kv-client-id", creds.ClientID)
+}
+
+func TestStaticCredsHelpers(t *testing.T) {
+	tests := []struct {
+		name           string
+		creds          *StaticOAuthCredentials
+		wantClientID   string
+		wantClientSecret string
+	}{
+		{
+			name:             "nil creds returns empty strings",
+			creds:            nil,
+			wantClientID:     "",
+			wantClientSecret: "",
+		},
+		{
+			name: "populated creds returns values",
+			creds: &StaticOAuthCredentials{
+				ClientID:     "test-id",
+				ClientSecret: "test-secret",
+			},
+			wantClientID:     "test-id",
+			wantClientSecret: "test-secret",
+		},
+		{
+			name:             "empty creds returns empty strings",
+			creds:            &StaticOAuthCredentials{},
+			wantClientID:     "",
+			wantClientSecret: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.wantClientID, staticCredsClientID(tt.creds))
+			require.Equal(t, tt.wantClientSecret, staticCredsClientSecret(tt.creds))
+		})
+	}
 }
 
 func TestProcessCallback_InvalidSession(t *testing.T) {

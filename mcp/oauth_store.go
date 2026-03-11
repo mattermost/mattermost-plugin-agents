@@ -113,13 +113,15 @@ func (m *OAuthManager) storeClientCredentials(creds *ClientCredentials) error {
 }
 
 type OAuthSession struct {
-	UserID            string    `json:"userID"`
-	ServerID          string    `json:"serverID"`
-	ServerURL         string    `json:"serverURL"`
-	ServerMetadataURL string    `json:"serverMetadataURL"`
-	CodeVerifier      string    `json:"codeVerifier"`
-	State             string    `json:"state"`
-	CreatedAt         time.Time `json:"createdAt"`
+	UserID             string    `json:"userID"`
+	ServerID           string    `json:"serverID"`
+	ServerURL          string    `json:"serverURL"`
+	ServerMetadataURL  string    `json:"serverMetadataURL"`
+	CodeVerifier       string    `json:"codeVerifier"`
+	State              string    `json:"state"`
+	StaticClientID     string    `json:"staticClientID,omitempty"`
+	StaticClientSecret string    `json:"staticClientSecret,omitempty"`
+	CreatedAt          time.Time `json:"createdAt"`
 }
 
 func (m *OAuthManager) loadSession(userID, state string) (*OAuthSession, error) {
