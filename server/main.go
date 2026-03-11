@@ -261,7 +261,7 @@ func (p *Plugin) OnActivate() error {
 			if len(toolConfigs) == 0 {
 				toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
 			}
-			embeddedCfg := &mcp.ServerConfig{ToolConfigs: toolConfigs}
+			embeddedCfg := &mcp.ServerConfig{Enabled: true, ToolConfigs: toolConfigs}
 			return embeddedCfg.GetToolPolicy(toolName)
 		}
 		for i := range mcpCfg.Servers {
