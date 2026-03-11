@@ -100,10 +100,10 @@ func TestCacheUpdateOnNewTools(t *testing.T) {
 
 func TestExtractOAuthMetadataURL(t *testing.T) {
 	tests := []struct {
-		name        string
-		errMsg      string
-		wantURL     string
-		wantFound   bool
+		name      string
+		errMsg    string
+		wantURL   string
+		wantFound bool
 	}{
 		{
 			name:      "nil error",

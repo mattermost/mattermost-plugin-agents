@@ -189,15 +189,15 @@ func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, 
 
 	// Store OAuth session (including static credentials so ProcessCallback can reuse them)
 	if err := m.storeSession(&OAuthSession{
-		UserID:            userID,
-		ServerID:          serverID,
-		ServerURL:         serverURL,
-		ServerMetadataURL: metadataURL,
-		CodeVerifier:      codeVerifier,
-		State:             state,
-		StaticClientID:    staticCredsClientID(staticCreds),
+		UserID:             userID,
+		ServerID:           serverID,
+		ServerURL:          serverURL,
+		ServerMetadataURL:  metadataURL,
+		CodeVerifier:       codeVerifier,
+		State:              state,
+		StaticClientID:     staticCredsClientID(staticCreds),
 		StaticClientSecret: staticCredsClientSecret(staticCreds),
-		CreatedAt:         time.Now(),
+		CreatedAt:          time.Now(),
 	}); err != nil {
 		return "", fmt.Errorf("failed to store OAuth session: %w", err)
 	}

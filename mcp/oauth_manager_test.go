@@ -222,9 +222,9 @@ func TestLoadOrCreateClientCredentials_EmptyStaticCredsFallsBackToKVStore(t *tes
 
 func TestStaticCredsHelpers(t *testing.T) {
 	tests := []struct {
-		name           string
-		creds          *StaticOAuthCredentials
-		wantClientID   string
+		name             string
+		creds            *StaticOAuthCredentials
+		wantClientID     string
 		wantClientSecret string
 	}{
 		{
