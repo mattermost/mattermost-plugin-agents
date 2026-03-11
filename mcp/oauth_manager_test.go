@@ -154,7 +154,7 @@ func TestLoadOrCreateClientCredentials_StaticCredentials(t *testing.T) {
 }
 
 func TestLoadOrCreateClientCredentials_StaticCredentialsSkipKVStore(t *testing.T) {
-	manager, _ := setupTestOAuthManager(t)
+	manager, mockClient := setupTestOAuthManager(t)
 
 	serverURL := "https://github.com/login/oauth"
 	staticCreds := &StaticOAuthCredentials{
@@ -169,6 +169,7 @@ func TestLoadOrCreateClientCredentials_StaticCredentialsSkipKVStore(t *testing.T
 	require.NotNil(t, creds)
 	require.Equal(t, "static-client-id", creds.ClientID)
 	require.Equal(t, "static-client-secret", creds.ClientSecret)
+	mockClient.AssertNotCalled(t, "KVGet", mock.Anything, mock.Anything)
 }
 
 func TestLoadOrCreateClientCredentials_NilStaticCredsFallsBackToKVStore(t *testing.T) {
