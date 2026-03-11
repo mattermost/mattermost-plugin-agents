@@ -541,7 +541,9 @@ func EnrichToolCallsWithServerOrigin(stream *TextStreamResult, store *ToolStore)
 			if event.Type == EventTypeToolCalls {
 				if toolCalls, ok := event.Value.([]ToolCall); ok {
 					for i := range toolCalls {
-						toolCalls[i].ServerOrigin = store.GetServerOrigin(toolCalls[i].Name)
+						if toolCalls[i].ServerOrigin == "" {
+							toolCalls[i].ServerOrigin = store.GetServerOrigin(toolCalls[i].Name)
+						}
 					}
 					event.Value = toolCalls
 				}

@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {PlusIcon, TrashCanOutlineIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
@@ -79,25 +79,32 @@ const MCPServer = ({
         tool_configs: serverConfig.tool_configs,
     };
 
-    // Update server URL, only re-seeding tool configs when the vetted host identity changes
+    // Track the vetted host identity that tool_configs were last seeded from
+    const lastSeededIdentityRef = useRef<string | null>(getVettedHostIdentity(serverConfig.baseURL));
+
     const updateServerURL = (baseURL: string) => {
-        const oldIdentity = getVettedHostIdentity(config.baseURL);
-        const newIdentity = getVettedHostIdentity(baseURL);
-
-        let toolConfigs = config.tool_configs;
-        if (oldIdentity !== newIdentity) {
-            if (newIdentity) {
-                toolConfigs = seedVettedToolConfigs(baseURL) || toolConfigs;
-            } else {
-                toolConfigs = [];
-            }
-        }
-
         onChange(serverIndex, {
             ...config,
             baseURL,
-            tool_configs: toolConfigs,
         });
+    };
+
+    // Re-seed or clear tool_configs only on blur, so mid-edit keystrokes don't wipe customizations
+    const handleURLBlur = () => {
+        const currentIdentity = getVettedHostIdentity(config.baseURL);
+        if (currentIdentity !== lastSeededIdentityRef.current) {
+            let toolConfigs = config.tool_configs;
+            if (currentIdentity) {
+                toolConfigs = seedVettedToolConfigs(config.baseURL) || toolConfigs;
+            } else {
+                toolConfigs = [];
+            }
+            lastSeededIdentityRef.current = currentIdentity;
+            onChange(serverIndex, {
+                ...config,
+                tool_configs: toolConfigs,
+            });
+        }
     };
 
     // Update server enabled state
@@ -215,6 +222,7 @@ const MCPServer = ({
                 placeholder='https://mcp.example.com'
                 value={config.baseURL}
                 onChange={(e) => updateServerURL(e.target.value)}
+                onBlur={handleURLBlur}
                 helptext={intl.formatMessage({defaultMessage: 'The base URL of the MCP server.'})}
             />
 
@@ -273,6 +281,21 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
             });
         }
     }, [mcpConfig?.enabled]);
+
+    // Invalidate prefetched tools when tool-affecting config fields change
+    const configFingerprint = JSON.stringify({
+        servers: (mcpConfig?.servers || []).map((s) => ({url: s.baseURL, enabled: s.enabled})),
+        embeddedEnabled: mcpConfig?.embeddedServer?.enabled,
+        enablePluginServer: mcpConfig?.enablePluginServer,
+    });
+    const prevFingerprintRef = useRef(configFingerprint);
+
+    useEffect(() => {
+        if (prevFingerprintRef.current !== configFingerprint) {
+            prevFingerprintRef.current = configFingerprint;
+            setPreloadedToolsData(null);
+        }
+    }, [configFingerprint]);
 
     // Create a properly initialized config object
     const config: MCPConfig = {

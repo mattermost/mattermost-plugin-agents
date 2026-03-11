@@ -216,6 +216,9 @@ export class ToolConfigAPIHelper {
                 },
             },
         );
+        if (!response.ok) {
+            throw new Error(`getUserMCPTools failed: ${response.status} ${response.statusText}`);
+        }
         return response.json();
     }
 
@@ -229,6 +232,9 @@ export class ToolConfigAPIHelper {
                 },
             },
         );
+        if (!response.ok) {
+            throw new Error(`getUserPreferences failed: ${response.status} ${response.statusText}`);
+        }
         return response.json();
     }
 
@@ -249,6 +255,9 @@ export class ToolConfigAPIHelper {
                 body: JSON.stringify(prefs),
             },
         );
+        if (!response.ok) {
+            throw new Error(`setUserPreferences failed: ${response.status} ${response.statusText}`);
+        }
         return response.json();
     }
 }

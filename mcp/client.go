@@ -76,6 +76,10 @@ func (s *ServerConfig) GetToolPolicy(toolName string) (string, bool) {
 		return ToolPolicyAsk, false
 	}
 
+	if !s.Enabled {
+		return ToolPolicyAsk, false
+	}
+
 	found := false
 	policy := ToolPolicyAsk
 	enabled := false
@@ -151,7 +155,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 	// Create client instance
 	client := &Client{
 		session:        mcpSession,
-		config:         ServerConfig{Name: EmbeddedClientKey, BaseURL: EmbeddedClientKey},
+		config:         ServerConfig{Name: EmbeddedClientKey, BaseURL: EmbeddedClientKey, Enabled: true},
 		tools:          make(map[string]*mcp.Tool),
 		userID:         userID,
 		log:            c.log,

@@ -17,6 +17,10 @@ import (
 // - exact host or subdomain match
 // - supports embedded://mattermost
 func IsVettedHost(baseURL string) bool {
+	if baseURL == EmbeddedClientKey {
+		return true
+	}
+
 	host, ok := vettedHostFromBaseURL(baseURL)
 	if !ok {
 		return false
@@ -38,6 +42,10 @@ func IsVettedHost(baseURL string) bool {
 // tools without config fall back to the runtime default of policy="ask",
 // enabled=true until an admin explicitly configures them.
 func SeedVettedToolConfigs(baseURL string) []ToolConfig {
+	if baseURL == EmbeddedClientKey {
+		return cloneToolConfigs(mattermostVettedToolConfigs)
+	}
+
 	host, ok := vettedHostFromBaseURL(baseURL)
 	if !ok {
 		return nil
@@ -50,8 +58,6 @@ func SeedVettedToolConfigs(baseURL string) []ToolConfig {
 		return cloneToolConfigs(githubVettedToolConfigs)
 	case host == "mcp.figma.com" || strings.HasSuffix(host, ".mcp.figma.com"):
 		return cloneToolConfigs(figmaVettedToolConfigs)
-	case host == "mattermost" || strings.HasSuffix(host, ".mattermost"):
-		return cloneToolConfigs(mattermostVettedToolConfigs)
 	default:
 		return nil
 	}
@@ -80,7 +86,6 @@ func vettedHostPatterns() []string {
 		"mcp.atlassian.com",
 		"api.githubcopilot.com",
 		"mcp.figma.com",
-		"mattermost",
 	}
 }
 

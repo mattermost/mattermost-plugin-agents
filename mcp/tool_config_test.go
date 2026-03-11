@@ -34,7 +34,7 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 		},
 		{
 			name:        "missing tool config returns ask true",
-			config:      &ServerConfig{},
+			config:      &ServerConfig{Enabled: true},
 			toolName:    "search",
 			wantPolicy:  ToolPolicyAsk,
 			wantEnabled: true,
@@ -42,6 +42,7 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 		{
 			name: "ask enabled",
 			config: &ServerConfig{
+				Enabled: true,
 				ToolConfigs: []ToolConfig{
 					{Name: "search", Policy: ToolPolicyAsk, Enabled: true},
 				},
@@ -53,6 +54,7 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 		{
 			name: "auto run enabled",
 			config: &ServerConfig{
+				Enabled: true,
 				ToolConfigs: []ToolConfig{
 					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
 				},
@@ -64,6 +66,7 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 		{
 			name: "auto run disabled",
 			config: &ServerConfig{
+				Enabled: true,
 				ToolConfigs: []ToolConfig{
 					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: false},
 				},
@@ -75,6 +78,7 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 		{
 			name: "invalid policy normalizes to ask",
 			config: &ServerConfig{
+				Enabled: true,
 				ToolConfigs: []ToolConfig{
 					{Name: "search", Policy: "invalid", Enabled: true},
 				},
@@ -86,6 +90,7 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 		{
 			name: "empty policy normalizes to ask",
 			config: &ServerConfig{
+				Enabled: true,
 				ToolConfigs: []ToolConfig{
 					{Name: "search", Policy: "", Enabled: true},
 				},
@@ -97,6 +102,7 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 		{
 			name: "duplicate tool configs last matching entry wins",
 			config: &ServerConfig{
+				Enabled: true,
 				ToolConfigs: []ToolConfig{
 					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
 					{Name: "search", Policy: ToolPolicyAsk, Enabled: false},
@@ -109,6 +115,7 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 		{
 			name: "exact name match only",
 			config: &ServerConfig{
+				Enabled: true,
 				ToolConfigs: []ToolConfig{
 					{Name: "get_me", Policy: ToolPolicyAutoRun, Enabled: true},
 				},
@@ -116,6 +123,18 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 			toolName:    "GET_ME",
 			wantPolicy:  ToolPolicyAsk,
 			wantEnabled: true,
+		},
+		{
+			name: "disabled server returns ask false regardless of tool config",
+			config: &ServerConfig{
+				Enabled: false,
+				ToolConfigs: []ToolConfig{
+					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
+				},
+			},
+			toolName:    "search",
+			wantPolicy:  ToolPolicyAsk,
+			wantEnabled: false,
 		},
 	}
 
@@ -150,6 +169,7 @@ func TestServerConfigIsToolAutoRun(t *testing.T) {
 		{
 			name: "ask enabled",
 			config: &ServerConfig{
+				Enabled: true,
 				ToolConfigs: []ToolConfig{
 					{Name: "search", Policy: ToolPolicyAsk, Enabled: true},
 				},
@@ -160,6 +180,7 @@ func TestServerConfigIsToolAutoRun(t *testing.T) {
 		{
 			name: "auto run disabled",
 			config: &ServerConfig{
+				Enabled: true,
 				ToolConfigs: []ToolConfig{
 					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: false},
 				},
@@ -170,12 +191,24 @@ func TestServerConfigIsToolAutoRun(t *testing.T) {
 		{
 			name: "auto run enabled",
 			config: &ServerConfig{
+				Enabled: true,
 				ToolConfigs: []ToolConfig{
 					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
 				},
 			},
 			toolName: "search",
 			want:     true,
+		},
+		{
+			name: "disabled server never auto runs",
+			config: &ServerConfig{
+				Enabled: false,
+				ToolConfigs: []ToolConfig{
+					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
+				},
+			},
+			toolName: "search",
+			want:     false,
 		},
 	}
 

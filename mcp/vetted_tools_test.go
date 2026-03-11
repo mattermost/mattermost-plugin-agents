@@ -61,6 +61,16 @@ func TestIsVettedHost(t *testing.T) {
 			want:    false,
 		},
 		{
+			name:    "remote mattermost hostname is not vetted",
+			baseURL: "https://mattermost/mcp",
+			want:    false,
+		},
+		{
+			name:    "remote mattermost subdomain is not vetted",
+			baseURL: "https://evil.mattermost/mcp",
+			want:    false,
+		},
+		{
 			name:    "empty URL is not vetted",
 			baseURL: "",
 			want:    false,
@@ -109,6 +119,16 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 		{
 			name:    "unknown host returns nil",
 			baseURL: "https://unknown.example.com/mcp",
+			wantNil: true,
+		},
+		{
+			name:    "remote mattermost hostname returns nil",
+			baseURL: "https://mattermost/mcp",
+			wantNil: true,
+		},
+		{
+			name:    "remote mattermost subdomain returns nil",
+			baseURL: "https://evil.mattermost/mcp",
 			wantNil: true,
 		},
 		{
