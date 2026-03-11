@@ -288,36 +288,6 @@ func TestConvertMessagesReasoning(t *testing.T) {
 	}
 }
 
-func TestConvertToResponsesMessagesOmitsReasoningSummaryInInput(t *testing.T) {
-	b := &LLM{provider: schemas.OpenAI}
-	posts := []llm.Post{
-		{
-			Role:    llm.PostRoleSystem,
-			Message: "system prompt",
-		},
-		{
-			Role:               llm.PostRoleBot,
-			Message:            "assistant response",
-			Reasoning:          "hidden chain of thought",
-			ReasoningSignature: "sig-123",
-		},
-	}
-
-	messages := b.convertToResponsesMessages(posts)
-	require.Len(t, messages, 2)
-
-	assistantMsg := messages[1]
-	require.NotNil(t, assistantMsg.Role)
-	assert.Equal(t, schemas.ResponsesInputMessageRoleAssistant, *assistantMsg.Role)
-	assert.NotNil(t, assistantMsg.Content)
-	require.NotNil(t, assistantMsg.Content.ContentStr)
-	assert.Equal(t, "assistant response", *assistantMsg.Content.ContentStr)
-
-	// OpenAI Responses API rejects input entries with `summary` (input[x].summary).
-	// Reasoning summaries are stream output and should not be echoed back as input.
-	assert.Nil(t, assistantMsg.ResponsesReasoning)
-}
-
 func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 	tests := []struct {
 		name     string

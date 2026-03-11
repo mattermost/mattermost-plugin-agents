@@ -190,7 +190,7 @@ func (b *MMBots) EnsureBots() error {
 	b.botsLock.RUnlock()
 
 	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
-		b.pluginAPI.Log.Debug("EnsureBots: skipping - bot and service configuration unchanged")
+		b.pluginAPI.Log.Debug("EnsureBots: skipping - bot/service configuration unchanged")
 		return nil
 	}
 
@@ -213,7 +213,7 @@ func (b *MMBots) EnsureBots() error {
 	b.botsLock.RUnlock()
 
 	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
-		b.pluginAPI.Log.Debug("EnsureBots: skipping after lock - bot and service configuration unchanged")
+		b.pluginAPI.Log.Debug("EnsureBots: skipping after lock - bot/service configuration unchanged")
 		return nil
 	}
 
