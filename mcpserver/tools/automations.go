@@ -183,8 +183,31 @@ Returns automation details including trigger configuration and action pipeline.`
 			Description: `Create a channel automation — a trigger-action workflow that fires when events occur.
 Requires channel admin (or system admin) permission for the trigger channel.
 
+IMPORTANT WORKFLOW — ALWAYS CONFIRM BEFORE CREATING:
+Before calling this tool, you MUST present a plain-language summary to the user and get their
+explicit confirmation. Even if the user provided all details, always present the full summary.
+
+The summary must include:
+1. TRIGGER: What event fires this automation and its scope.
+2. AI TOOLS: Which tools the AI agent will have access to and what each one can do.
+   - Without tools, the agent can only generate text from its built-in knowledge — it cannot
+     read any Mattermost data or take any actions.
+   - With tools, the agent inherits YOUR permissions — it can access anything you can access
+     unless tool_constraints are used to limit it.
+   Explain what each granted tool does so the user understands the access they are giving.
+3. OUTPUT: Where the automation will post results — name the specific channel(s).
+4. CONSTRAINTS: Whether tool_constraints lock specific tools to specific values (e.g.,
+   search_posts locked to certain channel_ids), or whether tools have full unrestricted
+   access across everything the user can see.
+
+Format as a numbered list, then ask the user to confirm. Only call create_automation after
+the user says yes.
+
+If the user's request is missing details (trigger channel, output channel, which tools),
+ask clarifying questions BEFORE presenting the summary.
+
 TRIGGERS: Set exactly one trigger type inside the "trigger" object.
-- "message_posted": fires when any message is posted in the channel.
+- "message_posted": fires when any message is posted in the channel. Note: fires on EVERY message in the channel, including bot messages. High-traffic channels will trigger frequently.
   {"trigger": {"message_posted": {"channel_id": "<channel-id>"}}}
 - "schedule": fires on a recurring schedule.
   - interval: Go duration string (minimum "5m"). Examples: "1h" (hourly), "24h" (daily), "168h" (weekly).
@@ -192,7 +215,7 @@ TRIGGERS: Set exactly one trigger type inside the "trigger" object.
   {"trigger": {"schedule": {"channel_id": "<channel-id>", "interval": "24h", "start_at": 1741615200000}}}
 - "membership_changed": fires when a member joins or leaves the channel.
   {"trigger": {"membership_changed": {"channel_id": "<channel-id>"}}}
-- "channel_created": fires when any new public channel is created.
+- "channel_created": fires when any new public channel is created. Note: server-wide — fires for every new public channel created by any user.
   {"trigger": {"channel_created": {}}}
 
 ACTIONS: Ordered array executed sequentially. Each action has a unique "id" and exactly one action config.
@@ -204,8 +227,8 @@ Action types:
    - provider_type: "agent" (a bot) or "service" (a raw LLM service)
    - provider_id: the agent's Mattermost user ID (26-char ID). Call list_agents to discover available agents and their IDs.
    - system_prompt (optional): system instructions for the AI
-   - allowed_tools: list of tools the AI agent is allowed to call. WITHOUT this, the agent has NO tool access and can only generate text — it cannot search posts, read channels, or take any actions. For useful automations, always include the tools the agent needs. Look at your own available tools to decide which ones the automation's AI agent will need to accomplish its task.
-   - tool_constraints (optional): restrict tool parameters — map of tool name → param name → constraint with allowed_values and/or from_tool_output
+   - allowed_tools: list of tools the AI agent is allowed to call. WITHOUT this, the agent has NO tool access and can only generate text from its built-in knowledge — it cannot read any Mattermost data or take any actions. With tools, the agent inherits the creating user's permissions and can access anything they can access. IMPORTANT: Only include tools the user has explicitly agreed to. Each tool grants capabilities — e.g., search_posts can read messages across any channel the user has access to, create_post can post in any channel the user is in. Always explain what each tool does in your summary. Prefer the minimum set of tools needed.
+   - tool_constraints (recommended when granting tools): lock specific tool parameters to specific values. For example, constrain search_posts to only certain channel_ids so the agent cannot search across all channels the user has access to. Tell the user they can lock tools to certain values to limit the agent's scope. Always consider adding constraints when the automation only needs access to specific channels or teams.
 
 TEMPLATE SYNTAX: body, channel_id, reply_to_post_id, prompt, and system_prompt support Go text/template with this context:
 - {{.Trigger.Post.Message}}, {{.Trigger.Post.Id}}, {{.Trigger.Post.ChannelId}}
@@ -226,15 +249,18 @@ EXAMPLE: AI-powered triage — when a message is posted in #support, summarize i
 		{
 			Name: "update_automation",
 			Description: `Update an existing channel automation. Replaces the full automation definition — provide all fields, not just changed ones. Same trigger types, action types, template syntax, and allowed_tools guidance as create_automation.
-Use list_automations first to get the current definition, then modify and pass the full updated flow. Remember: ai_prompt actions need allowed_tools to be useful.`,
+Use list_automations first to get the current definition, then modify and pass the full updated flow. Remember: ai_prompt actions need allowed_tools to be useful.
+
+IMPORTANT: Before calling this tool, show the user what will change in plain language and
+get their confirmation. Highlight any changes to trigger scope, allowed_tools, or output channels.`,
 			Schema:   llm.NewJSONSchemaFromStruct[UpdateAutomationArgs](),
 			Resolver: p.toolUpdateAutomation,
 		},
 		{
-			Name:        "delete_automation",
+			Name: "delete_automation",
 			Description: "Delete a channel automation by ID. This is permanent and cannot be undone.",
-			Schema:      llm.NewJSONSchemaFromStruct[DeleteAutomationArgs](),
-			Resolver:    p.toolDeleteAutomation,
+			Schema:   llm.NewJSONSchemaFromStruct[DeleteAutomationArgs](),
+			Resolver: p.toolDeleteAutomation,
 		},
 	}
 }
