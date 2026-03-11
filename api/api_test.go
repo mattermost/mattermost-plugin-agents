@@ -162,7 +162,7 @@ func (t *testPluginAPI) PluginHTTP(req *http.Request) *http.Response {
 // createTestBots creates a test MMBots instance for testing
 func createTestBots(mockAPI *plugintest.API, client *pluginapi.Client) *bots.MMBots {
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	testBots := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil, nil)
+	testBots := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
 	return testBots
 }
 
@@ -216,6 +216,10 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		mockAPI.On("LogWarn", args...).Maybe()
 		mockAPI.On("LogError", args...).Maybe()
 	}
+
+	// Mock GetConfig and GetLicense for WithLLMContextServerInfo used in bridge context building.
+	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
 
 	api := New(
 		testBots,

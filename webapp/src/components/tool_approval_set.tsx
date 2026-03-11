@@ -30,6 +30,31 @@ const StatusBar = styled.div`
     font-size: 12px;
 `;
 
+const BatchButtonContainer = styled.div`
+    display: flex;
+    gap: 8px;
+`;
+
+const BatchButton = styled.button`
+    background: rgba(var(--button-bg-rgb), 0.08);
+    color: var(--button-bg);
+    border: none;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 16px;
+    cursor: pointer;
+
+    &:hover {
+        background: rgba(var(--button-bg-rgb), 0.12);
+    }
+
+    &:active {
+        background: rgba(var(--button-bg-rgb), 0.16);
+    }
+`;
+
 // Tool call interfaces
 interface ToolApprovalSetProps {
     postID: string;
@@ -58,6 +83,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     const [toolDecisions, setToolDecisions] = useState<ToolDecision>({});
     const autoSubmitRef = useRef(false);
     const submitInFlightRef = useRef(false);
+    const toolDecisionsRef = useRef<ToolDecision>({});
 
     const isCallStage = props.approvalStage === 'call';
 
@@ -86,6 +112,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         setError('');
         autoSubmitRef.current = false;
         submitInFlightRef.current = false;
+        toolDecisionsRef.current = {};
     }, [props.toolCalls, props.approvalStage]);
 
     const submitDecisions = useCallback(async (approvedToolIDs: string[]) => {
@@ -135,15 +162,16 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         submitDecisions([]);
     }, [decisionToolCalls.length, isCallStage, isSubmitting, props.canApprove, props.postID, props.toolCalls, submitDecisions]);
 
-    const handleToolDecision = async (toolID: string, approved: boolean) => {
+    const handleToolDecision = useCallback((toolID: string, approved: boolean) => {
         if (!props.canApprove || isSubmitting || submitInFlightRef.current || !decisionToolIDSet.has(toolID)) {
             return;
         }
 
         const updatedDecisions = {
-            ...toolDecisions,
+            ...toolDecisionsRef.current,
             [toolID]: approved,
         };
+        toolDecisionsRef.current = updatedDecisions;
         setToolDecisions(updatedDecisions);
 
         const hasUndecided = decisionToolCalls.some((tool) => {
@@ -151,11 +179,8 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         });
 
         if (hasUndecided) {
-            // If there are still undecided tools, do not submit yet
             return;
         }
-
-        // Submit when all tools are decided
 
         const approvedToolIDs = decisionToolCalls.
             filter((tool) => {
@@ -164,7 +189,28 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             map((tool) => tool.id);
 
         submitDecisions(approvedToolIDs);
-    };
+    }, [props.canApprove, isSubmitting, decisionToolIDSet, decisionToolCalls, submitDecisions]);
+
+    const handleBatchDecision = useCallback((approved: boolean) => {
+        if (!props.canApprove || isSubmitting || submitInFlightRef.current) {
+            return;
+        }
+
+        const updatedDecisions = {...toolDecisionsRef.current};
+        for (const tool of decisionToolCalls) {
+            updatedDecisions[tool.id] = approved;
+        }
+        toolDecisionsRef.current = updatedDecisions;
+        setToolDecisions(updatedDecisions);
+
+        const approvedToolIDs = decisionToolCalls.
+            filter((tool) => {
+                return updatedDecisions[tool.id];
+            }).
+            map((tool) => tool.id);
+
+        submitDecisions(approvedToolIDs);
+    }, [props.canApprove, isSubmitting, decisionToolCalls, submitDecisions]);
 
     const toggleCollapse = (toolID: string) => {
         setCollapsedTools((prev) =>
@@ -208,6 +254,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     tool={tool}
                     isCollapsed={isToolCollapsed(tool)}
                     isProcessing={isSubmitting}
+                    localDecision={toolDecisions[tool.id]}
                     onToggleCollapse={() => toggleCollapse(tool.id)}
                     onApprove={() => handleToolDecision(tool.id, true)}
                     onReject={() => handleToolDecision(tool.id, false)}
@@ -244,7 +291,6 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                 </StatusBar>
             )}
 
-            {/* Only show status counter for multiple decisions that haven't been submitted yet */}
             {decisionToolCalls.length > 1 && undecidedCount > 0 && !isSubmitting && (
                 <StatusBar>
                     <div>
@@ -254,6 +300,26 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                             values={{count: undecidedCount}}
                         />
                     </div>
+                    <BatchButtonContainer>
+                        <BatchButton
+                            type='button'
+                            onClick={() => handleBatchDecision(true)}
+                        >
+                            <FormattedMessage
+                                id='ai.tool_call.accept_all'
+                                defaultMessage='Accept all'
+                            />
+                        </BatchButton>
+                        <BatchButton
+                            type='button'
+                            onClick={() => handleBatchDecision(false)}
+                        >
+                            <FormattedMessage
+                                id='ai.tool_call.reject_all'
+                                defaultMessage='Reject all'
+                            />
+                        </BatchButton>
+                    </BatchButtonContainer>
                 </StatusBar>
             )}
         </ToolCallsContainer>

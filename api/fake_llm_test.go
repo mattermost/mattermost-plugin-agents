@@ -5,6 +5,7 @@ package api
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
@@ -23,20 +24,27 @@ type FakeLLM struct {
 	TokenCount int
 	// TokenLimit to return from InputTokenLimit
 	TokenLimit int
-	// LastConversation captures the most recent completion request.
+
+	// LastConversation holds the last completion request for assertions.
 	LastConversation llm.CompletionRequest
-	// LastConfig captures the resolved language model config from options.
+	// LastConfig holds the resolved config from the last call's options.
 	LastConfig llm.LanguageModelConfig
+
+	mu          sync.RWMutex
+	lastRequest llm.CompletionRequest
 }
 
 // ChatCompletion implements streaming completion
 func (f *FakeLLM) ChatCompletion(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
-	f.LastConversation = conversation
-	cfg := llm.LanguageModelConfig{}
+	var cfg llm.LanguageModelConfig
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	f.mu.Lock()
+	f.lastRequest = conversation
+	f.LastConversation = conversation
 	f.LastConfig = cfg
+	f.mu.Unlock()
 
 	if f.Error != nil {
 		return nil, f.Error
@@ -74,12 +82,15 @@ func (f *FakeLLM) ChatCompletion(conversation llm.CompletionRequest, opts ...llm
 
 // ChatCompletionNoStream implements non-streaming completion
 func (f *FakeLLM) ChatCompletionNoStream(conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
-	f.LastConversation = conversation
-	cfg := llm.LanguageModelConfig{}
+	var cfg llm.LanguageModelConfig
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	f.mu.Lock()
+	f.lastRequest = conversation
+	f.LastConversation = conversation
 	f.LastConfig = cfg
+	f.mu.Unlock()
 
 	if f.Error != nil {
 		return "", f.Error
@@ -102,6 +113,12 @@ func (f *FakeLLM) InputTokenLimit() int {
 		return f.TokenLimit
 	}
 	return 100000 // Default reasonable limit
+}
+
+func (f *FakeLLM) LastRequest() llm.CompletionRequest {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.lastRequest
 }
 
 // NewFakeLLM creates a FakeLLM with a simple text response

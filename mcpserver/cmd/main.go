@@ -53,6 +53,7 @@ Authentication is handled via Personal Access Tokens (PAT).`,
 	rootCmd.Flags().IntVar(&httpPort, "http-port", 8080, "Port for HTTP server (used when transport is http)")
 	rootCmd.Flags().StringVar(&httpBindAddr, "http-bind-addr", "127.0.0.1", "Bind address for HTTP server (defaults to localhost for security, use 0.0.0.0 for all interfaces)")
 	rootCmd.Flags().StringVar(&siteURL, "site-url", "", "External URL for OAuth and CORS (required when http-bind-addr is localhost or when using reverse proxy)")
+	rootCmd.Flags().Bool("stateless", false, "Enable stateless mode for multi-node/HA deployments (no server-side session tracking)")
 
 	// AI tracking flag
 	rootCmd.Flags().Bool("track-ai-generated", false, "Track AI-generated content in posts (default: false for stdio, true for http)")
@@ -136,6 +137,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		mcpServer, err = mcpserver.NewStdioServer(stdioConfig, logger)
 	case "http":
 		// Create HTTP transport configuration
+		stateless, _ := cmd.Flags().GetBool("stateless")
 		httpConfig := mcpserver.HTTPConfig{
 			BaseConfig: mcpserver.BaseConfig{
 				MMServerURL:         mmServerURL,
@@ -146,6 +148,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 			HTTPPort:     httpPort,
 			HTTPBindAddr: httpBindAddr,
 			SiteURL:      siteURL,
+			Stateless:    stateless,
 		}
 
 		mcpServer, err = mcpserver.NewHTTPServer(httpConfig, logger)

@@ -13,50 +13,73 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSearchPostsArgsChannelIDs(t *testing.T) {
+func TestBuildSearchTermWithChannel(t *testing.T) {
 	tests := []struct {
-		name               string
-		jsonInput          string
-		expectedQuery      string
-		expectedChannelIDs []string
-		expectedTeamID     string
-		expectedLimit      int
+		name        string
+		query       string
+		channelName string
+		expected    string
 	}{
 		{
-			name:               "single channel ID",
-			jsonInput:          `{"query": "bug fix", "channel_ids": ["abcdefghijklmnopqrstuvwxyz"]}`,
-			expectedQuery:      "bug fix",
-			expectedChannelIDs: []string{"abcdefghijklmnopqrstuvwxyz"},
-			expectedLimit:      0,
+			name:        "simple query with channel name",
+			query:       "bug fix",
+			channelName: "town-square",
+			expected:    "in:town-square bug fix",
 		},
 		{
-			name:               "multiple channel IDs",
-			jsonInput:          `{"query": "deployment", "channel_ids": ["abcdefghijklmnopqrstuvwxyz", "zyxwvutsrqponmlkjihgfedcba"]}`,
-			expectedQuery:      "deployment",
-			expectedChannelIDs: []string{"abcdefghijklmnopqrstuvwxyz", "zyxwvutsrqponmlkjihgfedcba"},
-			expectedLimit:      0,
+			name:        "channel name with hyphens",
+			query:       "release notes",
+			channelName: "release-announcements-2024",
+			expected:    "in:release-announcements-2024 release notes",
 		},
 		{
-			name:               "empty channel IDs array",
-			jsonInput:          `{"query": "test", "channel_ids": []}`,
-			expectedQuery:      "test",
-			expectedChannelIDs: []string{},
-			expectedLimit:      0,
+			name:        "query already containing in: modifier",
+			query:       "in:other-channel error",
+			channelName: "dev",
+			expected:    "in:dev in:other-channel error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildSearchTermWithChannel(tt.query, tt.channelName)
+			if got != tt.expected {
+				t.Errorf("buildSearchTermWithChannel(%q, %q) = %q, want %q", tt.query, tt.channelName, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSearchPostsArgsChannelID(t *testing.T) {
+	tests := []struct {
+		name              string
+		jsonInput         string
+		expectedQuery     string
+		expectedChannelID string
+		expectedTeamID    string
+		expectedLimit     int
+	}{
+		{
+			name:              "with channel ID",
+			jsonInput:         `{"query": "bug fix", "channel_id": "abcdefghijklmnopqrstuvwxyz"}`,
+			expectedQuery:     "bug fix",
+			expectedChannelID: "abcdefghijklmnopqrstuvwxyz",
+			expectedLimit:     0,
 		},
 		{
-			name:               "no channel IDs field",
-			jsonInput:          `{"query": "search term"}`,
-			expectedQuery:      "search term",
-			expectedChannelIDs: nil,
-			expectedLimit:      0,
+			name:              "no channel ID field",
+			jsonInput:         `{"query": "search term"}`,
+			expectedQuery:     "search term",
+			expectedChannelID: "",
+			expectedLimit:     0,
 		},
 		{
-			name:               "channel IDs with team ID and limit",
-			jsonInput:          `{"query": "release notes", "team_id": "abcdefghijklmnopqrstuvwxyz", "channel_ids": ["zyxwvutsrqponmlkjihgfedcba"], "limit": 50}`,
-			expectedQuery:      "release notes",
-			expectedChannelIDs: []string{"zyxwvutsrqponmlkjihgfedcba"},
-			expectedTeamID:     "abcdefghijklmnopqrstuvwxyz",
-			expectedLimit:      50,
+			name:              "channel ID with team ID and limit",
+			jsonInput:         `{"query": "release notes", "team_id": "abcdefghijklmnopqrstuvwxyz", "channel_id": "zyxwvutsrqponmlkjihgfedcba", "limit": 50}`,
+			expectedQuery:     "release notes",
+			expectedChannelID: "zyxwvutsrqponmlkjihgfedcba",
+			expectedTeamID:    "abcdefghijklmnopqrstuvwxyz",
+			expectedLimit:     50,
 		},
 	}
 
@@ -67,7 +90,7 @@ func TestSearchPostsArgsChannelIDs(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, tt.expectedQuery, args.Query)
-			assert.Equal(t, tt.expectedChannelIDs, args.ChannelIDs)
+			assert.Equal(t, tt.expectedChannelID, args.ChannelID)
 			assert.Equal(t, tt.expectedTeamID, args.TeamID)
 			assert.Equal(t, tt.expectedLimit, args.Limit)
 		})
@@ -91,8 +114,8 @@ func TestSearchPostsArgsSchema(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "channel_ids property exists",
-			field:    "channel_ids",
+			name:     "channel_id property exists",
+			field:    "channel_id",
 			expected: true,
 		},
 		{
@@ -119,10 +142,10 @@ func TestSearchPostsArgsSchema(t *testing.T) {
 		})
 	}
 
-	t.Run("channel_ids is array type", func(t *testing.T) {
-		channelIDsProp, exists := schema.Properties["channel_ids"]
+	t.Run("channel_id is string type", func(t *testing.T) {
+		channelIDProp, exists := schema.Properties["channel_id"]
 		require.True(t, exists)
-		assert.Equal(t, "array", channelIDsProp.Type)
+		assert.Equal(t, "string", channelIDProp.Type)
 	})
 
 	t.Run("schema has exactly four properties", func(t *testing.T) {

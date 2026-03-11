@@ -84,18 +84,72 @@ func (a *API) convertBridgePostsToInternal(req bridgeclient.CompletionRequest) (
 	return posts, nil
 }
 
-// convertServiceBridgeRequestToInternal converts the API request format to internal
-// llm.CompletionRequest for service completions.
-func (a *API) convertServiceBridgeRequestToInternal(req bridgeclient.CompletionRequest) (llm.CompletionRequest, error) {
+// convertLLMBridgeRequestToInternal converts the API request format to internal llm.CompletionRequest
+func (a *API) convertLLMBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.CompletionRequest, operation, operationSubType string) (llm.CompletionRequest, error) {
 	posts, err := a.convertBridgePostsToInternal(req)
 	if err != nil {
 		return llm.CompletionRequest{}, err
 	}
 
+	llmContext, err := a.buildLLMBridgeContext(bot, req)
+	if err != nil {
+		return llm.CompletionRequest{}, err
+	}
+
+	resolvedOperation := operation
+	if req.Operation != "" {
+		resolvedOperation = req.Operation
+	}
+	resolvedOperationSubType := operationSubType
+	if req.OperationSubType != "" {
+		resolvedOperationSubType = req.OperationSubType
+	}
+
 	return llm.CompletionRequest{
-		Posts:   posts,
-		Context: &llm.Context{},
+		Posts:            posts,
+		Context:          llmContext,
+		Operation:        resolvedOperation,
+		OperationSubType: resolvedOperationSubType,
 	}, nil
+}
+
+// buildLLMBridgeContext builds the LLM context for bridge requests (service path).
+func (a *API) buildLLMBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRequest) (*llm.Context, error) {
+	var context *llm.Context
+	if a.contextBuilder != nil {
+		context = llm.NewContext(
+			a.contextBuilder.WithLLMContextServerInfo(),
+			a.contextBuilder.WithLLMContextBot(bot),
+			a.contextBuilder.WithLLMContextNoTools(),
+		)
+	} else {
+		context = llm.NewContext()
+		if bot != nil {
+			var botUserID string
+			if mmBot := bot.GetMMBot(); mmBot != nil {
+				botUserID = mmBot.UserId
+			}
+			context.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
+		}
+	}
+
+	if req.UserID != "" {
+		context.RequestingUser = &model.User{Id: req.UserID}
+	}
+	if req.ChannelID != "" {
+		channel, err := a.pluginAPI.Channel.Get(req.ChannelID)
+		if err != nil {
+			a.pluginAPI.Log.Warn("failed to get channel for bridge context; using channel ID only", "channel_id", req.ChannelID, "error", err)
+			context.Channel = &model.Channel{Id: req.ChannelID}
+		} else {
+			context.Channel = channel
+			if channel.TeamId != "" && channel.Type != model.ChannelTypeDirect && channel.Type != model.ChannelTypeGroup {
+				context.Team = &model.Team{Id: channel.TeamId}
+			}
+		}
+	}
+
+	return context, nil
 }
 
 func (a *API) getBridgeRequestingUser(userID string) *model.User {
@@ -122,8 +176,13 @@ func (a *API) buildAgentBridgeContext(bot *bots.Bot, req bridgeclient.Completion
 	bridgeContext.BotUsername = botConfig.Name
 	bridgeContext.CustomInstructions = botConfig.CustomInstructions
 	bridgeContext.BotModel = bot.GetService().DefaultModel
+	bridgeContext.BotServiceType = bot.GetService().Type
 	if mmbot := bot.GetMMBot(); mmbot != nil {
 		bridgeContext.BotUserID = mmbot.UserId
+	}
+
+	if a.contextBuilder != nil {
+		a.contextBuilder.WithLLMContextServerInfo()(bridgeContext)
 	}
 
 	if includeTools && a.contextBuilder != nil {
@@ -133,10 +192,23 @@ func (a *API) buildAgentBridgeContext(bot *bots.Bot, req bridgeclient.Completion
 		a.contextBuilder.WithLLMContextRequestingUser(bridgeContext.RequestingUser)(bridgeContext)
 	}
 
+	if req.ChannelID != "" {
+		channel, err := a.pluginAPI.Channel.Get(req.ChannelID)
+		if err != nil {
+			a.pluginAPI.Log.Warn("failed to get channel for bridge context; using channel ID only", "channel_id", req.ChannelID, "error", err)
+			bridgeContext.Channel = &model.Channel{Id: req.ChannelID}
+		} else {
+			bridgeContext.Channel = channel
+			if channel.TeamId != "" && channel.Type != model.ChannelTypeDirect && channel.Type != model.ChannelTypeGroup {
+				bridgeContext.Team = &model.Team{Id: channel.TeamId}
+			}
+		}
+	}
+
 	return bridgeContext
 }
 
-func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool) (llm.CompletionRequest, error) {
+func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool, operation, operationSubType string) (llm.CompletionRequest, error) {
 	posts, err := a.convertBridgePostsToInternal(req)
 	if err != nil {
 		return llm.CompletionRequest{}, err
@@ -159,9 +231,20 @@ func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclien
 		},
 	}, posts...)
 
+	resolvedOperation := operation
+	if req.Operation != "" {
+		resolvedOperation = req.Operation
+	}
+	resolvedOperationSubType := operationSubType
+	if req.OperationSubType != "" {
+		resolvedOperationSubType = req.OperationSubType
+	}
+
 	return llm.CompletionRequest{
-		Posts:   posts,
-		Context: bridgeContext,
+		Posts:            posts,
+		Context:          bridgeContext,
+		Operation:        resolvedOperation,
+		OperationSubType: resolvedOperationSubType,
 	}, nil
 }
 
@@ -387,6 +470,7 @@ func (a *API) prepareAgentBridgeCompletion(
 	ctx context.Context,
 	agent string,
 	req bridgeclient.CompletionRequest,
+	operation, operationSubType string,
 ) (*bots.Bot, llm.CompletionRequest, []llm.LanguageModelOption, int, error) {
 	normalizedUserID, normalizedChannelID, err := normalizeBridgeCompletionPrincipalIDs(req.UserID, req.ChannelID)
 	if err != nil {
@@ -416,7 +500,7 @@ func (a *API) prepareAgentBridgeCompletion(
 	}
 
 	toolsRequested := allowedTools != nil
-	llmRequest, err := a.convertAgentBridgeRequestToInternal(bot, req, toolsRequested)
+	llmRequest, err := a.convertAgentBridgeRequestToInternal(bot, req, toolsRequested, operation, operationSubType)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid request: %v", err)
 	}
@@ -481,9 +565,16 @@ func (a *API) prepareAgentBridgeCompletion(
 		llmRequest.Context.Tools = scopedTools
 	}
 
-	opts, err := a.convertRequestToLLMOptions(req, !toolsRequested, allowedTools)
+	opts, err := a.convertRequestToLLMOptions(req)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid options: %v", err)
+	}
+
+	// Handle tool options
+	if !toolsRequested {
+		opts = append(opts, llm.WithToolsDisabled())
+	} else if len(allowedTools) > 0 {
+		opts = append(opts, llm.WithAutoRunTools(allowedTools))
 	}
 
 	return bot, llmRequest, opts, 0, nil
@@ -613,8 +704,8 @@ func (a *API) filterEligibleToolsForContext(ctx context.Context, userID string, 
 	return eligibleTools, eligibleToolMap, nil
 }
 
-// convertRequestToLLMOptions converts the API request options to llm.LanguageModelOption.
-func (a *API) convertRequestToLLMOptions(req bridgeclient.CompletionRequest, disableTools bool, autoRunTools []string) ([]llm.LanguageModelOption, error) {
+// convertRequestToLLMOptions converts the API request options to llm.LanguageModelOption
+func (a *API) convertRequestToLLMOptions(req bridgeclient.CompletionRequest) ([]llm.LanguageModelOption, error) {
 	var options []llm.LanguageModelOption
 
 	// Add MaxGeneratedTokens option if provided
@@ -639,12 +730,6 @@ func (a *API) convertRequestToLLMOptions(req bridgeclient.CompletionRequest, dis
 		options = append(options, func(cfg *llm.LanguageModelConfig) {
 			cfg.JSONOutputFormat = &schema
 		})
-	}
-
-	if disableTools {
-		options = append(options, llm.WithToolsDisabled())
-	} else if len(autoRunTools) > 0 {
-		options = append(options, llm.WithAutoRunTools(autoRunTools))
 	}
 
 	return options, nil
@@ -739,9 +824,8 @@ func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.Co
 	}
 }
 
-// handleNonStreamingLLMResponse handles non-streaming LLM responses
+// handleNonStreamingLLMResponse handles non-streaming LLM responses.
 func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest, opts ...llm.LanguageModelOption) {
-	// Make the non-streaming LLM call
 	response, err := bot.LLM().ChatCompletionNoStream(llmRequest, opts...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
@@ -953,7 +1037,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), normalizedAgent, req)
+	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), normalizedAgent, req, llm.OperationBridgeAgent, llm.SubTypeStreaming)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),
@@ -999,7 +1083,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), normalizedAgent, req)
+	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), normalizedAgent, req, llm.OperationBridgeAgent, llm.SubTypeNoStream)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),
@@ -1080,7 +1164,7 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertServiceBridgeRequestToInternal(req)
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeService, llm.SubTypeStreaming)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -1089,13 +1173,14 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	}
 
 	// Convert request options
-	opts, err := a.convertRequestToLLMOptions(req, true, nil)
+	opts, err := a.convertRequestToLLMOptions(req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid options: %v", err),
 		})
 		return
 	}
+	opts = append(opts, llm.WithToolsDisabled())
 
 	// Stream the response
 	a.streamLLMResponse(c, bot, llmRequest, opts...)
@@ -1170,7 +1255,7 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertServiceBridgeRequestToInternal(req)
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeService, llm.SubTypeNoStream)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -1179,13 +1264,14 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	}
 
 	// Convert request options
-	opts, err := a.convertRequestToLLMOptions(req, true, nil)
+	opts, err := a.convertRequestToLLMOptions(req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid options: %v", err),
 		})
 		return
 	}
+	opts = append(opts, llm.WithToolsDisabled())
 
 	// Handle non-streaming response
 	a.handleNonStreamingLLMResponse(c, bot, llmRequest, opts...)

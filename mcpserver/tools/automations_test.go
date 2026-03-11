@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -31,12 +32,12 @@ func TestAutomationSchemaGeneration(t *testing.T) {
 		{
 			name:           "CreateAutomationArgs schema",
 			schema:         func() any { return llm.NewJSONSchemaFromStruct[CreateAutomationArgs]() },
-			expectedFields: []string{"name", "enabled", "trigger_type", "trigger_channel_id", "actions"},
+			expectedFields: []string{"name", "enabled", "trigger", "actions"},
 		},
 		{
 			name:           "UpdateAutomationArgs schema",
 			schema:         func() any { return llm.NewJSONSchemaFromStruct[UpdateAutomationArgs]() },
-			expectedFields: []string{"automation_id", "name", "enabled", "trigger_type", "trigger_channel_id", "actions"},
+			expectedFields: []string{"automation_id", "name", "enabled", "trigger", "actions"},
 		},
 		{
 			name:           "DeleteAutomationArgs schema",
@@ -118,12 +119,146 @@ func TestIsAutomationTool(t *testing.T) {
 	}
 }
 
+func TestValidateTrigger(t *testing.T) {
+	tests := []struct {
+		name    string
+		trigger AutomationTrigger
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "no trigger set",
+			trigger: AutomationTrigger{},
+			wantErr: true,
+			errMsg:  "trigger is required",
+		},
+		{
+			name:    "message_posted trigger",
+			trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch1"}},
+			wantErr: false,
+		},
+		{
+			name:    "schedule trigger",
+			trigger: AutomationTrigger{Schedule: &ScheduleConfig{ChannelID: "ch1", Interval: "daily"}},
+			wantErr: false,
+		},
+		{
+			name:    "membership_changed trigger",
+			trigger: AutomationTrigger{MembershipChanged: &MembershipChangedConfig{ChannelID: "ch1"}},
+			wantErr: false,
+		},
+		{
+			name:    "channel_created trigger",
+			trigger: AutomationTrigger{ChannelCreated: &ChannelCreatedConfig{}},
+			wantErr: false,
+		},
+		{
+			name: "multiple triggers set",
+			trigger: AutomationTrigger{
+				MessagePosted: &MessagePostedConfig{ChannelID: "ch1"},
+				Schedule:      &ScheduleConfig{ChannelID: "ch1", Interval: "daily"},
+			},
+			wantErr: true,
+			errMsg:  "exactly one type set",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateTrigger(tt.trigger)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestTriggerHelpers(t *testing.T) {
+	tests := []struct {
+		name     string
+		trigger  AutomationTrigger
+		wantType string
+		wantChID string
+	}{
+		{
+			name:     "message_posted",
+			trigger:  AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch1"}},
+			wantType: "message_posted",
+			wantChID: "ch1",
+		},
+		{
+			name:     "schedule",
+			trigger:  AutomationTrigger{Schedule: &ScheduleConfig{ChannelID: "ch2", Interval: "daily"}},
+			wantType: "schedule",
+			wantChID: "ch2",
+		},
+		{
+			name:     "membership_changed",
+			trigger:  AutomationTrigger{MembershipChanged: &MembershipChangedConfig{ChannelID: "ch3"}},
+			wantType: "membership_changed",
+			wantChID: "ch3",
+		},
+		{
+			name:     "channel_created",
+			trigger:  AutomationTrigger{ChannelCreated: &ChannelCreatedConfig{}},
+			wantType: "channel_created",
+			wantChID: "",
+		},
+		{
+			name:     "empty trigger",
+			trigger:  AutomationTrigger{},
+			wantType: "unknown",
+			wantChID: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.wantType, triggerTypeName(tt.trigger))
+			assert.Equal(t, tt.wantChID, triggerChannelID(tt.trigger))
+		})
+	}
+}
+
+func TestActionTypeName(t *testing.T) {
+	tests := []struct {
+		name     string
+		action   AutomationAction
+		wantType string
+	}{
+		{
+			name:     "send_message",
+			action:   AutomationAction{ID: "a1", SendMessage: &SendMessageActionConfig{Body: "hi"}},
+			wantType: "send_message",
+		},
+		{
+			name:     "ai_prompt",
+			action:   AutomationAction{ID: "a2", AIPrompt: &AIPromptActionConfig{Prompt: "hello"}},
+			wantType: "ai_prompt",
+		},
+		{
+			name:     "empty action",
+			action:   AutomationAction{ID: "a3"},
+			wantType: "unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.wantType, actionTypeName(tt.action))
+		})
+	}
+}
+
 func TestFilterAutomationFlows(t *testing.T) {
 	flows := []AutomationFlow{
-		{ID: "1", Name: "Welcome Message", Enabled: true, Trigger: AutomationTrigger{ChannelID: "ch1"}},
-		{ID: "2", Name: "Bug Report", Enabled: false, Trigger: AutomationTrigger{ChannelID: "ch2"}},
-		{ID: "3", Name: "Welcome Notification", Enabled: true, Trigger: AutomationTrigger{ChannelID: "ch1"}},
-		{ID: "4", Name: "Daily Standup", Enabled: true, Trigger: AutomationTrigger{ChannelID: "ch3"}},
+		{ID: "1", Name: "Welcome Message", Enabled: true, Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch1"}}},
+		{ID: "2", Name: "Bug Report", Enabled: false, Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch2"}}},
+		{ID: "3", Name: "Welcome Notification", Enabled: true, Trigger: AutomationTrigger{MembershipChanged: &MembershipChangedConfig{ChannelID: "ch1"}}},
+		{ID: "4", Name: "Daily Standup", Enabled: true, Trigger: AutomationTrigger{Schedule: &ScheduleConfig{ChannelID: "ch3", Interval: "daily"}}},
 	}
 
 	boolTrue := true
@@ -297,15 +432,15 @@ func TestAutomationListFlows(t *testing.T) {
 			ID:      "flow1",
 			Name:    "Welcome Bot",
 			Enabled: true,
-			Trigger: AutomationTrigger{Type: "new_message", ChannelID: "ch-abc"},
-			Actions: []AutomationAction{{Name: "Send greeting", Type: "send_message"}},
+			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch-abc"}},
+			Actions: []AutomationAction{{ID: "greet", SendMessage: &SendMessageActionConfig{Body: "Hello!"}}},
 		},
 		{
 			ID:      "flow2",
 			Name:    "Bug Triage",
 			Enabled: false,
-			Trigger: AutomationTrigger{Type: "new_message", ChannelID: "ch-def"},
-			Actions: []AutomationAction{{Name: "Label bug", Type: "webhook"}},
+			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch-def"}},
+			Actions: []AutomationAction{{ID: "summarize", AIPrompt: &AIPromptActionConfig{Prompt: "Summarize", ProviderType: "agent", ProviderID: "bot1"}}},
 		},
 	}
 
@@ -368,14 +503,13 @@ func TestAutomationCreateFlow(t *testing.T) {
 	client := newTestClient(ts.URL)
 	mcpCtx := &MCPToolContext{Client: client}
 
-	t.Run("create success", func(t *testing.T) {
+	t.Run("create with message_posted trigger", func(t *testing.T) {
 		argsGetter := func(target any) error {
 			return json.Unmarshal([]byte(`{
 				"name": "Test Flow",
 				"enabled": true,
-				"trigger_type": "new_message",
-				"trigger_channel_id": "abcdefghijklmnopqrstuvwxyz",
-				"actions": [{"name": "Greet", "type": "send_message", "body": "Hello!"}]
+				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz"}},
+				"actions": [{"id": "greet", "send_message": {"channel_id": "abcdefghijklmnopqrstuvwxyz", "body": "Hello!"}}]
 			}`), target)
 		}
 
@@ -386,12 +520,46 @@ func TestAutomationCreateFlow(t *testing.T) {
 		assert.Contains(t, result, "new-flow-id")
 	})
 
+	t.Run("create with schedule trigger", func(t *testing.T) {
+		argsGetter := func(target any) error {
+			return json.Unmarshal([]byte(`{
+				"name": "Scheduled Flow",
+				"enabled": true,
+				"trigger": {"schedule": {"channel_id": "abcdefghijklmnopqrstuvwxyz", "interval": "daily"}},
+				"actions": [{"id": "post", "send_message": {"channel_id": "abcdefghijklmnopqrstuvwxyz", "body": "Daily update"}}]
+			}`), target)
+		}
+
+		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		require.NoError(t, err)
+		assert.Contains(t, result, "Successfully created automation")
+		assert.Contains(t, result, "Scheduled Flow")
+	})
+
+	t.Run("create with ai_prompt action", func(t *testing.T) {
+		argsGetter := func(target any) error {
+			return json.Unmarshal([]byte(`{
+				"name": "AI Flow",
+				"enabled": true,
+				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz"}},
+				"actions": [
+					{"id": "ask", "ai_prompt": {"prompt": "Summarize this", "provider_type": "agent", "provider_id": "bot123", "system_prompt": "You are helpful", "allowed_tools": ["search"], "tool_constraints": {"search": {"query": {"allowed_values": ["bugs", "features"]}}}}},
+					{"id": "post", "send_message": {"channel_id": "abcdefghijklmnopqrstuvwxyz", "body": "Result: {{(index .Steps \"ask\").Message}}"}}
+				]
+			}`), target)
+		}
+
+		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		require.NoError(t, err)
+		assert.Contains(t, result, "Successfully created automation")
+		assert.Contains(t, result, "AI Flow")
+	})
+
 	t.Run("create missing name", func(t *testing.T) {
 		argsGetter := func(target any) error {
 			return json.Unmarshal([]byte(`{
 				"name": "",
-				"trigger_type": "new_message",
-				"trigger_channel_id": "abcdefghijklmnopqrstuvwxyz"
+				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz"}}
 			}`), target)
 		}
 
@@ -400,24 +568,36 @@ func TestAutomationCreateFlow(t *testing.T) {
 		assert.Equal(t, "name is required", result)
 	})
 
-	t.Run("create missing trigger_type", func(t *testing.T) {
+	t.Run("create missing trigger", func(t *testing.T) {
 		argsGetter := func(target any) error {
 			return json.Unmarshal([]byte(`{
 				"name": "Test",
-				"trigger_type": "",
-				"trigger_channel_id": "abcdefghijklmnopqrstuvwxyz"
+				"trigger": {}
 			}`), target)
 		}
 
 		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Equal(t, "trigger_type is required", result)
+		assert.Contains(t, result, "trigger is required")
+	})
+
+	t.Run("create multiple triggers", func(t *testing.T) {
+		argsGetter := func(target any) error {
+			return json.Unmarshal([]byte(`{
+				"name": "Test",
+				"trigger": {"message_posted": {"channel_id": "ch1"}, "schedule": {"channel_id": "ch1", "interval": "daily"}}
+			}`), target)
+		}
+
+		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		require.Error(t, err)
+		assert.Contains(t, result, "exactly one type set")
 	})
 }
 
 func TestAutomationUpdateFlow(t *testing.T) {
 	sampleFlows := []AutomationFlow{
-		{ID: "flow1", Name: "Original", Enabled: true, Trigger: AutomationTrigger{Type: "new_message", ChannelID: "ch1"}},
+		{ID: "flow1", Name: "Original", Enabled: true, Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch1"}}},
 	}
 
 	ts := newTestAutomationServer(t, sampleFlows)
@@ -433,8 +613,7 @@ func TestAutomationUpdateFlow(t *testing.T) {
 				"automation_id": "flow1",
 				"name": "Updated Name",
 				"enabled": false,
-				"trigger_type": "new_message",
-				"trigger_channel_id": "abcdefghijklmnopqrstuvwxyz",
+				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz"}},
 				"actions": []
 			}`), target)
 		}
@@ -450,8 +629,7 @@ func TestAutomationUpdateFlow(t *testing.T) {
 			return json.Unmarshal([]byte(`{
 				"automation_id": "nonexistent",
 				"name": "X",
-				"trigger_type": "new_message",
-				"trigger_channel_id": "abcdefghijklmnopqrstuvwxyz"
+				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz"}}
 			}`), target)
 		}
 
@@ -587,27 +765,81 @@ func TestAutomationGetToolsCount(t *testing.T) {
 }
 
 func TestFormatAutomationFlow(t *testing.T) {
-	flow := AutomationFlow{
-		ID:      "test-id",
-		Name:    "Test Flow",
-		Enabled: true,
-		Trigger: AutomationTrigger{Type: "new_message", ChannelID: "ch-123"},
-		Actions: []AutomationAction{
-			{Name: "Send", Type: "send_message", ChannelID: "ch-456", Body: "Hello"},
-			{Name: "Webhook", Type: "webhook"},
-		},
-	}
+	t.Run("send_message action", func(t *testing.T) {
+		flow := AutomationFlow{
+			ID:      "test-id",
+			Name:    "Test Flow",
+			Enabled: true,
+			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch-123"}},
+			Actions: []AutomationAction{
+				{ID: "send", SendMessage: &SendMessageActionConfig{ChannelID: "ch-456", Body: "Hello"}},
+			},
+		}
 
-	result := formatAutomationFlow(flow)
-	assert.Contains(t, result, "Test Flow")
-	assert.Contains(t, result, "test-id")
-	assert.Contains(t, result, "true")
-	assert.Contains(t, result, "new_message")
-	assert.Contains(t, result, "ch-123")
-	assert.Contains(t, result, "Send")
-	assert.Contains(t, result, "ch-456")
-	assert.Contains(t, result, "Hello")
-	assert.Contains(t, result, "Webhook")
+		result := formatAutomationFlow(flow)
+		assert.Contains(t, result, "Test Flow")
+		assert.Contains(t, result, "test-id")
+		assert.Contains(t, result, "true")
+		assert.Contains(t, result, "message_posted")
+		assert.Contains(t, result, "ch-123")
+		assert.Contains(t, result, "send_message")
+		assert.Contains(t, result, "ch-456")
+		assert.Contains(t, result, "Hello")
+	})
+
+	t.Run("ai_prompt action", func(t *testing.T) {
+		flow := AutomationFlow{
+			ID:      "ai-id",
+			Name:    "AI Flow",
+			Enabled: true,
+			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch-1"}},
+			Actions: []AutomationAction{
+				{ID: "ask", AIPrompt: &AIPromptActionConfig{
+					Prompt:       "Summarize",
+					SystemPrompt: "Be helpful",
+					ProviderType: "agent",
+					ProviderID:   "bot1",
+					AllowedTools: []string{"search"},
+					ToolConstraints: ToolConstraints{
+						"search": {"query": ParamConstraint{AllowedValues: []string{"bugs"}}},
+					},
+				}},
+			},
+		}
+
+		result := formatAutomationFlow(flow)
+		assert.Contains(t, result, "ai_prompt")
+		assert.Contains(t, result, "Summarize")
+		assert.Contains(t, result, "Be helpful")
+		assert.Contains(t, result, "search")
+		assert.Contains(t, result, "tool_constraints=<configured>")
+	})
+
+	t.Run("schedule trigger with interval", func(t *testing.T) {
+		flow := AutomationFlow{
+			ID:      "sched-id",
+			Name:    "Scheduled",
+			Enabled: true,
+			Trigger: AutomationTrigger{Schedule: &ScheduleConfig{ChannelID: "ch-1", Interval: "daily"}},
+		}
+
+		result := formatAutomationFlow(flow)
+		assert.Contains(t, result, "schedule")
+		assert.Contains(t, result, "interval=daily")
+	})
+
+	t.Run("channel_created trigger no channel", func(t *testing.T) {
+		flow := AutomationFlow{
+			ID:      "cc-id",
+			Name:    "On Channel Create",
+			Enabled: true,
+			Trigger: AutomationTrigger{ChannelCreated: &ChannelCreatedConfig{}},
+		}
+
+		result := formatAutomationFlow(flow)
+		assert.Contains(t, result, "channel_created")
+		assert.NotContains(t, result, "channel=")
+	})
 }
 
 func TestFormatAutomationFlows(t *testing.T) {
@@ -664,20 +896,33 @@ func TestHandleAutomationHTTPError(t *testing.T) {
 	tests := []struct {
 		name           string
 		statusCode     int
+		body           string
 		automationID   string
 		expectedResult string
 	}{
 		{
+			name:           "400 bad request with body",
+			statusCode:     http.StatusBadRequest,
+			body:           "invalid trigger configuration",
+			expectedResult: "Bad request: invalid trigger configuration",
+		},
+		{
+			name:           "400 bad request empty body",
+			statusCode:     http.StatusBadRequest,
+			body:           "",
+			expectedResult: "Bad request: invalid request",
+		},
+		{
 			name:           "401 unauthorized",
 			statusCode:     http.StatusUnauthorized,
 			automationID:   "",
-			expectedResult: "You don't have permission to manage automations",
+			expectedResult: "You don't have permission to manage automations for this channel",
 		},
 		{
 			name:           "403 forbidden",
 			statusCode:     http.StatusForbidden,
 			automationID:   "",
-			expectedResult: "You don't have permission to manage automations",
+			expectedResult: "You don't have permission to manage automations for this channel",
 		},
 		{
 			name:           "404 with automation id",
@@ -701,9 +946,15 @@ func TestHandleAutomationHTTPError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var respBody io.ReadCloser
+			if tt.body != "" {
+				respBody = io.NopCloser(strings.NewReader(tt.body))
+			} else {
+				respBody = http.NoBody
+			}
 			resp := &http.Response{
 				StatusCode: tt.statusCode,
-				Body:       http.NoBody,
+				Body:       respBody,
 			}
 
 			result, err := handleAutomationHTTPError(resp, fmt.Errorf("test error"), tt.automationID)

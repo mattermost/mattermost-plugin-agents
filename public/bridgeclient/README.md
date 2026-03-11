@@ -157,6 +157,25 @@ values are treated as unset. Non-empty malformed IDs are rejected by the bridge 
 For backward compatibility, channel permission checks only run when `UserID` is also provided.
 The same whitespace normalization for optional `user_id` applies to discovery endpoint query params.
 
+## Token Usage Dimensions
+
+Bridge callers can optionally provide `Operation` and `OperationSubType` in `CompletionRequest` to customize token usage categorization in logs.
+
+If omitted, the bridge keeps current defaults:
+
+- `Operation`: `bridge_agent` or `bridge_service` (based on endpoint)
+- `OperationSubType`: `streaming` or `nostream` (based on request mode)
+
+```go
+request := bridgeclient.CompletionRequest{
+    Posts: []bridgeclient.Post{
+        {Role: "user", Message: "Summarize incident timeline"},
+    },
+    Operation:        "playbooks_summary",
+    OperationSubType: "incident_report",
+}
+```
+
 ## Agent vs Service
 
 - **Agent**: Target a specific bot by its Bot ID (the immutable Mattermost Bot User ID)

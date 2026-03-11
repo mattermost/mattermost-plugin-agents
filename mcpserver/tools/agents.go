@@ -10,23 +10,21 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
-const aiPluginBridgeAPIPath = "/plugins/mattermost-ai/bridge/v1"
+const aiBotsAPIPath = "/plugins/mattermost-ai/ai_bots"
 
-// BridgeAgentInfo mirrors the bridgeclient.BridgeAgentInfo type.
-type BridgeAgentInfo struct {
+// AIBotInfo mirrors the api.AIBotInfo type for the fields we need.
+type AIBotInfo struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
 	Username    string `json:"username"`
-	ServiceID   string `json:"service_id"`
-	ServiceType string `json:"service_type"`
-	IsDefault   bool   `json:"is_default"`
 }
 
-// BridgeAgentsResponse mirrors the bridgeclient.AgentsResponse type.
-type BridgeAgentsResponse struct {
-	Agents []BridgeAgentInfo `json:"agents"`
+// AIBotsResponse mirrors the api.AIBotsResponse type.
+type AIBotsResponse struct {
+	Bots []AIBotInfo `json:"bots"`
 }
 
 // ListAgentsArgs represents arguments for the list_agents tool.
@@ -46,34 +44,29 @@ The agent ID (26-character Mattermost user ID) is what you pass as config.provid
 	}
 }
 
-// toolListAgents fetches available agents from the AI plugin bridge API.
+// toolListAgents fetches available agents via the plugin's /ai_bots endpoint.
 func (p *MattermostToolProvider) toolListAgents(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args ListAgentsArgs
 	if err := argsGetter(&args); err != nil {
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool list_agents: %w", err)
 	}
 
-	agents, err := p.fetchBridgeAgents()
+	bots, err := p.fetchAIBots(mcpContext.Client)
 	if err != nil {
-		return "Failed to retrieve agents. The AI plugin bridge API is not reachable.", fmt.Errorf("failed to fetch agents: %w", err)
+		return "Failed to retrieve agents. The AI plugin is not reachable.", fmt.Errorf("failed to fetch agents: %w", err)
 	}
 
-	if len(agents) == 0 {
+	if len(bots) == 0 {
 		return "No agents are currently configured.", nil
 	}
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d agent(s):\n\n", len(agents)))
+	result.WriteString(fmt.Sprintf("Found %d agent(s):\n\n", len(bots)))
 
-	// Note which agent is "self" if we know the bot user ID
-	for i, a := range agents {
+	for i, a := range bots {
 		result.WriteString(fmt.Sprintf("%d. %s\n", i+1, a.DisplayName))
 		result.WriteString(fmt.Sprintf("   ID: %s\n", a.ID))
 		result.WriteString(fmt.Sprintf("   Username: @%s\n", a.Username))
-		result.WriteString(fmt.Sprintf("   Service Type: %s\n", a.ServiceType))
-		if a.IsDefault {
-			result.WriteString("   (default agent)\n")
-		}
 		if mcpContext.BotUserID != "" && a.ID == mcpContext.BotUserID {
 			result.WriteString("   ** This is YOU (the current agent) **\n")
 		}
@@ -85,31 +78,32 @@ func (p *MattermostToolProvider) toolListAgents(mcpContext *MCPToolContext, args
 	return result.String(), nil
 }
 
-// fetchBridgeAgents makes a direct HTTP call to the AI plugin's bridge API.
-// This uses the Mattermost-Plugin-ID header for inter-plugin auth.
-func (p *MattermostToolProvider) fetchBridgeAgents() ([]BridgeAgentInfo, error) {
-	url := p.mmInternalServerURL + aiPluginBridgeAPIPath + "/agents"
+// fetchAIBots calls the plugin's /ai_bots endpoint using the authenticated Client4.
+// The Mattermost server authenticates the Bearer token and sets Mattermost-User-Id,
+// which satisfies the plugin's MattermostAuthorizationRequired middleware.
+func (p *MattermostToolProvider) fetchAIBots(client *model.Client4) ([]AIBotInfo, error) {
+	url := p.mmInternalServerURL + aiBotsAPIPath
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Mattermost-Plugin-ID", "mattermost-ai")
+	req.Header.Set(model.HeaderAuth, model.HeaderBearer+" "+client.AuthToken)
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec
+	resp, err := client.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to reach bridge API: %w", err)
+		return nil, fmt.Errorf("failed to reach AI plugin: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("bridge API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("AI plugin returned status %d", resp.StatusCode)
 	}
 
-	var agentsResp BridgeAgentsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&agentsResp); err != nil {
-		return nil, fmt.Errorf("failed to decode agents response: %w", err)
+	var botsResp AIBotsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&botsResp); err != nil {
+		return nil, fmt.Errorf("failed to decode bots response: %w", err)
 	}
 
-	return agentsResp.Agents, nil
+	return botsResp.Bots, nil
 }

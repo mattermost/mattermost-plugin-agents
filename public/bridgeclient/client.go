@@ -81,6 +81,12 @@ type CompletionRequest struct {
 	// ToolConstraints restricts tool parameter values to allowed sets.
 	// Requires AllowedTools to also be set; each constrained tool must be in AllowedTools.
 	ToolConstraints ToolConstraints `json:"tool_constraints,omitempty"`
+	// Operation optionally overrides the default operation used for token usage logging.
+	// If empty, the bridge chooses an operation based on endpoint type (agent/service).
+	Operation string `json:"operation,omitempty"`
+	// OperationSubType optionally overrides the default operation subtype used for token usage logging.
+	// If empty, the bridge chooses a subtype based on request mode (streaming/nostream).
+	OperationSubType string `json:"operation_subtype,omitempty"`
 	// UserID is the optional Mattermost user ID making the request.
 	// If provided, the bridge will check user-level permissions.
 	UserID string `json:"user_id,omitempty"`
