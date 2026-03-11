@@ -104,8 +104,8 @@ export class LLMBotPostHelper {
      * @param postId - Optional post ID to scope the search
      */
     getCitationTooltip(postId?: string): Locator {
-        // Tooltip is rendered at page level, not inside post container
-        return this.page.locator('[data-testid="llm-citation-tooltip"]').first();
+        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
+        return baseLocator.locator('[data-testid="llm-citation"] [data-testid="llm-citation-tooltip"]:visible').last();
     }
 
     /**
@@ -394,8 +394,9 @@ export class LLMBotPostHelper {
      * Get post citation tooltip (appears on hover)
      * Post citation tooltips show @username and #channelname
      */
-    getPostCitationTooltip(): Locator {
-        return this.page.locator('[class*="TooltipContainer"]').first();
+    getPostCitationTooltip(postId?: string): Locator {
+        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
+        return baseLocator.locator('[class*="CitationWrapper"] [class*="TooltipContainer"]:visible').last();
     }
 
     // ==================== SEARCH SOURCES ACTIONS ====================
@@ -501,8 +502,8 @@ export class LLMBotPostHelper {
      * @param username - Expected username in tooltip
      * @param channelName - Expected channel name in tooltip
      */
-    async expectPostCitationTooltip(username: string, channelName: string): Promise<void> {
-        const tooltip = this.getPostCitationTooltip();
+    async expectPostCitationTooltip(username: string, channelName: string, postId?: string): Promise<void> {
+        const tooltip = this.getPostCitationTooltip(postId);
         await expect(tooltip).toBeVisible();
         await expect(tooltip).toContainText(username);
         await expect(tooltip).toContainText(channelName);

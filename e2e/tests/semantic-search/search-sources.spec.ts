@@ -32,24 +32,8 @@ data: {"id":"chatcmpl-search-1","object":"chat.completion.chunk","created":17081
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-const searchResponseNoResults = `
-data: {"id":"chatcmpl-search-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-search-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"I"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-search-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" couldn't"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-search-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" find"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-search-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" any"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-search-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" relevant"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-search-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" content"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-search-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" about"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-search-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" that"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-search-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" topic"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-search-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"."},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-search-2","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}]}
-data: [DONE]
-`.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-
 const searchResponseWithSourcesText = "Based on the search results, here are the findings about budget.";
-const searchResponseNoResultsText = "I couldn't find any relevant content about that topic.";
+const searchResponseNoResultsText = "I couldn't find any relevant messages for your query. Please try a different search term.";
 
 test.beforeAll(async () => {
     mattermost = await RunContainer();
@@ -146,26 +130,30 @@ test.describe('Search Sources Display', () => {
         await expect(page.getByTestId('mattermost-ai-rhs')).toBeVisible();
     });
 
-    test('Search with no results shows appropriate message', async ({ page }) => {
-        const { aiPlugin, llmBotHelper } = await setupTestPage(page);
+    test('Search query with no channel results returns appropriate message', async ({ page }) => {
+        await setupTestPage(page);
 
-        await aiPlugin.openRHS();
+        const userClient = await mattermost.getClient(username, password);
+        const currentUser = await userClient.getMe();
+        const secondUser = await userClient.getUserByUsername('seconduser');
+        const emptyDMChannel = await userClient.createDirectChannel([currentUser.id, secondUser.id]);
 
-        // Wait for the direct channel to be created and textarea to be ready
-        await expect(aiPlugin.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
+        const response = await fetch(`${mattermost.url()}/plugins/mattermost-ai/search`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${userClient.getToken()}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                query: 'xyznonexistent12345',
+                channelId: emptyDMChannel.id,
+            }),
+        });
 
-        await openAIMock.addCompletionMock(searchResponseNoResults);
-        await aiPlugin.triggerEmbeddingSearch('xyznonexistent12345');
+        expect(response.ok).toBe(true);
 
-        await aiPlugin.waitForBotResponse(searchResponseNoResultsText);
-
-        // Verify "Sources" section is NOT visible when there are no results
-        await llmBotHelper.expectSearchSourcesVisible(false);
-
-        // Verify the response text indicates no results were found
-        await llmBotHelper.expectPostText("couldn't find any relevant content");
-
-        // Verify RHS is still visible
-        await expect(page.getByTestId('mattermost-ai-rhs')).toBeVisible();
+        const payload = await response.json();
+        expect(payload.answer).toBe(searchResponseNoResultsText);
+        expect(payload.results).toEqual([]);
     });
 });
