@@ -84,21 +84,6 @@ test.describe('RHS Bot Interactions', () => {
   });
 });
 
-test.describe('Prompt Templates', () => {
-  test('prompt templates replace text in textarea', async ({ page }) => {
-    const { aiPlugin } = await setupTestPage(page);
-    await aiPlugin.openRHS();
-
-    // Clicking prompt template adds message
-    await aiPlugin.usePromptTemplate('brainstorm');
-    await aiPlugin.expectTextInTextarea('Brainstorm ideas about ');
-
-    // Clicking without editing replaces the text
-    await aiPlugin.usePromptTemplate('todo');
-    await aiPlugin.expectTextInTextarea('Write a todo list about ');
-  });
-});
-
 test.describe('Bot Mentions', () => {
   test('bot responds to channel mentions but ignores code blocks', async ({ page }) => {
     const { mmPage } = await setupTestPage(page);

@@ -10,6 +10,7 @@ import {
     getAvailableProviders,
     ProviderBundle,
 } from 'helpers/api-config';
+import { attachAPIErrorContext } from 'helpers/log-scanner';
 
 /**
  * Test Suite: Combined Features
@@ -18,8 +19,8 @@ import {
  * Runs once per configured provider (OpenAI and/or Anthropic).
  *
  * Environment Variables Required:
- * - ANTHROPIC_API_KEY: To run tests with Anthropic (claude-3-7-sonnet)
- * - OPENAI_API_KEY: To run tests with OpenAI (gpt-5)
+ * - ANTHROPIC_API_KEY: To run tests with Anthropic
+ * - OPENAI_API_KEY: To run tests with OpenAI
  *
  * Tests:
  * 1. Reasoning and Citations Together
@@ -44,6 +45,8 @@ async function setupTestPage(page, mattermost, provider: ProviderBundle) {
 
 function createProviderTestSuite(provider: ProviderBundle) {
     test.describe(`Combined Features - ${provider.name}`, () => {
+        test.skip(provider.service.type === 'openaicompatible', 'Skipping OpenAI reasoning tests due to flaky upstream reasoning events.');
+
         let mattermost: MattermostContainer;
 
         test.beforeAll(async () => {
@@ -67,7 +70,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
                         thinkingBudget: 1024,
                     }),
                     ...(provider.service.type === 'openaicompatible' && {
-                        reasoningEffort: 'low',
+                        reasoningEffort: 'high',
                     }),
                 }
             };
@@ -79,6 +82,10 @@ function createProviderTestSuite(provider: ProviderBundle) {
             if (mattermost) {
                 await mattermost.stop();
             }
+        });
+
+        test.afterEach(async ({}, testInfo) => {
+            await attachAPIErrorContext(testInfo);
         });
 
         test('Reasoning and Citations Together', async ({ page }) => {

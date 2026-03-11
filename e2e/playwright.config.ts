@@ -18,6 +18,7 @@ const getTestIgnorePatterns = (): string[] => {
   if (process.env.EXCLUDE_REAL_API_TESTS) {
     patterns.push('**/llmbot-post-component/**');
     patterns.push('**/backend-verification/real-api.spec.ts');
+    patterns.push('**/system-console/live-service-full-flow.spec.ts');
   }
 
   return patterns;

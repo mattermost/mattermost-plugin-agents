@@ -4,7 +4,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -58,7 +57,7 @@ func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, args
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	// Create the user
 	user := &model.User{
