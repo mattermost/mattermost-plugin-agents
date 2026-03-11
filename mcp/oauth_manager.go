@@ -226,6 +226,15 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 		return nil, fmt.Errorf("invalid or expired session: %w", err)
 	}
 
+	// Always clean up the session when we're done, whether we succeed or fail.
+	// The session contains sensitive material (CodeVerifier, static credentials)
+	// that should not linger in the KV store.
+	defer func() {
+		if delErr := m.deleteSession(loggedInUserID, state); delErr != nil {
+			m.pluginAPI.LogError("Failed to delete OAuth session after processing callback")
+		}
+	}()
+
 	// Validate state
 	if session.State == "" || session.State != state {
 		return nil, fmt.Errorf("state mismatch")
@@ -262,11 +271,6 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 	// Store the token
 	if err := m.storeToken(loggedInUserID, session.ServerID, token); err != nil {
 		return nil, fmt.Errorf("failed to save token: %w", err)
-	}
-
-	// Clean up session
-	if err := m.deleteSession(loggedInUserID, state); err != nil {
-		m.pluginAPI.LogError("Failed to delete OAuth session after processing callback")
 	}
 
 	return session, nil

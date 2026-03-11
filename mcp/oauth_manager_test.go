@@ -105,6 +105,11 @@ func TestBuildSessionKey(t *testing.T) {
 			require.Equal(t, key, key2)
 		})
 	}
+
+	// Different inputs must produce different keys
+	key1 := buildSessionKey("user123", "state456")
+	key2 := buildSessionKey("user789", "state999")
+	require.NotEqual(t, key1, key2)
 }
 
 func TestLoadOrCreateClientCredentials_ExistingCredentials(t *testing.T) {
@@ -195,6 +200,7 @@ func TestLoadOrCreateClientCredentials_NilStaticCredsFallsBackToKVStore(t *testi
 	require.NotNil(t, creds)
 	require.Equal(t, "kv-client-id", creds.ClientID)
 	require.Equal(t, "kv-client-secret", creds.ClientSecret)
+	mockClient.AssertCalled(t, "KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials"))
 }
 
 func TestLoadOrCreateClientCredentials_EmptyStaticCredsFallsBackToKVStore(t *testing.T) {
@@ -219,6 +225,8 @@ func TestLoadOrCreateClientCredentials_EmptyStaticCredsFallsBackToKVStore(t *tes
 	require.NoError(t, err)
 	require.NotNil(t, creds)
 	require.Equal(t, "kv-client-id", creds.ClientID)
+	require.Equal(t, "kv-client-secret", creds.ClientSecret)
+	mockClient.AssertCalled(t, "KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials"))
 }
 
 func TestStaticCredsHelpers(t *testing.T) {
@@ -271,9 +279,10 @@ func TestProcessCallback_InvalidSession(t *testing.T) {
 	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession")).Return(appErr)
 
 	ctx := context.Background()
-	_, err := manager.ProcessCallback(ctx, userID, state, code)
+	session, err := manager.ProcessCallback(ctx, userID, state, code)
 
 	require.Error(t, err)
+	require.Nil(t, session)
 	require.Contains(t, err.Error(), "invalid or expired session")
 }
 
@@ -301,12 +310,15 @@ func TestProcessCallback_StateValidation(t *testing.T) {
 		sess := args.Get(1).(*OAuthSession)
 		*sess = *session
 	}).Return(nil).Once()
+	mockClient.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Once()
 
 	ctx := context.Background()
-	_, err := manager.ProcessCallback(ctx, userID, wrongState, "auth-code")
+	session, err := manager.ProcessCallback(ctx, userID, wrongState, "auth-code")
 
 	require.Error(t, err)
+	require.Nil(t, session)
 	require.Contains(t, err.Error(), "state mismatch")
+	mockClient.AssertCalled(t, "KVDelete", mock.AnythingOfType("string"))
 }
 
 func TestProcessCallback_UserIDValidation(t *testing.T) {
@@ -333,12 +345,15 @@ func TestProcessCallback_UserIDValidation(t *testing.T) {
 		sess := args.Get(1).(*OAuthSession)
 		*sess = *session
 	}).Return(nil)
+	mockClient.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Once()
 
 	ctx := context.Background()
-	_, err := manager.ProcessCallback(ctx, wrongUserID, state, "auth-code")
+	session, err := manager.ProcessCallback(ctx, wrongUserID, state, "auth-code")
 
 	require.Error(t, err)
+	require.Nil(t, session)
 	require.Contains(t, err.Error(), "user ID mismatch")
 	require.Contains(t, err.Error(), correctUserID)
 	require.Contains(t, err.Error(), wrongUserID)
+	mockClient.AssertCalled(t, "KVDelete", mock.AnythingOfType("string"))
 }
