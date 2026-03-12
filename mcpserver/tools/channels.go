@@ -552,35 +552,40 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 
 	// Get user details for each member
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Channel Members (page %d, showing %d members):\n\n", args.Page, len(members)))
+	result.WriteString(fmt.Sprintf("Channel Members (page %d, showing %d members):\n", args.Page, len(members)))
 
-	for i, member := range members {
+	for _, member := range members {
 		user, _, err := client.GetUser(ctx, member.UserId, "")
 		if err != nil {
 			p.logger.Warn("failed to get user details for member", "user_id", member.UserId, "error", err)
-			result.WriteString(fmt.Sprintf("%d. User ID: %s (details unavailable)\n", i+1, member.UserId))
+			result.WriteString(fmt.Sprintf("\nid: %s\nstatus: details unavailable\n", member.UserId))
 			continue
 		}
 
-		result.WriteString(fmt.Sprintf("%d. **%s**", i+1, user.Username))
+		result.WriteString(fmt.Sprintf("\nusername: %s\n", user.Username))
+		result.WriteString(fmt.Sprintf("id: %s\n", user.Id))
 
 		if user.FirstName != "" || user.LastName != "" {
-			result.WriteString(fmt.Sprintf(" (%s %s)", user.FirstName, user.LastName))
+			result.WriteString(fmt.Sprintf("name: %s %s\n", user.FirstName, user.LastName))
 		}
-
-		result.WriteString(fmt.Sprintf("\n   ID: %s\n", user.Id))
 
 		if user.Email != "" {
-			result.WriteString(fmt.Sprintf("   Email: %s\n", user.Email))
+			result.WriteString(fmt.Sprintf("email: %s\n", user.Email))
 		}
 
-		// Add role information
-		roles := strings.Split(member.Roles, " ")
-		if len(roles) > 0 && roles[0] != "" {
-			result.WriteString(fmt.Sprintf("   Roles: %s\n", strings.Join(roles, ", ")))
+		if user.IsBot {
+			result.WriteString("is_bot: true\n")
 		}
 
-		result.WriteString("\n")
+		if user.DeleteAt != 0 {
+			result.WriteString("deactivated: true\n")
+		}
+
+		// Use scheme booleans for human-readable role
+		role := formatChannelMemberRole(member)
+		if role != "" {
+			result.WriteString(fmt.Sprintf("role: %s\n", role))
+		}
 	}
 
 	return result.String(), nil
@@ -888,4 +893,18 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	}
 
 	return result.String(), nil
+}
+
+// formatChannelMemberRole returns a human-readable role string from ChannelMember scheme booleans.
+func formatChannelMemberRole(member model.ChannelMember) string {
+	switch {
+	case member.SchemeAdmin:
+		return "admin"
+	case member.SchemeGuest:
+		return "guest"
+	case member.SchemeUser:
+		return "member"
+	default:
+		return ""
+	}
 }
