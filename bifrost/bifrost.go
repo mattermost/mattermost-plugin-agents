@@ -1173,6 +1173,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	// Process stream
 	var toolCalls []llm.ToolCall
 	toolCallsBuffer := make(map[string]*responsesToolCallBuffer)
+	var currentFuncCallID string // tracks the active function call for argument deltas
 
 	// Reasoning buffers
 	var reasoningBuffer strings.Builder
@@ -1310,10 +1311,10 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 
 			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
 				// Tool call arguments delta
+				callID := currentFuncCallID
 				if resp.Item != nil && resp.Item.ResponsesToolMessage != nil {
 					tm := resp.Item.ResponsesToolMessage
-					callID := ""
-					if tm.CallID != nil {
+					if tm.CallID != nil && *tm.CallID != "" {
 						callID = *tm.CallID
 					}
 					if callID != "" {
@@ -1323,10 +1324,13 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 						if tm.Name != nil {
 							toolCallsBuffer[callID].name = *tm.Name
 						}
-						if resp.Delta != nil {
-							toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
-						}
 					}
+				}
+				if callID != "" && resp.Delta != nil {
+					if toolCallsBuffer[callID] == nil {
+						toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
+					}
+					toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
@@ -1339,6 +1343,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							callID = *tm.CallID
 						}
 						if callID != "" {
+							currentFuncCallID = callID
 							if toolCallsBuffer[callID] == nil {
 								toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
 							}
