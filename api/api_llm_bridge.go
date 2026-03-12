@@ -577,6 +577,13 @@ func (a *API) prepareAgentBridgeCompletion(
 		opts = append(opts, llm.WithAutoRunTools(allowedTools))
 	}
 
+	// Enable native web search if the bot supports it.
+	// Native web search is a provider-level feature (not an MCP tool),
+	// so it's not part of allowed_tools — it's always available when configured.
+	if bot.HasNativeWebSearchEnabled() {
+		opts = append(opts, llm.WithNativeWebSearchAllowed())
+	}
+
 	return bot, llmRequest, opts, 0, nil
 }
 
