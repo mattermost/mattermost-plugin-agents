@@ -1310,27 +1310,14 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				blockStartPos = textLen
 
 			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
-				// Tool call arguments delta
-				callID := currentFuncCallID
-				if resp.Item != nil && resp.Item.ResponsesToolMessage != nil {
-					tm := resp.Item.ResponsesToolMessage
-					if tm.CallID != nil && *tm.CallID != "" {
-						callID = *tm.CallID
+				// Tool call arguments delta.
+				// Bifrost does not populate resp.Item on delta events for any provider;
+				// the call ID comes from the preceding OutputItemAdded event.
+				if currentFuncCallID != "" && resp.Delta != nil {
+					if toolCallsBuffer[currentFuncCallID] == nil {
+						toolCallsBuffer[currentFuncCallID] = &responsesToolCallBuffer{id: currentFuncCallID}
 					}
-					if callID != "" {
-						if toolCallsBuffer[callID] == nil {
-							toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
-						}
-						if tm.Name != nil {
-							toolCallsBuffer[callID].name = *tm.Name
-						}
-					}
-				}
-				if callID != "" && resp.Delta != nil {
-					if toolCallsBuffer[callID] == nil {
-						toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
-					}
-					toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
+					toolCallsBuffer[currentFuncCallID].arguments.WriteString(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
