@@ -58,7 +58,11 @@ See `CLAUDE.md` and `README.md` for standard build/lint/test commands. Summary:
 - **Lint**: `make check-style` or `make check-style-fix`
 - **Test**: `make test` (Go unit tests + webapp tests)
 - **E2E tests**: `make e2e` (uses Testcontainers/Docker - fully self-contained)
+- **Focused e2e test**: `cd e2e && npx playwright test tests/path/to/spec.ts --reporter=list` (Chromium + Firefox pre-installed)
+- **Chromium-only e2e**: `cd e2e && npx playwright test tests/path/to/spec.ts --project=chromium --reporter=list`
 - **Build only**: `make dist`
+
+**E2E prerequisites:** npm dependencies and Playwright browsers (Chromium + Firefox) are pre-installed by the update script. No bootstrap steps needed — just run the test commands above.
 
 ### Configuring an Anthropic AI agent via API
 
