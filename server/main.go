@@ -202,7 +202,9 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Warn("Failed to check for orphaned reindex job", "error", orphanErr)
 	}
 
-	// Check model compatibility and disable search if model has changed
+	// Check model compatibility and disable search if the model has changed since last reindex.
+	// Search will be re-enabled by the config update listener (registered below) after a
+	// reindex updates the stored model info — this is intentional, not a deadlock.
 	if embeddingsSearch != nil {
 		embeddingsCfg := p.configuration.EmbeddingSearchConfig()
 		compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.GetProviderType(), embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())
@@ -245,7 +247,11 @@ func (p *Plugin) OnActivate() error {
 			return
 		}
 
-		// Check model compatibility
+		// Check model compatibility.
+		// If the configured model no longer matches the indexed model, search is intentionally
+		// disabled until a reindex updates the stored model info. This is not a deadlock: the
+		// listener re-fires on every config save and re-calls InitEmbeddingsSearch above, so
+		// after a successful reindex the next config change will pass this check and re-enable search.
 		if newEmbeddingsSearch != nil {
 			embeddingsCfg := p.configuration.EmbeddingSearchConfig()
 			compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.GetProviderType(), embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())

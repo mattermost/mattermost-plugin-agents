@@ -269,9 +269,9 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 	}
 
 	// Run catch-up pass to index posts created during the main reindex
-	catchUpCount, catchUpErr := s.runCatchUpPass(ctx, jobStatus, search)
+	catchUpCount, catchUpCursor, catchUpErr := s.runCatchUpPass(ctx, jobStatus, search)
 	if catchUpErr != nil {
-		s.handleJobError(jobStatus, fmt.Sprintf("Catch-up pass failed: %s", catchUpErr), 0, "")
+		s.handleJobError(jobStatus, fmt.Sprintf("Catch-up pass failed: %s", catchUpErr), catchUpCursor.LastCreateAt, catchUpCursor.LastID)
 		return
 	}
 	if catchUpCount > 0 {
@@ -419,11 +419,16 @@ func (s *Indexer) saveJobStatus(status *JobStatus) {
 	}
 }
 
-// runCatchUpPass indexes posts created after the cutoff timestamp during the main reindex
-func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, search embeddings.EmbeddingSearch) (int64, error) {
+// runCatchUpPass indexes posts created after the cutoff timestamp during the main reindex.
+// Returns the number of posts processed, the cursor position at time of return, and any error.
+func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, search embeddings.EmbeddingSearch) (int64, Cursor, error) {
 	if jobStatus.CutoffAt == 0 {
-		return 0, nil
+		return 0, Cursor{}, nil
 	}
+
+	// Capture upper bound so new posts arriving during catch-up don't make the loop unbounded.
+	// Posts created after this point will be picked up by the incremental indexer.
+	catchUpCutoff := time.Now().UnixMilli()
 
 	bp := &batchProcessor{
 		indexer:        s,
@@ -456,12 +461,13 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 			AND (Posts.Message != '' OR Posts.Props::text LIKE '%"attachments"%')
 			AND Posts.Type = ''
 			AND (Posts.CreateAt, Posts.Id) > ($1, $2)
+			AND Posts.CreateAt <= $3
 		ORDER BY Posts.CreateAt ASC, Posts.Id ASC
-		LIMIT $3`
+		LIMIT $4`
 
-		err := s.db.SelectContext(ctx, &posts, query, lastCreateAt, lastID, defaultBatchSize)
+		err := s.db.SelectContext(ctx, &posts, query, lastCreateAt, lastID, catchUpCutoff, defaultBatchSize)
 		if err != nil {
-			return catchUpCount, fmt.Errorf("failed to fetch catch-up posts: %w", err)
+			return catchUpCount, Cursor{LastCreateAt: lastCreateAt, LastID: lastID}, fmt.Errorf("failed to fetch catch-up posts: %w", err)
 		}
 
 		if len(posts) == 0 {
@@ -470,7 +476,7 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 
 		// Process batch (filters, stores, updates heartbeat and saves progress)
 		if err := bp.processBatch(ctx, posts); err != nil {
-			return catchUpCount, fmt.Errorf("failed to store catch-up documents: %w", err)
+			return catchUpCount, Cursor{LastCreateAt: lastCreateAt, LastID: lastID}, fmt.Errorf("failed to store catch-up documents: %w", err)
 		}
 
 		catchUpCount += int64(len(posts))
@@ -481,5 +487,5 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 		lastID = lastPost.ID
 	}
 
-	return catchUpCount, nil
+	return catchUpCount, Cursor{LastCreateAt: lastCreateAt, LastID: lastID}, nil
 }
