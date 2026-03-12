@@ -79,7 +79,7 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 	)
 
 	// Create HTTP search service for callback to plugin API
-	pluginURL := config.GetMMServerURL() + "/plugins/mattermost-ai"
+	pluginURL := strings.TrimRight(config.GetMMServerURL(), "/") + "/plugins/mattermost-ai"
 	searchService := tools.NewHTTPSemanticSearchService(pluginURL)
 
 	// Register tools with remote access mode

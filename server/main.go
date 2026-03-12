@@ -269,6 +269,9 @@ func (p *Plugin) OnActivate() error {
 			lastSearchInitError.Store("") // Clear any previous error
 		} else {
 			currentSearch.Store(nil)
+			if lastSearchInitError.Load() != nil {
+				lastSearchInitError.Store("")
+			}
 		}
 		pluginAPI.Log.Info("Embedding search reinitialized on config change")
 	})

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
@@ -153,6 +154,7 @@ func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGRes
 // executeSearch performs the embedding search and enriches results with metadata.
 // This is the core search operation without any LLM concerns.
 func (s *Search) executeSearch(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
+	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, fmt.Errorf("query cannot be empty")
 	}
@@ -242,6 +244,7 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 		return nil, fmt.Errorf("search functionality is not configured")
 	}
 
+	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, fmt.Errorf("query cannot be empty")
 	}
