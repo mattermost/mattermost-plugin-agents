@@ -2232,7 +2232,7 @@ func TestCutoffTimestampHandling(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			postID := fmt.Sprintf("new-post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
-				postID, cutoffTime+100+int64(i), fmt.Sprintf("New message %d", i))
+				postID, cutoffTime+1+int64(i), fmt.Sprintf("New message %d", i))
 			require.NoError(t, err)
 		}
 
@@ -2852,7 +2852,7 @@ func TestCatchUpPassHeartbeat(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			postID := fmt.Sprintf("catchup-post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
-				postID, cutoffTime+100+int64(i), fmt.Sprintf("Catch-up message %d", i))
+				postID, cutoffTime+1+int64(i), fmt.Sprintf("Catch-up message %d", i))
 			require.NoError(t, err)
 		}
 
@@ -2890,7 +2890,9 @@ func TestCatchUpPassHeartbeat(t *testing.T) {
 		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
 		mockBots := &bots.MMBots{}
 
-		cutoffTime := model.GetMillis()
+		// Set cutoffTime well in the past so all catch-up posts have CreateAt values
+		// safely below catchUpCutoff (which captures time.Now() during the catch-up pass)
+		cutoffTime := model.GetMillis() - 2000
 
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
@@ -2899,7 +2901,7 @@ func TestCatchUpPassHeartbeat(t *testing.T) {
 		for i := 0; i < 650; i++ {
 			postID := fmt.Sprintf("catchup-post%03d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
-				postID, cutoffTime+100+int64(i), fmt.Sprintf("Catch-up message %d", i))
+				postID, cutoffTime+1+int64(i), fmt.Sprintf("Catch-up message %d", i))
 			require.NoError(t, err)
 		}
 
@@ -2959,7 +2961,7 @@ func TestCatchUpFailureHandling(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			postID := fmt.Sprintf("catchup-post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
-				postID, cutoffTime+100+int64(i), fmt.Sprintf("Catch-up message %d", i))
+				postID, cutoffTime+1+int64(i), fmt.Sprintf("Catch-up message %d", i))
 			require.NoError(t, err)
 		}
 

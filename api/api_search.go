@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
@@ -41,6 +42,7 @@ func (a *API) handleRunSearch(c *gin.Context) {
 		return
 	}
 
+	req.Query = strings.TrimSpace(req.Query)
 	if req.Query == "" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("query cannot be empty"))
 		return
@@ -77,6 +79,7 @@ func (a *API) handleSearchQuery(c *gin.Context) {
 		return
 	}
 
+	req.Query = strings.TrimSpace(req.Query)
 	if req.Query == "" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("query cannot be empty"))
 		return
@@ -146,6 +149,7 @@ func (a *API) handleRawSearch(c *gin.Context) {
 		return
 	}
 
+	req.Query = strings.TrimSpace(req.Query)
 	if req.Query == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "query is required"})
 		return

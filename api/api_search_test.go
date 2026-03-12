@@ -423,9 +423,7 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 				"teamId":    "team123",
 				"channelId": "channel123",
 			},
-			// Note: The current implementation does not trim whitespace,
-			// so a whitespace-only query will be treated as a valid query
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusBadRequest,
 		},
 		{
 			name: "valid query - missing optional fields is OK",
