@@ -77,6 +77,7 @@ type AutomationAction struct {
 type SendMessageActionConfig struct {
 	ChannelID     string `json:"channel_id"`
 	ReplyToPostID string `json:"reply_to_post_id,omitempty"`
+	AsBotID       string `json:"as_bot_id,omitempty"`
 	Body          string `json:"body"`
 }
 
@@ -192,13 +193,9 @@ The summary must include:
 2. AI TOOLS: Which tools the AI agent will have access to and what each one can do.
    - Without tools, the agent can only generate text from its built-in knowledge — it cannot
      read any Mattermost data or take any actions.
-   - With tools, the agent inherits YOUR permissions — it can access anything you can access
-     unless tool_constraints are used to limit it.
+   - With tools, the agent inherits YOUR permissions — it can access anything you can access.
    Explain what each granted tool does so the user understands the access they are giving.
 3. OUTPUT: Where the automation will post results — name the specific channel(s).
-4. CONSTRAINTS: Whether tool_constraints lock specific tools to specific values (e.g.,
-   search_posts locked to certain channel_ids), or whether tools have full unrestricted
-   access across everything the user can see.
 
 Format as a numbered list, then ask the user to confirm. Only call create_automation after
 the user says yes.
@@ -206,8 +203,14 @@ the user says yes.
 If the user's request is missing details (trigger channel, output channel, which tools),
 ask clarifying questions BEFORE presenting the summary.
 
+TOOL SUFFICIENCY CHECK (THIS IS VERY IMPORTANT): Before presenting the summary, think through the automation's task
+step-by-step and verify the granted tools cover every step the agent will need to perform.
+Ask: what data does the agent need to discover, read, or act on — and can it actually do
+each of those things with only the tools listed? If any step requires a tool that isn't
+included, add it to your recommendation and explain why it's needed.
+
 TRIGGERS: Set exactly one trigger type inside the "trigger" object.
-- "message_posted": fires when any message is posted in the channel. Note: fires on EVERY message in the channel, including bot messages. High-traffic channels will trigger frequently.
+- "message_posted": fires when a human user posts a message in the channel. Bot messages are automatically filtered out, so there is no risk of bot-triggered loops. High-traffic channels will trigger frequently.
   {"trigger": {"message_posted": {"channel_id": "<channel-id>"}}}
 - "schedule": fires on a recurring schedule.
   - interval: Go duration string (minimum "5m"). Examples: "1h" (hourly), "24h" (daily), "168h" (weekly).
@@ -218,17 +221,20 @@ TRIGGERS: Set exactly one trigger type inside the "trigger" object.
 - "channel_created": fires when any new public channel is created. Note: server-wide — fires for every new public channel created by any user.
   {"trigger": {"channel_created": {}}}
 
-ACTIONS: Ordered array executed sequentially. Each action has a unique "id" and exactly one action config.
+ACTIONS: Ordered array executed sequentially. Each action has a unique "id" (lowercase alphanumeric and hyphens only, e.g. "generate-recap" not "generate_recap") and exactly one action config.
 Action types:
-1. "send_message": Posts a message as the bot.
-   {"id": "post", "send_message": {"channel_id": "<ch>", "body": "Hello!", "reply_to_post_id": "<optional post id>"}}
-2. "ai_prompt": Sends a prompt to an AI agent/service and stores the response. Does NOT post a message — chain a send_message action after to post it.
-   {"id": "ask", "ai_prompt": {"prompt": "...", "provider_type": "agent", "provider_id": "<agent-user-id>", "system_prompt": "...", "allowed_tools": ["tool1"], "tool_constraints": {"tool1": {"param1": {"allowed_values": ["a","b"]}}}}}
+1. "send_message": Posts a message as a bot.
+   {"id": "post", "send_message": {"channel_id": "<ch>", "body": "Hello!", "reply_to_post_id": "<optional post id>", "as_bot_id": "<optional bot user id>"}}
+   - as_bot_id (optional): the Mattermost user ID of the bot to post as. Must be a bot account. If omitted, the message is posted as the default automation bot. Use list_agents to find bot IDs. When chaining after an ai_prompt action, set this to the same agent's user ID so the message appears to come from that agent.
+2. "ai_prompt": Sends a prompt to an AI agent/service and stores the response. Does NOT post a message — chain a send_message action after (with as_bot_id set to the agent) to post it.
+   {"id": "ask", "ai_prompt": {"prompt": "...", "provider_type": "agent", "provider_id": "<agent-user-id>", "system_prompt": "...", "allowed_tools": ["tool1"]}}
    - provider_type: "agent" (a bot) or "service" (a raw LLM service)
    - provider_id: the agent's Mattermost user ID (26-char ID). Call list_agents to discover available agents and their IDs.
    - system_prompt (optional): system instructions for the AI
-   - allowed_tools: list of tools the AI agent is allowed to call. WITHOUT this, the agent has NO tool access and can only generate text from its built-in knowledge — it cannot read any Mattermost data or take any actions. With tools, the agent inherits the creating user's permissions and can access anything they can access. IMPORTANT: Only include tools the user has explicitly agreed to. Each tool grants capabilities — e.g., search_posts can read messages across any channel the user has access to, create_post can post in any channel the user is in. Always explain what each tool does in your summary. Prefer the minimum set of tools needed.
-   - tool_constraints (recommended when granting tools): lock specific tool parameters to specific values. For example, constrain search_posts to only certain channel_ids so the agent cannot search across all channels the user has access to. Tell the user they can lock tools to certain values to limit the agent's scope. Always consider adding constraints when the automation only needs access to specific channels or teams.
+   - allowed_tools: list of tools the AI agent is allowed to call. WITHOUT this, the agent has NO tool access and can only generate text from its built-in knowledge — it cannot read any Mattermost data or take any actions. With tools, the agent inherits the creating user's permissions and can access anything they can access. IMPORTANT: Only include tools the user has explicitly agreed to. Always explain what each tool does in your summary. Prefer the minimum set of tools needed.
+   TOOL SELECTION: Use list_tools to discover available tools and read their descriptions carefully. Choose tools whose described behavior matches what the automation actually needs to do.
+   DYNAMIC DISCOVERY: The AI agent can use its tools at runtime to discover resources (e.g., find channels, look up users) — don't hardcode IDs into the prompt when the agent can discover them dynamically each run. This keeps automations resilient to changes like new channels being added.
+   NOTE: "web_search" is NOT a valid allowed_tools value. Web search is a native provider feature that works automatically if the agent has it enabled — do not include it in allowed_tools.
 
 TEMPLATE SYNTAX: body, channel_id, reply_to_post_id, prompt, and system_prompt support Go text/template with this context:
 - {{.Trigger.Post.Message}}, {{.Trigger.Post.Id}}, {{.Trigger.Post.ChannelId}}
@@ -257,10 +263,10 @@ get their confirmation. Highlight any changes to trigger scope, allowed_tools, o
 			Resolver: p.toolUpdateAutomation,
 		},
 		{
-			Name: "delete_automation",
+			Name:        "delete_automation",
 			Description: "Delete a channel automation by ID. This is permanent and cannot be undone.",
-			Schema:   llm.NewJSONSchemaFromStruct[DeleteAutomationArgs](),
-			Resolver: p.toolDeleteAutomation,
+			Schema:      llm.NewJSONSchemaFromStruct[DeleteAutomationArgs](),
+			Resolver:    p.toolDeleteAutomation,
 		},
 	}
 }
@@ -593,6 +599,9 @@ func formatAutomationFlow(f AutomationFlow) string {
 			if a.SendMessage != nil {
 				if a.SendMessage.ChannelID != "" {
 					result.WriteString(fmt.Sprintf(", channel=%s", a.SendMessage.ChannelID))
+				}
+				if a.SendMessage.AsBotID != "" {
+					result.WriteString(fmt.Sprintf(", as_bot_id=%s", a.SendMessage.AsBotID))
 				}
 				if a.SendMessage.Body != "" {
 					result.WriteString(fmt.Sprintf(", body=%s", a.SendMessage.Body))
