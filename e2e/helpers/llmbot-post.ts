@@ -367,38 +367,6 @@ export class LLMBotPostHelper {
         return this.getSearchSourceItem(index, postId).locator('[class*="RelevanceScore"]');
     }
 
-    // ==================== POST CITATION LOCATORS ====================
-
-    /**
-     * Get post citation wrapper by index (different from web citations)
-     * Post citations use MessageTextOutlineIcon inside CitationWrapper
-     * @param index - Citation index (1-based)
-     * @param postId - Optional post ID to scope the search
-     */
-    getPostCitationWrapper(index: number, postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        // Post citations have CitationWrapper with MessageTextOutlineIcon
-        return baseLocator.locator('[class*="CitationWrapper"]').nth(index - 1);
-    }
-
-    /**
-     * Get all post citation wrappers
-     * @param postId - Optional post ID to scope the search
-     */
-    getAllPostCitationWrappers(postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        return baseLocator.locator('[class*="CitationWrapper"]');
-    }
-
-    /**
-     * Get post citation tooltip (appears on hover)
-     * Post citation tooltips show @username and #channelname
-     */
-    getPostCitationTooltip(postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        return baseLocator.locator('[class*="CitationWrapper"] [class*="TooltipContainer"]:visible').last();
-    }
-
     // ==================== SEARCH SOURCES ACTIONS ====================
 
     /**
@@ -408,29 +376,6 @@ export class LLMBotPostHelper {
     async clickSearchSourcesHeader(postId?: string): Promise<void> {
         const header = this.getSearchSourcesHeader(postId);
         await header.click();
-    }
-
-    // ==================== POST CITATION ACTIONS ====================
-
-    /**
-     * Hover over a post citation to show tooltip
-     * @param index - Citation index (1-based)
-     * @param postId - Optional post ID to scope the action
-     */
-    async hoverPostCitation(index: number, postId?: string): Promise<void> {
-        const citationWrapper = this.getPostCitationWrapper(index, postId);
-        await citationWrapper.hover();
-        await this.page.waitForTimeout(300);
-    }
-
-    /**
-     * Click a post citation to navigate to the source post
-     * @param index - Citation index (1-based)
-     * @param postId - Optional post ID to scope the action
-     */
-    async clickPostCitation(index: number, postId?: string): Promise<void> {
-        const citationWrapper = this.getPostCitationWrapper(index, postId);
-        await citationWrapper.click();
     }
 
     // ==================== SEARCH SOURCES ASSERTIONS ====================
@@ -485,30 +430,6 @@ export class LLMBotPostHelper {
         expect(text).toMatch(/\d+%/);
     }
 
-    // ==================== POST CITATION ASSERTIONS ====================
-
-    /**
-     * Assert post citation count
-     * @param count - Expected number of post citations
-     * @param postId - Optional post ID to scope the assertion
-     */
-    async expectPostCitationCount(count: number, postId?: string): Promise<void> {
-        const citations = this.getAllPostCitationWrappers(postId);
-        await expect(citations).toHaveCount(count);
-    }
-
-    /**
-     * Assert post citation tooltip shows username and channel
-     * @param username - Expected username in tooltip
-     * @param channelName - Expected channel name in tooltip
-     */
-    async expectPostCitationTooltip(username: string, channelName: string, postId?: string): Promise<void> {
-        const tooltip = this.getPostCitationTooltip(postId);
-        await expect(tooltip).toBeVisible();
-        await expect(tooltip).toContainText(username);
-        await expect(tooltip).toContainText(channelName);
-    }
-
     // ==================== SEARCH SOURCES WAITS ====================
 
     /**
@@ -519,17 +440,6 @@ export class LLMBotPostHelper {
     async waitForSearchSources(postId?: string, maxTimeout: number = 30000): Promise<void> {
         const container = this.getSearchSourcesContainer(postId);
         await expect(container).toBeVisible({ timeout: maxTimeout });
-    }
-
-    /**
-     * Wait for post citation to appear with smart polling
-     * @param index - Citation index (1-based)
-     * @param postId - Optional post ID to scope the wait
-     * @param maxTimeout - Maximum wait time in ms (default: 30 seconds)
-     */
-    async waitForPostCitation(index: number, postId?: string, maxTimeout: number = 30000): Promise<void> {
-        const citation = this.getPostCitationWrapper(index, postId);
-        await expect(citation).toBeVisible({ timeout: maxTimeout });
     }
 
     /**

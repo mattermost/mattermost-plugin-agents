@@ -4,7 +4,6 @@
 import React from 'react';
 
 import {CitationComponent} from './citation_component';
-import {PostCitationComponent} from './post_citation_component';
 import {Annotation} from './types';
 
 const openAICitationRegex = /\([^\s:]+\s*:\s*https?:\/\/[\S^)]*\)/g;
@@ -50,12 +49,8 @@ export function replaceCitationMarkers(element: any, annotations: Annotation[]):
                     const annotation = annotations.find((ann) => ann.index === citationIndex);
 
                     if (annotation) {
-                        // Render the correct component based on annotation type
-                        const CitationComp = annotation.type === 'post_citation' ?
-                            PostCitationComponent :
-                            CitationComponent;
                         result.push(
-                            <CitationComp
+                            <CitationComponent
                                 key={`citation-${citationIndex}-${i}`}
                                 annotation={annotation}
                             />,

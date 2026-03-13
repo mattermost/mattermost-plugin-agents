@@ -789,6 +789,62 @@ func (_c *MockClient_GetPostsSince_Call) RunAndReturn(run func(channelID string,
 	return _c
 }
 
+// GetTeam provides a mock function for the type MockClient
+func (_mock *MockClient) GetTeam(teamID string) (*model.Team, error) {
+	ret := _mock.Called(teamID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetTeam")
+	}
+
+	var r0 *model.Team
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(string) (*model.Team, error)); ok {
+		return returnFunc(teamID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(string) *model.Team); ok {
+		r0 = returnFunc(teamID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.Team)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(string) error); ok {
+		r1 = returnFunc(teamID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClient_GetTeam_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetTeam'
+type MockClient_GetTeam_Call struct {
+	*mock.Call
+}
+
+// GetTeam is a helper method to define mock.On call
+//   - teamID
+func (_e *MockClient_Expecter) GetTeam(teamID interface{}) *MockClient_GetTeam_Call {
+	return &MockClient_GetTeam_Call{Call: _e.mock.On("GetTeam", teamID)}
+}
+
+func (_c *MockClient_GetTeam_Call) Run(run func(teamID string)) *MockClient_GetTeam_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string))
+	})
+	return _c
+}
+
+func (_c *MockClient_GetTeam_Call) Return(team *model.Team, err error) *MockClient_GetTeam_Call {
+	_c.Call.Return(team, err)
+	return _c
+}
+
+func (_c *MockClient_GetTeam_Call) RunAndReturn(run func(teamID string) (*model.Team, error)) *MockClient_GetTeam_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetUser provides a mock function for the type MockClient
 func (_mock *MockClient) GetUser(userID string) (*model.User, error) {
 	ret := _mock.Called(userID)

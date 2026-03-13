@@ -534,6 +534,10 @@ func TestSearchQuery(t *testing.T) {
 					Id:       "user1",
 					Username: "testuser",
 				}, nil)
+				siteURL := "http://localhost:8065"
+				mc.On("GetConfig").Return(&model.Config{
+					ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
+				})
 				ml.On("ChatCompletionNoStream", mock.Anything).
 					Return("", errors.New("LLM service unavailable"))
 			},
@@ -564,6 +568,10 @@ func TestSearchQuery(t *testing.T) {
 					Id:       "user1",
 					Username: "testuser",
 				}, nil)
+				siteURL := "http://localhost:8065"
+				mc.On("GetConfig").Return(&model.Config{
+					ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
+				})
 				ml.On("ChatCompletionNoStream", mock.Anything).
 					Return("Based on the search results, here is the answer.", nil)
 			},
@@ -829,9 +837,9 @@ func TestBuildPromptWithLargeResults(t *testing.T) {
 	// Should succeed - prompt size is handled by the template
 	require.NoError(t, err)
 	require.NotEmpty(t, req.Posts[0].Message)
-	// The template uses Username and ChannelName, not PostID
 	require.Contains(t, req.Posts[0].Message, "username0")  // First result should be included
 	require.Contains(t, req.Posts[0].Message, "username99") // Last result should be included
+	require.Contains(t, req.Posts[0].Message, "post0")      // PostID should be included for citations
 	require.Contains(t, req.Posts[0].Message, "Channel 0")
 	require.Contains(t, req.Posts[0].Message, "Channel 99")
 }

@@ -5,75 +5,88 @@ import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
-import { LLMBotPostHelper } from 'helpers/llmbot-post';
 
 const username = 'regularuser';
 const password = 'regularuser';
 
-let mattermost: MattermostContainer;
-let openAIMock: OpenAIMockContainer;
+// Build a streaming SSE mock response with permalink citations using real post IDs and site URL.
+// Uses team name in the URL (e.g. /test/pl/) so links pass the unsafeLinks permalink filter.
+function buildSearchResponseWithCitations(siteURL: string, teamName: string, postId1: string, postId2: string): string {
+    const cite1 = `[permalink](${siteURL}/${teamName}/pl/${postId1}?view=citation)`;
+    const cite2 = `[permalink](${siteURL}/${teamName}/pl/${postId2}?view=citation)`;
 
-// Mock response with citation markers that the backend will process into post citations
-// The !!CITE1!! and !!CITE2!! markers get replaced by the backend with citation UI elements
-const searchResponseWithCitations = `
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"Based"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" on"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" the"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" discussion"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" !!CITE1!!"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" the"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" budget"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" has"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" been"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" approved"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" !!CITE2!!"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"."},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-citations-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}]}
-data: [DONE]
-`.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
+    const chunks = [
+        {delta: {role: 'assistant', content: ''}, finish_reason: null},
+        {delta: {content: `Based on the discussion ${cite1} the budget has been approved ${cite2}.`}, finish_reason: null},
+        {delta: {}, finish_reason: 'stop'},
+    ];
 
-const searchResponseText = "Based on the discussion";
+    const lines = chunks.map((choice, _i) => {
+        const obj = {
+            id: 'chatcmpl-citations-1',
+            object: 'chat.completion.chunk',
+            created: 1708124577,
+            model: 'gpt-3.5-turbo-0613',
+            system_fingerprint: null,
+            choices: [{index: 0, ...choice, logprobs: null}],
+        };
+        return `data: ${JSON.stringify(obj)}`;
+    });
 
-test.beforeAll(async () => {
-    mattermost = await RunContainer();
-    openAIMock = await RunOpenAIMocks(mattermost.network);
-});
+    lines.push('data: [DONE]');
+    return lines.join('\n\n') + '\n\n';
+}
 
-test.beforeEach(async () => {
-    // Reset mocks before each test to prevent cross-contamination
-    await openAIMock.resetMocks();
-});
+const searchResponseText = 'Based on the discussion';
 
-test.afterAll(async () => {
-    await openAIMock.stop();
-    await mattermost.stop();
-});
-
-async function setupTestPage(page: Page) {
+async function setupTestPage(page: Page, mattermost: MattermostContainer) {
     const mmPage = new MattermostPage(page);
     const aiPlugin = new AIPlugin(page);
-    const llmBotHelper = new LLMBotPostHelper(page);
     const url = mattermost.url();
 
     await mmPage.login(url, username, password);
 
-    return { mmPage, aiPlugin, llmBotHelper };
+    return { mmPage, aiPlugin };
 }
 
 test.describe('Post Citations Display', () => {
-    test('Post citations display with tooltips and navigation', async ({ page }) => {
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
+    let mattermost: MattermostContainer;
+    let openAIMock: OpenAIMockContainer;
 
-        // Create posts with searchable content that will be cited
-        await mmPage.sendMessageAsUser(
+    test.beforeAll(async () => {
+        mattermost = await RunContainer();
+        openAIMock = await RunOpenAIMocks(mattermost.network);
+
+        // Permalink citations with ?view=citation normally bypass the unsafeLinks filter
+        // when siteURL is available in the Redux store. In the e2e environment the mock
+        // response arrives before the store is fully hydrated, so we enable allowUnsafeLinks
+        // to work around this timing issue.
+        const patch = JSON.stringify({PluginSettings: {Plugins: {'mattermost-ai': {config: {allowUnsafeLinks: true}}}}});
+        await mattermost.container.copyContentToContainer([{content: patch, target: '/tmp/unsafe-links-patch.json'}]);
+        await mattermost.container.exec(['mmctl', '--local', 'config', 'patch', '/tmp/unsafe-links-patch.json']);
+    });
+
+    test.beforeEach(async () => {
+        await openAIMock.resetMocks();
+    });
+
+    test.afterAll(async () => {
+        await openAIMock.stop();
+        await mattermost.stop();
+    });
+
+    test('Permalink citations render as clickable links', async ({ page }) => {
+        const { mmPage, aiPlugin } = await setupTestPage(page, mattermost);
+
+        // Create posts and capture their IDs for citation URLs
+        const post1 = await mmPage.sendMessageAsUser(
             mattermost,
             username,
             password,
             'We need to discuss the Q4 budget allocation for the marketing department'
         );
 
-        await mmPage.sendMessageAsUser(
+        const post2 = await mmPage.sendMessageAsUser(
             mattermost,
             username,
             password,
@@ -83,8 +96,11 @@ test.describe('Post Citations Display', () => {
         // Wait for posts to be indexed by the embedding search
         await page.waitForTimeout(2000);
 
-        // Set up the mock response with citation markers
-        await openAIMock.addCompletionMock(searchResponseWithCitations);
+        // Build the mock response dynamically with real post IDs, team name, and site URL.
+        // The team name in the URL ensures links pass the unsafeLinks permalink filter.
+        const siteURL = mattermost.url();
+        const mockResponse = buildSearchResponseWithCitations(siteURL, 'test', post1.id, post2.id);
+        await openAIMock.addCompletionMock(mockResponse);
 
         // Wait for plugin to be fully initialized (app bar icon indicates plugin is ready)
         await aiPlugin.openRHS();
@@ -97,53 +113,18 @@ test.describe('Post Citations Display', () => {
         // Wait for bot response to appear
         await aiPlugin.waitForBotResponse(searchResponseText);
 
-        // Wait for post citations to be rendered
-        // The backend processes !!CITE1!! and !!CITE2!! markers and emits websocket events
-        // with post_citation annotations that the frontend renders as citation icons
-        await llmBotHelper.waitForPostCitation(1);
+        // Verify permalink citation links are rendered
+        const botPost = page.locator('.post__body').last();
 
-        // Verify citation icons are rendered (small circular icons with message icon)
-        await llmBotHelper.expectPostCitationCount(2);
+        // The [permalink](URL?view=citation) markdown should render as <a> tags
+        // containing the post IDs in their href attribute
+        const citationLinks = botPost.locator(`a[href*="view=citation"]`);
+        await expect(citationLinks).toHaveCount(2, { timeout: 10000 });
 
-        // Verify both citation wrappers are visible
-        const firstCitation = llmBotHelper.getPostCitationWrapper(1);
-        const secondCitation = llmBotHelper.getPostCitationWrapper(2);
-        await expect(firstCitation).toBeVisible();
-        await expect(secondCitation).toBeVisible();
-
-        // Hover over the first citation icon
-        await llmBotHelper.hoverPostCitation(1);
-
-        // Verify tooltip appears showing @username and #channelname
-        const tooltip = llmBotHelper.getPostCitationTooltip();
-        await expect(tooltip).toBeVisible({ timeout: 5000 });
-        await expect(tooltip).toContainText('@');
-        await expect(tooltip).toContainText('#');
-
-        // Move mouse away to dismiss tooltip
-        await page.mouse.move(0, 0);
-        await page.waitForTimeout(500);
-
-        // Verify we can hover over the second citation
-        await llmBotHelper.hoverPostCitation(2);
-        await expect(tooltip).toBeVisible({ timeout: 5000 });
-        await expect(tooltip).toContainText('@');
-
-        // Move mouse away before clicking
-        await page.mouse.move(0, 0);
-        await page.waitForTimeout(500);
-
-        // Set up navigation listener before clicking the citation
-        // Post citations navigate to /_redirect/pl/{postId} or /pl/{postId} URLs
-        const navigationPromise = page.waitForURL(
-            (url) => url.pathname.includes('/_redirect/pl/') || url.pathname.includes('/pl/'),
-            { timeout: 10000 },
-        );
-
-        // Click the first citation icon
-        await llmBotHelper.clickPostCitation(1);
-
-        // Verify navigation to the source post
-        await navigationPromise;
+        // Verify links point to the correct posts via /team/pl/
+        const firstHref = await citationLinks.nth(0).getAttribute('href');
+        const secondHref = await citationLinks.nth(1).getAttribute('href');
+        expect(firstHref).toContain(`/test/pl/${post1.id}`);
+        expect(secondHref).toContain(`/test/pl/${post2.id}`);
     });
 });

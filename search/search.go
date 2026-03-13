@@ -45,6 +45,7 @@ type RAGResult struct {
 	PostID      string  `json:"postId"`
 	ChannelID   string  `json:"channelId"`
 	ChannelName string  `json:"channelName"`
+	TeamName    string  `json:"teamName"`
 	UserID      string  `json:"userId"`
 	Username    string  `json:"username"`
 	Content     string  `json:"content"`
@@ -98,8 +99,8 @@ func (s *Search) Search(ctx context.Context, query string, opts Options) ([]RAGR
 func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGResult {
 	var ragResults []RAGResult
 	for i, result := range searchResults {
-		// Get channel name
-		var channelName string
+		// Get channel name and team name
+		var channelName, teamName string
 		channel, chErr := s.mmclient.GetChannel(result.Document.ChannelID)
 		if chErr != nil {
 			s.mmclient.LogWarn("Failed to get channel", "error", chErr, "channelID", result.Document.ChannelID)
@@ -112,6 +113,11 @@ func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGRes
 				channelName = "Group Message"
 			default:
 				channelName = channel.DisplayName
+			}
+			if channel.TeamId != "" {
+				if team, err := s.mmclient.GetTeam(channel.TeamId); err == nil {
+					teamName = team.Name
+				}
 			}
 		}
 
@@ -141,6 +147,7 @@ func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGRes
 			PostID:      result.Document.PostID,
 			ChannelID:   result.Document.ChannelID,
 			ChannelName: channelName + chunkInfo,
+			TeamName:    teamName,
 			UserID:      result.Document.UserID,
 			Username:    username,
 			Content:     content,
@@ -189,8 +196,18 @@ func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query st
 	if channelID != "" {
 		promptCtx.Channel = &model.Channel{Id: channelID}
 	}
-	if teamID != "" {
-		promptCtx.Team = &model.Team{Id: teamID}
+	if s.mmclient != nil {
+		if cfg := s.mmclient.GetConfig(); cfg != nil && cfg.ServiceSettings.SiteURL != nil {
+			promptCtx.SiteURL = *cfg.ServiceSettings.SiteURL
+		}
+	}
+	// Set Team from the first search result that has one so citation_format.tmpl
+	// renders /teamname/pl/ URLs instead of /_redirect/pl/.
+	for _, r := range ragResults {
+		if r.TeamName != "" {
+			promptCtx.Team = &model.Team{Name: r.TeamName}
+			break
+		}
 	}
 	if bot != nil {
 		var botUserID string
@@ -326,9 +343,6 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 		processingError = err
 		return
 	}
-
-	// Decorate stream to emit citation annotations based on !!CITE#!! markers
-	resultStream = DecorateSearchStreamWithAnnotations(resultStream, results)
 
 	resultsJSON, err := json.Marshal(results)
 	if err != nil {
