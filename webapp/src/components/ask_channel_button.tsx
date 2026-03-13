@@ -107,6 +107,7 @@ const AskChannelButton = () => {
     const target = useRef<HTMLButtonElement>(null);
     const {bots, activeBot, setActiveBot} = useBotlist();
     const isBasicsLicensed = useIsBasicsLicensed();
+    const askAgentsTestId = 'ask-agents-channel-button';
 
     const currentChannelId = useSelector((state: GlobalState) => state.entities.channels.currentChannelId);
     const currentTeamId = useSelector((state: GlobalState) => state.entities.teams.currentTeamId);
@@ -179,6 +180,7 @@ const AskChannelButton = () => {
         <>
             {showPopover ? (
                 <ButtonContainer
+                    data-testid={askAgentsTestId}
                     ref={target}
                     onClick={handleToggle}
                     isActive={showPopover}
@@ -191,6 +193,7 @@ const AskChannelButton = () => {
                     overlay={tooltip}
                 >
                     <ButtonContainer
+                        data-testid={askAgentsTestId}
                         ref={target}
                         onClick={handleToggle}
                         isActive={showPopover}

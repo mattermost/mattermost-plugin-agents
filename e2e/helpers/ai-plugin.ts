@@ -156,15 +156,8 @@ export class AIPlugin {
   }
 
   async openChannelAnalysisPopover() {
-    // Find the "Ask Agents about this channel" button in the channel header
-    // This button has an AI icon and opens a popover with channel analysis options
-    const channelHeaderButtons = this.page.locator('.channel-header__top, [class*="channel-header"]');
-    const agentsButton = channelHeaderButtons.locator('button').filter({ hasText: /Ask Agents/ }).or(
-      channelHeaderButtons.locator('button[aria-label*="Agents"]')
-    ).or(
-      channelHeaderButtons.locator('button:has(svg)').last()
-    );
-
+    const agentsButton = this.page.getByTestId('ask-agents-channel-button');
+    await expect(agentsButton).toBeVisible({ timeout: 10000 });
     await agentsButton.click({ timeout: 10000 });
 
     // Wait for the popover to appear
