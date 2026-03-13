@@ -907,10 +907,10 @@ func TestHandleAutomationHTTPError(t *testing.T) {
 			expectedResult: "Bad request: invalid trigger configuration",
 		},
 		{
-			name:           "400 bad request empty body",
+			name:           "400 bad request empty body falls back to error",
 			statusCode:     http.StatusBadRequest,
 			body:           "",
-			expectedResult: "Bad request: invalid request",
+			expectedResult: "Bad request: test error",
 		},
 		{
 			name:           "401 unauthorized",
@@ -968,4 +968,44 @@ func TestHandleAutomationHTTPError(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, result, "not installed or not reachable")
 	})
+
+	t.Run("400 with nil error and empty body", func(t *testing.T) {
+		resp := &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body:       http.NoBody,
+		}
+		result, err := handleAutomationHTTPError(resp, nil, "")
+		require.Error(t, err)
+		assert.Contains(t, result, "Bad request: invalid request")
+	})
+}
+
+func TestAutomationErrorDetail(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected string
+	}{
+		{
+			name:     "AppError uses Message field",
+			err:      model.NewAppError("test", "schedule trigger start_at must be a future UTC timestamp", nil, "", http.StatusBadRequest),
+			expected: "schedule trigger start_at must be a future UTC timestamp",
+		},
+		{
+			name:     "plain error passes through",
+			err:      fmt.Errorf("connection refused"),
+			expected: "connection refused",
+		},
+		{
+			name:     "wrapped non-JSON body error passes through",
+			err:      fmt.Errorf("failed to decode JSON payload into AppError. Body: some validation error : invalid character 's' looking for beginning of value"),
+			expected: "failed to decode JSON payload into AppError. Body: some validation error : invalid character 's' looking for beginning of value",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, automationErrorDetail(tt.err))
+		})
+	}
 }

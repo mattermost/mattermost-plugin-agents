@@ -6,12 +6,14 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 const automationPluginAPIPath = "/plugins/com.mattermost.channel-automation/api/v1"
@@ -53,7 +55,7 @@ type MessagePostedConfig struct {
 type ScheduleConfig struct {
 	ChannelID string `json:"channel_id"`
 	Interval  string `json:"interval" jsonschema:"Go duration string, minimum 5m. Examples: 1h (hourly) 24h (daily) 168h (weekly)"`
-	StartAt   int64  `json:"start_at,omitempty" jsonschema:"Unix timestamp in milliseconds for the first run. Repeats every interval after this time."`
+	StartAt   int64  `json:"start_at,omitempty" jsonschema:"Unix timestamp in milliseconds (UTC) for the first run — must be in the future. Repeats every interval after this time."`
 }
 
 // MembershipChangedConfig holds trigger config for the membership_changed trigger type.
@@ -214,8 +216,8 @@ TRIGGERS: Set exactly one trigger type inside the "trigger" object.
   {"trigger": {"message_posted": {"channel_id": "<channel-id>"}}}
 - "schedule": fires on a recurring schedule.
   - interval: Go duration string (minimum "5m"). Examples: "1h" (hourly), "24h" (daily), "168h" (weekly).
-  - start_at (optional): unix timestamp in milliseconds for the first run. The automation fires at this time, then repeats every interval. If omitted or in the past, the first run happens immediately. Use this to schedule a daily recap at e.g. 9am.
-  {"trigger": {"schedule": {"channel_id": "<channel-id>", "interval": "24h", "start_at": 1741615200000}}}
+  - start_at (optional): unix timestamp in milliseconds (UTC) for the first run — must be in the future. The automation fires at this time, then repeats every interval. If omitted, the first run happens immediately. Use this to schedule a daily recap at e.g. 9am.
+  {"trigger": {"schedule": {"channel_id": "<channel-id>", "interval": "24h", "start_at": 1899936000000}}}
 - "membership_changed": fires when a member joins or leaves the channel.
   {"trigger": {"membership_changed": {"channel_id": "<channel-id>"}}}
 - "channel_created": fires when any new public channel is created. Note: server-wide — fires for every new public channel created by any user.
@@ -357,6 +359,14 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 
 	resp, err := mcpContext.Client.DoAPIRequestWithHeaders(ctx, http.MethodPost, p.automationAPIURL("/flows"), string(body), nil)
 	if err != nil {
+		statusCode := 0
+		if resp != nil {
+			statusCode = resp.StatusCode
+		}
+		p.logger.Error("Automation creation failed",
+			"status", statusCode,
+			"error", err.Error(),
+		)
 		return handleAutomationHTTPError(resp, err, "")
 	}
 	defer resp.Body.Close()
@@ -399,6 +409,14 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 
 	resp, err := mcpContext.Client.DoAPIRequestWithHeaders(ctx, http.MethodPut, p.automationAPIURL("/flows/"+args.AutomationID), string(body), nil)
 	if err != nil {
+		statusCode := 0
+		if resp != nil {
+			statusCode = resp.StatusCode
+		}
+		p.logger.Error("Automation update failed",
+			"status", statusCode,
+			"error", err.Error(),
+		)
 		return handleAutomationHTTPError(resp, err, args.AutomationID)
 	}
 	defer resp.Body.Close()
@@ -504,35 +522,58 @@ func actionTypeName(a AutomationAction) string {
 }
 
 // handleAutomationHTTPError returns a user-friendly error message for automation API failures.
+// The Mattermost client's DoAPIRequestWithHeaders consumes the response body for non-2xx
+// status codes, so resp.Body is typically empty. The original body content is available
+// in the err parameter via AppErrorFromJSON.
 func handleAutomationHTTPError(resp *http.Response, err error, automationID string) (string, error) {
 	if resp == nil {
 		return "Channel Automation plugin is not installed or not reachable.", fmt.Errorf("automation plugin request failed: %w", err)
 	}
 
-	// Read the body for potential error details before checking status.
+	// Try reading the body, but it's usually empty because the Mattermost client
+	// already consumed it. Fall back to the error message which contains the original body.
 	var body []byte
 	if resp.Body != nil {
 		body, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
 	}
+	detail := strings.TrimSpace(string(body))
+	if detail == "" && err != nil {
+		detail = automationErrorDetail(err)
+	}
 
 	switch resp.StatusCode {
 	case http.StatusBadRequest:
-		detail := strings.TrimSpace(string(body))
 		if detail == "" {
 			detail = "invalid request"
 		}
 		return fmt.Sprintf("Bad request: %s", detail), fmt.Errorf("automation API returned 400: %s", detail)
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return "You don't have permission to manage automations for this channel.", fmt.Errorf("automation API returned %d: %s", resp.StatusCode, string(body))
+		return "You don't have permission to manage automations for this channel.", fmt.Errorf("automation API returned %d: %s", resp.StatusCode, detail)
 	case http.StatusNotFound:
 		if automationID != "" {
 			return fmt.Sprintf("Automation not found with ID '%s'.", automationID), fmt.Errorf("automation API returned 404 for ID %s", automationID)
 		}
-		return "Channel Automation plugin is not installed or not reachable.", fmt.Errorf("automation API returned 404: %s", string(body))
+		return "Channel Automation plugin is not installed or not reachable.", fmt.Errorf("automation API returned 404: %s", detail)
 	default:
-		return "Channel Automation plugin is not installed or not reachable.", fmt.Errorf("automation API returned %d: %s", resp.StatusCode, string(body))
+		return "Channel Automation plugin is not installed or not reachable.", fmt.Errorf("automation API returned %d: %s", resp.StatusCode, detail)
 	}
+}
+
+// automationErrorDetail extracts a user-friendly message from an error returned by
+// the Mattermost client. If the error is an *AppError (response was valid AppError JSON),
+// it uses the Message field. Otherwise it returns the raw error string.
+func automationErrorDetail(err error) string {
+	var appErr *model.AppError
+	if errors.As(err, &appErr) {
+		if appErr.Message != "" {
+			return appErr.Message
+		}
+		if appErr.DetailedError != "" {
+			return appErr.DetailedError
+		}
+	}
+	return err.Error()
 }
 
 // filterAutomationFlows applies client-side filters to a list of flows.
