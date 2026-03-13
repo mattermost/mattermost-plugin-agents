@@ -179,6 +179,10 @@ export default class Plugin {
             registry.registerNewMessagesSeparatorActionComponent(UnreadsSummarize);
         }
 
+        if (registry.registerChannelHeaderIcon) {
+            registry.registerChannelHeaderIcon(AskChannelButton);
+        }
+
         // Register slash commands
         if (rhs) {
             registry.registerSlashCommandWillBePostedHook((message: string, args: any) => {
@@ -199,7 +203,6 @@ export default class Plugin {
         }
 
         if (registry.registerRootComponent) {
-            registry.registerRootComponent(AskChannelButton);
             registry.registerRootComponent(AgentsTour);
         }
 

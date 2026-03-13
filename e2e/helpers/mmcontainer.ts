@@ -8,7 +8,7 @@ const defaultUsername        = "admin";
 const defaultPassword        = "admin";
 const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
-const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:latest";
+const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:release-11";
 
 // MattermostContainer represents the mattermost container type used in the module
 export default class MattermostContainer {
