@@ -57,24 +57,12 @@ class RealAPIHelper {
     }
 
     /**
-     * Open the channel agents popover by clicking the agents button in channel header
+     * Run channel analysis via slash command to avoid header-icon dependencies
      */
-    async openChannelAgentsPopover() {
-        const agentsButton = this.page.getByTestId('ask-agents-channel-button');
-        await expect(agentsButton).toBeVisible({ timeout: 10000 });
-        await agentsButton.click();
-
-        // Wait for the popover to appear
-        await this.page.waitForSelector('.channel-summarize-popover', { timeout: 10000 });
-    }
-
-    /**
-     * Type and submit a custom query in the channel agents input
-     */
-    async submitChannelQuery(query: string) {
-        const input = this.page.locator('.channel-summarize-popover input[type="text"]');
+    async askChannel(query: string) {
+        const input = this.page.getByTestId('post_textbox');
         await expect(input).toBeVisible();
-        await input.fill(query);
+        await input.fill(`/ask-channel ${query}`);
         await input.press('Enter');
     }
 }
@@ -130,8 +118,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await mmPage.sendChannelMessage('Feature discussion: We need to implement SSO.');
             await mmPage.sendChannelMessage('Deadline: Next Friday.');
 
-            await apiHelper.openChannelAgentsPopover();
-            await apiHelper.submitChannelQuery('What feature and deadline were discussed?');
+            await apiHelper.askChannel('What feature and deadline were discussed?');
 
             await llmBotHelper.waitForStreamingComplete();
 
@@ -160,8 +147,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await mmPage.sendChannelMessage('Off-topic discussion: Best sci-fi movies.');
 
             // Analyze Channel 2
-            await apiHelper.openChannelAgentsPopover();
-            await apiHelper.submitChannelQuery('What is the discussion topic?');
+            await apiHelper.askChannel('What is the discussion topic?');
 
             await llmBotHelper.waitForStreamingComplete();
 
