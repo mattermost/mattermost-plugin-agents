@@ -5,7 +5,6 @@ import { test, expect, Page } from '@playwright/test';
 import RunRealAPIContainer from 'helpers/real-api-container';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
-import { AIPlugin } from 'helpers/ai-plugin';
 import { LLMBotPostHelper } from 'helpers/llmbot-post';
 import {
     getAPIConfig,
@@ -57,24 +56,40 @@ class RealAPIHelper {
     }
 
     /**
-     * Run channel analysis via slash command to avoid header-icon dependencies
+     * Trigger channel analysis directly through the plugin API.
+     * This keeps the test focused on backend behavior even when the header button is absent.
      */
-    async askChannel(query: string) {
-        const input = this.page.getByTestId('post_textbox');
-        await expect(input).toBeVisible();
-        await input.fill(`/ask-channel ${query}`);
-        await input.press('Enter');
+    async analyzeChannel(
+        mattermost: MattermostContainer,
+        channelName: string,
+        botUsername: string,
+        query: string,
+    ): Promise<{postid: string; channelid: string}> {
+        const userClient = await mattermost.getClient(username, password);
+        const team = (await userClient.getMyTeams())[0];
+        const channel = await userClient.getChannelByName(team.id, channelName);
+
+        return await (userClient as any).doFetch(
+            `${mattermost.url()}/plugins/mattermost-ai/channel/${channel.id}/analyze?botUsername=${botUsername}`,
+            {
+                method: 'post',
+                body: JSON.stringify({
+                    analysis_type: 'summarize_channel',
+                    prompt: query,
+                    team_id: team.id,
+                }),
+            },
+        );
     }
 }
 
 async function setupTestPage(page: Page, mattermost: MattermostContainer, provider: ProviderBundle) {
     const mmPage = new MattermostPage(page);
-    const aiPlugin = new AIPlugin(page);
     const llmBotHelper = new LLMBotPostHelper(page);
     const apiHelper = new RealAPIHelper(page);
     const botUsername = provider.bot.name;
 
-    return { mmPage, aiPlugin, llmBotHelper, apiHelper, botUsername };
+    return { mmPage, llmBotHelper, apiHelper, botUsername };
 }
 
 function createProviderTestSuite(provider: ProviderBundle) {
@@ -110,7 +125,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
             test.skip(!config.shouldRunTests, skipMessage);
             test.setTimeout(360000);
 
-            const { mmPage, llmBotHelper, apiHelper } = await setupTestPage(page, mattermost, provider);
+            const { mmPage, llmBotHelper, apiHelper, botUsername } = await setupTestPage(page, mattermost, provider);
 
             await mmPage.login(mattermost.url(), username, password);
             await apiHelper.waitForPageReady();
@@ -118,12 +133,19 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await mmPage.sendChannelMessage('Feature discussion: We need to implement SSO.');
             await mmPage.sendChannelMessage('Deadline: Next Friday.');
 
-            await apiHelper.askChannel('What feature and deadline were discussed?');
+            const result = await apiHelper.analyzeChannel(
+                mattermost,
+                'town-square',
+                botUsername,
+                'What feature and deadline were discussed?',
+            );
 
-            await llmBotHelper.waitForStreamingComplete();
+            await mmPage.createAndNavigateToDMWithBot(mattermost, username, password, botUsername);
 
-            const postText = llmBotHelper.getPostText();
-            await expect(postText).toBeVisible();
+            const postText = llmBotHelper.getPostText(result.postid);
+            await expect(postText).toBeVisible({ timeout: 300000 });
+            await expect.poll(async () => await postText.textContent(), { timeout: 300000 }).toMatch(/sso|feature/i);
+            await expect.poll(async () => await postText.textContent(), { timeout: 300000 }).toMatch(/friday|deadline/i);
             const content = await postText.textContent();
             expect(content).toBeTruthy();
             expect(content!.toLowerCase()).toMatch(/sso|feature/);
@@ -134,7 +156,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
             test.skip(!config.shouldRunTests, skipMessage);
             test.setTimeout(480000);
 
-            const { mmPage, llmBotHelper, apiHelper } = await setupTestPage(page, mattermost, provider);
+            const { mmPage, llmBotHelper, apiHelper, botUsername } = await setupTestPage(page, mattermost, provider);
 
             await mmPage.login(mattermost.url(), username, password);
             await apiHelper.waitForPageReady();
@@ -146,12 +168,18 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await apiHelper.navigateToChannel(mattermost, 'off-topic');
             await mmPage.sendChannelMessage('Off-topic discussion: Best sci-fi movies.');
 
-            // Analyze Channel 2
-            await apiHelper.askChannel('What is the discussion topic?');
+            const result = await apiHelper.analyzeChannel(
+                mattermost,
+                'off-topic',
+                botUsername,
+                'What is the discussion topic?',
+            );
 
-            await llmBotHelper.waitForStreamingComplete();
+            await mmPage.createAndNavigateToDMWithBot(mattermost, username, password, botUsername);
 
-            const postText = llmBotHelper.getPostText();
+            const postText = llmBotHelper.getPostText(result.postid);
+            await expect(postText).toBeVisible({ timeout: 300000 });
+            await expect.poll(async () => await postText.textContent(), { timeout: 300000 }).toMatch(/sci-fi|movie/i);
             const content = await postText.textContent();
             expect(content).toBeTruthy();
 
