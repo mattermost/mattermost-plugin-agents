@@ -4,6 +4,7 @@
 package bifrost
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -562,6 +563,115 @@ func TestConvertBifrostAnnotation(t *testing.T) {
 			} else {
 				require.NotNil(t, result)
 				assert.Equal(t, *tt.expected, *result)
+			}
+		})
+	}
+}
+
+type testStructuredOutput struct {
+	Name  string `json:"name"`
+	Score int    `json:"score"`
+}
+
+func TestConvertToBifrostRequestStructuredOutput(t *testing.T) {
+	tests := []struct {
+		name             string
+		jsonOutputFormat bool
+		expectFormat     bool
+	}{
+		{
+			name:             "with JSON output format sets ResponseFormat",
+			jsonOutputFormat: true,
+			expectFormat:     true,
+		},
+		{
+			name:             "without JSON output format leaves ResponseFormat nil",
+			jsonOutputFormat: false,
+			expectFormat:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{
+				provider:     schemas.OpenAI,
+				defaultModel: "gpt-4",
+			}
+			cfg := llm.LanguageModelConfig{
+				Model:              "gpt-4",
+				MaxGeneratedTokens: 1000,
+			}
+			if tt.jsonOutputFormat {
+				cfg.JSONOutputFormat = llm.NewJSONSchemaFromStruct[testStructuredOutput]()
+			}
+
+			req := b.convertToBifrostRequest(llm.CompletionRequest{}, cfg)
+
+			if tt.expectFormat {
+				require.NotNil(t, req.Params.ResponseFormat)
+				// Verify the structure
+				data, err := json.Marshal(*req.Params.ResponseFormat)
+				require.NoError(t, err)
+				var format map[string]interface{}
+				require.NoError(t, json.Unmarshal(data, &format))
+				assert.Equal(t, "json_schema", format["type"])
+				jsonSchema, ok := format["json_schema"].(map[string]interface{})
+				require.True(t, ok)
+				assert.Equal(t, "response", jsonSchema["name"])
+				assert.Equal(t, true, jsonSchema["strict"])
+				assert.NotNil(t, jsonSchema["schema"])
+			} else {
+				assert.Nil(t, req.Params.ResponseFormat)
+			}
+		})
+	}
+}
+
+func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
+	tests := []struct {
+		name             string
+		jsonOutputFormat bool
+		expectFormat     bool
+	}{
+		{
+			name:             "with JSON output format sets Text config",
+			jsonOutputFormat: true,
+			expectFormat:     true,
+		},
+		{
+			name:             "without JSON output format leaves Text nil",
+			jsonOutputFormat: false,
+			expectFormat:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{
+				provider:        schemas.OpenAI,
+				defaultModel:    "gpt-4",
+				useResponsesAPI: true,
+			}
+			cfg := llm.LanguageModelConfig{
+				Model:              "gpt-4",
+				MaxGeneratedTokens: 1000,
+			}
+			if tt.jsonOutputFormat {
+				cfg.JSONOutputFormat = llm.NewJSONSchemaFromStruct[testStructuredOutput]()
+			}
+
+			req := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, cfg)
+
+			if tt.expectFormat {
+				require.NotNil(t, req.Params.Text)
+				require.NotNil(t, req.Params.Text.Format)
+				assert.Equal(t, "json_schema", req.Params.Text.Format.Type)
+				assert.Equal(t, "response", *req.Params.Text.Format.Name)
+				assert.Equal(t, true, *req.Params.Text.Format.Strict)
+				require.NotNil(t, req.Params.Text.Format.JSONSchema)
+				require.NotNil(t, req.Params.Text.Format.JSONSchema.Schema)
+			} else {
+				assert.Nil(t, req.Params.Text)
 			}
 		})
 	}
