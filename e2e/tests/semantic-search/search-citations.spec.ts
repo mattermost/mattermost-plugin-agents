@@ -105,15 +105,21 @@ test.describe('Post Citations Display', () => {
         // Wait for bot response to appear
         await aiPlugin.waitForBotResponse(searchResponseText);
 
-        // Verify permalink citation links are rendered inside the bot's PostText component.
-        // Scope to the RHS to avoid matching unrelated posts in the center channel.
-        const rhsContainer = page.getByTestId('mattermost-ai-rhs');
-        const botPostText = rhsContainer.getByTestId('posttext').last();
+        // Verify permalink citation links are rendered inside the bot response post.
+        // Scope to the RHS bot post rather than the last PostText in the thread to avoid
+        // racing against the user query/root post order in CI.
+        const rhsBotPost = page.getByTestId('mattermost-ai-rhs').locator('[data-testid="llm-bot-post"]').filter({
+            hasText: searchResponseText,
+        }).last();
+        await expect(rhsBotPost).toBeVisible({timeout: 30000});
+
+        const botPostText = rhsBotPost.getByTestId('posttext');
+        await expect(botPostText).toContainText(searchResponseText, {timeout: 30000});
 
         // The [permalink](URL?view=citation) markdown should render as <a> tags
         // containing the post IDs in their href attribute
         const citationLinks = botPostText.locator(`a[href*="view=citation"]`);
-        await expect(citationLinks).toHaveCount(2, { timeout: 10000 });
+        await expect(citationLinks).toHaveCount(2, {timeout: 30000});
 
         // Verify links point to the correct posts via /team/pl/
         const firstHref = await citationLinks.nth(0).getAttribute('href');
