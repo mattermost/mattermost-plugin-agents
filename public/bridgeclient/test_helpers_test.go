@@ -10,11 +10,3 @@ type roundTripFunc func(req *http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
-
-type erroringReader struct {
-	err error
-}
-
-func (r *erroringReader) Read(_ []byte) (int, error) {
-	return 0, r.err
-}

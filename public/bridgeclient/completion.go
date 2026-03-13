@@ -7,7 +7,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +17,23 @@ import (
 )
 
 const maxSSELineBytes = 1024 * 1024
+
+func requestFailedError(statusCode int, responseBody []byte) error {
+	var errResp ErrorResponse
+	if err := json.Unmarshal(responseBody, &errResp); err == nil {
+		errMessage := strings.TrimSpace(errResp.Error)
+		if errMessage != "" {
+			return fmt.Errorf("request failed with status %d: %s", statusCode, errMessage)
+		}
+	}
+
+	bodyText := strings.TrimSpace(string(responseBody))
+	if bodyText == "" {
+		return fmt.Errorf("request failed with status %d", statusCode)
+	}
+
+	return fmt.Errorf("request failed with status %d: %s", statusCode, bodyText)
+}
 
 // AgentCompletion makes a non-streaming completion request to a specific agent by Bot ID.
 // The agent parameter should be the Mattermost Bot User ID (an immutable identifier).
@@ -195,29 +211,16 @@ func normalizeStreamEvent(event llm.TextStreamEvent) llm.TextStreamEvent {
 	}
 
 	switch value := event.Value.(type) {
-	case nil:
-		event.Value = errors.New("unknown stream error")
 	case error:
 		// Keep existing error as-is.
 	case string:
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			event.Value = errors.New("unknown stream error")
-			return event
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			event.Value = fmt.Errorf("%s", trimmed)
+		} else {
+			event.Value = fmt.Errorf("unknown stream error")
 		}
-		event.Value = errors.New(trimmed)
-	case map[string]interface{}:
-		if errValue, ok := value["error"].(string); ok && strings.TrimSpace(errValue) != "" {
-			event.Value = errors.New(strings.TrimSpace(errValue))
-			return event
-		}
-		if messageValue, ok := value["message"].(string); ok && strings.TrimSpace(messageValue) != "" {
-			event.Value = errors.New(strings.TrimSpace(messageValue))
-			return event
-		}
-		event.Value = errors.New("unknown stream error")
 	default:
-		event.Value = fmt.Errorf("%v", value)
+		event.Value = fmt.Errorf("unknown stream error")
 	}
 
 	return event

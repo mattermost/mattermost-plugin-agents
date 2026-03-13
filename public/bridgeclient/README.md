@@ -96,11 +96,6 @@ for event := range result.Stream {
 }
 ```
 
-For `llm.EventTypeError`, the client normalizes server error payloads into Go `error` values.
-
-For non-200 HTTP responses, the client surfaces `{"error":"..."}` when available and falls back
-to raw response body text if the payload is not in that shape.
-
 ### Multi-turn Conversations
 
 ```go
@@ -152,11 +147,6 @@ response, err := client.AgentCompletion("bot-user-id", request)
 
 If not using built-in permission checks, your plugin must verify permissions before making requests.
 
-The bridge API trims surrounding whitespace on `UserID` and `ChannelID` values. Whitespace-only
-values are treated as unset. Non-empty malformed IDs are rejected by the bridge with `400 Bad Request`.
-For backward compatibility, channel permission checks only run when `UserID` is also provided.
-The same whitespace normalization for optional `user_id` applies to discovery endpoint query params.
-
 ## Token Usage Dimensions
 
 Bridge callers can optionally provide `Operation` and `OperationSubType` in `CompletionRequest` to customize token usage categorization in logs.
@@ -189,7 +179,6 @@ request := bridgeclient.CompletionRequest{
 ## Discovery Endpoints
 
 The bridge API provides discovery endpoints to help clients find available agents and services before making completion requests.
-Agent and service discovery results are returned in deterministic sorted order (`display_name`/`name`, then `id`).
 
 ### Get Available Agents
 
@@ -241,7 +230,6 @@ for _, tool := range tools {
 This endpoint returns only tools that are currently eligible for `AllowedTools`.
 In practice, this is limited to service-account style MCP tools configured for bridge eligibility.
 If no eligible tools are available, this returns an empty list.
-Results are returned in a deterministic order by tool name.
 
 You can optionally pass `userID` to apply user-level permission filtering:
 
@@ -264,15 +252,3 @@ services, err := client.GetServices(userID)
 ```
 
 This is useful for showing users only the agents and services they have permission to use.
-
-## Input Validation Behavior
-
-The client performs local validation before issuing requests:
-
-- `AgentCompletion`, `AgentCompletionStream`, and `GetAgentTools` trim surrounding whitespace and require a valid Mattermost Bot User ID format for `agent`.
-- `GetAgents`, `GetServices`, and `GetAgentTools` trim surrounding whitespace and validate optional `userID` when provided. Whitespace-only `userID` values are treated as unset.
-- `ServiceCompletion` and `ServiceCompletionStream` trim surrounding whitespace and reject empty service values.
-- `UserID` and `ChannelID` in completion requests are validated by the bridge API (server-side) when non-empty.
-- For raw HTTP callers (without this client), bridge handlers also validate path identifiers: malformed agent IDs and whitespace-only service path values return `400 Bad Request`.
-
-When validation fails, methods return an error immediately without making an HTTP request.

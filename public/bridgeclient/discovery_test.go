@@ -22,7 +22,7 @@ func TestDiscoveryEndpointsSuccess(t *testing.T) {
 		assertResult  func(*testing.T, any)
 	}{
 		{
-			name:          "GetAgents trims user ID, sends expected request, and maps response",
+			name:          "GetAgents sends expected request and maps response",
 			expectedPath:  "/mattermost-ai/bridge/v1/agents",
 			expectedQuery: "user_id=abcdefghijklmnopqrstuvwxyz",
 			responseBody: `{
@@ -38,7 +38,7 @@ func TestDiscoveryEndpointsSuccess(t *testing.T) {
 				]
 			}`,
 			call: func(client *Client) (any, error) {
-				return client.GetAgents("\n\tabcdefghijklmnopqrstuvwxyz\t\n")
+				return client.GetAgents("abcdefghijklmnopqrstuvwxyz")
 			},
 			assertResult: func(t *testing.T, result any) {
 				agents, ok := result.([]BridgeAgentInfo)
@@ -62,7 +62,7 @@ func TestDiscoveryEndpointsSuccess(t *testing.T) {
 				]
 			}`,
 			call: func(client *Client) (any, error) {
-				return client.GetServices(" \n\t ")
+				return client.GetServices("")
 			},
 			assertResult: func(t *testing.T, result any) {
 				services, ok := result.([]BridgeServiceInfo)
@@ -74,7 +74,7 @@ func TestDiscoveryEndpointsSuccess(t *testing.T) {
 			},
 		},
 		{
-			name:          "GetAgentTools trims IDs, sends expected request, and maps response",
+			name:          "GetAgentTools sends expected request and maps response",
 			expectedPath:  "/mattermost-ai/bridge/v1/agents/zyxwvutsrqponmlkjihgfedcba/tools",
 			expectedQuery: "user_id=abcdefghijklmnopqrstuvwxyz",
 			responseBody: `{
@@ -83,7 +83,7 @@ func TestDiscoveryEndpointsSuccess(t *testing.T) {
 				]
 			}`,
 			call: func(client *Client) (any, error) {
-				return client.GetAgentTools(" \n\tzyxwvutsrqponmlkjihgfedcba\t\n ", "\n\tabcdefghijklmnopqrstuvwxyz\t\n")
+				return client.GetAgentTools("zyxwvutsrqponmlkjihgfedcba", "abcdefghijklmnopqrstuvwxyz")
 			},
 			assertResult: func(t *testing.T, result any) {
 				tools, ok := result.([]BridgeToolInfo)
@@ -168,77 +168,6 @@ func TestDiscoveryValidation(t *testing.T) {
 			err := tc.call(client)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tc.expectedErrSubstr)
-		})
-	}
-}
-
-func TestAppendValidatedUserIDQuery(t *testing.T) {
-	const validUserID = "abcdefghijklmnopqrstuvwxyz"
-
-	testCases := []struct {
-		name              string
-		requestURL        string
-		userID            string
-		expectedURL       string
-		expectedErrSubstr string
-	}{
-		{
-			name:        "empty user ID leaves URL unchanged",
-			requestURL:  "/mattermost-ai/bridge/v1/agents",
-			userID:      "",
-			expectedURL: "/mattermost-ai/bridge/v1/agents",
-		},
-		{
-			name:        "whitespace user ID leaves URL unchanged",
-			requestURL:  "/mattermost-ai/bridge/v1/agents",
-			userID:      " \t\n ",
-			expectedURL: "/mattermost-ai/bridge/v1/agents",
-		},
-		{
-			name:        "empty user ID does not parse malformed URL",
-			requestURL:  "%",
-			userID:      "",
-			expectedURL: "%",
-		},
-		{
-			name:        "trimmed valid user ID is appended",
-			requestURL:  "/mattermost-ai/bridge/v1/services",
-			userID:      "\n\tabcdefghijklmnopqrstuvwxyz\t\n",
-			expectedURL: "/mattermost-ai/bridge/v1/services?user_id=abcdefghijklmnopqrstuvwxyz",
-		},
-		{
-			name:        "existing query is preserved and existing user ID is replaced",
-			requestURL:  "/mattermost-ai/bridge/v1/services?foo=bar&user_id=oldvalue",
-			userID:      validUserID,
-			expectedURL: "/mattermost-ai/bridge/v1/services?foo=bar&user_id=abcdefghijklmnopqrstuvwxyz",
-		},
-		{
-			name:              "invalid user ID returns validation error",
-			requestURL:        "/mattermost-ai/bridge/v1/services",
-			userID:            "bad",
-			expectedErrSubstr: "invalid user ID",
-		},
-		{
-			name:              "malformed request URL returns parse error when user ID is set",
-			requestURL:        "%",
-			userID:            validUserID,
-			expectedErrSubstr: "failed to parse request URL",
-		},
-	}
-
-	for _, tc := range testCases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			requestURL, err := appendValidatedUserIDQuery(tc.requestURL, tc.userID)
-
-			if tc.expectedErrSubstr != "" {
-				require.Error(t, err)
-				require.Contains(t, err.Error(), tc.expectedErrSubstr)
-				return
-			}
-
-			require.NoError(t, err)
-			require.Equal(t, tc.expectedURL, requestURL)
 		})
 	}
 }
