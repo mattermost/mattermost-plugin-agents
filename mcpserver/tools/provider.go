@@ -24,8 +24,7 @@ type MCPToolContext struct {
 	Ctx        context.Context
 	Client     *model.Client4
 	AccessMode AccessMode
-	BotUserID  string         // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
-	ResultMeta map[string]any // Tool sets this to emit structured data via _meta sideband
+	BotUserID  string // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
 }
 
 // MCPToolResolver defines the signature for MCP tool resolvers
@@ -179,9 +178,6 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 				&mcp.TextContent{Text: result},
 			},
 			IsError: false,
-		}
-		if mcpContext.ResultMeta != nil {
-			callToolResult.Meta = mcp.Meta(mcpContext.ResultMeta)
 		}
 		return callToolResult, nil
 	}

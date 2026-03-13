@@ -208,16 +208,6 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 		// Prepare metadata for the tool call
 		metadata := c.prepareToolCallMetadata(client, llmContext)
 
-		text, resultMeta, err := client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
-		if err != nil {
-			return text, err // don't store meta on failure
-		}
-
-		// Only store meta from successful calls
-		if llmContext != nil && llmContext.ToolResultMeta != nil && resultMeta != nil {
-			llmContext.ToolResultMeta.Store(toolName, resultMeta)
-		}
-
-		return text, nil
+		return client.CallTool(context.Background(), toolName, args, metadata)
 	}
 }

@@ -6,7 +6,6 @@
 package bridgeclient
 
 import (
-	"encoding/json"
 	"net/http"
 )
 
@@ -37,39 +36,6 @@ type Post struct {
 	FileIDs []string `json:"file_ids,omitempty"` // Mattermost file IDs
 }
 
-// ToolConstraints maps tool names to their parameter constraints.
-type ToolConstraints map[string]map[string]ParamConstraint
-
-// ParamConstraint defines allowed values for a tool parameter.
-// Supports both static values and dynamic expansion from other tools' outputs.
-type ParamConstraint struct {
-	AllowedValues  []string        `json:"allowed_values,omitempty"`
-	FromToolOutput []OutputBinding `json:"from_tool_output,omitempty"`
-}
-
-// OutputBinding declares that values from a source tool's MCP _meta should be
-// accepted as allowed values for this parameter.
-// Only values from successful tool calls are captured (errors are ignored).
-type OutputBinding struct {
-	Tool  string `json:"tool"`  // source tool name
-	Field string `json:"field"` // key in source tool's _meta (e.g., "channel_id")
-}
-
-// UnmarshalJSON supports both shorthand ([]string) and full struct forms.
-// Shorthand: ["val1", "val2"] → ParamConstraint{AllowedValues: ["val1", "val2"]}
-// Full: {"allowed_values": [...], "from_tool_output": [...]}
-func (p *ParamConstraint) UnmarshalJSON(data []byte) error {
-	// Try as []string first (shorthand)
-	var values []string
-	if err := json.Unmarshal(data, &values); err == nil {
-		p.AllowedValues = values
-		return nil
-	}
-	// Try as full struct
-	type alias ParamConstraint
-	return json.Unmarshal(data, (*alias)(p))
-}
-
 // CompletionRequest represents a completion request
 type CompletionRequest struct {
 	Posts              []Post                 `json:"posts"`
@@ -78,9 +44,6 @@ type CompletionRequest struct {
 	// AllowedTools is an optional allowlist of tool names for agent completions.
 	// When provided on agent endpoints, only these eligible tools may run without approval.
 	AllowedTools []string `json:"allowed_tools,omitempty"`
-	// ToolConstraints restricts tool parameter values to allowed sets.
-	// Requires AllowedTools to also be set; each constrained tool must be in AllowedTools.
-	ToolConstraints ToolConstraints `json:"tool_constraints,omitempty"`
 	// Operation optionally overrides the default operation used for token usage logging.
 	// If empty, the bridge chooses an operation based on endpoint type (agent/service).
 	Operation string `json:"operation,omitempty"`

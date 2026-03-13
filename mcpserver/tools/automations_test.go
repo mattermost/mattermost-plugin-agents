@@ -543,7 +543,7 @@ func TestAutomationCreateFlow(t *testing.T) {
 				"enabled": true,
 				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz"}},
 				"actions": [
-					{"id": "ask", "ai_prompt": {"prompt": "Summarize this", "provider_type": "agent", "provider_id": "bot123", "system_prompt": "You are helpful", "allowed_tools": ["search"], "tool_constraints": {"search": {"query": {"allowed_values": ["bugs", "features"]}}}}},
+					{"id": "ask", "ai_prompt": {"prompt": "Summarize this", "provider_type": "agent", "provider_id": "bot123", "system_prompt": "You are helpful", "allowed_tools": ["search"]}},
 					{"id": "post", "send_message": {"channel_id": "abcdefghijklmnopqrstuvwxyz", "body": "Result: {{(index .Steps \"ask\").Message}}"}}
 				]
 			}`), target)
@@ -800,9 +800,6 @@ func TestFormatAutomationFlow(t *testing.T) {
 					ProviderType: "agent",
 					ProviderID:   "bot1",
 					AllowedTools: []string{"search"},
-					ToolConstraints: ToolConstraints{
-						"search": {"query": ParamConstraint{AllowedValues: []string{"bugs"}}},
-					},
 				}},
 			},
 		}
@@ -812,7 +809,6 @@ func TestFormatAutomationFlow(t *testing.T) {
 		assert.Contains(t, result, "Summarize")
 		assert.Contains(t, result, "Be helpful")
 		assert.Contains(t, result, "search")
-		assert.Contains(t, result, "tool_constraints=<configured>")
 	})
 
 	t.Run("schedule trigger with interval", func(t *testing.T) {

@@ -6,7 +6,6 @@ package llm
 import (
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -47,9 +46,6 @@ type Context struct {
 	Tools             *ToolStore
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
 	Parameters        map[string]interface{}
-
-	// ToolResultMeta collects _meta from successful MCP tool calls for dynamic constraint expansion.
-	ToolResultMeta *ToolResultMetaStore
 }
 
 // ContextOption defines a function that configures a Context
@@ -106,32 +102,4 @@ func (c Context) String() string {
 	}
 
 	return result.String()
-}
-
-// ToolResultMetaStore collects _meta from successful MCP tool calls.
-// It is safe for concurrent use.
-type ToolResultMetaStore struct {
-	mu      sync.Mutex
-	entries map[string][]map[string]any // tool_name -> list of _meta from each successful call
-}
-
-// NewToolResultMetaStore creates a new empty store.
-func NewToolResultMetaStore() *ToolResultMetaStore {
-	return &ToolResultMetaStore{
-		entries: make(map[string][]map[string]any),
-	}
-}
-
-// Store records _meta from a successful tool call.
-func (s *ToolResultMetaStore) Store(toolName string, meta map[string]any) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.entries[toolName] = append(s.entries[toolName], meta)
-}
-
-// GetAll returns all stored _meta entries for a given tool name.
-func (s *ToolResultMetaStore) GetAll(toolName string) []map[string]any {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.entries[toolName]
 }

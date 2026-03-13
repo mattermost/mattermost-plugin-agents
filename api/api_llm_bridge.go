@@ -273,149 +273,6 @@ func normalizeAllowedTools(rawTools []string) ([]string, error) {
 	return normalized, nil
 }
 
-func normalizeToolConstraints(constraints bridgeclient.ToolConstraints, allowedTools []string) (bridgeclient.ToolConstraints, error) {
-	if constraints == nil {
-		return nil, nil
-	}
-
-	if allowedTools == nil {
-		return nil, errors.New("tool_constraints requires allowed_tools to also be set")
-	}
-
-	allowedSet := make(map[string]struct{}, len(allowedTools))
-	for _, name := range allowedTools {
-		allowedSet[name] = struct{}{}
-	}
-
-	normalized := make(bridgeclient.ToolConstraints, len(constraints))
-	for toolName, paramConstraints := range constraints {
-		toolName = strings.TrimSpace(toolName)
-		if toolName == "" {
-			return nil, errors.New("tool_constraints cannot contain empty tool names")
-		}
-		if _, ok := allowedSet[toolName]; !ok {
-			return nil, fmt.Errorf("tool_constraints tool %q is not in allowed_tools", toolName)
-		}
-		if len(paramConstraints) == 0 {
-			return nil, fmt.Errorf("tool_constraints for tool %q cannot have empty parameter constraints", toolName)
-		}
-		normalizedParams := make(map[string]bridgeclient.ParamConstraint, len(paramConstraints))
-		for paramName, pc := range paramConstraints {
-			paramName = strings.TrimSpace(paramName)
-			if paramName == "" {
-				return nil, fmt.Errorf("tool_constraints for tool %q has empty parameter name", toolName)
-			}
-			if len(pc.AllowedValues) == 0 && len(pc.FromToolOutput) == 0 {
-				return nil, fmt.Errorf("tool_constraints for tool %q parameter %q must have allowed_values or from_tool_output", toolName, paramName)
-			}
-
-			// Validate FromToolOutput bindings
-			seenBindings := make(map[string]struct{})
-			for _, binding := range pc.FromToolOutput {
-				if binding.Tool == "" {
-					return nil, fmt.Errorf("tool_constraints for tool %q parameter %q: from_tool_output entry has empty tool", toolName, paramName)
-				}
-				if binding.Field == "" {
-					return nil, fmt.Errorf("tool_constraints for tool %q parameter %q: from_tool_output entry has empty field", toolName, paramName)
-				}
-				if _, ok := allowedSet[binding.Tool]; !ok {
-					return nil, fmt.Errorf("tool_constraints for tool %q parameter %q: from_tool_output tool %q is not in allowed_tools", toolName, paramName, binding.Tool)
-				}
-				if binding.Tool == toolName {
-					return nil, fmt.Errorf("tool_constraints for tool %q parameter %q: from_tool_output tool cannot reference itself", toolName, paramName)
-				}
-				key := binding.Tool + ":" + binding.Field
-				if _, exists := seenBindings[key]; exists {
-					return nil, fmt.Errorf("tool_constraints for tool %q parameter %q: duplicate from_tool_output binding (%s, %s)", toolName, paramName, binding.Tool, binding.Field)
-				}
-				seenBindings[key] = struct{}{}
-			}
-
-			normalizedParams[paramName] = pc
-		}
-		normalized[toolName] = normalizedParams
-	}
-
-	return normalized, nil
-}
-
-func validateConstraintParams(tool llm.Tool, constraints map[string]bridgeclient.ParamConstraint) error {
-	if tool.Schema == nil {
-		return fmt.Errorf("tool %q has no schema to validate constraints against", tool.Name)
-	}
-	jsonSchema, ok := tool.Schema.(*jsonschema.Schema)
-	if !ok {
-		return fmt.Errorf("tool %q schema is not a jsonschema.Schema", tool.Name)
-	}
-	if jsonSchema.Properties == nil {
-		return fmt.Errorf("tool %q schema has no properties", tool.Name)
-	}
-	for paramName := range constraints {
-		if _, exists := jsonSchema.Properties[paramName]; !exists {
-			return fmt.Errorf("tool %q has no parameter %q in its schema", tool.Name, paramName)
-		}
-	}
-	return nil
-}
-
-// hasDynamicBindings returns true if any parameter constraint has FromToolOutput bindings.
-func hasDynamicBindings(constraints bridgeclient.ToolConstraints) bool {
-	for _, params := range constraints {
-		for _, pc := range params {
-			if len(pc.FromToolOutput) > 0 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// extractStaticConstraints extracts the static allowed values from enriched constraints.
-func extractStaticConstraints(constraints map[string]bridgeclient.ParamConstraint) map[string][]string {
-	result := make(map[string][]string, len(constraints))
-	for param, pc := range constraints {
-		if len(pc.AllowedValues) > 0 {
-			result[param] = pc.AllowedValues
-		}
-	}
-	return result
-}
-
-// extractBindings extracts dynamic bindings from all tool constraints.
-func extractBindings(constraints bridgeclient.ToolConstraints) []llm.ResolvedBinding {
-	var bindings []llm.ResolvedBinding
-	for toolName, params := range constraints {
-		for paramName, pc := range params {
-			for _, ob := range pc.FromToolOutput {
-				bindings = append(bindings, llm.ResolvedBinding{
-					SourceTool:  ob.Tool,
-					TargetTool:  toolName,
-					TargetParam: paramName,
-					Field:       ob.Field,
-				})
-			}
-		}
-	}
-	return bindings
-}
-
-// buildStaticConstraintsMap builds the full static constraints map for all tools.
-func buildStaticConstraintsMap(constraints bridgeclient.ToolConstraints) map[string]map[string][]string {
-	result := make(map[string]map[string][]string, len(constraints))
-	for toolName, params := range constraints {
-		paramMap := make(map[string][]string, len(params))
-		for paramName, pc := range params {
-			if len(pc.AllowedValues) > 0 {
-				paramMap[paramName] = pc.AllowedValues
-			}
-		}
-		if len(paramMap) > 0 {
-			result[toolName] = paramMap
-		}
-	}
-	return result
-}
-
 func normalizeBridgeOptionalUserID(userID string) (string, error) {
 	normalizedUserID := strings.TrimSpace(userID)
 	if normalizedUserID == "" {
@@ -484,11 +341,6 @@ func (a *API) prepareAgentBridgeCompletion(
 		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid allowed_tools: %w", err)
 	}
 
-	toolConstraints, err := normalizeToolConstraints(req.ToolConstraints, allowedTools)
-	if err != nil {
-		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid tool_constraints: %w", err)
-	}
-
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, http.StatusNotFound, err
@@ -521,44 +373,11 @@ func (a *API) prepareAgentBridgeCompletion(
 			return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, errors.New("no eligible tools available for this agent")
 		}
 
-		// Check if any constraints use dynamic bindings (from_tool_output)
-		useDynamic := hasDynamicBindings(toolConstraints)
-
-		// Set up dynamic constraint infrastructure if needed
-		var dynamicStore *llm.DynamicConstraintStore
-		if useDynamic {
-			metaStore := llm.NewToolResultMetaStore()
-			llmRequest.Context.ToolResultMeta = metaStore
-			dynamicStore = llm.NewDynamicConstraintStore(
-				buildStaticConstraintsMap(toolConstraints),
-				metaStore,
-				extractBindings(toolConstraints),
-			)
-		}
-
 		scopedTools := llm.NewToolStore(nil, false)
 		for _, toolName := range allowedTools {
 			tool, ok := eligibleToolMap[toolName]
 			if !ok {
 				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("tool %q is not eligible or not available for this agent", toolName)
-			}
-			// Apply constraints if defined for this tool
-			if paramConstraints, hasConstraints := toolConstraints[toolName]; hasConstraints {
-				if validateErr := validateConstraintParams(tool, paramConstraints); validateErr != nil {
-					return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid tool_constraints: %w", validateErr)
-				}
-				staticValues := extractStaticConstraints(paramConstraints)
-				if useDynamic {
-					// Use dynamic constraint store for tools that may need _meta expansion
-					constrainedParams := make([]string, 0, len(paramConstraints))
-					for p := range paramConstraints {
-						constrainedParams = append(constrainedParams, p)
-					}
-					tool = tool.WithDynamicConstrainedParams(dynamicStore, toolName, constrainedParams, staticValues)
-				} else {
-					// Pure static constraints — use existing fast path
-					tool = tool.WithConstrainedParams(staticValues)
-				}
 			}
 			scopedTools.AddTools([]llm.Tool{tool})
 		}
@@ -1135,13 +954,6 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 		return
 	}
 
-	if req.ToolConstraints != nil {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "tool_constraints is only supported for agent completion endpoints",
-		})
-		return
-	}
-
 	normalizedUserID, normalizedChannelID, err := normalizeBridgeCompletionPrincipalIDs(req.UserID, req.ChannelID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
@@ -1222,13 +1034,6 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	if req.AllowedTools != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: "allowed_tools is only supported for agent completion endpoints",
-		})
-		return
-	}
-
-	if req.ToolConstraints != nil {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "tool_constraints is only supported for agent completion endpoints",
 		})
 		return
 	}

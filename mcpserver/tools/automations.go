@@ -85,27 +85,11 @@ type SendMessageActionConfig struct {
 
 // AIPromptActionConfig holds config for the ai_prompt action type.
 type AIPromptActionConfig struct {
-	SystemPrompt    string          `json:"system_prompt,omitempty"`
-	Prompt          string          `json:"prompt"`
-	ProviderType    string          `json:"provider_type"`
-	ProviderID      string          `json:"provider_id"`
-	AllowedTools    []string        `json:"allowed_tools,omitempty"`
-	ToolConstraints ToolConstraints `json:"tool_constraints,omitempty"`
-}
-
-// ToolConstraints maps tool names to their parameter constraints.
-type ToolConstraints map[string]map[string]ParamConstraint
-
-// ParamConstraint defines allowed values for a tool parameter.
-type ParamConstraint struct {
-	AllowedValues  []string        `json:"allowed_values,omitempty"`
-	FromToolOutput []OutputBinding `json:"from_tool_output,omitempty"`
-}
-
-// OutputBinding declares that values from a source tool's output should be accepted.
-type OutputBinding struct {
-	Tool  string `json:"tool"`
-	Field string `json:"field"`
+	SystemPrompt string   `json:"system_prompt,omitempty"`
+	Prompt       string   `json:"prompt"`
+	ProviderType string   `json:"provider_type"`
+	ProviderID   string   `json:"provider_id"`
+	AllowedTools []string `json:"allowed_tools,omitempty"`
 }
 
 // AutomationFlow mirrors the channel-automation plugin's Flow model.
@@ -657,9 +641,6 @@ func formatAutomationFlow(f AutomationFlow) string {
 				}
 				if len(a.AIPrompt.AllowedTools) > 0 {
 					result.WriteString(fmt.Sprintf(", allowed_tools=%v", a.AIPrompt.AllowedTools))
-				}
-				if len(a.AIPrompt.ToolConstraints) > 0 {
-					result.WriteString(", tool_constraints=<configured>")
 				}
 			}
 			result.WriteString(")\n")

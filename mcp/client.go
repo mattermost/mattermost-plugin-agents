@@ -341,28 +341,19 @@ func (c *Client) Tools() map[string]*mcp.Tool {
 	return c.tools
 }
 
-// CallTool calls a tool on this MCP server
-func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]any) (string, error) {
-	text, _, err := c.CallToolWithMetadata(ctx, toolName, args, nil)
-	return text, err
-}
-
-// CallToolWithMetadata calls a tool on this MCP server with optional metadata.
-// Returns the text result, result _meta (if any), and an error.
-func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, map[string]any, error) {
+// CallTool calls a tool on this MCP server with optional metadata.
+func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]any, metadata ...map[string]any) (string, error) {
 	if c.session == nil {
-		return "", nil, fmt.Errorf("MCP client not connected")
+		return "", fmt.Errorf("MCP client not connected")
 	}
 
-	// Call the tool using new SDK
 	params := &mcp.CallToolParams{
 		Name:      toolName,
 		Arguments: args,
 	}
 
-	// Add metadata if provided
-	if metadata != nil {
-		params.Meta = mcp.Meta(metadata)
+	if len(metadata) > 0 && metadata[0] != nil {
+		params.Meta = mcp.Meta(metadata[0])
 	}
 
 	result, err := c.session.CallTool(ctx, params)
@@ -371,12 +362,12 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 			if c.embeddedClient != nil {
 				// Reconnect to embedded server using stored client helper and session ID
 				if c.sessionID == "" {
-					return "", nil, fmt.Errorf("embedded server connection lost and cannot be reconnected: missing session ID")
+					return "", fmt.Errorf("embedded server connection lost and cannot be reconnected: missing session ID")
 				}
 
 				newClient, reconnectErr := c.embeddedClient.CreateClient(ctx, c.userID, c.sessionID)
 				if reconnectErr != nil {
-					return "", nil, fmt.Errorf("failed to reconnect to embedded MCP server: %w", reconnectErr)
+					return "", fmt.Errorf("failed to reconnect to embedded MCP server: %w", reconnectErr)
 				}
 
 				// Update session and tools from the new client
@@ -387,37 +378,30 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 				// Reconnect to remote server
 				c.session, err = c.createSession(ctx, c.config)
 				if err != nil {
-					return "", nil, fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, err)
+					return "", fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, err)
 				}
 			}
 
 			// Retry the tool call after reconnecting
 			result, err = c.session.CallTool(ctx, params)
 			if err != nil {
-				return "", nil, fmt.Errorf("failed to call tool %s on server %s after reconnecting: %w", toolName, c.config.Name, err)
+				return "", fmt.Errorf("failed to call tool %s on server %s after reconnecting: %w", toolName, c.config.Name, err)
 			}
 		} else {
-			return "", nil, fmt.Errorf("failed to call tool %s on server %s: %w", toolName, c.config.Name, err)
+			return "", fmt.Errorf("failed to call tool %s on server %s: %w", toolName, c.config.Name, err)
 		}
-	}
-
-	// Extract result _meta
-	var resultMeta map[string]any
-	if result.Meta != nil {
-		resultMeta = map[string]any(result.Meta)
 	}
 
 	// Extract text content from the result
 	if len(result.Content) > 0 {
 		text := ""
 		for _, content := range result.Content {
-			// Use type assertion to extract text content
 			if textContent, ok := content.(*mcp.TextContent); ok {
 				text += textContent.Text + "\n"
 			}
 		}
-		return text, resultMeta, nil
+		return text, nil
 	}
 
-	return "", nil, fmt.Errorf("no text content found in response from tool %s on server %s", toolName, c.config.Name)
+	return "", fmt.Errorf("no text content found in response from tool %s on server %s", toolName, c.config.Name)
 }
