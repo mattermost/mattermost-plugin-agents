@@ -56,14 +56,6 @@ test.describe('Post Citations Display', () => {
     test.beforeAll(async () => {
         mattermost = await RunContainer();
         openAIMock = await RunOpenAIMocks(mattermost.network);
-
-        // Permalink citations with ?view=citation normally bypass the unsafeLinks filter
-        // when siteURL is available in the Redux store. In the e2e environment the mock
-        // response arrives before the store is fully hydrated, so we enable allowUnsafeLinks
-        // to work around this timing issue.
-        const patch = JSON.stringify({PluginSettings: {Plugins: {'mattermost-ai': {config: {allowUnsafeLinks: true}}}}});
-        await mattermost.container.copyContentToContainer([{content: patch, target: '/tmp/unsafe-links-patch.json'}]);
-        await mattermost.container.exec(['mmctl', '--local', 'config', 'patch', '/tmp/unsafe-links-patch.json']);
     });
 
     test.beforeEach(async () => {
