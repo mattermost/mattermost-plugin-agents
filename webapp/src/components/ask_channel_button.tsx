@@ -124,7 +124,7 @@ const AskChannelButton = () => {
 
     useEffect(() => {
         if (typeof document === 'undefined') {
-            return undefined;
+            return;
         }
 
         const updatePortalTarget = () => {
