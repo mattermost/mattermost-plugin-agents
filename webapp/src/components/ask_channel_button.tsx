@@ -2,11 +2,13 @@
 // See LICENSE.txt for license information.
 
 import React, {useRef, useState, useEffect} from 'react';
+import {createPortal} from 'react-dom';
 import styled, {css} from 'styled-components';
 import {useSelector, useDispatch} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
 //eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
 import {OverlayTrigger, Tooltip, Overlay} from 'react-bootstrap';
+import {FormattedMessage, useIntl} from 'react-intl';
 
 import {doChannelAnalysis} from '@/client';
 import {openRHS} from '@/redux_actions';
@@ -102,8 +104,10 @@ const PopoverWrapper = React.forwardRef((props: any, ref: any) => {
 });
 
 const AskChannelButton = () => {
+    const intl = useIntl();
     const dispatch = useDispatch();
     const [showPopover, setShowPopover] = useState(false);
+    const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
     const target = useRef<HTMLButtonElement>(null);
     const {bots, activeBot, setActiveBot} = useBotlist();
     const isBasicsLicensed = useIsBasicsLicensed();
@@ -116,6 +120,26 @@ const AskChannelButton = () => {
 
     useEffect(() => {
         setInitialLastViewedAt(lastViewedAt);
+    }, [currentChannelId]);
+
+    useEffect(() => {
+        if (typeof document === 'undefined') {
+            return undefined;
+        }
+
+        const updatePortalTarget = () => {
+            const nextTarget = document.querySelector('#channelHeaderInfo .channel-header__icons') as HTMLElement | null;
+            setPortalTarget((currentTarget) => (currentTarget === nextTarget ? currentTarget : nextTarget));
+        };
+
+        updatePortalTarget();
+
+        const observer = new MutationObserver(updatePortalTarget);
+        observer.observe(document.body, {childList: true, subtree: true});
+
+        return () => {
+            observer.disconnect();
+        };
     }, [currentChannelId]);
 
     const channelName = currentChannel?.display_name || 'Current Channel';
@@ -167,21 +191,27 @@ const AskChannelButton = () => {
         return null;
     }
 
+    if (!portalTarget) {
+        return null;
+    }
+
+    const buttonLabel = intl.formatMessage({defaultMessage: 'Ask Agents about this channel'});
     const tooltip = (
         <Tooltip id='ask-agents-tooltip'>
-            {'Ask Agents about'}
-            <br/>
-            {'this channel'}
+            <FormattedMessage defaultMessage='Ask Agents about this channel'/>
         </Tooltip>
     );
 
-    return (
+    return createPortal(
         <>
             {showPopover ? (
                 <ButtonContainer
                     ref={target}
                     onClick={handleToggle}
                     isActive={showPopover}
+                    aria-label={buttonLabel}
+                    title={buttonLabel}
+                    data-testid='ask-channel-button'
                 >
                     <IconAI/>
                 </ButtonContainer>
@@ -194,6 +224,9 @@ const AskChannelButton = () => {
                         ref={target}
                         onClick={handleToggle}
                         isActive={showPopover}
+                        aria-label={buttonLabel}
+                        title={buttonLabel}
+                        data-testid='ask-channel-button'
                     >
                         <IconAI/>
                     </ButtonContainer>
@@ -218,6 +251,8 @@ const AskChannelButton = () => {
                 </PopoverWrapper>
             </Overlay>
         </>
+        ,
+        portalTarget,
     );
 };
 

@@ -156,25 +156,37 @@ export class AIPlugin {
   }
 
   async openChannelAnalysisPopover() {
-    // Find the "Ask Agents about this channel" button in the channel header
-    // This button has an AI icon and opens a popover with channel analysis options
-    const channelHeaderButtons = this.page.locator('.channel-header__top, [class*="channel-header"]');
-    const agentsButton = channelHeaderButtons.locator('button').filter({ hasText: /Ask Agents/ }).or(
-      channelHeaderButtons.locator('button[aria-label*="Agents"]')
-    ).or(
-      channelHeaderButtons.locator('button:has(svg)').last()
-    );
-
-    await agentsButton.click({ timeout: 10000 });
-
-    // Wait for the popover to appear
     const popover = this.page.locator('.channel-summarize-popover');
-    await expect(popover).toBeVisible({ timeout: 10000 });
+    if (await popover.isVisible().catch(() => false)) {
+      return;
+    }
 
-    // CRITICAL: Wait for bots to be loaded before interacting
-    // The bot name appears in the "GENERATE WITH:" section
-    // If activeBot is null, handleSummarize will silently return without doing anything
-    await expect(popover.getByText('Mock Bot')).toBeVisible({ timeout: 15000 });
+    const buttonCandidates = [
+      this.page.getByTestId('ask-channel-button'),
+      this.page.getByRole('button', { name: /Ask Agents about this channel/i }),
+      this.page.locator('button[title="Ask Agents about this channel"]'),
+    ];
+
+    let clicked = false;
+    for (const candidate of buttonCandidates) {
+      const isVisible = await candidate.first().isVisible().catch(() => false);
+      if (!isVisible) {
+        continue;
+      }
+
+      await candidate.first().click({ timeout: 10000 });
+      clicked = true;
+      break;
+    }
+
+    if (!clicked) {
+      throw new Error('Channel analysis button was not visible');
+    }
+
+    await expect(popover).toBeVisible({ timeout: 10000 });
+    await expect(popover.getByPlaceholder(/Ask Agents about this channel/i)).toBeVisible({ timeout: 10000 });
+    await expect(popover.getByText('Summarize unreads')).toBeVisible({ timeout: 10000 });
+    await expect(popover.getByText(/GENERATE WITH/i)).toBeVisible({ timeout: 10000 });
   }
 
   async sendChannelAnalysisMessage(message: string) {
