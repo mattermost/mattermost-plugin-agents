@@ -8,7 +8,7 @@ const defaultUsername        = "admin";
 const defaultPassword        = "admin";
 const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
-const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:latest";
+const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:release-11";
 
 // MattermostContainer represents the mattermost container type used in the module
 export default class MattermostContainer {
@@ -25,6 +25,7 @@ export default class MattermostContainer {
     configFile: any[];
     plugins: any[];
     private logStream: any;
+    private isLogStreamClosed: boolean;
 
     url(): string {
         const containerPort = this.container.getMappedPort(8065)
@@ -55,6 +56,7 @@ export default class MattermostContainer {
 
     stop = async () => {
         if (this.logStream) {
+            this.isLogStreamClosed = true;
             this.logStream.end();
         }
         await this.pgContainer.stop()
@@ -158,6 +160,7 @@ export default class MattermostContainer {
         this.password = defaultPassword;
         this.teamName = defaultTeamName;
         this.teamDisplayName = defaultTeamDisplayName;
+        this.isLogStreamClosed = false;
     }
 
     start = async (): Promise<MattermostContainer> => {
@@ -211,10 +214,13 @@ export default class MattermostContainer {
                     fs.mkdirSync(logDir);
                 }
                 this.logStream = fs.createWriteStream(`${logDir}/server-logs.log`, {flags: 'a'});
+                this.isLogStreamClosed = false;
 
                 stream.on('data', (data: string) => {
                     // Write all logs to file
-                    this.logStream.write(data + '\n');
+                    if (this.logStream && !this.isLogStreamClosed) {
+                        this.logStream.write(data + '\n');
+                    }
 
                     // Only print plugin logs to console in non-CI environments
                     // In CI, this causes interleaving with Playwright test output

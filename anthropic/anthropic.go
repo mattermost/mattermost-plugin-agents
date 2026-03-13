@@ -481,7 +481,7 @@ func (a *Anthropic) extractAnnotations(message anthropicSDK.Message) []llm.Annot
 		}
 
 		startPos := textPosition
-		endPos := textPosition + len(textBlock.Text)
+		endPos := textPosition + llm.UTF16CodeUnitCount(textBlock.Text)
 		textPosition = endPos
 
 		for _, citation := range textBlock.Citations {
