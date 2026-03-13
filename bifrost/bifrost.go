@@ -1181,8 +1181,8 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 
 	// Annotation buffer and text position tracking
 	var annotations []llm.Annotation
-	var textLen int       // cumulative byte length of all streamed text
-	var blockStartPos int // byte position where current text block started
+	var textLen int       // cumulative UTF-16 code unit length of all streamed text
+	var blockStartPos int // UTF-16 code unit position where current text block started
 
 	// Watchdog timer for streaming timeout
 	watchdog := make(chan struct{})
@@ -1250,7 +1250,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 						Type:  llm.EventTypeText,
 						Value: *resp.Delta,
 					}
-					textLen += len(*resp.Delta)
+					textLen += llm.UTF16CodeUnitCount(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
