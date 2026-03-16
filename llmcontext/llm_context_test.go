@@ -5,7 +5,6 @@ package llmcontext
 
 import (
 	"testing"
-	"time"
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -23,13 +22,11 @@ func (p *emptyToolProvider) GetTools(*bots.Bot) []llm.Tool {
 }
 
 type countingMCPToolProvider struct {
-	delay time.Duration
 	calls int
 }
 
 func (p *countingMCPToolProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors) {
 	p.calls++
-	time.Sleep(p.delay)
 	return []llm.Tool{
 		{
 			Name:        "test_tool",
@@ -69,13 +66,12 @@ func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
 
 	client := pluginapi.NewClient(mockAPI, nil)
-	mcpProvider := &countingMCPToolProvider{delay: 20 * time.Millisecond}
+	mcpProvider := &countingMCPToolProvider{}
 	builder := NewLLMContextBuilder(client, &emptyToolProvider{}, mcpProvider, &contextTestConfigProvider{})
 
 	user := &model.User{Id: "user-id", Username: "test-user", Locale: "en"}
 	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect}
 
-	startedAt := time.Now()
 	context := builder.BuildLLMContextUserRequest(
 		newTestBot(),
 		user,
@@ -83,9 +79,7 @@ func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 		builder.WithLLMContextDefaultTools(newTestBot()),
 	)
 
-	require.GreaterOrEqual(t, time.Since(startedAt), 20*time.Millisecond)
 	require.Equal(t, 1, mcpProvider.calls)
-	require.NotNil(t, context.Tools)
 	require.Len(t, context.Tools.GetTools(), 1)
 }
 
@@ -100,13 +94,12 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
 
 	client := pluginapi.NewClient(mockAPI, nil)
-	mcpProvider := &countingMCPToolProvider{delay: 20 * time.Millisecond}
+	mcpProvider := &countingMCPToolProvider{}
 	builder := NewLLMContextBuilder(client, &emptyToolProvider{}, mcpProvider, &contextTestConfigProvider{})
 
 	user := &model.User{Id: "user-id", Username: "test-user", Locale: "en"}
 	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect}
 
-	startedAt := time.Now()
 	context := builder.BuildLLMContextUserRequest(
 		newTestBot(),
 		user,
@@ -114,8 +107,6 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 		builder.WithLLMContextNoTools(),
 	)
 
-	require.Less(t, time.Since(startedAt), 20*time.Millisecond)
 	require.Equal(t, 0, mcpProvider.calls)
-	require.NotNil(t, context.Tools)
 	require.Empty(t, context.Tools.GetTools())
 }

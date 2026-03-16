@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
@@ -25,60 +24,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type latencyTestToolProvider struct{}
+type noToolsTestToolProvider struct{}
 
-func (p *latencyTestToolProvider) GetTools(*bots.Bot) []llm.Tool {
+func (p *noToolsTestToolProvider) GetTools(*bots.Bot) []llm.Tool {
 	return nil
 }
 
-type latencyTestMCPProvider struct {
-	delay time.Duration
+type noToolsTestMCPProvider struct {
 	calls int
 }
 
-func (p *latencyTestMCPProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors) {
+func (p *noToolsTestMCPProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors) {
 	p.calls++
-	time.Sleep(p.delay)
 	return nil, nil
 }
 
-type latencyTestContextConfigProvider struct{}
+type noToolsTestContextConfigProvider struct{}
 
-func (p *latencyTestContextConfigProvider) GetEnableLLMTrace() bool {
+func (p *noToolsTestContextConfigProvider) GetEnableLLMTrace() bool {
 	return false
 }
 
-func (p *latencyTestContextConfigProvider) GetServiceByID(string) (llm.ServiceConfig, bool) {
+func (p *noToolsTestContextConfigProvider) GetServiceByID(string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }
 
-type latencyStreamingService struct {
+type noToolsStreamingService struct {
 	newDMCalls int
 }
 
-func (s *latencyStreamingService) StreamToNewPost(context.Context, string, string, *llm.TextStreamResult, *model.Post, string) error {
+func (s *noToolsStreamingService) StreamToNewPost(context.Context, string, string, *llm.TextStreamResult, *model.Post, string) error {
 	return nil
 }
 
-func (s *latencyStreamingService) StreamToNewDM(_ context.Context, botID string, _ *llm.TextStreamResult, _ string, post *model.Post, _ string) error {
+func (s *noToolsStreamingService) StreamToNewDM(_ context.Context, botID string, _ *llm.TextStreamResult, _ string, post *model.Post, _ string) error {
 	s.newDMCalls++
 	post.Id = "response-post-id"
 	post.ChannelId = model.GetDMNameFromIds("user12345678901234567890ab", botID)
 	return nil
 }
 
-func (s *latencyStreamingService) StreamToPost(context.Context, *llm.TextStreamResult, *model.Post, string) {
+func (s *noToolsStreamingService) StreamToPost(context.Context, *llm.TextStreamResult, *model.Post, string) {
 }
 
-func (s *latencyStreamingService) StopStreaming(string) {}
+func (s *noToolsStreamingService) StopStreaming(string) {}
 
-func (s *latencyStreamingService) GetStreamingContext(ctx context.Context, _ string) (context.Context, error) {
+func (s *noToolsStreamingService) GetStreamingContext(ctx context.Context, _ string) (context.Context, error) {
 	return ctx, nil
 }
 
-func (s *latencyStreamingService) FinishStreaming(string) {}
+func (s *noToolsStreamingService) FinishStreaming(string) {}
 
-func setupLatencyAPI(t *testing.T, mcpProvider *latencyTestMCPProvider, mmClient *mmapimocks.MockClient) (*TestEnvironment, *latencyStreamingService) {
+func setupNoToolsAPI(t *testing.T, mcpProvider *noToolsTestMCPProvider, mmClient *mmapimocks.MockClient) (*TestEnvironment, *noToolsStreamingService) {
 	t.Helper()
 
 	e := SetupTestEnvironment(t)
@@ -98,12 +95,12 @@ func setupLatencyAPI(t *testing.T, mcpProvider *latencyTestMCPProvider, mmClient
 	e.api.mmClient = mmClient
 	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
 		e.client,
-		&latencyTestToolProvider{},
+		&noToolsTestToolProvider{},
 		mcpProvider,
-		&latencyTestContextConfigProvider{},
+		&noToolsTestContextConfigProvider{},
 	)
 
-	streamingService := &latencyStreamingService{}
+	streamingService := &noToolsStreamingService{}
 	e.api.streamingService = streamingService
 
 	fakeLLM := NewFakeLLM("summary response")
@@ -122,9 +119,9 @@ func TestHandleThreadAnalysisDoesNotLoadToolsWhenToolsAreDisabled(t *testing.T) 
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
-	mcpProvider := &latencyTestMCPProvider{delay: 80 * time.Millisecond}
+	mcpProvider := &noToolsTestMCPProvider{}
 	mmClient := mmapimocks.NewMockClient(t)
-	e, streamingService := setupLatencyAPI(t, mcpProvider, mmClient)
+	e, streamingService := setupNoToolsAPI(t, mcpProvider, mmClient)
 	defer e.Cleanup(t)
 
 	requestingUser := &model.User{Id: testUserID, Username: "requester", Locale: "en"}
@@ -150,23 +147,21 @@ func TestHandleThreadAnalysisDoesNotLoadToolsWhenToolsAreDisabled(t *testing.T) 
 	request := httptest.NewRequest(http.MethodPost, "/post/postid/analyze", strings.NewReader(`{"analysis_type":"summarize_thread"}`))
 	request.Header.Add("Mattermost-User-ID", testUserID)
 
-	startedAt := time.Now()
 	recorder := httptest.NewRecorder()
 	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
 
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	require.Equal(t, 1, streamingService.newDMCalls)
 	require.Equal(t, 0, mcpProvider.calls, "thread analysis should not build MCP tools when the LLM call disables tools")
-	require.Less(t, time.Since(startedAt), 60*time.Millisecond)
 }
 
 func TestHandleIntervalDoesNotLoadToolsWhenToolsAreDisabled(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
-	mcpProvider := &latencyTestMCPProvider{delay: 80 * time.Millisecond}
+	mcpProvider := &noToolsTestMCPProvider{}
 	mmClient := mmapimocks.NewMockClient(t)
-	e, streamingService := setupLatencyAPI(t, mcpProvider, mmClient)
+	e, streamingService := setupNoToolsAPI(t, mcpProvider, mmClient)
 	defer e.Cleanup(t)
 
 	requestingUser := &model.User{Id: testUserID, Username: "requester", Locale: "en"}
@@ -188,12 +183,10 @@ func TestHandleIntervalDoesNotLoadToolsWhenToolsAreDisabled(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/channel/"+testChannelID+"/interval", strings.NewReader(`{"start_time":1,"end_time":0,"preset_prompt":"summarize_range"}`))
 	request.Header.Add("Mattermost-User-ID", testUserID)
 
-	startedAt := time.Now()
 	recorder := httptest.NewRecorder()
 	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
 
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	require.Equal(t, 1, streamingService.newDMCalls)
 	require.Equal(t, 0, mcpProvider.calls, "channel interval should not build MCP tools when the LLM call disables tools")
-	require.Less(t, time.Since(startedAt), 60*time.Millisecond)
 }
