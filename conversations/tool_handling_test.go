@@ -102,6 +102,10 @@ func (c *fakeMMClient) DM(string, string, *model.Post) error {
 	return errors.New("not implemented")
 }
 
+func (c *fakeMMClient) GetTeam(string) (*model.Team, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (c *fakeMMClient) GetChannel(string) (*model.Channel, error) {
 	return nil, errors.New("not implemented")
 }

@@ -1,13 +1,11 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
 
 import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
-
-// spec: /Users/nickmisasi/workspace/worktrees/mattermost-plugin-ai-agents-in-e2e/e2e/specs/semantic-search.md
-// seed: /Users/nickmisasi/workspace/worktrees/mattermost-plugin-ai-agents-in-e2e/seed.spec.ts
+import { LLMBotPostHelper } from 'helpers/llmbot-post';
 
 const username = 'regularuser';
 const password = 'regularuser';
@@ -26,8 +24,7 @@ data: {"id":"chatcmpl-search-1","object":"chat.completion.chunk","created":17081
 data: {"id":"chatcmpl-search-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" here"},"logprobs":null,"finish_reason":null}]}
 data: {"id":"chatcmpl-search-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" are"},"logprobs":null,"finish_reason":null}]}
 data: {"id":"chatcmpl-search-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" the"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-search-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" relevant"},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-search-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" posts"},"logprobs":null,"finish_reason":null}]}
+data: {"id":"chatcmpl-search-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" findings"},"logprobs":null,"finish_reason":null}]}
 data: {"id":"chatcmpl-search-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" about"},"logprobs":null,"finish_reason":null}]}
 data: {"id":"chatcmpl-search-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":" budget"},"logprobs":null,"finish_reason":null}]}
 data: {"id":"chatcmpl-search-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"."},"logprobs":null,"finish_reason":null}]}
@@ -35,7 +32,8 @@ data: {"id":"chatcmpl-search-1","object":"chat.completion.chunk","created":17081
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-const searchResponseText = "Based on the search results, here are the relevant posts about budget.";
+const searchResponseWithSourcesText = "Based on the search results, here are the findings about budget.";
+const searchResponseNoResultsText = "I couldn't find any relevant messages for your query. Please try a different search term.";
 
 test.beforeAll(async () => {
     mattermost = await RunContainer();
@@ -52,102 +50,110 @@ test.afterAll(async () => {
     await mattermost.stop();
 });
 
-async function setupTestPage(page) {
+async function setupTestPage(page: Page) {
     const mmPage = new MattermostPage(page);
     const aiPlugin = new AIPlugin(page);
+    const llmBotHelper = new LLMBotPostHelper(page);
     const url = mattermost.url();
 
     await mmPage.login(url, username, password);
 
-    return { mmPage, aiPlugin };
+    return { mmPage, aiPlugin, llmBotHelper };
 }
 
-test.describe('Basic Semantic Search Operations', () => {
-    test('Perform Simple Single-Word Search', async ({ page }) => {
-        const { mmPage, aiPlugin } = await setupTestPage(page);
+test.describe('Search Sources Display', () => {
+    test('Search sources panel displays and expands', async ({ page }) => {
+        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
 
-        // Create test posts with "budget" content
+        // Create posts with searchable content about budget
         await mmPage.sendMessageAsUser(
             mattermost,
             username,
             password,
-            'We need to discuss the Q4 budget allocation for the marketing department'
+            'The Q4 budget report shows a 15% increase in marketing spend'
         );
 
         await mmPage.sendMessageAsUser(
             mattermost,
             username,
             password,
-            'The budget for the new project has been approved'
+            'Budget allocation for engineering has been approved for next quarter'
         );
 
         await mmPage.sendMessageAsUser(
             mattermost,
             username,
             password,
-            'Budget constraints are affecting our timeline'
+            'We need to finalize the budget review meeting notes'
         );
 
-        await aiPlugin.openRHS();
+        // Wait for posts to be indexed by the embedding search
+        await page.waitForTimeout(2000);
 
-        // Wait for the direct channel to be created and textarea to be ready
-        await expect(aiPlugin.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
-
-        // Skip search hint check - search infrastructure may not be fully enabled yet
-        // await expect(page.getByText('Agents searches only content you have access to')).toBeVisible();
-
+        // Set up mock response for the LLM
         await openAIMock.addCompletionMock(searchResponseWithSources);
-        await aiPlugin.sendMessage('budget');
 
-        await aiPlugin.waitForBotResponse(searchResponseText);
+        // Wait for plugin to be fully initialized (app bar icon indicates plugin is ready)
+        await aiPlugin.openRHS();
+        await expect(aiPlugin.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
+        await aiPlugin.closeRHS();
 
+        // Trigger embedding search via the search bar
+        await aiPlugin.triggerEmbeddingSearch('budget');
+
+        // Wait for bot response in RHS
+        await aiPlugin.waitForBotResponse(searchResponseWithSourcesText);
+
+        // Verify "Sources" header is visible
+        await llmBotHelper.waitForSearchSources();
+        await llmBotHelper.expectSearchSourcesVisible(true);
+
+        // Verify count badge is visible
+        const countBadge = llmBotHelper.getSearchSourcesCount();
+        await expect(countBadge).toBeVisible();
+
+        // Click "Sources" header to expand
+        await llmBotHelper.clickSearchSourcesHeader();
+
+        // Verify source items are visible after expanding
+        await llmBotHelper.expectSearchSourcesExpanded(true);
+
+        // Verify source items have relevance percentages
+        const sourceItems = llmBotHelper.getSearchSourceItems();
+        const itemCount = await sourceItems.count();
+        expect(itemCount).toBeGreaterThan(0);
+
+        // Verify first source item has relevance score in percentage format
+        await llmBotHelper.expectRelevanceScoreFormat(0);
+
+        // Verify RHS is still visible
         await expect(page.getByTestId('mattermost-ai-rhs')).toBeVisible();
     });
 
-    test('Perform Simple Multi-Word Search', async ({ page }) => {
-        const { mmPage, aiPlugin } = await setupTestPage(page);
+    test('Search query with no channel results returns appropriate message', async ({ page }) => {
+        await setupTestPage(page);
 
-        await mmPage.sendMessageAsUser(
-            mattermost,
-            username,
-            password,
-            'The project timeline needs to be updated based on the latest requirements'
-        );
+        const userClient = await mattermost.getClient(username, password);
+        const currentUser = await userClient.getMe();
+        const secondUser = await userClient.getUserByUsername('seconduser');
+        const emptyDMChannel = await userClient.createDirectChannel([currentUser.id, secondUser.id]);
 
-        await mmPage.sendMessageAsUser(
-            mattermost,
-            username,
-            password,
-            'Can someone share the project timeline for Q1?'
-        );
+        const response = await fetch(`${mattermost.url()}/plugins/mattermost-ai/search`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${userClient.getToken()}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                query: 'xyznonexistent12345',
+                channelId: emptyDMChannel.id,
+            }),
+        });
 
-        await mmPage.sendMessageAsUser(
-            mattermost,
-            username,
-            password,
-            'Our timeline includes design, development, and testing phases'
-        );
+        expect(response.ok).toBe(true);
 
-        await aiPlugin.openRHS();
-
-        // Wait for the direct channel to be created and textarea to be ready
-        await expect(aiPlugin.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
-
-        await openAIMock.addCompletionMock(searchResponseWithSources);
-        await aiPlugin.sendMessage('project timeline');
-
-        await aiPlugin.waitForBotResponse(searchResponseText);
-
-        await expect(page.getByTestId('mattermost-ai-rhs')).toBeVisible();
-    });
-
-    test('Verify Empty Query Validation', async ({ page }) => {
-        const { aiPlugin } = await setupTestPage(page);
-
-        await aiPlugin.openRHS();
-
-        const sendButton = page.locator('#rhsContainer').getByTestId('SendMessageButton');
-
-        await expect(sendButton).toBeDisabled();
+        const payload = await response.json();
+        expect(payload.answer).toBe(searchResponseNoResultsText);
+        expect(payload.results).toEqual([]);
     });
 });

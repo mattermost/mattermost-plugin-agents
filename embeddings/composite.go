@@ -5,6 +5,7 @@ package embeddings
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-ai/chunking"
 )
@@ -25,11 +26,6 @@ func NewCompositeSearch(store VectorStore, provider EmbeddingProvider, options c
 	}
 }
 
-// SetChunkingOptions updates the chunking options
-func (c *CompositeSearch) SetChunkingOptions(options chunking.Options) {
-	c.options = options
-}
-
 // Store chunks documents, generates embeddings, and stores them
 func (c *CompositeSearch) Store(ctx context.Context, docs []PostDocument) error {
 	// Apply chunking to each document
@@ -47,6 +43,11 @@ func (c *CompositeSearch) Store(ctx context.Context, docs []PostDocument) error 
 		}
 	}
 
+	// Early return if no documents after chunking (all filtered or empty input)
+	if len(chunkedDocs) == 0 {
+		return nil
+	}
+
 	// Extract texts for embedding
 	texts := make([]string, len(chunkedDocs))
 	for i, doc := range chunkedDocs {
@@ -57,6 +58,11 @@ func (c *CompositeSearch) Store(ctx context.Context, docs []PostDocument) error 
 	embeddings, err := c.provider.BatchCreateEmbeddings(ctx, texts)
 	if err != nil {
 		return err
+	}
+
+	// Validate embedding count matches document count
+	if len(embeddings) != len(chunkedDocs) {
+		return fmt.Errorf("embedding count mismatch: got %d embeddings for %d documents", len(embeddings), len(chunkedDocs))
 	}
 
 	// Store the chunks and their embeddings
@@ -88,4 +94,9 @@ func (c *CompositeSearch) Delete(ctx context.Context, postIDs []string) error {
 // Clear removes all documents and chunks
 func (c *CompositeSearch) Clear(ctx context.Context) error {
 	return c.store.Clear(ctx)
+}
+
+// DeleteOrphaned removes embeddings whose posts no longer exist or are past retention.
+func (c *CompositeSearch) DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error) {
+	return c.store.DeleteOrphaned(ctx, nowTime, batchSize)
 }

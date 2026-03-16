@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -22,7 +23,8 @@ type EmbeddedMCPServer struct {
 }
 
 // NewEmbeddedMCPServer creates a new embedded MCP server instance
-func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService) (*EmbeddedMCPServer, error) {
+// searchService is optional and can be nil if semantic search is not available
+func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService, searchService tools.SemanticSearchService) (*EmbeddedMCPServer, error) {
 	// Get site URL from plugin configuration
 	siteURL := ""
 	if config := pluginAPI.Configuration.GetConfig(); config != nil && config.ServiceSettings.SiteURL != nil {
@@ -55,7 +57,7 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 	mcpLogger := NewPluginAPILoggerAdapter(logger)
 
 	// Create the in-memory MCP server
-	server, err := mcpserver.NewInMemoryServer(config, mcpLogger)
+	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, searchService)
 	if err != nil {
 		return nil, err
 	}

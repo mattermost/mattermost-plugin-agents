@@ -60,19 +60,7 @@ class RealAPIHelper {
      * Open the channel agents popover by clicking the agents button in channel header
      */
     async openChannelAgentsPopover() {
-        // The agents button is in the channel header with a styled-components class
-        // It's the button with ButtonContainer class that has an SVG icon
-        const channelHeader = this.page.locator('.channel-header__top, [class*="channel-header"]');
-
-        // Look for the AI plugin button
-        const agentsButton = channelHeader.locator('button[class*="ButtonContainer"]').first();
-
-        // Wait for the button to be visible and click it
-        await agentsButton.waitFor({ state: 'visible', timeout: 10000 });
-        await agentsButton.click();
-
-        // Wait for the popover to appear
-        await this.page.waitForSelector('.channel-summarize-popover', { timeout: 10000 });
+        await new AIPlugin(this.page).openChannelAnalysisPopover();
     }
 
     /**

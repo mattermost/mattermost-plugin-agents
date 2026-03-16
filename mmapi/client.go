@@ -21,6 +21,7 @@ type Client interface {
 	CreatePost(post *model.Post) error
 	UpdatePost(post *model.Post) error
 	DM(senderID, receiverID string, post *model.Post) error
+	GetTeam(teamID string) (*model.Team, error)
 	GetChannel(channelID string) (*model.Channel, error)
 	GetDirectChannel(userID1, userID2 string) (*model.Channel, error)
 	PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast)
@@ -63,6 +64,10 @@ type client struct {
 
 func (m *client) GetUser(userID string) (*model.User, error) {
 	return m.pluginAPI.User.Get(userID)
+}
+
+func (m *client) GetTeam(teamID string) (*model.Team, error) {
+	return m.pluginAPI.Team.Get(teamID)
 }
 
 func (m *client) GetChannel(channelID string) (*model.Channel, error) {
