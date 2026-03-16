@@ -43,17 +43,23 @@ func generateState() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+// ServerConfigLookup resolves a server's current configuration by its ID.
+// It returns the config and true if found, or a zero value and false if not.
+type ServerConfigLookup func(serverID string) (ServerConfig, bool)
+
 type OAuthManager struct {
-	pluginAPI   mmapi.Client
-	callbackURL string
-	httpClient  *http.Client
+	pluginAPI          mmapi.Client
+	callbackURL        string
+	httpClient         *http.Client
+	serverConfigLookup ServerConfigLookup
 }
 
-func NewOAuthManager(pluginAPI mmapi.Client, callbackURL string, httpClient *http.Client) *OAuthManager {
+func NewOAuthManager(pluginAPI mmapi.Client, callbackURL string, httpClient *http.Client, serverConfigLookup ServerConfigLookup) *OAuthManager {
 	return &OAuthManager{
-		pluginAPI:   pluginAPI,
-		callbackURL: callbackURL,
-		httpClient:  httpClient,
+		pluginAPI:          pluginAPI,
+		callbackURL:        callbackURL,
+		httpClient:         httpClient,
+		serverConfigLookup: serverConfigLookup,
 	}
 }
 
@@ -188,17 +194,18 @@ func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, 
 	// Build authorization URL with PKCE
 	authURL := oauthConfig.AuthCodeURL(state, oauth2.S256ChallengeOption(codeVerifier))
 
-	// Store OAuth session (including static credentials so ProcessCallback can reuse them)
+	// Store OAuth session. Only the StaticClientID is persisted so ProcessCallback
+	// knows whether to look up static credentials; the secret itself is re-derived
+	// from the live plugin config via serverConfigLookup at callback time.
 	if err := m.storeSession(&OAuthSession{
-		UserID:             userID,
-		ServerID:           serverID,
-		ServerURL:          serverURL,
-		ServerMetadataURL:  metadataURL,
-		CodeVerifier:       codeVerifier,
-		State:              state,
-		StaticClientID:     staticCredsClientID(staticCreds),
-		StaticClientSecret: staticCredsClientSecret(staticCreds),
-		CreatedAt:          time.Now(),
+		UserID:            userID,
+		ServerID:          serverID,
+		ServerURL:         serverURL,
+		ServerMetadataURL: metadataURL,
+		CodeVerifier:      codeVerifier,
+		State:             state,
+		StaticClientID:    staticCredsClientID(staticCreds),
+		CreatedAt:         time.Now(),
 	}); err != nil {
 		return "", fmt.Errorf("failed to store OAuth session: %w", err)
 	}
@@ -213,13 +220,6 @@ func staticCredsClientID(creds *StaticOAuthCredentials) string {
 	return creds.ClientID
 }
 
-func staticCredsClientSecret(creds *StaticOAuthCredentials) string {
-	if creds == nil {
-		return ""
-	}
-	return creds.ClientSecret
-}
-
 func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, state, code string) (*OAuthSession, error) {
 	session, err := m.loadSession(loggedInUserID, state)
 	if err != nil {
@@ -227,8 +227,8 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 	}
 
 	// Always clean up the session when we're done, whether we succeed or fail.
-	// The session contains sensitive material (CodeVerifier, static credentials)
-	// that should not linger in the KV store.
+	// The session contains sensitive material (CodeVerifier) that should not
+	// linger in the KV store.
 	defer func() {
 		if delErr := m.deleteSession(loggedInUserID, state); delErr != nil {
 			m.pluginAPI.LogError("Failed to delete OAuth session after processing callback")
@@ -245,12 +245,15 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 		return nil, fmt.Errorf("user ID mismatch: expected %s, got %s", session.UserID, loggedInUserID)
 	}
 
-	// Reconstruct static credentials from the stored session
+	// Re-derive static credentials from the live plugin config so the secret
+	// never needs to be persisted in the KV store session.
 	var staticCreds *StaticOAuthCredentials
-	if session.StaticClientID != "" {
-		staticCreds = &StaticOAuthCredentials{
-			ClientID:     session.StaticClientID,
-			ClientSecret: session.StaticClientSecret,
+	if session.StaticClientID != "" && m.serverConfigLookup != nil {
+		if cfg, ok := m.serverConfigLookup(session.ServerID); ok {
+			staticCreds = staticOAuthCreds(cfg)
+		} else {
+			m.pluginAPI.LogWarn("Static OAuth credentials were expected but server config not found; falling back to dynamic registration",
+				"serverID", session.ServerID)
 		}
 	}
 

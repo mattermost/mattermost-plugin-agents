@@ -113,15 +113,14 @@ func (m *OAuthManager) storeClientCredentials(creds *ClientCredentials) error {
 }
 
 type OAuthSession struct {
-	UserID             string    `json:"userID"`
-	ServerID           string    `json:"serverID"`
-	ServerURL          string    `json:"serverURL"`
-	ServerMetadataURL  string    `json:"serverMetadataURL"`
-	CodeVerifier       string    `json:"codeVerifier"`
-	State              string    `json:"state"`
-	StaticClientID     string    `json:"staticClientID,omitempty"`
-	StaticClientSecret string    `json:"staticClientSecret,omitempty"`
-	CreatedAt          time.Time `json:"createdAt"`
+	UserID            string    `json:"userID"`
+	ServerID          string    `json:"serverID"`
+	ServerURL         string    `json:"serverURL"`
+	ServerMetadataURL string    `json:"serverMetadataURL"`
+	CodeVerifier      string    `json:"codeVerifier"`
+	State             string    `json:"state"`
+	StaticClientID    string    `json:"staticClientID,omitempty"`
+	CreatedAt         time.Time `json:"createdAt"`
 }
 
 func (m *OAuthManager) loadSession(userID, state string) (*OAuthSession, error) {
@@ -145,12 +144,8 @@ const oauthSessionTTL = 10 * time.Minute
 
 func (m *OAuthManager) storeSession(session *OAuthSession) error {
 	sessionKey := buildSessionKey(session.UserID, session.State)
-	sessionData, err := json.Marshal(session)
-	if err != nil {
-		return fmt.Errorf("failed to marshal OAuth session: %w", err)
-	}
 
-	if err := m.pluginAPI.KVSetWithExpiry(sessionKey, sessionData, oauthSessionTTL); err != nil {
+	if err := m.pluginAPI.KVSetWithExpiry(sessionKey, session, oauthSessionTTL); err != nil {
 		return fmt.Errorf("failed to store OAuth session: %w", err)
 	}
 
