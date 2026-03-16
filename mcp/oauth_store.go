@@ -141,6 +141,8 @@ func (m *OAuthManager) loadSession(userID, state string) (*OAuthSession, error) 
 	return &session, nil
 }
 
+const oauthSessionTTL = 10 * time.Minute
+
 func (m *OAuthManager) storeSession(session *OAuthSession) error {
 	sessionKey := buildSessionKey(session.UserID, session.State)
 	sessionData, err := json.Marshal(session)
@@ -148,7 +150,7 @@ func (m *OAuthManager) storeSession(session *OAuthSession) error {
 		return fmt.Errorf("failed to marshal OAuth session: %w", err)
 	}
 
-	if err := m.pluginAPI.KVSet(sessionKey, sessionData); err != nil {
+	if err := m.pluginAPI.KVSetWithExpiry(sessionKey, sessionData, oauthSessionTTL); err != nil {
 		return fmt.Errorf("failed to store OAuth session: %w", err)
 	}
 
