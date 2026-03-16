@@ -29,6 +29,7 @@ import {PostbackPost} from './components/postback_post';
 import {isRHSCompatable} from './mm_webapp';
 import SearchButton from './components/search_button';
 import AskChannelButton from './components/ask_channel_button';
+import ChannelHeaderAskChannelPortal from './components/channel_header_ask_channel_portal';
 import {doSelectPost} from './hooks';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
@@ -179,6 +180,7 @@ export default class Plugin {
             registry.registerNewMessagesSeparatorActionComponent(UnreadsSummarize);
         }
 
+        const needsChannelHeaderIconFallback = !registry.registerChannelHeaderIcon;
         if (registry.registerChannelHeaderIcon) {
             registry.registerChannelHeaderIcon(AskChannelButton);
         }
@@ -204,6 +206,9 @@ export default class Plugin {
 
         if (registry.registerRootComponent) {
             registry.registerRootComponent(AgentsTour);
+            if (needsChannelHeaderIconFallback) {
+                registry.registerRootComponent(ChannelHeaderAskChannelPortal);
+            }
         }
 
         if (registry.registerSearchComponents) {
