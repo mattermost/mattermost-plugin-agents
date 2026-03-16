@@ -13,7 +13,6 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/openai"
 )
 
@@ -36,7 +35,7 @@ type Config struct {
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
-	MCP                             mcp.Config                       `json:"mcp"`
+	MCP                             MCPConfig                        `json:"mcp"`
 	WebSearch                       WebSearchConfig                  `json:"webSearch"`
 }
 
@@ -159,7 +158,7 @@ func parseBooleanEnv(key string) (bool, bool) {
 	return parsed, true
 }
 
-func (c *Container) MCP() mcp.Config {
+func (c *Container) MCP() MCPConfig {
 	return c.cfg.Load().MCP
 }
 

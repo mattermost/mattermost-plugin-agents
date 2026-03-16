@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/anthropic"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
+	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/indexer"
@@ -43,6 +44,7 @@ type Config interface {
 	GetDefaultBotName() string
 	MCP() mcp.Config
 	AllowUnsafeLinks() bool
+	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
 }
 
@@ -76,6 +78,7 @@ type API struct {
 	mcpClientManager      MCPClientManager
 	mcpHandlers           *mcpserver.PluginMCPHandlers
 	llmUpstreamHTTPClient *http.Client
+	getSearchInitError    func() string
 }
 
 // New creates a new API instance
@@ -98,6 +101,7 @@ func New(
 	mcpClientManager MCPClientManager,
 	mcpHandlers *mcpserver.PluginMCPHandlers,
 	llmUpstreamHTTPClient *http.Client,
+	getSearchInitError func() string,
 ) *API {
 	return &API{
 		bots:                  bots,
@@ -119,6 +123,7 @@ func New(
 		mcpClientManager:      mcpClientManager,
 		mcpHandlers:           mcpHandlers,
 		llmUpstreamHTTPClient: llmUpstreamHTTPClient,
+		getSearchInitError:    getSearchInitError,
 	}
 }
 
@@ -170,6 +175,10 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
 
+	// Raw search endpoint returns enriched semantic search results without LLM processing.
+	// Used by the MCP server for external search callbacks.
+	router.POST("/search/raw", a.handleRawSearch)
+
 	botRequiredRouter := router.Group("")
 	botRequiredRouter.Use(a.aiBotRequired)
 
@@ -197,6 +206,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/reindex", a.handleReindexPosts)
 	adminRouter.GET("/reindex/status", a.handleGetJobStatus)
 	adminRouter.POST("/reindex/cancel", a.handleCancelJob)
+	adminRouter.POST("/reindex/catchup", a.handleCatchUpIndex)
+	adminRouter.GET("/reindex/health-check", a.handleIndexHealthCheck)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)

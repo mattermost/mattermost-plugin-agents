@@ -91,8 +91,6 @@ func (c HTTPConfig) GetTrackAIGenerated() bool {
 // Used for embedded MCP servers that run within the same process as the plugin
 type InMemoryConfig struct {
 	BaseConfig
-	// No additional configuration needed for in-memory transport
-	// Authentication is handled through session tokens passed via context
 }
 
 // GetTrackAIGenerated returns whether to track AI-generated content

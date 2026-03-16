@@ -58,6 +58,67 @@ func (m *mockConfig) GetTranscriptGenerator() string {
 	return "testbot"
 }
 
+func TestGetAllBotUserIDs(t *testing.T) {
+	tests := []struct {
+		name     string
+		bots     []*Bot
+		expected []string
+	}{
+		{
+			name:     "returns empty slice when no bots configured",
+			bots:     nil,
+			expected: []string{},
+		},
+		{
+			name:     "returns empty slice when bots slice is empty",
+			bots:     []*Bot{},
+			expected: []string{},
+		},
+		{
+			name: "returns all bot user IDs when bots exist",
+			bots: []*Bot{
+				{mmBot: &model.Bot{UserId: "bot1-user-id"}},
+				{mmBot: &model.Bot{UserId: "bot2-user-id"}},
+			},
+			expected: []string{"bot1-user-id", "bot2-user-id"},
+		},
+		{
+			name: "skips bots with nil mmBot",
+			bots: []*Bot{
+				{mmBot: &model.Bot{UserId: "bot1-user-id"}},
+				{mmBot: nil},
+				{mmBot: &model.Bot{UserId: "bot3-user-id"}},
+			},
+			expected: []string{"bot1-user-id", "bot3-user-id"},
+		},
+		{
+			name: "returns correct count with single bot",
+			bots: []*Bot{
+				{mmBot: &model.Bot{UserId: "single-bot-id"}},
+			},
+			expected: []string{"single-bot-id"},
+		},
+		{
+			name: "returns empty slice when all bots have nil mmBot",
+			bots: []*Bot{
+				{mmBot: nil},
+				{mmBot: nil},
+			},
+			expected: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mmBots := &MMBots{}
+			mmBots.SetBotsForTesting(tt.bots)
+
+			result := mmBots.GetAllBotUserIDs()
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestBotConfigsEqual(t *testing.T) {
 	baseBotConfig := func() llm.BotConfig {
 		return llm.BotConfig{

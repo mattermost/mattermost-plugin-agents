@@ -4,7 +4,9 @@
 package llmcontext
 
 import (
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -100,8 +102,16 @@ func (b *Builder) WithLLMContextChannel(channel *model.Channel) llm.ContextOptio
 
 func (b *Builder) WithLLMContextRequestingUser(user *model.User) llm.ContextOption {
 	return func(c *llm.Context) {
-		c.RequestingUser = user
 		if user != nil {
+			// Create a shallow copy to avoid mutating the original user object,
+			// then sanitize profile fields that are rendered into the system prompt.
+			sanitizedUser := *user
+			sanitizedUser.FirstName = sanitizeUserProfileField(user.FirstName)
+			sanitizedUser.LastName = sanitizeUserProfileField(user.LastName)
+			sanitizedUser.Position = sanitizeUserProfileField(user.Position)
+			sanitizedUser.Nickname = sanitizeUserProfileField(user.Nickname)
+			c.RequestingUser = &sanitizedUser
+
 			tz := user.GetPreferredTimezone()
 			loc, err := time.LoadLocation(tz)
 			if err == nil && loc != nil {
@@ -109,6 +119,25 @@ func (b *Builder) WithLLMContextRequestingUser(user *model.User) llm.ContextOpti
 			}
 		}
 	}
+}
+
+// sanitizeUserProfileField strips characters that could be used for prompt injection
+// in user profile fields rendered into the system prompt. It collapses newlines, carriage
+// returns, and tabs to spaces, removes other control characters, and trims the result.
+func sanitizeUserProfileField(s string) string {
+	var result strings.Builder
+	result.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			result.WriteRune(' ')
+		case unicode.IsControl(r):
+			continue
+		default:
+			result.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(result.String())
 }
 
 // WithLLMContextSessionID removed: embedded MCP manages its own session lifecycle

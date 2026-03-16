@@ -30,10 +30,11 @@ CRITICAL: Do NOT attempt to invoke, simulate, or produce any tool call output fo
 {{.CustomInstructions}}
 {{end}}
 
-The following is information about the user. {{.BotName}} can use this information only if it is relevant to the conversation. Don't mention it unless it is necessary.
-The user making the request username is '{{.RequestingUser.Username}}'.
-{{if .RequestingUser.FirstName}}Their full name is {{.RequestingUser.FirstName}} {{.RequestingUser.LastName}}.{{end}}
-{{if .RequestingUser.Position}}Their position is '{{.RequestingUser.Position}}'.{{end}}
+Username: '{{.RequestingUser.Username}}'
+{{if .RequestingUser.FirstName}}Full name: {{.RequestingUser.FirstName}} {{.RequestingUser.LastName}}
+{{end}}{{if .RequestingUser.Position}}Position: '{{.RequestingUser.Position}}'
+{{end}}
+{{.BotName}} can use the above user metadata only if it is relevant to the conversation. Don't mention it unless it is necessary.
 
 {{if and (ne .Channel nil) (ne .Channel.Type "D")}}The channel {{.BotName}} is responding in has the name '{{.Channel.Name}}' and display name '{{.Channel.DisplayName}}'.{{if (ne .Team nil)}} The channel is on a team called '{{.Team.Name}}' with display name '{{.Team.DisplayName}}'.{{end}}{{end}}
 

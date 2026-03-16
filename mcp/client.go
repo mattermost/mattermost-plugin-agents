@@ -47,18 +47,8 @@ type Client struct {
 	sessionID      string                // session ID for embedded server reconnection
 }
 
-// ServerConfig contains the configuration for a single MCP server
-type ServerConfig struct {
-	Name         string            `json:"name"`
-	Enabled      bool              `json:"enabled"`
-	BaseURL      string            `json:"baseURL"`
-	Headers      map[string]string `json:"headers,omitempty"`
-	ClientID     string            `json:"clientID,omitempty"`
-	ClientSecret string            `json:"clientSecret,omitempty"`
-}
-
-// StaticOAuthCreds returns static OAuth credentials from config, or nil if not configured.
-func (s ServerConfig) StaticOAuthCreds() *StaticOAuthCredentials {
+// staticOAuthCreds returns static OAuth credentials from a server config, or nil if not configured.
+func staticOAuthCreds(s ServerConfig) *StaticOAuthCredentials {
 	if s.ClientID == "" {
 		return nil
 	}
@@ -262,7 +252,7 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 
 	// TODO: Load and check cached authentication information
 
-	staticCreds := serverConfig.StaticOAuthCreds()
+	staticCreds := staticOAuthCreds(serverConfig)
 
 	// We have no information about this server, so try to connect various ways.
 	client := mcp.NewClient(

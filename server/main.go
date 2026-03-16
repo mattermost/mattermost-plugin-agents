@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-ai/api"
@@ -15,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
 	"github.com/mattermost/mattermost-plugin-ai/database"
+	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/indexer"
@@ -151,6 +153,34 @@ func (p *Plugin) OnActivate() error {
 
 	streamingService := streaming.NewMMPostStreamService(mmClient, i18nBundle)
 
+	// Atomic pointer for the embedding search - single source of truth
+	var currentSearch atomic.Pointer[embeddings.EmbeddingSearch]
+	var lastSearchInitError atomic.Value // stores string
+
+	// Getter function that reads from the atomic pointer
+	getSearch := func() embeddings.EmbeddingSearch {
+		ptr := currentSearch.Load()
+		if ptr == nil {
+			return nil
+		}
+		return *ptr
+	}
+
+	// Config getter for saving model info after reindexing
+	configGetter := func() embeddings.EmbeddingSearchConfig {
+		return p.configuration.EmbeddingSearchConfig()
+	}
+
+	// Getter for the last search initialization error
+	getSearchInitError := func() string {
+		val := lastSearchInitError.Load()
+		if val == nil {
+			return ""
+		}
+		return val.(string)
+	}
+
+	// Initialize embedding search
 	embeddingsSearch, err := search.InitEmbeddingsSearch(
 		dbClient.DB,
 		llmUpstreamHTTPClient,
@@ -159,18 +189,92 @@ func (p *Plugin) OnActivate() error {
 	)
 	if err != nil {
 		pluginAPI.Log.Warn("failed to initialize search infrastructure", "error", err)
+		lastSearchInitError.Store(err.Error())
 		// Continue without search functionality
 	}
 
-	indexerService := indexer.New(embeddingsSearch, mmClient, bots, dbClient.DB)
+	// Create indexer service with getter function
+	indexerService := indexer.New(getSearch, configGetter, mmClient, bots, dbClient.DB, p.API)
 
+	// Mark any orphaned reindex jobs from this node as failed
+	// This handles the case where the plugin/server crashed while a job was running
+	if orphanErr := indexerService.MarkOrphanedJobAsFailed(); orphanErr != nil {
+		pluginAPI.Log.Warn("Failed to check for orphaned reindex job", "error", orphanErr)
+	}
+
+	// Check model compatibility and disable search if the model has changed since last reindex.
+	// Search will be re-enabled by the config update listener (registered below) after a
+	// reindex updates the stored model info — this is intentional, not a deadlock.
+	if embeddingsSearch != nil {
+		embeddingsCfg := p.configuration.EmbeddingSearchConfig()
+		compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.GetProviderType(), embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())
+		if !compatibility.Compatible {
+			pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
+				"reason", compatibility.Reason)
+			embeddingsSearch = nil // Disable search
+			lastSearchInitError.Store("search disabled: " + compatibility.Reason)
+		}
+	}
+
+	// Store initial search in atomic pointer
+	if embeddingsSearch != nil {
+		currentSearch.Store(&embeddingsSearch)
+		lastSearchInitError.Store("") // Clear any previous error
+	}
+
+	// Create search service with getter function
 	searchService := search.New(
-		embeddingsSearch,
+		getSearch,
 		mmClient,
 		prompts,
 		streamingService,
 		licenseChecker,
 	)
+
+	// Register update listener for embedding search config changes
+	p.configuration.RegisterUpdateListener(func() {
+		newEmbeddingsSearch, initErr := search.InitEmbeddingsSearch(
+			dbClient.DB,
+			llmUpstreamHTTPClient,
+			p.configuration.EmbeddingSearchConfig(),
+			licenseChecker,
+		)
+		if initErr != nil {
+			pluginAPI.Log.Error("Failed to reinitialize embedding search on config change", "error", initErr)
+			// Disable search on failure
+			currentSearch.Store(nil)
+			lastSearchInitError.Store(initErr.Error())
+			return
+		}
+
+		// Check model compatibility.
+		// If the configured model no longer matches the indexed model, search is intentionally
+		// disabled until a reindex updates the stored model info. This is not a deadlock: the
+		// listener re-fires on every config save and re-calls InitEmbeddingsSearch above, so
+		// after a successful reindex the next config change will pass this check and re-enable search.
+		if newEmbeddingsSearch != nil {
+			embeddingsCfg := p.configuration.EmbeddingSearchConfig()
+			compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.GetProviderType(), embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())
+			if !compatibility.Compatible {
+				pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
+					"reason", compatibility.Reason)
+				newEmbeddingsSearch = nil
+				lastSearchInitError.Store("search disabled: " + compatibility.Reason)
+			}
+		}
+
+		// Update atomic pointer - both services will see the new value
+		if newEmbeddingsSearch != nil {
+			currentSearch.Store(&newEmbeddingsSearch)
+			lastSearchInitError.Store("") // Clear any previous error
+		} else {
+			currentSearch.Store(nil)
+			if lastSearchInitError.Load() != nil {
+				lastSearchInitError.Store("")
+			}
+		}
+		pluginAPI.Log.Info("Embedding search reinitialized on config change")
+	})
 
 	webSearchService := mmtools.NewWebSearchService(func() *config.Config {
 		return p.configuration.Config()
@@ -194,7 +298,7 @@ func (p *Plugin) OnActivate() error {
 	// Create embedded MCP server if enabled
 	var embeddedMCPServer mcp.EmbeddedMCPServer
 	if p.configuration.MCP().EmbeddedServer.Enabled {
-		embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
+		embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
 		if err != nil {
 			pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
 			// Continue without embedded server
@@ -208,7 +312,7 @@ func (p *Plugin) OnActivate() error {
 		var embeddedServer mcp.EmbeddedMCPServer
 		var embeddedErr error
 		if p.configuration.MCP().EmbeddedServer.Enabled {
-			embeddedServer, embeddedErr = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
+			embeddedServer, embeddedErr = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
 			if embeddedErr != nil {
 				pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
 			}
@@ -285,6 +389,7 @@ func (p *Plugin) OnActivate() error {
 		mcpClientManager,
 		mcpHandlers,
 		llmUpstreamHTTPClient,
+		getSearchInitError,
 	)
 
 	// Keep only what we need
@@ -349,6 +454,24 @@ func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
 			p.pluginAPI.Log.Error("Failed to delete post from vector database", "error", err)
 		}
 	}
+}
+
+func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {
+	if p.indexerService == nil {
+		return 0, nil
+	}
+
+	count, err := p.indexerService.RunDataRetention(context.Background(), nowTime, batchSize)
+	if err != nil {
+		p.pluginAPI.Log.Error("Failed to run data retention for embeddings", "error", err)
+		return 0, err
+	}
+
+	if count > 0 {
+		p.pluginAPI.Log.Info("Data retention cleaned up orphaned embeddings", "deleted", count)
+	}
+
+	return count, nil
 }
 
 func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {

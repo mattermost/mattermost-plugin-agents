@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
+	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -42,6 +43,14 @@ type ToolProvider interface {
 	ProvideTools(*mcp.Server)
 }
 
+// SemanticSearchService provides semantic search capabilities for the MCP server.
+// *search.Search implements this interface directly for embedded servers.
+// HTTPSemanticSearchService implements it for external servers via HTTP callbacks.
+type SemanticSearchService interface {
+	Enabled() bool
+	Search(ctx context.Context, query string, opts search.Options) ([]search.RAGResult, error)
+}
+
 // MattermostToolProvider provides Mattermost tools following the mmtools pattern
 type MattermostToolProvider struct {
 	authProvider        auth.AuthenticationProvider
@@ -50,12 +59,14 @@ type MattermostToolProvider struct {
 	mmInternalServerURL string // Internal server URL for API communication
 	devMode             bool
 	accessMode          AccessMode
-	trackAIGenerated    bool // Whether to add ai_generated_by props to posts
+	trackAIGenerated    bool                  // Whether to add ai_generated_by props to posts
+	searchService       SemanticSearchService // Optional semantic search service, can be nil
 }
 
 // NewMattermostToolProvider creates a new tool provider
 // Now accepts a ServerConfig interface to avoid circular dependencies
-func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config types.ServerConfig, accessMode AccessMode) *MattermostToolProvider {
+// searchService is optional and can be nil if semantic search is not available
+func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config types.ServerConfig, accessMode AccessMode, searchService SemanticSearchService) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	internalURL := config.GetMMInternalServerURL()
 	if internalURL == "" {
@@ -70,6 +81,7 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 		devMode:             config.GetDevMode(),
 		accessMode:          accessMode,
 		trackAIGenerated:    config.GetTrackAIGenerated(),
+		searchService:       searchService,
 	}
 }
 

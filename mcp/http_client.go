@@ -30,7 +30,7 @@ func (c *Client) httpClientForMCP(headers map[string]string) *http.Client {
 		serverName:  c.config.Name,
 		manager:     c.oauthManager,
 		serverURL:   c.config.BaseURL,
-		staticCreds: c.config.StaticOAuthCreds(),
+		staticCreds: staticOAuthCreds(c.config),
 		base:        c.httpClient.Transport,
 	}
 

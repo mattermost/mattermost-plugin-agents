@@ -1343,6 +1343,11 @@ func (s *OpenAI) BatchCreateEmbeddings(ctx context.Context, texts []string) ([][
 		return nil, fmt.Errorf("failed to create embeddings batch: %w", err)
 	}
 
+	// Validate response count matches input count
+	if len(resp.Data) != len(texts) {
+		return nil, fmt.Errorf("embedding count mismatch: requested %d embeddings but got %d", len(texts), len(resp.Data))
+	}
+
 	embeddings := make([][]float32, len(resp.Data))
 	for i, data := range resp.Data {
 		// Convert float64 to float32

@@ -24,7 +24,8 @@ type MattermostInMemoryMCPServer struct {
 
 // NewInMemoryServer creates a new in-memory transport MCP server
 // This server is designed to run embedded within the plugin process
-func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger) (*MattermostInMemoryMCPServer, error) {
+// searchService is optional and can be nil if semantic search is not available
+func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger, searchService tools.SemanticSearchService) (*MattermostInMemoryMCPServer, error) {
 	if config.MMServerURL == "" {
 		return nil, fmt.Errorf("mattermost server URL cannot be empty for in-memory transport")
 	}
@@ -62,7 +63,8 @@ func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger) (*Matterm
 	)
 
 	// Register tools with remote access mode (embedded clients are treated as remote)
-	mattermostServer.registerTools(tools.AccessModeRemote)
+	// Pass options for semantic search support
+	mattermostServer.registerTools(tools.AccessModeRemote, searchService)
 
 	logger.Info("Created in-memory MCP server")
 

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -31,19 +32,11 @@ type Errors struct {
 	Errors         []error             // Generic errors (connection, config, etc.)
 }
 
-// EmbeddedServerConfig contains configuration for the embedded MCP server
-type EmbeddedServerConfig struct {
-	Enabled bool `json:"enabled"`
-}
-
-// Config contains the configuration for the MCP  servers
-type Config struct {
-	Enabled            bool                 `json:"enabled"`
-	EnablePluginServer bool                 `json:"enablePluginServer"`
-	Servers            []ServerConfig       `json:"servers"`
-	EmbeddedServer     EmbeddedServerConfig `json:"embeddedServer"`
-	IdleTimeoutMinutes int                  `json:"idleTimeoutMinutes"`
-}
+// Type aliases for MCP config types, which are defined in the config package
+// to avoid circular imports. Existing callers can continue to use mcp.Config, etc.
+type Config = config.MCPConfig
+type ServerConfig = config.MCPServerConfig
+type EmbeddedServerConfig = config.MCPEmbeddedServerConfig
 
 // DiscoverRemoteServerTools creates a temporary connection to a remote MCP server and discovers its tools
 func DiscoverRemoteServerTools(
