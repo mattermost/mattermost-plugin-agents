@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
@@ -74,6 +75,10 @@ func (c *fakeMMClient) KVSet(key string, value interface{}) error {
 	}
 	c.kv[key] = value
 	return nil
+}
+
+func (c *fakeMMClient) KVSetWithExpiry(key string, value interface{}, _ time.Duration) error {
+	return c.KVSet(key, value)
 }
 
 func (c *fakeMMClient) KVDelete(key string) error {
