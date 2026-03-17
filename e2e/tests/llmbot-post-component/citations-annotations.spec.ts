@@ -3,7 +3,7 @@ import RunRealAPIContainer from 'helpers/real-api-container';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
-import { LLMBotPostHelper } from 'helpers/llmbot-post';
+import { LLMBotPostHelper, isWebSearchUnavailableError } from 'helpers/llmbot-post';
 import {
     getAPIConfig,
     getSkipMessage,
@@ -41,6 +41,23 @@ const citationInstruction = 'Use the web_search tool and include at least one ci
 
 function withCitationInstruction(prompt: string): string {
     return `${citationInstruction} ${prompt}`;
+}
+
+async function waitForCitationOrSkip(
+    llmBotHelper: LLMBotPostHelper,
+    index: number,
+    maxTimeout: number = 60000,
+    retries: number = 2,
+): Promise<void> {
+    try {
+        await llmBotHelper.waitForCitationWithRetry(index, undefined, maxTimeout, retries);
+    } catch (error) {
+        if (isWebSearchUnavailableError(error)) {
+            test.skip(true, error.message);
+            return;
+        }
+        throw error;
+    }
 }
 
 async function setupTestPage(page, mattermost, provider: ProviderBundle) {
@@ -105,7 +122,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for at least one citation to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
+            await waitForCitationOrSkip(llmBotHelper, 1);
 
             const citations = llmBotHelper.getAllCitationIcons();
             const count = await citations.count();
@@ -136,7 +153,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for citation to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
+            await waitForCitationOrSkip(llmBotHelper, 1);
 
             const citations = llmBotHelper.getAllCitationIcons();
             const count = await citations.count();
@@ -176,7 +193,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for citation to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
+            await waitForCitationOrSkip(llmBotHelper, 1);
 
             const citations = llmBotHelper.getAllCitationIcons();
             const count = await citations.count();
@@ -221,8 +238,8 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for multiple citations to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
-            await llmBotHelper.waitForCitationWithRetry(2, undefined, 60000);
+            await waitForCitationOrSkip(llmBotHelper, 1);
+            await waitForCitationOrSkip(llmBotHelper, 2);
 
             const citations = llmBotHelper.getAllCitationIcons();
             const count = await citations.count();
@@ -277,7 +294,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for citation to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
+            await waitForCitationOrSkip(llmBotHelper, 1);
 
             const citationsBefore = llmBotHelper.getAllCitationIcons();
             const countBefore = await citationsBefore.count();
@@ -323,7 +340,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for citation to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
+            await waitForCitationOrSkip(llmBotHelper, 1);
 
             const postText = llmBotHelper.getPostText();
             await expect(postText).toBeVisible();
@@ -356,7 +373,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await llmBotHelper.waitForStreamingComplete();
 
             // Wait for citation to appear (smart wait, up to 5 min)
-            await llmBotHelper.waitForCitationWithRetry(1, undefined, 60000);
+            await waitForCitationOrSkip(llmBotHelper, 1);
 
             const citations = llmBotHelper.getAllCitationIcons();
             const count = await citations.count();

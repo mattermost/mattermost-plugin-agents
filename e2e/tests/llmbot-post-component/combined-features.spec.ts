@@ -3,7 +3,7 @@ import RunRealAPIContainer from 'helpers/real-api-container';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
-import { LLMBotPostHelper } from 'helpers/llmbot-post';
+import { LLMBotPostHelper, isWebSearchUnavailableError } from 'helpers/llmbot-post';
 import {
     getAPIConfig,
     getSkipMessage,
@@ -32,6 +32,28 @@ const password = 'regularuser';
 
 const config = getAPIConfig();
 const skipMessage = getSkipMessage();
+const citationInstruction = 'Use the web_search tool and include at least one citation in your response. Do not answer without citations.';
+
+function withCitationInstruction(prompt: string): string {
+    return `${citationInstruction} ${prompt}`;
+}
+
+async function waitForCitationOrSkip(
+    llmBotHelper: LLMBotPostHelper,
+    index: number,
+    maxTimeout: number = 60000,
+    retries: number = 2,
+): Promise<void> {
+    try {
+        await llmBotHelper.waitForCitationWithRetry(index, undefined, maxTimeout, retries);
+    } catch (error) {
+        if (isWebSearchUnavailableError(error)) {
+            test.skip(true, error.message);
+            return;
+        }
+        throw error;
+    }
+}
 
 async function setupTestPage(page, mattermost, provider: ProviderBundle) {
     const mmPage = new MattermostPage(page);
@@ -105,11 +127,12 @@ function createProviderTestSuite(provider: ProviderBundle) {
                 ? 'Search the web for TypeScript docs and briefly analyze 2-3 key features with citations (1 paragraph)'
                 : 'Use web search to find TypeScript docs and briefly list 2-3 benefits with citations (1 paragraph)';
 
-            await aiPlugin.sendMessage(prompt);
+            await aiPlugin.sendMessage(withCitationInstruction(prompt));
 
             await llmBotHelper.waitForReasoning(undefined, 35000);
             // Wait for streaming to complete (smart wait, 5min safety timeout)
             await llmBotHelper.waitForStreamingComplete();
+            await waitForCitationOrSkip(llmBotHelper, 1);
 
             await llmBotHelper.expectReasoningVisible(true);
             await expect(page.getByText('Thinking')).toBeVisible();
@@ -155,11 +178,12 @@ function createProviderTestSuite(provider: ProviderBundle) {
                 ? 'Search the web for TypeScript benefits and briefly analyze 2-3 key points with citations (1 paragraph)'
                 : 'Use web search to find TypeScript benefits and briefly explain 2-3 points with citations (1 paragraph)';
 
-            await aiPlugin.sendMessage(prompt);
+            await aiPlugin.sendMessage(withCitationInstruction(prompt));
 
             // Wait for reasoning and streaming to complete on first response (up to 5 min each)
             await llmBotHelper.waitForReasoning(); // Uses default 300s timeout
             await llmBotHelper.waitForStreamingComplete(); // Uses default 300s timeout
+            await waitForCitationOrSkip(llmBotHelper, 1);
 
             // Verify first response has reasoning
             await llmBotHelper.expectReasoningVisible(true);
@@ -190,6 +214,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
                 // Wait for reasoning and streaming to complete on regenerated response (up to 5 min each)
                 await llmBotHelper.waitForReasoning(); // Uses default 300s timeout
                 await llmBotHelper.waitForStreamingComplete(); // Uses default 300s timeout
+                await waitForCitationOrSkip(llmBotHelper, 1);
 
                 // Verify regenerated response ALSO has reasoning
                 await llmBotHelper.expectReasoningVisible(true);

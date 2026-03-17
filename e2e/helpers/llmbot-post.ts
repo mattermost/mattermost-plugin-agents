@@ -1,6 +1,23 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { getAPIErrorContext } from './log-scanner';
 
+const WEB_SEARCH_UNAVAILABLE_PATTERNS = [
+    /web[_ ]search tool (?:is )?(?:currently |temporarily )?unavailable/i,
+    /can't pull live results with citations/i,
+    /unable to retrieve live results and provide (?:the )?(?:required )?citations/i,
+];
+
+export class WebSearchUnavailableError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'WebSearchUnavailableError';
+    }
+}
+
+export function isWebSearchUnavailableError(error: unknown): error is WebSearchUnavailableError {
+    return error instanceof WebSearchUnavailableError;
+}
+
 /**
  * LLMBotPostHelper - Page object for LLMBot post component interactions
  *
@@ -311,6 +328,24 @@ export class LLMBotPostHelper {
         await expect(postText).toHaveText(text);
     }
 
+    /**
+     * Get the post text content as a plain string.
+     * @param postId - Optional post ID to scope the read
+     */
+    async getPostTextContent(postId?: string): Promise<string> {
+        const content = await this.getPostText(postId).textContent().catch(() => '');
+        return content ?? '';
+    }
+
+    /**
+     * Detect provider responses that explicitly report web search is unavailable.
+     * @param postId - Optional post ID to scope the read
+     */
+    async hasWebSearchUnavailableMessage(postId?: string): Promise<boolean> {
+        const content = await this.getPostTextContent(postId);
+        return WEB_SEARCH_UNAVAILABLE_PATTERNS.some((pattern) => pattern.test(content));
+    }
+
     // ==================== SEARCH SOURCES LOCATORS ====================
 
     /**
@@ -541,11 +576,23 @@ export class LLMBotPostHelper {
                     return;
                 }
             }
+
+            if (await this.hasWebSearchUnavailableMessage(postId)) {
+                throw new WebSearchUnavailableError(
+                    `Provider reported the web_search tool was unavailable before citation ${index} appeared${getAPIErrorContext()}`,
+                );
+            }
+
             await this.page.waitForTimeout(500);
         }
 
         // If we hit max timeout, throw error with API context if available
         const count = await allCitations.count().catch(() => 0);
+        if (await this.hasWebSearchUnavailableMessage(postId)) {
+            throw new WebSearchUnavailableError(
+                `Provider reported the web_search tool was unavailable before citation ${index} appeared (found ${count})${getAPIErrorContext()}`,
+            );
+        }
         throw new Error(`Timeout waiting for citation ${index} to appear (found ${count})${getAPIErrorContext()}`);
     }
 
@@ -568,6 +615,10 @@ export class LLMBotPostHelper {
                 return;
             } catch (error) {
                 if (attempt >= retries) {
+                    throw error;
+                }
+                const canRegenerate = await this.getRegenerateButton(postId).isVisible().catch(() => false);
+                if (!canRegenerate) {
                     throw error;
                 }
                 await this.regenerateResponse(postId);
