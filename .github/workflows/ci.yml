@@ -11,9 +11,42 @@ permissions:
   contents: write
 
 jobs:
+  e2e-build-artifact:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 18
+    - uses: actions/setup-go@v4
+      with:
+        go-version-file: 'go.mod'
+    - name: Build plugin bundle for e2e jobs
+      run: make dist
+    - uses: actions/upload-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/*.tar.gz
+        retention-days: 1
+
   e2e:
+    needs: e2e-build-artifact
     timeout-minutes: 60
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - name: shard-1
+            group: e2e-shard-1
+          - name: shard-2
+            group: e2e-shard-2
+          - name: shard-3
+            group: e2e-shard-3
+          - name: shard-4
+            group: e2e-shard-4
+    name: e2e-${{ matrix.shard.name }}
     env:
       MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
       EXCLUDE_REAL_API_TESTS: 'true'
@@ -25,31 +58,49 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: 18
-    - name: Build
-      run: make dist
-      working-directory: ./
+    - uses: actions/download-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/
     - name: Install dependencies
       run: npm ci
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
-    - name: Run Playwright tests (excluding real API tests)
-      run: npx playwright test --project=chromium
+    - name: Validate CI test groups
+      run: node ./scripts/ci-test-groups.mjs validate
+    - name: Run Playwright tests for ${{ matrix.shard.name }}
+      shell: bash
+      run: |
+        mapfile -t SPEC_FILES < <(node ./scripts/ci-test-groups.mjs list "${{ matrix.shard.group }}")
+        npx playwright test --project=chromium "${SPEC_FILES[@]}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: playwright-report
+        name: playwright-report-${{ matrix.shard.name }}
         path: ./e2e/playwright-report/
         retention-days: 30
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: server-logs
+        name: server-logs-${{ matrix.shard.name }}
         path: ./e2e/logs/server-logs.log
         retention-days: 30
 
   e2e-llmbot-real-apis:
+    needs: e2e-build-artifact
     timeout-minutes: 180
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - name: citations
+            group: llmbot-real-citations
+          - name: reasoning
+            group: llmbot-real-reasoning
+          - name: edge-cases
+            group: llmbot-real-edge-cases
+    name: e2e-llmbot-real-apis-${{ matrix.shard.name }}
     env:
       MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
     defaults:
@@ -60,32 +111,39 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: 18
-    - name: Build
-      run: make dist
-      working-directory: ./
+    - uses: actions/download-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/
     - name: Install dependencies
       run: npm ci
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
-    - name: Run LLMBot tests with real APIs
+    - name: Validate CI test groups
+      run: node ./scripts/ci-test-groups.mjs validate
+    - name: Run LLMBot tests with real APIs for ${{ matrix.shard.name }}
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      run: npx playwright test tests/llmbot-post-component --project=chromium
+      shell: bash
+      run: |
+        mapfile -t SPEC_FILES < <(node ./scripts/ci-test-groups.mjs list "${{ matrix.shard.group }}")
+        npx playwright test --project=chromium "${SPEC_FILES[@]}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: playwright-report-llmbot-real-apis
+        name: playwright-report-llmbot-real-apis-${{ matrix.shard.name }}
         path: ./e2e/playwright-report/
         retention-days: 30
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: server-logs-llmbot-real-apis
+        name: server-logs-llmbot-real-apis-${{ matrix.shard.name }}
         path: ./e2e/logs/server-logs.log
         retention-days: 30
 
   e2e-channel-analysis-real-apis:
+    needs: e2e-build-artifact
     timeout-minutes: 180
     runs-on: ubuntu-latest
     env:
@@ -98,18 +156,24 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: 18
-    - name: Build
-      run: make dist
-      working-directory: ./
+    - uses: actions/download-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/
     - name: Install dependencies
       run: npm ci
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
+    - name: Validate CI test groups
+      run: node ./scripts/ci-test-groups.mjs validate
     - name: Run Channel Analysis tests with real APIs
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      run: npx playwright test tests/channel-analysis/backend-verification/real-api.spec.ts --project=chromium
+      shell: bash
+      run: |
+        mapfile -t SPEC_FILES < <(node ./scripts/ci-test-groups.mjs list channel-analysis-real)
+        npx playwright test --project=chromium "${SPEC_FILES[@]}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -124,8 +188,18 @@ jobs:
         retention-days: 30
 
   e2e-tool-calling:
+    needs: e2e-build-artifact
     timeout-minutes: 180
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        provider:
+          - name: anthropic
+            display_name: Anthropic
+          - name: openai
+            display_name: OpenAI
+    name: e2e-tool-calling-${{ matrix.provider.name }}
     env:
       MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
     defaults:
@@ -136,28 +210,35 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: 18
-    - name: Build
-      run: make dist
-      working-directory: ./
+    - uses: actions/download-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/
     - name: Install dependencies
       run: npm ci
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
-    - name: Run Tool Calling tests with real APIs
+    - name: Validate CI test groups
+      run: node ./scripts/ci-test-groups.mjs validate
+    - name: Run Tool Calling tests with real APIs for ${{ matrix.provider.display_name }}
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      run: npx playwright test tests/multiplayer-tool-calling --project=chromium
+        E2E_PROVIDER: ${{ matrix.provider.name }}
+      shell: bash
+      run: |
+        mapfile -t SPEC_FILES < <(node ./scripts/ci-test-groups.mjs list tool-calling-real)
+        npx playwright test --project=chromium "${SPEC_FILES[@]}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: playwright-report-tool-calling
+        name: playwright-report-tool-calling-${{ matrix.provider.name }}
         path: ./e2e/playwright-report/
         retention-days: 30
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: server-logs-tool-calling
+        name: server-logs-tool-calling-${{ matrix.provider.name }}
         path: ./e2e/logs/server-logs.log
         retention-days: 30
 
