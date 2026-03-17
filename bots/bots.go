@@ -575,3 +575,17 @@ func (b *MMBots) SetBotsForTesting(bots []*Bot) {
 	defer b.botsLock.Unlock()
 	b.bots = bots
 }
+
+// GetAllBotUserIDs returns a list of all bot user IDs
+func (b *MMBots) GetAllBotUserIDs() []string {
+	b.botsLock.RLock()
+	defer b.botsLock.RUnlock()
+
+	ids := make([]string, 0, len(b.bots))
+	for _, bot := range b.bots {
+		if bot.mmBot != nil {
+			ids = append(ids, bot.mmBot.UserId)
+		}
+	}
+	return ids
+}

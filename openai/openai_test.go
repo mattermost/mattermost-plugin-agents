@@ -5,8 +5,14 @@ package openai
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -472,47 +478,12 @@ func TestGetModelConstant(t *testing.T) {
 		expected shared.ChatModel
 	}{
 		{
-			name:     "gpt-4o model",
-			model:    "gpt-4o",
-			expected: shared.ChatModelGPT4o,
-		},
-		{
-			name:     "gpt-4o-mini model",
-			model:    "gpt-4o-mini",
-			expected: shared.ChatModelGPT4oMini,
-		},
-		{
-			name:     "gpt-4-turbo model",
-			model:    "gpt-4-turbo",
-			expected: shared.ChatModelGPT4Turbo,
-		},
-		{
-			name:     "gpt-4 model",
-			model:    "gpt-4",
-			expected: shared.ChatModelGPT4,
-		},
-		{
-			name:     "gpt-3.5-turbo model",
-			model:    "gpt-3.5-turbo",
-			expected: shared.ChatModelGPT3_5Turbo,
-		},
-		{
-			name:     "o1-preview model",
-			model:    "o1-preview",
-			expected: shared.ChatModelO1Preview,
-		},
-		{
-			name:     "o1-mini model",
-			model:    "o1-mini",
-			expected: shared.ChatModelO1Mini,
-		},
-		{
-			name:     "custom model",
+			name:     "custom model passes through as-is",
 			model:    "custom-model-xyz",
 			expected: shared.ChatModel("custom-model-xyz"),
 		},
 		{
-			name:     "gpt-4-32k model (custom)",
+			name:     "unlisted model passes through as-is",
 			model:    "gpt-4-32k",
 			expected: shared.ChatModel("gpt-4-32k"),
 		},
@@ -533,22 +504,7 @@ func TestGetEmbeddingModelConstant(t *testing.T) {
 		expected openai.EmbeddingModel
 	}{
 		{
-			name:     "text-embedding-3-large",
-			model:    "text-embedding-3-large",
-			expected: openai.EmbeddingModelTextEmbedding3Large,
-		},
-		{
-			name:     "text-embedding-3-small",
-			model:    "text-embedding-3-small",
-			expected: openai.EmbeddingModelTextEmbedding3Small,
-		},
-		{
-			name:     "text-embedding-ada-002",
-			model:    "text-embedding-ada-002",
-			expected: openai.EmbeddingModelTextEmbeddingAda002,
-		},
-		{
-			name:     "custom embedding model",
+			name:     "custom embedding model passes through as-is",
 			model:    "custom-embedding-model",
 			expected: openai.EmbeddingModel("custom-embedding-model"),
 		},
@@ -679,61 +635,466 @@ func TestCountTokens(t *testing.T) {
 	}
 }
 
-func TestDimensions(t *testing.T) {
+func TestCreateEmbedding(t *testing.T) {
 	tests := []struct {
-		name     string
-		config   Config
-		expected int
+		name           string
+		handler        http.HandlerFunc
+		text           string
+		contextFunc    func() (context.Context, context.CancelFunc)
+		expectError    bool
+		errorContains  string
+		expectedLength int
 	}{
 		{
-			name: "custom dimensions",
-			config: Config{
-				EmbeddingDimensions: 1536,
+			name: "successful embedding creation",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				response := `{
+					"object": "list",
+					"data": [
+						{
+							"object": "embedding",
+							"index": 0,
+							"embedding": [0.1, 0.2, 0.3, 0.4, 0.5]
+						}
+					],
+					"model": "text-embedding-3-large",
+					"usage": {"prompt_tokens": 5, "total_tokens": 5}
+				}`
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(response))
 			},
-			expected: 1536,
+			text:           "test text",
+			contextFunc:    func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+			expectError:    false,
+			expectedLength: 5,
 		},
 		{
-			name: "large embedding dimensions",
-			config: Config{
-				EmbeddingDimensions: 3072,
+			name: "API rate limiting error (429)",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error": {"message": "Rate limit exceeded", "type": "rate_limit_error"}}`))
 			},
-			expected: 3072,
+			text:          "test text",
+			contextFunc:   func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+			expectError:   true,
+			errorContains: "failed to create embedding",
 		},
 		{
-			name:     "zero dimensions",
-			config:   Config{},
-			expected: 0,
+			name: "API invalid API key error (401)",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error": {"message": "Invalid API key", "type": "invalid_request_error"}}`))
+			},
+			text:          "test text",
+			contextFunc:   func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+			expectError:   true,
+			errorContains: "failed to create embedding",
+		},
+		{
+			name: "API server error (500)",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error": {"message": "Internal server error", "type": "server_error"}}`))
+			},
+			text:          "test text",
+			contextFunc:   func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+			expectError:   true,
+			errorContains: "failed to create embedding",
+		},
+		{
+			name: "empty response from API (len(resp.Data) == 0)",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				response := `{
+					"object": "list",
+					"data": [],
+					"model": "text-embedding-3-large",
+					"usage": {"prompt_tokens": 0, "total_tokens": 0}
+				}`
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(response))
+			},
+			text:          "test text",
+			contextFunc:   func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+			expectError:   true,
+			errorContains: "no embedding data returned",
+		},
+		{
+			name: "context cancellation",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				// Simulate slow response - check if context is done
+				select {
+				case <-r.Context().Done():
+					// Context was canceled
+					return
+				case <-time.After(5 * time.Second):
+					// This should not happen in tests
+					w.WriteHeader(http.StatusOK)
+				}
+			},
+			text: "test text",
+			contextFunc: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				// Cancel immediately
+				cancel()
+				return ctx, cancel
+			},
+			expectError:   true,
+			errorContains: "", // Error message varies based on implementation
+		},
+		{
+			name: "network timeout",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				// Simulate very slow response
+				time.Sleep(2 * time.Second)
+				w.WriteHeader(http.StatusOK)
+			},
+			text: "test text",
+			contextFunc: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), 50*time.Millisecond)
+			},
+			expectError:   true,
+			errorContains: "", // Error message varies
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			o := &OpenAI{config: tt.config}
-			result := o.Dimensions()
-			assert.Equal(t, tt.expected, result)
+			server := httptest.NewServer(tt.handler)
+			defer server.Close()
+
+			client := NewCompatibleEmbeddings(Config{
+				APIKey:              "test-key",
+				APIURL:              server.URL,
+				EmbeddingModel:      "text-embedding-3-large",
+				EmbeddingDimensions: 5,
+			}, server.Client())
+
+			ctx, cancel := tt.contextFunc()
+			defer cancel()
+
+			result, err := client.CreateEmbedding(ctx, tt.text)
+
+			if tt.expectError {
+				require.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+				assert.Nil(t, result)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				assert.Len(t, result, tt.expectedLength)
+				// Verify float32 conversion
+				assert.Equal(t, float32(0.1), result[0])
+				assert.Equal(t, float32(0.5), result[4])
+			}
 		})
 	}
 }
 
-func TestToolBufferElement(t *testing.T) {
-	t.Run("tool buffer accumulation", func(t *testing.T) {
-		buffer := &ToolBufferElement{}
+func TestBatchCreateEmbeddings(t *testing.T) {
+	tests := []struct {
+		name           string
+		handler        http.HandlerFunc
+		texts          []string
+		contextFunc    func() (context.Context, context.CancelFunc)
+		expectError    bool
+		errorContains  string
+		expectedCount  int
+		expectedLength int
+	}{
+		{
+			name: "successful batch embedding creation",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				response := `{
+					"object": "list",
+					"data": [
+						{"object": "embedding", "index": 0, "embedding": [0.1, 0.2, 0.3]},
+						{"object": "embedding", "index": 1, "embedding": [0.4, 0.5, 0.6]},
+						{"object": "embedding", "index": 2, "embedding": [0.7, 0.8, 0.9]}
+					],
+					"model": "text-embedding-3-large",
+					"usage": {"prompt_tokens": 15, "total_tokens": 15}
+				}`
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(response))
+			},
+			texts:          []string{"text1", "text2", "text3"},
+			contextFunc:    func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+			expectError:    false,
+			expectedCount:  3,
+			expectedLength: 3,
+		},
+		{
+			name: "API error during batch call",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error": {"message": "Invalid request", "type": "invalid_request_error"}}`))
+			},
+			texts:         []string{"text1", "text2"},
+			contextFunc:   func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+			expectError:   true,
+			errorContains: "failed to create embeddings batch",
+		},
+		{
+			name: "large batch handling - verifies request body contains array",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				// Read and verify the request body contains an array of strings
+				var requestBody struct {
+					Input []string `json:"input"`
+					Model string   `json:"model"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
 
-		// Test ID accumulation
-		buffer.id.WriteString("call_")
-		buffer.id.WriteString("123")
-		assert.Equal(t, "call_123", buffer.id.String())
+				// Verify we received all texts
+				if len(requestBody.Input) != 100 {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error": {"message": "Expected 100 texts"}}`))
+					return
+				}
 
-		// Test name accumulation
-		buffer.name.WriteString("search")
-		buffer.name.WriteString("_function")
-		assert.Equal(t, "search_function", buffer.name.String())
+				// Build response with 100 embeddings
+				var data []string
+				for i := 0; i < 100; i++ {
+					data = append(data, fmt.Sprintf(`{"object": "embedding", "index": %d, "embedding": [0.%d]}`, i, i%10))
+				}
 
-		// Test arguments accumulation
-		buffer.args.WriteString(`{"query":`)
-		buffer.args.WriteString(`"test"}`)
-		assert.Equal(t, `{"query":"test"}`, buffer.args.String())
-	})
+				w.Header().Set("Content-Type", "application/json")
+				response := fmt.Sprintf(`{
+					"object": "list",
+					"data": [%s],
+					"model": "text-embedding-3-large",
+					"usage": {"prompt_tokens": 1000, "total_tokens": 1000}
+				}`, strings.Join(data, ","))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(response))
+			},
+			texts: func() []string {
+				texts := make([]string, 100)
+				for i := range texts {
+					texts[i] = fmt.Sprintf("text %d", i)
+				}
+				return texts
+			}(),
+			contextFunc:    func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+			expectError:    false,
+			expectedCount:  100,
+			expectedLength: 1,
+		},
+		{
+			name: "empty texts array input",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				// Note: The OpenAI API would normally return an error for empty input,
+				// but the SDK may handle this differently
+				w.Header().Set("Content-Type", "application/json")
+				response := `{
+					"object": "list",
+					"data": [],
+					"model": "text-embedding-3-large",
+					"usage": {"prompt_tokens": 0, "total_tokens": 0}
+				}`
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(response))
+			},
+			texts:          []string{},
+			contextFunc:    func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+			expectError:    false,
+			expectedCount:  0,
+			expectedLength: 0,
+		},
+		{
+			name: "context cancellation",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				select {
+				case <-r.Context().Done():
+					return
+				case <-time.After(5 * time.Second):
+					w.WriteHeader(http.StatusOK)
+				}
+			},
+			texts: []string{"text1", "text2"},
+			contextFunc: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel() // Cancel immediately
+				return ctx, cancel
+			},
+			expectError: true,
+		},
+		{
+			name: "response with mismatched count vs input - fewer embeddings returned",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				// API returns fewer embeddings than requested
+				w.Header().Set("Content-Type", "application/json")
+				response := `{
+					"object": "list",
+					"data": [
+						{"object": "embedding", "index": 0, "embedding": [0.1, 0.2, 0.3]}
+					],
+					"model": "text-embedding-3-large",
+					"usage": {"prompt_tokens": 5, "total_tokens": 5}
+				}`
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(response))
+			},
+			texts:       []string{"text1", "text2", "text3"},
+			contextFunc: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+			// The code now validates that response count matches input count
+			expectError:   true,
+			errorContains: "embedding count mismatch",
+		},
+		{
+			name: "response with mismatched count vs input - more embeddings returned",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				// API returns more embeddings than requested (unusual but possible)
+				w.Header().Set("Content-Type", "application/json")
+				response := `{
+					"object": "list",
+					"data": [
+						{"object": "embedding", "index": 0, "embedding": [0.1, 0.2, 0.3]},
+						{"object": "embedding", "index": 1, "embedding": [0.4, 0.5, 0.6]},
+						{"object": "embedding", "index": 2, "embedding": [0.7, 0.8, 0.9]},
+						{"object": "embedding", "index": 3, "embedding": [1.0, 1.1, 1.2]}
+					],
+					"model": "text-embedding-3-large",
+					"usage": {"prompt_tokens": 10, "total_tokens": 10}
+				}`
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(response))
+			},
+			texts:       []string{"text1", "text2"},
+			contextFunc: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+			// The code now validates that response count matches input count
+			expectError:   true,
+			errorContains: "embedding count mismatch",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(tt.handler)
+			defer server.Close()
+
+			client := NewCompatibleEmbeddings(Config{
+				APIKey:              "test-key",
+				APIURL:              server.URL,
+				EmbeddingModel:      "text-embedding-3-large",
+				EmbeddingDimensions: 3,
+			}, server.Client())
+
+			ctx, cancel := tt.contextFunc()
+			defer cancel()
+
+			result, err := client.BatchCreateEmbeddings(ctx, tt.texts)
+
+			if tt.expectError {
+				require.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+				assert.Nil(t, result)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				assert.Len(t, result, tt.expectedCount)
+				if tt.expectedCount > 0 && tt.expectedLength > 0 {
+					assert.Len(t, result[0], tt.expectedLength)
+				}
+			}
+		})
+	}
+}
+
+func TestNewEmbeddingsDefaults(t *testing.T) {
+	tests := []struct {
+		name                    string
+		config                  Config
+		expectedModel           string
+		expectedDimensions      int
+		useCompatibleEmbeddings bool
+	}{
+		{
+			name: "NewEmbeddings sets defaults when model is empty",
+			config: Config{
+				APIKey:         "test-key",
+				EmbeddingModel: "",
+			},
+			expectedModel:           "text-embedding-3-large",
+			expectedDimensions:      3072,
+			useCompatibleEmbeddings: false,
+		},
+		{
+			name: "NewEmbeddings preserves custom model when set",
+			config: Config{
+				APIKey:              "test-key",
+				EmbeddingModel:      "text-embedding-3-small",
+				EmbeddingDimensions: 1536,
+			},
+			expectedModel:           "text-embedding-3-small",
+			expectedDimensions:      1536,
+			useCompatibleEmbeddings: false,
+		},
+		{
+			name: "NewCompatibleEmbeddings sets defaults when model is empty",
+			config: Config{
+				APIKey:         "test-key",
+				APIURL:         "https://api.example.com/v1",
+				EmbeddingModel: "",
+			},
+			expectedModel:           "text-embedding-3-large",
+			expectedDimensions:      3072,
+			useCompatibleEmbeddings: true,
+		},
+		{
+			name: "NewCompatibleEmbeddings preserves custom model when set",
+			config: Config{
+				APIKey:              "test-key",
+				APIURL:              "https://api.example.com/v1",
+				EmbeddingModel:      "custom-embedding-model",
+				EmbeddingDimensions: 768,
+			},
+			expectedModel:           "custom-embedding-model",
+			expectedDimensions:      768,
+			useCompatibleEmbeddings: true,
+		},
+		{
+			name: "NewEmbeddings with model set but dimensions unset keeps dimensions at 0",
+			config: Config{
+				APIKey:              "test-key",
+				EmbeddingModel:      "text-embedding-ada-002",
+				EmbeddingDimensions: 0,
+			},
+			// Note: When model is set, the defaults are NOT applied
+			// This is expected behavior - only empty model triggers defaults
+			expectedModel:           "text-embedding-ada-002",
+			expectedDimensions:      0,
+			useCompatibleEmbeddings: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var client *OpenAI
+			if tt.useCompatibleEmbeddings {
+				client = NewCompatibleEmbeddings(tt.config, http.DefaultClient)
+			} else {
+				client = NewEmbeddings(tt.config, http.DefaultClient)
+			}
+
+			assert.Equal(t, tt.expectedModel, client.config.EmbeddingModel)
+			assert.Equal(t, tt.expectedDimensions, client.config.EmbeddingDimensions)
+			assert.Equal(t, tt.expectedDimensions, client.Dimensions())
+		})
+	}
 }
 
 func TestReasoningEffortConfiguration(t *testing.T) {

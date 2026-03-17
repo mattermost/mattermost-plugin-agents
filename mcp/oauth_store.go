@@ -119,6 +119,7 @@ type OAuthSession struct {
 	ServerMetadataURL string    `json:"serverMetadataURL"`
 	CodeVerifier      string    `json:"codeVerifier"`
 	State             string    `json:"state"`
+	StaticClientID    string    `json:"staticClientID,omitempty"`
 	CreatedAt         time.Time `json:"createdAt"`
 }
 
@@ -139,14 +140,12 @@ func (m *OAuthManager) loadSession(userID, state string) (*OAuthSession, error) 
 	return &session, nil
 }
 
+const oauthSessionTTL = 10 * time.Minute
+
 func (m *OAuthManager) storeSession(session *OAuthSession) error {
 	sessionKey := buildSessionKey(session.UserID, session.State)
-	sessionData, err := json.Marshal(session)
-	if err != nil {
-		return fmt.Errorf("failed to marshal OAuth session: %w", err)
-	}
 
-	if err := m.pluginAPI.KVSet(sessionKey, sessionData); err != nil {
+	if err := m.pluginAPI.KVSetWithExpiry(sessionKey, session, oauthSessionTTL); err != nil {
 		return fmt.Errorf("failed to store OAuth session: %w", err)
 	}
 

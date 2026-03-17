@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
+	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -67,6 +68,10 @@ func (tc *testConfigImpl) MCP() mcp.Config {
 
 func (tc *testConfigImpl) AllowUnsafeLinks() bool {
 	return tc.allowUnsafeLinks
+}
+
+func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
+	return embeddings.EmbeddingSearchConfig{}
 }
 
 func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
@@ -240,6 +245,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		&mockMCPClientManager{httpClient: &http.Client{}},
 		nil,
 		nil,
+		nil,
 	)
 
 	return &TestEnvironment{
@@ -331,7 +337,10 @@ func TestAdminRouter(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
-	for urlName, url := range map[string]string{} {
+	for urlName, url := range map[string]string{
+		"reindex_status": "/admin/reindex/status",
+		"mcp_tools":      "/admin/mcp/tools",
+	} {
 		for name, test := range map[string]struct {
 			request        *http.Request
 			expectedStatus int
@@ -442,7 +451,6 @@ func TestEmptyBodyCheckerInApi(t *testing.T) {
 		"summarize transcription": "/post/postid/summarize_transcription?botUsername=thebot",
 		"regen":                   "/post/postid/regenerate",
 		"postback summary":        "/post/postid/postback_summary",
-		"reindex":                 "/admin/reindex",
 		"cancel":                  "/admin/reindex/cancel",
 	} {
 		t.Run(urlName, func(t *testing.T) {
@@ -546,8 +554,11 @@ func TestHandleGetAIBots(t *testing.T) {
 		envSetup                 func(e *TestEnvironment)
 	}{
 		{
-			name:                     "search enabled - non-nil service with non-nil embedding search",
-			searchService:            search.New(mocks.NewMockEmbeddingSearch(t), nil, nil, nil, nil),
+			name: "search enabled - non-nil service with non-nil embedding search",
+			searchService: func() *search.Search {
+				me := mocks.NewMockEmbeddingSearch(t)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
+			}(),
 			expectedSearchEnabled:    true,
 			expectedAllowUnsafeLinks: false,
 			expectedStatus:           http.StatusOK,

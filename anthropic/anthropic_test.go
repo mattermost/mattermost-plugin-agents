@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"testing"
+	"unicode/utf16"
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -386,6 +387,46 @@ func TestExtractAnnotations(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "utf16 indices are used for non-ascii text blocks",
+			messageJSON: `{
+				"id": "msg_test8",
+				"type": "message",
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "• Emoji 🎉 "
+					},
+					{
+						"type": "text",
+						"text": "React docs",
+						"citations": [
+							{
+								"type": "web_search_result_location",
+								"url": "https://example.com/react",
+								"title": "React Docs",
+								"cited_text": "React docs"
+							}
+						]
+					}
+				],
+				"model": "claude-3-5-sonnet-20241022",
+				"stop_reason": "end_turn",
+				"usage": {"input_tokens": 10, "output_tokens": 20}
+			}`,
+			wantResults: []llm.Annotation{
+				{
+					Type:       llm.AnnotationTypeURLCitation,
+					StartIndex: jsUTF16Length("• Emoji 🎉 "),
+					EndIndex:   jsUTF16Length("• Emoji 🎉 React docs"),
+					URL:        "https://example.com/react",
+					Title:      "React Docs",
+					CitedText:  "React docs",
+					Index:      1,
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -396,6 +437,10 @@ func TestExtractAnnotations(t *testing.T) {
 			assert.Equal(t, tt.wantResults, got)
 		})
 	}
+}
+
+func jsUTF16Length(s string) int {
+	return len(utf16.Encode([]rune(s)))
 }
 
 func TestConversationToMessages(t *testing.T) {

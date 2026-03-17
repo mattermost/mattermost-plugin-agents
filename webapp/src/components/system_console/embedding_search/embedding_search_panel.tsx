@@ -10,7 +10,7 @@ import {useIsBasicsLicensed} from '@/license';
 import {Pill} from '../../pill';
 import EnterpriseChip from '../enterprise_chip';
 import Panel from '../panel';
-import {ItemList, SelectionItem, SelectionItemOption} from '../item';
+import {BooleanItem, ItemList, SelectionItem, SelectionItemOption} from '../item';
 import {IntItem} from '../number_items';
 
 import {EmbeddingSearchConfig} from './types';
@@ -35,16 +35,48 @@ interface Props {
 const EmbeddingSearchPanel = ({value, onChange}: Props) => {
     const intl = useIntl();
     const isBasicsLicensed = useIsBasicsLicensed();
+    const effectiveType = value.type || '';
+    const isEnabled = effectiveType !== '';
 
     const {
         jobStatus,
         statusMessage,
         showReindexConfirmation,
+        healthCheckResult,
+        healthCheckLoading,
+        modelCompatibility,
+        isJobStale,
         handleReindexClick,
         handleConfirmReindex,
         handleCancelReindex,
         handleCancelJob,
+        handleCatchUpClick,
+        handleHealthCheck,
+        handleResumeClick,
     } = useJobStatus();
+
+    // Check if current form values differ from stored (indexed) values
+    // This enables showing a warning immediately when editing, before save
+    const currentModelName = value.embeddingProvider.parameters?.embeddingModel as string | null;
+    const storedDimensions = modelCompatibility?.stored_dimensions ?? 0;
+    const storedModelName = modelCompatibility?.stored_model_name ?? '';
+
+    // Compute local mismatch and reason
+    let localMismatchReason = '';
+    if (modelCompatibility && storedDimensions > 0) {
+        if (value.dimensions !== storedDimensions) {
+            localMismatchReason = intl.formatMessage(
+                {defaultMessage: 'dimension mismatch: stored={stored}, current={current}'},
+                {stored: storedDimensions, current: value.dimensions},
+            );
+        } else if (currentModelName && currentModelName !== storedModelName) {
+            localMismatchReason = intl.formatMessage(
+                {defaultMessage: 'model changed: stored={stored}, current={current}'},
+                {stored: storedModelName, current: currentModelName},
+            );
+        }
+    }
+    const hasLocalModelMismatch = localMismatchReason !== '';
 
     if (!isBasicsLicensed) {
         return (
@@ -76,12 +108,25 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
             subtitle={intl.formatMessage({defaultMessage: 'Configure embedding search settings. Note: The current implementation is experimental and subject to breaking changes. This includes having to reindex all posts.'})}
         >
             <ItemList>
-                <SelectionItem
-                    label={intl.formatMessage({defaultMessage: 'Type'})}
-                    value={value.type}
-                    onChange={(e) => {
-                        const newType = e.target.value;
-                        if (newType === '') {
+                <BooleanItem
+                    label={intl.formatMessage({defaultMessage: 'Enable Embedding Search'})}
+                    value={isEnabled}
+                    onChange={(enabled) => {
+                        if (enabled) {
+                            onChange({
+                                type: 'composite',
+                                vectorStore: {type: 'pgvector', parameters: {}},
+                                embeddingProvider: {type: 'openai', parameters: {embeddingModel: '', apiKey: ''}},
+                                parameters: {},
+                                dimensions: 1536,
+                                chunkingOptions: {
+                                    chunkSize: 1000,
+                                    chunkOverlap: 200,
+                                    minChunkSize: 0.75,
+                                    chunkingStrategy: 'sentences',
+                                },
+                            });
+                        } else {
                             onChange({
                                 type: '',
                                 vectorStore: {type: '', parameters: {}},
@@ -95,31 +140,12 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     chunkingStrategy: 'sentences',
                                 },
                             });
-                        } else if (value.type === '') {
-                            // Set defaults when enabling
-                            onChange({
-                                type: newType,
-                                vectorStore: {type: 'pgvector', parameters: {}},
-                                embeddingProvider: {type: 'openai', parameters: {embeddingModel: '', apiKey: ''}},
-                                parameters: {},
-                                dimensions: 0,
-                                chunkingOptions: {
-                                    chunkSize: 1000,
-                                    chunkOverlap: 200,
-                                    minChunkSize: 0.75,
-                                    chunkingStrategy: 'sentences',
-                                },
-                            });
-                        } else {
-                            onChange({...value, type: newType});
                         }
                     }}
-                >
-                    <SelectionItemOption value=''>{'Disabled'}</SelectionItemOption>
-                    <SelectionItemOption value='composite'>{'Composite'}</SelectionItemOption>
-                </SelectionItem>
+                    helpText={intl.formatMessage({defaultMessage: 'Enable or disable embedding-based semantic search.'})}
+                />
 
-                {value.type && value.type !== '' &&
+                {isEnabled &&
                 <SelectionItem
                     label={intl.formatMessage({defaultMessage: 'Vector Store Type'})}
                     value={value.vectorStore.type}
@@ -132,7 +158,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                 </SelectionItem>
                 }
 
-                {value.type && value.type !== '' &&
+                {isEnabled &&
                 <SelectionItem
                     label={intl.formatMessage({defaultMessage: 'Embedding Provider Type'})}
                     value={value.embeddingProvider.type}
@@ -158,21 +184,21 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                 </SelectionItem>
                 }
 
-                {value.type && value.type !== '' && value.embeddingProvider.type === 'openai' && (
+                {isEnabled && value.embeddingProvider.type === 'openai' && (
                     <OpenAIProviderConfig
                         value={value.embeddingProvider}
                         onChange={(config) => onChange({...value, embeddingProvider: config})}
                     />
                 )}
 
-                {value.type && value.type !== '' && value.embeddingProvider.type === 'openai-compatible' && (
+                {isEnabled && value.embeddingProvider.type === 'openai-compatible' && (
                     <OpenAICompatibleProviderConfig
                         value={value.embeddingProvider}
                         onChange={(config) => onChange({...value, embeddingProvider: config})}
                     />
                 )}
 
-                {value.type === 'composite' && (
+                {isEnabled && (
                     <>
                         <IntItem
                             label={intl.formatMessage({defaultMessage: 'Dimensions'})}
@@ -184,7 +210,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     dimensions: dimensionsValue,
                                 });
                             }}
-                            min={0}
+                            min={1}
                             helptext={intl.formatMessage({defaultMessage: 'The number of dimensions for the vector embeddings. Common values are 768, 1024, or 1536 depending on the model.'})}
                         />
 
@@ -195,12 +221,20 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                     </>
                 )}
 
-                {value.type && value.type !== '' && (
+                {isEnabled && (
                     <ReindexSection
                         jobStatus={jobStatus}
                         statusMessage={statusMessage}
+                        healthCheckResult={healthCheckResult}
+                        healthCheckLoading={healthCheckLoading}
+                        hasLocalModelMismatch={hasLocalModelMismatch}
+                        localMismatchReason={localMismatchReason}
+                        isJobStale={isJobStale}
                         onReindexClick={handleReindexClick}
                         onCancelJob={handleCancelJob}
+                        onCatchUpClick={handleCatchUpClick}
+                        onHealthCheck={handleHealthCheck}
+                        onResumeClick={handleResumeClick}
                     />
                 )}
             </ItemList>
@@ -209,6 +243,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                 show={showReindexConfirmation}
                 onConfirm={handleConfirmReindex}
                 onCancel={handleCancelReindex}
+                embeddingProviderType={value.embeddingProvider.type}
             />
         </Panel>
     );

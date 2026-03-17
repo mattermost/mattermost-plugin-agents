@@ -36,9 +36,13 @@ mcpserver/data/
 
 node_modules/
 
+test-results/
+
 specs/
 
 .cursor/
+
+/.plan
 
 .opencode/
 

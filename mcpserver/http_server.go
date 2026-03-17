@@ -78,8 +78,12 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 		nil, // ServerOptions - keeping nil for now
 	)
 
+	// Create HTTP search service for callback to plugin API
+	pluginURL := strings.TrimRight(config.GetMMServerURL(), "/") + "/plugins/mattermost-ai"
+	searchService := tools.NewHTTPSemanticSearchService(pluginURL)
+
 	// Register tools with remote access mode
-	mattermostServer.registerTools(tools.AccessModeRemote)
+	mattermostServer.registerTools(tools.AccessModeRemote, searchService)
 
 	// Create HTTP server with OAuth endpoints and MCP routing
 	addr := fmt.Sprintf("%s:%d", config.HTTPBindAddr, config.HTTPPort)

@@ -19,6 +19,7 @@ import (
 )
 
 func TestMMToolProvider_GetTools(t *testing.T) {
+	mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 	tests := []struct {
 		name                      string
 		searchService             *search.Search
@@ -26,7 +27,7 @@ func TestMMToolProvider_GetTools(t *testing.T) {
 	}{
 		{
 			name:                      "search tool available - search enabled",
-			searchService:             search.New(mocks.NewMockEmbeddingSearch(t), nil, nil, nil, nil),
+			searchService:             search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil),
 			expectedSearchToolPresent: true,
 		},
 		{
@@ -79,9 +80,9 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 		{
 			name: "search succeeds - service enabled",
 			searchService: func() *search.Search {
-				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
-				mockEmbedding.On("Search", mock.Anything, "test search term", mock.Anything).Return([]embeddings.SearchResult{}, nil)
-				return search.New(mockEmbedding, nil, nil, nil, nil)
+				me := mocks.NewMockEmbeddingSearch(t)
+				me.On("Search", mock.Anything, "test search term", mock.Anything).Return([]embeddings.SearchResult{}, nil)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
 			}(),
 			searchTerm:  "test search term",
 			expectError: false,
@@ -104,8 +105,8 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 		{
 			name: "search fails - term too short",
 			searchService: func() *search.Search {
-				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
-				return search.New(mockEmbedding, nil, nil, nil, nil)
+				me := mocks.NewMockEmbeddingSearch(t)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
 			}(),
 			searchTerm:  "hi",
 			expectError: true,

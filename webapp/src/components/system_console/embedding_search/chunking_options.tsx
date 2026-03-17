@@ -75,7 +75,7 @@ export const ChunkingOptionsConfig = ({value, onChange}: ChunkingOptionsProps) =
                     });
                 }}
                 min={0}
-                helptext={intl.formatMessage({defaultMessage: 'Number of characters to overlap between chunks (only used for fixed size chunking).'})}
+                helptext={intl.formatMessage({defaultMessage: 'Number of characters to overlap between chunks.'})}
             />
 
             <FloatItem
