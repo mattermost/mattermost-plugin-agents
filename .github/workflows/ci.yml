@@ -19,9 +19,6 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: 18
-    - uses: actions/setup-go@v4
-      with:
-        go-version-file: 'go.mod'
     - name: Build plugin bundle for e2e jobs
       run: make dist
     - uses: actions/upload-artifact@v4
