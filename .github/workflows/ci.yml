@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 60
     runs-on: ubuntu-latest
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:release-11' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
       EXCLUDE_REAL_API_TESTS: 'true'
     defaults:
       run:
@@ -51,7 +51,7 @@ jobs:
     timeout-minutes: 180
     runs-on: ubuntu-latest
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:release-11' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
     defaults:
       run:
         working-directory: ./e2e
@@ -89,7 +89,7 @@ jobs:
     timeout-minutes: 180
     runs-on: ubuntu-latest
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:release-11' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
     defaults:
       run:
         working-directory: ./e2e
@@ -127,7 +127,7 @@ jobs:
     timeout-minutes: 180
     runs-on: ubuntu-latest
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:release-11' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
     defaults:
       run:
         working-directory: ./e2e
