@@ -2,8 +2,11 @@
 
 import fs from 'fs';
 import path from 'path';
+import {fileURLToPath} from 'url';
 
-const testsRoot = path.resolve(import.meta.dirname, '..', 'tests');
+const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
+const e2eRoot = path.resolve(scriptDirectory, '..');
+const testsRoot = path.resolve(e2eRoot, 'tests');
 
 const realAPISpecs = new Set([
     'tests/channel-analysis/backend-verification/real-api.spec.ts',
@@ -97,7 +100,7 @@ function walkSpecFiles(dirPath) {
             return [];
         }
 
-        return [path.relative(path.resolve(import.meta.dirname, '..'), absolutePath).replaceAll(path.sep, '/')];
+        return [path.relative(e2eRoot, absolutePath).replaceAll(path.sep, '/')];
     });
 }
 
@@ -139,7 +142,7 @@ function validateUniqueFiles(label, files) {
 }
 
 function validateExistingFiles(files) {
-    const missingFiles = files.filter((file) => !fs.existsSync(path.resolve(import.meta.dirname, '..', file)));
+    const missingFiles = files.filter((file) => !fs.existsSync(path.resolve(e2eRoot, file)));
     if (missingFiles.length > 0) {
         throw new Error(`Missing files in CI groups:\n${missingFiles.join('\n')}`);
     }
