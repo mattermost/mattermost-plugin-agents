@@ -217,7 +217,9 @@ function main() {
         break;
     }
     case 'groups':
-        Object.keys(groups).sort().forEach((groupName) => console.log(groupName));
+        Object.keys(groups).sort().forEach((groupName) => {
+            console.log(groupName);
+        });
         break;
     case 'validate':
         validateCoverage();
