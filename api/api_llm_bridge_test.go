@@ -1294,11 +1294,7 @@ func (e *TestEnvironment) setupMCPWithEligibleTools(t *testing.T, toolNames []st
 			},
 		},
 	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		httpClient: &http.Client{
-			Transport: &http.Transport{DisableKeepAlives: true},
-		},
-	}
+	e.api.mcpClientManager = newTestMCPClientManager(t)
 
 	tools := make([]llm.Tool, len(toolNames))
 	for i, name := range toolNames {
@@ -1378,11 +1374,7 @@ func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 			},
 		},
 	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		httpClient: &http.Client{
-			Transport: &http.Transport{DisableKeepAlives: true},
-		},
-	}
+	e.api.mcpClientManager = newTestMCPClientManager(t)
 
 	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
 		e.client,
@@ -1440,12 +1432,9 @@ func TestBridgeGetAgentToolsReturnsEmbeddedServerTools(t *testing.T) {
 			Enabled: true,
 		},
 	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		httpClient: &http.Client{
-			Transport: &http.Transport{DisableKeepAlives: true},
-		},
-		embeddedServer: embeddedServer,
-	}
+	mcpManager := newTestMCPClientManager(t)
+	mcpManager.embeddedServer = embeddedServer
+	e.api.mcpClientManager = mcpManager
 
 	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
 		e.client,
@@ -1507,11 +1496,7 @@ func TestBridgeGetAgentToolsSkipsUnreachableEligibleServer(t *testing.T) {
 			},
 		},
 	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		httpClient: &http.Client{
-			Transport: &http.Transport{DisableKeepAlives: true},
-		},
-	}
+	e.api.mcpClientManager = newTestMCPClientManager(t)
 
 	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
 		e.client,

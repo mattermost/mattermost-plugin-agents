@@ -21,6 +21,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	mmapimocks "github.com/mattermost/mattermost-plugin-ai/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	prompttemplates "github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
@@ -102,6 +103,18 @@ type mockMCPClientManager struct {
 	toolsCache     *mcp.ToolsCache
 	httpClient     *http.Client
 	embeddedServer mcp.EmbeddedMCPServer
+}
+
+func newTestMCPClientManager(t *testing.T) *mockMCPClientManager {
+	t.Helper()
+	mockClient := mmapimocks.NewMockClient(t)
+	mockClient.EXPECT().KVGet(mock.Anything, mock.Anything).Return(nil).Maybe()
+	return &mockMCPClientManager{
+		oauthManager: mcp.NewOAuthManager(mockClient, "", &http.Client{}, nil),
+		httpClient: &http.Client{
+			Transport: &http.Transport{DisableKeepAlives: true},
+		},
+	}
 }
 
 func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
