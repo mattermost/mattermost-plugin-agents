@@ -350,19 +350,26 @@ func (c *Client) Tools() map[string]*mcp.Tool {
 	return c.tools
 }
 
-// CallTool calls a tool on this MCP server with optional metadata.
-func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]any, metadata ...map[string]any) (string, error) {
+// CallTool calls a tool on this MCP server
+func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]any) (string, error) {
+	return c.CallToolWithMetadata(ctx, toolName, args, nil)
+}
+
+// CallToolWithMetadata calls a tool on this MCP server with optional metadata
+func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, error) {
 	if c.session == nil {
 		return "", fmt.Errorf("MCP client not connected")
 	}
 
+	// Call the tool using new SDK
 	params := &mcp.CallToolParams{
 		Name:      toolName,
 		Arguments: args,
 	}
 
-	if len(metadata) > 0 && metadata[0] != nil {
-		params.Meta = mcp.Meta(metadata[0])
+	// Add metadata if provided
+	if metadata != nil {
+		params.Meta = mcp.Meta(metadata)
 	}
 
 	result, err := c.session.CallTool(ctx, params)
@@ -405,6 +412,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 	if len(result.Content) > 0 {
 		text := ""
 		for _, content := range result.Content {
+			// Use type assertion to extract text content
 			if textContent, ok := content.(*mcp.TextContent); ok {
 				text += textContent.Text + "\n"
 			}

@@ -208,6 +208,6 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 		// Prepare metadata for the tool call
 		metadata := c.prepareToolCallMetadata(client, llmContext)
 
-		return client.CallTool(context.Background(), toolName, args, metadata)
+		return client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
 	}
 }
