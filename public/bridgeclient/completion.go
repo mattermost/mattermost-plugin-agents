@@ -16,8 +16,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
 
-const maxSSELineBytes = 1024 * 1024
-
 func requestFailedError(statusCode int, responseBody []byte) error {
 	var errResp ErrorResponse
 	if err := json.Unmarshal(responseBody, &errResp); err == nil {
@@ -150,17 +148,16 @@ func (c *Client) doStreamingRequest(requestURL string, request CompletionRequest
 		defer close(stream)
 
 		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
 		for scanner.Scan() {
 			line := scanner.Text()
 
-			// SSE lines start with "data:"
-			if !strings.HasPrefix(line, "data:") {
+			// SSE lines start with "data: "
+			if !strings.HasPrefix(line, "data: ") {
 				continue
 			}
 
 			// Extract the data portion
-			data := strings.TrimLeft(strings.TrimPrefix(line, "data:"), " \t")
+			data := strings.TrimPrefix(line, "data: ")
 
 			// Check for empty data lines
 			if data == "" {
@@ -177,8 +174,6 @@ func (c *Client) doStreamingRequest(requestURL string, request CompletionRequest
 				}
 				return
 			}
-
-			event = normalizeStreamEvent(event)
 
 			// Send the event to the channel
 			stream <- event
@@ -203,27 +198,6 @@ func (c *Client) doStreamingRequest(requestURL string, request CompletionRequest
 	return &llm.TextStreamResult{
 		Stream: stream,
 	}, nil
-}
-
-func normalizeStreamEvent(event llm.TextStreamEvent) llm.TextStreamEvent {
-	if event.Type != llm.EventTypeError {
-		return event
-	}
-
-	switch value := event.Value.(type) {
-	case error:
-		// Keep existing error as-is.
-	case string:
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			event.Value = fmt.Errorf("%s", trimmed)
-		} else {
-			event.Value = fmt.Errorf("unknown stream error")
-		}
-	default:
-		event.Value = fmt.Errorf("unknown stream error")
-	}
-
-	return event
 }
 
 func buildCompletionHTTPRequest(requestURL string, request CompletionRequest, isStreaming bool) (*http.Request, error) {

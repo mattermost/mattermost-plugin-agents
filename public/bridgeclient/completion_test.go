@@ -5,7 +5,6 @@ package bridgeclient
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -124,34 +123,6 @@ func TestAgentCompletionStreamParsesSSEEvents(t *testing.T) {
 	text, err := result.ReadAll()
 	require.NoError(t, err)
 	require.Equal(t, "hello world", text)
-}
-
-func TestAgentCompletionStreamHandlesLargeSSELine(t *testing.T) {
-	client := &Client{}
-	largeChunk := strings.Repeat("a", 70*1024)
-
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		sse := strings.Join([]string{
-			fmt.Sprintf(`data: {"Type":0,"Value":"%s"}`, largeChunk),
-			`data: {"Type":1,"Value":null}`,
-			"",
-		}, "\n")
-
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(sse)),
-		}, nil
-	})
-
-	result, err := client.AgentCompletionStream("abcdefghijklmnopqrstuvwxyz", CompletionRequest{
-		Posts: []Post{{Role: "user", Message: "hello"}},
-	})
-	require.NoError(t, err)
-
-	text, readErr := result.ReadAll()
-	require.NoError(t, readErr)
-	require.Equal(t, largeChunk, text)
 }
 
 func TestAgentCompletionStreamEmitsErrorForMalformedEvent(t *testing.T) {
