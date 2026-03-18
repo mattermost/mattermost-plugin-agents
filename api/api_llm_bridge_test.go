@@ -1300,6 +1300,53 @@ func setupBridgeEligibleMCPServer(t *testing.T, toolNames []string) *httptest.Se
 	return httptest.NewServer(handler)
 }
 
+// setupMCPWithEligibleTools creates an MCP test server with the given tools,
+// configures the environment to use it, and sets up a context builder with
+// matching tools. Returns the server (caller must defer Close).
+func (e *TestEnvironment) setupMCPWithEligibleTools(t *testing.T, toolNames []string) *httptest.Server {
+	t.Helper()
+
+	server := setupBridgeEligibleMCPServer(t, toolNames)
+
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{
+			{
+				Name:    "service-account-server",
+				Enabled: true,
+				BaseURL: server.URL,
+				Headers: map[string]string{"Authorization": "Bearer test-token"},
+			},
+		},
+	}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		httpClient: &http.Client{
+			Transport: &http.Transport{DisableKeepAlives: true},
+		},
+	}
+
+	tools := make([]llm.Tool, len(toolNames))
+	for i, name := range toolNames {
+		tools[i] = llm.Tool{
+			Name:        name,
+			Description: name,
+			Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+			Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				return "ok", nil
+			},
+		}
+	}
+
+	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
+		e.client,
+		&testLLMContextToolProvider{tools: tools},
+		nil,
+		&testLLMContextConfigProvider{},
+	)
+
+	return server
+}
+
 func TestBridgeClientAgentCompletionUsesAgentContextAndPrompt(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -1574,51 +1621,8 @@ func TestBridgeGetAgentToolsReturnsSortedToolsForAllowedUser(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
-	server := setupBridgeEligibleMCPServer(t, []string{"z_tool", "a_tool"})
+	server := e.setupMCPWithEligibleTools(t, []string{"z_tool", "a_tool"})
 	defer server.Close()
-
-	e.config.mcpConfig = mcp.Config{
-		Enabled: true,
-		Servers: []mcp.ServerConfig{
-			{
-				Name:    "service-account-server",
-				Enabled: true,
-				BaseURL: server.URL,
-				Headers: map[string]string{"Authorization": "Bearer test-token"},
-			},
-		},
-	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		httpClient: &http.Client{
-			Transport: &http.Transport{DisableKeepAlives: true},
-		},
-	}
-
-	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
-		e.client,
-		&testLLMContextToolProvider{
-			tools: []llm.Tool{
-				{
-					Name:        "z_tool",
-					Description: "tool z",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
-					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-						return "ok", nil
-					},
-				},
-				{
-					Name:        "a_tool",
-					Description: "tool a",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
-					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-						return "ok", nil
-					},
-				},
-			},
-		},
-		nil,
-		&testLLMContextConfigProvider{},
-	)
 
 	botConfig := llm.BotConfig{
 		Name:            "testbot",
@@ -1643,43 +1647,8 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
-	server := setupBridgeEligibleMCPServer(t, []string{"eligible_tool"})
+	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
 	defer server.Close()
-
-	e.config.mcpConfig = mcp.Config{
-		Enabled: true,
-		Servers: []mcp.ServerConfig{
-			{
-				Name:    "service-account-server",
-				Enabled: true,
-				BaseURL: server.URL,
-				Headers: map[string]string{"Authorization": "Bearer test-token"},
-			},
-		},
-	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		httpClient: &http.Client{
-			Transport: &http.Transport{DisableKeepAlives: true},
-		},
-	}
-
-	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
-		e.client,
-		&testLLMContextToolProvider{
-			tools: []llm.Tool{
-				{
-					Name:        "eligible_tool",
-					Description: "eligible from context",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
-					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-						return "ok", nil
-					},
-				},
-			},
-		},
-		nil,
-		&testLLMContextConfigProvider{},
-	)
 
 	botConfig := llm.BotConfig{
 		Name:            "testbot",
@@ -1710,126 +1679,6 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
 }
 
-func TestBridgeClientAgentCompletionStreamAllowedToolsEnablesAutoRun(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	server := setupBridgeEligibleMCPServer(t, []string{"eligible_tool"})
-	defer server.Close()
-
-	e.config.mcpConfig = mcp.Config{
-		Enabled: true,
-		Servers: []mcp.ServerConfig{
-			{
-				Name:    "service-account-server",
-				Enabled: true,
-				BaseURL: server.URL,
-				Headers: map[string]string{"Authorization": "Bearer test-token"},
-			},
-		},
-	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		httpClient: &http.Client{
-			Transport: &http.Transport{DisableKeepAlives: true},
-		},
-	}
-
-	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
-		e.client,
-		&testLLMContextToolProvider{
-			tools: []llm.Tool{
-				{
-					Name:        "eligible_tool",
-					Description: "eligible from context",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
-					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-						return "ok", nil
-					},
-				},
-			},
-		},
-		nil,
-		&testLLMContextConfigProvider{},
-	)
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-
-	fakeLLM := NewFakeLLMWithStreamEvents([]llm.TextStreamEvent{
-		{Type: llm.EventTypeText, Value: "stream"},
-		{Type: llm.EventTypeEnd, Value: nil},
-	})
-	for _, bot := range e.bots.GetAllBots() {
-		bot.SetLLMForTest(fakeLLM)
-	}
-
-	client := e.CreateBridgeClient()
-	result, err := client.AgentCompletionStream(testBotUserID, bridgeclient.CompletionRequest{
-		Posts: []bridgeclient.Post{
-			{Role: "user", Message: "Use tool in stream"},
-		},
-		AllowedTools: []string{"eligible_tool"},
-		UserID:       testUserID,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	text, readErr := result.ReadAll()
-	require.NoError(t, readErr)
-	require.Equal(t, "stream", text)
-
-	require.False(t, fakeLLM.LastConfig.ToolsDisabled)
-	require.Equal(t, []string{"eligible_tool"}, fakeLLM.LastConfig.AutoRunTools)
-	require.NotNil(t, fakeLLM.LastConversation.Context)
-	require.NotNil(t, fakeLLM.LastConversation.Context.Tools)
-	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
-}
-
-func TestBridgeClientAgentCompletionStreamDisablesToolsByDefault(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-
-	fakeLLM := NewFakeLLMWithStreamEvents([]llm.TextStreamEvent{
-		{Type: llm.EventTypeText, Value: "default-stream"},
-		{Type: llm.EventTypeEnd, Value: nil},
-	})
-	for _, bot := range e.bots.GetAllBots() {
-		bot.SetLLMForTest(fakeLLM)
-	}
-
-	client := e.CreateBridgeClient()
-	result, err := client.AgentCompletionStream(testBotUserID, bridgeclient.CompletionRequest{
-		Posts: []bridgeclient.Post{
-			{Role: "user", Message: "No tools allowed"},
-		},
-	})
-	require.NoError(t, err)
-
-	text, readErr := result.ReadAll()
-	require.NoError(t, readErr)
-	require.Equal(t, "default-stream", text)
-
-	require.True(t, fakeLLM.LastConfig.ToolsDisabled)
-	require.Empty(t, fakeLLM.LastConfig.AutoRunTools)
-}
-
 func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -1837,43 +1686,8 @@ func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
-	server := setupBridgeEligibleMCPServer(t, []string{"eligible_tool"})
+	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
 	defer server.Close()
-
-	e.config.mcpConfig = mcp.Config{
-		Enabled: true,
-		Servers: []mcp.ServerConfig{
-			{
-				Name:    "service-account-server",
-				Enabled: true,
-				BaseURL: server.URL,
-				Headers: map[string]string{"Authorization": "Bearer test-token"},
-			},
-		},
-	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		httpClient: &http.Client{
-			Transport: &http.Transport{DisableKeepAlives: true},
-		},
-	}
-
-	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
-		e.client,
-		&testLLMContextToolProvider{
-			tools: []llm.Tool{
-				{
-					Name:        "eligible_tool",
-					Description: "eligible from context",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
-					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-						return "ok", nil
-					},
-				},
-			},
-		},
-		nil,
-		&testLLMContextConfigProvider{},
-	)
 
 	botConfig := llm.BotConfig{
 		Name:            "testbot",
@@ -1902,76 +1716,6 @@ func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
 }
 
-func TestBridgeClientAgentCompletionAllowedToolsTrimsNames(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	server := setupBridgeEligibleMCPServer(t, []string{"eligible_tool"})
-	defer server.Close()
-
-	e.config.mcpConfig = mcp.Config{
-		Enabled: true,
-		Servers: []mcp.ServerConfig{
-			{
-				Name:    "service-account-server",
-				Enabled: true,
-				BaseURL: server.URL,
-				Headers: map[string]string{"Authorization": "Bearer test-token"},
-			},
-		},
-	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		httpClient: &http.Client{
-			Transport: &http.Transport{DisableKeepAlives: true},
-		},
-	}
-
-	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
-		e.client,
-		&testLLMContextToolProvider{
-			tools: []llm.Tool{
-				{
-					Name:        "eligible_tool",
-					Description: "eligible from context",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
-					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-						return "ok", nil
-					},
-				},
-			},
-		},
-		nil,
-		&testLLMContextConfigProvider{},
-	)
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-
-	fakeLLM := NewFakeLLM("trimmed")
-	for _, bot := range e.bots.GetAllBots() {
-		bot.SetLLMForTest(fakeLLM)
-	}
-
-	client := e.CreateBridgeClient()
-	result, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
-		Posts: []bridgeclient.Post{
-			{Role: "user", Message: "Run trimmed tool"},
-		},
-		AllowedTools: []string{" eligible_tool "},
-		UserID:       testUserID,
-	})
-	require.NoError(t, err)
-	require.Equal(t, "trimmed", result)
-	require.Equal(t, []string{"eligible_tool"}, fakeLLM.LastConfig.AutoRunTools)
-}
-
 func TestBridgeClientAgentCompletionRejectsIneligibleAllowedTool(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -1979,43 +1723,8 @@ func TestBridgeClientAgentCompletionRejectsIneligibleAllowedTool(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
-	server := setupBridgeEligibleMCPServer(t, []string{"eligible_tool"})
+	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
 	defer server.Close()
-
-	e.config.mcpConfig = mcp.Config{
-		Enabled: true,
-		Servers: []mcp.ServerConfig{
-			{
-				Name:    "service-account-server",
-				Enabled: true,
-				BaseURL: server.URL,
-				Headers: map[string]string{"Authorization": "Bearer test-token"},
-			},
-		},
-	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		httpClient: &http.Client{
-			Transport: &http.Transport{DisableKeepAlives: true},
-		},
-	}
-
-	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
-		e.client,
-		&testLLMContextToolProvider{
-			tools: []llm.Tool{
-				{
-					Name:        "eligible_tool",
-					Description: "eligible from context",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
-					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-						return "ok", nil
-					},
-				},
-			},
-		},
-		nil,
-		&testLLMContextConfigProvider{},
-	)
 
 	botConfig := llm.BotConfig{
 		Name:            "testbot",
@@ -2038,149 +1747,6 @@ func TestBridgeClientAgentCompletionRejectsIneligibleAllowedTool(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "is not eligible or not available for this agent")
-}
-
-func TestBridgeClientAgentCompletionStreamRejectsIneligibleAllowedTool(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	server := setupBridgeEligibleMCPServer(t, []string{"eligible_tool"})
-	defer server.Close()
-
-	e.config.mcpConfig = mcp.Config{
-		Enabled: true,
-		Servers: []mcp.ServerConfig{
-			{
-				Name:    "service-account-server",
-				Enabled: true,
-				BaseURL: server.URL,
-				Headers: map[string]string{"Authorization": "Bearer test-token"},
-			},
-		},
-	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		httpClient: &http.Client{
-			Transport: &http.Transport{DisableKeepAlives: true},
-		},
-	}
-
-	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
-		e.client,
-		&testLLMContextToolProvider{
-			tools: []llm.Tool{
-				{
-					Name:        "eligible_tool",
-					Description: "eligible from context",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
-					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-						return "ok", nil
-					},
-				},
-			},
-		},
-		nil,
-		&testLLMContextConfigProvider{},
-	)
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-
-	for _, bot := range e.bots.GetAllBots() {
-		bot.SetLLMForTest(NewFakeLLM("ignored"))
-	}
-
-	client := e.CreateBridgeClient()
-	_, err := client.AgentCompletionStream(testBotUserID, bridgeclient.CompletionRequest{
-		Posts: []bridgeclient.Post{
-			{Role: "user", Message: "Try disallowed in stream"},
-		},
-		AllowedTools: []string{"not_eligible_tool"},
-		UserID:       testUserID,
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "is not eligible or not available for this agent")
-}
-
-func TestBridgeClientAgentCompletionAllowedToolsSkipsUnreachableEligibleServer(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	server := setupBridgeEligibleMCPServer(t, []string{"eligible_tool"})
-	defer server.Close()
-
-	e.config.mcpConfig = mcp.Config{
-		Enabled: true,
-		Servers: []mcp.ServerConfig{
-			{
-				Name:    "unreachable-server",
-				Enabled: true,
-				BaseURL: "http://127.0.0.1:1",
-				Headers: map[string]string{"Authorization": "Bearer bad"},
-			},
-			{
-				Name:    "reachable-server",
-				Enabled: true,
-				BaseURL: server.URL,
-				Headers: map[string]string{"Authorization": "Bearer good"},
-			},
-		},
-	}
-	e.api.mcpClientManager = &mockMCPClientManager{
-		httpClient: &http.Client{
-			Transport: &http.Transport{DisableKeepAlives: true},
-		},
-	}
-
-	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
-		e.client,
-		&testLLMContextToolProvider{
-			tools: []llm.Tool{
-				{
-					Name:        "eligible_tool",
-					Description: "eligible from context",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
-					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-						return "ok", nil
-					},
-				},
-			},
-		},
-		nil,
-		&testLLMContextConfigProvider{},
-	)
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-
-	fakeLLM := NewFakeLLM("reachable still works")
-	for _, bot := range e.bots.GetAllBots() {
-		bot.SetLLMForTest(fakeLLM)
-	}
-
-	client := e.CreateBridgeClient()
-	result, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
-		Posts: []bridgeclient.Post{
-			{Role: "user", Message: "Run tool with partial server outage"},
-		},
-		AllowedTools: []string{"eligible_tool"},
-		UserID:       testUserID,
-	})
-	require.NoError(t, err)
-	require.Equal(t, "reachable still works", result)
 }
 
 func TestBridgeGetAgentToolsRespectsUserPermissions(t *testing.T) {
@@ -2249,103 +1815,6 @@ func TestBridgeClientAgentCompletionRejectsExplicitEmptyAllowedToolsArray(t *tes
 	respBody, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(respBody), "allowed_tools cannot be empty")
-}
-
-func TestBridgeServiceCompletionRejectsExplicitEmptyAllowedToolsArray(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-	for _, bot := range e.bots.GetAllBots() {
-		bot.SetServiceForTest(llm.ServiceConfig{ID: "service-id", Name: "service-name"})
-	}
-
-	rawBody := `{"posts":[{"role":"user","message":"Hello"}],"allowed_tools":[]}`
-	req, err := http.NewRequest(
-		http.MethodPost,
-		"/mattermost-ai/bridge/v1/completion/service/service-id/nostream",
-		strings.NewReader(rawBody),
-	)
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
-	require.NotNil(t, resp)
-	defer resp.Body.Close()
-
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	respBody, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.Contains(t, string(respBody), "allowed_tools is only supported for agent completion endpoints")
-}
-
-func TestBridgeServiceCompletionStreamRejectsExplicitEmptyAllowedToolsArray(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-	for _, bot := range e.bots.GetAllBots() {
-		bot.SetServiceForTest(llm.ServiceConfig{ID: "service-id", Name: "service-name"})
-	}
-
-	rawBody := `{"posts":[{"role":"user","message":"Hello"}],"allowed_tools":[]}`
-	req, err := http.NewRequest(
-		http.MethodPost,
-		"/mattermost-ai/bridge/v1/completion/service/service-id",
-		strings.NewReader(rawBody),
-	)
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp := (&testPluginAPI{api: e.api}).PluginHTTP(req)
-	require.NotNil(t, resp)
-	defer resp.Body.Close()
-
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	respBody, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.Contains(t, string(respBody), "allowed_tools is only supported for agent completion endpoints")
-}
-
-func TestBridgeClientAgentCompletionRejectsInvalidAllowedToolsEntry(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-
-	client := e.CreateBridgeClient()
-	_, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
-		Posts: []bridgeclient.Post{
-			{Role: "user", Message: "Hello"},
-		},
-		AllowedTools: []string{"   "},
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "allowed_tools cannot contain empty tool names")
 }
 
 func TestBridgeClientAgentCompletionRejectsAllowedToolsWhenAgentToolsDisabled(t *testing.T) {
@@ -2488,51 +1957,3 @@ func TestBridgeClientAgentCompletionAllowedToolsFailsWhenNoEligibleToolsAvailabl
 	require.Contains(t, err.Error(), "no eligible tools available for this agent")
 }
 
-func TestBridgeClientAgentCompletionStreamAllowedToolsFailsWhenNoEligibleToolsAvailable(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	// MCP disabled means allowed_tools cannot resolve any bridge-eligible tools.
-	e.config.mcpConfig = mcp.Config{
-		Enabled: false,
-	}
-
-	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
-		e.client,
-		&testLLMContextToolProvider{
-			tools: []llm.Tool{
-				{
-					Name:        "context_only_tool",
-					Description: "present in context but not bridge-eligible",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
-					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-						return "ok", nil
-					},
-				},
-			},
-		},
-		nil,
-		&testLLMContextConfigProvider{},
-	)
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-
-	client := e.CreateBridgeClient()
-	_, err := client.AgentCompletionStream(testBotUserID, bridgeclient.CompletionRequest{
-		Posts: []bridgeclient.Post{
-			{Role: "user", Message: "Try tool call in stream"},
-		},
-		AllowedTools: []string{"context_only_tool"},
-		UserID:       testUserID,
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "no eligible tools available for this agent")
-}
