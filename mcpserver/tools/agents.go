@@ -35,7 +35,7 @@ func (p *MattermostToolProvider) getAgentTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name: "list_agents",
-			Description: `List all available AI agents (bots) and LLM services. Returns each agent's ID, display name, username, and service type.
+			Description: `List all available AI agents (bots). Returns each agent's ID, display name, and username.
 Use this tool to discover valid provider_id values for the ai_prompt action type when creating automations.
 The agent ID (26-character Mattermost user ID) is what you pass as config.provider_id with provider_type "agent".`,
 			Schema:   llm.NewJSONSchemaFromStruct[ListAgentsArgs](),
@@ -49,6 +49,10 @@ func (p *MattermostToolProvider) toolListAgents(mcpContext *MCPToolContext, args
 	var args ListAgentsArgs
 	if err := argsGetter(&args); err != nil {
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool list_agents: %w", err)
+	}
+
+	if mcpContext == nil || mcpContext.Client == nil {
+		return "client not available", fmt.Errorf("client not available in context")
 	}
 
 	bots, err := p.fetchAIBots(mcpContext.Client)
