@@ -6,6 +6,7 @@ package mmapi
 import (
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -30,6 +31,7 @@ type Client interface {
 	LogWarn(msg string, keyValuePairs ...interface{})
 	KVGet(key string, value interface{}) error
 	KVSet(key string, value interface{}) error
+	KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error
 	KVDelete(key string) error
 	GetUserByUsername(username string) (*model.User, error)
 	GetUserStatus(userID string) (*model.Status, error)
@@ -102,6 +104,11 @@ func IsKVNotFound(err error) bool {
 
 func (m *client) KVSet(key string, value interface{}) error {
 	_, err := m.pluginAPI.KV.Set(key, value)
+	return err
+}
+
+func (m *client) KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error {
+	_, err := m.pluginAPI.KV.Set(key, value, pluginapi.SetExpiry(ttl))
 	return err
 }
 

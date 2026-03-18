@@ -19,8 +19,10 @@ type MCPConfig struct {
 
 // MCPServerConfig contains the configuration for a single MCP server
 type MCPServerConfig struct {
-	Name    string            `json:"name"`
-	Enabled bool              `json:"enabled"`
-	BaseURL string            `json:"baseURL"`
-	Headers map[string]string `json:"headers,omitempty"`
+	Name         string            `json:"name"`
+	Enabled      bool              `json:"enabled"`
+	BaseURL      string            `json:"baseURL"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	ClientID     string            `json:"clientID,omitempty"`
+	ClientSecret string            `json:"clientSecret,omitempty"`
 }

@@ -307,7 +307,15 @@ func (p *Plugin) OnActivate() error {
 		}
 	}
 
-	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient), embeddedMCPServer, untrustedHTTPClient)
+	serverConfigLookup := func(serverID string) (mcp.ServerConfig, bool) {
+		for _, s := range p.configuration.MCP().Servers {
+			if s.Name == serverID {
+				return s, true
+			}
+		}
+		return mcp.ServerConfig{}, false
+	}
+	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient)
 	p.configuration.RegisterUpdateListener(func() {
 		var embeddedServer mcp.EmbeddedMCPServer
 		var embeddedErr error

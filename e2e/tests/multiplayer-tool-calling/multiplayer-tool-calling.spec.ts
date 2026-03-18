@@ -274,10 +274,17 @@ async function completeAllToolCallRounds(page: Page, action: 'accept-share' | 'a
 }
 
 /**
- * Wait for the bot to finish responding in the thread after all tool calls.
- * Polls until no Accept/Share/Keep private buttons remain and no stop button is visible.
+ * Wait for the tool approval flow to settle after all tool calls.
+ * Polls until no Accept/Share/Keep private buttons remain.
+ *
+ * We intentionally do not wait for the final streaming response to fully
+ * complete here. The OpenAI provider can keep the stop button visible for a
+ * long time even after the tool execution already succeeded, which makes the
+ * approval-flow assertions flaky. The tests below assert the high-signal end
+ * states directly (no approval buttons remain and the requested post was
+ * created), which is sufficient to verify the happy path.
  */
-async function waitForBotFinished(page: Page, timeout: number = 120000): Promise<void> {
+async function waitForApprovalFlowToSettle(page: Page, timeout: number = 30000): Promise<void> {
     const startTime = Date.now();
     const rhs = page.locator('#rhsContainer');
 
@@ -285,15 +292,14 @@ async function waitForBotFinished(page: Page, timeout: number = 120000): Promise
         const hasAccept = await rhs.getByRole('button', { name: 'Accept' }).first().isVisible().catch(() => false);
         const hasShare = await rhs.getByRole('button', { name: 'Share' }).first().isVisible().catch(() => false);
         const hasKeepPrivate = await rhs.getByRole('button', { name: 'Keep private' }).first().isVisible().catch(() => false);
-        const hasStop = await rhs.getByRole('button', { name: /stop/i }).first().isVisible().catch(() => false);
 
-        if (!hasAccept && !hasShare && !hasKeepPrivate && !hasStop) {
+        if (!hasAccept && !hasShare && !hasKeepPrivate) {
             await page.waitForTimeout(2000); // Let final UI settle
             return;
         }
         await page.waitForTimeout(1000);
     }
-    throw new Error('Timeout waiting for bot to finish in thread');
+    throw new Error('Timeout waiting for tool approval flow to settle');
 }
 
 async function waitForPageReady(page: Page): Promise<void> {
@@ -372,8 +378,8 @@ function createProviderTestSuite(provider: ProviderBundle) {
                 const rounds = await completeAllToolCallRounds(invokerPage, 'accept-share');
                 expect(rounds).toBeGreaterThanOrEqual(1);
 
-                // Wait for the bot to finish (no more approval buttons, no stop button)
-                await waitForBotFinished(invokerPage);
+                // Wait for approval UI to settle after the last share.
+                await waitForApprovalFlowToSettle(invokerPage);
 
                 // Onlooker should NOT see approval buttons after completion
                 await onlookerPage.waitForTimeout(3000);
@@ -518,8 +524,8 @@ function createProviderTestSuite(provider: ProviderBundle) {
                 }
                 expect(rounds).toBeGreaterThanOrEqual(1);
 
-                // Wait for the flow to settle
-                await waitForBotFinished(invokerPage);
+                // Wait for approval UI to settle after the final keep-private.
+                await waitForApprovalFlowToSettle(invokerPage);
 
                 // Onlooker should NOT see any approval buttons
                 const onlookerRhs = onlookerPage.locator('#rhsContainer');

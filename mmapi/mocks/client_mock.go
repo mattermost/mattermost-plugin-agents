@@ -7,6 +7,7 @@ package mocks
 import (
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	mock "github.com/stretchr/testify/mock"
@@ -1239,6 +1240,53 @@ func (_c *MockClient_KVSet_Call) Return(err error) *MockClient_KVSet_Call {
 }
 
 func (_c *MockClient_KVSet_Call) RunAndReturn(run func(key string, value interface{}) error) *MockClient_KVSet_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// KVSetWithExpiry provides a mock function for the type MockClient
+func (_mock *MockClient) KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error {
+	ret := _mock.Called(key, value, ttl)
+
+	if len(ret) == 0 {
+		panic("no return value specified for KVSetWithExpiry")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(string, interface{}, time.Duration) error); ok {
+		r0 = returnFunc(key, value, ttl)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockClient_KVSetWithExpiry_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'KVSetWithExpiry'
+type MockClient_KVSetWithExpiry_Call struct {
+	*mock.Call
+}
+
+// KVSetWithExpiry is a helper method to define mock.On call
+//   - key
+//   - value
+//   - ttl
+func (_e *MockClient_Expecter) KVSetWithExpiry(key interface{}, value interface{}, ttl interface{}) *MockClient_KVSetWithExpiry_Call {
+	return &MockClient_KVSetWithExpiry_Call{Call: _e.mock.On("KVSetWithExpiry", key, value, ttl)}
+}
+
+func (_c *MockClient_KVSetWithExpiry_Call) Run(run func(key string, value interface{}, ttl time.Duration)) *MockClient_KVSetWithExpiry_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(interface{}), args[2].(time.Duration))
+	})
+	return _c
+}
+
+func (_c *MockClient_KVSetWithExpiry_Call) Return(err error) *MockClient_KVSetWithExpiry_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockClient_KVSetWithExpiry_Call) RunAndReturn(run func(key string, value interface{}, ttl time.Duration) error) *MockClient_KVSetWithExpiry_Call {
 	_c.Call.Return(run)
 	return _c
 }
