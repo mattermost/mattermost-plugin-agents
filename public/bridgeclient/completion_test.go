@@ -221,21 +221,9 @@ func TestCompletionEndpointInputValidation(t *testing.T) {
 			expectedError: "invalid agent ID",
 		},
 		{
-			name:          "agent completion stream rejects whitespace-only id",
-			endpoint:      agentStream,
-			input:         "\n\t",
-			expectedError: "invalid agent ID",
-		},
-		{
 			name:          "service completion rejects empty service",
 			endpoint:      serviceNoStream,
 			input:         "",
-			expectedError: "service cannot be empty",
-		},
-		{
-			name:          "service completion stream rejects whitespace-only service",
-			endpoint:      serviceStream,
-			input:         " \t ",
 			expectedError: "service cannot be empty",
 		},
 	}

@@ -717,17 +717,6 @@ func TestBridgeClientPermissions(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:      "whitespace UserID and ChannelID are treated as unset",
-			userID:    " \t ",
-			channelID: " \n ",
-			botConfig: llm.BotConfig{
-				UserAccessLevel: llm.UserAccessLevelAllow,
-				UserIDs:         []string{testUserID},
-			},
-			envSetup:    func(e *TestEnvironment) {},
-			expectError: false,
-		},
-		{
 			name:      "ChannelID only with valid channel ID - succeeds (user checks skipped)",
 			userID:    "",
 			channelID: testChannelID,

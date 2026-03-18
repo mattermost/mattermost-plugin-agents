@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 )
 
 func (c *Client) doGetJSON(requestURL string, out any) error {
@@ -41,12 +40,11 @@ func (c *Client) doGetJSON(requestURL string, out any) error {
 }
 
 func appendValidatedUserIDQuery(requestURL string, userID string) (string, error) {
-	trimmedUserID := strings.TrimSpace(userID)
-	if trimmedUserID == "" {
+	if userID == "" {
 		return requestURL, nil
 	}
 
-	if err := ValidateID(trimmedUserID); err != nil {
+	if err := ValidateID(userID); err != nil {
 		return "", fmt.Errorf("invalid user ID: %w", err)
 	}
 
@@ -56,7 +54,7 @@ func appendValidatedUserIDQuery(requestURL string, userID string) (string, error
 	}
 
 	query := parsedURL.Query()
-	query.Set("user_id", trimmedUserID)
+	query.Set("user_id", userID)
 	parsedURL.RawQuery = query.Encode()
 
 	return parsedURL.String(), nil
@@ -101,12 +99,11 @@ func (c *Client) GetServices(userID string) ([]BridgeServiceInfo, error) {
 // GetAgentTools retrieves bridge-eligible tools for a specific agent.
 // If userID is provided, the result is filtered to what that user can access.
 func (c *Client) GetAgentTools(agent string, userID string) ([]BridgeToolInfo, error) {
-	trimmedAgent := strings.TrimSpace(agent)
-	if err := ValidateID(trimmedAgent); err != nil {
+	if err := ValidateID(agent); err != nil {
 		return nil, fmt.Errorf("invalid agent ID: %w", err)
 	}
 
-	requestURL := fmt.Sprintf("/%s/bridge/v1/agents/%s/tools", aiPluginID, trimmedAgent)
+	requestURL := fmt.Sprintf("/%s/bridge/v1/agents/%s/tools", aiPluginID, agent)
 	updatedRequestURL, err := appendValidatedUserIDQuery(requestURL, userID)
 	if err != nil {
 		return nil, err
