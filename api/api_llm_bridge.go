@@ -17,7 +17,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -147,77 +146,17 @@ func (a *API) buildLLMBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRe
 	return context, nil
 }
 
-func (a *API) buildAgentBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool) *llm.Context {
-	bridgeContext := llm.NewContext()
-	if req.UserID != "" {
-		bridgeContext.RequestingUser = &model.User{
-			Id:       req.UserID,
-			Username: req.UserID,
-			Locale:   "en",
-		}
-	} else {
-		bridgeContext.RequestingUser = &model.User{}
-	}
-
-	botConfig := bot.GetConfig()
-	bridgeContext.BotName = botConfig.DisplayName
-	bridgeContext.BotUsername = botConfig.Name
-	bridgeContext.CustomInstructions = botConfig.CustomInstructions
-	bridgeContext.BotModel = bot.GetService().DefaultModel
-	bridgeContext.BotServiceType = bot.GetService().Type
-	if mmbot := bot.GetMMBot(); mmbot != nil {
-		bridgeContext.BotUserID = mmbot.UserId
-	}
-
-	if a.contextBuilder != nil {
-		a.contextBuilder.WithLLMContextServerInfo()(bridgeContext)
-	}
-
-	if includeTools && a.contextBuilder != nil {
-		a.contextBuilder.WithLLMContextTools(bot)(bridgeContext)
-	}
-	if a.contextBuilder != nil {
-		a.contextBuilder.WithLLMContextRequestingUser(bridgeContext.RequestingUser)(bridgeContext)
-	}
-
-	if req.ChannelID != "" {
-		channel, err := a.pluginAPI.Channel.Get(req.ChannelID)
-		if err != nil {
-			a.pluginAPI.Log.Warn("failed to get channel for bridge context; using channel ID only", "channel_id", req.ChannelID, "error", err)
-			bridgeContext.Channel = &model.Channel{Id: req.ChannelID}
-		} else {
-			bridgeContext.Channel = channel
-			if channel.TeamId != "" && channel.Type != model.ChannelTypeDirect && channel.Type != model.ChannelTypeGroup {
-				bridgeContext.Team = &model.Team{Id: channel.TeamId}
-			}
-		}
-	}
-
-	return bridgeContext
-}
-
 func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool, operation, operationSubType string) (llm.CompletionRequest, error) {
 	posts, err := a.convertBridgePostsToInternal(req)
 	if err != nil {
 		return llm.CompletionRequest{}, err
 	}
 
-	if a.prompts == nil {
-		return llm.CompletionRequest{}, errors.New("prompt manager is unavailable")
+	bridgeContext := llm.NewContext()
+	bridgeContext.RequestingUser = &model.User{Id: req.UserID}
+	if includeTools && a.contextBuilder != nil {
+		a.contextBuilder.WithLLMContextTools(bot)(bridgeContext)
 	}
-
-	bridgeContext := a.buildAgentBridgeContext(bot, req, includeTools)
-	systemPrompt, err := a.prompts.Format(prompts.PromptDirectMessageQuestionSystem, bridgeContext)
-	if err != nil {
-		return llm.CompletionRequest{}, fmt.Errorf("failed to format system prompt: %w", err)
-	}
-
-	posts = append([]llm.Post{
-		{
-			Role:    llm.PostRoleSystem,
-			Message: systemPrompt,
-		},
-	}, posts...)
 
 	resolvedOperation := operation
 	if req.Operation != "" {
@@ -280,10 +219,6 @@ func (a *API) prepareAgentBridgeCompletion(
 	allowedTools, err := normalizeAllowedTools(req.AllowedTools)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid allowed_tools: %w", err)
-	}
-
-	if allowedTools != nil && req.UserID == "" {
-		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, errors.New("user_id is required when allowed_tools is provided")
 	}
 
 	bot, err := a.getBotByAgent(agent)
@@ -370,7 +305,7 @@ func (a *API) discoverBridgeEligibleTools(ctx context.Context, userID string) ([
 	toolMap := map[string]bridgeclient.BridgeToolInfo{}
 
 	// Discover tools from embedded server if enabled
-	if mcpConfig.EmbeddedServer.Enabled {
+	if userID != "" && mcpConfig.EmbeddedServer.Enabled {
 		embeddedServer := a.mcpClientManager.GetEmbeddedServer()
 		if embeddedServer != nil {
 			tools, err := mcp.DiscoverEmbeddedServerTools(
@@ -685,7 +620,6 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 		return
 	}
 
-	// Optional user filtering for usage restrictions.
 	if userID != "" {
 		err = a.bots.CheckUsageRestrictionsForUser(bot, userID)
 		if err != nil {
@@ -703,10 +637,13 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 		return
 	}
 
-	bridgeContext := a.buildAgentBridgeContext(bot, bridgeclient.CompletionRequest{
-		UserID: userID,
-	}, true)
-	eligibleTools, _, err := a.filterEligibleToolsForContext(c.Request.Context(), userID, bridgeContext.Tools)
+	// Build a minimal context just to resolve the bot's available tools.
+	toolContext := llm.NewContext()
+	toolContext.RequestingUser = &model.User{Id: userID}
+	if a.contextBuilder != nil {
+		a.contextBuilder.WithLLMContextTools(bot)(toolContext)
+	}
+	eligibleTools, _, err := a.filterEligibleToolsForContext(c.Request.Context(), userID, toolContext.Tools)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("failed to discover eligible tools: %v", err),
