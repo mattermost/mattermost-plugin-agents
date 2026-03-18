@@ -109,7 +109,7 @@ request := bridgeclient.CompletionRequest{
 }
 ```
 
-### Agent tool allowlist (service-account eligible tools only)
+### Agent tool allowlist
 
 ```go
 request := bridgeclient.CompletionRequest{
@@ -117,6 +117,7 @@ request := bridgeclient.CompletionRequest{
         {Role: "user", Message: "Use the eligible MCP tool"},
     },
     AllowedTools: []string{"eligible_tool_name"},
+    UserID:       userID, // Required when using AllowedTools
 }
 
 response, err := client.AgentCompletion("bot-user-id", request)
@@ -125,7 +126,7 @@ response, err := client.AgentCompletion("bot-user-id", request)
 When `AllowedTools` is provided:
 - only tools in the list may run
 - tool execution is auto-run (no approval flow)
-- tools must be bridge-eligible (service-account style / non user-scoped auth)
+- tools must come from enabled MCP servers or embedded MCP servers
 - empty lists and blank tool names are rejected by the bridge API
 
 ## Permission Checking
@@ -228,7 +229,7 @@ for _, tool := range tools {
 ```
 
 This endpoint returns only tools that are currently eligible for `AllowedTools`.
-In practice, this is limited to service-account style MCP tools configured for bridge eligibility.
+Eligible tools come from enabled MCP servers and embedded MCP servers.
 If no eligible tools are available, this returns an empty list.
 
 You can optionally pass `userID` to apply user-level permission filtering:

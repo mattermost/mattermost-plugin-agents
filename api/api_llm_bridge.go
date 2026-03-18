@@ -22,11 +22,6 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-const (
-	bridgeSyntheticUserID   = "bridgeclient-service-account"
-	bridgeSyntheticUsername = "bridgeclient"
-)
-
 // convertBridgePostsToInternal converts bridge posts to internal llm posts.
 func (a *API) convertBridgePostsToInternal(req bridgeclient.CompletionRequest) ([]llm.Post, error) {
 	posts := make([]llm.Post, len(req.Posts))
@@ -154,11 +149,7 @@ func (a *API) buildLLMBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRe
 
 func (a *API) getBridgeRequestingUser(userID string) *model.User {
 	if userID == "" {
-		return &model.User{
-			Id:       bridgeSyntheticUserID,
-			Username: bridgeSyntheticUsername,
-			Locale:   "en",
-		}
+		return &model.User{}
 	}
 	return &model.User{
 		Id:       userID,
@@ -341,6 +332,10 @@ func (a *API) prepareAgentBridgeCompletion(
 		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid allowed_tools: %w", err)
 	}
 
+	if allowedTools != nil && req.UserID == "" {
+		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, errors.New("user_id is required when allowed_tools is provided")
+	}
+
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, http.StatusNotFound, err
@@ -407,11 +402,7 @@ func (a *API) prepareAgentBridgeCompletion(
 }
 
 func bridgeToolDiscoveryUserID(userID string) string {
-	normalizedUserID := strings.TrimSpace(userID)
-	if normalizedUserID == "" {
-		return bridgeSyntheticUserID
-	}
-	return normalizedUserID
+	return strings.TrimSpace(userID)
 }
 
 func (a *API) discoverBridgeEligibleTools(ctx context.Context, userID string) ([]bridgeclient.BridgeToolInfo, error) {
@@ -463,7 +454,7 @@ func (a *API) discoverBridgeEligibleTools(ctx context.Context, userID string) ([
 
 	// Discover tools from remote servers
 	for _, serverConfig := range mcpConfig.Servers {
-		if !serverConfig.Enabled || serverConfig.BaseURL == "" || len(serverConfig.Headers) == 0 {
+		if !serverConfig.Enabled || serverConfig.BaseURL == "" {
 			continue
 		}
 

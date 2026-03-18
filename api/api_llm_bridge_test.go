@@ -1333,7 +1333,7 @@ func TestBridgeClientAgentCompletionUsesAgentContextAndPrompt(t *testing.T) {
 	require.Equal(t, "Test Bot", fakeLLM.LastConversation.Context.BotName)
 	require.Equal(t, "testbot", fakeLLM.LastConversation.Context.BotUsername)
 	require.NotNil(t, fakeLLM.LastConversation.Context.RequestingUser)
-	require.Equal(t, bridgeSyntheticUsername, fakeLLM.LastConversation.Context.RequestingUser.Username)
+	require.Empty(t, fakeLLM.LastConversation.Context.RequestingUser.Id)
 
 	require.GreaterOrEqual(t, len(fakeLLM.LastConversation.Posts), 2)
 	require.Equal(t, llm.PostRoleSystem, fakeLLM.LastConversation.Posts[0].Role)
@@ -1440,7 +1440,7 @@ func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 	e.setupTestBot(botConfig)
 
 	client := e.CreateBridgeClient()
-	tools, err := client.GetAgentTools(testBotUserID, "")
+	tools, err := client.GetAgentTools(testBotUserID, testUserID)
 	require.NoError(t, err)
 	require.Len(t, tools, 1)
 	require.Equal(t, "eligible_tool", tools[0].Name)
@@ -1495,7 +1495,7 @@ func TestBridgeGetAgentToolsReturnsEmbeddedServerTools(t *testing.T) {
 	e.setupTestBot(botConfig)
 
 	client := e.CreateBridgeClient()
-	tools, err := client.GetAgentTools(testBotUserID, "")
+	tools, err := client.GetAgentTools(testBotUserID, testUserID)
 	require.NoError(t, err)
 	require.Len(t, tools, 1)
 	require.Equal(t, "embedded_tool", tools[0].Name)
@@ -1561,7 +1561,7 @@ func TestBridgeGetAgentToolsSkipsUnreachableEligibleServer(t *testing.T) {
 	e.setupTestBot(botConfig)
 
 	client := e.CreateBridgeClient()
-	tools, err := client.GetAgentTools(testBotUserID, "")
+	tools, err := client.GetAgentTools(testBotUserID, testUserID)
 	require.NoError(t, err)
 	require.Len(t, tools, 1)
 	require.Equal(t, "eligible_tool", tools[0].Name)
@@ -1699,6 +1699,7 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 			{Role: "user", Message: "Use the tool"},
 		},
 		AllowedTools: []string{"eligible_tool"},
+		UserID:       testUserID,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "auto run enabled", result)
@@ -1775,6 +1776,7 @@ func TestBridgeClientAgentCompletionStreamAllowedToolsEnablesAutoRun(t *testing.
 			{Role: "user", Message: "Use tool in stream"},
 		},
 		AllowedTools: []string{"eligible_tool"},
+		UserID:       testUserID,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1891,6 +1893,7 @@ func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {
 			{Role: "user", Message: "Run tool once"},
 		},
 		AllowedTools: []string{"eligible_tool", "eligible_tool"},
+		UserID:       testUserID,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "deduped", result)
@@ -1962,6 +1965,7 @@ func TestBridgeClientAgentCompletionAllowedToolsTrimsNames(t *testing.T) {
 			{Role: "user", Message: "Run trimmed tool"},
 		},
 		AllowedTools: []string{" eligible_tool "},
+		UserID:       testUserID,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "trimmed", result)
@@ -2030,6 +2034,7 @@ func TestBridgeClientAgentCompletionRejectsIneligibleAllowedTool(t *testing.T) {
 			{Role: "user", Message: "Try disallowed"},
 		},
 		AllowedTools: []string{"not_eligible_tool"},
+		UserID:       testUserID,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "is not eligible or not available for this agent")
@@ -2097,6 +2102,7 @@ func TestBridgeClientAgentCompletionStreamRejectsIneligibleAllowedTool(t *testin
 			{Role: "user", Message: "Try disallowed in stream"},
 		},
 		AllowedTools: []string{"not_eligible_tool"},
+		UserID:       testUserID,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "is not eligible or not available for this agent")
@@ -2171,6 +2177,7 @@ func TestBridgeClientAgentCompletionAllowedToolsSkipsUnreachableEligibleServer(t
 			{Role: "user", Message: "Run tool with partial server outage"},
 		},
 		AllowedTools: []string{"eligible_tool"},
+		UserID:       testUserID,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "reachable still works", result)
@@ -2362,6 +2369,7 @@ func TestBridgeClientAgentCompletionRejectsAllowedToolsWhenAgentToolsDisabled(t 
 			{Role: "user", Message: "Hello"},
 		},
 		AllowedTools: []string{"eligible_tool"},
+		UserID:       testUserID,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "agent has tools disabled")
@@ -2474,6 +2482,7 @@ func TestBridgeClientAgentCompletionAllowedToolsFailsWhenNoEligibleToolsAvailabl
 			{Role: "user", Message: "Try tool call"},
 		},
 		AllowedTools: []string{"context_only_tool"},
+		UserID:       testUserID,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no eligible tools available for this agent")
@@ -2522,6 +2531,7 @@ func TestBridgeClientAgentCompletionStreamAllowedToolsFailsWhenNoEligibleToolsAv
 			{Role: "user", Message: "Try tool call in stream"},
 		},
 		AllowedTools: []string{"context_only_tool"},
+		UserID:       testUserID,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no eligible tools available for this agent")
