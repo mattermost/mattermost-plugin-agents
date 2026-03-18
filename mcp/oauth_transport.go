@@ -60,20 +60,14 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 		}()
 	}
 
-	transport := t.base
-	if transport == nil {
-		transport = http.DefaultTransport
-	}
-
-	// Allow operation without OAuth manager (e.g. service-account style auth via static headers).
-	if t.manager == nil {
-		reqBodyClosed = true
-		return transport.RoundTrip(req)
-	}
-
 	token, err := t.manager.loadToken(t.userID, t.serverName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load token: %w", err)
+	}
+
+	transport := t.base
+	if transport == nil {
+		transport = http.DefaultTransport
 	}
 
 	// Include the token if found
