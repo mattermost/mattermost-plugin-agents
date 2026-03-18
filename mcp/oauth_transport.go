@@ -66,9 +66,6 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 	}
 
 	transport := t.base
-	if transport == nil {
-		transport = http.DefaultTransport
-	}
 
 	// Include the token if found
 	if token != nil {
