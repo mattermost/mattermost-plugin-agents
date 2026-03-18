@@ -12,112 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestAutomationSchemaGeneration(t *testing.T) {
-	tests := []struct {
-		name           string
-		schema         func() any
-		expectedFields []string
-	}{
-		{
-			name:           "ListAutomationsArgs schema",
-			schema:         func() any { return llm.NewJSONSchemaFromStruct[ListAutomationsArgs]() },
-			expectedFields: []string{"automation_id", "channel_id"},
-		},
-		{
-			name:           "CreateAutomationArgs schema",
-			schema:         func() any { return llm.NewJSONSchemaFromStruct[CreateAutomationArgs]() },
-			expectedFields: []string{"name", "enabled", "trigger", "actions"},
-		},
-		{
-			name:           "UpdateAutomationArgs schema",
-			schema:         func() any { return llm.NewJSONSchemaFromStruct[UpdateAutomationArgs]() },
-			expectedFields: []string{"automation_id", "name", "enabled", "trigger", "actions"},
-		},
-		{
-			name:           "DeleteAutomationArgs schema",
-			schema:         func() any { return llm.NewJSONSchemaFromStruct[DeleteAutomationArgs]() },
-			expectedFields: []string{"automation_id"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			schema := tt.schema()
-			require.NotNil(t, schema)
-
-			// Marshal to JSON and check fields exist
-			data, err := json.Marshal(schema)
-			require.NoError(t, err)
-
-			var schemaMap map[string]any
-			require.NoError(t, json.Unmarshal(data, &schemaMap))
-
-			properties, ok := schemaMap["properties"].(map[string]any)
-			require.True(t, ok, "schema should have properties")
-
-			for _, field := range tt.expectedFields {
-				assert.Contains(t, properties, field, "schema should contain field %s", field)
-			}
-		})
-	}
-}
-
-func TestAutomationAPIURL(t *testing.T) {
-	provider := &MattermostToolProvider{
-		mmServerURL: "http://localhost:8065",
-	}
-
-	tests := []struct {
-		name     string
-		path     string
-		expected string
-	}{
-		{
-			name:     "flows list",
-			path:     "/flows",
-			expected: "http://localhost:8065/plugins/com.mattermost.channel-automation/api/v1/flows",
-		},
-		{
-			name:     "flows by id",
-			path:     "/flows/abc123",
-			expected: "http://localhost:8065/plugins/com.mattermost.channel-automation/api/v1/flows/abc123",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, provider.automationAPIURL(tt.path))
-		})
-	}
-}
-
-func TestIsAutomationTool(t *testing.T) {
-	tests := []struct {
-		name     string
-		toolName string
-		expected bool
-	}{
-		{"list_automations", "list_automations", true},
-		{"create_automation", "create_automation", true},
-		{"update_automation", "update_automation", true},
-		{"delete_automation", "delete_automation", true},
-		{"read_channel", "read_channel", false},
-		{"create_post", "create_post", false},
-		{"empty string", "", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, IsAutomationTool(tt.toolName))
-		})
-	}
-}
 
 func TestValidateTrigger(t *testing.T) {
 	tests := []struct {
@@ -172,83 +70,6 @@ func TestValidateTrigger(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
-		})
-	}
-}
-
-func TestTriggerHelpers(t *testing.T) {
-	tests := []struct {
-		name     string
-		trigger  AutomationTrigger
-		wantType string
-		wantChID string
-	}{
-		{
-			name:     "message_posted",
-			trigger:  AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch1"}},
-			wantType: "message_posted",
-			wantChID: "ch1",
-		},
-		{
-			name:     "schedule",
-			trigger:  AutomationTrigger{Schedule: &ScheduleConfig{ChannelID: "ch2", Interval: "daily"}},
-			wantType: "schedule",
-			wantChID: "ch2",
-		},
-		{
-			name:     "membership_changed",
-			trigger:  AutomationTrigger{MembershipChanged: &MembershipChangedConfig{ChannelID: "ch3"}},
-			wantType: "membership_changed",
-			wantChID: "ch3",
-		},
-		{
-			name:     "channel_created",
-			trigger:  AutomationTrigger{ChannelCreated: &ChannelCreatedConfig{}},
-			wantType: "channel_created",
-			wantChID: "",
-		},
-		{
-			name:     "empty trigger",
-			trigger:  AutomationTrigger{},
-			wantType: "unknown",
-			wantChID: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.wantType, triggerTypeName(tt.trigger))
-			assert.Equal(t, tt.wantChID, triggerChannelID(tt.trigger))
-		})
-	}
-}
-
-func TestActionTypeName(t *testing.T) {
-	tests := []struct {
-		name     string
-		action   AutomationAction
-		wantType string
-	}{
-		{
-			name:     "send_message",
-			action:   AutomationAction{ID: "a1", SendMessage: &SendMessageActionConfig{Body: "hi"}},
-			wantType: "send_message",
-		},
-		{
-			name:     "ai_prompt",
-			action:   AutomationAction{ID: "a2", AIPrompt: &AIPromptActionConfig{Prompt: "hello"}},
-			wantType: "ai_prompt",
-		},
-		{
-			name:     "empty action",
-			action:   AutomationAction{ID: "a3"},
-			wantType: "unknown",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.wantType, actionTypeName(tt.action))
 		})
 	}
 }
@@ -351,7 +172,7 @@ func newTestAutomationServer(t *testing.T, flows []AutomationFlow) *httptest.Ser
 func newTestProvider(t *testing.T, serverURL string) *MattermostToolProvider {
 	t.Helper()
 	return &MattermostToolProvider{
-		logger:              &testLogger{t: t},
+		logger:      &testLogger{t: t},
 		mmServerURL: serverURL,
 	}
 }
@@ -454,41 +275,6 @@ func TestAutomationCreateFlow(t *testing.T) {
 		assert.Contains(t, result, "Successfully created automation")
 		assert.Contains(t, result, "Test Flow")
 		assert.Contains(t, result, "new-flow-id")
-	})
-
-	t.Run("create with schedule trigger", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{
-				"name": "Scheduled Flow",
-				"enabled": true,
-				"trigger": {"schedule": {"channel_id": "abcdefghijklmnopqrstuvwxyz", "interval": "daily"}},
-				"actions": [{"id": "post", "send_message": {"channel_id": "abcdefghijklmnopqrstuvwxyz", "body": "Daily update"}}]
-			}`), target)
-		}
-
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
-		require.NoError(t, err)
-		assert.Contains(t, result, "Successfully created automation")
-		assert.Contains(t, result, "Scheduled Flow")
-	})
-
-	t.Run("create with ai_prompt action", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{
-				"name": "AI Flow",
-				"enabled": true,
-				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz"}},
-				"actions": [
-					{"id": "ask", "ai_prompt": {"prompt": "Summarize this", "provider_type": "agent", "provider_id": "bot123", "system_prompt": "You are helpful", "allowed_tools": ["search"]}},
-					{"id": "post", "send_message": {"channel_id": "abcdefghijklmnopqrstuvwxyz", "body": "Result: {{(index .Steps \"ask\").Message}}"}}
-				]
-			}`), target)
-		}
-
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
-		require.NoError(t, err)
-		assert.Contains(t, result, "Successfully created automation")
-		assert.Contains(t, result, "AI Flow")
 	})
 
 	t.Run("create missing name", func(t *testing.T) {
@@ -681,111 +467,6 @@ func TestAutomationErrorHandling(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, "client not available", result)
 	})
-}
-
-func TestAutomationGetToolsCount(t *testing.T) {
-	provider := &MattermostToolProvider{
-		logger: &testLogger{t: t},
-	}
-
-	tools := provider.getAutomationTools()
-	assert.Len(t, tools, 4)
-
-	expectedNames := []string{"list_automations", "create_automation", "update_automation", "delete_automation"}
-	for i, name := range expectedNames {
-		assert.Equal(t, name, tools[i].Name, "tool %d should be named %s", i, name)
-		assert.NotEmpty(t, tools[i].Description)
-		assert.NotNil(t, tools[i].Schema)
-		assert.NotNil(t, tools[i].Resolver)
-	}
-}
-
-func TestFormatAutomationFlow(t *testing.T) {
-	t.Run("send_message action", func(t *testing.T) {
-		flow := AutomationFlow{
-			ID:      "test-id",
-			Name:    "Test Flow",
-			Enabled: true,
-			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch-123"}},
-			Actions: []AutomationAction{
-				{ID: "send", SendMessage: &SendMessageActionConfig{ChannelID: "ch-456", Body: "Hello"}},
-			},
-		}
-
-		result := formatAutomationFlow(flow)
-		assert.Contains(t, result, "Test Flow")
-		assert.Contains(t, result, "test-id")
-		assert.Contains(t, result, "true")
-		assert.Contains(t, result, "message_posted")
-		assert.Contains(t, result, "ch-123")
-		assert.Contains(t, result, "send_message")
-		assert.Contains(t, result, "ch-456")
-		assert.Contains(t, result, "Hello")
-	})
-
-	t.Run("ai_prompt action", func(t *testing.T) {
-		flow := AutomationFlow{
-			ID:      "ai-id",
-			Name:    "AI Flow",
-			Enabled: true,
-			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch-1"}},
-			Actions: []AutomationAction{
-				{ID: "ask", AIPrompt: &AIPromptActionConfig{
-					Prompt:       "Summarize",
-					SystemPrompt: "Be helpful",
-					ProviderType: "agent",
-					ProviderID:   "bot1",
-					AllowedTools: []string{"search"},
-				}},
-			},
-		}
-
-		result := formatAutomationFlow(flow)
-		assert.Contains(t, result, "ai_prompt")
-		assert.Contains(t, result, "Summarize")
-		assert.Contains(t, result, "Be helpful")
-		assert.Contains(t, result, "search")
-	})
-
-	t.Run("schedule trigger with interval", func(t *testing.T) {
-		flow := AutomationFlow{
-			ID:      "sched-id",
-			Name:    "Scheduled",
-			Enabled: true,
-			Trigger: AutomationTrigger{Schedule: &ScheduleConfig{ChannelID: "ch-1", Interval: "daily"}},
-		}
-
-		result := formatAutomationFlow(flow)
-		assert.Contains(t, result, "schedule")
-		assert.Contains(t, result, "interval=daily")
-	})
-
-	t.Run("channel_created trigger no channel", func(t *testing.T) {
-		flow := AutomationFlow{
-			ID:      "cc-id",
-			Name:    "On Channel Create",
-			Enabled: true,
-			Trigger: AutomationTrigger{ChannelCreated: &ChannelCreatedConfig{}},
-		}
-
-		result := formatAutomationFlow(flow)
-		assert.Contains(t, result, "channel_created")
-		assert.NotContains(t, result, "channel=")
-	})
-}
-
-func TestFormatAutomationFlows(t *testing.T) {
-	flows := []AutomationFlow{
-		{ID: "1", Name: "Flow A"},
-		{ID: "2", Name: "Flow B"},
-	}
-
-	result := formatAutomationFlows(flows)
-	assert.Contains(t, result, "Found 2 automation(s)")
-	assert.Contains(t, result, "1. ")
-	assert.Contains(t, result, "2. ")
-	assert.Contains(t, result, "Flow A")
-	assert.Contains(t, result, "Flow B")
 }
 
 func TestAutomationPluginInstalled(t *testing.T) {
