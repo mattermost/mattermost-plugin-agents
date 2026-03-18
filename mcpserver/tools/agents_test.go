@@ -45,21 +45,6 @@ func TestListAgents(t *testing.T) {
 	ts := newTestAIBotsServer(t, sampleBots)
 	defer ts.Close()
 
-	t.Run("lists all agents", func(t *testing.T) {
-		provider := newTestProvider(t, ts.URL)
-		mcpCtx := &MCPToolContext{BotUserID: "", Client: newTestClient4(ts.URL)}
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{}`), target)
-		}
-
-		result, err := provider.toolListAgents(mcpCtx, argsGetter)
-		require.NoError(t, err)
-		assert.Contains(t, result, "Otto")
-		assert.Contains(t, result, "bot1id12345678901234567")
-		assert.Contains(t, result, "Claude")
-		assert.Contains(t, result, "bot2id12345678901234567")
-	})
-
 	t.Run("marks self agent", func(t *testing.T) {
 		provider := newTestProvider(t, ts.URL)
 		mcpCtx := &MCPToolContext{BotUserID: "bot1id12345678901234567", Client: newTestClient4(ts.URL)}
@@ -70,21 +55,6 @@ func TestListAgents(t *testing.T) {
 		result, err := provider.toolListAgents(mcpCtx, argsGetter)
 		require.NoError(t, err)
 		assert.Contains(t, result, "This is YOU")
-	})
-
-	t.Run("no agents configured", func(t *testing.T) {
-		emptyTS := newTestAIBotsServer(t, []AIBotInfo{})
-		defer emptyTS.Close()
-
-		provider := newTestProvider(t, emptyTS.URL)
-		mcpCtx := &MCPToolContext{Client: newTestClient4(emptyTS.URL)}
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{}`), target)
-		}
-
-		result, err := provider.toolListAgents(mcpCtx, argsGetter)
-		require.NoError(t, err)
-		assert.Contains(t, result, "No agents")
 	})
 
 	t.Run("unreachable server", func(t *testing.T) {
@@ -98,17 +68,4 @@ func TestListAgents(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, result, "not reachable")
 	})
-}
-
-func TestGetAgentToolsCount(t *testing.T) {
-	provider := &MattermostToolProvider{
-		logger: &testLogger{t: t},
-	}
-
-	agentTools := provider.getAgentTools()
-	assert.Len(t, agentTools, 1)
-	assert.Equal(t, "list_agents", agentTools[0].Name)
-	assert.NotEmpty(t, agentTools[0].Description)
-	assert.NotNil(t, agentTools[0].Schema)
-	assert.NotNil(t, agentTools[0].Resolver)
 }

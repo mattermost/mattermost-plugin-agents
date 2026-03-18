@@ -53,14 +53,13 @@ type SemanticSearchService interface {
 
 // MattermostToolProvider provides Mattermost tools following the mmtools pattern
 type MattermostToolProvider struct {
-	authProvider        auth.AuthenticationProvider
-	logger              logger.Logger
-	mmServerURL         string // External server URL for OAuth redirects
-	mmInternalServerURL string // Internal server URL for API communication
-	devMode             bool
-	accessMode          AccessMode
-	trackAIGenerated    bool                  // Whether to add ai_generated_by props to posts
-	searchService       SemanticSearchService // Optional semantic search service, can be nil
+	authProvider     auth.AuthenticationProvider
+	logger           logger.Logger
+	mmServerURL      string // Mattermost server URL for API communication (internal URL if set, otherwise external)
+	devMode          bool
+	accessMode       AccessMode
+	trackAIGenerated bool                  // Whether to add ai_generated_by props to posts
+	searchService    SemanticSearchService // Optional semantic search service, can be nil
 }
 
 // NewMattermostToolProvider creates a new tool provider
@@ -68,20 +67,19 @@ type MattermostToolProvider struct {
 // searchService is optional and can be nil if semantic search is not available
 func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config types.ServerConfig, accessMode AccessMode, searchService SemanticSearchService) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
-	internalURL := config.GetMMInternalServerURL()
-	if internalURL == "" {
-		internalURL = config.GetMMServerURL()
+	serverURL := config.GetMMInternalServerURL()
+	if serverURL == "" {
+		serverURL = config.GetMMServerURL()
 	}
 
 	return &MattermostToolProvider{
-		authProvider:        authProvider,
-		logger:              logger,
-		mmServerURL:         config.GetMMServerURL(),
-		mmInternalServerURL: internalURL,
-		devMode:             config.GetDevMode(),
-		accessMode:          accessMode,
-		trackAIGenerated:    config.GetTrackAIGenerated(),
-		searchService:       searchService,
+		authProvider:     authProvider,
+		logger:           logger,
+		mmServerURL:      serverURL,
+		devMode:          config.GetDevMode(),
+		accessMode:       accessMode,
+		trackAIGenerated: config.GetTrackAIGenerated(),
+		searchService:    searchService,
 	}
 }
 

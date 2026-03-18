@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -22,10 +23,15 @@ const automationPluginAPIPath = "/plugins/com.mattermost.channel-automation/api/
 // the plugin is installed and reachable. Returns true if the plugin responds (even
 // with an auth error), false if it 404s or is unreachable.
 func (p *MattermostToolProvider) isAutomationPluginInstalled() bool {
-	url := p.automationAPIURL("/flows")
-	resp, err := http.Get(url) //nolint:gosec
+	reqURL := p.automationAPIURL("/flows")
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
 	if err != nil {
-		p.logger.Warn("Automation plugin check failed: connection error", "url", url, "error", err.Error())
+		p.logger.Warn("Automation plugin check failed: bad request", "url", reqURL, "error", err.Error())
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		p.logger.Warn("Automation plugin check failed: connection error", "url", reqURL, "error", err.Error())
 		return false
 	}
 	resp.Body.Close()
@@ -106,7 +112,7 @@ type AutomationFlow struct {
 
 // automationAPIURL builds a full URL for the channel automation plugin API.
 func (p *MattermostToolProvider) automationAPIURL(path string) string {
-	return p.mmInternalServerURL + automationPluginAPIPath + path
+	return p.mmServerURL + automationPluginAPIPath + path
 }
 
 // --- Arg structs ---
@@ -115,8 +121,6 @@ func (p *MattermostToolProvider) automationAPIURL(path string) string {
 type ListAutomationsArgs struct {
 	AutomationID string `json:"automation_id,omitempty" jsonschema:"The ID of a specific automation to retrieve"`
 	ChannelID    string `json:"channel_id,omitempty" jsonschema:"Filter automations by trigger channel ID"`
-	Query        string `json:"query,omitempty" jsonschema:"Search automations by name (case-insensitive substring match)"`
-	Enabled      *bool  `json:"enabled,omitempty" jsonschema:"Filter automations by enabled status"`
 }
 
 // CreateAutomationArgs represents arguments for the create_automation tool.
@@ -159,8 +163,8 @@ func (p *MattermostToolProvider) getAutomationTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name: "list_automations",
-			Description: `List, search, or get channel automations (trigger-action workflows).
-Provide automation_id to get a specific automation, or use optional filters: channel_id (filter by trigger channel), query (case-insensitive name search), enabled (true/false).
+			Description: `List or get channel automations (trigger-action workflows).
+Provide automation_id to get a specific automation, or use optional channel_id to filter by trigger channel.
 Returns automation details including trigger configuration and action pipeline.`,
 			Schema:   llm.NewJSONSchemaFromStruct[ListAutomationsArgs](),
 			Resolver: p.toolListAutomations,
@@ -275,8 +279,13 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 		return p.getAutomationByID(ctx, mcpContext, args.AutomationID)
 	}
 
-	// Otherwise list all and filter client-side.
-	resp, err := mcpContext.Client.DoAPIRequestWithHeaders(ctx, http.MethodGet, p.automationAPIURL("/flows"), "", nil)
+	// Use server-side channel_id filter if provided, otherwise fetch all.
+	flowsURL := p.automationAPIURL("/flows")
+	if args.ChannelID != "" {
+		flowsURL += "?channel_id=" + url.QueryEscape(args.ChannelID)
+	}
+
+	resp, err := mcpContext.Client.DoAPIRequestWithHeaders(ctx, http.MethodGet, flowsURL, "", nil)
 	if err != nil {
 		return handleAutomationHTTPError(resp, err, "")
 	}
@@ -286,8 +295,6 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 	if err := json.NewDecoder(resp.Body).Decode(&flows); err != nil {
 		return "failed to parse automation list", fmt.Errorf("failed to decode automations response: %w", err)
 	}
-
-	flows = filterAutomationFlows(flows, args.ChannelID, args.Query, args.Enabled)
 
 	if len(flows) == 0 {
 		return "No automations found matching the specified criteria.", nil
@@ -560,30 +567,6 @@ func automationErrorDetail(err error) string {
 	return err.Error()
 }
 
-// filterAutomationFlows applies client-side filters to a list of flows.
-func filterAutomationFlows(flows []AutomationFlow, channelID, query string, enabled *bool) []AutomationFlow {
-	if channelID == "" && query == "" && enabled == nil {
-		return flows
-	}
-
-	queryLower := strings.ToLower(query)
-	filtered := make([]AutomationFlow, 0, len(flows))
-
-	for _, f := range flows {
-		if channelID != "" && triggerChannelID(f.Trigger) != channelID {
-			continue
-		}
-		if query != "" && !strings.Contains(strings.ToLower(f.Name), queryLower) {
-			continue
-		}
-		if enabled != nil && f.Enabled != *enabled {
-			continue
-		}
-		filtered = append(filtered, f)
-	}
-
-	return filtered
-}
 
 // formatAutomationFlows formats multiple automation flows for display.
 func formatAutomationFlows(flows []AutomationFlow) string {

@@ -82,7 +82,7 @@ func (p *MattermostToolProvider) toolListAgents(mcpContext *MCPToolContext, args
 // The Mattermost server authenticates the Bearer token and sets Mattermost-User-Id,
 // which satisfies the plugin's MattermostAuthorizationRequired middleware.
 func (p *MattermostToolProvider) fetchAIBots(client *model.Client4) ([]AIBotInfo, error) {
-	url := p.mmInternalServerURL + aiBotsAPIPath
+	url := p.mmServerURL + aiBotsAPIPath
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {

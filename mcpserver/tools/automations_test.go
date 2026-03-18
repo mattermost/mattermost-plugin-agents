@@ -27,7 +27,7 @@ func TestAutomationSchemaGeneration(t *testing.T) {
 		{
 			name:           "ListAutomationsArgs schema",
 			schema:         func() any { return llm.NewJSONSchemaFromStruct[ListAutomationsArgs]() },
-			expectedFields: []string{"automation_id", "channel_id", "query", "enabled"},
+			expectedFields: []string{"automation_id", "channel_id"},
 		},
 		{
 			name:           "CreateAutomationArgs schema",
@@ -70,7 +70,7 @@ func TestAutomationSchemaGeneration(t *testing.T) {
 
 func TestAutomationAPIURL(t *testing.T) {
 	provider := &MattermostToolProvider{
-		mmInternalServerURL: "http://localhost:8065",
+		mmServerURL: "http://localhost:8065",
 	}
 
 	tests := []struct {
@@ -253,74 +253,6 @@ func TestActionTypeName(t *testing.T) {
 	}
 }
 
-func TestFilterAutomationFlows(t *testing.T) {
-	flows := []AutomationFlow{
-		{ID: "1", Name: "Welcome Message", Enabled: true, Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch1"}}},
-		{ID: "2", Name: "Bug Report", Enabled: false, Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch2"}}},
-		{ID: "3", Name: "Welcome Notification", Enabled: true, Trigger: AutomationTrigger{MembershipChanged: &MembershipChangedConfig{ChannelID: "ch1"}}},
-		{ID: "4", Name: "Daily Standup", Enabled: true, Trigger: AutomationTrigger{Schedule: &ScheduleConfig{ChannelID: "ch3", Interval: "daily"}}},
-	}
-
-	boolTrue := true
-	boolFalse := false
-
-	tests := []struct {
-		name        string
-		channelID   string
-		query       string
-		enabled     *bool
-		expectedIDs []string
-	}{
-		{
-			name:        "no filters returns all",
-			expectedIDs: []string{"1", "2", "3", "4"},
-		},
-		{
-			name:        "filter by channel_id",
-			channelID:   "ch1",
-			expectedIDs: []string{"1", "3"},
-		},
-		{
-			name:        "filter by name query",
-			query:       "welcome",
-			expectedIDs: []string{"1", "3"},
-		},
-		{
-			name:        "filter by enabled true",
-			enabled:     &boolTrue,
-			expectedIDs: []string{"1", "3", "4"},
-		},
-		{
-			name:        "filter by enabled false",
-			enabled:     &boolFalse,
-			expectedIDs: []string{"2"},
-		},
-		{
-			name:        "combined channel and query",
-			channelID:   "ch1",
-			query:       "message",
-			expectedIDs: []string{"1"},
-		},
-		{
-			name:        "no match",
-			query:       "nonexistent",
-			expectedIDs: []string{},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := filterAutomationFlows(flows, tt.channelID, tt.query, tt.enabled)
-
-			ids := make([]string, len(result))
-			for i, f := range result {
-				ids[i] = f.ID
-			}
-			assert.Equal(t, tt.expectedIDs, ids)
-		})
-	}
-}
-
 // newTestAutomationServer creates an httptest server that mimics the channel-automation plugin API.
 func newTestAutomationServer(t *testing.T, flows []AutomationFlow) *httptest.Server {
 	t.Helper()
@@ -336,7 +268,11 @@ func newTestAutomationServer(t *testing.T, flows []AutomationFlow) *httptest.Ser
 		switch r.Method {
 		case http.MethodGet:
 			allFlows := make([]AutomationFlow, 0, len(flowMap))
+			filterChID := r.URL.Query().Get("channel_id")
 			for _, f := range flowMap {
+				if filterChID != "" && triggerChannelID(f.Trigger) != filterChID {
+					continue
+				}
 				allFlows = append(allFlows, f)
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -416,7 +352,7 @@ func newTestProvider(t *testing.T, serverURL string) *MattermostToolProvider {
 	t.Helper()
 	return &MattermostToolProvider{
 		logger:              &testLogger{t: t},
-		mmInternalServerURL: serverURL,
+		mmServerURL: serverURL,
 	}
 }
 
