@@ -50,6 +50,7 @@ type AutomationTrigger struct {
 	Schedule          *ScheduleConfig          `json:"schedule,omitempty"`
 	MembershipChanged *MembershipChangedConfig `json:"membership_changed,omitempty"`
 	ChannelCreated    *ChannelCreatedConfig    `json:"channel_created,omitempty"`
+	UserJoinedTeam    *UserJoinedTeamConfig    `json:"user_joined_team,omitempty"`
 }
 
 // MessagePostedConfig holds trigger config for the message_posted trigger type.
@@ -72,6 +73,11 @@ type MembershipChangedConfig struct {
 // ChannelCreatedConfig holds trigger config for the channel_created trigger type.
 type ChannelCreatedConfig struct{}
 
+// UserJoinedTeamConfig holds trigger config for the user_joined_team trigger type.
+type UserJoinedTeamConfig struct {
+	TeamID string `json:"team_id"`
+}
+
 // --- Action types (union: exactly one config pointer should be non-nil) ---
 
 // AutomationAction defines a single step in a flow. Exactly one config pointer should be set.
@@ -79,6 +85,14 @@ type AutomationAction struct {
 	ID          string                   `json:"id"`
 	SendMessage *SendMessageActionConfig `json:"send_message,omitempty"`
 	AIPrompt    *AIPromptActionConfig    `json:"ai_prompt,omitempty"`
+	SendDM      *SendDMActionConfig      `json:"send_dm,omitempty"`
+}
+
+// SendDMActionConfig holds config for the send_dm action type.
+type SendDMActionConfig struct {
+	UserID  string `json:"user_id"`
+	Body    string `json:"body"`
+	AsBotID string `json:"as_bot_id"`
 }
 
 // SendMessageActionConfig holds config for the send_message action type.
@@ -193,6 +207,11 @@ the user says yes.
 If the user's request is missing details (trigger channel, output channel, which tools),
 ask clarifying questions BEFORE presenting the summary.
 
+ACTION SELECTION: For each step in the automation, choose the right action type:
+- send_message / send_dm: for posting text to channels or users.
+- ai_prompt with allowed_tools: for anything else — any step that needs to read data, modify state, or interact with Mattermost beyond posting text. Call list_tools to discover what tools are available, then include the ones needed in allowed_tools.
+If a step cannot be accomplished with send_message or send_dm, it MUST be an ai_prompt action with the appropriate tools.
+
 TOOL SUFFICIENCY CHECK (THIS IS VERY IMPORTANT): Before presenting the summary, think through the automation's task
 step-by-step and verify the granted tools cover every step the agent will need to perform.
 Ask: what data does the agent need to discover, read, or act on — and can it actually do
@@ -210,13 +229,15 @@ TRIGGERS: Set exactly one trigger type inside the "trigger" object.
   {"trigger": {"membership_changed": {"channel_id": "<channel-id>"}}}
 - "channel_created": fires when any new public channel is created. Note: server-wide — fires for every new public channel created by any user.
   {"trigger": {"channel_created": {}}}
+- "user_joined_team": fires when a non-bot user joins the specified team.
+  {"trigger": {"user_joined_team": {"team_id": "<team-id>"}}}
 
 ACTIONS: Ordered array executed sequentially. Each action has a unique "id" (lowercase alphanumeric and hyphens only, e.g. "generate-recap" not "generate_recap") and exactly one action config.
 Action types:
 1. "send_message": Posts a message as a bot.
    {"id": "post", "send_message": {"channel_id": "<ch>", "body": "Hello!", "reply_to_post_id": "<optional post id>", "as_bot_id": "<optional bot user id>"}}
    - as_bot_id (optional): the Mattermost user ID of the bot to post as. Must be a bot account. If omitted, the message is posted as the default automation bot. Use list_agents to find bot IDs. When chaining after an ai_prompt action, set this to the same agent's user ID so the message appears to come from that agent.
-2. "ai_prompt": Sends a prompt to an AI agent/service and stores the response. Does NOT post a message — chain a send_message action after (with as_bot_id set to the agent) to post it.
+2. "ai_prompt": Runs an AI agent with a prompt and optional tools. With tools, the agent can perform actions (e.g. modify channels, manage members, search) — not just generate text. Does NOT post a message — chain a send_message or send_dm action after to post the response.
    {"id": "ask", "ai_prompt": {"prompt": "...", "provider_type": "agent", "provider_id": "<agent-user-id>", "system_prompt": "...", "allowed_tools": ["tool1"]}}
    - provider_type: "agent" (a bot) or "service" (a raw LLM service)
    - provider_id: the agent's Mattermost user ID (26-char ID). Call list_agents to discover available agents and their IDs.
@@ -225,20 +246,20 @@ Action types:
    TOOL SELECTION: Use list_tools to discover available tools and read their descriptions carefully. Choose tools whose described behavior matches what the automation actually needs to do.
    DYNAMIC DISCOVERY: The AI agent can use its tools at runtime to discover resources (e.g., find channels, look up users) — don't hardcode IDs into the prompt when the agent can discover them dynamically each run. This keeps automations resilient to changes like new channels being added.
    NOTE: "web_search" is NOT a valid allowed_tools value. Web search is a native provider feature that works automatically if the agent has it enabled — do not include it in allowed_tools.
+3. "send_dm": Sends a direct message to a user as a bot. Creates the DM channel automatically if it doesn't exist.
+   {"id": "welcome", "send_dm": {"user_id": "{{.Trigger.User.Id}}", "body": "Welcome!", "as_bot_id": "<bot-user-id>"}}
+   - user_id (required): the Mattermost user ID to DM. Supports template syntax.
+   - body (required): the message content. Supports template syntax.
+   - as_bot_id (required): the bot user ID to send the DM as. Use list_agents to find bot IDs.
 
 TEMPLATE SYNTAX: body, channel_id, reply_to_post_id, prompt, and system_prompt support Go text/template with this context:
 - {{.Trigger.Post.Message}}, {{.Trigger.Post.Id}}, {{.Trigger.Post.ChannelId}}
 - {{.Trigger.Channel.Id}}, {{.Trigger.Channel.Name}}, {{.Trigger.Channel.DisplayName}}
 - {{.Trigger.User.Id}}, {{.Trigger.User.Username}}, {{.Trigger.User.FirstName}}, {{.Trigger.User.LastName}}
+- {{.Trigger.Team.Id}}, {{.Trigger.Team.Name}}, {{.Trigger.Team.DisplayName}}, {{.Trigger.Team.DefaultChannelId}}
 - {{(index .Steps "prev-action-id").Message}}, {{(index .Steps "prev-action-id").PostID}} — output from a previous action
 
-EXAMPLE: AI-powered triage — when a message is posted in #support, summarize it with AI, then post the summary in #triage:
-{"name":"Support Triage","enabled":true,
- "trigger":{"message_posted":{"channel_id":"<support-ch-id>"}},
- "actions":[
-   {"id":"summarize","ai_prompt":{"prompt":"Summarize: {{.Trigger.Post.Message}}","provider_type":"agent","provider_id":"<agent-id>","allowed_tools":["search_posts"]}},
-   {"id":"post","send_message":{"channel_id":"<triage-ch-id>","body":"From @{{.Trigger.User.Username}}:\n{{(index .Steps \"summarize\").Message}}"}}
- ]}`,
+CHAINING ACTIONS: A single ai_prompt action can call tools multiple times AND generate a text response in one step — prefer consolidating related work into one ai_prompt rather than splitting into many actions. Use {{(index .Steps "prev-action-id").Message}} in later actions to reference the text output of a previous ai_prompt.`,
 			Schema:   llm.NewJSONSchemaFromStruct[CreateAutomationArgs](),
 			Resolver: p.toolCreateAutomation,
 		},
@@ -326,9 +347,6 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 
 	if args.Name == "" {
 		return "name is required", fmt.Errorf("name cannot be empty")
-	}
-	if err := validateTrigger(args.Trigger); err != nil {
-		return err.Error(), err
 	}
 
 	if mcpContext.Client == nil {
@@ -446,30 +464,6 @@ func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext
 
 // --- Helpers ---
 
-// validateTrigger ensures exactly one trigger variant is set.
-func validateTrigger(t AutomationTrigger) error {
-	count := 0
-	if t.MessagePosted != nil {
-		count++
-	}
-	if t.Schedule != nil {
-		count++
-	}
-	if t.MembershipChanged != nil {
-		count++
-	}
-	if t.ChannelCreated != nil {
-		count++
-	}
-	if count == 0 {
-		return fmt.Errorf("trigger is required: set exactly one of message_posted, schedule, membership_changed, or channel_created")
-	}
-	if count > 1 {
-		return fmt.Errorf("trigger must have exactly one type set, but %d were provided", count)
-	}
-	return nil
-}
-
 // triggerChannelID extracts the channel ID from any trigger variant.
 func triggerChannelID(t AutomationTrigger) string {
 	if t.MessagePosted != nil {
@@ -566,7 +560,6 @@ func automationErrorDetail(err error) string {
 	}
 	return err.Error()
 }
-
 
 // formatAutomationFlows formats multiple automation flows for display.
 func formatAutomationFlows(flows []AutomationFlow) string {
