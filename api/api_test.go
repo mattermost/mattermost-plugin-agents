@@ -147,6 +147,21 @@ func (e *TestEnvironment) Cleanup(t *testing.T) {
 	}
 }
 
+// OverrideLicense replaces the default GetLicense mock registered by
+// SetupTestEnvironment so that tests can control the license value.
+// Testify matches the first registered expectation, so simply adding
+// a new On("GetLicense") does not override the default.
+func (e *TestEnvironment) OverrideLicense(license *model.License) {
+	filtered := make([]*mock.Call, 0, len(e.mockAPI.ExpectedCalls))
+	for _, call := range e.mockAPI.ExpectedCalls {
+		if call.Method != "GetLicense" {
+			filtered = append(filtered, call)
+		}
+	}
+	e.mockAPI.ExpectedCalls = filtered
+	e.mockAPI.On("GetLicense").Return(license).Maybe()
+}
+
 // CreateBridgeClient creates a bridge client that uses the test API
 func (e *TestEnvironment) CreateBridgeClient() *bridgeclient.Client {
 	// Create a plugin API wrapper that routes to our test API
@@ -706,8 +721,7 @@ func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
 			e.setupTestBot(llm.BotConfig{Name: "permtest", DisplayName: "Permission Bot"})
 
 			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-			e.mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-			e.mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+			e.OverrideLicense(&model.License{SkuShortName: "advanced"})
 
 			post := &model.Post{
 				Id:        "postid",
@@ -779,8 +793,7 @@ func TestToolPrivateRequiresRequester(t *testing.T) {
 			e.setupTestBot(llm.BotConfig{Name: "permtest", DisplayName: "Permission Bot"})
 
 			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-			e.mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-			e.mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+			e.OverrideLicense(&model.License{SkuShortName: "advanced"})
 
 			post := &model.Post{
 				Id:        "postid",

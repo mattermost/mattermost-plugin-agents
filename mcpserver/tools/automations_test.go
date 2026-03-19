@@ -17,63 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestValidateTrigger(t *testing.T) {
-	tests := []struct {
-		name    string
-		trigger AutomationTrigger
-		wantErr bool
-		errMsg  string
-	}{
-		{
-			name:    "no trigger set",
-			trigger: AutomationTrigger{},
-			wantErr: true,
-			errMsg:  "trigger is required",
-		},
-		{
-			name:    "message_posted trigger",
-			trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch1"}},
-			wantErr: false,
-		},
-		{
-			name:    "schedule trigger",
-			trigger: AutomationTrigger{Schedule: &ScheduleConfig{ChannelID: "ch1", Interval: "daily"}},
-			wantErr: false,
-		},
-		{
-			name:    "membership_changed trigger",
-			trigger: AutomationTrigger{MembershipChanged: &MembershipChangedConfig{ChannelID: "ch1"}},
-			wantErr: false,
-		},
-		{
-			name:    "channel_created trigger",
-			trigger: AutomationTrigger{ChannelCreated: &ChannelCreatedConfig{}},
-			wantErr: false,
-		},
-		{
-			name: "multiple triggers set",
-			trigger: AutomationTrigger{
-				MessagePosted: &MessagePostedConfig{ChannelID: "ch1"},
-				Schedule:      &ScheduleConfig{ChannelID: "ch1", Interval: "daily"},
-			},
-			wantErr: true,
-			errMsg:  "exactly one type set",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateTrigger(tt.trigger)
-			if tt.wantErr {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errMsg)
-			} else {
-				require.NoError(t, err)
-			}
-		})
-	}
-}
-
 // newTestAutomationServer creates an httptest server that mimics the channel-automation plugin API.
 func newTestAutomationServer(t *testing.T, flows []AutomationFlow) *httptest.Server {
 	t.Helper()

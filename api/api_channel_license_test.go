@@ -66,11 +66,10 @@ func TestChannelAnalysisLicenseMiddleware(t *testing.T) {
 			})
 
 			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-			e.mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
 			if test.licensed {
-				e.mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+				e.OverrideLicense(&model.License{SkuShortName: "advanced"})
 			} else {
-				e.mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+				e.OverrideLicense(&model.License{})
 			}
 
 			e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{
