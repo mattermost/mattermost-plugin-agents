@@ -571,9 +571,43 @@ export class LLMBotPostHelper {
                     throw error;
                 }
                 await this.regenerateResponse(postId);
-                await this.waitForStreamingComplete();
+                await this.waitForStreamingComplete(maxTimeout);
             }
         }
+    }
+
+    /**
+     * Assert that citations are positioned inline throughout the text, not clustered at the beginning.
+     * Uses the second citation to avoid flakes — an LLM might legitimately start with a cited sentence,
+     * but the second citation should always have substantive text before it.
+     * @param postId - Optional post ID to scope the assertion
+     */
+    async expectCitationsInline(postId?: string): Promise<void> {
+        const postText = this.getPostText(postId);
+        const textBeforeSecondCitation = await postText.evaluate((el) => {
+            const citations = el.querySelectorAll('[data-testid="llm-citation"]');
+            if (citations.length < 2) return '';
+            const secondCitation = citations[1];
+
+            const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+            let text = '';
+            let node = walker.nextNode();
+            while (node) {
+                if (secondCitation.compareDocumentPosition(node) &
+                    Node.DOCUMENT_POSITION_FOLLOWING) {
+                    break;
+                }
+                if (!secondCitation.contains(node)) {
+                    text += node.textContent;
+                }
+                node = walker.nextNode();
+            }
+            return text.trim();
+        });
+
+        // With the bug, this would be empty (all citations clustered at position 0).
+        // With the fix, there should be substantive text before the second citation.
+        expect(textBeforeSecondCitation.length).toBeGreaterThan(10);
     }
 
     /**

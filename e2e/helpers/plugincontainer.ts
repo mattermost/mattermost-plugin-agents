@@ -38,6 +38,7 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 				  "type": "openaicompatible",
 				  "apiKey": "mock",
 				  "apiURL": "http://openai:8080",
+				  "defaultModel": "gpt-mock",
 			  },
 			  {
 				  "id": "second-service",
@@ -45,6 +46,7 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 				  "type": "openaicompatible",
 				  "apiKey": "ohno",
 				  "apiURL": "http://openai:8080/second",
+				  "defaultModel": "gpt-mock",
 			  },
 		  ],
 		  "bots": [

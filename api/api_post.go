@@ -139,12 +139,12 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 		return
 	}
 
-	// Build LLM context
+	// Thread analysis disables tools, so skip MCP/tool initialization entirely.
 	llmContext := a.contextBuilder.BuildLLMContextUserRequest(
 		bot,
 		user,
 		channel,
-		a.contextBuilder.WithLLMContextDefaultTools(bot),
+		a.contextBuilder.WithLLMContextNoTools(),
 	)
 
 	// Create thread analyzer

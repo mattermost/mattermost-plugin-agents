@@ -51,10 +51,23 @@ export class OpenAIMockContainer {
 		await this.container.stop()
 	}
 
-	resetMocks = async () => {
-		await fetch(`http://localhost:${this.container.getMappedPort(8081)}/reset`, {
-			method: "POST",
-		})
+	resetMocks = async (attempt = 0): Promise<void> => {
+		const maxAttempts = 5;
+
+		try {
+			await fetch(`http://localhost:${this.container.getMappedPort(8081)}/reset`, {
+				method: "POST",
+			});
+		} catch (error) {
+			if (attempt >= maxAttempts - 1) {
+				throw error;
+			}
+
+			const backoffMs = Math.min(2000, 250 * Math.pow(2, attempt));
+			await new Promise(resolve => setTimeout(resolve, backoffMs));
+
+			return this.resetMocks(attempt + 1);
+		}
 	}
 
 	addMock = async (body: any, attempt = 0): Promise<Response> => {
@@ -91,7 +104,7 @@ export class OpenAIMockContainer {
 		return this.addMock({
 			request: {
 				method: "POST",
-				path: prefix + "/chat/completions",
+				path: prefix + "/v1/chat/completions",
 			},
 			context: {
 				times: 100,
@@ -112,7 +125,7 @@ export class OpenAIMockContainer {
 		return this.addMock({
 			request: {
 				method: "POST",
-				path: prefix + "/chat/completions",
+				path: prefix + "/v1/chat/completions",
 				body: {
 					matcher: "ShouldContainSubstring",
 					value: requestBodyContains
@@ -137,7 +150,7 @@ export class OpenAIMockContainer {
 		return this.addMock({
 			request: {
 				method: "POST",
-				path: prefix + "/chat/completions",
+				path: prefix + "/v1/chat/completions",
 			},
 			context: {
 				times: 100,
@@ -164,4 +177,3 @@ export const RunOpenAIMocks = async (network: StartedNetwork): Promise<OpenAIMoc
 
 	return container
 }
-
