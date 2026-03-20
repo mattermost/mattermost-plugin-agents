@@ -43,9 +43,10 @@ type GetChannelInfoArgs struct {
 
 // GetChannelMembersArgs represents arguments for the get_channel_members tool
 type GetChannelMembersArgs struct {
-	ChannelID string `json:"channel_id" jsonschema:"ID of the channel to get members for,minLength=26,maxLength=26"`
-	Limit     int    `json:"limit,omitempty" jsonschema:"Number of members to return (default: 50, max: 200),minimum=1,maximum=200"`
-	Page      int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
+	ChannelID   string `json:"channel_id" jsonschema:"ID of the channel to get members for,minLength=26,maxLength=26"`
+	Limit       int    `json:"limit,omitempty" jsonschema:"Number of members to return (default: 50, max: 200),minimum=1,maximum=200"`
+	Page        int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
+	ExcludeBots *bool  `json:"exclude_bots,omitempty" jsonschema:"Exclude bot accounts from results (default: true)"`
 }
 
 // AddUserToChannelArgs represents arguments for the add_user_to_channel tool
@@ -547,6 +548,9 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
+	// Default exclude_bots to true
+	excludeBots := args.ExcludeBots == nil || *args.ExcludeBots
+
 	// Get channel members
 	members, _, err := client.GetChannelMembers(ctx, args.ChannelID, args.Page, args.Limit, "")
 	if err != nil {
@@ -557,15 +561,22 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 		return "no members found in this channel", nil
 	}
 
-	// Get user details for each member
+	// Get user details for each member, optionally filtering bots
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Channel Members (page %d, showing %d members):\n", args.Page, len(members)))
+	botsExcluded := 0
+	var written int
 
 	for _, member := range members {
 		user, _, err := client.GetUser(ctx, member.UserId, "")
 		if err != nil {
 			p.logger.Warn("failed to get user details for member", "user_id", member.UserId, "error", err)
 			format.WriteUser(&result, format.UserEntry{User: &model.User{Id: member.UserId, Username: "details unavailable"}})
+			written++
+			continue
+		}
+
+		if excludeBots && user.IsBot {
+			botsExcluded++
 			continue
 		}
 
@@ -573,9 +584,19 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 			User: user,
 			Role: format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),
 		})
+		written++
 	}
 
-	return result.String(), nil
+	// Build header and footer
+	var header strings.Builder
+	header.WriteString(fmt.Sprintf("Channel Members (page %d, showing %d members):\n", args.Page, written))
+
+	var footer string
+	if botsExcluded > 0 {
+		footer = fmt.Sprintf("\n(%d bot account(s) excluded — set exclude_bots=false to include them)\n", botsExcluded)
+	}
+
+	return header.String() + result.String() + footer, nil
 }
 
 // toolAddUserToChannel implements the add_user_to_channel tool using the context client

@@ -215,7 +215,7 @@ func TestChannelSummarizationFlowEval(t *testing.T) {
 				"Mentions the concern about 500GB of data or downtime",
 				"Mentions the rollback plan involving keeping MySQL in read-only mode",
 				"Is a coherent summary, not a raw dump of messages or tool output",
-				"Does not mention the tool-calling process itself",
+				"Does not expose internal tool names, tool IDs, or raw tool output in the final response",
 				// Rubric referencing a user that only exists in the seeded data (anti-hallucination)
 				"Mentions at least one of alice.eval, bob.eval, or charlie.eval by username",
 			},
@@ -264,7 +264,7 @@ func TestDMSummaryFlowEval(t *testing.T) {
 			"Send bob.eval a DM summarizing the key decisions made in the "+data.channel.DisplayName+" channel. The channel ID is "+data.channel.Id+".",
 			[]string{
 				"Confirms that a DM was sent to bob.eval",
-				"Does not mention the tool-calling process itself",
+				"Does not expose internal tool names, tool IDs, or raw tool output in the final response",
 			},
 		)
 
@@ -326,8 +326,8 @@ func TestBroadcastDMToTeamFlowEval(t *testing.T) {
 			"Send the following message to everyone on the Staff team: Hey! Just a reminder that we have a company all-hands meeting tomorrow at 3pm in the main conference room. Please make sure to attend.",
 			[]string{
 				"Confirms that direct messages were sent to multiple individual users",
-				"Does not mention sending a message to the bot account (autobot.eval or Automation Bot)",
-				"Does not mention the tool-calling process itself",
+				"Does not mention sending a message to a bot account (autobot.eval or Automation Bot)",
+				"Does not expose internal tool names, tool IDs, or raw tool output in the final response",
 			},
 		)
 
@@ -340,8 +340,9 @@ func TestBroadcastDMToTeamFlowEval(t *testing.T) {
 		adminUser, _, err := adminClient.GetMe(ctx, "")
 		require.NoError(e.T, err, "Should get admin user")
 
-		// Verify DMs were sent to each real user
-		for _, targetUser := range []*model.User{data.dana, data.emma, data.frank} {
+		// Verify DMs were sent to other team members (not the requesting user dana,
+		// since LLMs may reasonably skip DM'ing "yourself")
+		for _, targetUser := range []*model.User{data.emma, data.frank} {
 			dmChannel, _, err := adminClient.CreateDirectChannel(ctx, adminUser.Id, targetUser.Id)
 			require.NoError(e.T, err, "Should get DM channel with %s", targetUser.Username)
 
