@@ -6,6 +6,8 @@ package mcpserver_test
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"testing"
 	"time"
 
@@ -18,6 +20,18 @@ import (
 	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
 )
+
+// silentLogger suppresses all testcontainers lifecycle output (🐳, ✅, etc.).
+type silentLogger struct{}
+
+func (silentLogger) Printf(string, ...interface{}) {}
+
+func init() {
+	// Suppress testcontainers lifecycle logs that clutter verbose test output.
+	testcontainers.Logger = silentLogger{}
+	// Also suppress any stdlib log output from testcontainers internals.
+	log.SetOutput(io.Discard)
+}
 
 // testLogger routes MCP server log output through t.Log so it only appears on failure.
 // Replaces the mlog stderr logger that unconditionally wrote to stderr.
@@ -80,9 +94,6 @@ type TestSuite struct {
 func SetupTestSuite(t *testing.T) *TestSuite {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-
-	// Route testcontainers lifecycle logs through t.Log (only shown on failure).
-	testcontainers.Logger = testcontainers.TestLogger(t)
 
 	// Start Mattermost container with PAT enabled.
 	// Retry once — the container init (team/user creation via mmctl) can hit transient races.
