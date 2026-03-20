@@ -5,6 +5,8 @@ package mcpserver_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -455,6 +457,81 @@ func seedTeamBroadcastScenario(t *testing.T, serverURL, adminToken string) *eval
 	}
 }
 
+// testTraceLog implements llm.TraceLog and routes tool resolution traces to t.Log.
+// This enables ToolStore.TraceResolved to log tool name, args, result, and error.
+type testTraceLog struct {
+	t *testing.T
+}
+
+func (l *testTraceLog) Info(message string, keyValuePairs ...any) {
+	l.t.Helper()
+	var sb strings.Builder
+	sb.WriteString(message)
+	for i := 0; i+1 < len(keyValuePairs); i += 2 {
+		sb.WriteString(fmt.Sprintf(" %v=%v", keyValuePairs[i], keyValuePairs[i+1]))
+	}
+	l.t.Log(sb.String())
+}
+
+// evalStreamLogger wraps a LanguageModel to log intermediate LLM text and tool call
+// requests between tool loop iterations. It sits inside AutoRunToolsWrapper so it
+// captures each re-invocation of the LLM.
+type evalStreamLogger struct {
+	inner llm.LanguageModel
+	t     *testing.T
+}
+
+func (w *evalStreamLogger) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+	result, err := w.inner.ChatCompletion(request, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	output := make(chan llm.TextStreamEvent)
+	go func() {
+		defer close(output)
+		var text strings.Builder
+		for event := range result.Stream {
+			switch event.Type {
+			case llm.EventTypeText:
+				if s, ok := event.Value.(string); ok {
+					text.WriteString(s)
+				}
+			case llm.EventTypeToolCalls:
+				if text.Len() > 0 {
+					w.t.Logf("[LLM text]\n%s", text.String())
+					text.Reset()
+				}
+				if tcs, ok := event.Value.([]llm.ToolCall); ok {
+					for _, tc := range tcs {
+						w.t.Logf("[LLM tool call] %s args=%s", tc.Name, string(tc.Arguments))
+					}
+				}
+			case llm.EventTypeEnd:
+				if text.Len() > 0 {
+					w.t.Logf("[LLM final text]\n%s", text.String())
+					text.Reset()
+				}
+			}
+			output <- event
+		}
+	}()
+
+	return &llm.TextStreamResult{Stream: output}, nil
+}
+
+func (w *evalStreamLogger) ChatCompletionNoStream(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	return w.inner.ChatCompletionNoStream(request, opts...)
+}
+
+func (w *evalStreamLogger) CountTokens(text string) int {
+	return w.inner.CountTokens(text)
+}
+
+func (w *evalStreamLogger) InputTokenLimit() int {
+	return w.inner.InputTokenLimit()
+}
+
 // agenticEvalSetup holds the components needed for agentic flow evals.
 type agenticEvalSetup struct {
 	wrappedLLM   llm.LanguageModel
@@ -475,7 +552,7 @@ func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, requesting
 		allToolNames[i] = tool.Name
 	}
 
-	toolStore := llm.NewToolStore(nil, false)
+	toolStore := llm.NewToolStore(&testTraceLog{t: t}, true)
 	toolStore.AddTools(mcpTools)
 
 	llmContext := llm.NewContext()
@@ -489,7 +566,8 @@ func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, requesting
 	llmContext.BotUsername = "ai-bot"
 	llmContext.BotModel = "eval-model"
 
-	wrappedLLM := llm.NewAutoRunToolsWrapper(e.LLM)
+	loggedLLM := &evalStreamLogger{inner: e.LLM, t: t}
+	wrappedLLM := llm.NewAutoRunToolsWrapper(loggedLLM)
 
 	return &agenticEvalSetup{
 		wrappedLLM:   wrappedLLM,

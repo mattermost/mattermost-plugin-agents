@@ -5,19 +5,62 @@ package mcpserver_test
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
 	mmcontainer "github.com/mattermost/testcontainers-mattermost-go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
 	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
+
+// testLogger routes MCP server log output through t.Log so it only appears on failure.
+// Replaces the mlog stderr logger that unconditionally wrote to stderr.
+type testLogger struct {
+	t *testing.T
+}
+
+func (l *testLogger) Debug(msg string, keyValuePairs ...any) {
+	l.t.Helper()
+	l.t.Logf("[DEBUG] %s%s", msg, formatKV(keyValuePairs))
+}
+
+func (l *testLogger) Info(msg string, keyValuePairs ...any) {
+	l.t.Helper()
+	l.t.Logf("[INFO] %s%s", msg, formatKV(keyValuePairs))
+}
+
+func (l *testLogger) Warn(msg string, keyValuePairs ...any) {
+	l.t.Helper()
+	l.t.Logf("[WARN] %s%s", msg, formatKV(keyValuePairs))
+}
+
+func (l *testLogger) Error(msg string, keyValuePairs ...any) {
+	l.t.Helper()
+	l.t.Logf("[ERROR] %s%s", msg, formatKV(keyValuePairs))
+}
+
+func (l *testLogger) Flush() error { return nil }
+
+// formatKV formats key-value pairs into a " key=value key=value" string.
+func formatKV(kvs []any) string {
+	if len(kvs) == 0 {
+		return ""
+	}
+	var s string
+	for i := 0; i+1 < len(kvs); i += 2 {
+		s += fmt.Sprintf(" %v=%v", kvs[i], kvs[i+1])
+	}
+	return s
+}
+
+// Compile-time check that testLogger satisfies logger.Logger.
+var _ loggerlib.Logger = (*testLogger)(nil)
 
 // TestSuite represents the integration test suite
 type TestSuite struct {
@@ -37,6 +80,9 @@ type TestSuite struct {
 func SetupTestSuite(t *testing.T) *TestSuite {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+
+	// Route testcontainers lifecycle logs through t.Log (only shown on failure).
+	testcontainers.Logger = testcontainers.TestLogger(t)
 
 	// Start Mattermost container with PAT enabled.
 	// Retry once — the container init (team/user creation via mmctl) can hit transient races.
@@ -70,28 +116,12 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	require.NoError(t, err, "Failed to create PAT token")
 	adminToken := pat.Token
 
-	// Set up logger for testing
-	mlogger, err := mlog.NewLogger()
-	require.NoError(t, err, "Failed to create logger")
-
-	cfg := make(mlog.LoggerConfiguration)
-	cfg["console"] = mlog.TargetCfg{
-		Type:          "console",
-		Levels:        []mlog.Level{mlog.LvlDebug, mlog.LvlInfo, mlog.LvlWarn, mlog.LvlError},
-		Format:        "plain",
-		FormatOptions: json.RawMessage(`{"enable_color": false}`),
-		Options:       json.RawMessage(`{"out": "stderr"}`),
-		MaxQueueSize:  1000,
-	}
-	err = mlogger.ConfigureTargets(cfg, nil)
-	require.NoError(t, err, "Failed to configure logger")
-
 	return &TestSuite{
 		t:          t,
 		container:  container,
 		serverURL:  serverURL,
 		adminToken: adminToken,
-		logger:     loggerlib.NewStandaloneLogger(mlogger),
+		logger:     &testLogger{t: t},
 	}
 }
 
