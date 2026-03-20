@@ -19,10 +19,10 @@ import (
 )
 
 // runAgenticFlowEval is a helper that runs an agentic flow eval with the given prompt and rubrics.
-func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, data *evalChannelData, userMessage string, rubrics []string) string {
+func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.User, team *model.Team, userMessage string, rubrics []string) string {
 	e.Helper()
 
-	setup := setupAgenticEval(e.T, e, suite, data)
+	setup := setupAgenticEval(e.T, e, suite, requestingUser, team)
 
 	promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(e.T, err, "Failed to load prompts")
@@ -207,7 +207,7 @@ func TestChannelSummarizationFlowEval(t *testing.T) {
 	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
 
 	evals.Run(t, "channel summarization flow", func(e *evals.EvalT) {
-		runAgenticFlowEval(e, suite, data,
+		runAgenticFlowEval(e, suite, data.alice, data.team,
 			"Summarize what's been discussed in the "+data.channel.DisplayName+" channel. The channel ID is "+data.channel.Id,
 			[]string{
 				"Mentions the discussion about migrating from MySQL to PostgreSQL",
@@ -235,7 +235,7 @@ func TestFindSpecificInfoFlowEval(t *testing.T) {
 	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
 
 	evals.Run(t, "find specific info flow", func(e *evals.EvalT) {
-		runAgenticFlowEval(e, suite, data,
+		runAgenticFlowEval(e, suite, data.alice, data.team,
 			"What did alice.eval say about the rollback plan for the database migration? You can find the discussion in the "+data.channel.DisplayName+" channel (ID: "+data.channel.Id+").",
 			[]string{
 				"Mentions keeping MySQL in read-only mode during cutover",
@@ -260,7 +260,7 @@ func TestDMSummaryFlowEval(t *testing.T) {
 	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
 
 	evals.Run(t, "dm summary flow", func(e *evals.EvalT) {
-		runAgenticFlowEval(e, suite, data,
+		runAgenticFlowEval(e, suite, data.alice, data.team,
 			"Send bob.eval a DM summarizing the key decisions made in the "+data.channel.DisplayName+" channel. The channel ID is "+data.channel.Id+".",
 			[]string{
 				"Confirms that a DM was sent to bob.eval",
@@ -308,4 +308,69 @@ func containsMigrationContent(message string) bool {
 		}
 	}
 	return false
+}
+
+// TestBroadcastDMToTeamFlowEval tests the team lookup → list members → filter bots → send DMs flow:
+// LLM looks up a team by display name, gets members, excludes bot accounts, and DMs each real user.
+func TestBroadcastDMToTeamFlowEval(t *testing.T) {
+	evals.NumEvalsOrSkip(t)
+
+	suite := SetupTestSuite(t)
+	defer suite.TearDown()
+	suite.CreateMCPServer(false)
+
+	data := seedTeamBroadcastScenario(t, suite.serverURL, suite.adminToken)
+
+	evals.Run(t, "broadcast DM to team flow", func(e *evals.EvalT) {
+		runAgenticFlowEval(e, suite, data.dana, data.team,
+			"Send the following message to everyone on the Staff team: Hey! Just a reminder that we have a company all-hands meeting tomorrow at 3pm in the main conference room. Please make sure to attend.",
+			[]string{
+				"Confirms that direct messages were sent to multiple individual users",
+				"Does not mention sending a message to the bot account (autobot.eval or Automation Bot)",
+				"Does not mention the tool-calling process itself",
+			},
+		)
+
+		// Verify DMs were actually sent by checking the Mattermost API
+		ctx := context.Background()
+		adminClient := model.NewAPIv4Client(suite.serverURL)
+		adminClient.SetToken(suite.adminToken)
+
+		// Get the admin user (MCP server identity)
+		adminUser, _, err := adminClient.GetMe(ctx, "")
+		require.NoError(e.T, err, "Should get admin user")
+
+		// Verify DMs were sent to each real user
+		for _, targetUser := range []*model.User{data.dana, data.emma, data.frank} {
+			dmChannel, _, err := adminClient.CreateDirectChannel(ctx, adminUser.Id, targetUser.Id)
+			require.NoError(e.T, err, "Should get DM channel with %s", targetUser.Username)
+
+			dmPosts, _, err := adminClient.GetPostsForChannel(ctx, dmChannel.Id, 0, 10, "", false, false)
+			require.NoError(e.T, err, "Should get DM posts for %s", targetUser.Username)
+
+			found := false
+			for _, post := range dmPosts.Posts {
+				if post.UserId == adminUser.Id && strings.Contains(strings.ToLower(post.Message), "all-hands") {
+					found = true
+					e.Logf("DM to %s: %s", targetUser.Username, post.Message)
+					break
+				}
+			}
+			assert.True(e.T, found, "A DM about the all-hands meeting should have been sent to %s", targetUser.Username)
+		}
+
+		// Verify NO DM was sent to the bot
+		botDMChannel, _, err := adminClient.CreateDirectChannel(ctx, adminUser.Id, data.botUser.Id)
+		require.NoError(e.T, err, "Should get DM channel with bot")
+
+		botDMPosts, _, err := adminClient.GetPostsForChannel(ctx, botDMChannel.Id, 0, 10, "", false, false)
+		require.NoError(e.T, err, "Should get DM posts for bot")
+
+		for _, post := range botDMPosts.Posts {
+			if post.UserId == adminUser.Id && strings.Contains(strings.ToLower(post.Message), "all-hands") {
+				assert.Fail(e.T, "A DM about the all-hands meeting should NOT have been sent to bot %s", data.botUser.Username)
+				break
+			}
+		}
+	})
 }

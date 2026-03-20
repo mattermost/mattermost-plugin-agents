@@ -379,6 +379,82 @@ func setupEmbeddingSearch(t *testing.T, data *evalChannelData, serverURL, adminT
 	}
 }
 
+// evalTeamBroadcastData holds seeded data for the team broadcast DM eval.
+type evalTeamBroadcastData struct {
+	team    *model.Team
+	dana    *model.User
+	emma    *model.User
+	frank   *model.User
+	botUser *model.User // user account backing the bot
+}
+
+// seedTeamBroadcastScenario creates a team with real users and a bot account
+// for testing the "DM everyone on a team" workflow.
+func seedTeamBroadcastScenario(t *testing.T, serverURL, adminToken string) *evalTeamBroadcastData {
+	t.Helper()
+
+	ctx := context.Background()
+	adminClient := model.NewAPIv4Client(serverURL)
+	adminClient.SetToken(adminToken)
+
+	// Enable bot account creation
+	_, _, err := adminClient.PatchConfig(ctx, &model.Config{
+		ServiceSettings: model.ServiceSettings{
+			EnableBotAccountCreation: model.NewPointer(true),
+		},
+	})
+	require.NoError(t, err, "Failed to enable bot account creation")
+
+	// Create team with display name "Staff" and URL name "private-core"
+	team := testhelpers.CreateTestTeam(t, adminClient, "private-core", "Staff")
+
+	// Create real users with first/last names so they're clearly human
+	password := "EvalTest123!"
+	dana := testhelpers.CreateTestUser(t, adminClient, "dana.eval", "dana.eval@example.com", password)
+	emma := testhelpers.CreateTestUser(t, adminClient, "emma.eval", "emma.eval@example.com", password)
+	frank := testhelpers.CreateTestUser(t, adminClient, "frank.eval", "frank.eval@example.com", password)
+
+	// Set first/last names
+	for _, pair := range []struct {
+		user      *model.User
+		firstName string
+		lastName  string
+	}{
+		{dana, "Dana", "Rodriguez"},
+		{emma, "Emma", "Chen"},
+		{frank, "Frank", "Williams"},
+	} {
+		pair.user.FirstName = pair.firstName
+		pair.user.LastName = pair.lastName
+		_, _, err := adminClient.UpdateUser(ctx, pair.user)
+		require.NoError(t, err, "Failed to update user %s", pair.user.Username)
+	}
+
+	// Create a bot account
+	bot, _, err := adminClient.CreateBot(ctx, &model.Bot{
+		Username:    "autobot.eval",
+		DisplayName: "Automation Bot",
+		Description: "An automated integration bot",
+	})
+	require.NoError(t, err, "Failed to create bot")
+
+	botUser, _, err := adminClient.GetUser(ctx, bot.UserId, "")
+	require.NoError(t, err, "Failed to get bot user")
+
+	// Add all users to the team
+	for _, u := range []*model.User{dana, emma, frank, botUser} {
+		testhelpers.AddUserToTeam(t, adminClient, team.Id, u.Id)
+	}
+
+	return &evalTeamBroadcastData{
+		team:    team,
+		dana:    dana,
+		emma:    emma,
+		frank:   frank,
+		botUser: botUser,
+	}
+}
+
 // agenticEvalSetup holds the components needed for agentic flow evals.
 type agenticEvalSetup struct {
 	wrappedLLM   llm.LanguageModel
@@ -388,7 +464,7 @@ type agenticEvalSetup struct {
 
 // setupAgenticEval builds the common infrastructure for agentic flow evals:
 // MCP tools as llm.Tool, ToolStore, AutoRunToolsWrapper, and populated llm.Context.
-func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, data *evalChannelData) *agenticEvalSetup {
+func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, requestingUser *model.User, team *model.Team) *agenticEvalSetup {
 	t.Helper()
 
 	mcpTools := mcpToolsToLLMTools(t, suite.mcpServer.GetMCPServer())
@@ -404,9 +480,9 @@ func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, data *eval
 
 	llmContext := llm.NewContext()
 	llmContext.Tools = toolStore
-	llmContext.RequestingUser = data.alice
+	llmContext.RequestingUser = requestingUser
 	llmContext.Channel = &model.Channel{Type: model.ChannelTypeDirect}
-	llmContext.Team = data.team
+	llmContext.Team = team
 	llmContext.ServerName = "Eval Server"
 	llmContext.CompanyName = "Eval Corp"
 	llmContext.BotName = "AI Assistant"
