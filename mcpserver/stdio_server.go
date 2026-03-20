@@ -61,9 +61,12 @@ func NewStdioServer(config StdioConfig, logger loggerlib.Logger) (*MattermostStd
 		return nil, fmt.Errorf("startup token validation failed: %w", err)
 	}
 
-	// Create HTTP search service for callback to plugin API
-	pluginURL := strings.TrimRight(config.GetMMServerURL(), "/") + "/plugins/mattermost-ai"
-	searchService := tools.NewHTTPSemanticSearchService(pluginURL)
+	// Use provided search service or create default HTTP callback service
+	searchService := config.SearchService
+	if searchService == nil {
+		pluginURL := strings.TrimRight(config.GetMMServerURL(), "/") + "/plugins/mattermost-ai"
+		searchService = tools.NewHTTPSemanticSearchService(pluginURL)
+	}
 
 	// Register tools with local access mode
 	mattermostServer.registerTools(tools.AccessModeLocal, searchService)

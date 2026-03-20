@@ -53,6 +53,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	if semanticEnabled {
 		schema = llm.NewJSONSchemaFromStruct[CombinedSearchArgs]()
 		description = "Search for posts in Mattermost using both semantic (AI-powered) and keyword search. " +
+			"Keyword search uses AND logic — all terms must appear in a single post, so prefer short, focused queries (1-2 key terms) over long multi-word phrases. " +
 			"Parameters: query (required), team_id (optional), channel_id (optional). " +
 			"semantic_limit/semantic_offset control semantic results (default: 10). " +
 			"keyword_limit/keyword_offset control keyword results (default: 10). " +
@@ -60,6 +61,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	} else {
 		schema = llm.NewJSONSchemaFromStruct[KeywordOnlySearchArgs]()
 		description = "Search for posts in Mattermost using keyword search. " +
+			"Uses AND logic — all terms must appear in a single post, so prefer short, focused queries (1-2 key terms) over long multi-word phrases. " +
 			"Parameters: query (required), team_id (optional), channel_id (optional). " +
 			"keyword_limit/keyword_offset control results (default: 10). " +
 			"Returns matching posts with content, author, and channel."

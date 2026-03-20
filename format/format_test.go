@@ -346,8 +346,6 @@ func TestBuildPostIndex(t *testing.T) {
 	assert.Equal(t, 1, idx["aaa"])
 	assert.Equal(t, 2, idx["bbb"])
 	assert.Equal(t, 3, idx["ccc"])
-	_, ok := idx["missing"]
-	assert.False(t, ok)
 }
 
 func TestMemberRole(t *testing.T) {

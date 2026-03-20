@@ -15,6 +15,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
 	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
@@ -109,14 +110,24 @@ func (suite *TestSuite) TearDown() {
 
 // CreateMCPServer creates and configures an MCP server for testing
 func (suite *TestSuite) CreateMCPServer(devMode bool) {
+	suite.createMCPServerWithConfig(devMode, nil)
+}
+
+// CreateMCPServerWithSearch creates an MCP server with a custom semantic search service
+func (suite *TestSuite) CreateMCPServerWithSearch(devMode bool, searchService tools.SemanticSearchService) {
+	suite.createMCPServerWithConfig(devMode, searchService)
+}
+
+func (suite *TestSuite) createMCPServerWithConfig(devMode bool, searchService tools.SemanticSearchService) {
 	require.NotNil(suite.t, suite.logger, "Logger must be initialized")
 	require.NotEmpty(suite.t, suite.serverURL, "Server URL must be set")
 	require.NotEmpty(suite.t, suite.adminToken, "Admin token must be set")
 
 	stdioConfig := mcpserver.StdioConfig{
 		BaseConfig: mcpserver.BaseConfig{
-			MMServerURL: suite.serverURL,
-			DevMode:     devMode,
+			MMServerURL:   suite.serverURL,
+			DevMode:       devMode,
+			SearchService: searchService,
 		},
 		PersonalAccessToken: suite.adminToken,
 	}

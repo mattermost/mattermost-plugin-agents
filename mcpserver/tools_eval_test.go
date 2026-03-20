@@ -4,9 +4,11 @@
 package mcpserver_test
 
 import (
+	"context"
+	"strings"
 	"testing"
 
-	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
@@ -16,17 +18,50 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// runAgenticFlowEval is a helper that runs an agentic flow eval with the given prompt and rubrics.
+func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, data *evalChannelData, userMessage string, rubrics []string) string {
+	e.Helper()
+
+	setup := setupAgenticEval(e.T, e, suite, data)
+
+	promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(e.T, err, "Failed to load prompts")
+
+	posts, err := conversations.BuildNewConversationPosts(promptsObj, setup.llmContext, llm.Post{
+		Role:    llm.PostRoleUser,
+		Message: userMessage,
+	})
+	require.NoError(e.T, err, "Failed to build conversation posts")
+
+	result, err := conversations.ExecuteCompletion(setup.wrappedLLM, posts, setup.llmContext, llm.OperationConversation, "",
+		llm.WithAutoRunTools(setup.allToolNames))
+	require.NoError(e.T, err, "ChatCompletion should succeed")
+
+	response, err := result.ReadAll()
+	require.NoError(e.T, err, "ReadAll should succeed")
+	require.NotEmpty(e.T, response, "Response should not be empty")
+
+	e.Logf("LLM response:\n%s", response)
+
+	for _, rubric := range rubrics {
+		evals.LLMRubricT(e, rubric, response)
+	}
+
+	return response
+}
+
+// ---------------------------------------------------------------------------
+// Individual Tool Evals
+// ---------------------------------------------------------------------------
+
 // TestReadChannelOutputQualityEval tests that read_channel output is useful for LLM consumption.
-// It seeds a realistic conversation and grades the tool output against rubrics.
 func TestReadChannelOutputQualityEval(t *testing.T) {
 	evals.NumEvalsOrSkip(t)
 
-	// Setup Mattermost container + MCP server (expensive — done once)
 	suite := SetupTestSuite(t)
 	defer suite.TearDown()
 	suite.CreateMCPServer(false)
 
-	// Seed test data
 	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
 
 	rubrics := []string{
@@ -41,23 +76,14 @@ func TestReadChannelOutputQualityEval(t *testing.T) {
 	}
 
 	evals.Run(t, "read_channel output quality", func(e *evals.EvalT) {
-		args := map[string]interface{}{
+		result, err := executeToolWithMCP(e.T, suite, "read_channel", map[string]interface{}{
 			"channel_id": data.channel.Id,
 			"limit":      20,
-		}
-
-		result, err := executeToolWithMCP(e.T, suite, "read_channel", args)
+		})
 		require.NoError(e.T, err, "read_channel should succeed")
-		require.NotEmpty(e.T, result.Content, "read_channel should return content")
 
-		text := ""
-		for _, c := range result.Content {
-			if tc, ok := c.(*gomcp.TextContent); ok {
-				text += tc.Text
-			}
-		}
+		text := extractMCPText(result)
 		require.NotEmpty(e.T, text, "read_channel should return text content")
-
 		e.Logf("read_channel output:\n%s", text)
 
 		for _, rubric := range rubrics {
@@ -66,82 +92,220 @@ func TestReadChannelOutputQualityEval(t *testing.T) {
 	})
 }
 
-// TestChannelSummarizationFlowEval tests the full agentic loop:
-// LLM receives MCP tools → decides to call get_channel_info + read_channel → produces summary.
-// Uses the real AutoRunToolsWrapper and ToolStore from production code.
-func TestChannelSummarizationFlowEval(t *testing.T) {
+// TestSearchPostsOutputQualityEval tests that search_posts output is parseable and relevant.
+// Runs two sub-tests: keyword search only, and keyword + semantic search.
+func TestSearchPostsOutputQualityEval(t *testing.T) {
 	evals.NumEvalsOrSkip(t)
 
-	// Setup Mattermost container + MCP server
+	suite := SetupTestSuite(t)
+	defer suite.TearDown()
+
+	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
+
+	rubrics := []string{
+		"Each search result includes the author username",
+		"Each search result includes the post message content",
+		"Each search result includes a Post ID that could be used in follow-up tool calls",
+		"The results contain posts about database migration or PostgreSQL",
+	}
+
+	t.Run("keyword", func(t *testing.T) {
+		suite.CreateMCPServer(false)
+
+		evals.Run(t, "search_posts keyword quality", func(e *evals.EvalT) {
+			// Use a single term to avoid AND logic requiring all terms in one post
+			result, err := executeToolWithMCP(e.T, suite, "search_posts", map[string]interface{}{
+				"query":   "migration",
+				"team_id": data.team.Id,
+				"limit":   10,
+			})
+			require.NoError(e.T, err, "search_posts should succeed")
+
+			text := extractMCPText(result)
+			require.NotEmpty(e.T, text, "search_posts should return text content")
+			e.Logf("search_posts keyword output:\n%s", text)
+
+			for _, rubric := range rubrics {
+				evals.LLMRubricT(e, rubric, text)
+			}
+		})
+	})
+
+	t.Run("with_semantic", func(t *testing.T) {
+		// Set up real PGVector + mock embedding provider and index test posts
+		searchService := setupEmbeddingSearch(t, data, suite.serverURL, suite.adminToken)
+		suite.CreateMCPServerWithSearch(false, searchService)
+
+		// This sub-test validates the semantic search pipeline integration (PGVector + mock embeddings).
+		// Mock embeddings don't produce semantically meaningful similarity scores, so this tests
+		// that the pipeline wiring works end-to-end (index, query, format), not search relevance.
+		evals.Run(t, "search_posts semantic pipeline", func(e *evals.EvalT) {
+			result, err := executeToolWithMCP(e.T, suite, "search_posts", map[string]interface{}{
+				"query":   "database migration plan",
+				"team_id": data.team.Id,
+				"limit":   10,
+			})
+			require.NoError(e.T, err, "search_posts should succeed")
+
+			text := extractMCPText(result)
+			require.NotEmpty(e.T, text, "search_posts should return text content")
+			e.Logf("search_posts semantic output:\n%s", text)
+
+			for _, rubric := range rubrics {
+				evals.LLMRubricT(e, rubric, text)
+			}
+		})
+	})
+}
+
+// TestGetChannelMembersOutputQualityEval tests that get_channel_members output is parseable.
+func TestGetChannelMembersOutputQualityEval(t *testing.T) {
+	evals.NumEvalsOrSkip(t)
+
 	suite := SetupTestSuite(t)
 	defer suite.TearDown()
 	suite.CreateMCPServer(false)
 
-	// Seed test data
 	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
 
 	rubrics := []string{
-		"Mentions the discussion about migrating from MySQL to PostgreSQL",
-		"Mentions the timeline question and the response about next sprint",
-		"Mentions the concern about 500GB of data or downtime",
-		"Mentions the rollback plan involving keeping MySQL in read-only mode",
-		"Is a coherent summary, not a raw dump of messages or tool output",
-		"Does not mention the tool-calling process itself",
+		"The output lists members with their usernames",
+		"Each member entry includes an ID that could be used in follow-up tool calls",
+		"The member list includes alice.eval, bob.eval, and charlie.eval",
 	}
 
-	evals.Run(t, "channel summarization flow", func(e *evals.EvalT) {
-		// Convert MCP tools to llm.Tool (mirrors production mcp/user_clients.go:201)
-		mcpTools := mcpToolsToLLMTools(e.T, suite.mcpServer.GetMCPServer())
-		require.NotEmpty(e.T, mcpTools, "Should have MCP tools")
-
-		// Collect all tool names for auto-run
-		allToolNames := make([]string, len(mcpTools))
-		for i, tool := range mcpTools {
-			allToolNames[i] = tool.Name
-		}
-
-		// Build ToolStore (production: llm/tools.go:364)
-		toolStore := llm.NewToolStore(nil, false)
-		toolStore.AddTools(mcpTools)
-
-		// Build context with tools and required template fields
-		llmContext := llm.NewContext()
-		llmContext.Tools = toolStore
-		llmContext.RequestingUser = data.alice
-		llmContext.Channel = &model.Channel{Type: model.ChannelTypeDirect} // Simulate DM context
-		llmContext.Team = data.team
-		llmContext.ServerName = "Eval Server"
-		llmContext.CompanyName = "Eval Corp"
-		llmContext.BotName = "AI Assistant"
-		llmContext.BotUsername = "ai-bot"
-		llmContext.BotModel = "eval-model"
-
-		// Load real system prompt and build posts (production: conversations/completion.go)
-		promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
-		require.NoError(e.T, err, "Failed to load prompts")
-
-		posts, err := conversations.BuildNewConversationPosts(promptsObj, llmContext, llm.Post{
-			Role:    llm.PostRoleUser,
-			Message: "Summarize what's been discussed in the " + data.channel.DisplayName + " channel. The channel ID is " + data.channel.Id,
+	evals.Run(t, "get_channel_members output quality", func(e *evals.EvalT) {
+		result, err := executeToolWithMCP(e.T, suite, "get_channel_members", map[string]interface{}{
+			"channel_id": data.channel.Id,
+			"limit":      50,
 		})
-		require.NoError(e.T, err, "Failed to build conversation posts")
+		require.NoError(e.T, err, "get_channel_members should succeed")
 
-		// Wrap eval LLM with real AutoRunToolsWrapper (production: llm/auto_run_tools.go:18)
-		wrappedLLM := llm.NewAutoRunToolsWrapper(e.LLM)
-
-		// Execute with auto-run tools (same option as production channels.go:113)
-		result, err := conversations.ExecuteCompletion(wrappedLLM, posts, llmContext, llm.OperationConversation, "",
-			llm.WithAutoRunTools(allToolNames))
-		require.NoError(e.T, err, "ChatCompletion should succeed")
-
-		summary, err := result.ReadAll()
-		require.NoError(e.T, err, "ReadAll should succeed")
-		require.NotEmpty(e.T, summary, "Summary should not be empty")
-
-		e.Logf("Channel summary:\n%s", summary)
+		text := extractMCPText(result)
+		require.NotEmpty(e.T, text, "get_channel_members should return text content")
+		e.Logf("get_channel_members output:\n%s", text)
 
 		for _, rubric := range rubrics {
-			evals.LLMRubricT(e, rubric, summary)
+			evals.LLMRubricT(e, rubric, text)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Agentic Flow Evals
+// ---------------------------------------------------------------------------
+
+// TestChannelSummarizationFlowEval tests the full agentic loop:
+// LLM receives MCP tools → calls read_channel → produces summary.
+func TestChannelSummarizationFlowEval(t *testing.T) {
+	evals.NumEvalsOrSkip(t)
+
+	suite := SetupTestSuite(t)
+	defer suite.TearDown()
+	suite.CreateMCPServer(false)
+
+	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
+
+	evals.Run(t, "channel summarization flow", func(e *evals.EvalT) {
+		runAgenticFlowEval(e, suite, data,
+			"Summarize what's been discussed in the "+data.channel.DisplayName+" channel. The channel ID is "+data.channel.Id,
+			[]string{
+				"Mentions the discussion about migrating from MySQL to PostgreSQL",
+				"Mentions the timeline question and the response about next sprint",
+				"Mentions the concern about 500GB of data or downtime",
+				"Mentions the rollback plan involving keeping MySQL in read-only mode",
+				"Is a coherent summary, not a raw dump of messages or tool output",
+				"Does not mention the tool-calling process itself",
+				// Rubric referencing a user that only exists in the seeded data (anti-hallucination)
+				"Mentions at least one of alice.eval, bob.eval, or charlie.eval by username",
+			},
+		)
+	})
+}
+
+// TestFindSpecificInfoFlowEval tests search → synthesize:
+// LLM uses search tools to find what a specific user said about a specific topic.
+func TestFindSpecificInfoFlowEval(t *testing.T) {
+	evals.NumEvalsOrSkip(t)
+
+	suite := SetupTestSuite(t)
+	defer suite.TearDown()
+	suite.CreateMCPServer(false)
+
+	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
+
+	evals.Run(t, "find specific info flow", func(e *evals.EvalT) {
+		runAgenticFlowEval(e, suite, data,
+			"What did alice.eval say about the rollback plan for the database migration? You can find the discussion in the "+data.channel.DisplayName+" channel (ID: "+data.channel.Id+").",
+			[]string{
+				"Mentions keeping MySQL in read-only mode during cutover",
+				"Mentions the ability to switch back within minutes",
+				"Mentions continuous replication as a safety net",
+				"Does not attribute the rollback plan to bob.eval or charlie.eval",
+				"Is a direct answer to the question, not a full channel summary",
+			},
+		)
+	})
+}
+
+// TestDMSummaryFlowEval tests the read → write loop:
+// LLM reads a channel, composes a summary, and sends it as a DM.
+func TestDMSummaryFlowEval(t *testing.T) {
+	evals.NumEvalsOrSkip(t)
+
+	suite := SetupTestSuite(t)
+	defer suite.TearDown()
+	suite.CreateMCPServer(false)
+
+	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
+
+	evals.Run(t, "dm summary flow", func(e *evals.EvalT) {
+		runAgenticFlowEval(e, suite, data,
+			"Send bob.eval a DM summarizing the key decisions made in the "+data.channel.DisplayName+" channel. The channel ID is "+data.channel.Id+".",
+			[]string{
+				"Confirms that a DM was sent to bob.eval",
+				"Does not mention the tool-calling process itself",
+			},
+		)
+
+		// Verify the DM was actually sent by checking via the Mattermost API
+		ctx := context.Background()
+		adminClient := model.NewAPIv4Client(suite.serverURL)
+		adminClient.SetToken(suite.adminToken)
+
+		// Get the admin user (MCP server identity)
+		adminUser, _, err := adminClient.GetMe(ctx, "")
+		require.NoError(e.T, err, "Should get admin user")
+
+		// Get DM channel between admin and bob
+		dmChannel, _, err := adminClient.CreateDirectChannel(ctx, adminUser.Id, data.bob.Id)
+		require.NoError(e.T, err, "Should get DM channel")
+
+		// Check that a post exists in the DM channel
+		dmPosts, _, err := adminClient.GetPostsForChannel(ctx, dmChannel.Id, 0, 10, "", false, false)
+		require.NoError(e.T, err, "Should get DM posts")
+
+		// Find a post that mentions migration (the summary the LLM sent)
+		found := false
+		for _, post := range dmPosts.Posts {
+			if post.UserId == adminUser.Id && containsMigrationContent(post.Message) {
+				found = true
+				e.Logf("DM post content:\n%s", post.Message)
+				break
+			}
+		}
+		assert.True(e.T, found, "A DM post mentioning migration should exist in the DM channel with bob")
+	})
+}
+
+// containsMigrationContent checks if a message contains migration-related keywords (case-insensitive).
+func containsMigrationContent(message string) bool {
+	lower := strings.ToLower(message)
+	keywords := []string{"migration", "postgresql", "mysql", "database", "migrate"}
+	for _, kw := range keywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
 }
