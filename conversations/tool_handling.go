@@ -460,17 +460,8 @@ func (c *Conversations) completeAndStreamToolResponse(
 		return fmt.Errorf("failed to convert existing conversation to LLM posts: %w", err)
 	}
 
-	completionRequest := llm.CompletionRequest{
-		Posts:            posts,
-		Context:          llmContext,
-		Operation:        llm.OperationConversationToolFollowup,
-		OperationSubType: llm.SubTypeToolCall,
-	}
-	var opts []llm.LanguageModelOption
-	if toolsDisabled {
-		opts = append(opts, llm.WithToolsDisabled())
-	}
-	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
+	opts := CompletionOptions{ToolsDisabled: toolsDisabled}.BuildLLMOptions()
+	result, err := ExecuteCompletion(bot.LLM(), posts, llmContext, llm.OperationConversationToolFollowup, llm.SubTypeToolCall, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to get chat completion: %w", err)
 	}

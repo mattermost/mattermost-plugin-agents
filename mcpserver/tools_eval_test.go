@@ -9,6 +9,7 @@ import (
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mattermost/mattermost-plugin-ai/conversations"
 	"github.com/mattermost/mattermost-plugin-ai/evals"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
@@ -115,27 +116,22 @@ func TestChannelSummarizationFlowEval(t *testing.T) {
 		llmContext.BotUsername = "ai-bot"
 		llmContext.BotModel = "eval-model"
 
-		// Load real system prompt (production: prompts/)
+		// Load real system prompt and build posts (production: conversations/completion.go)
 		promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
 		require.NoError(e.T, err, "Failed to load prompts")
 
-		systemPrompt, err := promptsObj.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)
-		require.NoError(e.T, err, "Failed to format system prompt")
+		posts, err := conversations.BuildNewConversationPosts(promptsObj, llmContext, llm.Post{
+			Role:    llm.PostRoleUser,
+			Message: "Summarize what's been discussed in the " + data.channel.DisplayName + " channel. The channel ID is " + data.channel.Id,
+		})
+		require.NoError(e.T, err, "Failed to build conversation posts")
 
 		// Wrap eval LLM with real AutoRunToolsWrapper (production: llm/auto_run_tools.go:18)
 		wrappedLLM := llm.NewAutoRunToolsWrapper(e.LLM)
 
-		request := llm.CompletionRequest{
-			Posts: []llm.Post{
-				{Role: llm.PostRoleSystem, Message: systemPrompt},
-				{Role: llm.PostRoleUser, Message: "Summarize what's been discussed in the " + data.channel.DisplayName + " channel. The channel ID is " + data.channel.Id},
-			},
-			Context:   llmContext,
-			Operation: llm.OperationConversation,
-		}
-
 		// Execute with auto-run tools (same option as production channels.go:113)
-		result, err := wrappedLLM.ChatCompletion(request, llm.WithAutoRunTools(allToolNames))
+		result, err := conversations.ExecuteCompletion(wrappedLLM, posts, llmContext, llm.OperationConversation, "",
+			llm.WithAutoRunTools(allToolNames))
 		require.NoError(e.T, err, "ChatCompletion should succeed")
 
 		summary, err := result.ReadAll()

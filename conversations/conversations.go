@@ -99,6 +99,8 @@ func (c *Conversations) SetMeetingsService(meetingsService MeetingsService) {
 func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 	toolsDisabled := !isDM && !allowToolsInChannel
+
+	// Configure tool visibility
 	if context != nil {
 		if toolsDisabled && context.Tools != nil {
 			context.DisabledToolsInfo = context.Tools.GetToolsInfo()
@@ -107,21 +109,16 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		}
 	}
 
+	// Stage 1: Build posts
 	var posts []llm.Post
 	if post.RootId == "" {
-		// A new conversation
-		prompt, err := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, context)
+		var err error
+		posts, err = BuildNewConversationPosts(c.prompts, context, c.PostToAIPost(bot, post))
 		if err != nil {
-			return nil, fmt.Errorf("failed to format prompt: %w", err)
-		}
-		posts = []llm.Post{
-			{
-				Role:    llm.PostRoleSystem,
-				Message: prompt,
-			},
+			return nil, err
 		}
 	} else {
-		// Continuing an existing conversation
+		// Existing conversation path (thread loading) stays here — it needs mmapi.Client
 		previousConversation, errThread := mmapi.GetThreadData(c.mmClient, post.Id)
 		if errThread != nil {
 			return nil, fmt.Errorf("failed to get previous conversation: %w", errThread)
@@ -133,30 +130,22 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert existing conversation to LLM posts: %w", err)
 		}
+		posts = append(posts, c.PostToAIPost(bot, post))
 	}
 
-	posts = append(posts, c.PostToAIPost(bot, post))
+	// Stage 2: Build options
+	opts := CompletionOptions{
+		ToolsDisabled:          toolsDisabled,
+		NativeWebSearchAllowed: c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled(),
+	}.BuildLLMOptions()
 
-	completionRequest := llm.CompletionRequest{
-		Posts:     posts,
-		Context:   context,
-		Operation: llm.OperationConversation,
-	}
-	var opts []llm.LanguageModelOption
-	if toolsDisabled {
-		// Tools are disabled in this context but we still inform the LLM about DM-only tools.
-		opts = append(opts, llm.WithToolsDisabled())
-
-		if c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled() {
-			opts = append(opts, llm.WithNativeWebSearchAllowed())
-		}
-	}
-	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
+	// Stage 3: Execute
+	result, err := ExecuteCompletion(bot.LLM(), posts, context, llm.OperationConversation, "", opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	// Decorate the stream with web search annotations if available
+	// Side effects (stay here, not in the extracted functions)
 	webSearchData := mmtools.ConsumeWebSearchContexts(context)
 	c.mmClient.LogDebug("Checking for web search data in ProcessUserRequestWithContext", "has_data", len(webSearchData) > 0, "num_contexts", len(webSearchData))
 	if len(webSearchData) > 0 {
