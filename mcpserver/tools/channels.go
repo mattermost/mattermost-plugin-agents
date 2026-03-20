@@ -7,10 +7,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strconv"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-ai/format"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -198,6 +199,11 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 		return "no posts found in the specified timeframe", nil
 	}
 
+	// Sort chronologically (oldest first) for natural reading order
+	sort.Slice(filteredPosts, func(i, j int) bool {
+		return filteredPosts[i].CreateAt < filteredPosts[j].CreateAt
+	})
+
 	// Collect unique user IDs and fetch all at once
 	userIDs := make([]string, 0)
 	seen := make(map[string]bool)
@@ -232,11 +238,20 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channelDisplayName, teamDisplayName))
 	result.WriteString(fmt.Sprintf("Found %d posts:\n\n", len(filteredPosts)))
 
+	postIndex := format.BuildPostIndex(filteredPosts)
 	for i, post := range filteredPosts {
-		username := userCache[post.UserId]
-		result.WriteString(fmt.Sprintf("**Post %d** by %s:\n", i+1, username))
-		result.WriteString(fmt.Sprintf("Post ID: %s\n", post.Id))
-		result.WriteString(fmt.Sprintf("%s\n\n", post.Message))
+		var replyAnnotation string
+		if post.RootId != "" {
+			if parentNum, ok := postIndex[post.RootId]; ok {
+				replyAnnotation = fmt.Sprintf("(reply to Post %d)", parentNum)
+			}
+		}
+		format.WritePost(&result, format.PostEntry{
+			HeaderLabel:     fmt.Sprintf("Post %d", i+1),
+			Username:        userCache[post.UserId],
+			ReplyAnnotation: replyAnnotation,
+			Post:            post,
+		})
 	}
 
 	return result.String(), nil
@@ -425,35 +440,29 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 
 	// Single channel found - format as before (backward compatible)
 	channel := channels[0]
-	var result strings.Builder
-	result.WriteString("Channel Information:\n")
-	result.WriteString(fmt.Sprintf("ID: %s\n", channel.Id))
-	result.WriteString(fmt.Sprintf("Name: %s\n", channel.Name))
-	result.WriteString(fmt.Sprintf("Display Name: %s\n", channel.DisplayName))
-	result.WriteString(fmt.Sprintf("Type: %s\n", channel.Type))
-	result.WriteString(fmt.Sprintf("Team ID: %s\n", channel.TeamId))
 
 	// Get team info
+	var teamName string
 	team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
 	if teamErr == nil {
-		result.WriteString(fmt.Sprintf("Team Name: %s\n", team.Name))
-		result.WriteString(fmt.Sprintf("Team Display Name: %s\n", team.DisplayName))
+		teamName = team.DisplayName
 	}
-
-	if channel.Purpose != "" {
-		result.WriteString(fmt.Sprintf("Purpose: %s\n", channel.Purpose))
-	}
-	if channel.Header != "" {
-		result.WriteString(fmt.Sprintf("Header: %s\n", channel.Header))
-	}
-
-	result.WriteString(fmt.Sprintf("Created: %s\n", time.Unix(channel.CreateAt/1000, 0).Format("2006-01-02 15:04:05")))
 
 	// Get member count
-	memberCount, _, err := client.GetChannelStats(ctx, channel.Id, "", false)
+	var memberCount int64 = -1
+	stats, _, err := client.GetChannelStats(ctx, channel.Id, "", false)
 	if err == nil {
-		result.WriteString(fmt.Sprintf("Member Count: %s\n", strconv.FormatInt(memberCount.MemberCount, 10)))
+		memberCount = stats.MemberCount
 	}
+
+	var result strings.Builder
+	format.WriteChannel(&result, format.ChannelEntry{
+		HeaderLabel: "Channel Information:",
+		Channel:     channel,
+		TeamName:    teamName,
+		TeamID:      channel.TeamId,
+		MemberCount: memberCount,
+	})
 
 	return result.String(), nil
 }
@@ -468,36 +477,34 @@ func (p *MattermostToolProvider) formatMultipleChannels(ctx context.Context, cli
 	teamCache := make(map[string]*model.Team)
 
 	for i, channel := range channels {
-		result.WriteString(fmt.Sprintf("%d. Channel: %s\n", i+1, channel.DisplayName))
-
 		// Get team info from cache or fetch
+		var teamName string
 		team, exists := teamCache[channel.TeamId]
 		if !exists {
 			fetchedTeam, _, err := client.GetTeam(ctx, channel.TeamId, "")
 			if err == nil {
 				team = fetchedTeam
 				teamCache[channel.TeamId] = team
-				result.WriteString(fmt.Sprintf("   Team: %s (Team ID: %s)\n", team.DisplayName, team.Id))
 			}
-		} else {
-			result.WriteString(fmt.Sprintf("   Team: %s (Team ID: %s)\n", team.DisplayName, team.Id))
 		}
-
-		result.WriteString(fmt.Sprintf("   Channel ID: %s\n", channel.Id))
-		result.WriteString(fmt.Sprintf("   Channel Name: %s\n", channel.Name))
-		result.WriteString(fmt.Sprintf("   Type: %s\n", channel.Type))
-
-		if channel.Purpose != "" {
-			result.WriteString(fmt.Sprintf("   Purpose: %s\n", channel.Purpose))
+		if team != nil {
+			teamName = team.DisplayName
 		}
 
 		// Get member count
-		memberCount, _, err := client.GetChannelStats(ctx, channel.Id, "", false)
+		var memberCount int64 = -1
+		stats, _, err := client.GetChannelStats(ctx, channel.Id, "", false)
 		if err == nil {
-			result.WriteString(fmt.Sprintf("   Members: %s\n", strconv.FormatInt(memberCount.MemberCount, 10)))
+			memberCount = stats.MemberCount
 		}
 
-		result.WriteString("\n")
+		format.WriteChannel(&result, format.ChannelEntry{
+			HeaderLabel: fmt.Sprintf("%d. %s", i+1, channel.DisplayName),
+			Channel:     channel,
+			TeamName:    teamName,
+			TeamID:      channel.TeamId,
+			MemberCount: memberCount,
+		})
 	}
 
 	result.WriteString("Multiple channels found. To disambiguate, either:\n")
@@ -558,34 +565,14 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 		user, _, err := client.GetUser(ctx, member.UserId, "")
 		if err != nil {
 			p.logger.Warn("failed to get user details for member", "user_id", member.UserId, "error", err)
-			result.WriteString(fmt.Sprintf("\nid: %s\nstatus: details unavailable\n", member.UserId))
+			format.WriteUser(&result, format.UserEntry{User: &model.User{Id: member.UserId, Username: "details unavailable"}})
 			continue
 		}
 
-		result.WriteString(fmt.Sprintf("\nusername: %s\n", user.Username))
-		result.WriteString(fmt.Sprintf("id: %s\n", user.Id))
-
-		if user.FirstName != "" || user.LastName != "" {
-			result.WriteString(fmt.Sprintf("name: %s %s\n", user.FirstName, user.LastName))
-		}
-
-		if user.Email != "" {
-			result.WriteString(fmt.Sprintf("email: %s\n", user.Email))
-		}
-
-		if user.IsBot {
-			result.WriteString("is_bot: true\n")
-		}
-
-		if user.DeleteAt != 0 {
-			result.WriteString("deactivated: true\n")
-		}
-
-		// Use scheme booleans for human-readable role
-		role := formatChannelMemberRole(member)
-		if role != "" {
-			result.WriteString(fmt.Sprintf("role: %s\n", role))
-		}
+		format.WriteUser(&result, format.UserEntry{
+			User: user,
+			Role: format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),
+		})
 	}
 
 	return result.String(), nil
@@ -865,27 +852,22 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 			}
 		}
 
-		result.WriteString(fmt.Sprintf("%d. **%s**\n", i+1+start, displayName))
-		result.WriteString(fmt.Sprintf("   ID: %s\n", channel.Id))
-		result.WriteString(fmt.Sprintf("   Name: %s\n", channel.Name))
-		result.WriteString(fmt.Sprintf("   Type: %s\n", channel.Type))
-
+		var teamName string
+		var teamID string
 		if channel.TeamId != "" {
 			if teamInfo, ok := teamInfoMap[channel.TeamId]; ok && teamInfo.DisplayName != "" {
-				result.WriteString(fmt.Sprintf("   Team: %s (ID: %s)\n", teamInfo.DisplayName, teamInfo.ID))
-			} else {
-				result.WriteString(fmt.Sprintf("   Team ID: %s\n", channel.TeamId))
+				teamName = teamInfo.DisplayName
 			}
+			teamID = channel.TeamId
 		}
 
-		if channel.Purpose != "" {
-			result.WriteString(fmt.Sprintf("   Purpose: %s\n", channel.Purpose))
-		}
-		if channel.Header != "" {
-			result.WriteString(fmt.Sprintf("   Header: %s\n", channel.Header))
-		}
-
-		result.WriteString("\n")
+		format.WriteChannel(&result, format.ChannelEntry{
+			HeaderLabel: fmt.Sprintf("%d. **%s**", i+1+start, displayName),
+			Channel:     channel,
+			TeamName:    teamName,
+			TeamID:      teamID,
+			MemberCount: -1,
+		})
 	}
 
 	if hasMore {
@@ -893,18 +875,4 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	}
 
 	return result.String(), nil
-}
-
-// formatChannelMemberRole returns a human-readable role string from ChannelMember scheme booleans.
-func formatChannelMemberRole(member model.ChannelMember) string {
-	switch {
-	case member.SchemeAdmin:
-		return "admin"
-	case member.SchemeGuest:
-		return "guest"
-	case member.SchemeUser:
-		return "member"
-	default:
-		return ""
-	}
 }

@@ -51,6 +51,10 @@ Write tests that verify behavior which could actually break due to bugs in our c
 - Integration between components
 - Behavior that depends on state or external inputs
 
+## Formatting Convention
+- All text formatting of Mattermost entities (posts, users, channels, teams, members) for LLM consumption or tool output must go through the `format/` package
+- Never format Mattermost model types inline with `fmt.Sprintf` — add a formatter to `format/` instead
+
 ## E2E CI Shard Maintenance
 - The agent/plugin e2e CI sharding is defined in `e2e/scripts/ci-test-groups.mjs`.
 - When adding a new e2e spec file that should run on CI, update the appropriate group in that file in the same change.

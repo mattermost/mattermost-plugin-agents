@@ -5,10 +5,9 @@ package tools
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
-	"time"
 
+	"github.com/mattermost/mattermost-plugin-ai/format"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -140,25 +139,19 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 		return "either team_id, team_display_name, or team_name must be provided", fmt.Errorf("insufficient parameters for team lookup")
 	}
 
-	// Format the response
-	var result strings.Builder
-	result.WriteString("Team Information:\n")
-	result.WriteString(fmt.Sprintf("ID: %s\n", team.Id))
-	result.WriteString(fmt.Sprintf("Name: %s\n", team.Name))
-	result.WriteString(fmt.Sprintf("Display Name: %s\n", team.DisplayName))
-	result.WriteString(fmt.Sprintf("Type: %s\n", team.Type))
-
-	if team.Description != "" {
-		result.WriteString(fmt.Sprintf("Description: %s\n", team.Description))
-	}
-
-	result.WriteString(fmt.Sprintf("Created: %s\n", time.Unix(team.CreateAt/1000, 0).Format("2006-01-02 15:04:05")))
-
 	// Get member count
+	var memberCount int64 = -1
 	teamStats, _, err := client.GetTeamStats(ctx, team.Id, "")
 	if err == nil {
-		result.WriteString(fmt.Sprintf("Member Count: %s\n", strconv.FormatInt(teamStats.TotalMemberCount, 10)))
+		memberCount = teamStats.TotalMemberCount
 	}
+
+	// Format the response
+	var result strings.Builder
+	format.WriteTeam(&result, format.TeamEntry{
+		Team:        team,
+		MemberCount: memberCount,
+	})
 
 	return result.String(), nil
 }
@@ -216,30 +209,10 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 			continue
 		}
 
-		result.WriteString(fmt.Sprintf("\nusername: %s\n", user.Username))
-		result.WriteString(fmt.Sprintf("id: %s\n", user.Id))
-
-		if user.FirstName != "" || user.LastName != "" {
-			result.WriteString(fmt.Sprintf("name: %s %s\n", user.FirstName, user.LastName))
-		}
-
-		if user.Email != "" {
-			result.WriteString(fmt.Sprintf("email: %s\n", user.Email))
-		}
-
-		if user.IsBot {
-			result.WriteString("is_bot: true\n")
-		}
-
-		if user.DeleteAt != 0 {
-			result.WriteString("deactivated: true\n")
-		}
-
-		// Use scheme booleans for human-readable role
-		role := formatTeamMemberRole(member)
-		if role != "" {
-			result.WriteString(fmt.Sprintf("role: %s\n", role))
-		}
+		format.WriteUser(&result, format.UserEntry{
+			User: user,
+			Role: format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),
+		})
 	}
 
 	return result.String(), nil
@@ -352,18 +325,4 @@ func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, a
 	}
 
 	return fmt.Sprintf("Successfully added user '%s' to team '%s'", user.Username, team.DisplayName), nil
-}
-
-// formatTeamMemberRole returns a human-readable role string from TeamMember scheme booleans.
-func formatTeamMemberRole(member *model.TeamMember) string {
-	switch {
-	case member.SchemeAdmin:
-		return "admin"
-	case member.SchemeGuest:
-		return "guest"
-	case member.SchemeUser:
-		return "member"
-	default:
-		return ""
-	}
 }
