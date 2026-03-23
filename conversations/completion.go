@@ -28,25 +28,6 @@ func (o CompletionOptions) BuildLLMOptions() []llm.LanguageModelOption {
 	return opts
 }
 
-// ExecuteCompletion runs an LLM completion with the given posts and context.
-// This is the core agentic loop entry point — no side effects, no post streaming.
-func ExecuteCompletion(
-	lm llm.LanguageModel,
-	posts []llm.Post,
-	context *llm.Context,
-	operation string,
-	operationSubType string,
-	opts ...llm.LanguageModelOption,
-) (*llm.TextStreamResult, error) {
-	request := llm.CompletionRequest{
-		Posts:            posts,
-		Context:          context,
-		Operation:        operation,
-		OperationSubType: operationSubType,
-	}
-	return lm.ChatCompletion(request, opts...)
-}
-
 // BuildNewConversationPosts creates the post list for a new (non-threaded) conversation.
 // Returns system prompt + user message posts.
 func BuildNewConversationPosts(

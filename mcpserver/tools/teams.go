@@ -210,7 +210,7 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 		user, _, err := client.GetUser(ctx, member.UserId, "")
 		if err != nil {
 			p.logger.Warn("failed to get user details for member", "user_id", member.UserId, "error", err)
-			result.WriteString(fmt.Sprintf("\nid: %s\nstatus: details unavailable\n", member.UserId))
+			format.WriteUser(&result, format.UserEntry{User: &model.User{Id: member.UserId, Username: "details unavailable"}})
 			written++
 			continue
 		}

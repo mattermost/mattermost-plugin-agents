@@ -434,14 +434,13 @@ func (p *MattermostToolProvider) formatSingleResult(result *strings.Builder, ind
 		username = "@" + username
 	}
 	format.WritePost(result, format.PostEntry{
-		HeaderLabel:   fmt.Sprintf("Result %d", index),
-		Username:      username,
-		Score:         score,
-		Post:          r.Post,
-		ChannelName:   r.ChannelName,
-		TeamName:      r.TeamName,
-		ShowChannel:   channelIDFilter == "",
-		PrefixMessage: true,
+		HeaderLabel: fmt.Sprintf("Result %d", index),
+		Username:    username,
+		Score:       score,
+		Post:        r.Post,
+		ChannelName: r.ChannelName,
+		TeamName:    r.TeamName,
+		ShowChannel: channelIDFilter == "",
 	})
 }
 

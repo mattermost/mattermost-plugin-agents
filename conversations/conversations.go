@@ -99,8 +99,6 @@ func (c *Conversations) SetMeetingsService(meetingsService MeetingsService) {
 func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 	toolsDisabled := !isDM && !allowToolsInChannel
-
-	// Configure tool visibility
 	if context != nil {
 		if toolsDisabled && context.Tools != nil {
 			context.DisabledToolsInfo = context.Tools.GetToolsInfo()
@@ -109,7 +107,6 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		}
 	}
 
-	// Stage 1: Build posts
 	var posts []llm.Post
 	if post.RootId == "" {
 		var err error
@@ -118,7 +115,6 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 			return nil, err
 		}
 	} else {
-		// Existing conversation path (thread loading) stays here — it needs mmapi.Client
 		previousConversation, errThread := mmapi.GetThreadData(c.mmClient, post.Id)
 		if errThread != nil {
 			return nil, fmt.Errorf("failed to get previous conversation: %w", errThread)
@@ -133,19 +129,20 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		posts = append(posts, c.PostToAIPost(bot, post))
 	}
 
-	// Stage 2: Build options
 	opts := CompletionOptions{
 		ToolsDisabled:          toolsDisabled,
 		NativeWebSearchAllowed: c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled(),
 	}.BuildLLMOptions()
 
-	// Stage 3: Execute
-	result, err := ExecuteCompletion(bot.LLM(), posts, context, llm.OperationConversation, "", opts...)
+	result, err := bot.LLM().ChatCompletion(llm.CompletionRequest{
+		Posts:     posts,
+		Context:   context,
+		Operation: llm.OperationConversation,
+	}, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	// Side effects (stay here, not in the extracted functions)
 	webSearchData := mmtools.ConsumeWebSearchContexts(context)
 	c.mmClient.LogDebug("Checking for web search data in ProcessUserRequestWithContext", "has_data", len(webSearchData) > 0, "num_contexts", len(webSearchData))
 	if len(webSearchData) > 0 {

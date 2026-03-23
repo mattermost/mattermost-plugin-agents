@@ -461,7 +461,12 @@ func (c *Conversations) completeAndStreamToolResponse(
 	}
 
 	opts := CompletionOptions{ToolsDisabled: toolsDisabled}.BuildLLMOptions()
-	result, err := ExecuteCompletion(bot.LLM(), posts, llmContext, llm.OperationConversationToolFollowup, llm.SubTypeToolCall, opts...)
+	result, err := bot.LLM().ChatCompletion(llm.CompletionRequest{
+		Posts:            posts,
+		Context:          llmContext,
+		Operation:        llm.OperationConversationToolFollowup,
+		OperationSubType: llm.SubTypeToolCall,
+	}, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to get chat completion: %w", err)
 	}

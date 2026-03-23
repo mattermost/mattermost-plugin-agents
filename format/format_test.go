@@ -245,7 +245,7 @@ func TestFormatPost(t *testing.T) {
 					CreateAt: 1710878490000, // 2024-03-19T20:01:30Z
 				},
 			},
-			expected: "**Post 1** by alice:\nPost ID: post1\nTime: 2024-03-19T20:01:30Z\nHello world\n\n",
+			expected: "**Post 1** by alice:\nPost ID: post1\nTime: 2024-03-19T20:01:30Z\nMessage: Hello world\n\n",
 		},
 		{
 			name: "reply with annotation and root ID",
@@ -260,19 +260,18 @@ func TestFormatPost(t *testing.T) {
 					CreateAt: 1710878492000,
 				},
 			},
-			expected: "**Post 3** by alice (reply to Post 2):\nPost ID: post3\nRoot ID: post2\nTime: 2024-03-19T20:01:32Z\nNext sprint\n\n",
+			expected: "**Post 3** by alice (reply to Post 2):\nPost ID: post3\nRoot ID: post2\nTime: 2024-03-19T20:01:32Z\nMessage: Next sprint\n\n",
 		},
 		{
 			name: "search result with score and channel",
 			entry: PostEntry{
-				HeaderLabel:   "Result 1",
-				Username:      "@alice",
-				Score:         0.95,
-				Post:          &model.Post{Id: "post1", ChannelId: "ch1", Message: "Found it"},
-				ChannelName:   "General",
-				TeamName:      "Engineering",
-				ShowChannel:   true,
-				PrefixMessage: true,
+				HeaderLabel: "Result 1",
+				Username:    "@alice",
+				Score:       0.95,
+				Post:        &model.Post{Id: "post1", ChannelId: "ch1", Message: "Found it"},
+				ChannelName: "General",
+				TeamName:    "Engineering",
+				ShowChannel: true,
 			},
 			expected: "**Result 1** (Score: 0.95) by @alice:\nChannel: General (Team: Engineering)\nPost ID: post1\nChannel ID: ch1\nMessage: Found it\n\n",
 		},
@@ -283,7 +282,7 @@ func TestFormatPost(t *testing.T) {
 				Username:    "",
 				Post:        &model.Post{Id: "post1", Message: "Orphaned"},
 			},
-			expected: "**Post 1** by Unknown User:\nPost ID: post1\nOrphaned\n\n",
+			expected: "**Post 1** by Unknown User:\nPost ID: post1\nMessage: Orphaned\n\n",
 		},
 		{
 			name: "no timestamp when CreateAt is zero",
@@ -292,16 +291,15 @@ func TestFormatPost(t *testing.T) {
 				Username:    "bob",
 				Post:        &model.Post{Id: "post1", Message: "No time"},
 			},
-			expected: "**Post 1** by bob:\nPost ID: post1\nNo time\n\n",
+			expected: "**Post 1** by bob:\nPost ID: post1\nMessage: No time\n\n",
 		},
 		{
 			name: "channel name without team",
 			entry: PostEntry{
-				HeaderLabel:   "Result 1",
-				Username:      "@bob",
-				Post:          &model.Post{Id: "post1", Message: "DM content"},
-				ChannelName:   "Direct Message",
-				PrefixMessage: true,
+				HeaderLabel: "Result 1",
+				Username:    "@bob",
+				Post:        &model.Post{Id: "post1", Message: "DM content"},
+				ChannelName: "Direct Message",
 			},
 			expected: "**Result 1** by @bob:\nChannel: Direct Message\nPost ID: post1\nMessage: DM content\n\n",
 		},
@@ -323,7 +321,7 @@ func TestFormatPost(t *testing.T) {
 					},
 				},
 			},
-			expected: "**Post 1** by charlie:\nPost ID: post1\nSee attached\nReport\nQ4 numbers\n\n\n",
+			expected: "**Post 1** by charlie:\nPost ID: post1\nMessage: See attached\nReport\nQ4 numbers\n\n\n",
 		},
 	}
 
@@ -400,7 +398,7 @@ func TestWriteUser(t *testing.T) {
 				},
 				Role: "admin",
 			},
-			expected: "\nusername: bob\nid: u1\nname: Bob Jones\nemail: bob@example.com\nrole: admin\n",
+			expected: "Username: bob\nID: u1\nName: Bob Jones\nEmail: bob@example.com\nRole: admin\n\n",
 		},
 		{
 			name: "bot user",
@@ -412,7 +410,7 @@ func TestWriteUser(t *testing.T) {
 				},
 				Role: "member",
 			},
-			expected: "\nusername: webhook-bot\nid: u1\nis_bot: true\nrole: member\n",
+			expected: "Username: webhook-bot\nID: u1\nIs Bot: true\nRole: member\n\n",
 		},
 		{
 			name: "deactivated user",
@@ -423,7 +421,7 @@ func TestWriteUser(t *testing.T) {
 					DeleteAt: 1710878490000,
 				},
 			},
-			expected: "\nusername: departed\nid: u1\ndeactivated: true\n",
+			expected: "Username: departed\nID: u1\nDeactivated: true\n\n",
 		},
 	}
 

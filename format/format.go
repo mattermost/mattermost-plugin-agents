@@ -85,8 +85,6 @@ type PostEntry struct {
 	TeamName    string
 	ShowChannel bool // show Channel ID line
 
-	// Message formatting
-	PrefixMessage bool // true → "Message: <msg>"; false → bare message
 }
 
 // FormatPost writes a single formatted post entry to the builder.
@@ -135,13 +133,7 @@ func WritePost(w *strings.Builder, entry PostEntry) {
 		fmt.Fprintf(w, "Time: %s\n", t.UTC().Format(time.RFC3339))
 	}
 
-	// Message body via PostBody (handles attachments)
-	body := PostBody(entry.Post)
-	if entry.PrefixMessage {
-		fmt.Fprintf(w, "Message: %s\n\n", body)
-	} else {
-		fmt.Fprintf(w, "%s\n\n", body)
-	}
+	fmt.Fprintf(w, "Message: %s\n\n", PostBody(entry.Post))
 }
 
 // BuildPostIndex creates a map from post ID to its 1-based display index.
@@ -180,72 +172,40 @@ type UserEntry struct {
 func WriteUser(w *strings.Builder, entry UserEntry) {
 	if entry.HeaderLabel != "" {
 		fmt.Fprintf(w, "**%s**:\n", entry.HeaderLabel)
-		fmt.Fprintf(w, "Username: %s\n", entry.User.Username)
-		fmt.Fprintf(w, "ID: %s\n", entry.User.Id)
-	} else {
-		fmt.Fprintf(w, "\nusername: %s\n", entry.User.Username)
-		fmt.Fprintf(w, "id: %s\n", entry.User.Id)
 	}
 
+	fmt.Fprintf(w, "Username: %s\n", entry.User.Username)
+	fmt.Fprintf(w, "ID: %s\n", entry.User.Id)
+
 	if entry.User.FirstName != "" || entry.User.LastName != "" {
-		if entry.HeaderLabel != "" {
-			fmt.Fprintf(w, "Name: %s %s\n", entry.User.FirstName, entry.User.LastName)
-		} else {
-			fmt.Fprintf(w, "name: %s %s\n", entry.User.FirstName, entry.User.LastName)
-		}
+		fmt.Fprintf(w, "Name: %s %s\n", entry.User.FirstName, entry.User.LastName)
 	}
 
 	if entry.User.Email != "" {
-		if entry.HeaderLabel != "" {
-			fmt.Fprintf(w, "Email: %s\n", entry.User.Email)
-		} else {
-			fmt.Fprintf(w, "email: %s\n", entry.User.Email)
-		}
+		fmt.Fprintf(w, "Email: %s\n", entry.User.Email)
 	}
 
 	if entry.User.Nickname != "" {
-		if entry.HeaderLabel != "" {
-			fmt.Fprintf(w, "Nickname: %s\n", entry.User.Nickname)
-		} else {
-			fmt.Fprintf(w, "nickname: %s\n", entry.User.Nickname)
-		}
+		fmt.Fprintf(w, "Nickname: %s\n", entry.User.Nickname)
 	}
 
 	if entry.User.Position != "" {
-		if entry.HeaderLabel != "" {
-			fmt.Fprintf(w, "Position: %s\n", entry.User.Position)
-		} else {
-			fmt.Fprintf(w, "position: %s\n", entry.User.Position)
-		}
+		fmt.Fprintf(w, "Position: %s\n", entry.User.Position)
 	}
 
 	if entry.User.IsBot {
-		if entry.HeaderLabel != "" {
-			w.WriteString("Is Bot: true\n")
-		} else {
-			w.WriteString("is_bot: true\n")
-		}
+		w.WriteString("Is Bot: true\n")
 	}
 
 	if entry.User.DeleteAt != 0 {
-		if entry.HeaderLabel != "" {
-			w.WriteString("Deactivated: true\n")
-		} else {
-			w.WriteString("deactivated: true\n")
-		}
+		w.WriteString("Deactivated: true\n")
 	}
 
 	if entry.Role != "" {
-		if entry.HeaderLabel != "" {
-			fmt.Fprintf(w, "Role: %s\n", entry.Role)
-		} else {
-			fmt.Fprintf(w, "role: %s\n", entry.Role)
-		}
+		fmt.Fprintf(w, "Role: %s\n", entry.Role)
 	}
 
-	if entry.HeaderLabel != "" {
-		w.WriteString("\n")
-	}
+	w.WriteString("\n")
 }
 
 // ChannelEntry holds data for formatting a single channel.
