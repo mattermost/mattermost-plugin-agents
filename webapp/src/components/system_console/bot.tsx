@@ -140,27 +140,28 @@ const Bot = (props: Props) => {
 
     // Find the selected service
     const selectedService = props.services.find((s) => s.id === props.bot.serviceID);
-    const supportsModelFetching = selectedService &&
-        (selectedService.type === 'anthropic' ||
-         selectedService.type === 'openai' ||
-         selectedService.type === 'azure' ||
-         selectedService.type === 'openaicompatible');
+    const canAttemptModelFetch = Boolean(
+        selectedService &&
+        (
+            selectedService.apiKey ||
+            selectedService.apiURL ||
+            selectedService.region ||
+            selectedService.awsAccessKeyID ||
+            selectedService.awsSecretAccessKey ||
+            selectedService.bifrostKeyJSON ||
+            selectedService.bifrostProviderConfigJSON
+        ),
+    );
 
     // Fetch models when the service changes
     useEffect(() => {
-        if (!supportsModelFetching || !selectedService) {
+        if (!selectedService) {
             setAvailableModels([]);
             setModelsFetchError('');
             return;
         }
 
-        // For openaicompatible, API key is optional if there's an API URL
-        // For other types, API key is required
-        const hasRequiredCredentials = selectedService.type === 'openaicompatible' ?
-            (selectedService.apiKey || selectedService.apiURL) :
-            selectedService.apiKey;
-
-        if (!hasRequiredCredentials) {
+        if (!canAttemptModelFetch) {
             setAvailableModels([]);
             setModelsFetchError('');
             return;
@@ -171,15 +172,10 @@ const Bot = (props: Props) => {
             setModelsFetchError('');
 
             try {
-                const data: ModelInfo[] = await fetchModels(
-                    selectedService.type,
-                    selectedService.apiKey,
-                    selectedService.apiURL || '',
-                    selectedService.orgId || '',
-                );
+                const data: ModelInfo[] = await fetchModels(selectedService);
                 setAvailableModels(data);
             } catch (error) {
-                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check the service configuration.'}));
+                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check the service configuration or use advanced Bifrost configuration.'}));
                 setAvailableModels([]);
             } finally {
                 setLoadingModels(false);
@@ -187,7 +183,7 @@ const Bot = (props: Props) => {
         };
 
         loadModels();
-    }, [selectedService?.id, selectedService?.type, selectedService?.apiKey, selectedService?.apiURL, selectedService?.orgId, supportsModelFetching, intl]);
+    }, [canAttemptModelFetch, selectedService, intl]);
 
     return (
         <BotContainer>
@@ -260,7 +256,7 @@ const Bot = (props: Props) => {
                                 </SelectionItemOption>
                             ))}
                         </SelectionItem>
-                        {supportsModelFetching && availableModels.length > 0 ? (
+                        {canAttemptModelFetch && availableModels.length > 0 ? (
                             <ComboboxItem
                                 label={intl.formatMessage({defaultMessage: 'Model'})}
                                 value={props.bot.model}
@@ -273,10 +269,10 @@ const Bot = (props: Props) => {
                             <TextItem
                                 label={intl.formatMessage({defaultMessage: 'Model'})}
                                 helptext={(() => {
-                                    if (supportsModelFetching && loadingModels) {
+                                    if (canAttemptModelFetch && loadingModels) {
                                         return intl.formatMessage({defaultMessage: 'Loading models...'});
                                     }
-                                    if (supportsModelFetching && modelsFetchError) {
+                                    if (canAttemptModelFetch && modelsFetchError) {
                                         return modelsFetchError;
                                     }
                                     return intl.formatMessage({defaultMessage: 'Optional: Override the service\'s default model for this agent. Leave empty to use the service default.'});

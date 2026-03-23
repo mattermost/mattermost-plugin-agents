@@ -3,7 +3,7 @@
 
 import React, {useState, useEffect} from 'react';
 import styled from 'styled-components';
-import {useIntl, type IntlShape} from 'react-intl';
+import {useIntl} from 'react-intl';
 
 import {TrashCanOutlineIcon, ChevronDownIcon, ChevronUpIcon} from '@mattermost/compass-icons/components';
 
@@ -31,28 +31,8 @@ export type LLMService = {
     region: string
     awsAccessKeyID: string
     awsSecretAccessKey: string
-}
-
-const mapServiceTypeToDisplayName = new Map<string, string>([
-    ['openai', 'OpenAI'],
-    ['openaicompatible', 'OpenAI Compatible'],
-    ['azure', 'Azure'],
-    ['anthropic', 'Anthropic'],
-    ['bedrock', 'AWS Bedrock'],
-    ['cohere', 'Cohere'],
-    ['mistral', 'Mistral'],
-    ['asage', 'asksage (Experimental)'],
-]);
-
-function scaleAIToDisplayName(intl: IntlShape): string {
-    return intl.formatMessage({defaultMessage: 'Scale AI'});
-}
-
-function serviceTypeToDisplayName(intl: IntlShape, serviceType: string): string {
-    if (serviceType === 'scale') {
-        return scaleAIToDisplayName(intl);
-    }
-    return mapServiceTypeToDisplayName.get(serviceType) || serviceType;
+    bifrostKeyJSON: string
+    bifrostProviderConfigJSON: string
 }
 
 type ModelInfo = {
@@ -60,30 +40,43 @@ type ModelInfo = {
     displayName: string
 }
 
+export type ServiceTypeInfo = {
+    id: string
+    displayName: string
+}
+
 type ServiceFieldsProps = {
     service: LLMService
+    serviceTypes: ServiceTypeInfo[]
     onChange: (service: LLMService) => void
 }
 
 const ServiceFields = (props: ServiceFieldsProps) => {
     const type = props.service.type;
     const intl = useIntl();
-    const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale';
-    const isCohere = type === 'cohere';
-    const isMistral = type === 'mistral';
-    const isScale = type === 'scale';
+    const isOpenAIFamily = type === 'openai' || type === 'openaicompatible' || type === 'azure';
+    const isBedrock = type === 'bedrock';
+    const showAPIURLField = type !== '' && !isBedrock;
 
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
 
-    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible';
-
     useEffect(() => {
-        // For openaicompatible, API key is optional if there's an API URL
-        const hasRequiredCredentials = type === 'openaicompatible' ? (props.service.apiKey || props.service.apiURL) : props.service.apiKey;
+        const canAttemptModelFetch = Boolean(
+            props.service.type &&
+            (
+                props.service.apiKey ||
+                props.service.apiURL ||
+                props.service.region ||
+                props.service.awsAccessKeyID ||
+                props.service.awsSecretAccessKey ||
+                props.service.bifrostKeyJSON ||
+                props.service.bifrostProviderConfigJSON
+            ),
+        );
 
-        if (!supportsModelFetching || !hasRequiredCredentials) {
+        if (!canAttemptModelFetch) {
             setAvailableModels([]);
             setModelsFetchError('');
             return;
@@ -94,15 +87,10 @@ const ServiceFields = (props: ServiceFieldsProps) => {
             setModelsFetchError('');
 
             try {
-                const data: ModelInfo[] = await fetchModels(
-                    type,
-                    props.service.apiKey,
-                    props.service.apiURL || '',
-                    props.service.orgId || '',
-                );
+                const data: ModelInfo[] = await fetchModels(props.service);
                 setAvailableModels(data);
             } catch (error) {
-                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check your API key and API URL.'}));
+                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check the service configuration or use advanced Bifrost configuration.'}));
                 setAvailableModels([]);
             } finally {
                 setLoadingModels(false);
@@ -110,7 +98,10 @@ const ServiceFields = (props: ServiceFieldsProps) => {
         };
 
         loadModels();
-    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, supportsModelFetching, intl]);
+    }, [
+        props.service,
+        intl,
+    ]);
 
     const getDefaultOutputTokenLimit = () => {
         switch (type) {
@@ -123,13 +114,16 @@ const ServiceFields = (props: ServiceFieldsProps) => {
         }
     };
 
+    const serviceTypeMap = new Map(props.serviceTypes.map((serviceType) => [serviceType.id, serviceType.displayName]));
+    const serviceTypeOptions = props.service.type && !serviceTypeMap.has(props.service.type) ?
+        [{id: props.service.type, displayName: props.service.type}, ...props.serviceTypes] :
+        props.serviceTypes;
+
     let loadModelsHelpText = '';
-    if (supportsModelFetching) {
-        if (loadingModels) {
-            loadModelsHelpText = intl.formatMessage({defaultMessage: 'Loading models...'});
-        } else if (modelsFetchError) {
-            loadModelsHelpText = modelsFetchError;
-        }
+    if (loadingModels) {
+        loadModelsHelpText = intl.formatMessage({defaultMessage: 'Loading models...'});
+    } else if (modelsFetchError) {
+        loadModelsHelpText = modelsFetchError;
     }
 
     return (
@@ -144,25 +138,26 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                 value={props.service.type}
                 onChange={(e) => props.onChange({...props.service, type: e.target.value})}
             >
-                <SelectionItemOption value='openai'>{'OpenAI'}</SelectionItemOption>
-                <SelectionItemOption value='anthropic'>{'Anthropic'}</SelectionItemOption>
-                <SelectionItemOption value='bedrock'>{'AWS Bedrock'}</SelectionItemOption>
-                <SelectionItemOption value='openaicompatible'>{'OpenAI Compatible'}</SelectionItemOption>
-                <SelectionItemOption value='azure'>{'Azure'}</SelectionItemOption>
-                <SelectionItemOption value='cohere'>{'Cohere'}</SelectionItemOption>
-                <SelectionItemOption value='mistral'>{'Mistral'}</SelectionItemOption>
-                <SelectionItemOption value='scale'>{scaleAIToDisplayName(intl)}</SelectionItemOption>
-                <SelectionItemOption value='asage'>{'asksage (Experimental)'}</SelectionItemOption>
+                {serviceTypeOptions.map((serviceType) => (
+                    <SelectionItemOption
+                        key={serviceType.id}
+                        value={serviceType.id}
+                    >
+                        {serviceType.displayName}
+                    </SelectionItemOption>
+                ))}
             </SelectionItem>
-            {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale') && (
+            {showAPIURLField && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'API URL'})}
                     value={props.service.apiURL}
                     onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
-                    helptext={isScale ? intl.formatMessage({defaultMessage: 'Scale API endpoint (e.g., https://sgp-api.scalegov.com/v5)'}) : undefined} // eslint-disable-line no-undefined
+                    helptext={type === 'openaicompatible' ?
+                        intl.formatMessage({defaultMessage: 'Endpoint for your OpenAI-compatible API (for example http://localhost:11434/v1 for Ollama).'}) :
+                        undefined}
                 />
             )}
-            {type === 'bedrock' && (
+            {isBedrock && (
                 <>
                     <TextItem
                         label={intl.formatMessage({defaultMessage: 'AWS Region'})}
@@ -199,35 +194,32 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                 // eslint-disable-next-line no-undefined
                 helptext={type === 'bedrock' ? intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'}) : undefined}
             />
-            {isOpenAIType && (
+            {(type === 'openai' || type === 'openaicompatible') && (
                 <>
-                    {!isCohere && !isMistral && (
-                        <TextItem
-                            label={isScale ? intl.formatMessage({defaultMessage: 'Account ID'}) : intl.formatMessage({defaultMessage: 'Organization ID'})}
-                            value={props.service.orgId}
-                            onChange={(e) => props.onChange({...props.service, orgId: e.target.value})}
-                            helptext={isScale ? intl.formatMessage({defaultMessage: 'Scale Account ID (x-selected-account-id header, required for ScaleGov)'}) : undefined} // eslint-disable-line no-undefined
-                        />
-                    )}
-                    {!isScale && (
-                        <BooleanItem
-                            label={intl.formatMessage({defaultMessage: 'Send User ID'})}
-                            value={props.service.sendUserId}
-                            onChange={(to: boolean) => props.onChange({...props.service, sendUserId: to})}
-                            helpText={intl.formatMessage({defaultMessage: 'Sends the Mattermost user ID to the upstream LLM.'})}
-                        />
-                    )}
-                    {(type === 'openai' || type === 'openaicompatible' || type === 'azure') && (
-                        <BooleanItem
-                            label={intl.formatMessage({defaultMessage: 'Use Responses API'})}
-                            value={props.service.useResponsesAPI ?? false}
-                            onChange={(to: boolean) => props.onChange({...props.service, useResponsesAPI: to})}
-                            helpText={intl.formatMessage({defaultMessage: 'Use the new OpenAI Responses API with support for reasoning summaries and other advanced features. Disable for legacy Completions API compatibility.'})}
-                        />
-                    )}
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'Organization ID'})}
+                        value={props.service.orgId}
+                        onChange={(e) => props.onChange({...props.service, orgId: e.target.value})}
+                    />
                 </>
             )}
-            {supportsModelFetching && availableModels.length > 0 && (
+            {isOpenAIFamily && (
+                <>
+                    <BooleanItem
+                        label={intl.formatMessage({defaultMessage: 'Send User ID'})}
+                        value={props.service.sendUserId}
+                        onChange={(to: boolean) => props.onChange({...props.service, sendUserId: to})}
+                        helpText={intl.formatMessage({defaultMessage: 'Sends the Mattermost user ID to the upstream LLM.'})}
+                    />
+                    <BooleanItem
+                        label={intl.formatMessage({defaultMessage: 'Use Responses API'})}
+                        value={props.service.useResponsesAPI ?? false}
+                        onChange={(to: boolean) => props.onChange({...props.service, useResponsesAPI: to})}
+                        helpText={intl.formatMessage({defaultMessage: 'Use the new OpenAI Responses API with support for reasoning summaries and other advanced features. Disable for legacy Completions API compatibility.'})}
+                    />
+                </>
+            )}
+            {availableModels.length > 0 && (
                 <ComboboxItem
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
@@ -238,12 +230,12 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     isClearable={false}
                 />
             )}
-            {!(supportsModelFetching && availableModels.length > 0) && (
+            {availableModels.length === 0 && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
                     onChange={(e) => props.onChange({...props.service, defaultModel: e.target.value})}
-                    helptext={loadModelsHelpText || (isScale ? intl.formatMessage({defaultMessage: 'Use vendor/model-name format (e.g., openai/gpt-4o). See Scale AI documentation for available models.'}) : '')}
+                    helptext={loadModelsHelpText || intl.formatMessage({defaultMessage: 'Enter a model name manually or configure the service so model discovery can succeed.'})}
                 />
             )}
             <TextItem
@@ -266,31 +258,44 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     props.onChange({...props.service, outputTokenLimit});
                 }}
             />
-            {isOpenAIType && (
-                <TextItem
-                    label={intl.formatMessage({defaultMessage: 'Streaming Timeout Seconds'})}
-                    type='number'
-                    value={props.service.streamingTimeoutSeconds?.toString() || '0'}
-                    onChange={(e) => {
-                        const value = parseInt(e.target.value, 10);
-                        const streamingTimeoutSeconds = isNaN(value) ? 0 : value;
-                        props.onChange({...props.service, streamingTimeoutSeconds});
-                    }}
-                />
-            )}
+            <TextItem
+                label={intl.formatMessage({defaultMessage: 'Streaming Timeout Seconds'})}
+                type='number'
+                value={props.service.streamingTimeoutSeconds?.toString() || '0'}
+                onChange={(e) => {
+                    const value = parseInt(e.target.value, 10);
+                    const streamingTimeoutSeconds = isNaN(value) ? 0 : value;
+                    props.onChange({...props.service, streamingTimeoutSeconds});
+                }}
+            />
+            <TextItem
+                label={intl.formatMessage({defaultMessage: 'Advanced Bifrost Key JSON'})}
+                value={props.service.bifrostKeyJSON || ''}
+                multiline={true}
+                onChange={(e) => props.onChange({...props.service, bifrostKeyJSON: e.target.value})}
+                helptext={intl.formatMessage({defaultMessage: 'Optional advanced Bifrost key configuration JSON for providers that need provider-specific auth fields (for example Vertex, vLLM, Hugging Face, or Replicate).'})}
+            />
+            <TextItem
+                label={intl.formatMessage({defaultMessage: 'Advanced Bifrost Provider Config JSON'})}
+                value={props.service.bifrostProviderConfigJSON || ''}
+                multiline={true}
+                onChange={(e) => props.onChange({...props.service, bifrostProviderConfigJSON: e.target.value})}
+                helptext={intl.formatMessage({defaultMessage: 'Optional advanced Bifrost provider configuration JSON. Use this to override network settings or provide advanced provider-specific configuration without waiting for plugin changes.'})}
+            />
         </>
     );
 };
 
 type Props = {
     service: LLMService
+    serviceTypes: ServiceTypeInfo[]
     onChange: (service: LLMService) => void
     onDelete: () => void
 }
 
 const Service = (props: Props) => {
     const [open, setOpen] = useState(false);
-    const intl = useIntl();
+    const serviceTypeMap = new Map(props.serviceTypes.map((serviceType) => [serviceType.id, serviceType.displayName]));
 
     return (
         <ServiceContainer>
@@ -298,10 +303,10 @@ const Service = (props: Props) => {
                 <IconAI/>
                 <Title>
                     <NameText>
-                        {props.service.name || serviceTypeToDisplayName(intl, props.service.type)}
+                        {props.service.name || serviceTypeMap.get(props.service.type) || props.service.type}
                     </NameText>
                     <VerticalDivider/>
-                    <ServiceTypeText>{serviceTypeToDisplayName(intl, props.service.type)}</ServiceTypeText>
+                    <ServiceTypeText>{serviceTypeMap.get(props.service.type) || props.service.type}</ServiceTypeText>
                     {props.service.defaultModel && (
                         <>
                             <VerticalDivider/>
@@ -325,6 +330,7 @@ const Service = (props: Props) => {
                     <ItemList>
                         <ServiceFields
                             service={props.service}
+                            serviceTypes={props.serviceTypes}
                             onChange={props.onChange}
                         />
                     </ItemList>
