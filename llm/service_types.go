@@ -20,7 +20,6 @@ const (
 	ServiceTypeCohere           = "cohere"
 	ServiceTypeBedrock          = "bedrock"
 	ServiceTypeMistral          = "mistral"
-	ServiceTypeScale            = "scale"
 )
 
 // ServiceTypeInfo describes a supported service type for the admin UI.

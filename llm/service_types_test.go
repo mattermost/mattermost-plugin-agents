@@ -14,8 +14,8 @@ func TestIsSupportedServiceType(t *testing.T) {
 	require.True(t, IsSupportedServiceType(ServiceTypeOpenAICompatible))
 	require.True(t, IsSupportedServiceType(string(schemas.Vertex)))
 	require.True(t, IsSupportedServiceType(string(schemas.Ollama)))
-	require.False(t, IsSupportedServiceType(ServiceTypeScale))
-	require.False(t, IsSupportedServiceType("asage"))
+	require.False(t, IsSupportedServiceType("scale"))
+	require.False(t, IsSupportedServiceType("notreal"))
 	require.False(t, IsSupportedServiceType("mattermostllm"))
 }
 
@@ -28,6 +28,6 @@ func TestModelProviderForServiceType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, schemas.Vertex, provider)
 
-	_, err = ModelProviderForServiceType(ServiceTypeScale)
+	_, err = ModelProviderForServiceType("scale")
 	require.Error(t, err)
 }

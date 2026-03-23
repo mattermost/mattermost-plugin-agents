@@ -4,16 +4,35 @@ This guide covers configuring different Large Language Model (LLM) providers wit
 
 ## Supported Providers
 
-The Mattermost Agents plugin currently supports these LLM providers:
+The Mattermost Agents plugin supports the full set of LLM backends built into the bundled [Bifrost](https://github.com/maximhq/bifrost) core dependency, plus the plugin's **OpenAI Compatible** convenience option for self-hosted OpenAI-style APIs.
 
-- Local models via OpenAI-compatible APIs (Ollama, vLLM, etc.)
+This means provider availability is derived from Bifrost rather than from a plugin-maintained allowlist. When Mattermost updates the bundled Bifrost version, newly added upstream providers become available automatically.
+
+At the time of writing, the bundled Bifrost provider set includes providers such as:
+
 - OpenAI
+- OpenAI Compatible (plugin convenience option for self-hosted OpenAI-style APIs)
 - Anthropic
+- Azure
 - AWS Bedrock
+- Cerebras
 - Cohere
+- Gemini
+- Groq
+- Hugging Face
 - Mistral
-- Scale AI
-- Azure OpenAI
+- Nebius
+- Ollama
+- OpenRouter
+- Parasail
+- Perplexity
+- Replicate
+- Runway
+- vLLM
+- Vertex
+- xAI
+
+Some providers can be configured with the standard fields shown in the System Console, while others may require **Advanced Bifrost Key JSON** and/or **Advanced Bifrost Provider Config JSON**.
 
 ## General Configuration Concepts
 
@@ -118,28 +137,23 @@ Obtain a [Mistral API key](https://console.mistral.ai/api-keys/), then select **
 | **API Key** | Yes | Your Mistral API key |
 | **Default Model** | Yes | The model to use by default (see [Mistral's model documentation](https://docs.mistral.ai/getting-started/models/)) |
 
-## Scale AI
+## Advanced Bifrost configuration
 
-### Overview
+For providers that need provider-specific authentication or runtime settings beyond the standard System Console fields, use the advanced Bifrost JSON fields:
 
-Scale AI (including ScaleGov) provides access to LLM models through an OpenAI-compatible API with custom authentication. Scale uses `x-api-key` and `x-selected-account-id` headers for authentication instead of the standard Authorization header.
+- **Advanced Bifrost Key JSON**
+- **Advanced Bifrost Provider Config JSON**
 
-### Authentication
+These fields map directly to Bifrost's provider configuration structures. They are intended for advanced deployments and for providers whose setup does not fit into the common API key / API URL / AWS fields.
 
-Obtain your Scale AI API key and account ID from your Scale AI or ScaleGov dashboard, then select **Scale AI** in the **Service** dropdown. Enter your API key and the API URL for your Scale endpoint (e.g., `https://sgp-api.scalegov.com/v5`). If using ScaleGov, enter your account ID in the **Account ID** field.
+Examples of when you may need advanced Bifrost configuration:
 
-### Configuration Options
+- Vertex-specific authentication fields
+- vLLM key configuration
+- Hugging Face or Replicate deployment-specific settings
+- custom Bifrost network overrides
 
-| Setting | Required | Description |
-|---------|----------|-------------|
-| **API Key** | Yes | Your Scale AI API key (sent as `x-api-key` header) |
-| **API URL** | Yes | Your Scale API endpoint (e.g., `https://sgp-api.scalegov.com/v5`) |
-| **Account ID** | No | Your Scale account ID (sent as `x-selected-account-id` header, required for ScaleGov) |
-| **Default Model** | Yes | The model to use by default in `vendor/model-name` format (e.g., `openai/gpt-4o`) |
-
-### Models
-
-Models use the `vendor/model-name` format (e.g., `openai/gpt-4o`). For the full list of available models, see the [Scale AI documentation](https://scale.com/docs).
+When in doubt, start with the standard System Console fields. Only use the advanced JSON fields when your provider requires it.
 
 ## Azure OpenAI
 
@@ -154,7 +168,7 @@ For more details about integrating with Microsoft Azure's OpenAI services, see t
 5. Select **Deploy model** then **Deploy base model**
 6. Select your desired model and select **Confirm**
 7. Select **Deploy** to start your model
-8. In Mattermost, select **OpenAI Compatible** in the **Service** dropdown
+8. In Mattermost, select **Azure** in the **Service** dropdown
 9. In the **Endpoint** panel for your new model deployment, copy the base URI of the **Target URI** (everything up to and including `.com`) and paste it in the **API URL** field in Mattermost
 10. In the **Endpoint** panel for your new model deployment, copy the **Key** and paste it in the **API Key** field in Mattermost
 11. In the **Deployment** panel for your new model deployment, copy the **Model name** and paste it in the **Default Model** field in Mattermost

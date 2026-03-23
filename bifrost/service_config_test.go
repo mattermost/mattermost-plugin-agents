@@ -43,7 +43,7 @@ func TestResolveServiceConfig(t *testing.T) {
 			Type: "vllm",
 			BifrostKeyJSON: `{
 				"vllm_key_config": {
-					"url": {"val": "http://vllm:8000"},
+					"url": "http://vllm:8000",
 					"model_name": "llama-3.1-8b"
 				}
 			}`,

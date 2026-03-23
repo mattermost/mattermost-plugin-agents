@@ -118,7 +118,7 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 
 	config := *a.providerConfig
 	config.CheckAndSetDefaults()
-	return config, nil
+	return &config, nil
 }
 
 // New creates a new LLM instance with the given configuration.
