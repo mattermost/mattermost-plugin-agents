@@ -313,6 +313,34 @@ func TestIsValidService(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "Valid Vertex service with project ID and region",
+			service: ServiceConfig{
+				ID:     "service-5",
+				Type:   ServiceTypeVertex,
+				OrgID:  "my-gcp-project",
+				Region: "us-central1",
+			},
+			want: true,
+		},
+		{
+			name: "Vertex service missing project ID",
+			service: ServiceConfig{
+				ID:     "service-5",
+				Type:   ServiceTypeVertex,
+				Region: "us-central1",
+			},
+			want: false,
+		},
+		{
+			name: "Vertex service missing region",
+			service: ServiceConfig{
+				ID:    "service-5",
+				Type:  ServiceTypeVertex,
+				OrgID: "my-gcp-project",
+			},
+			want: false,
+		},
+		{
 			name: "Valid Cohere service with API key",
 			service: ServiceConfig{
 				ID:     "service-6",

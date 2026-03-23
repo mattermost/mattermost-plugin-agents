@@ -23,6 +23,7 @@ const (
 	DefaultOpenAIModel    = "gpt-5.2"
 	DefaultAnthropicModel = "claude-sonnet-4-6"
 	DefaultAzureModel     = "gpt-5.2"
+	DefaultVertexModel    = "google/gemini-2.0-flash-001"
 	DefaultMistralModel   = "mistral-large-latest"
 	DefaultBedrockModel   = "global.anthropic.claude-sonnet-4-6-v1:0"
 )
@@ -158,6 +159,34 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		return bifrost.New(bifrost.Config{
 			Provider:         schemas.Mistral,
 			APIKey:           apiKey,
+			DefaultModel:     model,
+			StreamingTimeout: timeout,
+		})
+
+	case "vertex":
+		projectID := os.Getenv("VERTEX_PROJECT_ID")
+		if projectID == "" {
+			return nil, errors.New("VERTEX_PROJECT_ID environment variable is not set")
+		}
+
+		region := os.Getenv("VERTEX_REGION")
+		if region == "" {
+			region = "us-central1"
+		}
+
+		model := modelOverride
+		if model == "" {
+			model = os.Getenv("VERTEX_MODEL")
+			if model == "" {
+				model = DefaultVertexModel
+			}
+		}
+
+		return bifrost.New(bifrost.Config{
+			Provider:         schemas.Vertex,
+			APIKey:           os.Getenv("VERTEX_CREDENTIALS"),
+			ProjectID:        projectID,
+			Region:           region,
 			DefaultModel:     model,
 			StreamingTimeout: timeout,
 		})
@@ -313,7 +342,7 @@ func getProvidersToTest() []string {
 
 	// Handle "all" case
 	if providerEnv == "all" {
-		return []string{"openai", "anthropic", "azure", "mistral", "bedrock", "cohere"}
+		return []string{"openai", "anthropic", "azure", "vertex", "mistral", "bedrock", "cohere"}
 	}
 
 	// Handle comma-separated list

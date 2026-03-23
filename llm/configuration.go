@@ -133,6 +133,8 @@ func IsValidService(service ServiceConfig) bool {
 		return service.APIKey != "" && service.APIURL != ""
 	case ServiceTypeAnthropic:
 		return service.APIKey != ""
+	case ServiceTypeVertex:
+		return service.OrgID != "" && service.Region != ""
 	case ServiceTypeCohere:
 		return service.APIKey != ""
 	case ServiceTypeBedrock:

@@ -24,6 +24,8 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 		return schemas.Azure, nil
 	case llm.ServiceTypeAnthropic:
 		return schemas.Anthropic, nil
+	case llm.ServiceTypeVertex:
+		return schemas.Vertex, nil
 	case llm.ServiceTypeBedrock:
 		return schemas.Bedrock, nil
 	case llm.ServiceTypeCohere:
@@ -70,6 +72,7 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		APIKey:             serviceConfig.APIKey,
 		APIURL:             apiURL,
 		OrgID:              serviceConfig.OrgID,
+		ProjectID:          serviceConfig.OrgID,
 		Region:             serviceConfig.Region,
 		AWSAccessKeyID:     serviceConfig.AWSAccessKeyID,
 		AWSSecretAccessKey: serviceConfig.AWSSecretAccessKey,
@@ -115,6 +118,7 @@ func IsSupported(serviceType string) bool {
 		llm.ServiceTypeOpenAICompatible,
 		llm.ServiceTypeAzure,
 		llm.ServiceTypeAnthropic,
+		llm.ServiceTypeVertex,
 		llm.ServiceTypeBedrock,
 		llm.ServiceTypeCohere,
 		llm.ServiceTypeMistral:

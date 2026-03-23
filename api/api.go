@@ -382,6 +382,7 @@ type FetchModelsRequest struct {
 	APIKey      string `json:"apiKey"`
 	APIURL      string `json:"apiURL"`
 	OrgID       string `json:"orgID"`
+	Region      string `json:"region"`
 }
 
 func (a *API) handleFetchModels(c *gin.Context) {
@@ -396,16 +397,28 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	// API key is required for most services, but optional for openaicompatible (some don't require auth).
-	if req.APIKey == "" && req.ServiceType != "openaicompatible" {
+	// API key is required for most services, but optional for openaicompatible (some don't require auth)
+	// and vertex (which can use ADC/service account JSON instead).
+	if req.APIKey == "" && req.ServiceType != llm.ServiceTypeOpenAICompatible && req.ServiceType != llm.ServiceTypeVertex {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey is required"))
 		return
 	}
 
 	// For openaicompatible, require at least an API URL if no API key
-	if req.ServiceType == "openaicompatible" && req.APIKey == "" && req.APIURL == "" {
+	if req.ServiceType == llm.ServiceTypeOpenAICompatible && req.APIKey == "" && req.APIURL == "" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiURL is required for openaicompatible when apiKey is not provided"))
 		return
+	}
+
+	if req.ServiceType == llm.ServiceTypeVertex {
+		if req.OrgID == "" {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("orgID is required for vertex project ID"))
+			return
+		}
+		if req.Region == "" {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("region is required for vertex"))
+			return
+		}
 	}
 
 	if !bifrost.IsSupported(req.ServiceType) {
@@ -413,7 +426,7 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	models, err := bifrost.FetchModelsForServiceType(req.ServiceType, req.APIKey, req.APIURL, req.OrgID)
+	models, err := bifrost.FetchModelsForServiceType(req.ServiceType, req.APIKey, req.APIURL, req.OrgID, req.Region)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
 		return

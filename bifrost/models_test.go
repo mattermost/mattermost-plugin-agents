@@ -49,6 +49,13 @@ func TestNormalizeFetchModelsAPIURL(t *testing.T) {
 			expected:    "https://api.anthropic.com",
 		},
 		{
+			name:        "vertex URL unchanged",
+			serviceType: llm.ServiceTypeVertex,
+			provider:    schemas.Vertex,
+			apiURL:      "",
+			expected:    "",
+		},
+		{
 			name:        "cohere default URL applied",
 			serviceType: llm.ServiceTypeCohere,
 			provider:    schemas.Cohere,

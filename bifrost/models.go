@@ -16,19 +16,28 @@ import (
 
 // FetchModelsConfig holds configuration for fetching models.
 type FetchModelsConfig struct {
-	Provider schemas.ModelProvider
-	APIKey   string
-	APIURL   string
-	OrgID    string
+	Provider  schemas.ModelProvider
+	APIKey    string
+	APIURL    string
+	OrgID     string
+	ProjectID string
+	Region    string
 }
 
 // FetchModels retrieves the list of available models from a provider using Bifrost.
 func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
+	projectID := cfg.ProjectID
+	if projectID == "" && cfg.Provider == schemas.Vertex {
+		projectID = cfg.OrgID
+	}
+
 	account := &providerAccount{
-		provider: cfg.Provider,
-		apiKey:   cfg.APIKey,
-		apiURL:   cfg.APIURL,
-		orgID:    cfg.OrgID,
+		provider:  cfg.Provider,
+		apiKey:    cfg.APIKey,
+		apiURL:    cfg.APIURL,
+		orgID:     cfg.OrgID,
+		projectID: projectID,
+		region:    cfg.Region,
 	}
 
 	bifrostConfig := schemas.BifrostConfig{
@@ -78,7 +87,7 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 }
 
 // FetchModelsForServiceType fetches models for a given service type string.
-func FetchModelsForServiceType(serviceType, apiKey, apiURL, orgID string) ([]llm.ModelInfo, error) {
+func FetchModelsForServiceType(serviceType, apiKey, apiURL, orgID, region string) ([]llm.ModelInfo, error) {
 	provider, err := MapServiceTypeToProvider(serviceType)
 	if err != nil {
 		return nil, fmt.Errorf("model fetching not supported for service type: %s", serviceType)
@@ -87,10 +96,12 @@ func FetchModelsForServiceType(serviceType, apiKey, apiURL, orgID string) ([]llm
 	apiURL = normalizeFetchModelsAPIURL(serviceType, provider, apiURL)
 
 	return FetchModels(FetchModelsConfig{
-		Provider: provider,
-		APIKey:   apiKey,
-		APIURL:   apiURL,
-		OrgID:    orgID,
+		Provider:  provider,
+		APIKey:    apiKey,
+		APIURL:    apiURL,
+		OrgID:     orgID,
+		ProjectID: orgID,
+		Region:    region,
 	})
 }
 

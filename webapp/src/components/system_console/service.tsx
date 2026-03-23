@@ -38,6 +38,7 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['openaicompatible', 'OpenAI Compatible'],
     ['azure', 'Azure'],
     ['anthropic', 'Anthropic'],
+    ['vertex', 'Google Vertex AI'],
     ['bedrock', 'AWS Bedrock'],
     ['cohere', 'Cohere'],
     ['mistral', 'Mistral'],
@@ -77,11 +78,15 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
 
-    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible';
+    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'vertex';
 
     useEffect(() => {
-        // For openaicompatible, API key is optional if there's an API URL
-        const hasRequiredCredentials = type === 'openaicompatible' ? (props.service.apiKey || props.service.apiURL) : props.service.apiKey;
+        let hasRequiredCredentials = Boolean(props.service.apiKey);
+        if (type === 'openaicompatible') {
+            hasRequiredCredentials = Boolean(props.service.apiKey || props.service.apiURL);
+        } else if (type === 'vertex') {
+            hasRequiredCredentials = Boolean(props.service.orgId && props.service.region);
+        }
 
         if (!supportsModelFetching || !hasRequiredCredentials) {
             setAvailableModels([]);
@@ -99,10 +104,11 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     props.service.apiKey,
                     props.service.apiURL || '',
                     props.service.orgId || '',
+                    props.service.region || '',
                 );
                 setAvailableModels(data);
             } catch (error) {
-                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check your API key and API URL.'}));
+                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check the service configuration.'}));
                 setAvailableModels([]);
             } finally {
                 setLoadingModels(false);
@@ -110,7 +116,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
         };
 
         loadModels();
-    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, supportsModelFetching, intl]);
+    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, supportsModelFetching, intl]);
 
     const getDefaultOutputTokenLimit = () => {
         switch (type) {
@@ -132,6 +138,13 @@ const ServiceFields = (props: ServiceFieldsProps) => {
         }
     }
 
+    let apiKeyHelpText: string | undefined;
+    if (type === 'bedrock') {
+        apiKeyHelpText = intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'});
+    } else if (type === 'vertex') {
+        apiKeyHelpText = intl.formatMessage({defaultMessage: 'Optional. Paste Google service account credentials JSON to authenticate Vertex AI requests. Leave empty to use Application Default Credentials on the server.'});
+    }
+
     return (
         <>
             <TextItem
@@ -146,6 +159,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
             >
                 <SelectionItemOption value='openai'>{'OpenAI'}</SelectionItemOption>
                 <SelectionItemOption value='anthropic'>{'Anthropic'}</SelectionItemOption>
+                <SelectionItemOption value='vertex'>{'Google Vertex AI'}</SelectionItemOption>
                 <SelectionItemOption value='bedrock'>{'AWS Bedrock'}</SelectionItemOption>
                 <SelectionItemOption value='openaicompatible'>{'OpenAI Compatible'}</SelectionItemOption>
                 <SelectionItemOption value='azure'>{'Azure'}</SelectionItemOption>
@@ -162,33 +176,47 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     helptext={isScale ? intl.formatMessage({defaultMessage: 'Scale API endpoint (e.g., https://sgp-api.scalegov.com/v5)'}) : undefined} // eslint-disable-line no-undefined
                 />
             )}
-            {type === 'bedrock' && (
+            {(type === 'bedrock' || type === 'vertex') && (
                 <>
                     <TextItem
-                        label={intl.formatMessage({defaultMessage: 'AWS Region'})}
+                        label={type === 'vertex' ? intl.formatMessage({defaultMessage: 'Vertex Region'}) : intl.formatMessage({defaultMessage: 'AWS Region'})}
                         value={props.service.region}
                         onChange={(e) => props.onChange({...props.service, region: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'AWS region where Bedrock is available (e.g., us-east-1, us-west-2)'})}
+                        helptext={type === 'vertex' ?
+                            intl.formatMessage({defaultMessage: 'Google Cloud region for Vertex AI (e.g., us-central1, europe-west4, or global for global Gemini endpoints)'}) :
+                            intl.formatMessage({defaultMessage: 'AWS region where Bedrock is available (e.g., us-east-1, us-west-2)'})}
                     />
-                    <TextItem
-                        label={intl.formatMessage({defaultMessage: 'Custom Endpoint URL (Optional)'})}
-                        value={props.service.apiURL}
-                        onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'Optional custom endpoint for VPC endpoints or proxies (e.g., https://bedrock-runtime.vpce-xxx.us-east-1.vpce.amazonaws.com)'})}
-                    />
-                    <TextItem
-                        label={intl.formatMessage({defaultMessage: 'AWS Access Key ID (Optional)'})}
-                        value={props.service.awsAccessKeyID}
-                        onChange={(e) => props.onChange({...props.service, awsAccessKeyID: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'IAM user access key ID. If set, these credentials take precedence over API Key. Can also be set via AWS_ACCESS_KEY_ID environment variable. System console takes precedence over environment variables.'})}
-                    />
-                    <TextItem
-                        label={intl.formatMessage({defaultMessage: 'AWS Secret Access Key (Optional)'})}
-                        type='password'
-                        value={props.service.awsSecretAccessKey}
-                        onChange={(e) => props.onChange({...props.service, awsSecretAccessKey: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'IAM user secret access key. Required if AWS Access Key ID is provided. Can also be set via AWS_SECRET_ACCESS_KEY environment variable. System console takes precedence over environment variables.'})}
-                    />
+                    {type === 'vertex' && (
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Project ID'})}
+                            value={props.service.orgId}
+                            onChange={(e) => props.onChange({...props.service, orgId: e.target.value})}
+                            helptext={intl.formatMessage({defaultMessage: 'Google Cloud project ID used for Vertex AI requests and model listing'})}
+                        />
+                    )}
+                    {type === 'bedrock' && (
+                        <>
+                            <TextItem
+                                label={intl.formatMessage({defaultMessage: 'Custom Endpoint URL (Optional)'})}
+                                value={props.service.apiURL}
+                                onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
+                                helptext={intl.formatMessage({defaultMessage: 'Optional custom endpoint for VPC endpoints or proxies (e.g., https://bedrock-runtime.vpce-xxx.us-east-1.vpce.amazonaws.com)'})}
+                            />
+                            <TextItem
+                                label={intl.formatMessage({defaultMessage: 'AWS Access Key ID (Optional)'})}
+                                value={props.service.awsAccessKeyID}
+                                onChange={(e) => props.onChange({...props.service, awsAccessKeyID: e.target.value})}
+                                helptext={intl.formatMessage({defaultMessage: 'IAM user access key ID. If set, these credentials take precedence over API Key. Can also be set via AWS_ACCESS_KEY_ID environment variable. System console takes precedence over environment variables.'})}
+                            />
+                            <TextItem
+                                label={intl.formatMessage({defaultMessage: 'AWS Secret Access Key (Optional)'})}
+                                type='password'
+                                value={props.service.awsSecretAccessKey}
+                                onChange={(e) => props.onChange({...props.service, awsSecretAccessKey: e.target.value})}
+                                helptext={intl.formatMessage({defaultMessage: 'IAM user secret access key. Required if AWS Access Key ID is provided. Can also be set via AWS_SECRET_ACCESS_KEY environment variable. System console takes precedence over environment variables.'})}
+                            />
+                        </>
+                    )}
                 </>
             )}
             <TextItem
@@ -196,8 +224,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                 type='password'
                 value={props.service.apiKey}
                 onChange={(e) => props.onChange({...props.service, apiKey: e.target.value})}
-                // eslint-disable-next-line no-undefined
-                helptext={type === 'bedrock' ? intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'}) : undefined}
+                helptext={apiKeyHelpText}
             />
             {isOpenAIType && (
                 <>

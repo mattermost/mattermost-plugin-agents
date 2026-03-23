@@ -55,6 +55,7 @@ type Config struct {
 	APIKey             string
 	APIURL             string // Custom base URL (for Azure, OpenAI Compatible, etc.)
 	OrgID              string
+	ProjectID          string // For Google Vertex AI
 	Region             string // For AWS Bedrock
 	AWSAccessKeyID     string
 	AWSSecretAccessKey string
@@ -80,6 +81,7 @@ type providerAccount struct {
 	apiKey                  string
 	apiURL                  string
 	orgID                   string
+	projectID               string
 	region                  string
 	awsKeyID                string
 	awsSecret               string
@@ -114,6 +116,16 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 			AccessKey: schemas.EnvVar{Val: a.awsKeyID},
 			SecretKey: schemas.EnvVar{Val: a.awsSecret},
 			Region:    &region,
+		}
+	}
+
+	// Handle Vertex config
+	if a.provider == schemas.Vertex {
+		key.VertexKeyConfig = &schemas.VertexKeyConfig{
+			ProjectID:       schemas.EnvVar{Val: a.projectID},
+			ProjectNumber:   schemas.EnvVar{},
+			Region:          schemas.EnvVar{Val: a.region},
+			AuthCredentials: schemas.EnvVar{Val: a.apiKey},
 		}
 	}
 
@@ -163,11 +175,17 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 
 // New creates a new LLM instance with the given configuration.
 func New(cfg Config) (*LLM, error) {
+	projectID := cfg.ProjectID
+	if projectID == "" && cfg.Provider == schemas.Vertex {
+		projectID = cfg.OrgID
+	}
+
 	account := &providerAccount{
 		provider:                cfg.Provider,
 		apiKey:                  cfg.APIKey,
 		apiURL:                  cfg.APIURL,
 		orgID:                   cfg.OrgID,
+		projectID:               projectID,
 		region:                  cfg.Region,
 		awsKeyID:                cfg.AWSAccessKeyID,
 		awsSecret:               cfg.AWSSecretAccessKey,

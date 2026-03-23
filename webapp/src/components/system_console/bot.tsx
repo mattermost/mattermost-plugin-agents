@@ -144,7 +144,8 @@ const Bot = (props: Props) => {
         (selectedService.type === 'anthropic' ||
          selectedService.type === 'openai' ||
          selectedService.type === 'azure' ||
-         selectedService.type === 'openaicompatible');
+         selectedService.type === 'openaicompatible' ||
+         selectedService.type === 'vertex');
 
     // Fetch models when the service changes
     useEffect(() => {
@@ -156,9 +157,12 @@ const Bot = (props: Props) => {
 
         // For openaicompatible, API key is optional if there's an API URL
         // For other types, API key is required
-        const hasRequiredCredentials = selectedService.type === 'openaicompatible' ?
-            (selectedService.apiKey || selectedService.apiURL) :
-            selectedService.apiKey;
+        let hasRequiredCredentials = Boolean(selectedService.apiKey);
+        if (selectedService.type === 'openaicompatible') {
+            hasRequiredCredentials = Boolean(selectedService.apiKey || selectedService.apiURL);
+        } else if (selectedService.type === 'vertex') {
+            hasRequiredCredentials = Boolean(selectedService.orgId && selectedService.region);
+        }
 
         if (!hasRequiredCredentials) {
             setAvailableModels([]);
@@ -176,6 +180,7 @@ const Bot = (props: Props) => {
                     selectedService.apiKey,
                     selectedService.apiURL || '',
                     selectedService.orgId || '',
+                    selectedService.region || '',
                 );
                 setAvailableModels(data);
             } catch (error) {
@@ -187,7 +192,7 @@ const Bot = (props: Props) => {
         };
 
         loadModels();
-    }, [selectedService?.id, selectedService?.type, selectedService?.apiKey, selectedService?.apiURL, selectedService?.orgId, supportsModelFetching, intl]);
+    }, [selectedService?.id, selectedService?.type, selectedService?.apiKey, selectedService?.apiURL, selectedService?.orgId, selectedService?.region, supportsModelFetching, intl]);
 
     return (
         <BotContainer>
@@ -296,7 +301,7 @@ const Bot = (props: Props) => {
                         {(() => {
                             const selectedService = props.services.find((s) => s.id === props.bot.serviceID);
                             const supportsVisionAndTools = selectedService &&
-                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral'].includes(selectedService.type);
+                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'vertex', 'cohere', 'mistral'].includes(selectedService.type);
 
                             if (!supportsVisionAndTools) {
                                 return null;

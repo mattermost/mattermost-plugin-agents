@@ -8,6 +8,7 @@ const (
 	ServiceTypeOpenAICompatible = "openaicompatible"
 	ServiceTypeAzure            = "azure"
 	ServiceTypeAnthropic        = "anthropic"
+	ServiceTypeVertex           = "vertex"
 	ServiceTypeCohere           = "cohere"
 	ServiceTypeBedrock          = "bedrock"
 	ServiceTypeMistral          = "mistral"

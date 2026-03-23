@@ -523,7 +523,7 @@ export async function clearMCPToolsCache() {
     });
 }
 
-export async function fetchModels(serviceType: string, apiKey: string, apiURL: string, orgID: string) {
+export async function fetchModels(serviceType: string, apiKey: string, apiURL: string, orgID: string, region: string) {
     const url = `${baseRoute()}/admin/models/fetch`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
@@ -532,6 +532,7 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
             apiKey,
             apiURL,
             orgID,
+            region,
         }),
     }));
 
