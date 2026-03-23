@@ -100,4 +100,51 @@ test.describe('Service Management', () => {
         const servicesSection = page.locator('[class*="ServicesList"]');
         await expect(servicesSection.getByText('My Test Service')).toBeVisible();
     });
+
+    test('should show dynamically discovered providers and persist advanced bifrost config', async ({ page }) => {
+        test.setTimeout(60000);
+
+        const mmPage = new MattermostPage(page);
+        const systemConsole = new SystemConsoleHelper(page);
+
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await systemConsole.navigateToPluginConfig(mattermost.url());
+
+        const existingServiceCards = page.locator('[class*="ServiceContainer"]');
+        const initialCount = await existingServiceCards.count();
+
+        await systemConsole.clickAddService();
+        await expect(existingServiceCards).toHaveCount(initialCount + 1);
+
+        const serviceCard = page.locator('[class*="ServiceContainer"]').last();
+        await expect(serviceCard).toBeVisible();
+        await serviceCard.click();
+        await page.waitForTimeout(500);
+
+        await serviceCard.getByPlaceholder(/service name/i).fill('Vertex Advanced Service');
+
+        const serviceTypeDropdown = serviceCard.getByRole('combobox').first();
+        await expect(serviceTypeDropdown.locator('option[value="vertex"]')).toHaveCount(1);
+        await serviceTypeDropdown.selectOption('vertex');
+
+        const advancedKeyJSON = '{"vertex_key_config":{"project_id":"project-123","project_number":"123456789","region":"us-central1","auth_credentials":"{}"}}';
+        const advancedProviderConfigJSON = '{"network_config":{"base_url":"https://vertex.example.com","default_request_timeout_in_seconds":180}}';
+
+        await serviceCard.getByPlaceholder(/advanced bifrost key json/i).fill(advancedKeyJSON);
+        await serviceCard.getByPlaceholder(/advanced bifrost provider config json/i).fill(advancedProviderConfigJSON);
+        await serviceCard.getByPlaceholder(/default model/i).fill('gemini-2.5-pro');
+
+        await systemConsole.clickSave();
+        await page.reload();
+        await page.waitForTimeout(1000);
+
+        const savedServiceCard = page.locator('[class*="ServiceContainer"]').filter({hasText: 'Vertex Advanced Service'}).first();
+        await expect(savedServiceCard).toBeVisible();
+        await savedServiceCard.click();
+        await page.waitForTimeout(500);
+
+        await expect(savedServiceCard.getByRole('combobox').first()).toHaveValue('vertex');
+        await expect(savedServiceCard.getByPlaceholder(/advanced bifrost key json/i)).toHaveValue(advancedKeyJSON);
+        await expect(savedServiceCard.getByPlaceholder(/advanced bifrost provider config json/i)).toHaveValue(advancedProviderConfigJSON);
+    });
 });
