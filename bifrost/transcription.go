@@ -25,18 +25,42 @@ type Transcriber struct {
 
 // TranscriptionConfig holds configuration for creating a Transcriber.
 type TranscriptionConfig struct {
-	Provider schemas.ModelProvider
-	APIKey   string
-	APIURL   string
-	Model    string // e.g., "whisper-1"
+	Provider       schemas.ModelProvider
+	Keys           []schemas.Key
+	ProviderConfig *schemas.ProviderConfig
+	APIKey         string
+	APIURL         string
+	Model          string // e.g., "whisper-1"
 }
 
 // NewTranscriber creates a new Transcriber.
 func NewTranscriber(cfg TranscriptionConfig) (*Transcriber, error) {
 	account := &providerAccount{
 		provider: cfg.Provider,
-		apiKey:   cfg.APIKey,
-		apiURL:   cfg.APIURL,
+		keys:     cfg.Keys,
+	}
+	if cfg.ProviderConfig != nil {
+		account.providerConfig = cfg.ProviderConfig
+	} else {
+		account.providerConfig = &schemas.ProviderConfig{
+			NetworkConfig:            schemas.DefaultNetworkConfig,
+			ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
+		}
+		if cfg.APIURL != "" && cfg.Provider != schemas.Azure {
+			account.providerConfig.NetworkConfig.BaseURL = normalizeOpenAIBaseURL(cfg.Provider, cfg.APIURL)
+		}
+	}
+	if len(account.keys) == 0 {
+		key := schemas.Key{
+			Value:  schemas.EnvVar{Val: cfg.APIKey},
+			Weight: 1.0,
+		}
+		if cfg.Provider == schemas.Azure && cfg.APIURL != "" {
+			key.AzureKeyConfig = &schemas.AzureKeyConfig{
+				Endpoint: schemas.EnvVar{Val: cfg.APIURL},
+			}
+		}
+		account.keys = []schemas.Key{key}
 	}
 
 	bifrostConfig := schemas.BifrostConfig{

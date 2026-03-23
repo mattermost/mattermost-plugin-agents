@@ -207,7 +207,7 @@ func TestIsValidService(t *testing.T) {
 		want    bool
 	}{
 		{
-			name: "Valid OpenAI service with all required fields",
+			name: "valid openai service",
 			service: ServiceConfig{
 				ID:     "service-1",
 				Type:   ServiceTypeOpenAI,
@@ -216,242 +216,91 @@ func TestIsValidService(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "Valid OpenAI service with optional fields",
-			service: ServiceConfig{
-				ID:                      "service-1",
-				Name:                    "My OpenAI Service",
-				Type:                    ServiceTypeOpenAI,
-				APIKey:                  "sk-xyz",
-				OrgID:                   "org-xyz",
-				DefaultModel:            "gpt-4",
-				InputTokenLimit:         100,
-				StreamingTimeoutSeconds: 60,
-			},
-			want: true,
-		},
-		{
-			name: "OpenAI service missing API key",
-			service: ServiceConfig{
-				ID:     "service-1",
-				Type:   ServiceTypeOpenAI,
-				APIKey: "", // bad
-			},
-			want: false,
-		},
-		{
-			name: "Valid OpenAI Compatible service with API URL",
+			name: "valid openai compatible service with api url",
 			service: ServiceConfig{
 				ID:     "service-2",
 				Type:   ServiceTypeOpenAICompatible,
-				APIURL: "http://localhost:8080",
+				APIURL: "http://localhost:11434/v1",
 			},
 			want: true,
 		},
 		{
-			name: "OpenAI Compatible service missing API URL",
+			name: "valid dynamically discovered provider with no extra fields",
 			service: ServiceConfig{
-				ID:     "service-2",
-				Type:   ServiceTypeOpenAICompatible,
-				APIURL: "", // bad
+				ID:   "service-3",
+				Type: "vertex",
+			},
+			want: true,
+		},
+		{
+			name: "valid service with advanced bifrost key config",
+			service: ServiceConfig{
+				ID:             "service-4",
+				Type:           "vllm",
+				BifrostKeyJSON: `{"vllm_key_config":{"url":{"val":"http://vllm:8000"},"model_name":"llama-3.1-8b"}}`,
+			},
+			want: true,
+		},
+		{
+			name: "valid service with advanced bifrost provider config",
+			service: ServiceConfig{
+				ID:                        "service-5",
+				Type:                      "ollama",
+				BifrostProviderConfigJSON: `{"network_config":{"base_url":"http://ollama:11434","default_request_timeout_in_seconds":120}}`,
+			},
+			want: true,
+		},
+		{
+			name: "service with malformed bifrost key json",
+			service: ServiceConfig{
+				ID:             "service-6",
+				Type:           "vertex",
+				BifrostKeyJSON: `{"vertex_key_config":`,
 			},
 			want: false,
 		},
 		{
-			name: "OpenAI Compatible service does not require API key",
+			name: "service with malformed bifrost provider config json",
 			service: ServiceConfig{
-				ID:     "service-2",
-				Type:   ServiceTypeOpenAICompatible,
-				APIKey: "", // not required
-				APIURL: "http://localhost:8080",
-			},
-			want: true,
-		},
-		{
-			name: "Valid Azure service with API key and URL",
-			service: ServiceConfig{
-				ID:     "service-3",
-				Type:   ServiceTypeAzure,
-				APIKey: "azure-key",
-				APIURL: "https://myservice.openai.azure.com",
-			},
-			want: true,
-		},
-		{
-			name: "Azure service missing API key",
-			service: ServiceConfig{
-				ID:     "service-3",
-				Type:   ServiceTypeAzure,
-				APIKey: "", // bad
-				APIURL: "https://myservice.openai.azure.com",
+				ID:                        "service-7",
+				Type:                      "openai",
+				BifrostProviderConfigJSON: `{"network_config":`,
 			},
 			want: false,
 		},
 		{
-			name: "Azure service missing API URL",
+			name: "service with empty id",
 			service: ServiceConfig{
-				ID:     "service-3",
-				Type:   ServiceTypeAzure,
-				APIKey: "azure-key",
-				APIURL: "", // bad
-			},
-			want: false,
-		},
-		{
-			name: "Valid Anthropic service with API key",
-			service: ServiceConfig{
-				ID:     "service-4",
-				Type:   ServiceTypeAnthropic,
-				APIKey: "sk-ant-xyz",
-			},
-			want: true,
-		},
-		{
-			name: "Anthropic service missing API key",
-			service: ServiceConfig{
-				ID:     "service-4",
-				Type:   ServiceTypeAnthropic,
-				APIKey: "", // bad
-			},
-			want: false,
-		},
-		{
-			name: "Valid Cohere service with API key",
-			service: ServiceConfig{
-				ID:     "service-6",
-				Type:   ServiceTypeCohere,
-				APIKey: "cohere-key",
-			},
-			want: true,
-		},
-		{
-			name: "Cohere service missing API key",
-			service: ServiceConfig{
-				ID:     "service-6",
-				Type:   ServiceTypeCohere,
-				APIKey: "", // bad
-			},
-			want: false,
-		},
-		{
-			name: "Valid Bedrock service with region",
-			service: ServiceConfig{
-				ID:     "service-7",
-				Type:   ServiceTypeBedrock,
-				Region: "us-east-1", // AWS region
-			},
-			want: true,
-		},
-		{
-			name: "Bedrock service missing region",
-			service: ServiceConfig{
-				ID:     "service-7",
-				Type:   ServiceTypeBedrock,
-				Region: "", // bad - region required
-			},
-			want: false,
-		},
-		{
-			name: "Bedrock service does not require API key",
-			service: ServiceConfig{
-				ID:     "service-7",
-				Type:   ServiceTypeBedrock,
-				APIKey: "", // not required - can use IAM role
-				Region: "us-west-2",
-			},
-			want: true,
-		},
-		{
-			name: "Valid Mistral service with API key",
-			service: ServiceConfig{
-				ID:     "service-8",
-				Type:   ServiceTypeMistral,
-				APIKey: "mistral-key",
-			},
-			want: true,
-		},
-		{
-			name: "Mistral service missing API key",
-			service: ServiceConfig{
-				ID:     "service-8",
-				Type:   ServiceTypeMistral,
-				APIKey: "", // bad
-			},
-			want: false,
-		},
-		{
-			name: "Valid Scale service with API key and API URL",
-			service: ServiceConfig{
-				ID:     "service-9",
-				Type:   ServiceTypeScale,
-				APIKey: "scale-key",
-				APIURL: "https://sgp-api.scalegov.com/v5",
-			},
-			want: true,
-		},
-		{
-			name: "Valid Scale service with API key, API URL, and OrgID",
-			service: ServiceConfig{
-				ID:     "service-9",
-				Type:   ServiceTypeScale,
-				APIKey: "scale-key",
-				APIURL: "https://sgp-api.scalegov.com/v5",
-				OrgID:  "account-123",
-			},
-			want: true,
-		},
-		{
-			name: "Scale service missing API key",
-			service: ServiceConfig{
-				ID:     "service-9",
-				Type:   ServiceTypeScale,
-				APIKey: "", // bad
-				APIURL: "https://sgp-api.scalegov.com/v5",
-			},
-			want: false,
-		},
-		{
-			name: "Scale service missing API URL",
-			service: ServiceConfig{
-				ID:     "service-9",
-				Type:   ServiceTypeScale,
-				APIKey: "scale-key",
-				APIURL: "", // bad
-			},
-			want: false,
-		},
-		{
-			name: "Service with empty ID",
-			service: ServiceConfig{
-				ID:     "", // bad
+				ID:     "",
 				Type:   ServiceTypeOpenAI,
 				APIKey: "sk-xyz",
 			},
 			want: false,
 		},
 		{
-			name: "Service with empty Type",
-			service: ServiceConfig{
-				ID:     "service-7",
-				Type:   "", // bad
-				APIKey: "sk-xyz",
-			},
-			want: false,
-		},
-		{
-			name: "Service with unsupported Type",
+			name: "service with empty type",
 			service: ServiceConfig{
 				ID:     "service-8",
-				Type:   "mattermostllm", // bad - unsupported
+				Type:   "",
 				APIKey: "sk-xyz",
 			},
 			want: false,
 		},
 		{
-			name: "Service with invalid Type",
+			name: "service with unsupported type",
 			service: ServiceConfig{
 				ID:     "service-9",
-				Type:   "unknown", // bad - unsupported
+				Type:   "mattermostllm",
 				APIKey: "sk-xyz",
+			},
+			want: false,
+		},
+		{
+			name: "legacy scale service is no longer valid",
+			service: ServiceConfig{
+				ID:     "service-10",
+				Type:   ServiceTypeScale,
+				APIKey: "scale-key",
 			},
 			want: false,
 		},

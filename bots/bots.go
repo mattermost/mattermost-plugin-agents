@@ -21,7 +21,6 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
-	"github.com/maximhq/bifrost/core/schemas"
 )
 
 type Config interface {
@@ -457,16 +456,8 @@ func (b *MMBots) GetTranscribe() Transcriber {
 
 	service := bot.service
 
-	// Map service type to Bifrost provider
-	var provider schemas.ModelProvider
-	switch service.Type {
-	case llm.ServiceTypeOpenAI:
-		provider = schemas.OpenAI
-	case llm.ServiceTypeOpenAICompatible:
-		provider = schemas.OpenAI
-	case llm.ServiceTypeAzure:
-		provider = schemas.Azure
-	default:
+	resolvedConfig, err := bifrost.ResolveTranscriptionServiceConfig(service)
+	if err != nil {
 		b.pluginAPI.Log.Error("Unsupported service type for transcript generator",
 			"bot_name", bot.GetMMBot().Username,
 			"service_type", service.Type)
@@ -476,10 +467,10 @@ func (b *MMBots) GetTranscribe() Transcriber {
 	transcriptModel := "whisper-1"
 
 	transcriber, err := bifrost.NewTranscriber(bifrost.TranscriptionConfig{
-		Provider: provider,
-		APIKey:   service.APIKey,
-		APIURL:   service.APIURL,
-		Model:    transcriptModel,
+		Provider:       resolvedConfig.Provider,
+		Keys:           resolvedConfig.Keys,
+		ProviderConfig: resolvedConfig.ProviderConfig,
+		Model:          transcriptModel,
 	})
 	if err != nil {
 		b.pluginAPI.Log.Error("Failed to create Bifrost transcriber",

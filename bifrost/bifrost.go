@@ -52,6 +52,8 @@ type LLM struct {
 // Config holds the configuration for creating a LLM instance.
 type Config struct {
 	Provider           schemas.ModelProvider
+	Keys               []schemas.Key
+	ProviderConfig     *schemas.ProviderConfig
 	APIKey             string
 	APIURL             string // Custom base URL (for Azure, OpenAI Compatible, etc.)
 	OrgID              string
@@ -76,14 +78,9 @@ type Config struct {
 
 // providerAccount implements the Bifrost Account interface for a single provider.
 type providerAccount struct {
-	provider                schemas.ModelProvider
-	apiKey                  string
-	apiURL                  string
-	orgID                   string
-	region                  string
-	awsKeyID                string
-	awsSecret               string
-	streamingTimeoutSeconds int
+	provider       schemas.ModelProvider
+	keys           []schemas.Key
+	providerConfig *schemas.ProviderConfig
 }
 
 func (a *providerAccount) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
@@ -95,29 +92,14 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 		return nil, fmt.Errorf("provider %s not supported", provider)
 	}
 
-	key := schemas.Key{
-		Value:  schemas.EnvVar{Val: a.apiKey},
-		Weight: 1.0,
+	keys := make([]schemas.Key, len(a.keys))
+	copy(keys, a.keys)
+	if len(keys) == 0 {
+		keys = []schemas.Key{{
+			Weight: 1.0,
+		}}
 	}
-
-	// Handle Azure config
-	if a.provider == schemas.Azure && a.apiURL != "" {
-		key.AzureKeyConfig = &schemas.AzureKeyConfig{
-			Endpoint: schemas.EnvVar{Val: a.apiURL},
-		}
-	}
-
-	// Handle Bedrock config
-	if a.provider == schemas.Bedrock {
-		region := schemas.EnvVar{Val: a.region}
-		key.BedrockKeyConfig = &schemas.BedrockKeyConfig{
-			AccessKey: schemas.EnvVar{Val: a.awsKeyID},
-			SecretKey: schemas.EnvVar{Val: a.awsSecret},
-			Region:    &region,
-		}
-	}
-
-	return []schemas.Key{key}, nil
+	return keys, nil
 }
 
 func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (*schemas.ProviderConfig, error) {
@@ -125,43 +107,21 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 		return nil, fmt.Errorf("provider %s not supported", provider)
 	}
 
-	networkConfig := schemas.DefaultNetworkConfig
-
-	// Pass through the streaming timeout to the Bifrost HTTP client so that
-	// long-running requests (e.g. thinking models) are not killed by the
-	// underlying fasthttp ReadTimeout before the watchdog timer fires.
-	if a.streamingTimeoutSeconds > 0 {
-		networkConfig.DefaultRequestTimeoutInSeconds = a.streamingTimeoutSeconds * 10
-	} else {
-		networkConfig.DefaultRequestTimeoutInSeconds = int(DefaultStreamingTimeout.Seconds()) * 10
-	}
-
-	// Use BaseURL for providers that support custom endpoints (not Azure, which uses AzureKeyConfig)
-	if a.apiURL != "" && a.provider != schemas.Azure {
-		networkConfig.BaseURL = a.apiURL
-	}
-
-	// Pass OrgID via ExtraHeaders for OpenAI
-	if a.orgID != "" && a.provider == schemas.OpenAI {
-		networkConfig.ExtraHeaders = map[string]string{
-			"OpenAI-Organization": a.orgID,
+	if a.providerConfig == nil {
+		config := &schemas.ProviderConfig{
+			NetworkConfig:            schemas.DefaultNetworkConfig,
+			ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
+			ProxyConfig: &schemas.ProxyConfig{
+				Type: schemas.EnvProxy,
+			},
 		}
+		config.CheckAndSetDefaults()
+		return config, nil
 	}
 
-	// Configure retry logic with sensible defaults
-	networkConfig.MaxRetries = 2
-	networkConfig.RetryBackoffInitial = 1 * time.Second
-	networkConfig.RetryBackoffMax = 10 * time.Second
-
-	config := &schemas.ProviderConfig{
-		NetworkConfig:            networkConfig,
-		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
-		ProxyConfig: &schemas.ProxyConfig{
-			Type: schemas.EnvProxy,
-		},
-	}
-
-	return config, nil
+	config := *a.providerConfig
+	config.CheckAndSetDefaults()
+	return &config, nil
 }
 
 // toolArgsToJSON ensures tool arguments are valid JSON.
@@ -177,14 +137,60 @@ func toolArgsToJSON(s string) json.RawMessage {
 // New creates a new LLM instance with the given configuration.
 func New(cfg Config) (*LLM, error) {
 	account := &providerAccount{
-		provider:                cfg.Provider,
-		apiKey:                  cfg.APIKey,
-		apiURL:                  cfg.APIURL,
-		orgID:                   cfg.OrgID,
-		region:                  cfg.Region,
-		awsKeyID:                cfg.AWSAccessKeyID,
-		awsSecret:               cfg.AWSSecretAccessKey,
-		streamingTimeoutSeconds: int(cfg.StreamingTimeout.Seconds()),
+		provider: cfg.Provider,
+		keys:     cfg.Keys,
+	}
+	if cfg.ProviderConfig != nil {
+		account.providerConfig = cfg.ProviderConfig
+	} else {
+		legacyProviderConfig := &schemas.ProviderConfig{
+			NetworkConfig:            schemas.DefaultNetworkConfig,
+			ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
+			ProxyConfig: &schemas.ProxyConfig{
+				Type: schemas.EnvProxy,
+			},
+		}
+		if cfg.StreamingTimeout > 0 {
+			legacyProviderConfig.NetworkConfig.DefaultRequestTimeoutInSeconds = int(cfg.StreamingTimeout.Seconds()) * 10
+		} else {
+			legacyProviderConfig.NetworkConfig.DefaultRequestTimeoutInSeconds = int(DefaultStreamingTimeout.Seconds()) * 10
+		}
+		if cfg.APIURL != "" && cfg.Provider != schemas.Azure {
+			legacyProviderConfig.NetworkConfig.BaseURL = normalizeOpenAIBaseURL(cfg.Provider, cfg.APIURL)
+		}
+		if cfg.OrgID != "" && cfg.Provider == schemas.OpenAI {
+			legacyProviderConfig.NetworkConfig.ExtraHeaders = map[string]string{
+				"OpenAI-Organization": cfg.OrgID,
+			}
+		}
+		legacyProviderConfig.NetworkConfig.MaxRetries = 2
+		legacyProviderConfig.NetworkConfig.RetryBackoffInitial = 1 * time.Second
+		legacyProviderConfig.NetworkConfig.RetryBackoffMax = 10 * time.Second
+		account.providerConfig = legacyProviderConfig
+	}
+
+	if len(account.keys) == 0 {
+		key := schemas.Key{
+			Value:  schemas.EnvVar{Val: cfg.APIKey},
+			Weight: 1.0,
+		}
+		if cfg.Provider == schemas.Azure && cfg.APIURL != "" {
+			key.AzureKeyConfig = &schemas.AzureKeyConfig{
+				Endpoint: schemas.EnvVar{Val: cfg.APIURL},
+			}
+		}
+		if cfg.Provider == schemas.Bedrock {
+			bedrockConfig := &schemas.BedrockKeyConfig{
+				AccessKey: schemas.EnvVar{Val: cfg.AWSAccessKeyID},
+				SecretKey: schemas.EnvVar{Val: cfg.AWSSecretAccessKey},
+			}
+			if cfg.Region != "" {
+				region := schemas.EnvVar{Val: cfg.Region}
+				bedrockConfig.Region = &region
+			}
+			key.BedrockKeyConfig = bedrockConfig
+		}
+		account.keys = []schemas.Key{key}
 	}
 
 	bifrostConfig := schemas.BifrostConfig{

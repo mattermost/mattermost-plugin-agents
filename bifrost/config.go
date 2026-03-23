@@ -4,7 +4,6 @@
 package bifrost
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -15,24 +14,7 @@ import (
 
 // MapServiceTypeToProvider maps our service type strings to Bifrost provider constants.
 func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error) {
-	switch serviceType {
-	case llm.ServiceTypeOpenAI:
-		return schemas.OpenAI, nil
-	case llm.ServiceTypeOpenAICompatible:
-		return schemas.OpenAI, nil // Uses OpenAI with custom base URL
-	case llm.ServiceTypeAzure:
-		return schemas.Azure, nil
-	case llm.ServiceTypeAnthropic:
-		return schemas.Anthropic, nil
-	case llm.ServiceTypeBedrock:
-		return schemas.Bedrock, nil
-	case llm.ServiceTypeCohere:
-		return schemas.Cohere, nil
-	case llm.ServiceTypeMistral:
-		return schemas.Mistral, nil
-	default:
-		return "", fmt.Errorf("unsupported service type: %s", serviceType)
-	}
+	return llm.ModelProviderForServiceType(serviceType)
 }
 
 func supportsNativeTools(serviceType string) bool {
@@ -63,49 +45,29 @@ func filterNativeToolsForServiceType(serviceType string, tools []string) []strin
 
 // NewFromServiceConfig creates a LLM instance from ServiceConfig and BotConfig.
 func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (*LLM, error) {
-	provider, err := MapServiceTypeToProvider(serviceConfig.Type)
-	if err != nil {
-		return nil, err
-	}
-
 	// Calculate streaming timeout
 	streamingTimeout := DefaultStreamingTimeout
 	if serviceConfig.StreamingTimeoutSeconds > 0 {
 		streamingTimeout = time.Duration(serviceConfig.StreamingTimeoutSeconds) * time.Second
 	}
 
-	// Determine the API URL
-	apiURL := serviceConfig.APIURL
-
-	// For OpenAI Compatible services like Cohere and Mistral, set the appropriate base URL
-	switch serviceConfig.Type {
-	case llm.ServiceTypeCohere:
-		if apiURL == "" {
-			apiURL = "https://api.cohere.ai/compatibility/v1"
-		}
-	case llm.ServiceTypeMistral:
-		if apiURL == "" {
-			apiURL = "https://api.mistral.ai/v1"
-		}
+	resolvedConfig, err := resolveServiceConfig(serviceConfig, streamingTimeout)
+	if err != nil {
+		return nil, err
 	}
 
-	apiURL = normalizeOpenAIBaseURL(provider, apiURL)
 	enabledNativeTools := filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools)
 
 	cfg := Config{
-		Provider:           provider,
-		APIKey:             serviceConfig.APIKey,
-		APIURL:             apiURL,
-		OrgID:              serviceConfig.OrgID,
-		Region:             serviceConfig.Region,
-		AWSAccessKeyID:     serviceConfig.AWSAccessKeyID,
-		AWSSecretAccessKey: serviceConfig.AWSSecretAccessKey,
-		DefaultModel:       serviceConfig.DefaultModel,
-		InputTokenLimit:    serviceConfig.InputTokenLimit,
-		OutputTokenLimit:   serviceConfig.OutputTokenLimit,
-		StreamingTimeout:   streamingTimeout,
-		SendUserID:         serviceConfig.SendUserID,
-		UseResponsesAPI:    llm.ServiceUsesResponsesAPI(serviceConfig),
+		Provider:         resolvedConfig.Provider,
+		Keys:             resolvedConfig.Keys,
+		ProviderConfig:   resolvedConfig.ProviderConfig,
+		DefaultModel:     serviceConfig.DefaultModel,
+		InputTokenLimit:  serviceConfig.InputTokenLimit,
+		OutputTokenLimit: serviceConfig.OutputTokenLimit,
+		StreamingTimeout: streamingTimeout,
+		SendUserID:       serviceConfig.SendUserID,
+		UseResponsesAPI:  llm.ServiceUsesResponsesAPI(serviceConfig),
 
 		// Bot-specific configuration
 		EnabledNativeTools: enabledNativeTools,
@@ -137,16 +99,5 @@ func normalizeOpenAIBaseURL(provider schemas.ModelProvider, apiURL string) strin
 
 // IsSupported returns true if the service type is supported by Bifrost.
 func IsSupported(serviceType string) bool {
-	switch serviceType {
-	case llm.ServiceTypeOpenAI,
-		llm.ServiceTypeOpenAICompatible,
-		llm.ServiceTypeAzure,
-		llm.ServiceTypeAnthropic,
-		llm.ServiceTypeBedrock,
-		llm.ServiceTypeCohere,
-		llm.ServiceTypeMistral:
-		return true
-	default:
-		return false
-	}
+	return llm.IsSupportedServiceType(serviceType)
 }
