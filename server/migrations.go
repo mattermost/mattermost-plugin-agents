@@ -132,11 +132,16 @@ func servicesAreIdentical(a, b llm.ServiceConfig) bool {
 		a.OrgID != b.OrgID ||
 		a.DefaultModel != b.DefaultModel ||
 		a.APIURL != b.APIURL ||
+		a.Region != b.Region ||
+		a.AWSAccessKeyID != b.AWSAccessKeyID ||
+		a.AWSSecretAccessKey != b.AWSSecretAccessKey ||
 		a.InputTokenLimit != b.InputTokenLimit ||
 		a.StreamingTimeoutSeconds != b.StreamingTimeoutSeconds ||
 		a.SendUserID != b.SendUserID ||
 		a.OutputTokenLimit != b.OutputTokenLimit ||
-		a.UseResponsesAPI != b.UseResponsesAPI {
+		a.UseResponsesAPI != b.UseResponsesAPI ||
+		a.BifrostKeyJSON != b.BifrostKeyJSON ||
+		a.BifrostProviderConfigJSON != b.BifrostProviderConfigJSON {
 		return false
 	}
 	return true

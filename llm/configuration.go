@@ -3,6 +3,12 @@
 
 package llm
 
+import (
+	"encoding/json"
+
+	"github.com/maximhq/bifrost/core/schemas"
+)
+
 type ServiceConfig struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -28,6 +34,14 @@ type ServiceConfig struct {
 	// UseResponsesAPI determines whether to use the new OpenAI Responses API
 	// Only applicable to OpenAI and OpenAI-compatible services
 	UseResponsesAPI bool `json:"useResponsesAPI"`
+
+	// BifrostKeyJSON provides advanced provider key configuration for providers that
+	// require more than the common API key / URL fields.
+	BifrostKeyJSON string `json:"bifrostKeyJSON"`
+
+	// BifrostProviderConfigJSON provides advanced provider configuration for providers
+	// that require custom Bifrost provider settings.
+	BifrostProviderConfigJSON string `json:"bifrostProviderConfigJSON"`
 }
 
 type ChannelAccessLevel int
@@ -123,27 +137,25 @@ func IsValidService(service ServiceConfig) bool {
 		return false
 	}
 
-	// Service-specific validation
-	switch service.Type {
-	case ServiceTypeOpenAI:
-		return service.APIKey != ""
-	case ServiceTypeOpenAICompatible:
-		return service.APIURL != ""
-	case ServiceTypeAzure:
-		return service.APIKey != "" && service.APIURL != ""
-	case ServiceTypeAnthropic:
-		return service.APIKey != ""
-	case ServiceTypeCohere:
-		return service.APIKey != ""
-	case ServiceTypeBedrock:
-		// Bedrock requires AWS region
-		// API key is optional as AWS credentials can come from environment/IAM role
-		return service.Region != ""
-	case ServiceTypeMistral:
-		return service.APIKey != ""
-	case ServiceTypeScale:
-		return service.APIKey != "" && service.APIURL != ""
-	default:
+	if !IsSupportedServiceType(service.Type) {
 		return false
 	}
+
+	if err := validateAdvancedBifrostJSON(service.BifrostKeyJSON, &schemas.Key{}); err != nil {
+		return false
+	}
+
+	if err := validateAdvancedBifrostJSON(service.BifrostProviderConfigJSON, &schemas.ProviderConfig{}); err != nil {
+		return false
+	}
+
+	return true
+}
+
+func validateAdvancedBifrostJSON(raw string, target any) error {
+	if raw == "" {
+		return nil
+	}
+
+	return json.Unmarshal([]byte(raw), target)
 }

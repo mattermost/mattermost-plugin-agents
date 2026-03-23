@@ -32,10 +32,21 @@ type EmbeddingConfig struct {
 
 // NewEmbeddingProvider creates a new EmbeddingProvider.
 func NewEmbeddingProvider(cfg EmbeddingConfig) (*EmbeddingProvider, error) {
+	providerConfig := &schemas.ProviderConfig{
+		NetworkConfig:            schemas.DefaultNetworkConfig,
+		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
+	}
+	if cfg.APIURL != "" {
+		providerConfig.NetworkConfig.BaseURL = normalizeOpenAIBaseURL(cfg.Provider, cfg.APIURL)
+	}
+
 	account := &providerAccount{
 		provider: cfg.Provider,
-		apiKey:   cfg.APIKey,
-		apiURL:   normalizeOpenAIBaseURL(cfg.Provider, cfg.APIURL),
+		keys: []schemas.Key{{
+			Value:  schemas.EnvVar{Val: cfg.APIKey},
+			Weight: 1.0,
+		}},
+		providerConfig: providerConfig,
 	}
 
 	bifrostConfig := schemas.BifrostConfig{
