@@ -1,15 +1,16 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import styled from 'styled-components';
 import {PlusIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton} from '../assets/buttons';
 import ConfirmationDialog from '../confirmation_dialog';
+import {fetchServiceTypes} from '../../client';
 
-import Service, {LLMService} from './service';
+import Service, {LLMService, ServiceTypeInfo} from './service';
 import {LLMBotConfig} from './bot';
 
 const defaultNewService: LLMService = {
@@ -28,6 +29,8 @@ const defaultNewService: LLMService = {
     region: '',
     awsAccessKeyID: '',
     awsSecretAccessKey: '',
+    bifrostKeyJSON: '',
+    bifrostProviderConfigJSON: '',
 };
 
 export const firstNewService = {
@@ -45,6 +48,20 @@ const Services = (props: Props) => {
     const intl = useIntl();
     const [showErrorDialog, setShowErrorDialog] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
+    const [serviceTypes, setServiceTypes] = useState<ServiceTypeInfo[]>([]);
+
+    useEffect(() => {
+        const loadServiceTypes = async () => {
+            try {
+                const data: ServiceTypeInfo[] = await fetchServiceTypes();
+                setServiceTypes(data);
+            } catch {
+                setServiceTypes([]);
+            }
+        };
+
+        loadServiceTypes();
+    }, []);
 
     const addNewService = (e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
@@ -91,6 +108,7 @@ const Services = (props: Props) => {
                     <Service
                         key={service.id}
                         service={service}
+                        serviceTypes={serviceTypes}
                         onChange={onChange}
                         onDelete={() => onDelete(service.id)}
                     />

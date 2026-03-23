@@ -296,6 +296,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
+	adminRouter.GET("/service-types", a.handleListServiceTypes)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
 	adminRouter.GET("/config", a.handleGetConfig)
 	adminRouter.PUT("/config", a.handleSaveConfig)
@@ -475,10 +476,58 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 }
 
 type FetchModelsRequest struct {
-	ServiceType string `json:"serviceType"`
-	APIKey      string `json:"apiKey"`
-	APIURL      string `json:"apiURL"`
-	OrgID       string `json:"orgID"`
+	Service fetchModelsServiceConfigPayload `json:"service"`
+}
+
+type fetchModelsServiceConfigPayload struct {
+	ID                        string `json:"id"`
+	Name                      string `json:"name"`
+	Type                      string `json:"type"`
+	APIKey                    string `json:"apiKey"`
+	OrgID                     string `json:"orgId"`
+	DefaultModel              string `json:"defaultModel"`
+	APIURL                    string `json:"apiURL"`
+	Region                    string `json:"region"`
+	AWSAccessKeyID            string `json:"awsAccessKeyID"`
+	AWSSecretAccessKey        string `json:"awsSecretAccessKey"`
+	InputTokenLimit           int    `json:"tokenLimit"`
+	StreamingTimeoutSeconds   int    `json:"streamingTimeoutSeconds"`
+	SendUserID                bool   `json:"sendUserId"`
+	OutputTokenLimit          int    `json:"outputTokenLimit"`
+	UseResponsesAPI           bool   `json:"useResponsesAPI"`
+	BifrostKeyJSON            string `json:"bifrostKeyJSON"`
+	BifrostProviderConfigJSON string `json:"bifrostProviderConfigJSON"`
+}
+
+func (p fetchModelsServiceConfigPayload) toServiceConfig() llm.ServiceConfig {
+	serviceID := p.ID
+	if serviceID == "" {
+		serviceID = "fetch-models"
+	}
+
+	return llm.ServiceConfig{
+		ID:                        serviceID,
+		Name:                      p.Name,
+		Type:                      p.Type,
+		APIKey:                    p.APIKey,
+		OrgID:                     p.OrgID,
+		DefaultModel:              p.DefaultModel,
+		APIURL:                    p.APIURL,
+		Region:                    p.Region,
+		AWSAccessKeyID:            p.AWSAccessKeyID,
+		AWSSecretAccessKey:        p.AWSSecretAccessKey,
+		InputTokenLimit:           p.InputTokenLimit,
+		StreamingTimeoutSeconds:   p.StreamingTimeoutSeconds,
+		SendUserID:                p.SendUserID,
+		OutputTokenLimit:          p.OutputTokenLimit,
+		UseResponsesAPI:           p.UseResponsesAPI,
+		BifrostKeyJSON:            p.BifrostKeyJSON,
+		BifrostProviderConfigJSON: p.BifrostProviderConfigJSON,
+	}
+}
+
+func (a *API) handleListServiceTypes(c *gin.Context) {
+	c.JSON(http.StatusOK, llm.SupportedServiceTypeInfos())
 }
 
 func (a *API) handleFetchModels(c *gin.Context) {
@@ -488,29 +537,19 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	if req.ServiceType == "" {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("serviceType is required"))
+	serviceConfig := req.Service.toServiceConfig()
+
+	if serviceConfig.Type == "" {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service.type is required"))
 		return
 	}
 
-	// API key is required for most services, but optional for openaicompatible (some don't require auth).
-	if req.APIKey == "" && req.ServiceType != "openaicompatible" {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey is required"))
+	if !llm.IsValidService(serviceConfig) {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid service configuration for model fetching"))
 		return
 	}
 
-	// For openaicompatible, require at least an API URL if no API key
-	if req.ServiceType == "openaicompatible" && req.APIKey == "" && req.APIURL == "" {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiURL is required for openaicompatible when apiKey is not provided"))
-		return
-	}
-
-	if !bifrost.IsSupported(req.ServiceType) {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("model fetching not supported for service type: %s", req.ServiceType))
-		return
-	}
-
-	models, err := bifrost.FetchModelsForServiceType(req.ServiceType, req.APIKey, req.APIURL, req.OrgID)
+	models, err := bifrost.FetchModelsForService(serviceConfig)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
 		return
