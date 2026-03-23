@@ -8,11 +8,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/indexer"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/metrics"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -178,6 +180,59 @@ func TestHandleIndexHealthCheck(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleListServiceTypes(t *testing.T) {
+	api, mockAPI := setupAdminTestEnvironment(t)
+	defer mockAPI.AssertExpectations(t)
+
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/service-types", nil)
+	req.Header.Set("Mattermost-User-Id", "admin-user")
+
+	recorder := httptest.NewRecorder()
+	api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+	resp := recorder.Result()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var serviceTypes []llm.ServiceTypeInfo
+	err := json.NewDecoder(resp.Body).Decode(&serviceTypes)
+	require.NoError(t, err)
+
+	serviceTypeMap := make(map[string]string, len(serviceTypes))
+	for _, serviceType := range serviceTypes {
+		serviceTypeMap[serviceType.ID] = serviceType.DisplayName
+	}
+
+	require.Equal(t, "OpenAI Compatible", serviceTypeMap[llm.ServiceTypeOpenAICompatible])
+	require.Equal(t, "Vertex", serviceTypeMap["vertex"])
+	_, hasScale := serviceTypeMap["scale"]
+	require.False(t, hasScale)
+}
+
+func TestHandleFetchModelsRejectsInvalidServiceConfig(t *testing.T) {
+	api, mockAPI := setupAdminTestEnvironment(t)
+	defer mockAPI.AssertExpectations(t)
+
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/models/fetch", strings.NewReader(`{
+		"service": {
+			"id": "service-1",
+			"type": "vertex",
+			"bifrostKeyJSON": "{\"vertex_key_config\":"
+		}
+	}`))
+	req.Header.Set("Mattermost-User-Id", "admin-user")
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+	resp := recorder.Result()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 // notFoundError simulates the "not found" error that the indexer checks for

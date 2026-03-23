@@ -29,6 +29,11 @@ export interface LLMService {
     sendUserId: boolean;
     outputTokenLimit: number;
     useResponsesAPI: boolean;
+    region: string;
+    awsAccessKeyID: string;
+    awsSecretAccessKey: string;
+    bifrostKeyJSON: string;
+    bifrostProviderConfigJSON: string;
 }
 
 /**
@@ -193,6 +198,11 @@ export function createAnthropicService(overrides: ServiceConfigOverrides = {}): 
         streamingTimeoutSeconds: 0,
         sendUserId: false,
         useResponsesAPI: false,
+        region: '',
+        awsAccessKeyID: '',
+        awsSecretAccessKey: '',
+        bifrostKeyJSON: '',
+        bifrostProviderConfigJSON: '',
         ...overrides,
     };
 }
@@ -219,6 +229,11 @@ export function createOpenAIService(overrides: ServiceConfigOverrides = {}): LLM
         streamingTimeoutSeconds: 500,
         sendUserId: false,
         useResponsesAPI: true,
+        region: '',
+        awsAccessKeyID: '',
+        awsSecretAccessKey: '',
+        bifrostKeyJSON: '',
+        bifrostProviderConfigJSON: '',
         ...overrides,
     };
 }

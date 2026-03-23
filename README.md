@@ -17,7 +17,7 @@ The Mattermost Agents Plugin integrates AI capabilities directly into your [Matt
 - **Semantic Search**: Find relevant content across your Mattermost instance using natural language
 - **Smart Reactions**: Let AI suggest contextually appropriate emoji reactions
 - **Direct Conversations**: Chat directly with AI assistants in dedicated channels
-- **Flexible LLM Support**: Use local models (Ollama, vLLM, etc.), cloud providers (OpenAI, Anthropic, Azure), or any OpenAI-compatible API
+- **Flexible LLM Support**: Use the full set of bundled Bifrost-backed LLM providers, including local models (Ollama, vLLM, etc.), cloud providers (OpenAI, Anthropic, Azure, Bedrock, and more), or any OpenAI-compatible API
 
 ## Documentation
 

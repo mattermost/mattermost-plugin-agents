@@ -24,7 +24,6 @@ func TestSupportsNativeTools(t *testing.T) {
 		{llm.ServiceTypeBedrock, false},
 		{llm.ServiceTypeCohere, false},
 		{llm.ServiceTypeMistral, false},
-		{llm.ServiceTypeScale, false},
 		{"unknown", false},
 	}
 	for _, tt := range tests {

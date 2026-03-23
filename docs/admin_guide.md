@@ -66,29 +66,32 @@ Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 | Setting | Description |
 |---------|-------------|
 | **Name** | Internal name for this service configuration |
-| **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Scale AI, Azure OpenAI, OpenAI-compatible) |
+| **Type** | LLM provider. This list is generated from the bundled Bifrost provider set, plus **OpenAI Compatible** for self-hosted OpenAI-style APIs. |
 | **API Key** | Your provider's API key (requirements vary by provider) |
+| **API URL** | Optional custom endpoint or required provider endpoint, depending on the provider |
 | **Default Model** | Default model to use for this service |
 | **Input Token Limit** | Maximum tokens allowed in input |
 | **Output Token Limit** | Maximum tokens allowed in output |
 | **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
 | **Send User ID** | Whether to send Mattermost user IDs to the LLM provider |
 | **Use Responses API** | (OpenAI Compatible and Azure OpenAI only) Use OpenAI's Responses API for native provider tools, reasoning controls, and structured output on those endpoints. OpenAI (direct) always uses the Responses API, so this control isn't shown for that service type. |
+| **Advanced Bifrost Key JSON** | Optional advanced key configuration for providers that need provider-specific auth fields |
+| **Advanced Bifrost Provider Config JSON** | Optional advanced provider/network configuration passed through to Bifrost |
 
 #### Provider Specific Settings
 
 Each provider has specific configuration requirements:
 
-| Provider | Required Settings | Optional Settings |
-|----------|-------------------|-------------------|
-| **OpenAI** | API Key | Organization ID |
-| **OpenAI Compatible** | API URL | API Key, Organization ID |
-| **Anthropic** | API Key | |
-| **AWS Bedrock** | AWS Region | API Key (can use IAM role), Access/Secret Keys |
-| **Cohere** | API Key | |
-| **Mistral** | API Key | |
-| **Scale AI** | API Key, API URL | Account ID (required for ScaleGov) |
-| **Azure OpenAI** | API Key, API URL | |
+| Provider | Typical Required Settings | Optional / Advanced Settings |
+|----------|----------------------------|-----------------------------|
+| **OpenAI** | API Key | Organization ID, API URL, Use Responses API |
+| **OpenAI Compatible** | API URL | API Key, Organization ID, Use Responses API |
+| **Anthropic** | API Key | API URL override |
+| **AWS Bedrock** | AWS Region | API Key, Access/Secret Keys, custom endpoint, advanced Bifrost JSON |
+| **Azure OpenAI** | API Key, API URL | Use Responses API, advanced Bifrost JSON |
+| **Other Bifrost-backed providers** | Varies by provider | API Key, API URL, and/or advanced Bifrost JSON depending on the provider |
+
+The exact provider list comes from the bundled Bifrost version rather than from a static plugin allowlist. For some providers, the standard fields are enough. For others, you may need to use the advanced Bifrost JSON fields.
 
 For AWS Bedrock, authentication can be configured using AWS credentials in the API Key/Secret fields, or by using IAM roles when running Mattermost on AWS infrastructure.
 
@@ -348,7 +351,7 @@ This separation allows multiple bots to share the same LLM service configuration
 }
 ```
 
-**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`, `scale`
+**Supported service types:** Generated dynamically from the bundled Bifrost provider list, plus the plugin's `openaicompatible` convenience type.
 
 **Legacy format:** Older configurations with embedded service objects within bots are automatically migrated to the current format on plugin startup.
 

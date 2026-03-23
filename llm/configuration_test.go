@@ -237,7 +237,7 @@ func TestIsValidService(t *testing.T) {
 			service: ServiceConfig{
 				ID:             "service-4",
 				Type:           "vllm",
-				BifrostKeyJSON: `{"vllm_key_config":{"url":{"val":"http://vllm:8000"},"model_name":"llama-3.1-8b"}}`,
+				BifrostKeyJSON: `{"vllm_key_config":{"url":"http://vllm:8000","model_name":"llama-3.1-8b"}}`,
 			},
 			want: true,
 		},
@@ -299,7 +299,7 @@ func TestIsValidService(t *testing.T) {
 			name: "legacy scale service is no longer valid",
 			service: ServiceConfig{
 				ID:     "service-10",
-				Type:   ServiceTypeScale,
+				Type:   "scale",
 				APIKey: "scale-key",
 			},
 			want: false,
