@@ -50,6 +50,8 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	var schema *jsonschema.Schema
 	var description string
 
+	contextHint := "Results show individual matching posts — to see the full conversation around a result, use read_channel with the channel_id."
+
 	if semanticEnabled {
 		schema = llm.NewJSONSchemaFromStruct[CombinedSearchArgs]()
 		description = "Search for posts in Mattermost using both semantic (AI-powered) and keyword search. " +
@@ -57,14 +59,16 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 			"Parameters: query (required), team_id (optional), channel_id (optional). " +
 			"semantic_limit/semantic_offset control semantic results (default: 10). " +
 			"keyword_limit/keyword_offset control keyword results (default: 10). " +
-			"Returns matching posts with content, author, channel, and relevance score for semantic results."
+			"Returns matching posts with content, author, channel, and relevance score for semantic results. " +
+			contextHint
 	} else {
 		schema = llm.NewJSONSchemaFromStruct[KeywordOnlySearchArgs]()
 		description = "Search for posts in Mattermost using keyword search. " +
 			"Uses AND logic — all terms must appear in a single post, so prefer short, focused queries (1-2 key terms) over long multi-word phrases. " +
 			"Parameters: query (required), team_id (optional), channel_id (optional). " +
 			"keyword_limit/keyword_offset control results (default: 10). " +
-			"Returns matching posts with content, author, and channel."
+			"Returns matching posts with content, author, and channel. " +
+			contextHint
 	}
 
 	return []MCPTool{
@@ -383,7 +387,11 @@ func (p *MattermostToolProvider) formatCombinedResults(query string, semanticRes
 	total := totalSemantic + totalKeyword
 
 	if total == 0 {
-		return "No posts found matching the search criteria.", nil
+		terms := strings.Fields(query)
+		if len(terms) > 2 {
+			return fmt.Sprintf("No posts found for %q (%d terms). All terms must appear in a single post — try fewer terms (1-2).", query, len(terms)), nil
+		}
+		return fmt.Sprintf("No posts found for %q.", query), nil
 	}
 
 	var result strings.Builder

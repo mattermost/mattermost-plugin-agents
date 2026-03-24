@@ -247,7 +247,7 @@ func TestChannelSummarizationFlowEval(t *testing.T) {
 }
 
 // TestFindSpecificInfoFlowEval tests search → synthesize:
-// LLM discovers channel → reads it → finds what a specific user said about a specific topic.
+// LLM must discover the right channel on its own, read it, and find what a specific user said.
 func TestFindSpecificInfoFlowEval(t *testing.T) {
 	evals.NumEvalsOrSkip(t)
 
@@ -259,14 +259,13 @@ func TestFindSpecificInfoFlowEval(t *testing.T) {
 
 	evals.Run(t, "find specific info flow", func(e *evals.EvalT) {
 		runAgenticFlowEval(e, suite, data.alice, data.team,
-			// Use wrong capitalization on "planning" to test case-insensitive lookup
-			"What did alice.eval say about the rollback plan for the database migration? You can find the discussion in the Migration planning channel on the eval team.",
+			"What did alice.eval say about the rollback plan for the database migration?",
 			[]string{
 				"Mentions keeping MySQL in read-only mode during cutover",
 				"Mentions the ability to switch back within minutes",
 				"Mentions continuous replication as a safety net",
 				"Does not attribute the rollback plan to bob.eval or charlie.eval",
-				"Is a direct answer to the question, not a full channel summary",
+				"Focuses specifically on the rollback plan rather than summarizing unrelated channel topics like timelines, data volume, or monitoring",
 			},
 			[]string{"read_channel"},
 		)
