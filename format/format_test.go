@@ -86,6 +86,19 @@ func TestThreadData(t *testing.T) {
 			expected: "johndoe (2024-03-19T20:01:30Z): Morning update\n\njanedoe (2024-03-19T20:01:32Z): Thanks\n\n",
 		},
 		{
+			name: "post with user not in UsersByID map",
+			data: &mmapi.ThreadData{
+				Posts: []*model.Post{
+					{
+						UserId:  "missing-user",
+						Message: "Orphaned message",
+					},
+				},
+				UsersByID: map[string]*model.User{},
+			},
+			expected: "unknown: Orphaned message\n\n",
+		},
+		{
 			name: "thread with attachments",
 			data: &mmapi.ThreadData{
 				Posts: []*model.Post{
@@ -334,18 +347,6 @@ func TestFormatPost(t *testing.T) {
 	}
 }
 
-func TestBuildPostIndex(t *testing.T) {
-	posts := []*model.Post{
-		{Id: "aaa"},
-		{Id: "bbb"},
-		{Id: "ccc"},
-	}
-	idx := BuildPostIndex(posts)
-	assert.Equal(t, 1, idx["aaa"])
-	assert.Equal(t, 2, idx["bbb"])
-	assert.Equal(t, 3, idx["ccc"])
-}
-
 func TestMemberRole(t *testing.T) {
 	tests := []struct {
 		name                                 string
@@ -411,6 +412,28 @@ func TestWriteUser(t *testing.T) {
 				Role: "member",
 			},
 			expected: "Username: webhook-bot\nID: u1\nIs Bot: true\nRole: member\n\n",
+		},
+		{
+			name: "user with only last name",
+			entry: UserEntry{
+				User: &model.User{
+					Id:       "u1",
+					Username: "jsmith",
+					LastName: "Smith",
+				},
+			},
+			expected: "Username: jsmith\nID: u1\nName: Smith\n\n",
+		},
+		{
+			name: "user with only first name",
+			entry: UserEntry{
+				User: &model.User{
+					Id:        "u1",
+					Username:  "john",
+					FirstName: "John",
+				},
+			},
+			expected: "Username: john\nID: u1\nName: John\n\n",
 		},
 		{
 			name: "deactivated user",

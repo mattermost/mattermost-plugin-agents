@@ -16,7 +16,10 @@ import (
 func ThreadData(data *mmapi.ThreadData) string {
 	result := ""
 	for _, post := range data.Posts {
-		username := data.UsersByID[post.UserId].Username
+		username := "unknown"
+		if user := data.UsersByID[post.UserId]; user != nil {
+			username = user.Username
+		}
 		if post.CreateAt > 0 {
 			t := time.Unix(post.CreateAt/1000, (post.CreateAt%1000)*int64(time.Millisecond))
 			result += fmt.Sprintf("%s (%s): %s\n\n", username, t.UTC().Format(time.RFC3339), PostBody(post))
@@ -178,7 +181,8 @@ func WriteUser(w *strings.Builder, entry UserEntry) {
 	fmt.Fprintf(w, "ID: %s\n", entry.User.Id)
 
 	if entry.User.FirstName != "" || entry.User.LastName != "" {
-		fmt.Fprintf(w, "Name: %s %s\n", entry.User.FirstName, entry.User.LastName)
+		name := strings.TrimSpace(entry.User.FirstName + " " + entry.User.LastName)
+		fmt.Fprintf(w, "Name: %s\n", name)
 	}
 
 	if entry.User.Email != "" {

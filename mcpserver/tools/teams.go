@@ -14,9 +14,8 @@ import (
 
 // GetTeamInfoArgs represents arguments for the get_team_info tool
 type GetTeamInfoArgs struct {
-	TeamID          string `json:"team_id,omitempty" jsonschema:"The exact team ID (fastest, most reliable method)"`
-	TeamDisplayName string `json:"team_display_name,omitempty" jsonschema:"The human-readable display name users see (e.g. 'Engineering Team')"`
-	TeamName        string `json:"team_name,omitempty" jsonschema:"The URL-friendly team name (e.g. 'engineering-team')"`
+	TeamID   string `json:"team_id,omitempty" jsonschema:"The exact team ID (fastest, most reliable method)"`
+	TeamName string `json:"team_name,omitempty" jsonschema:"Team name to search for — matches against both display name and URL name (case-insensitive, supports partial matches)"`
 }
 
 // GetTeamMembersArgs represents arguments for the get_team_members tool
@@ -47,7 +46,7 @@ func (p *MattermostToolProvider) getTeamTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name:        "get_team_info",
-			Description: "Get information about a team. Provide ONE of the following parameters: team_id (fastest), team_display_name (user-visible name), or team_name (URL name). Returns team metadata including ID, names, type, description, and creation date. Example: {\"team_display_name\": \"Engineering Team\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
+			Description: "Get information about a team. Provide team_id (fastest) or team_name (matches against both display name and URL name, case-insensitive, supports partial matches). Returns team metadata including ID, names, type, description, and member count. Example: {\"team_name\": \"Engineering\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
 			Schema:      NewJSONSchemaForAccessMode[GetTeamInfoArgs](string(p.accessMode)),
 			Resolver:    p.toolGetTeamInfo,
 		},
@@ -95,49 +94,27 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 
 	var team *model.Team
 
-	// Try different lookup methods based on provided parameters
 	switch {
 	case args.TeamID != "":
-		// Validate team ID format
 		if !model.IsValidId(args.TeamID) {
 			return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 		}
-		// Direct ID lookup - fastest method
 		team, _, err = client.GetTeam(ctx, args.TeamID, "")
 		if err != nil {
 			return "team not found by ID", fmt.Errorf("error fetching team by ID: %w", err)
 		}
-	case args.TeamDisplayName != "":
-		// Lookup by display name - get all teams for user and search
-		// Get current user ID for the API call
-		user, _, userErr := client.GetMe(ctx, "")
-		if userErr != nil {
-			return "failed to get current user", fmt.Errorf("error getting current user: %w", userErr)
-		}
-
-		teams, _, teamsErr := client.GetTeamsForUser(ctx, user.Id, "")
-		if teamsErr != nil {
-			return "failed to fetch user teams", fmt.Errorf("error fetching user teams: %w", teamsErr)
-		}
-
-		for _, t := range teams {
-			if strings.EqualFold(t.DisplayName, args.TeamDisplayName) {
-				team = t
-				break
-			}
-		}
-
-		if team == nil {
-			return "team not found by display name", fmt.Errorf("no team found with display name: %s", args.TeamDisplayName)
-		}
 	case args.TeamName != "":
-		// Lookup by name
-		team, _, err = client.GetTeamByName(ctx, args.TeamName, "")
+		var msg string
+		team, msg, err = p.resolveTeamByName(mcpContext, args.TeamName)
 		if err != nil {
-			return "team not found by name", fmt.Errorf("error fetching team by name: %w", err)
+			return msg, err
+		}
+		if msg != "" {
+			// Multiple matches — return disambiguation message (not an error)
+			return msg, nil
 		}
 	default:
-		return "either team_id, team_display_name, or team_name must be provided", fmt.Errorf("insufficient parameters for team lookup")
+		return "either team_id or team_name must be provided", fmt.Errorf("insufficient parameters for team lookup")
 	}
 
 	// Get member count
@@ -155,6 +132,85 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 	})
 
 	return result.String(), nil
+}
+
+// resolveTeamByName resolves a team by name using multiple strategies:
+// 1. Exact display name match (case-insensitive) from user's teams
+// 2. Exact URL name match from user's teams
+// 3. Substring display name match from user's teams
+// 4. SearchTeams API as final fallback
+//
+// Returns (team, "", nil) on unique match, ("", disambiguationMsg, nil) on multiple matches,
+// or ("", errorMsg, error) on failure.
+func (p *MattermostToolProvider) resolveTeamByName(mcpContext *MCPToolContext, name string) (*model.Team, string, error) {
+	client := mcpContext.Client
+	ctx := mcpContext.Ctx
+
+	user, _, userErr := client.GetMe(ctx, "")
+	if userErr != nil {
+		return nil, "failed to get current user", fmt.Errorf("error getting current user: %w", userErr)
+	}
+
+	teams, _, teamsErr := client.GetTeamsForUser(ctx, user.Id, "")
+	if teamsErr != nil {
+		return nil, "failed to fetch user teams", fmt.Errorf("error fetching user teams: %w", teamsErr)
+	}
+
+	// 1. Exact display name match (case-insensitive)
+	for _, t := range teams {
+		if strings.EqualFold(t.DisplayName, name) {
+			return t, "", nil
+		}
+	}
+
+	// 2. Exact URL name match
+	for _, t := range teams {
+		if strings.EqualFold(t.Name, name) {
+			return t, "", nil
+		}
+	}
+
+	// 3. Substring match on display name (case-insensitive)
+	nameLower := strings.ToLower(name)
+	var substringMatches []*model.Team
+	for _, t := range teams {
+		if strings.Contains(strings.ToLower(t.DisplayName), nameLower) {
+			substringMatches = append(substringMatches, t)
+		}
+	}
+
+	if len(substringMatches) == 1 {
+		return substringMatches[0], "", nil
+	}
+	if len(substringMatches) > 1 {
+		return nil, formatTeamDisambiguation(name, substringMatches), nil
+	}
+
+	// 4. SearchTeams API as fallback for teams the user may not be a member of
+	searchResults, _, searchErr := client.SearchTeams(ctx, &model.TeamSearch{Term: name})
+	if searchErr == nil && len(searchResults) == 1 {
+		return searchResults[0], "", nil
+	}
+	if searchErr == nil && len(searchResults) > 1 {
+		return nil, formatTeamDisambiguation(name, searchResults), nil
+	}
+
+	// Nothing found — return error with recovery guidance
+	msg := fmt.Sprintf("No team found matching '%s'.", name)
+	msg += "\n\nACTION REQUIRED - Try these alternatives before asking the user:\n"
+	msg += "1. Call get_user_channels to list all channels (includes team info) you have access to\n"
+	msg += "2. Only ask the user for help after trying alternatives above."
+	return nil, msg, fmt.Errorf("no team found matching: %s", name)
+}
+
+// formatTeamDisambiguation builds a message listing multiple team matches for the LLM to choose from.
+func formatTeamDisambiguation(searchTerm string, teams []*model.Team) string {
+	var msg strings.Builder
+	msg.WriteString(fmt.Sprintf("Multiple teams match '%s'. Please specify which one by calling get_team_info with team_id:\n\n", searchTerm))
+	for _, t := range teams {
+		msg.WriteString(fmt.Sprintf("- '%s' (URL name: %s, ID: %s)\n", t.DisplayName, t.Name, t.Id))
+	}
+	return msg.String()
 }
 
 // toolGetTeamMembers implements the get_team_members tool

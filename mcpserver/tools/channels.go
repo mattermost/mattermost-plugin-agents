@@ -35,10 +35,9 @@ type CreateChannelArgs struct {
 
 // GetChannelInfoArgs represents arguments for the get_channel_info tool
 type GetChannelInfoArgs struct {
-	ChannelID          string `json:"channel_id,omitempty" jsonschema:"The exact channel ID (fastest, most reliable method),maxLength=26"`
-	ChannelDisplayName string `json:"channel_display_name,omitempty" jsonschema:"The human-readable display name users see (e.g. 'General Discussion'). Try this first for user-provided names.,maxLength=64"`
-	ChannelName        string `json:"channel_name,omitempty" jsonschema:"The URL-friendly channel name (e.g. 'general-discussion'). Use this only if display_name doesn't work.,maxLength=64"`
-	TeamID             string `json:"team_id,omitempty" jsonschema:"Team ID (optional - if provided, searches within specific team; if omitted, searches across all teams),maxLength=26"`
+	ChannelID   string `json:"channel_id,omitempty" jsonschema:"The exact channel ID (fastest, most reliable method),maxLength=26"`
+	ChannelName string `json:"channel_name,omitempty" jsonschema:"Channel name to search for — matches against both display name and URL name (case-insensitive, supports partial matches),maxLength=64"`
+	TeamID      string `json:"team_id,omitempty" jsonschema:"Team ID (optional - if provided, searches within specific team; if omitted, searches across all teams),maxLength=26"`
 }
 
 // GetChannelMembersArgs represents arguments for the get_channel_members tool
@@ -79,7 +78,7 @@ func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 		},
 		{
 			Name:        "get_channel_info",
-			Description: "Get information about channel(s). Provide ONE parameter: channel_id (fastest, returns single result), channel_display_name (user-visible), or channel_name (URL name). Optional: team_id to limit search scope. If multiple channels match (e.g., 'General' exists in multiple teams), returns ALL matches with team context for disambiguation. Returns channel metadata including ID, names, type, team, purpose, and member count. Example: {\"channel_display_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}",
+			Description: "Get information about channel(s). Provide channel_id (fastest) or channel_name (matches against both display name and URL name, case-insensitive, supports partial matches). Optional: team_id to limit search scope. If multiple channels match (e.g., 'General' exists in multiple teams), returns ALL matches with team context for disambiguation. Returns channel metadata including ID, names, type, team, purpose, and member count. Example: {\"channel_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}",
 			Schema:      llm.NewJSONSchemaFromStruct[GetChannelInfoArgs](),
 			Resolver:    p.toolGetChannelInfo,
 		},
@@ -355,46 +354,34 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 			return "failed to fetch channel", fmt.Errorf("error fetching channel by ID: %w", err)
 		}
 		channels = []*model.Channel{channel}
-	case args.ChannelDisplayName != "" || args.ChannelName != "":
-		// Prioritize display name over name - try display name first if provided
-		if args.ChannelDisplayName != "" {
-			channels, lastError = p.tryFindChannelByDisplayName(ctx, client, args.ChannelDisplayName, args.TeamID)
-			if lastError != nil {
-				// Real API error (not just zero results)
-				return "failed to search for channels", lastError
-			}
-			if len(channels) > 0 {
-				break // Found results with display name
-			}
+	case args.ChannelName != "":
+		// Unified lookup: try display name match, then URL name match, then substring
+		channels, lastError = p.tryFindChannelByDisplayName(ctx, client, args.ChannelName, args.TeamID)
+		if lastError != nil {
+			return "failed to search for channels", lastError
 		}
 
-		// If display name didn't find anything (or wasn't provided), try channel name
-		if args.ChannelName != "" {
+		// If no display name match, try URL name
+		if len(channels) == 0 {
 			channels, err = p.tryFindChannelByName(ctx, client, args.ChannelName, args.TeamID)
 			if err != nil {
-				// Real API error
 				return "failed to search for channels", err
 			}
 		}
 
-		// At this point, channels could be empty (no results) but that's not an error
-		if len(channels) == 0 {
-			// Build helpful "not found" message with actionable next steps for LLM
-			var notFoundMsg strings.Builder
-
-			// What was searched
-			switch {
-			case args.ChannelDisplayName != "" && args.ChannelName != "":
-				notFoundMsg.WriteString(fmt.Sprintf("No channels found matching display name '%s' or name '%s'.", args.ChannelDisplayName, args.ChannelName))
-			case args.ChannelDisplayName != "":
-				notFoundMsg.WriteString(fmt.Sprintf("No channels found with display name '%s'.", args.ChannelDisplayName))
-			default:
-				notFoundMsg.WriteString(fmt.Sprintf("No channels found with name '%s'.", args.ChannelName))
+		// If still nothing and we have a team scope, try substring match on display name
+		if len(channels) == 0 && args.TeamID != "" {
+			channels, err = p.tryFindChannelBySubstring(ctx, client, args.ChannelName, args.TeamID)
+			if err != nil {
+				return "failed to search for channels", err
 			}
+		}
 
-			// Search scope
+		if len(channels) == 0 {
+			var notFoundMsg strings.Builder
+			notFoundMsg.WriteString(fmt.Sprintf("No channels found matching '%s'.", args.ChannelName))
+
 			if args.TeamID != "" {
-				// Try to get team name for better error message
 				team, _, teamErr := client.GetTeam(ctx, args.TeamID, "")
 				if teamErr == nil {
 					notFoundMsg.WriteString(fmt.Sprintf(" (searched within team '%s', ID: %s)", team.DisplayName, args.TeamID))
@@ -406,32 +393,18 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 			}
 
 			notFoundMsg.WriteString("\n\nACTION REQUIRED - Try these alternatives before asking the user:\n")
-
-			if args.ChannelDisplayName != "" {
-				// Tried display name - this is likely a case sensitivity issue
-				notFoundMsg.WriteString("1. Call get_channel_info again with different capitalization (channel_display_name is CASE-SENSITIVE)\n")
-				notFoundMsg.WriteString("2. Call get_channel_info with channel_name parameter instead (NOT case-sensitive)\n")
-			}
-
-			if args.ChannelName != "" && args.ChannelDisplayName == "" {
-				// Tried channel name only - suggest trying display_name
-				notFoundMsg.WriteString("1. Call get_channel_info with channel_display_name parameter instead (try different capitalizations as it's CASE-SENSITIVE)\n")
-			}
-
+			stepNum := 1
 			if args.TeamID == "" {
-				stepNum := 2
-				if args.ChannelDisplayName != "" {
-					stepNum = 3
-				}
 				notFoundMsg.WriteString(fmt.Sprintf("%d. If you know the team, call get_channel_info with team_id parameter to narrow the search\n", stepNum))
+				stepNum++
 			}
-
+			notFoundMsg.WriteString(fmt.Sprintf("%d. Call get_user_channels to list all channels you have access to\n", stepNum))
 			notFoundMsg.WriteString("\nOnly ask the user for help after trying all alternatives above.")
 
 			return notFoundMsg.String(), nil
 		}
 	default:
-		return "either channel_id or channel_name/channel_display_name must be provided", fmt.Errorf("insufficient parameters for channel lookup")
+		return "either channel_id or channel_name must be provided", fmt.Errorf("insufficient parameters for channel lookup")
 	}
 
 	// If multiple channels found, return all with disambiguation guidance
@@ -655,7 +628,7 @@ func (p *MattermostToolProvider) tryFindChannelByDisplayName(ctx context.Context
 		}
 
 		for _, ch := range channels {
-			if ch.DisplayName == displayName {
+			if strings.EqualFold(ch.DisplayName, displayName) {
 				return []*model.Channel{ch}, nil
 			}
 		}
@@ -670,10 +643,10 @@ func (p *MattermostToolProvider) tryFindChannelByDisplayName(ctx context.Context
 		return nil, fmt.Errorf("error searching channels: %w", searchErr)
 	}
 
-	// Find ALL exact matches by display name
+	// Find ALL matches by display name (case-insensitive)
 	var matches []*model.Channel
 	for _, ch := range channels {
-		if ch.DisplayName == displayName {
+		if strings.EqualFold(ch.DisplayName, displayName) {
 			// Convert ChannelWithTeamData to Channel
 			matches = append(matches, &model.Channel{
 				Id:               ch.Id,
@@ -752,6 +725,30 @@ func (p *MattermostToolProvider) tryFindChannelByName(ctx context.Context, clien
 	}
 
 	// Return empty slice if no matches found (not a technical failure)
+	return matches, nil
+}
+
+// tryFindChannelBySubstring does a case-insensitive substring match on display names
+// within a specific team. Used as a fallback when exact matches fail.
+func (p *MattermostToolProvider) tryFindChannelBySubstring(ctx context.Context, client *model.Client4, term, teamID string) ([]*model.Channel, error) {
+	user, _, userErr := client.GetMe(ctx, "")
+	if userErr != nil {
+		return nil, fmt.Errorf("error getting current user: %w", userErr)
+	}
+
+	channels, _, channelErr := client.GetChannelsForTeamForUser(ctx, teamID, user.Id, false, "")
+	if channelErr != nil {
+		return nil, fmt.Errorf("error fetching team channels: %w", channelErr)
+	}
+
+	termLower := strings.ToLower(term)
+	var matches []*model.Channel
+	for _, ch := range channels {
+		if strings.Contains(strings.ToLower(ch.DisplayName), termLower) {
+			matches = append(matches, ch)
+		}
+	}
+
 	return matches, nil
 }
 

@@ -18,8 +18,9 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// runAgenticFlowEval is a helper that runs an agentic flow eval with the given prompt and rubrics.
-func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.User, team *model.Team, userMessage string, rubrics []string) string {
+// runAgenticFlowEval is a helper that runs an agentic flow eval with the given prompt, rubrics,
+// and a list of tools the LLM is required to have called.
+func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.User, team *model.Team, userMessage string, rubrics []string, requiredTools []string) string {
 	e.Helper()
 
 	setup := setupAgenticEval(e.T, e, suite, requestingUser, team)
@@ -45,6 +46,19 @@ func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.
 	require.NotEmpty(e.T, response, "Response should not be empty")
 
 	e.Logf("LLM response:\n%s", response)
+
+	// Assert that each required tool was actually called (not just that the LLM claims it was)
+	calledTools := setup.logger.CalledTools()
+	for _, requiredTool := range requiredTools {
+		found := false
+		for _, called := range calledTools {
+			if called == requiredTool {
+				found = true
+				break
+			}
+		}
+		assert.True(e.T, found, "Required tool %q was not called by the LLM (called tools: %v)", requiredTool, calledTools)
+	}
 
 	for _, rubric := range rubrics {
 		evals.LLMRubricT(e, rubric, response)
@@ -76,6 +90,9 @@ func TestReadChannelOutputQualityEval(t *testing.T) {
 		"The output contains a question about timeline and the Q3 feature freeze",
 		"The output contains a reply mentioning next sprint for the schema migration",
 		"The output contains a concern about 500GB of data and downtime estimation",
+		// Negative rubrics
+		"The output does not contain raw JSON objects or unformatted API response structures",
+		"The output does not include posts from any channel other than the Migration Planning channel",
 	}
 
 	evals.Run(t, "read_channel output quality", func(e *evals.EvalT) {
@@ -110,6 +127,8 @@ func TestSearchPostsOutputQualityEval(t *testing.T) {
 		"Each search result includes the post message content",
 		"Each search result includes a Post ID that could be used in follow-up tool calls",
 		"The results contain posts about database migration or PostgreSQL",
+		// Negative rubric
+		"The output does not contain raw JSON objects or unformatted API response structures",
 	}
 
 	t.Run("keyword", func(t *testing.T) {
@@ -175,6 +194,8 @@ func TestGetChannelMembersOutputQualityEval(t *testing.T) {
 		"The output lists members with their usernames",
 		"Each member entry includes an ID that could be used in follow-up tool calls",
 		"The member list includes alice.eval, bob.eval, and charlie.eval",
+		// Negative rubric
+		"The output does not include any bot accounts",
 	}
 
 	evals.Run(t, "get_channel_members output quality", func(e *evals.EvalT) {
@@ -199,7 +220,7 @@ func TestGetChannelMembersOutputQualityEval(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestChannelSummarizationFlowEval tests the full agentic loop:
-// LLM receives MCP tools → calls read_channel → produces summary.
+// LLM discovers channel by display name → calls read_channel → produces summary.
 func TestChannelSummarizationFlowEval(t *testing.T) {
 	evals.NumEvalsOrSkip(t)
 
@@ -211,23 +232,22 @@ func TestChannelSummarizationFlowEval(t *testing.T) {
 
 	evals.Run(t, "channel summarization flow", func(e *evals.EvalT) {
 		runAgenticFlowEval(e, suite, data.alice, data.team,
-			"Summarize what's been discussed in the "+data.channel.DisplayName+" channel. The channel ID is "+data.channel.Id,
+			// Use all-lowercase to test case-insensitive lookup and substring matching ("eval" → "Eval Team")
+			"Summarize what's been discussed in the migration planning channel on the eval team.",
 			[]string{
-				"Mentions the discussion about migrating from MySQL to PostgreSQL",
-				"Mentions the timeline question and the response about next sprint",
-				"Mentions the concern about 500GB of data or downtime",
-				"Mentions the rollback plan involving keeping MySQL in read-only mode",
+				"Mentions a database migration (e.g., MySQL to PostgreSQL)",
+				"Mentions at least two of: timeline/sprint, data volume/downtime, rollback plan",
 				"Is a coherent summary, not a raw dump of messages or tool output",
-				"Does not expose internal tool names, tool IDs, or raw tool output in the final response",
 				// Rubric referencing a user that only exists in the seeded data (anti-hallucination)
 				"Mentions at least one of alice.eval, bob.eval, or charlie.eval by username",
 			},
+			[]string{"get_channel_info", "read_channel"},
 		)
 	})
 }
 
 // TestFindSpecificInfoFlowEval tests search → synthesize:
-// LLM uses search tools to find what a specific user said about a specific topic.
+// LLM discovers channel → reads it → finds what a specific user said about a specific topic.
 func TestFindSpecificInfoFlowEval(t *testing.T) {
 	evals.NumEvalsOrSkip(t)
 
@@ -239,7 +259,8 @@ func TestFindSpecificInfoFlowEval(t *testing.T) {
 
 	evals.Run(t, "find specific info flow", func(e *evals.EvalT) {
 		runAgenticFlowEval(e, suite, data.alice, data.team,
-			"What did alice.eval say about the rollback plan for the database migration? You can find the discussion in the "+data.channel.DisplayName+" channel (ID: "+data.channel.Id+").",
+			// Use wrong capitalization on "planning" to test case-insensitive lookup
+			"What did alice.eval say about the rollback plan for the database migration? You can find the discussion in the Migration planning channel on the eval team.",
 			[]string{
 				"Mentions keeping MySQL in read-only mode during cutover",
 				"Mentions the ability to switch back within minutes",
@@ -247,12 +268,13 @@ func TestFindSpecificInfoFlowEval(t *testing.T) {
 				"Does not attribute the rollback plan to bob.eval or charlie.eval",
 				"Is a direct answer to the question, not a full channel summary",
 			},
+			[]string{"read_channel"},
 		)
 	})
 }
 
 // TestDMSummaryFlowEval tests the read → write loop:
-// LLM reads a channel, composes a summary, and sends it as a DM.
+// LLM discovers channel by display name → reads it → composes a summary → sends it as a DM.
 func TestDMSummaryFlowEval(t *testing.T) {
 	evals.NumEvalsOrSkip(t)
 
@@ -264,11 +286,12 @@ func TestDMSummaryFlowEval(t *testing.T) {
 
 	evals.Run(t, "dm summary flow", func(e *evals.EvalT) {
 		runAgenticFlowEval(e, suite, data.alice, data.team,
-			"Send bob.eval a DM summarizing the key decisions made in the "+data.channel.DisplayName+" channel. The channel ID is "+data.channel.Id+".",
+			// Use wrong capitalization on "Planning" to test case-insensitive lookup
+			"Send bob.eval a DM summarizing the key decisions made in the migration Planning channel on the Eval team.",
 			[]string{
 				"Confirms that a DM was sent to bob.eval",
-				"Does not expose internal tool names, tool IDs, or raw tool output in the final response",
 			},
+			[]string{"read_channel", "dm"},
 		)
 
 		// Verify the DM was actually sent by checking via the Mattermost API
@@ -326,12 +349,13 @@ func TestBroadcastDMToTeamFlowEval(t *testing.T) {
 
 	evals.Run(t, "broadcast DM to team flow", func(e *evals.EvalT) {
 		runAgenticFlowEval(e, suite, data.dana, data.team,
-			"Send the following message to everyone on the Staff team: Hey! Just a reminder that we have a company all-hands meeting tomorrow at 3pm in the main conference room. Please make sure to attend.",
+			// Use lowercase "staff" to test case-insensitive team lookup
+			"Send the following message to everyone on the staff team: Hey! Just a reminder that we have a company all-hands meeting tomorrow at 3pm in the main conference room. Please make sure to attend.",
 			[]string{
 				"Confirms that direct messages were sent to multiple individual users",
 				"Does not mention sending a message to a bot account (autobot.eval or Automation Bot)",
-				"Does not expose internal tool names, tool IDs, or raw tool output in the final response",
 			},
+			[]string{"get_team_members", "dm"},
 		)
 
 		// Verify DMs were actually sent by checking the Mattermost API
@@ -339,18 +363,18 @@ func TestBroadcastDMToTeamFlowEval(t *testing.T) {
 		adminClient := model.NewAPIv4Client(suite.serverURL)
 		adminClient.SetToken(suite.adminToken)
 
-		// Get the admin user (MCP server identity)
+		// Get the admin user (MCP server identity — also a team member)
 		adminUser, _, err := adminClient.GetMe(ctx, "")
 		require.NoError(e.T, err, "Should get admin user")
 
-		// Verify DMs were sent to other team members (not the requesting user dana,
-		// since LLMs may reasonably skip DM'ing "yourself")
-		for _, targetUser := range []*model.User{data.emma, data.frank} {
-			dmChannel, _, err := adminClient.CreateDirectChannel(ctx, adminUser.Id, targetUser.Id)
-			require.NoError(e.T, err, "Should get DM channel with %s", targetUser.Username)
+		// Verify DMs were sent to all non-requesting team members including admin.
+		// (dana is the requesting user — LLMs may reasonably skip DM'ing "yourself")
+		for _, targetUser := range []*model.User{data.emma, data.frank, adminUser} {
+			dmChannel, _, dmErr := adminClient.CreateDirectChannel(ctx, adminUser.Id, targetUser.Id)
+			require.NoError(e.T, dmErr, "Should get DM channel with %s", targetUser.Username)
 
-			dmPosts, _, err := adminClient.GetPostsForChannel(ctx, dmChannel.Id, 0, 10, "", false, false)
-			require.NoError(e.T, err, "Should get DM posts for %s", targetUser.Username)
+			dmPosts, _, dmErr := adminClient.GetPostsForChannel(ctx, dmChannel.Id, 0, 10, "", false, false)
+			require.NoError(e.T, dmErr, "Should get DM posts for %s", targetUser.Username)
 
 			found := false
 			for _, post := range dmPosts.Posts {

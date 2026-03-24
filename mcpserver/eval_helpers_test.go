@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -428,8 +429,8 @@ func seedTeamBroadcastScenario(t *testing.T, serverURL, adminToken string) *eval
 	} {
 		pair.user.FirstName = pair.firstName
 		pair.user.LastName = pair.lastName
-		_, _, err := adminClient.UpdateUser(ctx, pair.user)
-		require.NoError(t, err, "Failed to update user %s", pair.user.Username)
+		_, _, updateErr := adminClient.UpdateUser(ctx, pair.user)
+		require.NoError(t, updateErr, "Failed to update user %s", pair.user.Username)
 	}
 
 	// Create a bot account
@@ -477,8 +478,20 @@ func (l *testTraceLog) Info(message string, keyValuePairs ...any) {
 // requests between tool loop iterations. It sits inside AutoRunToolsWrapper so it
 // captures each re-invocation of the LLM.
 type evalStreamLogger struct {
-	inner llm.LanguageModel
-	t     *testing.T
+	inner       llm.LanguageModel
+	t           *testing.T
+	mu          sync.Mutex
+	calledTools []string
+}
+
+// CalledTools returns a copy of all tool names invoked during the eval run.
+// Safe to call after ReadAll() completes.
+func (w *evalStreamLogger) CalledTools() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	out := make([]string, len(w.calledTools))
+	copy(out, w.calledTools)
+	return out
 }
 
 func (w *evalStreamLogger) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
@@ -503,9 +516,12 @@ func (w *evalStreamLogger) ChatCompletion(request llm.CompletionRequest, opts ..
 					text.Reset()
 				}
 				if tcs, ok := event.Value.([]llm.ToolCall); ok {
+					w.mu.Lock()
 					for _, tc := range tcs {
 						w.t.Logf("[LLM tool call] %s args=%s", tc.Name, string(tc.Arguments))
+						w.calledTools = append(w.calledTools, tc.Name)
 					}
+					w.mu.Unlock()
 				}
 			case llm.EventTypeEnd:
 				if text.Len() > 0 {
@@ -537,6 +553,7 @@ type agenticEvalSetup struct {
 	wrappedLLM   llm.LanguageModel
 	llmContext   *llm.Context
 	allToolNames []string
+	logger       *evalStreamLogger
 }
 
 // setupAgenticEval builds the common infrastructure for agentic flow evals:
@@ -573,6 +590,7 @@ func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, requesting
 		wrappedLLM:   wrappedLLM,
 		llmContext:   llmContext,
 		allToolNames: allToolNames,
+		logger:       loggedLLM,
 	}
 }
 
