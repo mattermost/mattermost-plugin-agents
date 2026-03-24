@@ -325,6 +325,11 @@ func setupEmbeddingSearch(t *testing.T, data *evalChannelData, serverURL, adminT
 	client := model.NewAPIv4Client(serverURL)
 	client.SetToken(adminToken)
 
+	// Get the admin user ID — the MCP server authenticates as this user,
+	// so they must be in ChannelMembers for PGVector access control to work.
+	adminUser, _, err := client.GetMe(ctx, "")
+	require.NoError(t, err, "Failed to get admin user")
+
 	for _, ch := range []*model.Channel{data.channel, data.designChannel} {
 		// Register channel in pgvector DB stub (required for access control)
 		_, err = db.Exec(
@@ -362,6 +367,12 @@ func setupEmbeddingSearch(t *testing.T, data *evalChannelData, serverURL, adminT
 				Content:   post.Message,
 			})
 		}
+
+		// Add the admin user (MCP session identity) as a channel member so
+		// semantic search access control includes them in results.
+		_, _ = db.Exec(
+			"INSERT INTO ChannelMembers (ChannelId, UserId) VALUES ($1, $2) ON CONFLICT (ChannelId, UserId) DO NOTHING",
+			ch.Id, adminUser.Id)
 
 		if len(docs) > 0 {
 			err = compositeSearch.Store(ctx, docs)

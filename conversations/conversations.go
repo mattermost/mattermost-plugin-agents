@@ -109,12 +109,19 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 
 	var posts []llm.Post
 	if post.RootId == "" {
-		var err error
-		posts, err = BuildNewConversationPosts(c.prompts, context, c.PostToAIPost(bot, post))
+		// A new conversation
+		prompt, err := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, context)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to format prompt: %w", err)
+		}
+		posts = []llm.Post{
+			{
+				Role:    llm.PostRoleSystem,
+				Message: prompt,
+			},
 		}
 	} else {
+		// Continuing an existing conversation
 		previousConversation, errThread := mmapi.GetThreadData(c.mmClient, post.Id)
 		if errThread != nil {
 			return nil, fmt.Errorf("failed to get previous conversation: %w", errThread)
@@ -126,23 +133,30 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert existing conversation to LLM posts: %w", err)
 		}
-		posts = append(posts, c.PostToAIPost(bot, post))
 	}
 
-	opts := CompletionOptions{
-		ToolsDisabled:          toolsDisabled,
-		NativeWebSearchAllowed: c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled(),
-	}.BuildLLMOptions()
+	posts = append(posts, c.PostToAIPost(bot, post))
 
-	result, err := bot.LLM().ChatCompletion(llm.CompletionRequest{
+	completionRequest := llm.CompletionRequest{
 		Posts:     posts,
 		Context:   context,
 		Operation: llm.OperationConversation,
-	}, opts...)
+	}
+	var opts []llm.LanguageModelOption
+	if toolsDisabled {
+		// Tools are disabled in this context but we still inform the LLM about DM-only tools.
+		opts = append(opts, llm.WithToolsDisabled())
+
+		if c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled() {
+			opts = append(opts, llm.WithNativeWebSearchAllowed())
+		}
+	}
+	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
 		return nil, err
 	}
 
+	// Decorate the stream with web search annotations if available
 	webSearchData := mmtools.ConsumeWebSearchContexts(context)
 	c.mmClient.LogDebug("Checking for web search data in ProcessUserRequestWithContext", "has_data", len(webSearchData) > 0, "num_contexts", len(webSearchData))
 	if len(webSearchData) > 0 {

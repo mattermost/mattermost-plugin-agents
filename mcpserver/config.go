@@ -3,8 +3,6 @@
 
 package mcpserver
 
-import "github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
-
 // BaseConfig represents common configuration for all MCP server types
 type BaseConfig struct {
 	// Mattermost server URL (e.g., "https://mattermost.company.com")
@@ -22,11 +20,6 @@ type BaseConfig struct {
 	// For external servers: uses authenticated user's ID
 	// Default: true for embedded, true for HTTP, false for stdio
 	TrackAIGenerated *bool `json:"track_ai_generated,omitempty"`
-
-	// SearchService overrides the default semantic search service.
-	// If nil, a default HTTP-based service is created for external servers,
-	// or nil (disabled) for embedded servers unless explicitly provided.
-	SearchService tools.SemanticSearchService `json:"-"`
 }
 
 // GetMMServerURL returns the Mattermost server URL

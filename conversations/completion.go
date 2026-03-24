@@ -10,24 +10,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
 )
 
-// CompletionOptions holds the configuration for how a completion should be run.
-type CompletionOptions struct {
-	ToolsDisabled          bool
-	NativeWebSearchAllowed bool
-}
-
-// BuildLLMOptions converts CompletionOptions into an llm.LanguageModelOption slice.
-func (o CompletionOptions) BuildLLMOptions() []llm.LanguageModelOption {
-	var opts []llm.LanguageModelOption
-	if o.ToolsDisabled {
-		opts = append(opts, llm.WithToolsDisabled())
-		if o.NativeWebSearchAllowed {
-			opts = append(opts, llm.WithNativeWebSearchAllowed())
-		}
-	}
-	return opts
-}
-
 // BuildNewConversationPosts creates the post list for a new (non-threaded) conversation.
 // Returns system prompt + user message posts.
 func BuildNewConversationPosts(
