@@ -340,19 +340,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
 
-    // Pre-fetch tools data when the component mounts so they're ready when the Tools tab is clicked
-    useEffect(() => {
-        if (mcpConfig?.enabled) {
-            getMCPTools().then((response) => {
-                setPreloadedToolsData(response);
-            }).catch((error) => {
-                // eslint-disable-next-line no-console
-                console.error('Failed to preload MCP tools:', error);
-            });
-        }
-    }, [mcpConfig?.enabled]);
-
-    // Invalidate prefetched tools when tool-affecting config fields change
+    // Tool-affecting config fingerprint (must be declared before prefetch effect)
     const configFingerprint = JSON.stringify({
         servers: (mcpConfig?.servers || []).map((s) => ({url: s.baseURL, enabled: s.enabled})),
         embeddedEnabled: mcpConfig?.embeddedServer?.enabled,
@@ -360,12 +348,48 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     });
     const prevFingerprintRef = useRef(configFingerprint);
 
+    // Invalidate prefetched tools when tool-affecting config fields change
     useEffect(() => {
         if (prevFingerprintRef.current !== configFingerprint) {
             prevFingerprintRef.current = configFingerprint;
             setPreloadedToolsData(null);
         }
     }, [configFingerprint]);
+
+    // Pre-fetch tools data when MCP is enabled so they're ready when the Tools tab is clicked.
+    // Ignore responses from outdated requests (cleanup + fingerprint match) so config changes cannot apply stale data.
+    useEffect(() => {
+        if (!mcpConfig?.enabled) {
+            return () => {
+                // no-op: MCP disabled, nothing to cancel
+            };
+        }
+
+        const fingerprintAtFetchStart = configFingerprint;
+        let cancelled = false;
+
+        getMCPTools().
+            then((response) => {
+                if (cancelled) {
+                    return;
+                }
+                if (fingerprintAtFetchStart !== prevFingerprintRef.current) {
+                    return;
+                }
+                setPreloadedToolsData(response);
+            }).
+            catch((error) => {
+                if (cancelled) {
+                    return;
+                }
+                // eslint-disable-next-line no-console
+                console.error('Failed to preload MCP tools:', error);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [mcpConfig?.enabled, configFingerprint]);
 
     useEffect(() => {
         setIdleTimeoutInputValue(getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
