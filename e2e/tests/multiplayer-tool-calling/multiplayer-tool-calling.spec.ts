@@ -463,8 +463,9 @@ function createProviderTestSuite(provider: ProviderBundle) {
                 await expect(rhs.getByRole('button', { name: 'Share' })).not.toBeVisible();
                 await expect(rhs.getByRole('button', { name: 'Keep private' })).not.toBeVisible();
 
-                // The "Rejected" text should appear in the thread
-                await expect(rhs.getByText('Rejected')).toBeVisible({ timeout: 10000 });
+                // OpenAI can render more than one "Rejected" label in the thread,
+                // so assert on the first status indicator rather than strict text uniqueness.
+                await expect(rhs.getByText('Rejected').first()).toBeVisible({ timeout: 10000 });
 
                 // Verify the post was NOT created in town-square
                 await navigateToChannel(page, mattermost, 'town-square');

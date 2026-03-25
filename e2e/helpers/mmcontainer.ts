@@ -1,7 +1,15 @@
-import {StartedTestContainer, GenericContainer, StartedNetwork, Network, Wait} from "testcontainers";
-import {StartedPostgreSqlContainer, PostgreSqlContainer} from "@testcontainers/postgresql";
+import {File as NodeFile} from 'buffer';
+import type {StartedTestContainer, StartedNetwork} from 'testcontainers';
+import type {StartedPostgreSqlContainer} from '@testcontainers/postgresql';
 import {Client4} from "@mattermost/client";
 import { Client } from 'pg'
+
+if (typeof globalThis.File === 'undefined') {
+    Object.assign(globalThis, {File: NodeFile});
+}
+
+const {GenericContainer, Network, Wait} = require('testcontainers') as typeof import('testcontainers');
+const {PostgreSqlContainer} = require('@testcontainers/postgresql') as typeof import('@testcontainers/postgresql');
 
 const defaultEmail           = "admin@example.com";
 const defaultUsername        = "admin";
