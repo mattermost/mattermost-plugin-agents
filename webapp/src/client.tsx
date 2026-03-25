@@ -403,10 +403,11 @@ export function getPost(postId: string) {
     return Client4.getPost(postId);
 }
 
-export async function doReindexPosts() {
+export async function doReindexPosts(clearIndex = true) {
     const url = `${baseRoute()}/admin/reindex`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
+        body: JSON.stringify({clearIndex}),
     }));
 
     if (response.ok) {
@@ -441,6 +442,40 @@ export async function cancelReindex() {
     const url = `${baseRoute()}/admin/reindex/cancel`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function catchUpIndex() {
+    const url = `${baseRoute()}/admin/reindex/catchup`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function checkIndexHealth() {
+    const url = `${baseRoute()}/admin/reindex/health-check`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
     }));
 
     if (response.ok) {

@@ -17,8 +17,19 @@ type Prompts struct {
 
 const PromptExtension = "tmpl"
 
+// EscapePromptContent replaces angle brackets in user-generated content to prevent
+// injection of fake XML structural elements into prompt templates.
+func EscapePromptContent(s string) string {
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
+}
+
 func NewPrompts(input fs.FS) (*Prompts, error) {
-	templates, err := template.ParseFS(input, "*.tmpl")
+	funcMap := template.FuncMap{
+		"escapeContent": EscapePromptContent,
+	}
+	templates, err := template.New("").Funcs(funcMap).ParseFS(input, "*.tmpl")
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse prompt templates: %w", err)
 	}

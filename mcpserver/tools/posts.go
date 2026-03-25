@@ -38,10 +38,18 @@ type CreatePostAsUserArgs struct {
 	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the post"`
 }
 
-// DMSelfArgs represents arguments for the dm_self tool
-type DMSelfArgs struct {
-	Message     string   `json:"message" jsonschema:"The message content to send to yourself,minLength=1"`
-	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach to the message"`
+// DMArgs represents arguments for the dm tool
+type DMArgs struct {
+	Username    string   `json:"username,omitempty" jsonschema:"Target username. If omitted the message is sent to yourself."`
+	Message     string   `json:"message" jsonschema:"The message content to send,minLength=1"`
+	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach"`
+}
+
+// GroupMessageArgs represents arguments for the group_message tool
+type GroupMessageArgs struct {
+	Usernames   []string `json:"usernames" jsonschema:"Target usernames (must be at least 2)."`
+	Message     string   `json:"message" jsonschema:"The message content to send,minLength=1"`
+	Attachments []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file paths or URLs to attach"`
 }
 
 // getPostTools returns all post-related tools
@@ -54,7 +62,9 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 
 	createPostDesc := fmt.Sprintf("Create a new post in Mattermost. IMPORTANT WORKFLOW: You MUST first call get_channel_info to obtain the channel_id, channel_display_name, and team_display_name. Present this context to the user before posting. Then call this tool with all required parameters. This ensures full transparency about where the message will be posted. Parameters: channel_id (required), message (required), root_id (optional - for replies)%s. Returns created post details including ID and timestamp. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"message\": \"Hello team!\"}", attachmentsParam)
 
-	dmSelfDesc := fmt.Sprintf("Send a direct message to yourself. Use when user requests to send something to themselves (e.g., 'send me this', 'DM me that'). Parameters: message (required)%s. Returns confirmation with message ID. Example: {\"message\": \"Reminder: Follow up on project\"}", attachmentsParam)
+	dmDesc := fmt.Sprintf("Send a direct message to a user. Provide username to specify the recipient. If username is omitted, the message is sent to yourself. This is the DEFAULT way to message people — call it multiple times to message multiple people individually. Only use the group_message tool when the user explicitly asks for a group chat. Parameters: message (required), username (optional)%s. Returns confirmation with message ID. Example: {\"message\": \"Hello!\", \"username\": \"john\"}", attachmentsParam)
+
+	groupMessageDesc := fmt.Sprintf("Send a message to a shared group conversation with 2 or more other users. All participants can see each other's messages. ONLY use this when the user explicitly asks for a group message, group chat, or group conversation. If the user just asks to 'message' or 'send to' multiple people, use the dm tool once per person instead. Parameters: message (required), usernames (at least 2 required)%s. Returns confirmation with message ID. Example: {\"message\": \"Hey team!\", \"usernames\": [\"alice\", \"bob\"]}", attachmentsParam)
 
 	return []MCPTool{
 		{
@@ -70,10 +80,16 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 			Resolver:    p.toolCreatePost,
 		},
 		{
-			Name:        "dm_self",
-			Description: dmSelfDesc,
-			Schema:      NewJSONSchemaForAccessMode[DMSelfArgs](string(p.accessMode)),
-			Resolver:    p.toolDMSelf,
+			Name:        "dm",
+			Description: dmDesc,
+			Schema:      NewJSONSchemaForAccessMode[DMArgs](string(p.accessMode)),
+			Resolver:    p.toolDM,
+		},
+		{
+			Name:        "group_message",
+			Description: groupMessageDesc,
+			Schema:      NewJSONSchemaForAccessMode[GroupMessageArgs](string(p.accessMode)),
+			Resolver:    p.toolGroupMessage,
 		},
 	}
 }
@@ -376,12 +392,12 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 	return fmt.Sprintf("Successfully created post with ID %s as user %s%s", createdPost.Id, user.Username, attachmentMessage), nil
 }
 
-// toolDMSelf implements the dm_self tool
-func (p *MattermostToolProvider) toolDMSelf(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
-	var args DMSelfArgs
+// toolDM implements the dm tool
+func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+	var args DMArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool dm_self: %w", err)
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool dm: %w", err)
 	}
 
 	// Validate required fields
@@ -397,13 +413,28 @@ func (p *MattermostToolProvider) toolDMSelf(mcpContext *MCPToolContext, argsGett
 	ctx := mcpContext.Ctx
 
 	// Get current user information
-	user, _, err := client.GetMe(ctx, "")
+	currentUser, _, err := client.GetMe(ctx, "")
 	if err != nil {
 		return "failed to get current user", fmt.Errorf("error getting current user: %w", err)
 	}
 
-	// Create or get direct channel with self
-	dmChannel, _, err := client.CreateDirectChannel(ctx, user.Id, user.Id)
+	// Resolve target user
+	var targetUser *model.User
+	dmSelf := false
+	username := strings.TrimPrefix(args.Username, "@")
+	if username != "" {
+		targetUser, _, err = client.GetUserByUsername(ctx, username, "")
+		if err != nil {
+			return "failed to get target user", fmt.Errorf("error getting user by username %q: %w", username, err)
+		}
+		dmSelf = targetUser.Id == currentUser.Id
+	} else {
+		targetUser = currentUser
+		dmSelf = true
+	}
+
+	// Create or get direct channel
+	dmChannel, _, err := client.CreateDirectChannel(ctx, currentUser.Id, targetUser.Id)
 	if err != nil {
 		return "failed to create DM channel", fmt.Errorf("error creating direct channel: %w", err)
 	}
@@ -418,9 +449,11 @@ func (p *MattermostToolProvider) toolDMSelf(mcpContext *MCPToolContext, argsGett
 		FileIds:   fileIDs,
 	}
 
-	// Set props to trigger notifications
-	props := map[string]interface{}{
-		"from_webhook": "true",
+	props := make(map[string]interface{})
+
+	// Set from_webhook only when DM'ing yourself (prevents AI auto-response loop)
+	if dmSelf {
+		props["from_webhook"] = "true"
 	}
 
 	// Add AI-generated prop if tracking is enabled
@@ -431,24 +464,116 @@ func (p *MattermostToolProvider) toolDMSelf(mcpContext *MCPToolContext, argsGett
 		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
 			userID = mcpContext.BotUserID
 		} else {
-			// For external servers, use the current authenticated user's ID
-			// GetMe is already called above, so we have the user
-			userID = user.Id
+			userID = currentUser.Id
 		}
 
-		// Add the prop if we have a valid user ID
 		if userID != "" {
-			// Use the string constant as per the Mattermost feature spec
 			props["ai_generated_by"] = userID
 		}
 	}
 
-	post.SetProps(props)
+	if len(props) > 0 {
+		post.SetProps(props)
+	}
 
 	createdPost, _, err := client.CreatePost(ctx, post)
 	if err != nil {
 		return "failed to create DM post", fmt.Errorf("error creating DM post: %w", err)
 	}
 
-	return fmt.Sprintf("Successfully sent DM to yourself with ID: %s%s", createdPost.Id, attachmentMessage), nil
+	if dmSelf {
+		return fmt.Sprintf("Successfully sent DM to yourself with ID: %s%s", createdPost.Id, attachmentMessage), nil
+	}
+	return fmt.Sprintf("Successfully sent DM to @%s with ID: %s%s", targetUser.Username, createdPost.Id, attachmentMessage), nil
+}
+
+// toolGroupMessage implements the group_message tool
+func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+	var args GroupMessageArgs
+	err := argsGetter(&args)
+	if err != nil {
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool group_message: %w", err)
+	}
+
+	if args.Message == "" {
+		return "message is required", fmt.Errorf("message cannot be empty")
+	}
+
+	if mcpContext.Client == nil {
+		return "client not available", fmt.Errorf("client not available in context")
+	}
+	client := mcpContext.Client
+	ctx := mcpContext.Ctx
+
+	currentUser, _, err := client.GetMe(ctx, "")
+	if err != nil {
+		return "failed to get current user", fmt.Errorf("error getting current user: %w", err)
+	}
+
+	// Resolve all targets into a deduplicated map of userID -> username
+	targets := make(map[string]string)
+
+	for _, uname := range args.Usernames {
+		uname = strings.TrimPrefix(uname, "@")
+		resolvedUser, _, resolveErr := client.GetUserByUsername(ctx, uname, "")
+		if resolveErr != nil {
+			return fmt.Sprintf("failed to resolve username %q", uname), fmt.Errorf("error getting user by username %q: %w", uname, resolveErr)
+		}
+		if resolvedUser.Id != currentUser.Id {
+			targets[resolvedUser.Id] = resolvedUser.Username
+		}
+	}
+
+	if len(targets) < 2 {
+		return "group messages require at least 2 other users — for 1:1 DMs use the dm tool instead", fmt.Errorf("need at least 2 target users, got %d", len(targets))
+	}
+
+	// Build member list: targets + current user
+	memberIDs := make([]string, 0, len(targets)+1)
+	for uid := range targets {
+		memberIDs = append(memberIDs, uid)
+	}
+	memberIDs = append(memberIDs, currentUser.Id)
+
+	gmChannel, _, err := client.CreateGroupChannel(ctx, memberIDs)
+	if err != nil {
+		return "failed to create group message channel", fmt.Errorf("error creating group channel: %w", err)
+	}
+
+	fileIDs, attachmentMessage := uploadFilesAndUrlsForLocal(ctx, client, gmChannel.Id, args.Attachments, mcpContext.AccessMode)
+
+	post := &model.Post{
+		ChannelId: gmChannel.Id,
+		Message:   args.Message,
+		FileIds:   fileIDs,
+	}
+
+	if p.trackAIGenerated {
+		var userID string
+		if mcpContext.BotUserID != "" && model.IsValidId(mcpContext.BotUserID) {
+			userID = mcpContext.BotUserID
+		} else {
+			userID = currentUser.Id
+		}
+		if userID != "" {
+			if post.Props == nil {
+				post.Props = make(model.StringInterface)
+			}
+			post.Props["ai_generated_by"] = userID
+		}
+	}
+
+	createdPost, _, err := client.CreatePost(ctx, post)
+	if err != nil {
+		return "failed to create group message post", fmt.Errorf("error creating group message post: %w", err)
+	}
+
+	// Build username list for success message
+	usernames := make([]string, 0, len(targets))
+	for _, uname := range targets {
+		usernames = append(usernames, "@"+uname)
+	}
+
+	return fmt.Sprintf("Successfully sent group message to %s with ID: %s%s",
+		strings.Join(usernames, ", "), createdPost.Id, attachmentMessage), nil
 }

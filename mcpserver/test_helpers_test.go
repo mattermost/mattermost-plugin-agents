@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	mmcontainer "github.com/mattermost/testcontainers-mattermost-go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -33,12 +34,22 @@ type TestSuite struct {
 
 // SetupTestSuite initializes a Mattermost container and MCP server for testing
 func SetupTestSuite(t *testing.T) *TestSuite {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 
-	// Start Mattermost container with PAT enabled
-	container, err := mmcontainer.RunContainer(ctx,
-		mmcontainer.WithLicense(""),
-	)
+	// Start Mattermost container with PAT enabled.
+	// Retry once — the container init (team/user creation via mmctl) can hit transient races.
+	var container *mmcontainer.MattermostContainer
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		container, err = mmcontainer.RunContainer(ctx,
+			mmcontainer.WithLicense(""),
+		)
+		if err == nil {
+			break
+		}
+		t.Logf("RunContainer attempt %d failed: %v", attempt+1, err)
+	}
 	require.NoError(t, err, "Failed to start Mattermost container")
 
 	// Enable personal access tokens in the server config

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
@@ -79,6 +80,10 @@ func (c *fakeMMClient) KVSet(key string, value interface{}) error {
 	return nil
 }
 
+func (c *fakeMMClient) KVSetWithExpiry(key string, value interface{}, _ time.Duration) error {
+	return c.KVSet(key, value)
+}
+
 func (c *fakeMMClient) KVDelete(key string) error {
 	delete(c.kv, key)
 	c.kvDeletes = append(c.kvDeletes, key)
@@ -108,6 +113,10 @@ func (c *fakeMMClient) GetPostsBefore(string, string, int, int) (*model.PostList
 
 func (c *fakeMMClient) DM(string, string, *model.Post) error {
 	return errors.New("not implemented")
+}
+
+func (c *fakeMMClient) GetTeam(string) (*model.Team, error) {
+	return nil, errors.New("not implemented")
 }
 
 func (c *fakeMMClient) GetChannel(channelID string) (*model.Channel, error) {

@@ -10,9 +10,10 @@ interface ReindexConfirmationProps {
     show: boolean;
     onConfirm: () => void;
     onCancel: () => void;
+    embeddingProviderType: string;
 }
 
-export const ReindexConfirmation = ({show, onConfirm, onCancel}: ReindexConfirmationProps) => {
+export const ReindexConfirmation = ({show, onConfirm, onCancel, embeddingProviderType}: ReindexConfirmationProps) => {
     if (!show) {
         return null;
     }
@@ -32,6 +33,9 @@ export const ReindexConfirmation = ({show, onConfirm, onCancel}: ReindexConfirma
                         <li><FormattedMessage defaultMessage='Index all existing posts in the database'/></li>
                         <li><FormattedMessage defaultMessage='Take a significant amount of time for large installations'/></li>
                         <li><FormattedMessage defaultMessage='Increase database load during the reindexing process'/></li>
+                        {(embeddingProviderType === 'openai' || embeddingProviderType === 'openai-compatible') && (
+                            <li><FormattedMessage defaultMessage='Incur API costs from your embedding provider for re-embedding all posts'/></li>
+                        )}
                     </ul>
                 </>
             }

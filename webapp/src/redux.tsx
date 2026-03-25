@@ -1,13 +1,13 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {combineReducers, Store, Action} from 'redux';
+import {combineReducers, Store, UnknownAction} from 'redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {makeCallsPostButtonClickedHandler} from './calls_button';
 import manifest from './manifest';
 
-type WebappStore = Store<GlobalState, Action<Record<string, unknown>>>
+type WebappStore = Store<GlobalState, UnknownAction>
 
 const CallsClickHandler = 'calls_post_button_clicked_handler';
 export const BotsHandler = manifest.id + '_bots';
