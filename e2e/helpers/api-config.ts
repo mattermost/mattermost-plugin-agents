@@ -9,7 +9,7 @@
  */
 
 // Default models for each provider. Update these when bumping model versions.
-export const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6';
+export const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-20250514';
 export const DEFAULT_OPENAI_MODEL = 'gpt-5.2';
 
 /**
@@ -80,6 +80,21 @@ export interface APITestConfig {
     hasAnthropicKey: boolean;
     hasOpenAIKey: boolean;
     shouldRunTests: boolean;
+    requestedProvider: 'anthropic' | 'openai' | null;
+}
+
+function getRequestedProvider(): 'anthropic' | 'openai' | null {
+    const rawProvider = process.env.E2E_PROVIDER?.trim().toLowerCase();
+
+    if (!rawProvider) {
+        return null;
+    }
+
+    if (rawProvider !== 'anthropic' && rawProvider !== 'openai') {
+        throw new Error(`Unsupported E2E_PROVIDER value: ${rawProvider}`);
+    }
+
+    return rawProvider;
 }
 
 /**
@@ -88,11 +103,22 @@ export interface APITestConfig {
 export function getAPIConfig(): APITestConfig {
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
     const openaiKey = process.env.OPENAI_API_KEY;
+    const requestedProvider = getRequestedProvider();
+    const hasAnthropicKey = !!anthropicKey && anthropicKey.length > 0;
+    const hasOpenAIKey = !!openaiKey && openaiKey.length > 0;
+
+    let shouldRunTests = hasAnthropicKey || hasOpenAIKey;
+    if (requestedProvider === 'anthropic') {
+        shouldRunTests = hasAnthropicKey;
+    } else if (requestedProvider === 'openai') {
+        shouldRunTests = hasOpenAIKey;
+    }
 
     return {
-        hasAnthropicKey: !!anthropicKey && anthropicKey.length > 0,
-        hasOpenAIKey: !!openaiKey && openaiKey.length > 0,
-        shouldRunTests: !!(anthropicKey || openaiKey),
+        hasAnthropicKey,
+        hasOpenAIKey,
+        shouldRunTests,
+        requestedProvider,
     };
 }
 
@@ -102,6 +128,14 @@ export function getAPIConfig(): APITestConfig {
 export function getSkipMessage(): string | null {
     const config = getAPIConfig();
     if (!config.shouldRunTests) {
+        if (config.requestedProvider === 'anthropic') {
+            return 'Skipping real API tests: E2E_PROVIDER=anthropic was requested but ANTHROPIC_API_KEY is not configured.';
+        }
+
+        if (config.requestedProvider === 'openai') {
+            return 'Skipping real API tests: E2E_PROVIDER=openai was requested but OPENAI_API_KEY is not configured.';
+        }
+
         return 'Skipping llmbot-post-component tests: No ANTHROPIC_API_KEY or OPENAI_API_KEY found in environment. Set one to run these tests with real APIs.';
     }
     return null;
@@ -119,7 +153,8 @@ export function logAPIConfig(): void {
     }
 
     const providers = getAvailableProviders();
-    console.log('🔴 LLMBot tests using REAL APIs:');
+    const providerScope = config.requestedProvider ? ` (${config.requestedProvider} only)` : '';
+    console.log(`🔴 LLMBot tests using REAL APIs${providerScope}:`);
     for (const p of providers) {
         console.log(`   - ${p.name}: ${p.service.defaultModel}`);
     }
@@ -240,7 +275,7 @@ export function getAvailableProviders(): ProviderBundle[] {
     const config = getAPIConfig();
     const providers: ProviderBundle[] = [];
 
-    if (config.hasAnthropicKey) {
+    if (config.hasAnthropicKey && (config.requestedProvider === null || config.requestedProvider === 'anthropic')) {
         const service = createAnthropicService();
         const bot = createBotConfig(service);
         providers.push({
@@ -250,7 +285,7 @@ export function getAvailableProviders(): ProviderBundle[] {
         });
     }
 
-    if (config.hasOpenAIKey) {
+    if (config.hasOpenAIKey && (config.requestedProvider === null || config.requestedProvider === 'openai')) {
         const service = createOpenAIService();
         const bot = createBotConfig(service);
         providers.push({

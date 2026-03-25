@@ -9,9 +9,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost-plugin-ai/search"
 )
 
 const (
@@ -45,7 +44,7 @@ func (p *MMToolProvider) toolSearchServer(llmContext *llm.Context, argsGetter ll
 
 	// Perform the search
 	ctx := context.Background()
-	searchResults, err := p.search.Search(ctx, args.Term, embeddings.SearchOptions{
+	searchResults, err := p.search.Search(ctx, args.Term, search.Options{
 		Limit:  10,
 		UserID: llmContext.RequestingUser.Id,
 	})
@@ -54,13 +53,13 @@ func (p *MMToolProvider) toolSearchServer(llmContext *llm.Context, argsGetter ll
 	}
 
 	// Format the results
-	formatted := p.formatSearchResults(searchResults, llmContext.RequestingUser.Id)
+	formatted := p.formatSearchResults(searchResults)
 
 	return formatted, nil
 }
 
 // formatSearchResults formats search results into a readable string
-func (p *MMToolProvider) formatSearchResults(results []embeddings.SearchResult, requestingUserID string) string {
+func (p *MMToolProvider) formatSearchResults(results []search.RAGResult) string {
 	if len(results) == 0 {
 		return "No relevant messages found."
 	}
@@ -69,36 +68,22 @@ func (p *MMToolProvider) formatSearchResults(results []embeddings.SearchResult, 
 	builder.WriteString("Found the following relevant messages:\n\n")
 
 	for i, result := range results {
-		// Get channel name
-		channel, err := p.pluginAPI.GetChannel(result.Document.ChannelID)
-		channelName := "Unknown Channel"
-		if err == nil {
-			switch channel.Type {
-			case model.ChannelTypeDirect:
-				channelName = "Direct Message"
-			case model.ChannelTypeGroup:
-				channelName = "Group Message"
-			default:
-				channelName = channel.DisplayName
-				if channelName == "" {
-					channelName = channel.Name
-				}
-			}
+		// Format the result (channel name and username are already enriched)
+		channelName := result.ChannelName
+		if channelName == "" {
+			channelName = "Unknown Channel"
 		}
 
-		// Get username
-		user, err := p.pluginAPI.GetUser(result.Document.UserID)
-		username := "Unknown User"
-		if err == nil {
-			username = user.Username
+		username := result.Username
+		if username == "" {
+			username = "Unknown User"
 		}
 
-		// Format the result
 		builder.WriteString(fmt.Sprintf("%d. **%s** in ~%s (Score: %.2f)\n",
 			i+1, username, channelName, result.Score))
 
 		// Add message content (truncate if too long)
-		message := result.Document.Content
+		message := result.Content
 		if len(message) > 500 {
 			message = message[:497] + "..."
 		}

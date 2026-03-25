@@ -18,6 +18,7 @@ const getTestIgnorePatterns = (): string[] => {
   if (process.env.EXCLUDE_REAL_API_TESTS) {
     patterns.push('**/llmbot-post-component/**');
     patterns.push('**/backend-verification/real-api.spec.ts');
+    patterns.push('**/system-console/live-service-full-flow.spec.ts');
   }
 
   return patterns;
@@ -32,8 +33,8 @@ export default defineConfig({
 
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
-  /* Retry on CI only */
-  retries: process.env.CI ? 1 : 0,
+  /* Disable retries so CI surfaces flaky tests immediately. */
+  retries: 0,
   /* Opt out of parallel tests on CI. */
   workers: process.env.CI ? 1 : 4,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */

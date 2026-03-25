@@ -70,7 +70,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 			bot,
 			user,
 			channel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot),
+			c.contextBuilder.WithLLMContextNoTools(),
 		)
 
 		analyzer := threads.New(bot.LLM(), c.prompts, c.mmClient)
@@ -119,7 +119,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 			bot,
 			user,
 			originalFileChannel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot),
+			c.contextBuilder.WithLLMContextNoTools(),
 		)
 		var summaryErr error
 		result, summaryErr = c.meetingsService.SummarizeTranscription(ctx, bot, transcription, context)
@@ -152,7 +152,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 			bot,
 			user,
 			channel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot),
+			c.contextBuilder.WithLLMContextNoTools(),
 		)
 		var summaryErr error
 		result, summaryErr = c.meetingsService.SummarizeTranscription(ctx, bot, transcription, context)

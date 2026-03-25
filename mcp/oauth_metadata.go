@@ -16,6 +16,7 @@ import (
 type ProtectedResourceMetadata struct {
 	Resource             string   `json:"resource"`
 	AuthorizationServers []string `json:"authorization_servers"`
+	ScopesSupported      []string `json:"scopes_supported,omitempty"`
 }
 
 // AuthorizationServerMetadata represents the OAuth 2.0 Authorization Server Metadata (RFC 8414)

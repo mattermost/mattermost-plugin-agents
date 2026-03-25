@@ -18,6 +18,22 @@ export interface SystemConsolePluginConfig {
     allowUnsafeLinks?: boolean;
     services?: any[];
     bots?: any[];
+    mcp?: {
+        enabled?: boolean;
+        enablePluginServer?: boolean;
+        idleTimeoutMinutes?: number;
+        servers?: MCPServerConfig[] | null;
+        embeddedServer?: {
+            enabled?: boolean;
+        };
+    };
+}
+
+export interface MCPServerConfig {
+    name?: string;
+    enabled?: boolean;
+    baseURL?: string;
+    headers?: Record<string, string>;
 }
 
 const adminUsername = 'sysadmin';
@@ -72,6 +88,7 @@ async function setupAdminUser(mattermost: MattermostContainer): Promise<void> {
  */
 export async function RunSystemConsoleContainer(config: SystemConsolePluginConfig): Promise<MattermostContainer> {
     const filename = findPluginFile();
+    const mcpServers = config.mcp?.servers === undefined ? [] : config.mcp.servers;
 
     const pluginConfig = {
         config: {
@@ -85,6 +102,15 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
             allowUnsafeLinks: config.allowUnsafeLinks,
             services: config.services ?? [],
             bots: config.bots ?? [],
+            mcp: {
+                enabled: config.mcp?.enabled ?? false,
+                enablePluginServer: config.mcp?.enablePluginServer ?? false,
+                idleTimeoutMinutes: config.mcp?.idleTimeoutMinutes ?? 30,
+                servers: mcpServers,
+                embeddedServer: {
+                    enabled: config.mcp?.embeddedServer?.enabled ?? true,
+                },
+            },
         }
     };
 

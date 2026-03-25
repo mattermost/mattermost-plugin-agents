@@ -12,6 +12,7 @@ The Mattermost Agents plugin currently supports these LLM providers:
 - AWS Bedrock
 - Cohere
 - Mistral
+- Scale AI
 - Azure OpenAI
 
 ## General Configuration Concepts
@@ -116,6 +117,29 @@ Obtain a [Mistral API key](https://console.mistral.ai/api-keys/), then select **
 |---------|----------|-------------|
 | **API Key** | Yes | Your Mistral API key |
 | **Default Model** | Yes | The model to use by default (see [Mistral's model documentation](https://docs.mistral.ai/getting-started/models/)) |
+
+## Scale AI
+
+### Overview
+
+Scale AI (including ScaleGov) provides access to LLM models through an OpenAI-compatible API with custom authentication. Scale uses `x-api-key` and `x-selected-account-id` headers for authentication instead of the standard Authorization header.
+
+### Authentication
+
+Obtain your Scale AI API key and account ID from your Scale AI or ScaleGov dashboard, then select **Scale AI** in the **Service** dropdown. Enter your API key and the API URL for your Scale endpoint (e.g., `https://sgp-api.scalegov.com/v5`). If using ScaleGov, enter your account ID in the **Account ID** field.
+
+### Configuration Options
+
+| Setting | Required | Description |
+|---------|----------|-------------|
+| **API Key** | Yes | Your Scale AI API key (sent as `x-api-key` header) |
+| **API URL** | Yes | Your Scale API endpoint (e.g., `https://sgp-api.scalegov.com/v5`) |
+| **Account ID** | No | Your Scale account ID (sent as `x-selected-account-id` header, required for ScaleGov) |
+| **Default Model** | Yes | The model to use by default in `vendor/model-name` format (e.g., `openai/gpt-4o`) |
+
+### Models
+
+Models use the `vendor/model-name` format (e.g., `openai/gpt-4o`). For the full list of available models, see the [Scale AI documentation](https://scale.com/docs).
 
 ## Azure OpenAI
 

@@ -19,6 +19,7 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 		  "allowPrivateChannels": true,
 		  "disableFunctionCalls": false,
 		  "enableUserRestrictions": false,
+		  "allowUnsafeLinks": true,
 		  "defaultBotName": "mock",
 		  "mcp": {
 			  "embeddedServer": {

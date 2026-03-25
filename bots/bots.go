@@ -368,6 +368,9 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	result = llm.NewLLMTruncationWrapper(result)
 
 	// Token Usage Logging
+	// NOTE: This wrapper converts ChatCompletionNoStream into a streaming call
+	// internally, so any wrapper that needs to intercept ChatCompletionNoStream
+	// must be placed outside (after) this one.
 	if b.tokenUsageSinks != nil || b.metrics != nil {
 		result = llm.NewTokenUsageLoggingWrapper(
 			result,
@@ -376,6 +379,9 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 			b.metrics,
 		)
 	}
+
+	// Structured output fallback
+	result = llm.NewStructuredOutputFallbackWrapper(result, botConfig.StructuredOutputEnabled)
 
 	return result, nil
 }
@@ -542,4 +548,18 @@ func (b *MMBots) SetBotsForTesting(bots []*Bot) {
 	b.botsLock.Lock()
 	defer b.botsLock.Unlock()
 	b.bots = bots
+}
+
+// GetAllBotUserIDs returns a list of all bot user IDs
+func (b *MMBots) GetAllBotUserIDs() []string {
+	b.botsLock.RLock()
+	defer b.botsLock.RUnlock()
+
+	ids := make([]string, 0, len(b.bots))
+	for _, bot := range b.bots {
+		if bot.mmBot != nil {
+			ids = append(ids, bot.mmBot.UserId)
+		}
+	}
+	return ids
 }

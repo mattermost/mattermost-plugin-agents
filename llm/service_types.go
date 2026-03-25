@@ -11,4 +11,5 @@ const (
 	ServiceTypeCohere           = "cohere"
 	ServiceTypeBedrock          = "bedrock"
 	ServiceTypeMistral          = "mistral"
+	ServiceTypeScale            = "scale"
 )

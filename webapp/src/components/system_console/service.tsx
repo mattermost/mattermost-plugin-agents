@@ -3,7 +3,7 @@
 
 import React, {useState, useEffect} from 'react';
 import styled from 'styled-components';
-import {useIntl} from 'react-intl';
+import {useIntl, type IntlShape} from 'react-intl';
 
 import {TrashCanOutlineIcon, ChevronDownIcon, ChevronUpIcon} from '@mattermost/compass-icons/components';
 
@@ -44,7 +44,14 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['asage', 'asksage (Experimental)'],
 ]);
 
-function serviceTypeToDisplayName(serviceType: string): string {
+function scaleAIToDisplayName(intl: IntlShape): string {
+    return intl.formatMessage({defaultMessage: 'Scale AI'});
+}
+
+function serviceTypeToDisplayName(intl: IntlShape, serviceType: string): string {
+    if (serviceType === 'scale') {
+        return scaleAIToDisplayName(intl);
+    }
     return mapServiceTypeToDisplayName.get(serviceType) || serviceType;
 }
 
@@ -61,21 +68,19 @@ type ServiceFieldsProps = {
 const ServiceFields = (props: ServiceFieldsProps) => {
     const type = props.service.type;
     const intl = useIntl();
-    const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral';
+    const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale';
     const isCohere = type === 'cohere';
     const isMistral = type === 'mistral';
+    const isScale = type === 'scale';
 
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
 
-    // Determine if we should support model fetching for this service type
     const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible';
 
-    // Fetch models when API key or URL changes for supported service types
     useEffect(() => {
         // For openaicompatible, API key is optional if there's an API URL
-        // For other types, API key is required
         const hasRequiredCredentials = type === 'openaicompatible' ? (props.service.apiKey || props.service.apiURL) : props.service.apiKey;
 
         if (!supportsModelFetching || !hasRequiredCredentials) {
@@ -146,13 +151,15 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                 <SelectionItemOption value='azure'>{'Azure'}</SelectionItemOption>
                 <SelectionItemOption value='cohere'>{'Cohere'}</SelectionItemOption>
                 <SelectionItemOption value='mistral'>{'Mistral'}</SelectionItemOption>
+                <SelectionItemOption value='scale'>{scaleAIToDisplayName(intl)}</SelectionItemOption>
                 <SelectionItemOption value='asage'>{'asksage (Experimental)'}</SelectionItemOption>
             </SelectionItem>
-            {(type === 'openaicompatible' || type === 'azure' || type === 'asage') && (
+            {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale') && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'API URL'})}
                     value={props.service.apiURL}
                     onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
+                    helptext={isScale ? intl.formatMessage({defaultMessage: 'Scale API endpoint (e.g., https://sgp-api.scalegov.com/v5)'}) : undefined} // eslint-disable-line no-undefined
                 />
             )}
             {type === 'bedrock' && (
@@ -196,17 +203,20 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                 <>
                     {!isCohere && !isMistral && (
                         <TextItem
-                            label={intl.formatMessage({defaultMessage: 'Organization ID'})}
+                            label={isScale ? intl.formatMessage({defaultMessage: 'Account ID'}) : intl.formatMessage({defaultMessage: 'Organization ID'})}
                             value={props.service.orgId}
                             onChange={(e) => props.onChange({...props.service, orgId: e.target.value})}
+                            helptext={isScale ? intl.formatMessage({defaultMessage: 'Scale Account ID (x-selected-account-id header, required for ScaleGov)'}) : undefined} // eslint-disable-line no-undefined
                         />
                     )}
-                    <BooleanItem
-                        label={intl.formatMessage({defaultMessage: 'Send User ID'})}
-                        value={props.service.sendUserId}
-                        onChange={(to: boolean) => props.onChange({...props.service, sendUserId: to})}
-                        helpText={intl.formatMessage({defaultMessage: 'Sends the Mattermost user ID to the upstream LLM.'})}
-                    />
+                    {!isScale && (
+                        <BooleanItem
+                            label={intl.formatMessage({defaultMessage: 'Send User ID'})}
+                            value={props.service.sendUserId}
+                            onChange={(to: boolean) => props.onChange({...props.service, sendUserId: to})}
+                            helpText={intl.formatMessage({defaultMessage: 'Sends the Mattermost user ID to the upstream LLM.'})}
+                        />
+                    )}
                     {(type === 'openai' || type === 'openaicompatible' || type === 'azure') && (
                         <BooleanItem
                             label={intl.formatMessage({defaultMessage: 'Use Responses API'})}
@@ -217,7 +227,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     )}
                 </>
             )}
-            {supportsModelFetching && availableModels.length > 0 ? (
+            {supportsModelFetching && availableModels.length > 0 && (
                 <ComboboxItem
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
@@ -227,12 +237,13 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     helptext={intl.formatMessage({defaultMessage: 'Select from the list or type a custom model name'})}
                     isClearable={false}
                 />
-            ) : (
+            )}
+            {!(supportsModelFetching && availableModels.length > 0) && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
                     onChange={(e) => props.onChange({...props.service, defaultModel: e.target.value})}
-                    helptext={loadModelsHelpText}
+                    helptext={loadModelsHelpText || (isScale ? intl.formatMessage({defaultMessage: 'Use vendor/model-name format (e.g., openai/gpt-4o). See Scale AI documentation for available models.'}) : '')}
                 />
             )}
             <TextItem
@@ -279,6 +290,7 @@ type Props = {
 
 const Service = (props: Props) => {
     const [open, setOpen] = useState(false);
+    const intl = useIntl();
 
     return (
         <ServiceContainer>
@@ -286,10 +298,10 @@ const Service = (props: Props) => {
                 <IconAI/>
                 <Title>
                     <NameText>
-                        {props.service.name || serviceTypeToDisplayName(props.service.type)}
+                        {props.service.name || serviceTypeToDisplayName(intl, props.service.type)}
                     </NameText>
                     <VerticalDivider/>
-                    <ServiceTypeText>{serviceTypeToDisplayName(props.service.type)}</ServiceTypeText>
+                    <ServiceTypeText>{serviceTypeToDisplayName(intl, props.service.type)}</ServiceTypeText>
                     {props.service.defaultModel && (
                         <>
                             <VerticalDivider/>

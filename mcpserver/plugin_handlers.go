@@ -6,6 +6,7 @@ package mcpserver
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
@@ -25,7 +26,7 @@ type PluginMCPHandlers struct {
 
 // NewPluginMCPHandlers creates MCP handlers for use within a Mattermost plugin
 // The handlers expect requests to have an Authorization Bearer token injected by the plugin middleware
-func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHandlers, error) {
+func NewPluginMCPHandlers(siteURL, internalURL string, logger loggerlib.Logger) (*PluginMCPHandlers, error) {
 	if siteURL == "" {
 		return nil, fmt.Errorf("site URL cannot be empty")
 	}
@@ -40,8 +41,8 @@ func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHa
 
 	// Create Session authentication provider (validates session IDs with token resolver)
 	authProvider := auth.NewSessionAuthenticationProvider(
-		siteURL, // External server URL
-		"",      // Internal server URL (use external)
+		siteURL,     // External server URL
+		internalURL, // Internal server URL
 		logger,
 	)
 
@@ -59,10 +60,14 @@ func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHa
 	// Create server config for tool provider
 	config := BaseConfig{
 		MMServerURL:         siteURL,
-		MMInternalServerURL: "",
+		MMInternalServerURL: internalURL,
 		DevMode:             false,
 		TrackAIGenerated:    &trackAIGenerated,
 	}
+
+	// Create HTTP search service for callback to plugin API
+	pluginURL := strings.TrimRight(siteURL, "/") + "/plugins/mattermost-ai"
+	searchService := tools.NewHTTPSemanticSearchService(pluginURL)
 
 	// Register tools with remote access mode
 	toolProvider := tools.NewMattermostToolProvider(
@@ -70,13 +75,14 @@ func NewPluginMCPHandlers(siteURL string, logger loggerlib.Logger) (*PluginMCPHa
 		logger,
 		config,
 		tools.AccessModeRemote,
+		searchService,
 	)
 	toolProvider.ProvideTools(mcpServer)
 
 	// Create streamable HTTP handler for modern MCP communication
 	streamableHandler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		return mcpServer
-	}, nil)
+	}, &mcp.StreamableHTTPOptions{Stateless: true})
 
 	// Create OAuth metadata handler using shared implementation
 	resourceURL := fmt.Sprintf("%s/plugins/mattermost-ai/mcp-server", siteURL)

@@ -4,7 +4,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -92,7 +91,7 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	var team *model.Team
 
@@ -193,7 +192,7 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	// Get team members
 	members, _, err := client.GetTeamMembers(ctx, args.TeamID, args.Page, args.Limit, "")
@@ -270,7 +269,7 @@ func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, args
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	// Create the team
 	team := &model.Team{
@@ -331,7 +330,7 @@ func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, a
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	// Add user to team
 	_, _, err = client.AddTeamMember(ctx, args.TeamID, args.UserID)

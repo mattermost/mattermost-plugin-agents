@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/go-shiori/go-readability"
@@ -864,13 +865,13 @@ func buildWebSearchAnnotationsAndCleanText(message string, results []WebSearchRe
 	annotations := []llm.Annotation{}
 	var cleanedMessage strings.Builder
 	pos := 0
-	runeIndex := 0
+	utf16Index := 0
 
 	for pos < len(message) {
 		// Look for "!!CITE" sequence
 		if pos+6 <= len(message) && message[pos:pos+6] == "!!CITE" {
 			markerStartPos := pos
-			markerStartRuneIndex := runeIndex
+			markerStartUTF16Index := utf16Index
 
 			// Move past "!!CITE" (6 bytes, 6 runes since all ASCII)
 			pos += 6
@@ -890,7 +891,7 @@ func buildWebSearchAnnotationsAndCleanText(message string, results []WebSearchRe
 			if numBuilder.Len() == 0 {
 				// No number found, include in cleaned text and continue
 				cleanedMessage.WriteString(message[markerStartPos:digitCursor])
-				runeIndex += utf8.RuneCountInString(message[markerStartPos:digitCursor])
+				utf16Index += digitCursor - markerStartPos
 				pos = digitCursor
 				continue
 			}
@@ -905,8 +906,8 @@ func buildWebSearchAnnotationsAndCleanText(message string, results []WebSearchRe
 						// Found a valid citation - create annotation and DON'T include marker in cleaned text
 						annotations = append(annotations, llm.Annotation{
 							Type:       llm.AnnotationTypeURLCitation,
-							StartIndex: markerStartRuneIndex,
-							EndIndex:   markerStartRuneIndex, // Zero-width annotation - frontend will insert marker
+							StartIndex: markerStartUTF16Index,
+							EndIndex:   markerStartUTF16Index, // Zero-width annotation - frontend will insert marker
 							URL:        res.URL,
 							Title:      res.Title,
 							CitedText:  res.Snippet,
@@ -920,14 +921,14 @@ func buildWebSearchAnnotationsAndCleanText(message string, results []WebSearchRe
 
 				// Not a valid citation, include in cleaned text
 				cleanedMessage.WriteString(message[markerStartPos:nextPos])
-				runeIndex += utf8.RuneCountInString(message[markerStartPos:nextPos])
+				utf16Index += nextPos - markerStartPos
 				pos = nextPos
 				continue
 			}
 
 			// Didn't find closing "!!", include in cleaned text
 			cleanedMessage.WriteString(message[markerStartPos:digitCursor])
-			runeIndex += utf8.RuneCountInString(message[markerStartPos:digitCursor])
+			utf16Index += digitCursor - markerStartPos
 			pos = digitCursor
 			continue
 		}
@@ -936,7 +937,11 @@ func buildWebSearchAnnotationsAndCleanText(message string, results []WebSearchRe
 		r, size := utf8.DecodeRuneInString(message[pos:])
 		cleanedMessage.WriteRune(r)
 		pos += size
-		runeIndex++
+		n := utf16.RuneLen(r)
+		if n < 0 {
+			n = 1
+		}
+		utf16Index += n
 	}
 
 	return annotations, cleanedMessage.String()
