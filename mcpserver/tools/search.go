@@ -207,7 +207,7 @@ func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, clie
 			continue
 		}
 
-		channel, _, chErr := client.GetChannel(ctx, r.ChannelID, "")
+		channel, _, chErr := client.GetChannel(ctx, r.ChannelID)
 		if chErr == nil && channel.TeamId != "" {
 			team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
 			if teamErr == nil {
@@ -249,7 +249,7 @@ func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, clien
 	userCache := make(map[string]*model.User)
 
 	if args.ChannelID != "" {
-		channel, _, chErr := client.GetChannel(ctx, args.ChannelID, "")
+		channel, _, chErr := client.GetChannel(ctx, args.ChannelID)
 		if chErr != nil {
 			return nil, fmt.Errorf("error fetching channel %s: %w", args.ChannelID, chErr)
 		}
@@ -298,7 +298,7 @@ func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, clien
 
 	for _, post := range posts {
 		if _, exists := channelCache[post.ChannelId]; !exists {
-			channel, _, chErr := client.GetChannel(ctx, post.ChannelId, "")
+			channel, _, chErr := client.GetChannel(ctx, post.ChannelId)
 			if chErr == nil {
 				channelCache[post.ChannelId] = channel
 			} else {
