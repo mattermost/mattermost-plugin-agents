@@ -20,6 +20,7 @@ import {
 const config = getAPIConfig();
 const skipMessage =
     'Skipping ask-policy tests: No ANTHROPIC_API_KEY or OPENAI_API_KEY found in environment.';
+const REAL_API_SETUP_TIMEOUT_MS = 180000;
 
 const providers = config.shouldRunTests ? getAvailableProviders() : [];
 
@@ -28,6 +29,7 @@ for (const provider of providers) {
         let mattermost: MattermostContainer;
 
         test.beforeAll(async () => {
+            test.setTimeout(REAL_API_SETUP_TIMEOUT_MS);
             mattermost = await RunRealAPIContainer({
                 service: provider.service,
                 bot: provider.bot,
@@ -35,7 +37,9 @@ for (const provider of providers) {
         });
 
         test.afterAll(async () => {
-            await mattermost.stop();
+            if (mattermost) {
+                await mattermost.stop();
+            }
         });
 
         test('ask policy tool shows pending approval in DM', async ({ page }) => {
