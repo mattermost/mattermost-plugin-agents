@@ -142,7 +142,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                                 </OAuthDescription>
                             </div>
                             <OAuthButton
-                                onClick={() => window.open(server.oauthURL, '_blank')}
+                                onClick={() => window.open(server.oauthURL, '_blank', 'noopener,noreferrer')}
                             >
                                 <FormattedMessage defaultMessage='Connect Account'/>
                             </OAuthButton>

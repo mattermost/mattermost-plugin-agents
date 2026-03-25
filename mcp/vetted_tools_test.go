@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -58,6 +59,11 @@ func TestIsVettedHost(t *testing.T) {
 		{
 			name:    "partial host substring does not match",
 			baseURL: "https://evil-githubcopilot.com/mcp",
+			want:    false,
+		},
+		{
+			name:    "typosquat host does not match vetted Atlassian pattern",
+			baseURL: "https://mcp.atlassian.com.evil.com/mcp",
 			want:    false,
 		},
 		{
@@ -155,7 +161,11 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			require.Len(t, got, tt.wantCount)
 			for _, cfg := range got {
 				require.True(t, cfg.Enabled)
-				require.Equal(t, ToolPolicyAutoRun, cfg.Policy)
+				if strings.Contains(tt.baseURL, "api.githubcopilot.com") {
+					require.True(t, cfg.Policy == ToolPolicyAutoRun || cfg.Policy == ToolPolicyAsk)
+				} else {
+					require.Equal(t, ToolPolicyAutoRun, cfg.Policy)
+				}
 				require.NotEmpty(t, cfg.Name)
 			}
 		})
@@ -174,6 +184,9 @@ func TestSeedVettedToolConfigsSpotChecks(t *testing.T) {
 		configs := SeedVettedToolConfigs("https://api.githubcopilot.com/mcp/")
 		requireToolConfig(t, configs, "get_me", ToolPolicyAutoRun, true)
 		requireToolConfig(t, configs, "pull_request_read", ToolPolicyAutoRun, true)
+		requireToolConfig(t, configs, "get_code_scanning_alert", ToolPolicyAsk, true)
+		requireToolConfig(t, configs, "list_repository_security_advisories", ToolPolicyAsk, true)
+		requireToolConfig(t, configs, "get_global_security_advisory", ToolPolicyAutoRun, true)
 		requireNoToolConfig(t, configs, "create_repository")
 	})
 

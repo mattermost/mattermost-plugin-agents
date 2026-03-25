@@ -11,7 +11,7 @@ import {getMCPTools, clearMCPToolsCache} from '../../client';
 
 import {MCPConfig, MCPServerConfig} from './mcp_servers';
 import MCPServerToolRow from './mcp_server_tool_row';
-import {seedVettedToolConfigs} from './vetted_tool_configs';
+import {EMBEDDED_MATTERMOST_BASE_URL, seedVettedToolConfigs} from './vetted_tool_configs';
 
 // Type definitions matching the backend API response
 export type MCPToolInfo = {
@@ -125,7 +125,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
         // Seed embedded server
         const embeddedCfg = updatedConfig.embeddedServer;
         if (embeddedCfg.enabled) {
-            const seeded = seedVettedToolConfigs('embedded://mattermost');
+            const seeded = seedVettedToolConfigs(EMBEDDED_MATTERMOST_BASE_URL);
             if (seeded) {
                 const existing = embeddedCfg.tool_configs || [];
                 const existingNames = new Set(existing.map((tc) => tc.name));
@@ -150,7 +150,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
     const serversWithErrors = toolsData?.servers.filter((server) => server.error).length || 0;
 
     // The embedded server uses this key as its origin/URL
-    const embeddedClientKey = 'embedded://mattermost';
+    const embeddedClientKey = EMBEDDED_MATTERMOST_BASE_URL;
 
     // Find the matching ServerConfig for a discovered server
     const findServerConfig = (server: MCPServerInfo): MCPServerConfig | null => {
