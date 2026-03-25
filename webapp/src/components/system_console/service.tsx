@@ -154,7 +154,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
                     helptext={type === 'openaicompatible' ?
                         intl.formatMessage({defaultMessage: 'Endpoint for your OpenAI-compatible API (for example http://localhost:11434/v1 for Ollama).'}) :
-                        undefined}
+                        ''} // eslint-disable-line no-undefined
                 />
             )}
             {isBedrock && (
