@@ -1,4 +1,4 @@
-module github.com/mattermost/mattermost-plugin-ai
+module github.com/mattermost/mattermost-plugin-agents
 
 go 1.26.1
 

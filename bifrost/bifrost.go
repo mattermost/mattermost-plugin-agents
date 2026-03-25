@@ -21,7 +21,7 @@ import (
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 const (

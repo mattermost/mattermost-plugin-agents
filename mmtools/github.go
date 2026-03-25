@@ -13,12 +13,12 @@ import (
 	"regexp"
 
 	"github.com/google/go-github/v41/github"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 type GetGithubIssueArgs struct {
 	RepoOwner string `jsonschema_description:"The owner of the repository to get issues from. Example: 'mattermost'"`
-	RepoName  string `jsonschema_description:"The name of the repository to get issues from. Example: 'mattermost-plugin-ai'"`
+	RepoName  string `jsonschema_description:"The name of the repository to get issues from. Example: 'mattermost-plugin-agents'"`
 	Number    int    `jsonschema_description:"The issue number to get. Example: '1'"`
 }
 

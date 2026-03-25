@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
 )
 
 // TestMCPServerCreation tests basic MCP server creation and startup

@@ -11,8 +11,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
-	"github.com/mattermost/mattermost-plugin-ai/search"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/search"
 )
 
 // HTTPSemanticSearchService provides semantic search by calling back to the plugin API.

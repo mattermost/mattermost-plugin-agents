@@ -9,11 +9,11 @@ import (
 	"net/http"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/mattermost/mattermost-plugin-ai/bifrost"
-	"github.com/mattermost/mattermost-plugin-ai/chunking"
-	"github.com/mattermost/mattermost-plugin-ai/embeddings"
-	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/postgres"
+	"github.com/mattermost/mattermost-plugin-agents/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/postgres"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 

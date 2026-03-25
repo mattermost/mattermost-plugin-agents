@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/andygrunwald/go-jira"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 type GetJiraIssueArgs struct {
