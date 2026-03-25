@@ -318,6 +318,30 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
+      - name: Pre-pull plugin testcontainer images
+        run: |
+          pull_with_retry() {
+            local image="$1"
+            local attempts=4
+
+            for attempt in $(seq 1 "${attempts}"); do
+              if docker pull "${image}"; then
+                return 0
+              fi
+
+              if [[ "${attempt}" -eq "${attempts}" ]]; then
+                echo "Failed to pull ${image} after ${attempts} attempts" >&2
+                return 1
+              fi
+
+              sleep $((attempt * 4))
+            done
+          }
+
+          pull_with_retry testcontainers/ryuk:0.12.0
+          pull_with_retry docker.io/postgres:15.2-alpine
+          pull_with_retry mattermost/mattermost-enterprise-edition:release-9.6
+
       - name: Run tests
         env:
           PG_ROOT_DSN: "postgres://mmuser:mostest@localhost:5432/postgres?sslmode=disable"
