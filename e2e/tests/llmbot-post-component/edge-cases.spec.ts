@@ -55,6 +55,7 @@ async function setupTestPage(page, mattermost, provider: ProviderBundle) {
 function createProviderTestSuite(provider: ProviderBundle) {
     test.describe(`Edge Cases - ${provider.name}`, () => {
         test.skip(provider.service.type === 'openaicompatible', 'Skipping OpenAI reasoning tests due to flaky upstream reasoning events.');
+        test.describe.configure({timeout: 420000});
 
         let mattermost: MattermostContainer;
 

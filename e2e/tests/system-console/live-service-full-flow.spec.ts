@@ -359,6 +359,8 @@ function isPersistedModelMatch(cardText: string, selectedModel: string): boolean
 }
 
 test.describe.serial('System Console Real Live Service Full Flow', () => {
+    test.describe.configure({timeout: 180000});
+
     test.beforeAll(async () => {
         if (!shouldRunProvider) {
             return;

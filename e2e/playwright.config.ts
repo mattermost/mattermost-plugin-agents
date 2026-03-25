@@ -42,8 +42,8 @@ export default defineConfig({
     ['html'],
     ['list']
   ],
-  /* Global timeout for tests */
-  timeout: 60000,
+  /* CI setup bootstraps multiple containers in beforeAll hooks. */
+  timeout: process.env.CI ? 120000 : 60000,
   /* Global setup and teardown */
   globalSetup: require.resolve('./global-setup'),
   globalTeardown: require.resolve('./global-teardown'),

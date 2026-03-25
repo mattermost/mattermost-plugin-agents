@@ -9,6 +9,7 @@ const defaultPassword        = "admin";
 const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
 const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:11.5.1";
+const shouldAlwaysPullImages = process.env.E2E_ALWAYS_PULL_IMAGES === "true";
 
 // MattermostContainer represents the mattermost container type used in the module
 export default class MattermostContainer {
@@ -198,7 +199,7 @@ export default class MattermostContainer {
         }
 
         this.container = await new GenericContainer(image)
-            .withPullPolicy(PullPolicy.alwaysPull())
+            .withPullPolicy(shouldAlwaysPullImages ? PullPolicy.alwaysPull() : PullPolicy.defaultPolicy())
             .withEnvironment(this.envs)
             .withExposedPorts(8065)
             .withNetwork(this.network)

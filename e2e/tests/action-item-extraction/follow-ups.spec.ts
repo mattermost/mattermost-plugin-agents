@@ -48,8 +48,12 @@ test.beforeEach(async () => {
 });
 
 test.afterAll(async () => {
-    await openAIMock.stop();
-    await mattermost.stop();
+    if (openAIMock) {
+        await openAIMock.stop();
+    }
+    if (mattermost) {
+        await mattermost.stop();
+    }
 });
 
 async function setupTestPage(page) {
