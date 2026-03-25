@@ -99,6 +99,39 @@ export class OpenAIMockContainer {
 		}
 	}
 
+	/**
+	 * Register multiple Smocker mocks in one request (replaces all mocks, same as addMock).
+	 * Use this when sequential completions need different responses (e.g. tool call then text).
+	 */
+	addMocks = async (bodies: any[], attempt = 0): Promise<Response> => {
+		const maxAttempts = 5;
+
+		try {
+			const response = await fetch(`http://localhost:${this.container.getMappedPort(8081)}/mocks?reset=true`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(bodies),
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to register mocks: ${response.status} ${response.statusText}`);
+			}
+
+			return response;
+		} catch (error) {
+			if (attempt >= maxAttempts - 1) {
+				throw error;
+			}
+
+			const backoffMs = Math.min(2000, 250 * Math.pow(2, attempt));
+			await new Promise(resolve => setTimeout(resolve, backoffMs));
+
+			return this.addMocks(bodies, attempt + 1);
+		}
+	}
+
 	addCompletionMock = async (response: string, botPrefix?: string) => {
 		const prefix = botPrefix ? ("/"+botPrefix) : ""
 		return this.addMock({
