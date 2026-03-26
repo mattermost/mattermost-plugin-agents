@@ -104,6 +104,26 @@ func (c *Conversations) SetToolPolicyChecker(checker streaming.ToolPolicyChecker
 	c.toolPolicyChecker = checker
 }
 
+func (c *Conversations) appendDMAutoRunOptions(isDM bool, llmContext *llm.Context, opts []llm.LanguageModelOption) []llm.LanguageModelOption {
+	if !isDM || c.toolPolicyChecker == nil || llmContext == nil || llmContext.Tools == nil {
+		return opts
+	}
+
+	allTools := llmContext.Tools.GetTools()
+	var autoRunNames []string
+	for _, t := range allTools {
+		policy, enabled := c.toolPolicyChecker.GetToolPolicy(t.ServerOrigin, t.Name)
+		if policy == mcp.ToolPolicyAutoRun && enabled {
+			autoRunNames = append(autoRunNames, llm.ToolAutoRunKey(t.ServerOrigin, t.Name))
+		}
+	}
+	if len(autoRunNames) > 0 {
+		opts = append(opts, llm.WithAutoRunTools(autoRunNames))
+	}
+
+	return opts
+}
+
 // ProcessUserRequestWithContext is an internal helper that uses an existing context to process a message
 func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
@@ -161,20 +181,7 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		}
 	}
 
-	// In DMs, auto-run tools whose per-tool policy is ToolPolicyAutoRun + enabled
-	if isDM && c.toolPolicyChecker != nil && context != nil && context.Tools != nil {
-		allTools := context.Tools.GetTools()
-		var autoRunNames []string
-		for _, t := range allTools {
-			policy, enabled := c.toolPolicyChecker.GetToolPolicy(t.ServerOrigin, t.Name)
-			if policy == mcp.ToolPolicyAutoRun && enabled {
-				autoRunNames = append(autoRunNames, llm.ToolAutoRunKey(t.ServerOrigin, t.Name))
-			}
-		}
-		if len(autoRunNames) > 0 {
-			opts = append(opts, llm.WithAutoRunTools(autoRunNames))
-		}
-	}
+	opts = c.appendDMAutoRunOptions(isDM, context, opts)
 
 	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {

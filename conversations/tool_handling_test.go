@@ -4,6 +4,7 @@
 package conversations_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -182,6 +184,55 @@ func (c *fakeMMClient) GetFile(string) (io.ReadCloser, error) {
 }
 
 func (c *fakeMMClient) SendEphemeralPost(string, *model.Post) {}
+
+type capturingLanguageModel struct {
+	autoRunTools []string
+}
+
+func (m *capturingLanguageModel) ChatCompletion(_ llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+	var cfg llm.LanguageModelConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	m.autoRunTools = append([]string{}, cfg.AutoRunTools...)
+	return llm.NewStreamFromString("follow-up response"), nil
+}
+
+func (m *capturingLanguageModel) ChatCompletionNoStream(_ llm.CompletionRequest, _ ...llm.LanguageModelOption) (string, error) {
+	return "", nil
+}
+
+func (m *capturingLanguageModel) CountTokens(string) int {
+	return 0
+}
+
+func (m *capturingLanguageModel) InputTokenLimit() int {
+	return 0
+}
+
+type fakeStreamingService struct {
+	streamedPosts []*model.Post
+}
+
+func (s *fakeStreamingService) StreamToNewPost(_ context.Context, _ string, _ string, _ *llm.TextStreamResult, post *model.Post, _ string) error {
+	s.streamedPosts = append(s.streamedPosts, post.Clone())
+	return nil
+}
+
+func (s *fakeStreamingService) StreamToNewDM(context.Context, string, *llm.TextStreamResult, string, *model.Post, string) error {
+	return nil
+}
+
+func (s *fakeStreamingService) StreamToPost(context.Context, *llm.TextStreamResult, *model.Post, string) {
+}
+
+func (s *fakeStreamingService) StopStreaming(string) {}
+
+func (s *fakeStreamingService) GetStreamingContext(inCtx context.Context, _ string) (context.Context, error) {
+	return inCtx, nil
+}
+
+func (s *fakeStreamingService) FinishStreaming(string) {}
 
 type testToolProvider struct {
 	tools []llm.Tool
@@ -445,6 +496,121 @@ func TestHandleToolCallPreservesResolvedToolCallsWhenApprovingPendingSubset(t *t
 	require.Equal(t, "tool-2", resultCalls[1].ID)
 	require.Equal(t, llm.ToolCallStatusSuccess, resultCalls[1].Status)
 	require.Equal(t, "posted:secret-message", resultCalls[1].Result)
+}
+
+func TestHandleToolCallDMFollowupIncludesAutoRunTools(t *testing.T) {
+	const (
+		postID      = "post-id"
+		channelID   = "channel-id"
+		botID       = "bot-id"
+		requesterID = "requester-id"
+	)
+
+	mockAPI := &plugintest.API{}
+	client := pluginapi.NewClient(mockAPI, nil)
+	licenseChecker := enterprise.NewLicenseChecker(client)
+
+	siteName := "Mattermost"
+	mockAPI.On("GetConfig").Return(&model.Config{TeamSettings: model.TeamSettings{SiteName: &siteName}}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+
+	tools := []llm.Tool{
+		{
+			Name:         "get_channel_info",
+			Description:  "manual tool",
+			Schema:       llm.NewJSONSchemaFromStruct[toolArgs](),
+			ServerOrigin: mcp.EmbeddedClientKey,
+			Resolver: func(_ *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+				var parsed toolArgs
+				if err := args(&parsed); err != nil {
+					return "", err
+				}
+				return "info:" + parsed.Value, nil
+			},
+		},
+		{
+			Name:         "read_channel",
+			Description:  "auto-run tool",
+			Schema:       llm.NewJSONSchemaFromStruct[toolArgs](),
+			ServerOrigin: mcp.EmbeddedClientKey,
+			Resolver: func(_ *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+				var parsed toolArgs
+				if err := args(&parsed); err != nil {
+					return "", err
+				}
+				return "read:" + parsed.Value, nil
+			},
+		},
+	}
+	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: tools}, nil, &testConfigProvider{})
+	promptSet, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+
+	streamingService := &fakeStreamingService{}
+	capturingLLM := &capturingLanguageModel{}
+
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+	bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, capturingLLM)
+	botService.SetBotsForTesting([]*bots.Bot{bot})
+
+	post := &model.Post{
+		Id:        postID,
+		UserId:    botID,
+		ChannelId: channelID,
+		CreateAt:  1,
+	}
+	post.AddProp(streaming.LLMRequesterUserID, requesterID)
+
+	toolCalls := []llm.ToolCall{
+		{
+			ID:        "tool-1",
+			Name:      "get_channel_info",
+			Arguments: json.RawMessage(`{"value":"town-square"}`),
+		},
+	}
+	toolsJSON, err := json.Marshal(toolCalls)
+	require.NoError(t, err)
+	post.AddProp(streaming.ToolCallProp, string(toolsJSON))
+
+	postList := &model.PostList{
+		Order: []string{postID},
+		Posts: map[string]*model.Post{postID: post},
+	}
+
+	channel := &model.Channel{
+		Id:   channelID,
+		Type: model.ChannelTypeDirect,
+		Name: botID + "__" + requesterID,
+	}
+
+	fakeClient := &fakeMMClient{
+		users: map[string]*model.User{
+			requesterID: {Id: requesterID, Username: "user", Locale: "en"},
+			botID:       {Id: botID, Username: "bot", Locale: "en"},
+		},
+		postThreads: map[string]*model.PostList{
+			postID: postList,
+		},
+		kv:       map[string]interface{}{},
+		posts:    map[string]*model.Post{postID: post},
+		channels: map[string]*model.Channel{channelID: channel},
+	}
+
+	conversationService := conversations.New(promptSet, fakeClient, streamingService, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, &testToolCallingConfig{})
+	conversationService.SetToolPolicyChecker(streaming.ToolPolicyFunc(func(serverBaseURL, toolName string) (string, bool) {
+		if serverBaseURL != mcp.EmbeddedClientKey {
+			return mcp.ToolPolicyAsk, false
+		}
+		if toolName == "read_channel" {
+			return mcp.ToolPolicyAutoRun, true
+		}
+		return mcp.ToolPolicyAsk, true
+	}))
+
+	err = conversationService.HandleToolCall(requesterID, post, channel, []string{"tool-1"})
+	require.NoError(t, err)
+	require.Equal(t, []string{llm.ToolAutoRunKey(mcp.EmbeddedClientKey, "read_channel")}, capturingLLM.autoRunTools)
+	require.Len(t, streamingService.streamedPosts, 1)
 }
 
 func TestHandleToolCallChannelBlockedWhenConfigDisabled(t *testing.T) {
