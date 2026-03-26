@@ -43,7 +43,7 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
         setLoading(true);
         try {
             const response = await getUserMCPTools();
-            setServers(response.servers.filter((s: UserMCPServerInfo) => s.tools.length > 0));
+            setServers(response.servers);
         } catch {
             // Silently fail - servers stay empty
         }

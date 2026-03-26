@@ -72,7 +72,7 @@ export default function RHS() {
         const fetchServers = async () => {
             try {
                 const response = await getUserMCPTools();
-                setPreloadedServers(response.servers.filter((s: UserMCPServerInfo) => s.tools.length > 0));
+                setPreloadedServers(response.servers);
             } catch {
                 // Silently fail - servers will load when popover opens
             }

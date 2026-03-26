@@ -105,18 +105,20 @@ const MCPServer = ({
     };
 
     // Re-seed or clear tool_configs only on blur, so mid-edit keystrokes don't wipe customizations
-    const handleURLBlur = () => {
-        const currentIdentity = getVettedHostIdentity(config.baseURL);
+    const handleURLBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+        const baseURL = e.currentTarget.value;
+        const currentIdentity = getVettedHostIdentity(baseURL);
         if (currentIdentity !== lastSeededIdentityRef.current) {
             let toolConfigs = config.tool_configs;
             if (currentIdentity) {
-                toolConfigs = seedVettedToolConfigs(config.baseURL) || toolConfigs;
+                toolConfigs = seedVettedToolConfigs(baseURL) || toolConfigs;
             } else {
                 toolConfigs = [];
             }
             lastSeededIdentityRef.current = currentIdentity;
             onChange(serverIndex, {
                 ...config,
+                baseURL,
                 tool_configs: toolConfigs,
             });
         }

@@ -2,6 +2,10 @@ import { Page, Locator, expect } from '@playwright/test';
 import { Client4 } from '@mattermost/client';
 import MattermostContainer from './mmcontainer';
 
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * ToolConfigUIHelper - Page object for Tools tab in System Console
  */
@@ -67,7 +71,7 @@ export class ToolConfigUIHelper {
     /** Expand a server row by clicking on it to show its tools */
     async expandServer(serverName: string): Promise<void> {
         // The server row header is clickable to expand
-        const serverRow = this.page.locator('div').filter({ hasText: new RegExp(serverName) }).filter({ hasText: /tools? enabled/ });
+        const serverRow = this.page.locator('div').filter({ hasText: new RegExp(escapeRegExp(serverName)) }).filter({ hasText: /tools? enabled/ });
         await serverRow.first().click();
 
         // Wait for the tool rows to appear
@@ -77,7 +81,7 @@ export class ToolConfigUIHelper {
     /** Get the tool count text for a server (e.g. "8/8 tools enabled") */
     getServerToolCount(serverName: string): Locator {
         return this.page.locator('div')
-            .filter({ hasText: new RegExp(serverName) })
+            .filter({ hasText: new RegExp(escapeRegExp(serverName)) })
             .getByText(/\d+\/\d+ tools? enabled/)
             .first();
     }

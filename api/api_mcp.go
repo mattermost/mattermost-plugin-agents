@@ -45,7 +45,7 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 		return
 	}
 
-	tools, _ := a.mcpClientManager.GetToolsForUser(userID)
+	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(userID)
 
 	// Group tools by ServerOrigin
 	toolsByOrigin := make(map[string][]llm.Tool, len(tools))
@@ -53,104 +53,113 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 		toolsByOrigin[t.ServerOrigin] = append(toolsByOrigin[t.ServerOrigin], t)
 	}
 
-	// Build server lookup from config
-	type serverMeta struct {
-		name    string
-		baseURL string
-		order   int
-	}
-	serverMetas := make(map[string]serverMeta, len(mcpCfg.Servers)+1)
-	for i, s := range mcpCfg.Servers {
-		serverMetas[s.BaseURL] = serverMeta{name: s.Name, baseURL: s.BaseURL, order: i}
-	}
-	if mcpCfg.EmbeddedServer.Enabled {
-		serverMetas[mcp.EmbeddedClientKey] = serverMeta{
-			name:    mcp.EmbeddedServerName,
-			baseURL: mcp.EmbeddedClientKey,
-			order:   len(mcpCfg.Servers),
+	authErrorsByOrigin := make(map[string]llm.ToolAuthError)
+	if mcpErrors != nil {
+		for _, authErr := range mcpErrors.ToolAuthErrors {
+			authErrorsByOrigin[authErr.ServerOrigin] = authErr
 		}
 	}
 
-	// Build response
-	var servers []UserMCPServerInfo
-	for origin, originTools := range toolsByOrigin {
-		meta, ok := serverMetas[origin]
-		if !ok {
+	oauthManager := a.mcpClientManager.GetOAuthManager()
+	servers := make([]UserMCPServerInfo, 0, len(mcpCfg.Servers)+1)
+
+	for i := range mcpCfg.Servers {
+		serverConfig := &mcpCfg.Servers[i]
+		if !serverConfig.Enabled || serverConfig.BaseURL == "" {
 			continue
 		}
 
-		// Get tool config for this server
-		var sc *mcp.ServerConfig
-		if origin == mcp.EmbeddedClientKey {
-			toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
-			if len(toolConfigs) == 0 {
-				toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
-			}
-			sc = &mcp.ServerConfig{Enabled: true, ToolConfigs: toolConfigs}
-		} else {
-			for i := range mcpCfg.Servers {
-				if mcpCfg.Servers[i].BaseURL == origin {
-					sc = &mcpCfg.Servers[i]
-					break
-				}
-			}
+		servers = append(servers, buildUserMCPServerInfo(
+			userID,
+			oauthManager,
+			serverConfig,
+			toolsByOrigin[serverConfig.BaseURL],
+			authErrorsByOrigin,
+		))
+	}
+
+	if mcpCfg.EmbeddedServer.Enabled && a.mcpClientManager.GetEmbeddedServer() != nil {
+		toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
+		if len(toolConfigs) == 0 {
+			toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
 		}
 
-		// Check auth status
-		authenticated := false
-		if origin == mcp.EmbeddedClientKey {
-			authenticated = true
-		} else if a.mcpClientManager.GetOAuthManager() != nil {
-			hasToken, err := a.mcpClientManager.GetOAuthManager().HasStoredToken(userID, meta.name)
-			if err == nil && hasToken {
-				authenticated = true
-			}
+		embeddedConfig := &mcp.ServerConfig{
+			Name:        mcp.EmbeddedServerName,
+			Enabled:     true,
+			BaseURL:     mcp.EmbeddedClientKey,
+			ToolConfigs: toolConfigs,
 		}
 
-		// If tools were returned by GetToolsForUser, the connection succeeded
-		// (even without OAuth token storage), so mark as authenticated.
-		if len(originTools) > 0 {
-			authenticated = true
-		}
+		servers = append(servers, buildUserMCPServerInfo(
+			userID,
+			oauthManager,
+			embeddedConfig,
+			toolsByOrigin[mcp.EmbeddedClientKey],
+			authErrorsByOrigin,
+		))
+	}
 
-		var toolInfos []UserMCPToolInfo
-		for _, t := range originTools {
-			policy := "ask"
-			enabled := true
-			if sc != nil {
-				p, e := sc.GetToolPolicy(t.Name)
-				policy = p
-				enabled = e
-			}
-			toolInfos = append(toolInfos, UserMCPToolInfo{
-				Name:        t.Name,
-				Description: t.Description,
-				Enabled:     enabled,
-				Policy:      policy,
-			})
-		}
+	c.JSON(http.StatusOK, UserMCPToolsResponse{Servers: servers})
+}
 
-		// Sort tools by name for deterministic output
-		sort.Slice(toolInfos, func(i, j int) bool {
-			return toolInfos[i].Name < toolInfos[j].Name
-		})
-
-		servers = append(servers, UserMCPServerInfo{
-			Name:          meta.name,
-			ServerOrigin:  origin,
-			Authenticated: authenticated,
-			Tools:         toolInfos,
+func buildUserMCPServerInfo(
+	userID string,
+	oauthManager *mcp.OAuthManager,
+	serverConfig *mcp.ServerConfig,
+	originTools []llm.Tool,
+	authErrorsByOrigin map[string]llm.ToolAuthError,
+) UserMCPServerInfo {
+	toolInfos := make([]UserMCPToolInfo, 0, len(originTools))
+	for _, t := range originTools {
+		policy, enabled := serverConfig.GetToolPolicy(t.Name)
+		toolInfos = append(toolInfos, UserMCPToolInfo{
+			Name:        t.Name,
+			Description: t.Description,
+			Enabled:     enabled,
+			Policy:      policy,
 		})
 	}
 
-	// Sort servers by config order for deterministic output
-	sort.Slice(servers, func(i, j int) bool {
-		mi := serverMetas[servers[i].ServerOrigin]
-		mj := serverMetas[servers[j].ServerOrigin]
-		return mi.order < mj.order
+	sort.Slice(toolInfos, func(i, j int) bool {
+		return toolInfos[i].Name < toolInfos[j].Name
 	})
 
-	c.JSON(http.StatusOK, UserMCPToolsResponse{Servers: servers})
+	_, hasAuthError := authErrorsByOrigin[serverConfig.BaseURL]
+
+	return UserMCPServerInfo{
+		Name:          serverConfig.Name,
+		ServerOrigin:  serverConfig.BaseURL,
+		Authenticated: isUserMCPServerAuthenticated(userID, oauthManager, serverConfig, len(originTools) > 0, hasAuthError),
+		Tools:         toolInfos,
+	}
+}
+
+func isUserMCPServerAuthenticated(
+	userID string,
+	oauthManager *mcp.OAuthManager,
+	serverConfig *mcp.ServerConfig,
+	hasDiscoveredTools bool,
+	hasAuthError bool,
+) bool {
+	if serverConfig.BaseURL == mcp.EmbeddedClientKey {
+		return true
+	}
+
+	if hasDiscoveredTools {
+		return true
+	}
+
+	if hasAuthError {
+		return false
+	}
+
+	if oauthManager == nil {
+		return false
+	}
+
+	hasToken, err := oauthManager.HasStoredToken(userID, serverConfig.Name)
+	return err == nil && hasToken
 }
 
 // handleGetUserPreferences returns the user's MCP tool provider preferences.
@@ -171,7 +180,7 @@ func (a *API) handlePutUserPreferences(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
 	var prefs mcp.UserToolProviderPreferences
-	if err := c.BindJSON(&prefs); err != nil {
+	if err := c.ShouldBindJSON(&prefs); err != nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
