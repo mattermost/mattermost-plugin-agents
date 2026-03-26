@@ -17,6 +17,7 @@ export async function RunToolConfigContainer(): Promise<MattermostContainer> {
                 apiKey: 'mock',
                 apiURL: 'http://openai:8080',
                 defaultModel: 'gpt-mock',
+                useResponsesAPI: false,
             },
         ],
         bots: [
@@ -26,6 +27,7 @@ export async function RunToolConfigContainer(): Promise<MattermostContainer> {
                 displayName: 'Tool Test Bot',
                 serviceID: 'mock-service',
                 customInstructions: '',
+                enabledNativeTools: [],
             },
         ],
         mcp: {
@@ -52,6 +54,8 @@ export async function RunToolConfigContainerWithPolicies(): Promise<MattermostCo
                 apiKey: 'mock',
                 apiURL: 'http://openai:8080',
                 defaultModel: 'gpt-mock',
+                // Smocker only mocks /v1/chat/completions; Responses API would miss mocks and fail streaming.
+                useResponsesAPI: false,
             },
         ],
         bots: [
@@ -62,6 +66,7 @@ export async function RunToolConfigContainerWithPolicies(): Promise<MattermostCo
                 serviceID: 'mock-service',
                 customInstructions: '',
                 disableTools: false,
+                enabledNativeTools: [],
             },
         ],
         mcp: {
