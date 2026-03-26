@@ -172,7 +172,7 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 	// Get channel and team info for context (using the first post's channel)
 	var channelName, teamName string
 	if len(posts) > 0 {
-		channel, _, err := client.GetChannel(ctx, posts[0].ChannelId, "")
+		channel, _, err := client.GetChannel(ctx, posts[0].ChannelId)
 		if err == nil {
 			channelName = channel.DisplayName
 			team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
@@ -262,7 +262,7 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 	ctx := mcpContext.Ctx
 
 	// Validate that the provided display names match the actual channel and team
-	channel, _, err := client.GetChannel(ctx, args.ChannelID, "")
+	channel, _, err := client.GetChannel(ctx, args.ChannelID)
 	if err != nil {
 		return "failed to validate channel", fmt.Errorf("error fetching channel for validation: %w", err)
 	}

@@ -561,70 +561,138 @@ func TestModelInfoOperations(t *testing.T) {
 	})
 }
 
-func TestStoreWithRetry(t *testing.T) {
-	t.Run("success on first attempt", func(t *testing.T) {
+func TestProcessBatch(t *testing.T) {
+	makePosts := func(n int) []PostRecord {
+		posts := make([]PostRecord, n)
+		for i := range posts {
+			posts[i] = PostRecord{
+				ID:          fmt.Sprintf("post%d", i),
+				Message:     fmt.Sprintf("message %d", i),
+				UserID:      "user1",
+				ChannelID:   "channel1",
+				ChannelType: string(model.ChannelTypeOpen),
+				TeamID:      "team1",
+				ChannelName: "town-square",
+			}
+		}
+		return posts
+	}
+
+	t.Run("store error propagates directly", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
 		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
 
-		docs := []embeddings.PostDocument{
-			{PostID: "post1", Content: "test"},
+		mockSearch.On("Store", mock.Anything, mock.Anything).Return(errors.New("provider error")).Once()
+
+		bp := &batchProcessor{
+			indexer:           New(nil, nil, mockClient, &bots.MMBots{}, nil, nil),
+			jobStatus:         &JobStatus{Status: JobStatusRunning},
+			search:            mockSearch,
+			lastHeartbeatSave: time.Now(),
 		}
 
-		mockSearch.On("Store", mock.Anything, docs).Return(nil)
-
-		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, nil, nil)
-		err := indexer.storeWithRetry(context.Background(), docs, mockSearch)
-
-		require.NoError(t, err)
-	})
-
-	t.Run("success after retries", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
-
-		docs := []embeddings.PostDocument{
-			{PostID: "post1", Content: "test"},
-		}
-
-		// Fail twice, succeed on third attempt
-		callCount := 0
-		mockSearch.On("Store", mock.Anything, docs).
-			Run(func(args mock.Arguments) {
-				callCount++
-			}).
-			Return(func(ctx context.Context, d []embeddings.PostDocument) error {
-				if callCount < 3 {
-					return errors.New("temporary error")
-				}
-				return nil
-			})
-
-		// Expect LogWarn calls for retries
-		mockClient.On("LogWarn", "Embedding store failed, retrying", mock.Anything).Return()
-
-		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, nil, nil)
-		err := indexer.storeWithRetry(context.Background(), docs, mockSearch)
-
-		require.NoError(t, err)
-		assert.Equal(t, 3, callCount)
-	})
-
-	t.Run("failure after max retries", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
-
-		docs := []embeddings.PostDocument{
-			{PostID: "post1", Content: "test"},
-		}
-
-		mockSearch.On("Store", mock.Anything, docs).Return(errors.New("persistent error"))
-		mockClient.On("LogWarn", "Embedding store failed, retrying", mock.Anything).Return()
-
-		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, nil, nil)
-		err := indexer.storeWithRetry(context.Background(), docs, mockSearch)
-
+		err := bp.processBatch(context.Background(), makePosts(1))
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "persistent error")
+		assert.Contains(t, err.Error(), "provider error")
+		mockSearch.AssertNumberOfCalls(t, "Store", 1)
+	})
+
+	t.Run("saves heartbeat when time threshold exceeded", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+
+		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil)
+		mockClient.On("KVSet", ReindexJobKey, mock.Anything).Return(nil)
+
+		bp := &batchProcessor{
+			indexer:           New(nil, nil, mockClient, &bots.MMBots{}, nil, nil),
+			jobStatus:         &JobStatus{Status: JobStatusRunning},
+			search:            mockSearch,
+			lastHeartbeatSave: time.Now().Add(-3 * time.Minute), // 3 minutes ago — exceeds 2-minute threshold
+		}
+
+		// Process a small batch (well under 500-post threshold)
+		err := bp.processBatch(context.Background(), makePosts(5))
+		require.NoError(t, err)
+
+		// saveJobStatus should have been called due to time threshold
+		mockClient.AssertCalled(t, "KVSet", ReindexJobKey, mock.Anything)
+		// lastHeartbeatSave should have been reset
+		assert.WithinDuration(t, time.Now(), bp.lastHeartbeatSave, 5*time.Second)
+	})
+
+	t.Run("does not save heartbeat when neither threshold met", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+
+		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil)
+
+		bp := &batchProcessor{
+			indexer:           New(nil, nil, mockClient, &bots.MMBots{}, nil, nil),
+			jobStatus:         &JobStatus{Status: JobStatusRunning},
+			search:            mockSearch,
+			lastHeartbeatSave: time.Now(), // just now — well within 2-minute threshold
+		}
+
+		// Process a small batch (under 500-post threshold)
+		err := bp.processBatch(context.Background(), makePosts(5))
+		require.NoError(t, err)
+
+		// saveJobStatus should NOT have been called
+		mockClient.AssertNotCalled(t, "KVSet", ReindexJobKey, mock.Anything)
+	})
+
+	t.Run("saves checkpoint when count threshold met", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+
+		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil)
+		mockClient.On("KVSet", ReindexJobKey, mock.Anything).Return(nil)
+
+		bp := &batchProcessor{
+			indexer:           New(nil, nil, mockClient, &bots.MMBots{}, nil, nil),
+			jobStatus:         &JobStatus{Status: JobStatusRunning},
+			search:            mockSearch,
+			processedCount:    495,
+			lastSavedCount:    0,
+			lastHeartbeatSave: time.Now(), // recent — time threshold NOT met
+		}
+
+		// This pushes processedCount to 500, meeting the count threshold
+		err := bp.processBatch(context.Background(), makePosts(5))
+		require.NoError(t, err)
+
+		// saveJobStatus should have been called due to count threshold
+		mockClient.AssertCalled(t, "KVSet", ReindexJobKey, mock.Anything)
+		assert.Equal(t, int64(500), bp.lastSavedCount)
+	})
+
+	t.Run("accumulates progress across batches and triggers checkpoint", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+
+		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil)
+		mockClient.On("KVSet", ReindexJobKey, mock.Anything).Return(nil)
+
+		jobStatus := &JobStatus{Status: JobStatusRunning}
+		bp := &batchProcessor{
+			indexer:           New(nil, nil, mockClient, &bots.MMBots{}, nil, nil),
+			jobStatus:         jobStatus,
+			search:            mockSearch,
+			lastHeartbeatSave: time.Now(),
+		}
+
+		// Process 5 batches of 100 posts each (total 500), which should trigger the count checkpoint
+		for i := 0; i < 5; i++ {
+			err := bp.processBatch(context.Background(), makePosts(100))
+			require.NoError(t, err)
+		}
+
+		assert.Equal(t, int64(500), bp.processedCount)
+		assert.Equal(t, int64(500), jobStatus.ProcessedRows)
+		assert.Equal(t, int64(500), bp.lastSavedCount)
+		// KVSet should have been called exactly once — when count hit 500
+		mockClient.AssertNumberOfCalls(t, "KVSet", 1)
 	})
 }
 
@@ -1039,73 +1107,6 @@ func TestConfigGetter(t *testing.T) {
 	})
 }
 
-func TestStoreWithRetryIncremental(t *testing.T) {
-	t.Run("success on first attempt", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
-
-		docs := []embeddings.PostDocument{
-			{PostID: "post1", Content: "test"},
-		}
-
-		mockSearch.On("Store", mock.Anything, docs).Return(nil)
-
-		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, nil, nil)
-		err := indexer.storeWithRetryIncremental(context.Background(), docs, mockSearch)
-
-		require.NoError(t, err)
-	})
-
-	t.Run("success after retry", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
-
-		docs := []embeddings.PostDocument{
-			{PostID: "post1", Content: "test"},
-		}
-
-		// Fail on first attempt, succeed on second
-		callCount := 0
-		mockSearch.On("Store", mock.Anything, docs).
-			Run(func(args mock.Arguments) {
-				callCount++
-			}).
-			Return(func(ctx context.Context, d []embeddings.PostDocument) error {
-				if callCount == 1 {
-					return errors.New("temporary error")
-				}
-				return nil
-			})
-
-		mockClient.On("LogWarn", "Incremental embedding store failed, retrying", mock.Anything).Return()
-
-		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, nil, nil)
-		err := indexer.storeWithRetryIncremental(context.Background(), docs, mockSearch)
-
-		require.NoError(t, err)
-		assert.Equal(t, 2, callCount)
-	})
-
-	t.Run("failure after max retries", func(t *testing.T) {
-		mockClient := mocks.NewMockClient(t)
-		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
-
-		docs := []embeddings.PostDocument{
-			{PostID: "post1", Content: "test"},
-		}
-
-		// Always fail
-		mockSearch.On("Store", mock.Anything, docs).Return(errors.New("persistent error"))
-		mockClient.On("LogWarn", "Incremental embedding store failed, retrying", mock.Anything).Return()
-
-		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, nil, nil)
-		err := indexer.storeWithRetryIncremental(context.Background(), docs, mockSearch)
-
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "persistent error")
-	})
-}
-
 func TestGetJobStatusIncludesStale(t *testing.T) {
 	t.Run("not found returns error", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
@@ -1411,9 +1412,7 @@ func TestIndexPost_WithSearchError(t *testing.T) {
 			Type:   model.ChannelTypeOpen,
 		}
 
-		// Store should fail twice (maxIncrementalRetries = 2)
 		mockSearch.On("Store", mock.Anything, mock.Anything).Return(errors.New("storage error"))
-		mockClient.On("LogWarn", "Incremental embedding store failed, retrying", mock.Anything).Return()
 
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, nil, nil)
 		err := indexer.IndexPost(ctx, post, channel)

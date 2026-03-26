@@ -20,10 +20,7 @@ const (
 	JobStatusFailed    = "failed"
 	JobStatusCanceled  = "canceled"
 
-	defaultBatchSize        = 100
-	maxRetries              = 3
-	maxIncrementalRetries   = 2
-	incrementalRetryBackoff = 500 * time.Millisecond
+	defaultBatchSize = 100
 
 	// KV store keys
 	ReindexJobKey         = "reindex_job_status"
@@ -96,11 +93,12 @@ type HealthCheckResult struct {
 
 // batchProcessor provides shared batch processing logic for reindex and catch-up passes
 type batchProcessor struct {
-	indexer        *Indexer
-	jobStatus      *JobStatus
-	search         embeddings.EmbeddingSearch
-	processedCount int64
-	lastSavedCount int64
+	indexer           *Indexer
+	jobStatus         *JobStatus
+	search            embeddings.EmbeddingSearch
+	processedCount    int64
+	lastSavedCount    int64
+	lastHeartbeatSave time.Time
 }
 
 // processBatch processes a batch of posts: filters, stores, updates progress and heartbeat
@@ -108,9 +106,9 @@ func (bp *batchProcessor) processBatch(ctx context.Context, posts []PostRecord) 
 	// Filter and create documents
 	docs := bp.indexer.filterAndCreateDocs(posts)
 
-	// Store with retry
+	// Store documents
 	if len(docs) > 0 {
-		if err := bp.indexer.storeWithRetry(ctx, docs, bp.search); err != nil {
+		if err := bp.search.Store(ctx, docs); err != nil {
 			return err
 		}
 	}
@@ -122,10 +120,12 @@ func (bp *batchProcessor) processBatch(ctx context.Context, posts []PostRecord) 
 	// Update heartbeat
 	bp.jobStatus.LastUpdatedAt = time.Now()
 
-	// Save checkpoint every 500 posts
-	if bp.processedCount >= bp.lastSavedCount+500 {
+	// Save checkpoint every 500 posts or every 2 minutes (whichever comes first)
+	// to prevent false stale detection with slow embedding providers
+	if bp.processedCount >= bp.lastSavedCount+500 || time.Since(bp.lastHeartbeatSave) > 2*time.Minute {
 		bp.indexer.saveJobStatus(bp.jobStatus)
 		bp.lastSavedCount = bp.processedCount
+		bp.lastHeartbeatSave = time.Now()
 	}
 
 	return nil
@@ -191,6 +191,7 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 	lastID := cursor.LastID
 	processedCount := jobStatus.ProcessedRows // Resume from previous count if resuming
 	lastSavedCount := processedCount
+	lastHeartbeatSave := time.Now()
 
 	for {
 		// Check if the job was canceled
@@ -237,9 +238,9 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 		// Process batch and index posts
 		docs := s.filterAndCreateDocs(posts)
 
-		// Store the batch with retry logic
+		// Store the batch
 		if len(docs) > 0 {
-			if err := s.storeWithRetry(ctx, docs, search); err != nil {
+			if err := search.Store(ctx, docs); err != nil {
 				s.handleJobError(jobStatus, fmt.Sprintf("Failed to store documents: %s", err), lastCreateAt, lastID)
 				return
 			}
@@ -257,14 +258,16 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 		// Update heartbeat timestamp every batch
 		jobStatus.LastUpdatedAt = time.Now()
 
-		// Save cursor and progress every 500 additional processed records
-		if processedCount >= lastSavedCount+500 {
+		// Save cursor and progress every 500 additional processed records or every 2 minutes
+		// to prevent false stale detection with slow embedding providers
+		if processedCount >= lastSavedCount+500 || time.Since(lastHeartbeatSave) > 2*time.Minute {
 			s.saveCursor(Cursor{LastCreateAt: lastCreateAt, LastID: lastID})
 			s.saveJobStatus(jobStatus)
 			s.pluginAPI.LogWarn("Reindexing progress",
 				"processed", processedCount,
 				"estimated_total", jobStatus.TotalRows)
 			lastSavedCount = processedCount
+			lastHeartbeatSave = time.Now()
 		}
 	}
 
@@ -345,27 +348,6 @@ func (s *Indexer) filterAndCreateDocs(posts []PostRecord) []embeddings.PostDocum
 	return docs
 }
 
-// storeWithRetry stores documents with retry logic
-func (s *Indexer) storeWithRetry(ctx context.Context, docs []embeddings.PostDocument, search embeddings.EmbeddingSearch) error {
-	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		err := search.Store(ctx, docs)
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-
-		s.pluginAPI.LogWarn("Embedding store failed, retrying",
-			"attempt", attempt+1,
-			"max_retries", maxRetries,
-			"error", err)
-
-		// Exponential backoff
-		time.Sleep(time.Duration(1<<attempt) * time.Second)
-	}
-	return lastErr
-}
-
 // handleJobError handles a job error by saving cursor and updating status
 func (s *Indexer) handleJobError(jobStatus *JobStatus, errMsg string, lastCreateAt int64, lastID string) {
 	jobStatus.Status = JobStatusFailed
@@ -431,11 +413,12 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 	catchUpCutoff := time.Now().UnixMilli()
 
 	bp := &batchProcessor{
-		indexer:        s,
-		jobStatus:      jobStatus,
-		search:         search,
-		processedCount: jobStatus.ProcessedRows,
-		lastSavedCount: jobStatus.ProcessedRows,
+		indexer:           s,
+		jobStatus:         jobStatus,
+		search:            search,
+		processedCount:    jobStatus.ProcessedRows,
+		lastSavedCount:    jobStatus.ProcessedRows,
+		lastHeartbeatSave: time.Now(),
 	}
 
 	var posts []PostRecord

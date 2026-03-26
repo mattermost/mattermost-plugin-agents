@@ -92,6 +92,21 @@ func TestHandleRunSearch(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 			expectError:    true,
 		},
+		{
+			name: "search fails - query exceeds max length",
+			setupMock: func(t *testing.T) *search.Search {
+				me := mocks.NewMockEmbeddingSearch(t)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
+			},
+			requestBody: SearchRequest{
+				Query:      strings.Repeat("a", 4001),
+				TeamID:     "team123",
+				ChannelID:  "channel123",
+				MaxResults: 10,
+			},
+			expectedStatus: http.StatusBadRequest,
+			expectError:    true,
+		},
 	}
 
 	for _, test := range tests {
@@ -240,6 +255,37 @@ func TestHandleSearchQuery(t *testing.T) {
 				TeamID:     "team123",
 				ChannelID:  "channel123",
 				MaxResults: 10000,
+			},
+			expectedStatus: http.StatusOK,
+			expectError:    false,
+		},
+		{
+			name: "search query fails - query exceeds max length",
+			setupMock: func(t *testing.T) *search.Search {
+				me := mocks.NewMockEmbeddingSearch(t)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
+			},
+			requestBody: SearchRequest{
+				Query:      strings.Repeat("a", 4001),
+				TeamID:     "team123",
+				ChannelID:  "channel123",
+				MaxResults: 10,
+			},
+			expectedStatus: http.StatusBadRequest,
+			expectError:    true,
+		},
+		{
+			name: "search query succeeds - query at max length",
+			setupMock: func(t *testing.T) *search.Search {
+				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+				mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
+				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil)
+			},
+			requestBody: SearchRequest{
+				Query:      strings.Repeat("a", 4000),
+				TeamID:     "team123",
+				ChannelID:  "channel123",
+				MaxResults: 10,
 			},
 			expectedStatus: http.StatusOK,
 			expectError:    false,

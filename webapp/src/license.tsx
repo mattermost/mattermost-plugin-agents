@@ -5,25 +5,32 @@ import {useSelector} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
 
+// SKU short names align with model.LicenseShortSku* in Mattermost server public.
 const professional = 'professional';
 const enterprise = 'enterprise';
 const enterpriseAdvanced = 'advanced';
+const entry = 'entry';
 
-// isValidSkuShortName returns whether the SKU short name is one of the known strings;
-// namely: professional, enterprise or enterprise advanced.
+// isValidSkuShortName returns whether the SKU short name is one of the known strings
+// used by LicenseToLicenseTier (professional, enterprise, advanced, entry).
 const isValidSkuShortName = (license: Record<string, string>) => {
     switch (license?.SkuShortName) {
     case professional:
     case enterprise:
     case enterpriseAdvanced:
+    case entry:
         return true;
     default:
         return false;
     }
 };
 
+// checkEnterpriseLicensed mirrors model.MinimumEnterpriseLicense: true for enterprise-tier
+// and higher (SkuShortName enterprise, advanced, entry). Unknown SKUs may match via MessageExport.
 export const checkEnterpriseLicensed = (license: Record<string, string>) => {
-    if (license?.SkuShortName === enterprise || license?.SkuShortName === enterpriseAdvanced) {
+    if (license?.SkuShortName === entry ||
+        license?.SkuShortName === enterprise ||
+        license?.SkuShortName === enterpriseAdvanced) {
         return true;
     }
 
@@ -38,8 +45,11 @@ export const checkEnterpriseLicensed = (license: Record<string, string>) => {
     return false;
 };
 
+// checkProfessionalLicensed mirrors model.MinimumProfessionalLicense: true for professional
+// and higher (includes entry, enterprise, advanced). Unknown SKUs may match via LDAP.
 export const checkProfessionalLicensed = (license: Record<string, string>) => {
     if (license?.SkuShortName === professional ||
+        license?.SkuShortName === entry ||
         license?.SkuShortName === enterprise ||
         license?.SkuShortName === enterpriseAdvanced) {
         return true;
