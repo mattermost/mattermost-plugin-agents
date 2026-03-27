@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
@@ -60,7 +62,16 @@ type MattermostToolProvider struct {
 	accessMode       AccessMode
 	trackAIGenerated bool                  // Whether to add ai_generated_by props to posts
 	searchService    SemanticSearchService // Optional semantic search service, can be nil
+
+	// Cache for automation plugin availability check.
+	// Only the "installed" result is cached to avoid repeated probes on the hot path.
+	// "Not installed" is always re-checked so newly installed plugins are detected immediately.
+	automationCacheMu        sync.RWMutex
+	automationCacheInstalled bool
+	automationCacheTime      time.Time
 }
+
+const automationCacheTTL = 30 * time.Minute
 
 // NewMattermostToolProvider creates a new tool provider
 // Now accepts a ServerConfig interface to avoid circular dependencies
@@ -94,11 +105,9 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	mcpTools = append(mcpTools, p.getSearchTools()...)
 	mcpTools = append(mcpTools, p.getAgentTools()...)
 
-	// Only add automation tools if the channel automation plugin is installed
-	automationInstalled := p.isAutomationPluginInstalled()
-	if automationInstalled {
-		mcpTools = append(mcpTools, p.getAutomationTools()...)
-	}
+	// Automation tools are always registered; availability is checked dynamically
+	// via middleware on each tools/list request.
+	mcpTools = append(mcpTools, p.getAutomationTools()...)
 
 	// Add dev tools if dev mode is enabled
 	if p.devMode {
@@ -109,6 +118,69 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 
 	for _, mcpTool := range mcpTools {
 		p.registerDynamicTool(mcpServer, mcpTool)
+	}
+
+	// Add middleware to dynamically filter automation tools from tools/list
+	// when the channel automation plugin is not installed.
+	mcpServer.AddReceivingMiddleware(p.automationToolFilterMiddleware())
+}
+
+// isAutomationPluginAvailable checks if the automation plugin is installed,
+// caching positive results for automationCacheTTL to avoid repeated probes.
+// Negative results are never cached so newly installed plugins are detected immediately.
+func (p *MattermostToolProvider) isAutomationPluginAvailable() bool {
+	p.automationCacheMu.RLock()
+	if p.automationCacheInstalled && time.Since(p.automationCacheTime) < automationCacheTTL {
+		p.automationCacheMu.RUnlock()
+		return true
+	}
+	p.automationCacheMu.RUnlock()
+
+	installed := p.isAutomationPluginInstalled()
+
+	if installed {
+		p.automationCacheMu.Lock()
+		p.automationCacheInstalled = true
+		p.automationCacheTime = time.Now()
+		p.automationCacheMu.Unlock()
+	} else {
+		p.automationCacheMu.Lock()
+		p.automationCacheInstalled = false
+		p.automationCacheMu.Unlock()
+	}
+
+	return installed
+}
+
+// automationToolFilterMiddleware returns MCP receiving middleware that filters
+// automation tools from tools/list responses when the automation plugin is unavailable.
+func (p *MattermostToolProvider) automationToolFilterMiddleware() mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if err != nil || method != "tools/list" {
+				return result, err
+			}
+
+			if p.isAutomationPluginAvailable() {
+				return result, nil
+			}
+
+			// Filter out automation tools when plugin is not available
+			listResult, ok := result.(*mcp.ListToolsResult)
+			if !ok {
+				return result, nil
+			}
+
+			filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
+			for _, tool := range listResult.Tools {
+				if !IsAutomationTool(tool.Name) {
+					filtered = append(filtered, tool)
+				}
+			}
+			listResult.Tools = filtered
+			return listResult, nil
+		}
 	}
 }
 

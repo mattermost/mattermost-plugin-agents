@@ -197,20 +197,59 @@ func normalizeAllowedTools(rawTools []string) ([]string, error) {
 	return normalized, nil
 }
 
+// validateAgentParam is gin middleware that validates the :agent path parameter.
+func (a *API) validateAgentParam(c *gin.Context) {
+	agent := c.Param("agent")
+	if agent == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: "agent parameter is required",
+		})
+		return
+	}
+	if err := bridgeclient.ValidateID(agent); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: fmt.Sprintf("invalid agent ID: %v", err),
+		})
+		return
+	}
+}
+
+// validateUserIDQuery is gin middleware that validates the optional user_id query parameter.
+func (a *API) validateUserIDQuery(c *gin.Context) {
+	userID := c.Query("user_id")
+	if userID != "" {
+		if err := bridgeclient.ValidateID(userID); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+				Error: fmt.Sprintf("invalid user_id: %v", err),
+			})
+			return
+		}
+	}
+}
+
+// validateCompletionRequestIDs validates optional user_id and channel_id fields
+// in the request body after JSON parsing.
+func validateCompletionRequestIDs(req bridgeclient.CompletionRequest) (int, error) {
+	if req.UserID != "" {
+		if err := bridgeclient.ValidateID(req.UserID); err != nil {
+			return http.StatusBadRequest, fmt.Errorf("invalid user_id: %w", err)
+		}
+	}
+	if req.ChannelID != "" {
+		if err := bridgeclient.ValidateID(req.ChannelID); err != nil {
+			return http.StatusBadRequest, fmt.Errorf("invalid channel_id: %w", err)
+		}
+	}
+	return 0, nil
+}
+
 func (a *API) prepareAgentBridgeCompletion(
 	agent string,
 	req bridgeclient.CompletionRequest,
 	operation, operationSubType string,
 ) (*bots.Bot, llm.CompletionRequest, []llm.LanguageModelOption, int, error) {
-	if req.UserID != "" {
-		if err := bridgeclient.ValidateID(req.UserID); err != nil {
-			return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid user_id: %w", err)
-		}
-	}
-	if req.ChannelID != "" {
-		if err := bridgeclient.ValidateID(req.ChannelID); err != nil {
-			return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid channel_id: %w", err)
-		}
+	if statusCode, err := validateCompletionRequestIDs(req); err != nil {
+		return nil, llm.CompletionRequest{}, nil, statusCode, err
 	}
 
 	allowedTools, err := normalizeAllowedTools(req.AllowedTools)
@@ -414,14 +453,6 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRe
 // handleGetAgents returns all available agents, optionally filtered by user permissions
 func (a *API) handleGetAgents(c *gin.Context) {
 	userID := c.Query("user_id")
-	if userID != "" {
-		if err := bridgeclient.ValidateID(userID); err != nil {
-			c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-				Error: fmt.Sprintf("invalid user_id: %v", err),
-			})
-			return
-		}
-	}
 
 	allBots := a.bots.GetAllBots()
 	agents := make([]bridgeclient.BridgeAgentInfo, 0, len(allBots))
@@ -462,29 +493,7 @@ func (a *API) handleGetAgents(c *gin.Context) {
 // Only tools that are eligible for allowed_tools execution are returned.
 func (a *API) handleGetAgentTools(c *gin.Context) {
 	agent := c.Param("agent")
-	if agent == "" {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "agent parameter is required",
-		})
-		return
-	}
-
-	if err := bridgeclient.ValidateID(agent); err != nil {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: fmt.Sprintf("invalid agent ID: %v", err),
-		})
-		return
-	}
-
 	userID := c.Query("user_id")
-	if userID != "" {
-		if err := bridgeclient.ValidateID(userID); err != nil {
-			c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-				Error: fmt.Sprintf("invalid user_id: %v", err),
-			})
-			return
-		}
-	}
 
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
@@ -539,14 +548,6 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 // handleGetServices returns all available services, optionally filtered by user permissions
 func (a *API) handleGetServices(c *gin.Context) {
 	userID := c.Query("user_id")
-	if userID != "" {
-		if err := bridgeclient.ValidateID(userID); err != nil {
-			c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-				Error: fmt.Sprintf("invalid user_id: %v", err),
-			})
-			return
-		}
-	}
 
 	// Get all unique services
 	servicesMap := make(map[string]bridgeclient.BridgeServiceInfo)
@@ -591,19 +592,6 @@ func (a *API) handleGetServices(c *gin.Context) {
 // handleAgentCompletionStreaming handles streaming completion requests for a specific agent
 func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 	agent := c.Param("agent")
-	if agent == "" {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "agent parameter is required",
-		})
-		return
-	}
-
-	if err := bridgeclient.ValidateID(agent); err != nil {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: fmt.Sprintf("invalid agent ID: %v", err),
-		})
-		return
-	}
 
 	var req bridgeclient.CompletionRequest
 	if err := c.BindJSON(&req); err != nil {
@@ -635,19 +623,6 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 // handleAgentCompletionNoStream handles non-streaming completion requests for a specific agent
 func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 	agent := c.Param("agent")
-	if agent == "" {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: "agent parameter is required",
-		})
-		return
-	}
-
-	if err := bridgeclient.ValidateID(agent); err != nil {
-		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-			Error: fmt.Sprintf("invalid agent ID: %v", err),
-		})
-		return
-	}
 
 	var req bridgeclient.CompletionRequest
 	if err := c.BindJSON(&req); err != nil {
@@ -708,21 +683,11 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 		return
 	}
 
-	if req.UserID != "" {
-		if err := bridgeclient.ValidateID(req.UserID); err != nil {
-			c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-				Error: fmt.Sprintf("invalid user_id: %v", err),
-			})
-			return
-		}
-	}
-	if req.ChannelID != "" {
-		if err := bridgeclient.ValidateID(req.ChannelID); err != nil {
-			c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-				Error: fmt.Sprintf("invalid channel_id: %v", err),
-			})
-			return
-		}
+	if statusCode, err := validateCompletionRequestIDs(req); err != nil {
+		c.JSON(statusCode, bridgeclient.ErrorResponse{
+			Error: err.Error(),
+		})
+		return
 	}
 
 	// Find a bot that uses the specified service (by ID or name)
@@ -798,21 +763,11 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 		return
 	}
 
-	if req.UserID != "" {
-		if err := bridgeclient.ValidateID(req.UserID); err != nil {
-			c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-				Error: fmt.Sprintf("invalid user_id: %v", err),
-			})
-			return
-		}
-	}
-	if req.ChannelID != "" {
-		if err := bridgeclient.ValidateID(req.ChannelID); err != nil {
-			c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
-				Error: fmt.Sprintf("invalid channel_id: %v", err),
-			})
-			return
-		}
+	if statusCode, err := validateCompletionRequestIDs(req); err != nil {
+		c.JSON(statusCode, bridgeclient.ErrorResponse{
+			Error: err.Error(),
+		})
+		return
 	}
 
 	// Find a bot that uses the specified service (by ID or name)

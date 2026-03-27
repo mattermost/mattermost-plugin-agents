@@ -137,14 +137,14 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	llmBridgeRoute.Use(a.interPluginAuthorizationRequired)
 
 	// Discovery endpoints
-	llmBridgeRoute.GET("/agents", a.handleGetAgents)
-	llmBridgeRoute.GET("/agents/:agent/tools", a.handleGetAgentTools)
-	llmBridgeRoute.GET("/services", a.handleGetServices)
+	llmBridgeRoute.GET("/agents", a.validateUserIDQuery, a.handleGetAgents)
+	llmBridgeRoute.GET("/agents/:agent/tools", a.validateAgentParam, a.validateUserIDQuery, a.handleGetAgentTools)
+	llmBridgeRoute.GET("/services", a.validateUserIDQuery, a.handleGetServices)
 
 	// Completion endpoints
 	completionRoute := llmBridgeRoute.Group("/completion")
-	completionRoute.POST("/agent/:agent", a.handleAgentCompletionStreaming)
-	completionRoute.POST("/agent/:agent/nostream", a.handleAgentCompletionNoStream)
+	completionRoute.POST("/agent/:agent", a.validateAgentParam, a.handleAgentCompletionStreaming)
+	completionRoute.POST("/agent/:agent/nostream", a.validateAgentParam, a.handleAgentCompletionNoStream)
 	completionRoute.POST("/service/:service", a.handleServiceCompletionStreaming)
 	completionRoute.POST("/service/:service/nostream", a.handleServiceCompletionNoStream)
 
