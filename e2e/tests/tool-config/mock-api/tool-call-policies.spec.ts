@@ -84,7 +84,10 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await mattermost.stop();
     });
 
-    test('disabled tool is not provided to LLM', async ({ page }) => {
+    // Note: does not configure a disabled tool; it only checks a text-only mock response
+    // shows no approval UI. For "disabled tool omitted from model tool list", see
+    // real-api/disabled-tool.spec.ts (GetToolsForUser parity) and mcp/client_manager_filter_test.go.
+    test('text-only completion shows no tool approval UI', async ({ page }) => {
         test.setTimeout(60000);
 
         // Set up a simple text response (no tool calls)
