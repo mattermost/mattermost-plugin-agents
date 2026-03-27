@@ -12,10 +12,22 @@ import { createToolConfigAPIHelper } from 'helpers/tool-config';
 /**
  * Test Suite: Disabled Tool Excluded (Real API) (4.10)
  *
- * Verifies that tools with enabled=false are not called by the LLM.
+ * Verifies that tools with enabled=false are not exposed to the LLM and are not invoked.
  *
  * Skip-gated: requires ANTHROPIC_API_KEY or OPENAI_API_KEY.
  */
+
+const VETTED_EMBEDDED_TOOLS = [
+    'read_post',
+    'read_channel',
+    'get_channel_info',
+    'get_channel_members',
+    'get_team_info',
+    'get_team_members',
+    'search_posts',
+    'search_users',
+    'get_user_channels',
+];
 
 const config = getAPIConfig();
 const skipMessage =
@@ -42,44 +54,56 @@ for (const provider of providers) {
             }
         });
 
-        test('disabled tool not called by LLM', async ({ page }) => {
+        test('disabled tool not in user tools API and not invoked in RHS', async ({ page }) => {
             test.skip(!config.shouldRunTests, skipMessage);
             test.setTimeout(120000);
 
             const mmPage = new MattermostPage(page);
             const aiPlugin = new AIPlugin(page);
 
-            // Login
             await mmPage.login(mattermost.url(), 'regularuser', 'regularuser');
 
-            // Use API to verify tools API reflects disabled state
             const apiHelper = await createToolConfigAPIHelper(mattermost);
             const adminClient = await mattermost.getAdminClient();
             const token = adminClient.getToken();
 
-            // Get available tools
+            const embeddedToolConfigs = VETTED_EMBEDDED_TOOLS.map((name) => ({
+                name,
+                policy: 'auto_run',
+                enabled: name !== 'get_channel_info',
+            }));
+
+            await apiHelper.setEmbeddedServerToolConfigs(embeddedToolConfigs);
+
             const toolsResponse = await apiHelper.getUserMCPTools(
                 mattermost.url(),
                 token,
             );
 
-            // Verify we get a valid response
-            expect(toolsResponse).toBeDefined();
-            expect(toolsResponse.servers).toBeDefined();
+            const embeddedServer = toolsResponse.servers.find((s: any) =>
+                s.tools?.some((t: any) => t.name === 'get_channel_info'),
+            );
+            expect(embeddedServer).toBeDefined();
+            const channelInfo = embeddedServer.tools.find(
+                (t: any) => t.name === 'get_channel_info',
+            );
+            expect(channelInfo?.enabled).toBe(false);
 
-            // Open Copilot RHS
             await aiPlugin.openRHS();
 
-            // Send a message - with some tools potentially disabled,
-            // the LLM should still respond (using available tools or text)
-            await aiPlugin.sendMessage('Hello, please tell me about this Mattermost workspace.');
+            await aiPlugin.sendMessage(
+                'Use the get_channel_info tool to list channels in this team. Be concise.',
+            );
 
-            // Wait for response
-            await page.waitForTimeout(15000);
+            const stopButton = page.getByRole('button', { name: /stop/i });
+            await expect(stopButton).not.toBeVisible({ timeout: 90000 });
 
-            // Verify the bot responded
             const rhsContainer = page.getByTestId('mattermost-ai-rhs');
             await expect(rhsContainer).toBeVisible();
+
+            await expect(
+                rhsContainer.getByText('get_channel_info', { exact: true }),
+            ).toHaveCount(0);
         });
     });
 }

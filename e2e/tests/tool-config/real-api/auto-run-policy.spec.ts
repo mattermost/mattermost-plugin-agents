@@ -6,7 +6,6 @@ import { RunRealAPIContainer } from 'helpers/real-api-container';
 import {
     getAPIConfig,
     getAvailableProviders,
-    ProviderBundle,
 } from 'helpers/api-config';
 
 /**
@@ -56,30 +55,23 @@ for (const provider of providers) {
             // Open Copilot RHS
             await aiPlugin.openRHS();
 
-            // Send a message that should trigger an embedded auto_run tool
-            // (e.g. get_channel_info is a vetted auto_run tool)
-            await aiPlugin.sendMessage('What channels are available in this team?');
+            // Force a tool call: get_channel_info is vetted auto_run on the embedded server.
+            await aiPlugin.sendMessage(
+                'Use the get_channel_info tool to list channels in this team. Call the tool.',
+            );
 
-            // Wait for streaming to complete
-            await page.waitForTimeout(2000);
             const stopButton = page.getByRole('button', { name: /stop/i });
             await expect(stopButton).not.toBeVisible({ timeout: 90000 });
 
-            // Verify the bot responded with content in the RHS
             const rhsContainer = page.getByTestId('mattermost-ai-rhs');
             await expect(rhsContainer).toBeVisible();
 
-            // auto_run in DM means no approval prompt should appear
             const acceptButton = page.getByRole('button', { name: /accept/i });
-            const isAcceptVisible = await acceptButton.isVisible().catch(() => false);
-            expect(isAcceptVisible).toBe(false);
+            await expect(acceptButton).not.toBeVisible();
 
-            // Check for evidence that a tool actually auto-ran
-            const autoApprovedBadge = rhsContainer.getByText('Auto-approved');
-            const didAutoRun = await autoApprovedBadge.first().isVisible().catch(() => false);
-            if (!didAutoRun) {
-                test.info().annotations.push({ type: 'note', description: 'LLM did not invoke a tool; auto_run flow was not exercised' });
-            }
+            await expect(rhsContainer.getByText('Auto-approved').first()).toBeVisible({
+                timeout: 90000,
+            });
         });
     });
 }

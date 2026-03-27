@@ -202,6 +202,30 @@ export class ToolConfigAPIHelper {
         await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
+    /** Replace embedded MCP server tool configs (full list). */
+    async setEmbeddedServerToolConfigs(
+        toolConfigs: Array<{ name: string; policy: string; enabled: boolean }>,
+    ): Promise<void> {
+        const pluginConfig = await this.getPluginConfig();
+        if (!pluginConfig.config?.mcp) {
+            throw new Error('MCP config missing');
+        }
+        pluginConfig.config.mcp.embeddedServer = {
+            ...(pluginConfig.config.mcp.embeddedServer || {}),
+            enabled: true,
+            tool_configs: toolConfigs,
+        };
+
+        await this.client.patchConfig({
+            PluginSettings: {
+                Plugins: {
+                    [this.pluginId]: pluginConfig,
+                },
+            },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
     /** Get tool configs for a specific server */
     async getServerToolConfigs(
         serverIndex: number,

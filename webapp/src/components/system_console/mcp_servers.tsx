@@ -7,12 +7,11 @@ import {PlusIcon, TrashCanOutlineIcon, ChevronDownIcon, ChevronRightIcon} from '
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton} from '../assets/buttons';
-import {getMCPTools} from '../../client';
+import {getMCPTools, getVettedToolSeed} from '../../client';
 
 import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
 
 import {BooleanItem, ItemList, TextItem} from './item';
-import {getVettedHostIdentity, seedVettedToolConfigs} from './vetted_tool_configs';
 
 export type MCPToolConfig = {
     name: string;
@@ -94,8 +93,8 @@ const MCPServer = ({
         clientSecret: serverConfig.clientSecret || '',
     };
 
-    // Track the vetted host identity that tool_configs were last seeded from
-    const lastSeededIdentityRef = useRef<string | null>(getVettedHostIdentity(serverConfig.baseURL));
+    // Last base URL we applied vetted seeding for (authoritative list from GET /admin/mcp/vetted-tool-seed).
+    const lastSeededBaseURLRef = useRef<string | null>(serverConfig.baseURL?.trim() ?? null);
 
     const updateServerURL = (baseURL: string) => {
         onChange(serverIndex, {
@@ -106,22 +105,30 @@ const MCPServer = ({
 
     // Re-seed or clear tool_configs only on blur, so mid-edit keystrokes don't wipe customizations
     const handleURLBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-        const baseURL = e.currentTarget.value;
-        const currentIdentity = getVettedHostIdentity(baseURL);
-        if (currentIdentity !== lastSeededIdentityRef.current) {
-            let toolConfigs = config.tool_configs;
-            if (currentIdentity) {
-                toolConfigs = seedVettedToolConfigs(baseURL) || toolConfigs;
-            } else {
-                toolConfigs = [];
+        (async () => {
+            const baseURL = e.currentTarget.value;
+            const trimmed = baseURL.trim();
+            if (trimmed === lastSeededBaseURLRef.current) {
+                return;
             }
-            lastSeededIdentityRef.current = currentIdentity;
+            let toolConfigs = config.tool_configs;
+            try {
+                const seeded = await getVettedToolSeed(baseURL);
+                if (seeded.length > 0) {
+                    toolConfigs = seeded.map((tc) => ({...tc}));
+                } else {
+                    toolConfigs = [];
+                }
+            } catch {
+                return;
+            }
+            lastSeededBaseURLRef.current = trimmed;
             onChange(serverIndex, {
                 ...config,
                 baseURL,
                 tool_configs: toolConfigs,
             });
-        }
+        })().catch(() => null);
     };
 
     // Update server enabled state

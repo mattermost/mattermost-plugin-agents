@@ -523,6 +523,30 @@ export async function clearMCPToolsCache() {
     });
 }
 
+/** Authoritative vetted default tool_configs for a base URL (matches mcp.SeedVettedToolConfigs). */
+export async function getVettedToolSeed(baseURL: string): Promise<Array<{name: string; policy: 'auto_run' | 'ask'; enabled: boolean}>> {
+    const trimmed = baseURL.trim();
+    if (!trimmed) {
+        return [];
+    }
+
+    const url = `${baseRoute()}/admin/mcp/vetted-tool-seed?base_url=${encodeURIComponent(trimmed)}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        const data = await response.json() as {tool_configs?: Array<{name: string; policy: 'auto_run' | 'ask'; enabled: boolean}>};
+        return data.tool_configs ?? [];
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function fetchModels(serviceType: string, apiKey: string, apiURL: string, orgID: string) {
     const url = `${baseRoute()}/admin/models/fetch`;
     const response = await fetch(url, Client4.getOptions({

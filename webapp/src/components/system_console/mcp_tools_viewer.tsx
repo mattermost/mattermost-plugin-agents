@@ -7,11 +7,11 @@ import {RefreshIcon, ExclamationThickIcon} from '@mattermost/compass-icons/compo
 import {FormattedMessage} from 'react-intl';
 
 import {TertiaryButton, SecondaryButton} from '../assets/buttons';
-import {getMCPTools, clearMCPToolsCache} from '../../client';
+import {getMCPTools, clearMCPToolsCache, getVettedToolSeed} from '../../client';
 
-import {MCPConfig, MCPServerConfig} from './mcp_servers';
+import {MCPConfig, MCPServerConfig, MCPToolConfig} from './mcp_servers';
 import MCPServerToolRow from './mcp_server_tool_row';
-import {EMBEDDED_MATTERMOST_BASE_URL, seedVettedToolConfigs} from './vetted_tool_configs';
+import {EMBEDDED_MATTERMOST_BASE_URL} from './vetted_tool_configs';
 
 // Type definitions matching the backend API response
 export type MCPToolInfo = {
@@ -100,49 +100,61 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
         }
         seededRef.current = true;
 
-        let updatedConfig = mcpConfig;
-        let changed = false;
+        (async () => {
+            let updatedConfig = mcpConfig;
+            let changed = false;
 
-        // Seed remote servers
-        const updatedServers = updatedConfig.servers.map((sc) => {
-            const seeded = seedVettedToolConfigs(sc.baseURL);
-            if (!seeded) {
-                return sc;
-            }
-            const existing = sc.tool_configs || [];
-            const existingNames = new Set(existing.map((tc) => tc.name));
-            const missing = seeded.filter((tc) => !existingNames.has(tc.name));
-            if (missing.length === 0) {
-                return sc;
-            }
-            changed = true;
-            return {...sc, tool_configs: [...existing, ...missing]};
-        });
-        if (changed) {
-            updatedConfig = {...updatedConfig, servers: updatedServers};
-        }
-
-        // Seed embedded server
-        const embeddedCfg = updatedConfig.embeddedServer;
-        if (embeddedCfg.enabled) {
-            const seeded = seedVettedToolConfigs(EMBEDDED_MATTERMOST_BASE_URL);
-            if (seeded) {
-                const existing = embeddedCfg.tool_configs || [];
-                const existingNames = new Set(existing.map((tc) => tc.name));
-                const missing = seeded.filter((tc) => !existingNames.has(tc.name));
-                if (missing.length > 0) {
+            const updatedServers = await Promise.all(
+                updatedConfig.servers.map(async (sc) => {
+                    let seeded: MCPToolConfig[] = [];
+                    try {
+                        seeded = await getVettedToolSeed(sc.baseURL);
+                    } catch {
+                        return sc;
+                    }
+                    if (seeded.length === 0) {
+                        return sc;
+                    }
+                    const existing = sc.tool_configs || [];
+                    const existingNames = new Set(existing.map((tc) => tc.name));
+                    const missing = seeded.filter((tc) => !existingNames.has(tc.name));
+                    if (missing.length === 0) {
+                        return sc;
+                    }
                     changed = true;
-                    updatedConfig = {
-                        ...updatedConfig,
-                        embeddedServer: {...embeddedCfg, tool_configs: [...existing, ...missing]},
-                    };
+                    return {...sc, tool_configs: [...existing, ...missing]};
+                }),
+            );
+            if (changed) {
+                updatedConfig = {...updatedConfig, servers: updatedServers};
+            }
+
+            const embeddedCfg = updatedConfig.embeddedServer;
+            if (embeddedCfg.enabled) {
+                let seeded: MCPToolConfig[] = [];
+                try {
+                    seeded = await getVettedToolSeed(EMBEDDED_MATTERMOST_BASE_URL);
+                } catch {
+                    seeded = [];
+                }
+                if (seeded.length > 0) {
+                    const existing = embeddedCfg.tool_configs || [];
+                    const existingNames = new Set(existing.map((tc) => tc.name));
+                    const missing = seeded.filter((tc) => !existingNames.has(tc.name));
+                    if (missing.length > 0) {
+                        changed = true;
+                        updatedConfig = {
+                            ...updatedConfig,
+                            embeddedServer: {...embeddedCfg, tool_configs: [...existing, ...missing]},
+                        };
+                    }
                 }
             }
-        }
 
-        if (changed) {
-            onConfigChange(updatedConfig);
-        }
+            if (changed) {
+                onConfigChange(updatedConfig);
+            }
+        })().catch(() => null);
     }, [toolsData]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Calculate total tools across all servers

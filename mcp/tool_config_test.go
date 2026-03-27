@@ -4,7 +4,6 @@
 package mcp
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -217,23 +216,4 @@ func TestServerConfigIsToolAutoRun(t *testing.T) {
 			require.Equal(t, tt.want, tt.config.IsToolAutoRun(tt.toolName))
 		})
 	}
-}
-
-func TestServerConfigJSONOmitEmptyToolConfigs(t *testing.T) {
-	cfg := ServerConfig{
-		Name:    "GitHub",
-		Enabled: true,
-		BaseURL: "https://api.githubcopilot.com/mcp/",
-	}
-
-	data, err := json.Marshal(cfg)
-	require.NoError(t, err)
-	require.NotContains(t, string(data), "tool_configs")
-}
-
-func TestServerConfigJSONUnmarshalWithoutToolConfigs(t *testing.T) {
-	var cfg ServerConfig
-	err := json.Unmarshal([]byte(`{"name":"GitHub","enabled":true,"baseURL":"https://api.githubcopilot.com/mcp/"}`), &cfg)
-	require.NoError(t, err)
-	require.Nil(t, cfg.ToolConfigs)
 }

@@ -4,6 +4,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -179,17 +180,44 @@ func (a *API) handleGetUserPreferences(c *gin.Context) {
 func (a *API) handlePutUserPreferences(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, mcp.UserPreferencesMaxRequestBodyBytes)
+
 	var prefs mcp.UserToolProviderPreferences
 	if err := c.ShouldBindJSON(&prefs); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			c.AbortWithError(http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
+			return
+		}
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
 
 	saved, err := mcp.SaveUserPreferences(a.mmClient, userID, &prefs)
 	if err != nil {
+		if errors.Is(err, mcp.ErrUserPreferencesInvalid) {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid preferences: %w", err))
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save preferences: %w", err))
 		return
 	}
 
 	c.JSON(http.StatusOK, saved)
+}
+
+// handleGetVettedToolSeed returns authoritative vetted default tool_configs for a base URL (admin).
+func (a *API) handleGetVettedToolSeed(c *gin.Context) {
+	baseURL := c.Query("base_url")
+	if baseURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "base_url is required"})
+		return
+	}
+
+	configs := mcp.SeedVettedToolConfigs(baseURL)
+	if configs == nil {
+		configs = []mcp.ToolConfig{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"tool_configs": configs})
 }
