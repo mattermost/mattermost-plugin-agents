@@ -200,6 +200,12 @@ func (c *Conversations) HandleToolCall(ctx stdcontext.Context, userID string, po
 	toolsDisabled := applyToolAvailability(llmContext, isDM, allowToolsInChannel)
 
 	for i := range tools {
+		if tools[i].Status != llm.ToolCallStatusPending && tools[i].Status != llm.ToolCallStatusAccepted {
+			// Preserve previously resolved tool statuses (e.g. auto-approved reads)
+			// when a mixed batch later asks approval for additional pending tools.
+			continue
+		}
+
 		if slices.Contains(acceptedToolIDs, tools[i].ID) {
 			_, resolveSpan := telemetry.Tracer().Start(ctx, "resolve tool",
 				trace.WithAttributes(
@@ -211,7 +217,8 @@ func (c *Conversations) HandleToolCall(ctx stdcontext.Context, userID string, po
 				return json.Unmarshal(tools[i].Arguments, args)
 			}, llmContext)
 			if resolveErr != nil {
-				tools[i].Result = "Tool call failed"
+				// Preserve actionable error message for the LLM to retry or adapt
+				tools[i].Result = resolveErr.Error()
 				tools[i].Status = llm.ToolCallStatusError
 				resolveSpan.SetAttributes(telemetry.ToolStatus.String("error"))
 				resolveSpan.End()
@@ -446,6 +453,16 @@ func (c *Conversations) HandleToolResult(ctx stdcontext.Context, userID string, 
 		return fmt.Errorf("failed to update post after tool result approval: %w", updateErr)
 	}
 
+	// Do not continue streaming when no tool call succeeded (all errors/rejections).
+	// Re-invoking completeAndStreamToolResponse would cause a channel loop.
+	hasSuccessfulResult := slices.ContainsFunc(tools, func(tc llm.ToolCall) bool {
+		return tc.Status == llm.ToolCallStatusSuccess
+	})
+	if !hasSuccessfulResult {
+		c.deleteToolCallKVEntries(post.Id, resultKVKey, toolCallKVKey)
+		return nil
+	}
+
 	if err := c.completeAndStreamToolResponse(ctx, bot, user, channel, toolCallPostCopy, llmContext, toolsDisabled, allowToolsInChannel); err != nil {
 		return err
 	}
@@ -493,10 +510,14 @@ func (c *Conversations) completeAndStreamToolResponse(
 	if toolsDisabled {
 		opts = append(opts, llm.WithToolsDisabled())
 	}
+	opts = c.appendDMAutoRunOptions(mmapi.IsDMWith(bot.GetMMBot().UserId, channel), llmContext, opts)
 	result, err := bot.LLM().ChatCompletion(ctx, completionRequest, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to get chat completion: %w", err)
 	}
+
+	// Enrich tool calls with server origin for auto-approval decisions
+	result = llm.EnrichToolCallsWithServerOrigin(result, llmContext.Tools)
 
 	// Decorate the stream with web search annotations if available
 	if webSearchData := mmtools.ConsumeWebSearchContexts(llmContext); len(webSearchData) > 0 {
@@ -513,6 +534,28 @@ func (c *Conversations) completeAndStreamToolResponse(
 	}
 
 	return nil
+}
+
+// AutoExecuteApprovedToolCalls is the callback invoked by the streaming layer
+// when all tool calls in a batch have been auto-approved. The approved tool IDs
+// are passed directly from the batch that was checked, avoiding a KV re-read
+// that could race with a newer batch overwriting the same key.
+func (c *Conversations) AutoExecuteApprovedToolCalls(postID string, requesterID string, approvedToolIDs []string) {
+	post, err := c.mmClient.GetPost(postID)
+	if err != nil {
+		c.mmClient.LogError("Auto-execute: failed to get post", "error", err, "post_id", postID)
+		return
+	}
+
+	channel, err := c.mmClient.GetChannel(post.ChannelId)
+	if err != nil {
+		c.mmClient.LogError("Auto-execute: failed to get channel", "error", err, "post_id", postID)
+		return
+	}
+
+	if err := c.HandleToolCall(stdcontext.Background(), requesterID, post, channel, approvedToolIDs); err != nil {
+		c.mmClient.LogError("Auto-execute: HandleToolCall failed", "error", err, "post_id", postID)
+	}
 }
 
 // deleteToolCallKVEntries cleans up KV store entries, logging any deletion errors.

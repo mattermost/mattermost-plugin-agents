@@ -106,8 +106,8 @@ const defaultConfig = {
     },
     mcp: {
         enabled: false,
-        servers: {},
-        idleTimeout: 30,
+        servers: [],
+        idleTimeoutMinutes: 30,
     },
     webSearch: {
         enabled: false,
@@ -374,7 +374,7 @@ const Config = (props: Props) => {
                         // Ensure we're creating a valid structure for the server configuration
                         const updatedConfig = {
                             ...config,
-                            servers: config.servers || {},
+                            servers: config.servers || [],
                         };
                         props.onChange(props.id, {...value, mcp: updatedConfig});
                         props.setSaveNeeded();

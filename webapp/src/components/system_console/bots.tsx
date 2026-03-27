@@ -100,8 +100,8 @@ const Bots = (props: Props) => {
                 </TertiaryButton>
                 {licenceAddDisabled && (
                     <EnterpriseChip
-                        text={intl.formatMessage({defaultMessage: 'Use multiple AI bots on Enterprise plans'})}
-                        subtext={intl.formatMessage({defaultMessage: 'Multiple AI services is available on Enterprise plans'})}
+                        text={intl.formatMessage({defaultMessage: 'Use multiple AI bots on qualifying Mattermost plans'})}
+                        subtext={intl.formatMessage({defaultMessage: 'Multiple AI services require a qualifying Mattermost plan'})}
                     />
                 )}
             </EnterpriseChipContainer>

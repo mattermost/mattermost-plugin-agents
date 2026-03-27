@@ -68,9 +68,10 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 			var oauthErr *OAuthNeededError
 			if errors.As(err, &oauthErr) {
 				mcpErrors.ToolAuthErrors = append(mcpErrors.ToolAuthErrors, llm.ToolAuthError{
-					ServerName: serverConfig.Name,
-					AuthURL:    oauthErr.AuthURL(),
-					Error:      err,
+					ServerName:   serverConfig.Name,
+					ServerOrigin: serverConfig.BaseURL,
+					AuthURL:      oauthErr.AuthURL(),
+					Error:        err,
 				})
 			} else {
 				c.log.Error("Failed to connect to MCP server", "userID", c.userID, "serverID", serverConfig.Name, "error", err)
@@ -167,10 +168,11 @@ func (c *UserClients) GetTools() []llm.Tool {
 			seenTools[toolName] = serverID
 
 			tools = append(tools, llm.Tool{
-				Name:        toolName,
-				Description: tool.Description,
-				Schema:      tool.InputSchema,
-				Resolver:    c.createToolResolver(client, toolName),
+				Name:         toolName,
+				Description:  tool.Description,
+				Schema:       tool.InputSchema,
+				Resolver:     c.createToolResolver(client, toolName),
+				ServerOrigin: client.config.BaseURL,
 			})
 		}
 	}

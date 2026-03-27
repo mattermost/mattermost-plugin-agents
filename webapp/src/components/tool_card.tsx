@@ -119,6 +119,21 @@ const SmallRejectedIcon = styled(CloseCircleOutlineIcon)`
     height: 12px;
 `;
 
+const AutoApprovedBadge = styled.span`
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 6px;
+    height: 18px;
+    border-radius: 9px;
+    background: rgba(var(--online-indicator-rgb), 0.12);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 14px;
+    color: var(--online-indicator);
+    white-space: nowrap;
+`;
+
 const ResponseSuccessIcon = styled(IconCheckCircle)`
     color: var(--online-indicator);
     width: 12px;
@@ -307,6 +322,7 @@ interface ToolCardProps {
     showArguments: boolean;
     showResults: boolean;
     approvalStage?: ToolApprovalStage;
+    isAutoApproved?: boolean;
 }
 
 const ToolCard: React.FC<ToolCardProps> = ({
@@ -321,12 +337,13 @@ const ToolCard: React.FC<ToolCardProps> = ({
     showArguments,
     showResults,
     approvalStage = 'call',
+    isAutoApproved = false,
 }) => {
     const {formatMessage} = useIntl();
 
     const isPending = tool.status === ToolCallStatus.Pending;
     const isAccepted = tool.status === ToolCallStatus.Accepted;
-    const isSuccess = tool.status === ToolCallStatus.Success;
+    const isSuccess = tool.status === ToolCallStatus.Success || tool.status === ToolCallStatus.AutoApproved;
     const isError = tool.status === ToolCallStatus.Error;
     const isRejected = tool.status === ToolCallStatus.Rejected;
     const showDecisionButtons = Boolean(onApprove && onReject);
@@ -522,6 +539,14 @@ const ToolCard: React.FC<ToolCardProps> = ({
                     {!showProcessingSpinner && isRejected && <SmallRejectedIcon size={16}/>}
                 </StatusIcon>
                 <ToolName>{displayName}</ToolName>
+                {(tool.status === ToolCallStatus.AutoApproved || isAutoApproved) && (
+                    <AutoApprovedBadge>
+                        <FormattedMessage
+                            id='ai.tool_call.auto_approved'
+                            defaultMessage='Auto-approved'
+                        />
+                    </AutoApprovedBadge>
+                )}
             </ToolCallHeader>
 
             {!isCollapsed && (
