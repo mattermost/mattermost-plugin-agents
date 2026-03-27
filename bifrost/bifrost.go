@@ -1031,7 +1031,7 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 					}
 					messages = append(messages, funcOutputMsg)
 				}
-			} else {
+			} else if post.Message != "" {
 				messages = append(messages, schemas.ResponsesMessage{
 					Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
 					Content: &schemas.ResponsesMessageContent{
