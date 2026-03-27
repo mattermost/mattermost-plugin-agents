@@ -4,7 +4,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +15,6 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -200,7 +198,6 @@ func normalizeAllowedTools(rawTools []string) ([]string, error) {
 }
 
 func (a *API) prepareAgentBridgeCompletion(
-	ctx context.Context,
 	agent string,
 	req bridgeclient.CompletionRequest,
 	operation, operationSubType string,
@@ -242,24 +239,17 @@ func (a *API) prepareAgentBridgeCompletion(
 			return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, errors.New("agent has tools disabled")
 		}
 
-		var eligibleTools []bridgeclient.BridgeToolInfo
-		var eligibleToolMap map[string]llm.Tool
-		eligibleTools, eligibleToolMap, err = a.filterEligibleToolsForContext(ctx, req.UserID, llmRequest.Context.Tools)
-		if err != nil {
-			return nil, llm.CompletionRequest{}, nil, http.StatusInternalServerError, fmt.Errorf("failed to resolve eligible tools: %v", err)
-		}
-
-		if len(eligibleTools) == 0 {
+		if llmRequest.Context.Tools == nil || len(llmRequest.Context.Tools.GetTools()) == 0 {
 			return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, errors.New("no eligible tools available for this agent")
 		}
 
 		scopedTools := llm.NewToolStore(nil, false)
 		for _, toolName := range allowedTools {
-			tool, ok := eligibleToolMap[toolName]
-			if !ok {
+			tool := llmRequest.Context.Tools.GetTool(toolName)
+			if tool == nil {
 				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("tool %q is not eligible or not available for this agent", toolName)
 			}
-			scopedTools.AddTools([]llm.Tool{tool})
+			scopedTools.AddTools([]llm.Tool{*tool})
 		}
 		llmRequest.Context.Tools = scopedTools
 	}
@@ -284,122 +274,6 @@ func (a *API) prepareAgentBridgeCompletion(
 	}
 
 	return bot, llmRequest, opts, 0, nil
-}
-
-func (a *API) discoverBridgeEligibleTools(ctx context.Context, userID string) ([]bridgeclient.BridgeToolInfo, error) {
-	mcpConfig := a.config.MCP()
-	if !mcpConfig.Enabled {
-		return nil, nil
-	}
-	if a.mcpClientManager == nil {
-		return nil, nil
-	}
-
-	oauthManager := a.mcpClientManager.GetOAuthManager()
-	httpClient := a.mcpClientManager.GetHTTPClient()
-	toolsCache := a.mcpClientManager.GetToolsCache()
-	if httpClient == nil {
-		return nil, errors.New("MCP HTTP client is unavailable")
-	}
-
-	toolMap := map[string]bridgeclient.BridgeToolInfo{}
-
-	// Discover tools from embedded server if enabled
-	if userID != "" && mcpConfig.EmbeddedServer.Enabled {
-		embeddedServer := a.mcpClientManager.GetEmbeddedServer()
-		if embeddedServer != nil {
-			tools, err := mcp.DiscoverEmbeddedServerTools(
-				ctx,
-				userID,
-				"",
-				mcpConfig.EmbeddedServer,
-				embeddedServer,
-				a.pluginAPI.Log,
-				a.pluginAPI,
-			)
-			if err != nil {
-				a.pluginAPI.Log.Warn("Failed discovering eligible bridge tools from embedded MCP server", "error", err)
-			} else {
-				for _, tool := range tools {
-					if _, exists := toolMap[tool.Name]; exists {
-						continue
-					}
-					toolMap[tool.Name] = bridgeclient.BridgeToolInfo{
-						Name:        tool.Name,
-						Description: tool.Description,
-					}
-				}
-			}
-		}
-	}
-
-	// Discover tools from remote servers
-	for _, serverConfig := range mcpConfig.Servers {
-		if !serverConfig.Enabled || serverConfig.BaseURL == "" {
-			continue
-		}
-
-		tools, err := mcp.DiscoverRemoteServerTools(
-			ctx,
-			userID,
-			serverConfig,
-			a.pluginAPI.Log,
-			oauthManager,
-			httpClient,
-			toolsCache,
-		)
-		if err != nil {
-			a.pluginAPI.Log.Warn("Failed discovering eligible bridge tools from MCP server; skipping server", "server_name", serverConfig.Name, "error", err)
-			continue
-		}
-
-		for _, tool := range tools {
-			if _, exists := toolMap[tool.Name]; exists {
-				continue
-			}
-			toolMap[tool.Name] = bridgeclient.BridgeToolInfo{
-				Name:        tool.Name,
-				Description: tool.Description,
-			}
-		}
-	}
-
-	result := make([]bridgeclient.BridgeToolInfo, 0, len(toolMap))
-	for _, tool := range toolMap {
-		result = append(result, tool)
-	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Name < result[j].Name
-	})
-
-	return result, nil
-}
-
-func (a *API) filterEligibleToolsForContext(ctx context.Context, userID string, toolStore *llm.ToolStore) ([]bridgeclient.BridgeToolInfo, map[string]llm.Tool, error) {
-	if toolStore == nil {
-		return nil, map[string]llm.Tool{}, nil
-	}
-
-	eligibleDiscoveredTools, err := a.discoverBridgeEligibleTools(ctx, userID)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	eligibleTools := make([]bridgeclient.BridgeToolInfo, 0, len(eligibleDiscoveredTools))
-	eligibleToolMap := make(map[string]llm.Tool, len(eligibleDiscoveredTools))
-	for _, discovered := range eligibleDiscoveredTools {
-		tool := toolStore.GetTool(discovered.Name)
-		if tool == nil {
-			continue
-		}
-		eligibleTools = append(eligibleTools, bridgeclient.BridgeToolInfo{
-			Name:        tool.Name,
-			Description: tool.Description,
-		})
-		eligibleToolMap[tool.Name] = *tool
-	}
-
-	return eligibleTools, eligibleToolMap, nil
 }
 
 // convertRequestToLLMOptions converts the API request options to llm.LanguageModelOption
@@ -643,16 +517,22 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 	if a.contextBuilder != nil {
 		a.contextBuilder.WithLLMContextTools(bot)(toolContext)
 	}
-	eligibleTools, _, err := a.filterEligibleToolsForContext(c.Request.Context(), userID, toolContext.Tools)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
-			Error: fmt.Sprintf("failed to discover eligible tools: %v", err),
-		})
-		return
+
+	var tools []bridgeclient.BridgeToolInfo
+	if toolContext.Tools != nil {
+		for _, info := range toolContext.Tools.GetToolsInfo() {
+			tools = append(tools, bridgeclient.BridgeToolInfo{
+				Name:        info.Name,
+				Description: info.Description,
+			})
+		}
 	}
+	sort.Slice(tools, func(i, j int) bool {
+		return tools[i].Name < tools[j].Name
+	})
 
 	c.JSON(http.StatusOK, bridgeclient.AgentToolsResponse{
-		Tools: eligibleTools,
+		Tools: tools,
 	})
 }
 
@@ -740,7 +620,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), agent, req, llm.OperationBridgeAgent, llm.SubTypeStreaming)
+	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, llm.OperationBridgeAgent, llm.SubTypeStreaming)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),
@@ -784,7 +664,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), agent, req, llm.OperationBridgeAgent, llm.SubTypeNoStream)
+	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, llm.OperationBridgeAgent, llm.SubTypeNoStream)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),

@@ -129,6 +129,35 @@ func (p *MattermostToolProvider) automationAPIURL(path string) string {
 	return p.mmServerURL + automationPluginAPIPath + path
 }
 
+// doAutomationRequest makes an HTTP request to the channel automation plugin API
+// using the client's auth credentials. This bypasses Client4.DoAPIRequestWithHeaders
+// which prepends /api/v4, but plugin routes are served directly at /plugins/....
+// Returns the response and a non-nil error for non-2xx status codes.
+func doAutomationRequest(ctx context.Context, client *model.Client4, method, reqURL, data string) (*http.Response, error) {
+	var body io.Reader
+	if data != "" {
+		body = strings.NewReader(data)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
+	if err != nil {
+		return nil, err
+	}
+	if client.AuthToken != "" {
+		req.Header.Set(model.HeaderAuth, client.AuthType+" "+client.AuthToken)
+	}
+	if data != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := client.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		return resp, fmt.Errorf("automation API request failed with status %d", resp.StatusCode)
+	}
+	return resp, nil
+}
+
 // --- Arg structs ---
 
 // ListAutomationsArgs represents arguments for the list_automations tool.
@@ -306,7 +335,7 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 		flowsURL += "?channel_id=" + url.QueryEscape(args.ChannelID)
 	}
 
-	resp, err := mcpContext.Client.DoAPIRequestWithHeaders(ctx, http.MethodGet, flowsURL, "", nil)
+	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, flowsURL, "")
 	if err != nil {
 		return handleAutomationHTTPError(resp, err, "")
 	}
@@ -325,7 +354,7 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 }
 
 func (p *MattermostToolProvider) getAutomationByID(ctx context.Context, mcpContext *MCPToolContext, id string) (string, error) {
-	resp, err := mcpContext.Client.DoAPIRequestWithHeaders(ctx, http.MethodGet, p.automationAPIURL("/flows/"+id), "", nil)
+	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, p.automationAPIURL("/flows/"+id), "")
 	if err != nil {
 		return handleAutomationHTTPError(resp, err, id)
 	}
@@ -366,7 +395,7 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 		return "failed to encode automation", fmt.Errorf("failed to marshal automation: %w", err)
 	}
 
-	resp, err := mcpContext.Client.DoAPIRequestWithHeaders(ctx, http.MethodPost, p.automationAPIURL("/flows"), string(body), nil)
+	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodPost, p.automationAPIURL("/flows"), string(body))
 	if err != nil {
 		statusCode := 0
 		if resp != nil {
@@ -416,7 +445,7 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 		return "failed to encode automation", fmt.Errorf("failed to marshal automation: %w", err)
 	}
 
-	resp, err := mcpContext.Client.DoAPIRequestWithHeaders(ctx, http.MethodPut, p.automationAPIURL("/flows/"+args.AutomationID), string(body), nil)
+	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodPut, p.automationAPIURL("/flows/"+args.AutomationID), string(body))
 	if err != nil {
 		statusCode := 0
 		if resp != nil {
@@ -453,7 +482,7 @@ func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext
 	}
 	ctx := context.Background()
 
-	resp, err := mcpContext.Client.DoAPIRequestWithHeaders(ctx, http.MethodDelete, p.automationAPIURL("/flows/"+args.AutomationID), "", nil)
+	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodDelete, p.automationAPIURL("/flows/"+args.AutomationID), "")
 	if err != nil {
 		return handleAutomationHTTPError(resp, err, args.AutomationID)
 	}

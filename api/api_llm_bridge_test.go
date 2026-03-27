@@ -1412,9 +1412,10 @@ func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 	client := e.CreateBridgeClient()
 	tools, err := client.GetAgentTools(testBotUserID, testUserID)
 	require.NoError(t, err)
-	require.Len(t, tools, 1)
+	require.Len(t, tools, 2)
 	require.Equal(t, "eligible_tool", tools[0].Name)
 	require.Equal(t, "eligible from context", tools[0].Description)
+	require.Equal(t, "ineligible_tool", tools[1].Name)
 }
 
 func TestBridgeGetAgentToolsReturnsEmbeddedServerTools(t *testing.T) {
@@ -1831,24 +1832,11 @@ func TestBridgeClientAgentCompletionAllowedToolsFailsWhenNoEligibleToolsAvailabl
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
-	// MCP disabled means allowed_tools cannot resolve any bridge-eligible tools.
-	e.config.mcpConfig = mcp.Config{
-		Enabled: false,
-	}
-
+	// No tool provider means the ToolStore will be empty.
 	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
 		e.client,
 		&testLLMContextToolProvider{
-			tools: []llm.Tool{
-				{
-					Name:        "context_only_tool",
-					Description: "present in context but not bridge-eligible",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
-					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-						return "ok", nil
-					},
-				},
-			},
+			tools: []llm.Tool{},
 		},
 		nil,
 		&testLLMContextConfigProvider{},
@@ -1866,7 +1854,7 @@ func TestBridgeClientAgentCompletionAllowedToolsFailsWhenNoEligibleToolsAvailabl
 		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "Try tool call"},
 		},
-		AllowedTools: []string{"context_only_tool"},
+		AllowedTools: []string{"nonexistent_tool"},
 		UserID:       testUserID,
 	})
 	require.Error(t, err)
