@@ -624,11 +624,9 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 		case llm.PostRoleBot:
 			msg = schemas.ChatMessage{
 				Role: schemas.ChatMessageRoleAssistant,
-			}
-			if post.Message != "" {
-				msg.Content = &schemas.ChatMessageContent{
+				Content: &schemas.ChatMessageContent{
 					ContentStr: Ptr(post.Message),
-				}
+				},
 			}
 
 			// Add reasoning details for thinking-enabled conversations
@@ -646,6 +644,9 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 
 			// Handle tool calls in assistant messages
 			if len(post.ToolUse) > 0 {
+				if post.Message == "" {
+					msg.Content = nil
+				}
 				toolCalls := make([]schemas.ChatAssistantMessageToolCall, 0, len(post.ToolUse))
 				for i, tc := range post.ToolUse {
 					toolCalls = append(toolCalls, schemas.ChatAssistantMessageToolCall{
