@@ -65,7 +65,7 @@ Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 | Setting | Description |
 |---------|-------------|
 | **Name** | Internal name for this service configuration |
-| **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Azure OpenAI, OpenAI-compatible) |
+| **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Scale AI, Azure OpenAI, OpenAI-compatible) |
 | **API Key** | Your provider's API key (requirements vary by provider) |
 | **Default Model** | Default model to use for this service |
 | **Input Token Limit** | Maximum tokens allowed in input |
@@ -85,6 +85,7 @@ Each provider has specific configuration requirements:
 | **AWS Bedrock** | AWS Region | API Key (can use IAM role), Access/Secret Keys |
 | **Cohere** | API Key | |
 | **Mistral** | API Key | |
+| **Scale AI** | API Key, API URL | Account ID (required for ScaleGov) |
 | **Azure OpenAI** | API Key, API URL | |
 
 For AWS Bedrock, authentication can be configured using AWS credentials in the API Key/Secret fields, or by using IAM roles when running Mattermost on AWS infrastructure.
@@ -337,7 +338,7 @@ This separation allows multiple bots to share the same LLM service configuration
 }
 ```
 
-**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`
+**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`, `scale`
 
 **Legacy format:** Older configurations with embedded service objects within bots are automatically migrated to the current format on plugin startup.
 

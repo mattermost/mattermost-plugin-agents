@@ -24,10 +24,9 @@ type Chunk struct {
 
 // Options defines options for chunking documents
 type Options struct {
-	ChunkSize        int     `json:"chunkSize"`        // Maximum size of each chunk in characters
-	ChunkOverlap     int     `json:"chunkOverlap"`     // Number of characters to overlap between chunks
-	MinChunkSize     float64 `json:"minChunkSize"`     // Minimum chunk size as a fraction of max size (0.0-1.0)
-	ChunkingStrategy string  `json:"chunkingStrategy"` // Strategy: sentences, paragraphs, or fixed
+	ChunkSize        int    `json:"chunkSize"`        // Maximum size of each chunk in characters
+	ChunkOverlap     int    `json:"chunkOverlap"`     // Number of characters to overlap between chunks
+	ChunkingStrategy string `json:"chunkingStrategy"` // Strategy: sentences, paragraphs, or fixed
 }
 
 // DefaultOptions returns the default chunking options
@@ -35,7 +34,6 @@ func DefaultOptions() Options {
 	return Options{
 		ChunkSize:        1000,
 		ChunkOverlap:     200,
-		MinChunkSize:     0.75,
 		ChunkingStrategy: "sentences",
 	}
 }
@@ -92,7 +90,7 @@ func ChunkText(content string, opts Options) []Chunk {
 		splitter := textsplitter.NewRecursiveCharacter(
 			textsplitter.WithChunkSize(opts.ChunkSize),
 			textsplitter.WithChunkOverlap(opts.ChunkOverlap),
-			textsplitter.WithSeparators([]string{". ", "! ", "? ", "\n", " ", ""}),
+			textsplitter.WithSeparators([]string{".", "!", "?", "\n", " ", ""}),
 		)
 		textChunks, err = splitter.SplitText(content)
 	}

@@ -20,6 +20,7 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 		  "disableFunctionCalls": false,
 		  "enableLLMTrace": true,
 		  "enableUserRestrictions": false,
+		  "allowUnsafeLinks": true,
 		  "defaultBotName": "mock",
 		  "mcp": {
 			  "embeddedServer": {

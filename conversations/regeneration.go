@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
@@ -70,7 +71,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			bot,
 			user,
 			channel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot),
+			c.contextBuilder.WithLLMContextNoTools(),
 		)
 
 		analyzer := threads.New(bot.LLM(), c.prompts, c.mmClient)
@@ -119,7 +120,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			bot,
 			user,
 			originalFileChannel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot),
+			c.contextBuilder.WithLLMContextNoTools(),
 		)
 		var summaryErr error
 		result, summaryErr = c.meetingsService.SummarizeTranscription(bot, transcription, context)
@@ -152,7 +153,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			bot,
 			user,
 			channel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot),
+			c.contextBuilder.WithLLMContextNoTools(),
 		)
 		var summaryErr error
 		result, summaryErr = c.meetingsService.SummarizeTranscription(bot, transcription, context)
@@ -189,6 +190,16 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			channel,
 			contextOpts...,
 		)
+
+		// Apply user-disabled-provider filtering for DM/group channels only (Copilot RHS).
+		if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+			prefs, prefsErr := mcp.LoadUserPreferences(c.mmClient, user.Id)
+			if prefsErr != nil {
+				c.mmClient.LogWarn("Failed to load user tool preferences on regen, proceeding without filtering", "error", prefsErr.Error(), "userID", user.Id)
+			} else if len(prefs.DisabledServers) > 0 && contextWithCallback.Tools != nil {
+				contextWithCallback.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
+			}
+		}
 
 		// Process the user request with the context that has the callback
 		allowToolsInChannel := allowToolsInChannelFromPost(post)

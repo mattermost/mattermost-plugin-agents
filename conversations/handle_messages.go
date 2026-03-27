@@ -9,6 +9,9 @@ import (
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
+	"github.com/mattermost/mattermost-plugin-ai/i18n"
+	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
@@ -125,11 +128,6 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 	configEnabled := c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
 	allowToolsInChannel := computeAllowToolsInChannel(configEnabled, post, postingUser)
 
-	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, allowToolsInChannel)
-	if err != nil {
-		return fmt.Errorf("unable to process bot mention: %w", err)
-	}
-
 	responseRootID := post.Id
 	if post.RootId != "" {
 		responseRootID = post.RootId
@@ -140,21 +138,18 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 		RootId:    responseRootID,
 	}
 	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
-	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, postingUser.Id, stream, responsePost, post.Id); err != nil {
-		return fmt.Errorf("unable to stream response: %w", err)
-	}
-
-	return nil
+	return c.respondToPost(bot, postingUser, channel, responsePost, post.Id, func() (*llm.TextStreamResult, error) {
+		stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, allowToolsInChannel)
+		if err != nil {
+			return nil, fmt.Errorf("unable to process bot mention: %w", err)
+		}
+		return stream, nil
+	})
 }
 
 func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
 	if err := c.bots.CheckUsageRestrictionsForUser(bot, postingUser.Id); err != nil {
 		return err
-	}
-
-	stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, false)
-	if err != nil {
-		return fmt.Errorf("unable to process bot mention: %w", err)
 	}
 
 	responseRootID := post.Id
@@ -166,9 +161,87 @@ func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, posting
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, postingUser.Id, stream, responsePost, post.Id); err != nil {
+	return c.respondToPost(bot, postingUser, channel, responsePost, post.Id, func() (*llm.TextStreamResult, error) {
+		stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, false)
+		if err != nil {
+			return nil, fmt.Errorf("unable to process bot mention: %w", err)
+		}
+		return stream, nil
+	})
+}
+
+func (c *Conversations) respondToPost(
+	bot *bots.Bot,
+	postingUser *model.User,
+	channel *model.Channel,
+	responsePost *model.Post,
+	respondingToPostID string,
+	buildStream func() (*llm.TextStreamResult, error),
+) error {
+	if err := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, respondingToPostID); err != nil {
+		return fmt.Errorf("unable to create response placeholder: %w", err)
+	}
+
+	stream, err := buildStream()
+	if err != nil {
+		c.failResponsePlaceholder(responsePost, postingUser.Locale)
+		return err
+	}
+
+	if err := c.streamResponseToExistingPost(stream, responsePost, postingUser, channel); err != nil {
+		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("unable to stream response: %w", err)
 	}
 
 	return nil
+}
+
+func (c *Conversations) createResponsePlaceholder(botID, requesterUserID string, post *model.Post, respondingToPostID string) error {
+	streaming.ModifyPostForBot(botID, requesterUserID, post, respondingToPostID)
+	return c.mmClient.CreatePost(post)
+}
+
+func (c *Conversations) streamResponseToExistingPost(stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel) error {
+	ctx, err := c.streamingService.GetStreamingContext(context.Background(), post.Id)
+	if err != nil {
+		return err
+	}
+
+	locale := c.responseLocale(postingUser, channel)
+	go func() {
+		defer c.streamingService.FinishStreaming(post.Id)
+		c.streamingService.StreamToPost(ctx, stream, post, locale)
+	}()
+
+	return nil
+}
+
+func (c *Conversations) failResponsePlaceholder(post *model.Post, userLocale string) {
+	message := "Sorry! An error occurred while accessing the LLM. See server logs for details."
+	if c.i18n != nil {
+		T := i18n.LocalizerFunc(c.i18n, c.fallbackLocale(userLocale))
+		message = T("agents.stream_to_post_access_llm_error", message)
+	}
+	post.Message = message
+	if err := c.mmClient.UpdatePost(post); err != nil {
+		c.mmClient.LogError("Failed to update response placeholder after startup error", "error", err)
+	}
+}
+
+func (c *Conversations) responseLocale(postingUser *model.User, channel *model.Channel) string {
+	defaultLocale := c.fallbackLocale("")
+	if channel != nil && channel.Type == model.ChannelTypeDirect && postingUser != nil && postingUser.Locale != "" {
+		return postingUser.Locale
+	}
+	return defaultLocale
+}
+
+func (c *Conversations) fallbackLocale(userLocale string) string {
+	if userLocale != "" {
+		return userLocale
+	}
+	if config := c.mmClient.GetConfig(); config != nil && config.LocalizationSettings.DefaultServerLocale != nil && *config.LocalizationSettings.DefaultServerLocale != "" {
+		return *config.LocalizationSettings.DefaultServerLocale
+	}
+	return "en"
 }

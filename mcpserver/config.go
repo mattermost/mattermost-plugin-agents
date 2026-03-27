@@ -75,6 +75,7 @@ type HTTPConfig struct {
 	HTTPPort     int    `json:"http_port"`      // Port for HTTP server (default: 8080)
 	HTTPBindAddr string `json:"http_bind_addr"` // Bind address (default: "127.0.0.1" for security)
 	SiteURL      string `json:"site_url"`       // Site URL for external access (optional)
+	Stateless    bool   `json:"stateless"`      // Stateless mode for multi-node/HA deployments (default: false)
 }
 
 // GetTrackAIGenerated returns whether to track AI-generated content
@@ -90,8 +91,6 @@ func (c HTTPConfig) GetTrackAIGenerated() bool {
 // Used for embedded MCP servers that run within the same process as the plugin
 type InMemoryConfig struct {
 	BaseConfig
-	// No additional configuration needed for in-memory transport
-	// Authentication is handled through session tokens passed via context
 }
 
 // GetTrackAIGenerated returns whether to track AI-generated content

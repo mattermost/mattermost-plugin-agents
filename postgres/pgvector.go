@@ -6,6 +6,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 
 	sq "github.com/Masterminds/squirrel"
@@ -24,6 +25,10 @@ type PGVectorConfig struct {
 }
 
 func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
+	if config.Dimensions <= 0 {
+		return nil, fmt.Errorf("pgvector dimensions must be greater than 0, got %d", config.Dimensions)
+	}
+
 	// Enable pgvector extension if not already enabled
 	if _, err := db.Exec("CREATE EXTENSION IF NOT EXISTS vector"); err != nil {
 		return nil, fmt.Errorf("failed to create vector extension: %w", err)
@@ -68,12 +73,53 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 }
 
 func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, embeddings [][]float32) error {
+	// Validate input lengths match to prevent index out of bounds errors
+	if len(docs) != len(embeddings) {
+		return fmt.Errorf("mismatched input lengths: got %d documents but %d embeddings", len(docs), len(embeddings))
+	}
+
+	if len(docs) == 0 {
+		return nil
+	}
+
+	// Collect unique post IDs to clean up before insert
+	// This ensures that when a post is re-indexed with a different chunk count,
+	// old chunks are removed to prevent orphaned data.
+	postIDSet := make(map[string]struct{})
+	for _, doc := range docs {
+		postIDSet[doc.PostID] = struct{}{}
+	}
+	postIDs := make([]string, 0, len(postIDSet))
+	for id := range postIDSet {
+		postIDs = append(postIDs, id)
+	}
+
+	tx, err := pv.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Bulk delete existing entries for all posts being updated
+	deleteQuery, deleteArgs, err := sq.
+		Delete("llm_posts_embeddings").
+		Where(sq.Eq{"post_id": postIDs}).
+		PlaceholderFormat(sq.Dollar).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build delete query: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, deleteQuery, deleteArgs...); err != nil {
+		return fmt.Errorf("failed to delete existing chunks: %w", err)
+	}
+
+	// Insert new entries
 	for i, doc := range docs {
 		id := doc.PostID
 		if doc.IsChunk {
 			id = fmt.Sprintf("%s_chunk_%d", doc.PostID, doc.ChunkIndex)
 		}
-		_, err := pv.db.NamedExecContext(ctx, `
+		_, err := tx.NamedExecContext(ctx, `
 			INSERT INTO llm_posts_embeddings (
 				id, post_id, team_id, channel_id, user_id, content, embedding, created_at,
 				is_chunk, chunk_index, total_chunks
@@ -81,13 +127,7 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 			VALUES (
 				:id, :post_id, :team_id, :channel_id, :user_id, :content, :embedding, :created_at,
 				:is_chunk, :chunk_index, :total_chunks
-			)
-			ON CONFLICT (id) DO UPDATE SET
-				content = EXCLUDED.content,
-				embedding = EXCLUDED.embedding,
-				is_chunk = EXCLUDED.is_chunk,
-				chunk_index = EXCLUDED.chunk_index,
-				total_chunks = EXCLUDED.total_chunks`,
+			)`,
 			map[string]interface{}{
 				"id":           id,
 				"post_id":      doc.PostID,
@@ -105,6 +145,10 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 		if err != nil {
 			return fmt.Errorf("failed to insert vector: %w", err)
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return nil
@@ -160,10 +204,28 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 		queryBuilder = queryBuilder.Where(sq.Lt{"e.created_at": opts.CreatedBefore})
 	}
 
+	// Filter by MinScore in SQL when specified
+	// Convert minScore to L2 distance threshold: L2 = sqrt(2(1 - score))
+	if opts.MinScore > 0 {
+		maxDistanceSquared := 2 * (1 - opts.MinScore)
+		if maxDistanceSquared > 0 {
+			maxDistance := float32(math.Sqrt(float64(maxDistanceSquared)))
+			queryBuilder = queryBuilder.Where("(e.embedding <-> ?) < ?", pgvector.NewVector(embedding), maxDistance)
+		}
+	}
+
 	queryBuilder = queryBuilder.OrderBy("similarity ASC")
 
-	if opts.Limit > 0 && opts.Limit < 100000 {
-		queryBuilder = queryBuilder.Limit(uint64(opts.Limit)) //nolint:gosec
+	// Apply limit with sensible default/max
+	const maxSearchLimit = 1000
+	limit := opts.Limit
+	if limit <= 0 || limit > maxSearchLimit {
+		limit = maxSearchLimit
+	}
+	queryBuilder = queryBuilder.Limit(uint64(limit)) //nolint:gosec
+
+	if opts.Offset > 0 {
+		queryBuilder = queryBuilder.Offset(uint64(opts.Offset)) //nolint:gosec
 	}
 
 	query, args, err := queryBuilder.ToSql()
@@ -208,7 +270,10 @@ func scanSearchResults(rows *sqlx.Rows, minScore float32) ([]embeddings.SearchRe
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
 
-		score := 1 - similarity
+		// Convert L2 distance to cosine similarity for normalized vectors
+		// For unit vectors: L2² = 2(1 - cos(θ)), so cos(θ) = 1 - L2²/2
+		// This gives a score from 1 (identical) to -1 (opposite)
+		score := 1 - (similarity*similarity)/2
 		if score < 0 {
 			score = 0
 		}
@@ -269,4 +334,30 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 		return fmt.Errorf("failed to clear vectors: %w", err)
 	}
 	return nil
+}
+
+// DeleteOrphaned removes embeddings whose posts no longer exist or are soft-deleted past retention.
+func (pv *PGVector) DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error) {
+	query := `
+		WITH orphaned AS (
+			SELECT e.id FROM llm_posts_embeddings e
+			LEFT JOIN Posts p ON e.post_id = p.Id
+			WHERE p.Id IS NULL
+			   OR (p.DeleteAt > 0 AND p.DeleteAt <= $1)
+			LIMIT $2
+		)
+		DELETE FROM llm_posts_embeddings
+		WHERE id IN (SELECT id FROM orphaned)`
+
+	result, err := pv.db.ExecContext(ctx, query, nowTime, batchSize)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete orphaned embeddings: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return rowsAffected, nil
 }

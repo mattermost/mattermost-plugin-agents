@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
+	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/indexer"
@@ -43,6 +44,7 @@ type Config interface {
 	GetDefaultBotName() string
 	MCP() mcp.Config
 	AllowUnsafeLinks() bool
+	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
 }
 
@@ -53,6 +55,8 @@ type MCPClientManager interface {
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (string, error)
+	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
+	GetConfig() mcp.Config
 }
 
 // ConfigStore provides read/write access to the plugin configuration in the database.
@@ -95,6 +99,7 @@ type API struct {
 	configStore           ConfigStore
 	configUpdater         ConfigUpdater
 	clusterNotifier       ClusterNotifier
+	getSearchInitError    func() string
 }
 
 // New creates a new API instance
@@ -120,6 +125,7 @@ func New(
 	configStore ConfigStore,
 	configUpdater ConfigUpdater,
 	clusterNotifier ClusterNotifier,
+	getSearchInitError func() string,
 ) *API {
 	return &API{
 		bots:                  bots,
@@ -144,6 +150,7 @@ func New(
 		configStore:           configStore,
 		configUpdater:         configUpdater,
 		clusterNotifier:       clusterNotifier,
+		getSearchInitError:    getSearchInitError,
 	}
 }
 
@@ -194,6 +201,13 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
+	router.GET("/mcp/tools", a.handleGetUserMCPTools)
+	router.GET("/mcp/user-preferences", a.handleGetUserPreferences)
+	router.PUT("/mcp/user-preferences", a.handlePutUserPreferences)
+
+	// Raw search endpoint returns enriched semantic search results without LLM processing.
+	// Used by the MCP server for external search callbacks.
+	router.POST("/search/raw", a.handleRawSearch)
 
 	botRequiredRouter := router.Group("")
 	botRequiredRouter.Use(a.aiBotRequired)
@@ -222,7 +236,10 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/reindex", a.handleReindexPosts)
 	adminRouter.GET("/reindex/status", a.handleGetJobStatus)
 	adminRouter.POST("/reindex/cancel", a.handleCancelJob)
+	adminRouter.POST("/reindex/catchup", a.handleCatchUpIndex)
+	adminRouter.GET("/reindex/health-check", a.handleIndexHealthCheck)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
+	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
 	adminRouter.GET("/config", a.handleGetConfig)
@@ -413,7 +430,7 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	// API key is required for most services, but optional for openaicompatible (some don't require auth)
+	// API key is required for most services, but optional for openaicompatible (some don't require auth).
 	if req.APIKey == "" && req.ServiceType != "openaicompatible" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey is required"))
 		return

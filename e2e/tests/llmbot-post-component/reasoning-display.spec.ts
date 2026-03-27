@@ -33,6 +33,7 @@ import { attachAPIErrorContext } from 'helpers/log-scanner';
 
 const username = 'regularuser';
 const password = 'regularuser';
+const REAL_API_SETUP_TIMEOUT_MS = 180000;
 
 const config = getAPIConfig();
 const skipMessage = getSkipMessage();
@@ -54,6 +55,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
         let mattermost: MattermostContainer;
 
         test.beforeAll(async () => {
+            test.setTimeout(REAL_API_SETUP_TIMEOUT_MS);
             if (!config.shouldRunTests) return;
 
             // Customize provider to optimize for reasoning tests

@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/mmtools"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
@@ -43,19 +44,21 @@ type AIThread struct {
 type ConfigProvider interface {
 	EnableChannelMentionToolCalling() bool
 	AllowNativeWebSearchInChannels() bool
+	MCP() mcp.Config
 }
 
 type Conversations struct {
-	prompts          *llm.Prompts
-	mmClient         mmapi.Client
-	streamingService streaming.Service
-	contextBuilder   *llmcontext.Builder
-	bots             *bots.MMBots
-	db               *mmapi.DBClient
-	licenseChecker   *enterprise.LicenseChecker
-	i18n             *i18n.Bundle
-	meetingsService  MeetingsService
-	configProvider   ConfigProvider
+	prompts           *llm.Prompts
+	mmClient          mmapi.Client
+	streamingService  streaming.Service
+	contextBuilder    *llmcontext.Builder
+	bots              *bots.MMBots
+	db                *mmapi.DBClient
+	licenseChecker    *enterprise.LicenseChecker
+	i18n              *i18n.Bundle
+	meetingsService   MeetingsService
+	configProvider    ConfigProvider
+	toolPolicyChecker streaming.ToolPolicyChecker
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations
@@ -93,6 +96,32 @@ func New(
 // SetMeetingsService sets the meetings service (used to break circular dependency during initialization)
 func (c *Conversations) SetMeetingsService(meetingsService MeetingsService) {
 	c.meetingsService = meetingsService
+}
+
+// SetToolPolicyChecker sets the per-tool policy checker used for auto-approval
+// and DM auto-run decisions.
+func (c *Conversations) SetToolPolicyChecker(checker streaming.ToolPolicyChecker) {
+	c.toolPolicyChecker = checker
+}
+
+func (c *Conversations) appendDMAutoRunOptions(isDM bool, llmContext *llm.Context, opts []llm.LanguageModelOption) []llm.LanguageModelOption {
+	if !isDM || c.toolPolicyChecker == nil || llmContext == nil || llmContext.Tools == nil {
+		return opts
+	}
+
+	allTools := llmContext.Tools.GetTools()
+	var autoRunNames []string
+	for _, t := range allTools {
+		policy, enabled := c.toolPolicyChecker.GetToolPolicy(t.ServerOrigin, t.Name)
+		if policy == mcp.ToolPolicyAutoRun && enabled {
+			autoRunNames = append(autoRunNames, llm.ToolAutoRunKey(t.ServerOrigin, t.Name))
+		}
+	}
+	if len(autoRunNames) > 0 {
+		opts = append(opts, llm.WithAutoRunTools(autoRunNames))
+	}
+
+	return opts
 }
 
 // ProcessUserRequestWithContext is an internal helper that uses an existing context to process a message
@@ -151,16 +180,34 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 			opts = append(opts, llm.WithNativeWebSearchAllowed())
 		}
 	}
+
+	opts = c.appendDMAutoRunOptions(isDM, context, opts)
+
 	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
 		return nil, err
 	}
+
+	// Enrich tool calls with server origin for auto-approval decisions
+	var toolsStore *llm.ToolStore
+	if context != nil && context.Tools != nil {
+		toolsStore = context.Tools
+	}
+	result = llm.EnrichToolCallsWithServerOrigin(result, toolsStore)
 
 	// Decorate the stream with web search annotations if available
 	webSearchData := mmtools.ConsumeWebSearchContexts(context)
 	c.mmClient.LogDebug("Checking for web search data in ProcessUserRequestWithContext", "has_data", len(webSearchData) > 0, "num_contexts", len(webSearchData))
 	if len(webSearchData) > 0 {
 		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
+	}
+
+	// Wrap stream with MCP auto-approval for channel tool calls.
+	// When tools are enabled in channels and a per-tool policy checker exists,
+	// auto_run tools are auto-executed, skipping the call-approval UI and
+	// proceeding directly to result-sharing.
+	if allowToolsInChannel && context != nil && context.Tools != nil && c.toolPolicyChecker != nil {
+		result = wrapStreamWithMCPAutoApproval(result, context, c.toolPolicyChecker)
 	}
 
 	go func() {
@@ -205,9 +252,38 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
 	}
 
-	// Check for auth errors in the tool store
+	// Apply user-disabled-provider filtering for DM/group channels only (Copilot RHS).
+	// In-channel @mentions use the agent's EnabledTools and do not apply user toggles.
+	// This must happen before auth-error notifications so users don't receive OAuth
+	// prompts for providers they have explicitly disabled.
+	var disabledOrigins map[string]bool
+	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
+		if err != nil {
+			c.mmClient.LogWarn("Failed to load user tool preferences, proceeding without filtering", "error", err.Error(), "userID", postingUser.Id)
+		} else if len(prefs.DisabledServers) > 0 {
+			disabledOrigins = make(map[string]bool, len(prefs.DisabledServers))
+			for _, origin := range prefs.DisabledServers {
+				disabledOrigins[origin] = true
+			}
+			if llmContext.Tools != nil {
+				llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
+			}
+		}
+	}
+
+	// Check for auth errors in the tool store, excluding disabled providers.
 	if llmContext.Tools != nil {
 		authErrors := llmContext.Tools.GetAuthErrors()
+		if len(disabledOrigins) > 0 {
+			filtered := authErrors[:0]
+			for _, ae := range authErrors {
+				if !disabledOrigins[ae.ServerOrigin] {
+					filtered = append(filtered, ae)
+				}
+			}
+			authErrors = filtered
+		}
 		if len(authErrors) > 0 {
 			rootID := post.RootId
 			if rootID == "" {

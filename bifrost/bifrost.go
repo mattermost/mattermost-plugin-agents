@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 
@@ -576,6 +577,10 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildChatReasoning(cfg)
+	// Apply structured output (JSON schema) configuration
+	if cfg.JSONOutputFormat != nil {
+		params.ResponseFormat = buildChatResponseFormat(cfg.JSONOutputFormat)
+	}
 	req.Params = params
 
 	return req
@@ -851,7 +856,7 @@ func schemaMapToFunctionParams(schemaMap map[string]interface{}) *schemas.ToolFu
 		params.Description = &desc
 	}
 	if props, ok := schemaMap["properties"].(map[string]interface{}); ok {
-		params.Properties = (*schemas.OrderedMap)(&props)
+		params.Properties = schemas.OrderedMapFromMap(props)
 	}
 	if req, ok := schemaMap["required"].([]interface{}); ok {
 		required := make([]string, 0, len(req))
@@ -864,6 +869,55 @@ func schemaMapToFunctionParams(schemaMap map[string]interface{}) *schemas.ToolFu
 	}
 
 	return params
+}
+
+// jsonSchemaToMap converts a *jsonschema.Schema to a map[string]interface{} via JSON round-trip.
+func jsonSchemaToMap(schema *jsonschema.Schema) (map[string]interface{}, error) {
+	data, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal JSON schema: %w", err)
+	}
+	var schemaMap map[string]interface{}
+	if err := json.Unmarshal(data, &schemaMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON schema: %w", err)
+	}
+	return schemaMap, nil
+}
+
+// buildChatResponseFormat creates the response_format parameter for the Chat Completions API.
+func buildChatResponseFormat(schema *jsonschema.Schema) *interface{} {
+	schemaMap, err := jsonSchemaToMap(schema)
+	if err != nil {
+		return nil
+	}
+	var responseFormat interface{} = map[string]interface{}{
+		"type": "json_schema",
+		"json_schema": map[string]interface{}{
+			"name":   "response",
+			"schema": schemaMap,
+			"strict": true,
+		},
+	}
+	return &responseFormat
+}
+
+// buildResponsesTextConfig creates the text configuration for the Responses API with JSON schema output.
+func buildResponsesTextConfig(schema *jsonschema.Schema) *schemas.ResponsesTextConfig {
+	schemaMap, err := jsonSchemaToMap(schema)
+	if err != nil {
+		return nil
+	}
+	var schemaAny any = schemaMap
+	return &schemas.ResponsesTextConfig{
+		Format: &schemas.ResponsesTextConfigFormat{
+			Type:   "json_schema",
+			Name:   Ptr("response"),
+			Strict: Ptr(true),
+			JSONSchema: &schemas.ResponsesTextConfigFormatJSONSchema{
+				Schema: &schemaAny,
+			},
+		},
+	}
 }
 
 // isValidImageType checks if the MIME type is supported.
@@ -1147,6 +1201,10 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildResponsesReasoning(cfg)
+	// Apply structured output (JSON schema) configuration
+	if cfg.JSONOutputFormat != nil {
+		params.Text = buildResponsesTextConfig(cfg.JSONOutputFormat)
+	}
 	req.Params = params
 
 	return req
@@ -1173,6 +1231,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	// Process stream
 	var toolCalls []llm.ToolCall
 	toolCallsBuffer := make(map[string]*responsesToolCallBuffer)
+	var currentFuncCallID string // tracks the active function call for argument deltas
 
 	// Reasoning buffers
 	var reasoningBuffer strings.Builder
@@ -1309,7 +1368,9 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				blockStartPos = textLen
 
 			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
-				// Tool call arguments delta
+				// Tool call arguments delta.
+				// Bifrost often does not populate resp.Item on delta events; the call ID
+				// may come from the preceding OutputItemAdded event (currentFuncCallID).
 				if resp.Item != nil && resp.Item.ResponsesToolMessage != nil {
 					tm := resp.Item.ResponsesToolMessage
 					callID := ""
@@ -1327,6 +1388,11 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
 						}
 					}
+				} else if currentFuncCallID != "" && resp.Delta != nil {
+					if toolCallsBuffer[currentFuncCallID] == nil {
+						toolCallsBuffer[currentFuncCallID] = &responsesToolCallBuffer{id: currentFuncCallID}
+					}
+					toolCallsBuffer[currentFuncCallID].arguments.WriteString(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
@@ -1339,6 +1405,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							callID = *tm.CallID
 						}
 						if callID != "" {
+							currentFuncCallID = callID
 							if toolCallsBuffer[callID] == nil {
 								toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
 							}

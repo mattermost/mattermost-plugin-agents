@@ -14,11 +14,12 @@ import (
 
 // authenticationTransport handles 401 responses for MCP
 type authenticationTransport struct {
-	userID     string
-	serverName string
-	serverURL  string
-	manager    *OAuthManager
-	base       http.RoundTripper
+	userID      string
+	serverName  string
+	serverURL   string
+	manager     *OAuthManager
+	staticCreds *StaticOAuthCredentials
+	base        http.RoundTripper
 }
 
 type mcpUnauthorized struct {
@@ -68,7 +69,7 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 
 	// Include the token if found
 	if token != nil {
-		oauthConfig, configErr := t.manager.createOAuthConfig(req.Context(), t.serverURL, "")
+		oauthConfig, configErr := t.manager.createOAuthConfig(req.Context(), t.serverURL, "", t.staticCreds)
 		if configErr != nil {
 			return nil, fmt.Errorf("failed to create OAuth config: %w", configErr)
 		}

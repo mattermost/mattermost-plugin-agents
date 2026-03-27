@@ -220,12 +220,12 @@ func (a *API) handleInterval(c *gin.Context) {
 		return
 	}
 
-	// Build LLM context
+	// Interval summaries disable tools, so skip MCP/tool initialization entirely.
 	context := a.contextBuilder.BuildLLMContextUserRequest(
 		bot,
 		user,
 		channel,
-		a.contextBuilder.WithLLMContextDefaultTools(bot),
+		a.contextBuilder.WithLLMContextNoTools(),
 	)
 
 	// Map preset prompt to prompt type and title
