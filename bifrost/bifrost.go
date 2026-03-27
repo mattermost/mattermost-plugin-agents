@@ -624,9 +624,11 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 		case llm.PostRoleBot:
 			msg = schemas.ChatMessage{
 				Role: schemas.ChatMessageRoleAssistant,
-				Content: &schemas.ChatMessageContent{
+			}
+			if post.Message != "" {
+				msg.Content = &schemas.ChatMessageContent{
 					ContentStr: Ptr(post.Message),
-				},
+				}
 			}
 
 			// Add reasoning details for thinking-enabled conversations
@@ -997,19 +999,17 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 			}
 
 		case llm.PostRoleBot:
-			msg := schemas.ResponsesMessage{
-				Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
-				Content: &schemas.ResponsesMessageContent{
-					ContentStr: Ptr(post.Message),
-				},
-			}
-
-			messages = append(messages, msg)
-
 			// Handle tool calls in assistant messages
 			if len(post.ToolUse) > 0 {
+				if post.Message != "" {
+					messages = append(messages, schemas.ResponsesMessage{
+						Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
+						Content: &schemas.ResponsesMessageContent{
+							ContentStr: Ptr(post.Message),
+						},
+					})
+				}
 				for _, tc := range post.ToolUse {
-					// Add function call message
 					funcCallMsg := schemas.ResponsesMessage{
 						Type: Ptr(schemas.ResponsesMessageTypeFunctionCall),
 						ResponsesToolMessage: &schemas.ResponsesToolMessage{
@@ -1020,7 +1020,6 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 					}
 					messages = append(messages, funcCallMsg)
 
-					// Add function call output message
 					funcOutputMsg := schemas.ResponsesMessage{
 						Type: Ptr(schemas.ResponsesMessageTypeFunctionCallOutput),
 						ResponsesToolMessage: &schemas.ResponsesToolMessage{
@@ -1032,7 +1031,13 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 					}
 					messages = append(messages, funcOutputMsg)
 				}
-				continue // Skip adding msg again since we handled tool calls
+			} else {
+				messages = append(messages, schemas.ResponsesMessage{
+					Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
+					Content: &schemas.ResponsesMessageContent{
+						ContentStr: Ptr(post.Message),
+					},
+				})
 			}
 		}
 	}
