@@ -11,12 +11,14 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
+	"github.com/mattermost/mattermost-plugin-ai/llm"
 )
 
 // EmbeddingProvider implements the embeddings.EmbeddingProvider interface using Bifrost.
 type EmbeddingProvider struct {
 	client     *bifrostcore.Bifrost
 	provider   schemas.ModelProvider
+	apiKey     string // used only to redact configured secrets from provider error surfaces
 	model      string
 	dimensions int
 }
@@ -50,6 +52,7 @@ func NewEmbeddingProvider(cfg EmbeddingConfig) (*EmbeddingProvider, error) {
 	return &EmbeddingProvider{
 		client:     client,
 		provider:   cfg.Provider,
+		apiKey:     cfg.APIKey,
 		model:      cfg.Model,
 		dimensions: cfg.Dimensions,
 	}, nil
@@ -74,7 +77,7 @@ func (p *EmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([
 
 	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, fmt.Errorf("bifrost embedding error: %s", bifrostErr.Error.Message)
+		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost embedding error: %s", bifrostErr.Error.Message), p.apiKey)
 	}
 
 	if resp == nil || len(resp.Data) == 0 {
@@ -109,7 +112,7 @@ func (p *EmbeddingProvider) BatchCreateEmbeddings(ctx context.Context, texts []s
 
 	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, fmt.Errorf("bifrost batch embedding error: %s", bifrostErr.Error.Message)
+		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost batch embedding error: %s", bifrostErr.Error.Message), p.apiKey)
 	}
 
 	if resp == nil || len(resp.Data) == 0 {

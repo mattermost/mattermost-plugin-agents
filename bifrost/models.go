@@ -49,7 +49,7 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 
 	resp, bifrostErr := client.ListAllModels(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, fmt.Errorf("bifrost list models error: %s", bifrostErr.Error.Message)
+		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost list models error: %s", bifrostErr.Error.Message), cfg.APIKey)
 	}
 
 	if resp == nil {
