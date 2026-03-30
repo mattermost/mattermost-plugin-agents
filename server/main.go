@@ -539,9 +539,17 @@ func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *mode
 }
 
 func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
+	if post == nil {
+		return
+	}
 	if p.indexerService != nil {
 		if err := p.indexerService.DeletePost(context.Background(), post.Id); err != nil {
 			p.pluginAPI.Log.Error("Failed to delete post from vector database", "error", err)
+		}
+	}
+	if p.conversationsService != nil {
+		if err := p.conversationsService.DeletePostMetaForDeletedPost(post); err != nil {
+			p.pluginAPI.Log.Error("Failed to delete LLM thread title for deleted post", "error", err, "post_id", post.Id)
 		}
 	}
 }
