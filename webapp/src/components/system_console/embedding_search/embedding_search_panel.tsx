@@ -90,8 +90,8 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                 subtitle={''}
             >
                 <EnterpriseChip
-                    text={intl.formatMessage({defaultMessage: 'Embeddings search is available on Enterprise plans'})}
-                    subtext={intl.formatMessage({defaultMessage: 'Embeddings search is available on Enterprise plans'})}
+                    text={intl.formatMessage({defaultMessage: 'Embedding search is available on qualifying Mattermost plans'})}
+                    subtext={intl.formatMessage({defaultMessage: 'Embedding search is available on qualifying Mattermost plans'})}
                 />
             </Panel>
         );

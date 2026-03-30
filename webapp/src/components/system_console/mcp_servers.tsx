@@ -1,28 +1,37 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {PlusIcon, TrashCanOutlineIcon, ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton} from '../assets/buttons';
+import {getMCPTools, getVettedToolSeed} from '../../client';
 
-import MCPToolsViewer from './mcp_tools_viewer';
+import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
 
 import {BooleanItem, ItemList, TextItem} from './item';
+
+export type MCPToolConfig = {
+    name: string;
+    policy: 'auto_run' | 'ask';
+    enabled: boolean;
+};
 
 export type MCPServerConfig = {
     name: string;
     enabled: boolean;
     baseURL: string;
     headers: {[key: string]: string};
+    tool_configs?: MCPToolConfig[];
     clientID?: string;
     clientSecret?: string;
 };
 
 export type MCPEmbeddedServerConfig = {
     enabled: boolean;
+    tool_configs?: MCPToolConfig[];
 };
 
 export type MCPConfig = {
@@ -52,6 +61,8 @@ const defaultServerConfig: MCPServerConfig = {
     enabled: true,
     baseURL: '',
     headers: {},
+    clientID: '',
+    clientSecret: '',
 };
 
 // Component for a single MCP server configuration
@@ -77,16 +88,47 @@ const MCPServer = ({
         enabled: serverConfig.enabled ?? false,
         baseURL: serverConfig.baseURL || '',
         headers: serverConfig.headers || {},
+        tool_configs: serverConfig.tool_configs,
         clientID: serverConfig.clientID || '',
         clientSecret: serverConfig.clientSecret || '',
     };
 
-    // Update server URL
+    // Last base URL we applied vetted seeding for (authoritative list from GET /admin/mcp/vetted-tool-seed).
+    const lastSeededBaseURLRef = useRef<string | null>(serverConfig.baseURL?.trim() ?? null);
+
     const updateServerURL = (baseURL: string) => {
         onChange(serverIndex, {
             ...config,
             baseURL,
         });
+    };
+
+    // Re-seed or clear tool_configs only on blur, so mid-edit keystrokes don't wipe customizations
+    const handleURLBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+        (async () => {
+            const baseURL = e.currentTarget.value;
+            const trimmed = baseURL.trim();
+            if (trimmed === lastSeededBaseURLRef.current) {
+                return;
+            }
+            let toolConfigs = config.tool_configs;
+            try {
+                const seeded = await getVettedToolSeed(baseURL);
+                if (seeded.length > 0) {
+                    toolConfigs = seeded.map((tc) => ({...tc}));
+                } else {
+                    toolConfigs = [];
+                }
+            } catch {
+                return;
+            }
+            lastSeededBaseURLRef.current = trimmed;
+            onChange(serverIndex, {
+                ...config,
+                baseURL,
+                tool_configs: toolConfigs,
+            });
+        })().catch(() => null);
     };
 
     // Update server enabled state
@@ -204,6 +246,7 @@ const MCPServer = ({
                 placeholder='https://mcp.example.com'
                 value={config.baseURL}
                 onChange={(e) => updateServerURL(e.target.value)}
+                onBlur={handleURLBlur}
                 helptext={intl.formatMessage({defaultMessage: 'The base URL of the MCP server.'})}
             />
 
@@ -303,7 +346,63 @@ const MCPServer = ({
 const MCPServers = ({mcpConfig, onChange}: Props) => {
     const intl = useIntl();
     const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
+    const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
+
+    // Tool-affecting config fingerprint (must be declared before prefetch effect)
+    const configFingerprint = JSON.stringify({
+        servers: (mcpConfig?.servers || []).map((s) => ({url: s.baseURL, enabled: s.enabled})),
+        embeddedEnabled: mcpConfig?.embeddedServer?.enabled,
+        enablePluginServer: mcpConfig?.enablePluginServer,
+    });
+    const prevFingerprintRef = useRef(configFingerprint);
+
+    // Invalidate prefetched tools when tool-affecting config fields change
+    useEffect(() => {
+        if (prevFingerprintRef.current !== configFingerprint) {
+            prevFingerprintRef.current = configFingerprint;
+            setPreloadedToolsData(null);
+        }
+    }, [configFingerprint]);
+
+    // Pre-fetch tools data when MCP is enabled so they're ready when the Tools tab is clicked.
+    // Ignore responses from outdated requests (cleanup + fingerprint match) so config changes cannot apply stale data.
+    useEffect(() => {
+        if (!mcpConfig?.enabled) {
+            return () => {
+                // no-op: MCP disabled, nothing to cancel
+            };
+        }
+
+        const fingerprintAtFetchStart = configFingerprint;
+        let cancelled = false;
+
+        getMCPTools().
+            then((response) => {
+                if (cancelled) {
+                    return;
+                }
+                if (fingerprintAtFetchStart !== prevFingerprintRef.current) {
+                    return;
+                }
+                setPreloadedToolsData(response);
+            }).
+            catch((error) => {
+                if (cancelled) {
+                    return;
+                }
+                // eslint-disable-next-line no-console
+                console.error('Failed to preload MCP tools:', error);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [mcpConfig?.enabled, configFingerprint]);
+
+    useEffect(() => {
+        setIdleTimeoutInputValue(getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
+    }, [mcpConfig?.idleTimeoutMinutes]);
 
     // Create a properly initialized config object
     const config: MCPConfig = {
@@ -315,10 +414,6 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         },
         idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
     };
-
-    useEffect(() => {
-        setIdleTimeoutInputValue(getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
-    }, [mcpConfig?.idleTimeoutMinutes]);
 
     // Generate a server name
     const generateServerName = () => {
@@ -489,7 +584,11 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                         )}
 
                         {activeTab === 'tools' && (
-                            <MCPToolsViewer/>
+                            <MCPToolsViewer
+                                mcpConfig={config}
+                                onConfigChange={(updatedConfig) => onChange(updatedConfig)}
+                                initialToolsData={preloadedToolsData}
+                            />
                         )}
                     </TabContent>
                 </>

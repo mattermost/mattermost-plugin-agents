@@ -23,8 +23,9 @@ type SearchRequest struct {
 }
 
 const (
-	defaultMaxResults = 5
-	maxMaxResults     = 100
+	defaultMaxResults    = 5
+	maxMaxResults        = 100
+	maxSearchQueryLength = 4000
 )
 
 func (a *API) handleRunSearch(c *gin.Context) {
@@ -45,6 +46,10 @@ func (a *API) handleRunSearch(c *gin.Context) {
 	req.Query = strings.TrimSpace(req.Query)
 	if req.Query == "" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("query cannot be empty"))
+		return
+	}
+	if len(req.Query) > maxSearchQueryLength {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("query exceeds maximum length of %d characters", maxSearchQueryLength))
 		return
 	}
 
@@ -82,6 +87,10 @@ func (a *API) handleSearchQuery(c *gin.Context) {
 	req.Query = strings.TrimSpace(req.Query)
 	if req.Query == "" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("query cannot be empty"))
+		return
+	}
+	if len(req.Query) > maxSearchQueryLength {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("query exceeds maximum length of %d characters", maxSearchQueryLength))
 		return
 	}
 
@@ -152,6 +161,10 @@ func (a *API) handleRawSearch(c *gin.Context) {
 	req.Query = strings.TrimSpace(req.Query)
 	if req.Query == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "query is required"})
+		return
+	}
+	if len(req.Query) > maxSearchQueryLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("query exceeds maximum length of %d characters", maxSearchQueryLength)})
 		return
 	}
 

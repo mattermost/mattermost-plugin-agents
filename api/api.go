@@ -54,6 +54,8 @@ type MCPClientManager interface {
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (string, error)
+	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
+	GetConfig() mcp.Config
 }
 
 // API represents the HTTP API functionality for the plugin
@@ -173,6 +175,9 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
+	router.GET("/mcp/tools", a.handleGetUserMCPTools)
+	router.GET("/mcp/user-preferences", a.handleGetUserPreferences)
+	router.PUT("/mcp/user-preferences", a.handlePutUserPreferences)
 
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
 	// Used by the MCP server for external search callbacks.
@@ -208,6 +213,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/reindex/catchup", a.handleCatchUpIndex)
 	adminRouter.GET("/reindex/health-check", a.handleIndexHealthCheck)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
+	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
 

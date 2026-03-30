@@ -27,6 +27,10 @@ type Tool struct {
 	Description string
 	Schema      any
 	Resolver    ToolResolver
+
+	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
+	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
+	ServerOrigin string
 }
 
 type ToolResolver func(context *Context, argsGetter ToolArgumentGetter) (string, error)
@@ -37,10 +41,11 @@ type ToolResolver func(context *Context, argsGetter ToolArgumentGetter) (string,
 // - Automatically injected when the resolver is called
 func (t Tool) WithBoundParams(params map[string]interface{}) Tool {
 	return Tool{
-		Name:        t.Name,
-		Description: t.Description,
-		Schema:      removeSchemaProperties(t.Schema, params),
-		Resolver:    wrapResolverWithBoundParams(t.Resolver, params),
+		Name:         t.Name,
+		Description:  t.Description,
+		Schema:       removeSchemaProperties(t.Schema, params),
+		Resolver:     wrapResolverWithBoundParams(t.Resolver, params),
+		ServerOrigin: t.ServerOrigin,
 	}
 }
 
@@ -191,7 +196,25 @@ const (
 	ToolCallStatusError
 	// ToolCallStatusSuccess indicates the tool call was accepted and resolved successfully
 	ToolCallStatusSuccess
+	// ToolCallStatusAutoApproved indicates the tool call was auto-approved and executed
+	// by the MCP approved servers feature per admin configuration.
+	// This status is set by the stream wrapper and consumed by the streaming layer
+	// to skip the call-approval UI and proceed directly to result-sharing.
+	ToolCallStatusAutoApproved
 )
+
+// HasPreExecutedToolCalls checks if any tool call in the batch was pre-executed
+// by the MCP auto-approval wrapper. The wrapper sets ToolCallStatusAutoApproved
+// on success and ToolCallStatusError on execution failure. Either status means
+// the batch was already executed and should not be reset/re-executed.
+func HasPreExecutedToolCalls(toolCalls []ToolCall) bool {
+	for _, tc := range toolCalls {
+		if tc.Status == ToolCallStatusAutoApproved || tc.Status == ToolCallStatusError {
+			return true
+		}
+	}
+	return false
+}
 
 // ToolCall represents a tool call. An empty result indicates that the tool has not yet been resolved.
 type ToolCall struct {
@@ -201,6 +224,10 @@ type ToolCall struct {
 	Arguments   json.RawMessage `json:"arguments"`
 	Result      string          `json:"result"`
 	Status      ToolCallStatus  `json:"status"`
+
+	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
+	// Empty for built-in tools. Used for auto-approval decisions.
+	ServerOrigin string `json:"server_origin,omitempty"`
 }
 
 // SanitizeNonPrintableChars replaces non-printable Unicode characters with their
@@ -258,19 +285,23 @@ func isSafeRune(r rune) bool {
 
 // SanitizeArguments sanitizes the Arguments field to prevent
 // bidirectional text and other Unicode spoofing attacks.
+// Also ensures Arguments is valid JSON (defaults to "{}" if empty/nil).
 func (tc *ToolCall) SanitizeArguments() {
-	if len(tc.Arguments) > 0 {
-		tc.Arguments = json.RawMessage(SanitizeNonPrintableChars(string(tc.Arguments)))
+	if len(tc.Arguments) == 0 {
+		tc.Arguments = json.RawMessage("{}")
+		return
 	}
+	tc.Arguments = json.RawMessage(SanitizeNonPrintableChars(string(tc.Arguments)))
 }
 
 type ToolArgumentGetter func(args any) error
 
 // ToolAuthError represents an authentication error that occurred during tool creation
 type ToolAuthError struct {
-	ServerName string `json:"server_name"`
-	AuthURL    string `json:"auth_url"`
-	Error      error  `json:"error"`
+	ServerName   string `json:"server_name"`
+	ServerOrigin string `json:"server_origin"`
+	AuthURL      string `json:"auth_url"`
+	Error        error  `json:"error"`
 }
 
 // AutoRunResult represents the result of executing an auto-run tool
@@ -281,20 +312,28 @@ type AutoRunResult struct {
 	IsError    bool
 }
 
+// ToolAutoRunKey builds a composite key for auto-run tool identification
+// that includes the server origin, preventing cross-server name collisions.
+func ToolAutoRunKey(serverOrigin, toolName string) string {
+	return serverOrigin + "\x00" + toolName
+}
+
 // ShouldAutoRunTools checks if all pending tool calls are configured for auto-run.
 // Returns true only if AutoRunTools is configured and ALL tool calls are in the auto-run list.
+// Auto-run entries and tool calls are matched by composite key (ServerOrigin + Name)
+// so that identically-named tools from different servers are distinguished.
 func ShouldAutoRunTools(pendingToolCalls []ToolCall, autoRunTools []string) bool {
 	if len(autoRunTools) == 0 || len(pendingToolCalls) == 0 {
 		return false
 	}
 
 	autoRunSet := make(map[string]bool, len(autoRunTools))
-	for _, name := range autoRunTools {
-		autoRunSet[name] = true
+	for _, key := range autoRunTools {
+		autoRunSet[key] = true
 	}
 
 	for _, tc := range pendingToolCalls {
-		if !autoRunSet[tc.Name] {
+		if !autoRunSet[ToolAutoRunKey(tc.ServerOrigin, tc.Name)] {
 			return false
 		}
 	}
@@ -403,6 +442,33 @@ func (s *ToolStore) GetTool(name string) *Tool {
 	return nil
 }
 
+// GetServerOrigin returns the ServerOrigin for a tool by name.
+// Returns empty string if the tool is not found or has no server origin (built-in tools).
+func (s *ToolStore) GetServerOrigin(toolName string) string {
+	if tool, ok := s.tools[toolName]; ok {
+		return tool.ServerOrigin
+	}
+	return ""
+}
+
+// RemoveToolsByServerOrigin removes all tools whose ServerOrigin matches
+// any of the provided origins. This is used for user-disabled provider
+// filtering in Copilot DM contexts.
+func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
+	if s == nil || len(disabledOrigins) == 0 {
+		return
+	}
+	disabledSet := make(map[string]bool, len(disabledOrigins))
+	for _, origin := range disabledOrigins {
+		disabledSet[origin] = true
+	}
+	for name, tool := range s.tools {
+		if disabledSet[tool.ServerOrigin] {
+			delete(s.tools, name)
+		}
+	}
+}
+
 // GetToolsInfo returns basic information (name and description) about all tools in the store.
 // This is useful for informing LLMs about tools that are available in other contexts
 // (e.g., DM-only tools when in a channel).
@@ -454,4 +520,37 @@ func (s *ToolStore) AddAuthError(authError ToolAuthError) {
 // GetAuthErrors returns all authentication errors collected during tool creation
 func (s *ToolStore) GetAuthErrors() []ToolAuthError {
 	return s.authErrors
+}
+
+// EnrichToolCallsWithServerOrigin returns a new TextStreamResult that intercepts
+// EventTypeToolCalls events and populates each ToolCall's ServerOrigin field
+// by looking up the tool name in the provided ToolStore.
+func EnrichToolCallsWithServerOrigin(stream *TextStreamResult, store *ToolStore) *TextStreamResult {
+	if store == nil {
+		return stream
+	}
+
+	bufSize := cap(stream.Stream)
+	if bufSize < 1 {
+		bufSize = 1
+	}
+	enriched := make(chan TextStreamEvent, bufSize)
+	go func() {
+		defer close(enriched)
+		for event := range stream.Stream {
+			if event.Type == EventTypeToolCalls {
+				if toolCalls, ok := event.Value.([]ToolCall); ok {
+					for i := range toolCalls {
+						if toolCalls[i].ServerOrigin == "" {
+							toolCalls[i].ServerOrigin = store.GetServerOrigin(toolCalls[i].Name)
+						}
+					}
+					event.Value = toolCalls
+				}
+			}
+			enriched <- event
+		}
+	}()
+
+	return &TextStreamResult{Stream: enriched}
 }

@@ -110,6 +110,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const requesterIsCurrentUser = (props.post.props?.llm_requester_user_id === currentUserId);
     const isToolCallRedacted = String(props.post.props?.pending_tool_call_redacted).toLowerCase() === 'true';
     const hasPendingToolResult = Boolean(props.post.props?.pending_tool_result);
+    const isAutoApproved = String(props.post.props?.auto_approved_tool_call).toLowerCase() === 'true';
     const toolApprovalStage: ToolApprovalStage = hasPendingToolResult ? 'result' : 'call';
 
     // Initialize reasoning from persisted data when navigating to different posts
@@ -218,7 +219,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // determine when to fetch private results even after the approval flow completes.
     const hasCompletedToolCalls = useMemo(() => {
         return toolCalls.some((tc) =>
-            tc.status === ToolCallStatus.Success || tc.status === ToolCallStatus.Error,
+            tc.status === ToolCallStatus.Success ||
+            tc.status === ToolCallStatus.Error ||
+            tc.status === ToolCallStatus.AutoApproved,
         );
     }, [toolCalls]);
 
@@ -497,6 +500,18 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     </span>
                 </MinimalReasoningContainer>
             )}
+            {resolvedToolCalls && resolvedToolCalls.length > 0 && (
+                <ToolApprovalSet
+                    postID={props.post.id}
+                    toolCalls={resolvedToolCalls}
+                    approvalStage={toolApprovalStage}
+                    canApprove={requesterIsCurrentUser}
+                    canExpand={requesterIsCurrentUser}
+                    showArguments={showToolArguments}
+                    showResults={showToolResults}
+                    isAutoApproved={isAutoApproved}
+                />
+            )}
             <PostText
                 message={message}
                 channelID={props.post.channel_id}
@@ -507,17 +522,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             {props.post.props?.[SearchResultsPropKey] && (
                 <SearchSources
                     sources={JSON.parse(props.post.props[SearchResultsPropKey])}
-                />
-            )}
-            {resolvedToolCalls && resolvedToolCalls.length > 0 && (
-                <ToolApprovalSet
-                    postID={props.post.id}
-                    toolCalls={resolvedToolCalls}
-                    approvalStage={toolApprovalStage}
-                    canApprove={requesterIsCurrentUser}
-                    canExpand={requesterIsCurrentUser}
-                    showArguments={showToolArguments}
-                    showResults={showToolResults}
                 />
             )}
             { showPostbackButton &&

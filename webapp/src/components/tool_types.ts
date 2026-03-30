@@ -6,7 +6,8 @@ export enum ToolCallStatus {
     Accepted = 1,
     Rejected = 2,
     Error = 3,
-    Success = 4
+    Success = 4,
+    AutoApproved = 5,
 }
 
 export type JSONValue =

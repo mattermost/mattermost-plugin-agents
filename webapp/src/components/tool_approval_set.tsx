@@ -64,6 +64,7 @@ interface ToolApprovalSetProps {
     canExpand: boolean;
     showArguments: boolean;
     showResults: boolean;
+    isAutoApproved?: boolean;
 }
 
 // Define a type for tool decisions
@@ -87,8 +88,11 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     const isCallStage = props.approvalStage === 'call';
 
+    // When auto-approved during call stage, suppress approval buttons
+    const effectiveCanApprove = props.isAutoApproved && isCallStage ? false : props.canApprove;
+
     const decisionToolCalls = useMemo(() => {
-        if (!props.canApprove) {
+        if (!effectiveCanApprove) {
             return [];
         }
 
@@ -98,9 +102,10 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
         return props.toolCalls.filter((call) =>
             call.status === ToolCallStatus.Success ||
-            call.status === ToolCallStatus.Error,
+            call.status === ToolCallStatus.Error ||
+            call.status === ToolCallStatus.AutoApproved,
         );
-    }, [props.toolCalls, props.canApprove, isCallStage]);
+    }, [props.toolCalls, effectiveCanApprove, isCallStage]);
 
     const decisionToolIDSet = useMemo(() => {
         return new Set(decisionToolCalls.map((call) => call.id));
@@ -141,7 +146,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     }, [isCallStage, props.postID]);
 
     useEffect(() => {
-        if (isCallStage || !props.canApprove) {
+        if (isCallStage || !effectiveCanApprove) {
             return;
         }
 
@@ -160,10 +165,10 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
         autoSubmitRef.current = true;
         submitDecisions([]);
-    }, [decisionToolCalls.length, isCallStage, isSubmitting, props.canApprove, props.postID, props.toolCalls, submitDecisions]);
+    }, [decisionToolCalls.length, isCallStage, isSubmitting, effectiveCanApprove, props.postID, props.toolCalls, submitDecisions]);
 
     const handleToolDecision = useCallback((toolID: string, approved: boolean) => {
-        if (!props.canApprove || isSubmitting || submitInFlightRef.current || !decisionToolIDSet.has(toolID)) {
+        if (!effectiveCanApprove || isSubmitting || submitInFlightRef.current || !decisionToolIDSet.has(toolID)) {
             return;
         }
 
@@ -189,10 +194,10 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             map((tool) => tool.id);
 
         submitDecisions(approvedToolIDs);
-    }, [props.canApprove, isSubmitting, decisionToolIDSet, decisionToolCalls, submitDecisions]);
+    }, [effectiveCanApprove, isSubmitting, decisionToolIDSet, decisionToolCalls, submitDecisions]);
 
     const handleBatchDecision = useCallback((approved: boolean) => {
-        if (!props.canApprove || isSubmitting || submitInFlightRef.current) {
+        if (!effectiveCanApprove || isSubmitting || submitInFlightRef.current) {
             return;
         }
 
@@ -210,7 +215,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             map((tool) => tool.id);
 
         submitDecisions(approvedToolIDs);
-    }, [props.canApprove, isSubmitting, decisionToolCalls, submitDecisions]);
+    }, [effectiveCanApprove, isSubmitting, decisionToolCalls, submitDecisions]);
 
     const toggleCollapse = (toolID: string) => {
         setCollapsedTools((prev) =>
@@ -233,10 +238,17 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     // Helper to compute if a tool should be collapsed
     const isToolCollapsed = (tool: ToolCall) => {
+        // Auto-approved + call stage: collapsed by default
+        if (props.isAutoApproved && isCallStage) {
+            return !collapsedTools.includes(tool.id);
+        }
+
         // Pending tools are expanded by default, others are collapsed
         const defaultExpanded = isCallStage ?
             tool.status === ToolCallStatus.Pending :
-            tool.status === ToolCallStatus.Success || tool.status === ToolCallStatus.Error;
+            tool.status === ToolCallStatus.Success ||
+            tool.status === ToolCallStatus.Error ||
+            tool.status === ToolCallStatus.AutoApproved;
 
         // Check if user has toggled this tool
         const isCollapsed = collapsedTools.includes(tool.id);
@@ -262,6 +274,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     showArguments={props.showArguments}
                     showResults={props.showResults}
                     approvalStage={props.approvalStage}
+                    isAutoApproved={props.isAutoApproved || tool.status === ToolCallStatus.AutoApproved}
                 />
             ))}
 
@@ -276,6 +289,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     showArguments={props.showArguments}
                     showResults={props.showResults}
                     approvalStage={props.approvalStage}
+                    isAutoApproved={props.isAutoApproved || tool.status === ToolCallStatus.AutoApproved}
                 />
             ))}
 

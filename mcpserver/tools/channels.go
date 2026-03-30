@@ -145,7 +145,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	}
 
 	// Get channel info for context
-	channel, _, err := client.GetChannel(ctx, args.ChannelID, "")
+	channel, _, err := client.GetChannel(ctx, args.ChannelID)
 	if err != nil {
 		return "failed to fetch channel info", fmt.Errorf("error fetching channel: %w", err)
 	}
@@ -344,7 +344,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 		// Direct ID lookup - fastest method, always returns single result
 		var channel *model.Channel
 		var resp *model.Response
-		channel, resp, err = client.GetChannel(ctx, args.ChannelID, "")
+		channel, resp, err = client.GetChannel(ctx, args.ChannelID)
 		if err != nil {
 			// Check if it's a 404 (not found) - return success with message
 			if resp != nil && resp.StatusCode == http.StatusNotFound {
@@ -603,7 +603,7 @@ func (p *MattermostToolProvider) toolAddUserToChannel(mcpContext *MCPToolContext
 
 	// Get user and channel info for confirmation
 	user, _, userErr := client.GetUser(ctx, args.UserID, "")
-	channel, _, channelErr := client.GetChannel(ctx, args.ChannelID, "")
+	channel, _, channelErr := client.GetChannel(ctx, args.ChannelID)
 
 	if userErr != nil || channelErr != nil {
 		return fmt.Sprintf("Successfully added user %s to channel %s", args.UserID, args.ChannelID), nil

@@ -96,7 +96,7 @@ func TestAutoRunToolsWrapper(t *testing.T) {
 		},
 		{
 			name:         "no context delegates directly",
-			autoRunTools: []string{"test_tool"},
+			autoRunTools: []string{ToolAutoRunKey("", "test_tool")},
 			context:      nil,
 			responses: []testResponse{
 				{events: []TextStreamEvent{
@@ -110,7 +110,7 @@ func TestAutoRunToolsWrapper(t *testing.T) {
 		},
 		{
 			name:         "no tools in context delegates directly",
-			autoRunTools: []string{"test_tool"},
+			autoRunTools: []string{ToolAutoRunKey("", "test_tool")},
 			context:      &Context{},
 			responses: []testResponse{
 				{events: []TextStreamEvent{
@@ -124,7 +124,7 @@ func TestAutoRunToolsWrapper(t *testing.T) {
 		},
 		{
 			name:         "auto-run executes tools and re-invokes LLM",
-			autoRunTools: []string{"test_tool"},
+			autoRunTools: []string{ToolAutoRunKey("", "test_tool")},
 			context:      &Context{Tools: newTestToolStore("test_tool", "tool_result")},
 			responses: []testResponse{
 				{events: []TextStreamEvent{
@@ -140,12 +140,12 @@ func TestAutoRunToolsWrapper(t *testing.T) {
 				}},
 			},
 			expectedTexts:    []string{"thinking...", "final answer"},
-			expectedToolCall: false,
+			expectedToolCall: true, // pending + resolved tool call events are forwarded for UI progress
 			expectedCalls:    2,
 		},
 		{
 			name:         "non-auto-run tools forwarded to output",
-			autoRunTools: []string{"other_tool"},
+			autoRunTools: []string{ToolAutoRunKey("", "other_tool")},
 			context:      &Context{Tools: newTestToolStore("test_tool", "result")},
 			responses: []testResponse{
 				{events: []TextStreamEvent{
@@ -162,7 +162,7 @@ func TestAutoRunToolsWrapper(t *testing.T) {
 		},
 		{
 			name:         "events forwarded during iterations",
-			autoRunTools: []string{"test_tool"},
+			autoRunTools: []string{ToolAutoRunKey("", "test_tool")},
 			context:      &Context{Tools: newTestToolStore("test_tool", "result")},
 			responses: []testResponse{
 				{events: []TextStreamEvent{
@@ -179,7 +179,7 @@ func TestAutoRunToolsWrapper(t *testing.T) {
 				}},
 			},
 			expectedTexts:    []string{"step1 ", "step2"},
-			expectedToolCall: false,
+			expectedToolCall: true, // pending + resolved tool call events are forwarded for UI progress
 			expectedCalls:    2,
 		},
 	}
@@ -246,7 +246,7 @@ func TestAutoRunToolsWrapper_MaxDepthStopsLoop(t *testing.T) {
 		Context: &Context{Tools: newTestToolStore("test_tool", "result")},
 	}
 
-	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{"test_tool"}))
+	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{ToolAutoRunKey("", "test_tool")}))
 	require.NoError(t, err)
 
 	var textCount int
@@ -284,7 +284,7 @@ func TestAutoRunToolsWrapper_ChatCompletionNoStream(t *testing.T) {
 		Context: &Context{Tools: newTestToolStore("test_tool", "result")},
 	}
 
-	text, err := wrapper.ChatCompletionNoStream(request, WithAutoRunTools([]string{"test_tool"}))
+	text, err := wrapper.ChatCompletionNoStream(request, WithAutoRunTools([]string{ToolAutoRunKey("", "test_tool")}))
 	require.NoError(t, err)
 	assert.Equal(t, "thinking...done", text)
 	assert.Equal(t, 2, inner.callCount)
@@ -331,7 +331,7 @@ func TestAutoRunToolsWrapper_ToolResultsInPost(t *testing.T) {
 		Context: &Context{Tools: newTestToolStore("test_tool", "tool output")},
 	}
 
-	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{"test_tool"}))
+	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{ToolAutoRunKey("", "test_tool")}))
 	require.NoError(t, err)
 
 	// Consume stream
@@ -374,4 +374,60 @@ func (c *capturingLLM) CountTokens(text string) int {
 
 func (c *capturingLLM) InputTokenLimit() int {
 	return c.inner.InputTokenLimit()
+}
+
+func TestAutoRunToolsPreservesServerOrigin(t *testing.T) {
+	const serverOrigin = "https://mcp.example.com"
+
+	// Create a tool store with a tool that has a ServerOrigin
+	store := NewNoTools()
+	store.AddTools([]Tool{
+		{
+			Name:         "mcp_tool",
+			Description:  "An MCP tool",
+			ServerOrigin: serverOrigin,
+			Resolver: func(_ *Context, _ ToolArgumentGetter) (string, error) {
+				return "mcp_result", nil
+			},
+		},
+	})
+
+	var capturedPosts []Post
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []TextStreamEvent{
+				{Type: EventTypeToolCalls, Value: []ToolCall{
+					{ID: "tc1", Name: "mcp_tool", Arguments: json.RawMessage(`{}`), ServerOrigin: serverOrigin},
+				}},
+				{Type: EventTypeEnd},
+			}},
+			{events: []TextStreamEvent{
+				{Type: EventTypeText, Value: "done"},
+				{Type: EventTypeEnd},
+			}},
+		},
+	}
+
+	capturingInner := &capturingLLM{inner: inner, capturedPosts: &capturedPosts}
+	wrapper := NewAutoRunToolsWrapper(capturingInner)
+
+	request := CompletionRequest{
+		Posts:   []Post{{Role: PostRoleUser, Message: "test"}},
+		Context: &Context{Tools: store},
+	}
+
+	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{ToolAutoRunKey(serverOrigin, "mcp_tool")}))
+	require.NoError(t, err)
+
+	// Consume stream
+	for range result.Stream { //nolint:revive
+	}
+
+	// Verify the resolved tool call in the re-submitted posts preserves ServerOrigin
+	require.NotEmpty(t, capturedPosts)
+	lastPost := capturedPosts[len(capturedPosts)-1]
+	require.Len(t, lastPost.ToolUse, 1)
+	assert.Equal(t, serverOrigin, lastPost.ToolUse[0].ServerOrigin)
+	assert.Equal(t, "mcp_result", lastPost.ToolUse[0].Result)
+	assert.Equal(t, ToolCallStatusSuccess, lastPost.ToolUse[0].Status)
 }

@@ -192,6 +192,35 @@ async function waitForButtonInThread(page: Page, buttonName: string, timeout: nu
 }
 
 /**
+ * Wait for any approval decision button in the RHS thread panel.
+ * Returns the first visible button name, or null on timeout.
+ */
+async function waitForAnyButtonInThread(
+    page: Page,
+    buttonNames: string[],
+    timeout: number = 120000,
+    throwOnTimeout: boolean = true,
+): Promise<string | null> {
+    const startTime = Date.now();
+    const rhs = page.locator('#rhsContainer');
+    while (Date.now() - startTime < timeout) {
+        for (const buttonName of buttonNames) {
+            const button = rhs.getByRole('button', { name: buttonName });
+            const isVisible = await button.first().isVisible().catch(() => false);
+            if (isVisible) {
+                await page.waitForTimeout(500);
+                return buttonName;
+            }
+        }
+        await page.waitForTimeout(1000);
+    }
+    if (throwOnTimeout) {
+        throw new Error(`Timeout waiting for one of buttons in thread: ${buttonNames.join(', ')}`);
+    }
+    return null;
+}
+
+/**
  * Complete one full tool call round: Accept all → Share all.
  * Returns true if a round was completed, false if no Accept button appeared
  * (meaning the LLM is done making tool calls).
@@ -199,34 +228,45 @@ async function waitForButtonInThread(page: Page, buttonName: string, timeout: nu
 async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'accept-keep-private' | 'reject'): Promise<boolean> {
     const rhs = page.locator('#rhsContainer');
 
-    // Wait for Accept buttons to appear (tool call stage)
-    const hasAccept = await waitForButtonInThread(page, 'Accept', 120000, false);
-    if (!hasAccept) {
-        return false; // No more tool calls — the LLM is done
+    // A round can begin in call stage (Accept/Reject) or directly in result stage
+    // (Share/Keep private) when all tools in that round were auto-approved.
+    const firstDecisionButton = await waitForAnyButtonInThread(
+        page,
+        ['Accept', 'Share', 'Keep private'],
+        120000,
+        false,
+    );
+    if (!firstDecisionButton) {
+        return false; // No more decisions pending — the LLM is done
     }
 
-    if (action === 'reject') {
-        // Reject all tool calls in this round
-        const rejectButtons = rhs.getByRole('button', { name: 'Reject' });
-        const count = await rejectButtons.count();
-        for (let i = 0; i < count; i++) {
-            await rejectButtons.nth(i).click();
+    if (firstDecisionButton === 'Accept') {
+        if (action === 'reject') {
+            // Reject all tool calls in this round
+            const rejectButtons = rhs.getByRole('button', { name: 'Reject' });
+            const count = await rejectButtons.count();
+            for (let i = 0; i < count; i++) {
+                await rejectButtons.nth(i).click();
+            }
+            await page.waitForTimeout(2000);
+            return true;
         }
-        await page.waitForTimeout(2000);
-        return true;
+
+        // Accept all tool calls in this round
+        const acceptButtons = rhs.getByRole('button', { name: 'Accept' });
+        const acceptCount = await acceptButtons.count();
+        for (let i = 0; i < acceptCount; i++) {
+            await acceptButtons.nth(i).click();
+        }
+
+        // Wait for Share/Keep private buttons (result stage)
+        await waitForButtonInThread(page, 'Share', 120000);
     }
 
-    // Accept all tool calls in this round
-    const acceptButtons = rhs.getByRole('button', { name: 'Accept' });
-    const acceptCount = await acceptButtons.count();
-    for (let i = 0; i < acceptCount; i++) {
-        await acceptButtons.nth(i).click();
-    }
-
-    // Wait for Share/Keep private buttons (result stage)
-    await waitForButtonInThread(page, 'Share', 120000);
-
-    if (action === 'accept-share') {
+    // For auto-approved rounds there is no call-stage decision; choose result visibility.
+    // In reject mode, share auto-approved READ results so the LLM can continue to the
+    // next round where non-auto-approved WRITE tools can still be rejected.
+    if (action === 'accept-share' || action === 'reject') {
         const shareButtons = rhs.getByRole('button', { name: 'Share' });
         const shareCount = await shareButtons.count();
         for (let i = 0; i < shareCount; i++) {
@@ -259,15 +299,6 @@ async function completeAllToolCallRounds(page: Page, action: 'accept-share' | 'a
             break; // No more tool calls
         }
         rounds++;
-
-        // For reject, the LLM will still try subsequent tool calls, but we keep rejecting
-        // until no more appear. Give it time to propose the next one.
-        if (action === 'reject') {
-            const hasMore = await waitForButtonInThread(page, 'Accept', 10000, false);
-            if (!hasMore) {
-                break;
-            }
-        }
     }
 
     return rounds;
@@ -364,8 +395,8 @@ function createProviderTestSuite(provider: ProviderBundle) {
                 // Open thread on onlooker page (reply already visible via websocket)
                 await openLatestThread(onlookerPage);
 
-                // Before proceeding, check the onlooker's view on the FIRST tool call round
-                await waitForButtonInThread(invokerPage, 'Accept');
+                // Before proceeding, wait for the first decision stage (manual or auto-approved).
+                await waitForAnyButtonInThread(invokerPage, ['Accept', 'Share', 'Keep private']);
 
                 // === ONLOOKER ASSERTIONS (first call stage) ===
                 const onlookerRhs = onlookerPage.locator('#rhsContainer');
@@ -432,8 +463,9 @@ function createProviderTestSuite(provider: ProviderBundle) {
                 await expect(rhs.getByRole('button', { name: 'Share' })).not.toBeVisible();
                 await expect(rhs.getByRole('button', { name: 'Keep private' })).not.toBeVisible();
 
-                // The "Rejected" text should appear in the thread
-                await expect(rhs.getByText('Rejected')).toBeVisible({ timeout: 10000 });
+                // OpenAI can render more than one "Rejected" label in the thread,
+                // so assert on the first status indicator rather than strict text uniqueness.
+                await expect(rhs.getByText('Rejected').first()).toBeVisible({ timeout: 10000 });
 
                 // Verify the post was NOT created in town-square
                 await navigateToChannel(page, mattermost, 'town-square');
@@ -484,18 +516,28 @@ function createProviderTestSuite(provider: ProviderBundle) {
                 let rounds = 0;
                 const maxRounds = 10;
                 while (rounds < maxRounds) {
-                    const hasAccept = await waitForButtonInThread(invokerPage, 'Accept', 120000, false);
-                    if (!hasAccept) break;
-
-                    // Accept all tool calls in this round
-                    const acceptButtons = rhs.getByRole('button', { name: 'Accept' });
-                    const acceptCount = await acceptButtons.count();
-                    for (let i = 0; i < acceptCount; i++) {
-                        await acceptButtons.nth(i).click();
+                    const firstDecisionButton = await waitForAnyButtonInThread(
+                        invokerPage,
+                        ['Accept', 'Share', 'Keep private'],
+                        120000,
+                        false,
+                    );
+                    if (!firstDecisionButton) {
+                        break;
                     }
 
-                    // Wait for Share/Keep private
-                    await waitForButtonInThread(invokerPage, 'Share', 120000);
+                    if (firstDecisionButton === 'Accept') {
+                        // Accept all tool calls in this round
+                        const acceptButtons = rhs.getByRole('button', { name: 'Accept' });
+                        const acceptCount = await acceptButtons.count();
+                        for (let i = 0; i < acceptCount; i++) {
+                            await acceptButtons.nth(i).click();
+                        }
+
+                        // Wait for Share/Keep private
+                        await waitForButtonInThread(invokerPage, 'Share', 120000);
+                    }
+
                     rounds++;
 
                     // Peek: does the thread contain text suggesting this is a create_post result?
