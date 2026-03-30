@@ -39,6 +39,9 @@ import { attachAPIErrorContext } from 'helpers/log-scanner';
 const username = 'regularuser';
 const password = 'regularuser';
 
+/** Container + API health check can exceed the default 60s hook timeout on CI. */
+const REAL_API_SETUP_TIMEOUT_MS = 180000;
+
 const config = getAPIConfig();
 const skipMessage = getSkipMessage();
 
@@ -59,6 +62,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
         let mattermost: MattermostContainer;
 
         test.beforeAll(async () => {
+            test.setTimeout(REAL_API_SETUP_TIMEOUT_MS);
             if (!config.shouldRunTests) return;
 
             // Customize provider for edge case tests
