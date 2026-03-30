@@ -13,7 +13,7 @@ const clusterEventConfigUpdate = "config_update"
 // PublishConfigUpdate broadcasts a config update event to all other nodes in the cluster.
 // This is called after a config save via the admin API to ensure all nodes reload
 // the latest config from the database.
-func (p *Plugin) PublishConfigUpdate() {
+func (p *Plugin) PublishConfigUpdate() error {
 	ev := model.PluginClusterEvent{
 		Id: clusterEventConfigUpdate,
 	}
@@ -22,7 +22,9 @@ func (p *Plugin) PublishConfigUpdate() {
 	}
 	if err := p.API.PublishPluginClusterEvent(ev, opts); err != nil {
 		p.pluginAPI.Log.Error("Failed to publish config update cluster event", "error", err.Error())
+		return err
 	}
+	return nil
 }
 
 // OnPluginClusterEvent handles cluster events from other nodes.

@@ -6,6 +6,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -46,10 +47,12 @@ func (u *testConfigUpdater) Update(cfg *config.Config) {
 // testClusterNotifier tracks whether PublishConfigUpdate was called.
 type testClusterNotifier struct {
 	callCount int
+	err       error
 }
 
-func (n *testClusterNotifier) PublishConfigUpdate() {
+func (n *testClusterNotifier) PublishConfigUpdate() error {
 	n.callCount++
+	return n.err
 }
 
 func setupTestRouter(store ConfigStore, updater ConfigUpdater, notifier ClusterNotifier) *gin.Engine {
@@ -173,11 +176,36 @@ func TestHandleSaveConfig(t *testing.T) {
 	tests := []struct {
 		name                  string
 		requestBody           any
+		clusterErr            error
 		expectedStatus        int
 		validateStore         func(t *testing.T, store *testConfigStore)
 		validateUpdater       func(t *testing.T, updater *testConfigUpdater)
 		validateClusterNotify func(t *testing.T, notifier *testClusterNotifier)
 	}{
+		{
+			name: "returns error when cluster notify fails after successful save",
+			requestBody: config.Config{
+				DefaultBotName: "ai",
+				Services: []llm.ServiceConfig{
+					{ID: "svc-1", Name: "OpenAI", Type: "openai"},
+				},
+				Bots: []llm.BotConfig{
+					{ID: "bot-1", Name: "ai", ServiceID: "svc-1"},
+				},
+			},
+			clusterErr:     errors.New("cluster publish failed"),
+			expectedStatus: http.StatusInternalServerError,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.Equal(t, "ai", store.cfg.DefaultBotName)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 1, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 1, notifier.callCount)
+			},
+		},
 		{
 			name: "saves valid config",
 			requestBody: config.Config{
@@ -252,7 +280,7 @@ func TestHandleSaveConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &testConfigStore{}
 			updater := &testConfigUpdater{}
-			notifier := &testClusterNotifier{}
+			notifier := &testClusterNotifier{err: tt.clusterErr}
 
 			router := setupTestRouter(store, updater, notifier)
 

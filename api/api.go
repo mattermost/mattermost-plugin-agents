@@ -72,7 +72,7 @@ type ConfigUpdater interface {
 
 // ClusterNotifier broadcasts config update events to other cluster nodes.
 type ClusterNotifier interface {
-	PublishConfigUpdate()
+	PublishConfigUpdate() error
 }
 
 // API represents the HTTP API functionality for the plugin

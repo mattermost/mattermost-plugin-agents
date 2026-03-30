@@ -20,7 +20,7 @@ type ServiceConfig struct {
 	// Renaming the JSON field to inputTokenLimit would require a migration, leaving as is for now.
 	InputTokenLimit         int  `json:"tokenLimit"`
 	StreamingTimeoutSeconds int  `json:"streamingTimeoutSeconds"`
-	SendUserID              bool `json:"sendUserId"`
+	SendUserID              bool `json:"sendUserID"`
 
 	// Otherwise known as maxTokens
 	OutputTokenLimit int `json:"outputTokenLimit"`

@@ -58,7 +58,10 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	a.configUpdater.Update(&cfg)
 
 	// Notify other cluster nodes to reload config from DB
-	a.clusterNotifier.PublishConfigUpdate()
+	if err := a.clusterNotifier.PublishConfigUpdate(); err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to notify cluster of config update: %w", err))
+		return
+	}
 
 	c.Status(http.StatusOK)
 }
