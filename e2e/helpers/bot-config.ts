@@ -1,5 +1,10 @@
 import { Client4 } from '@mattermost/client';
 import MattermostContainer from './mmcontainer';
+import {
+    mattermostAIAdminConfigApiFromClient,
+    normalizeMattermostAiConfigFromApi,
+    type PluginAdminConfigApi,
+} from './plugin-http';
 
 export interface BotConfig {
     id: string;
@@ -54,13 +59,10 @@ export interface PluginConfig {
 }
 
 export class BotConfigHelper {
-    private client: Client4;
-    private baseUrl: string;
-    private pluginId = 'mattermost-ai';
+    private adminApi: PluginAdminConfigApi;
 
     constructor(client: Client4, baseUrl: string) {
-        this.client = client;
-        this.baseUrl = baseUrl;
+        this.adminApi = mattermostAIAdminConfigApiFromClient(client, baseUrl);
     }
 
     /**
@@ -68,27 +70,9 @@ export class BotConfigHelper {
      * Configuration is stored in the plugin database when using database-config.
      */
     async getPluginConfig(): Promise<PluginConfig> {
-        const url = `${this.baseUrl}/plugins/${this.pluginId}/admin/config`;
-        const response = await fetch(url, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${this.client.getToken()}`,
-            },
-        });
-
-        if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`Plugin ${this.pluginId} configuration not found: ${response.status} ${text}`);
-        }
-
-        const apiConfig = await response.json();
+        const apiConfig = await this.adminApi.get();
+        const config = normalizeMattermostAiConfigFromApi(apiConfig);
         // API returns config.Config (flat); helper expects { config: {...} }
-        // Ensure bots and services are arrays (API may return null when empty)
-        const config = {
-            ...apiConfig,
-            bots: apiConfig.bots ?? [],
-            services: apiConfig.services ?? [],
-        };
         return { config } as PluginConfig;
     }
 
@@ -96,23 +80,7 @@ export class BotConfigHelper {
      * Update the plugin configuration via the plugin's admin config API.
      */
     async updatePluginConfig(config: PluginConfig): Promise<void> {
-        const url = `${this.baseUrl}/plugins/${this.pluginId}/admin/config`;
-        const response = await fetch(url, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.client.getToken()}`,
-            },
-            body: JSON.stringify(config.config),
-        });
-
-        if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`Failed to update plugin config: ${response.status} ${text}`);
-        }
-
-        // Wait a bit for configuration to persist and update listeners to fire
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await this.adminApi.put(config.config as Record<string, unknown>);
     }
 
     /**

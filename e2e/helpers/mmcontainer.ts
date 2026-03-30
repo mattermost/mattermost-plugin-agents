@@ -3,6 +3,7 @@ import type {StartedTestContainer, StartedNetwork} from 'testcontainers';
 import type {StartedPostgreSqlContainer} from '@testcontainers/postgresql';
 import {Client4} from "@mattermost/client";
 import { Client } from 'pg'
+import { pluginAdminConfigApiFromClient } from './plugin-http';
 
 if (typeof globalThis.File === 'undefined') {
     Object.assign(globalThis, {File: NodeFile});
@@ -127,21 +128,8 @@ export default class MattermostContainer {
 
     setPluginConfig = async (pluginID: string, config: PluginConfig) => {
         const adminClient = await this.getAdminClient();
-        const url = `${this.url()}/plugins/${pluginID}/admin/config`;
-        const response = await fetch(url, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${adminClient.getToken()}`,
-            },
-            body: JSON.stringify(config),
-        });
-        if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`Failed to set plugin config: ${response.status} ${text}`);
-        }
-        // Wait for config update listeners to fire (EnsureBots, MCP reinit, etc.)
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        const api = pluginAdminConfigApiFromClient(adminClient, this.url(), pluginID);
+        await api.put(config as Record<string, unknown>, { settleMs: 2000 });
     }
 
     withEnv = (env: string, value: string): MattermostContainer => {

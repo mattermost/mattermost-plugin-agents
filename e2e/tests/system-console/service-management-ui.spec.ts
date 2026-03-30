@@ -34,13 +34,16 @@ test.describe('Service Management', () => {
     });
 
     test('should add and configure service through card-based UI', async ({ page }) => {
-        test.setTimeout(60000);
+        // Login + container startup after a long shard can exceed 60s on CI.
+        test.setTimeout(120000);
 
         const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
 
         // Login as admin
-        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword, {
+            channelViewTimeoutMs: 90000,
+        });
 
         // Navigate to system console
         await systemConsole.navigateToPluginConfig(mattermost.url());

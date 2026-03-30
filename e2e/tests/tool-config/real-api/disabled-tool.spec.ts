@@ -99,10 +99,7 @@ for (const provider of providers) {
 
             await apiHelper.setEmbeddedServerToolConfigs(buildEmbeddedToolConfigs([TARGET_TOOL_NAME]));
 
-            const toolsResponse = await apiHelper.getUserMCPTools(
-                mattermost.url(),
-                token,
-            );
+            const toolsResponse = await apiHelper.getUserMCPTools(token);
 
             const embeddedServer = toolsResponse.servers.find(
                 (s: any) => s.serverOrigin === 'embedded://mattermost',
