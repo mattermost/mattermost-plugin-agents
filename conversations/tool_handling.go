@@ -500,6 +500,12 @@ func (c *Conversations) completeAndStreamToolResponse(
 		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
 	}
 
+	// Same MCP auto_run execution as ProcessUserRequestWithContext (DMs use
+	// allowToolsInChannel=false; toolsDisabled reflects whether tools are off).
+	if !toolsDisabled && llmContext != nil && llmContext.Tools != nil && c.toolPolicyChecker != nil {
+		result = wrapStreamWithMCPAutoApproval(result, llmContext, c.toolPolicyChecker)
+	}
+
 	responsePost := &model.Post{
 		ChannelId: channel.Id,
 		RootId:    responseRootID,

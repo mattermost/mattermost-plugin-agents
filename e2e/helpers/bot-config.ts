@@ -26,6 +26,19 @@ export interface ServiceConfig {
     useResponsesAPI?: boolean;
 }
 
+export interface MCPEmbeddedServerConfig {
+    enabled?: boolean;
+    tool_configs?: Array<{ name: string; policy: string; enabled: boolean }>;
+}
+
+export interface PluginMCPConfig {
+    enabled?: boolean;
+    enablePluginServer?: boolean;
+    idleTimeoutMinutes?: number;
+    servers?: unknown[];
+    embeddedServer?: MCPEmbeddedServerConfig;
+}
+
 export interface PluginConfig {
     config: {
         allowPrivateChannels?: boolean;
@@ -36,6 +49,7 @@ export interface PluginConfig {
         enableVectorIndex?: boolean;
         services: ServiceConfig[];
         bots: BotConfig[];
+        mcp?: PluginMCPConfig;
     };
 }
 
