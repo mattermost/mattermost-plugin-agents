@@ -127,19 +127,23 @@ func newTestClient(serverURL string) *model.Client4 {
 }
 
 func TestAutomationListFlows(t *testing.T) {
+	flowID1 := model.NewId()
+	flowID2 := model.NewId()
+	chID1 := model.NewId()
+	chID2 := model.NewId()
 	sampleFlows := []AutomationFlow{
 		{
-			ID:      "flow1",
+			ID:      flowID1,
 			Name:    "Welcome Bot",
 			Enabled: true,
-			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch-abc"}},
+			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: chID1}},
 			Actions: []AutomationAction{{ID: "greet", SendMessage: &SendMessageActionConfig{Body: "Hello!"}}},
 		},
 		{
-			ID:      "flow2",
+			ID:      flowID2,
 			Name:    "Bug Triage",
 			Enabled: false,
-			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch-def"}},
+			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: chID2}},
 			Actions: []AutomationAction{{ID: "summarize", AIPrompt: &AIPromptActionConfig{Prompt: "Summarize", ProviderType: "agent", ProviderID: "bot1"}}},
 		},
 	}
@@ -164,7 +168,7 @@ func TestAutomationListFlows(t *testing.T) {
 
 	t.Run("get by id", func(t *testing.T) {
 		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{"automation_id":"flow1"}`), target)
+			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id":%q}`, flowID1)), target)
 		}
 
 		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
@@ -175,7 +179,7 @@ func TestAutomationListFlows(t *testing.T) {
 
 	t.Run("filter by channel_id", func(t *testing.T) {
 		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{"channel_id":"ch-def"}`), target)
+			return json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q}`, chID2)), target)
 		}
 
 		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
@@ -185,13 +189,24 @@ func TestAutomationListFlows(t *testing.T) {
 	})
 
 	t.Run("get by id not found", func(t *testing.T) {
+		missingID := model.NewId()
 		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{"automation_id":"nonexistent"}`), target)
+			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id":%q}`, missingID)), target)
 		}
 
 		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.Error(t, err)
 		assert.Contains(t, result, "Automation not found")
+	})
+
+	t.Run("get by invalid id", func(t *testing.T) {
+		argsGetter := func(target any) error {
+			return json.Unmarshal([]byte(`{"automation_id":"bad-id"}`), target)
+		}
+
+		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		require.Error(t, err)
+		assert.Equal(t, "invalid automation_id", result)
 	})
 }
 
@@ -261,8 +276,10 @@ func TestAutomationCreateFlow(t *testing.T) {
 }
 
 func TestAutomationUpdateFlow(t *testing.T) {
+	flowID := model.NewId()
+	chID := model.NewId()
 	sampleFlows := []AutomationFlow{
-		{ID: "flow1", Name: "Original", Enabled: true, Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: "ch1"}}},
+		{ID: flowID, Name: "Original", Enabled: true, Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: chID}}},
 	}
 
 	ts := newTestAutomationServer(t, sampleFlows)
@@ -274,13 +291,13 @@ func TestAutomationUpdateFlow(t *testing.T) {
 
 	t.Run("update success", func(t *testing.T) {
 		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{
-				"automation_id": "flow1",
+			return json.Unmarshal([]byte(fmt.Sprintf(`{
+				"automation_id": %q,
 				"name": "Updated Name",
 				"enabled": false,
 				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz"}},
 				"actions": []
-			}`), target)
+			}`, flowID)), target)
 		}
 
 		result, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
@@ -290,12 +307,13 @@ func TestAutomationUpdateFlow(t *testing.T) {
 	})
 
 	t.Run("update not found", func(t *testing.T) {
+		missingID := model.NewId()
 		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{
-				"automation_id": "nonexistent",
+			return json.Unmarshal([]byte(fmt.Sprintf(`{
+				"automation_id": %q,
 				"name": "X",
 				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz"}}
-			}`), target)
+			}`, missingID)), target)
 		}
 
 		result, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
@@ -303,20 +321,21 @@ func TestAutomationUpdateFlow(t *testing.T) {
 		assert.Contains(t, result, "Automation not found")
 	})
 
-	t.Run("update missing automation_id", func(t *testing.T) {
+	t.Run("update invalid automation_id", func(t *testing.T) {
 		argsGetter := func(target any) error {
 			return json.Unmarshal([]byte(`{"name": "X"}`), target)
 		}
 
 		result, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Equal(t, "automation_id is required", result)
+		assert.Equal(t, "invalid automation_id", result)
 	})
 }
 
 func TestAutomationDeleteFlow(t *testing.T) {
+	flowID := model.NewId()
 	sampleFlows := []AutomationFlow{
-		{ID: "flow1", Name: "To Delete", Enabled: true},
+		{ID: flowID, Name: "To Delete", Enabled: true},
 	}
 
 	ts := newTestAutomationServer(t, sampleFlows)
@@ -328,18 +347,19 @@ func TestAutomationDeleteFlow(t *testing.T) {
 
 	t.Run("delete success", func(t *testing.T) {
 		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{"automation_id": "flow1"}`), target)
+			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id": %q}`, flowID)), target)
 		}
 
 		result, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
 		require.NoError(t, err)
 		assert.Contains(t, result, "Successfully deleted automation")
-		assert.Contains(t, result, "flow1")
+		assert.Contains(t, result, flowID)
 	})
 
 	t.Run("delete not found", func(t *testing.T) {
+		missingID := model.NewId()
 		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{"automation_id": "nonexistent"}`), target)
+			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id": %q}`, missingID)), target)
 		}
 
 		result, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
@@ -347,14 +367,14 @@ func TestAutomationDeleteFlow(t *testing.T) {
 		assert.Contains(t, result, "Automation not found")
 	})
 
-	t.Run("delete missing automation_id", func(t *testing.T) {
+	t.Run("delete invalid automation_id", func(t *testing.T) {
 		argsGetter := func(target any) error {
 			return json.Unmarshal([]byte(`{}`), target)
 		}
 
 		result, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Equal(t, "automation_id is required", result)
+		assert.Equal(t, "invalid automation_id", result)
 	})
 }
 
