@@ -257,7 +257,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     body: buildToolCallResponse(
                         'call_manual_channel_lookup',
                         'get_channel_info',
-                        '{"channel_display_name":"Town Square"}',
+                        '{"channel_name":"Town Square"}',
                     ),
                 },
             },
