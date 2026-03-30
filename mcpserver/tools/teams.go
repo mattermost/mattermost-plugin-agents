@@ -5,26 +5,25 @@ package tools
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
-	"time"
 
+	"github.com/mattermost/mattermost-plugin-ai/format"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // GetTeamInfoArgs represents arguments for the get_team_info tool
 type GetTeamInfoArgs struct {
-	TeamID          string `json:"team_id,omitempty" jsonschema:"The exact team ID (fastest, most reliable method)"`
-	TeamDisplayName string `json:"team_display_name,omitempty" jsonschema:"The human-readable display name users see (e.g. 'Engineering Team')"`
-	TeamName        string `json:"team_name,omitempty" jsonschema:"The URL-friendly team name (e.g. 'engineering-team')"`
+	TeamID   string `json:"team_id,omitempty" jsonschema:"The exact team ID (fastest, most reliable method)"`
+	TeamName string `json:"team_name,omitempty" jsonschema:"Team name to search for — matches against both display name and URL name (case-insensitive, supports partial matches)"`
 }
 
 // GetTeamMembersArgs represents arguments for the get_team_members tool
 type GetTeamMembersArgs struct {
-	TeamID string `json:"team_id" jsonschema:"ID of the team to get members for,minLength=26,maxLength=26"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"Number of members to return (default: 50, max: 200),minimum=1,maximum=200"`
-	Page   int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
+	TeamID      string `json:"team_id" jsonschema:"ID of the team to get members for,minLength=26,maxLength=26"`
+	Limit       int    `json:"limit,omitempty" jsonschema:"Number of members to return (default: 50, max: 200),minimum=1,maximum=200"`
+	Page        int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
+	ExcludeBots *bool  `json:"exclude_bots,omitempty" jsonschema:"Exclude bot accounts from results (default: true)"`
 }
 
 // CreateTeamArgs represents arguments for the create_team tool (dev mode only)
@@ -47,7 +46,7 @@ func (p *MattermostToolProvider) getTeamTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name:        "get_team_info",
-			Description: "Get information about a team. Provide ONE of the following parameters: team_id (fastest), team_display_name (user-visible name), or team_name (URL name). Returns team metadata including ID, names, type, description, and creation date. Example: {\"team_display_name\": \"Engineering Team\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
+			Description: "Get information about a team. Provide team_id (fastest) or team_name (matches against both display name and URL name, case-insensitive, supports partial matches). Returns team metadata including ID, names, type, description, and member count. Example: {\"team_name\": \"Engineering\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
 			Schema:      NewJSONSchemaForAccessMode[GetTeamInfoArgs](string(p.accessMode)),
 			Resolver:    p.toolGetTeamInfo,
 		},
@@ -95,72 +94,123 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 
 	var team *model.Team
 
-	// Try different lookup methods based on provided parameters
 	switch {
 	case args.TeamID != "":
-		// Validate team ID format
 		if !model.IsValidId(args.TeamID) {
 			return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 		}
-		// Direct ID lookup - fastest method
 		team, _, err = client.GetTeam(ctx, args.TeamID, "")
 		if err != nil {
 			return "team not found by ID", fmt.Errorf("error fetching team by ID: %w", err)
 		}
-	case args.TeamDisplayName != "":
-		// Lookup by display name - get all teams for user and search
-		// Get current user ID for the API call
-		user, _, userErr := client.GetMe(ctx, "")
-		if userErr != nil {
-			return "failed to get current user", fmt.Errorf("error getting current user: %w", userErr)
-		}
-
-		teams, _, teamsErr := client.GetTeamsForUser(ctx, user.Id, "")
-		if teamsErr != nil {
-			return "failed to fetch user teams", fmt.Errorf("error fetching user teams: %w", teamsErr)
-		}
-
-		for _, t := range teams {
-			if t.DisplayName == args.TeamDisplayName {
-				team = t
-				break
-			}
-		}
-
-		if team == nil {
-			return "team not found by display name", fmt.Errorf("no team found with display name: %s", args.TeamDisplayName)
-		}
 	case args.TeamName != "":
-		// Lookup by name
-		team, _, err = client.GetTeamByName(ctx, args.TeamName, "")
+		var msg string
+		team, msg, err = p.resolveTeamByName(mcpContext, args.TeamName)
 		if err != nil {
-			return "team not found by name", fmt.Errorf("error fetching team by name: %w", err)
+			return msg, err
+		}
+		if msg != "" {
+			// Multiple matches — return disambiguation message (not an error)
+			return msg, nil
 		}
 	default:
-		return "either team_id, team_display_name, or team_name must be provided", fmt.Errorf("insufficient parameters for team lookup")
+		return "either team_id or team_name must be provided", fmt.Errorf("insufficient parameters for team lookup")
+	}
+
+	// Get member count
+	var memberCount int64 = -1
+	teamStats, _, err := client.GetTeamStats(ctx, team.Id, "")
+	if err == nil {
+		memberCount = teamStats.TotalMemberCount
 	}
 
 	// Format the response
 	var result strings.Builder
-	result.WriteString("Team Information:\n")
-	result.WriteString(fmt.Sprintf("ID: %s\n", team.Id))
-	result.WriteString(fmt.Sprintf("Name: %s\n", team.Name))
-	result.WriteString(fmt.Sprintf("Display Name: %s\n", team.DisplayName))
-	result.WriteString(fmt.Sprintf("Type: %s\n", team.Type))
-
-	if team.Description != "" {
-		result.WriteString(fmt.Sprintf("Description: %s\n", team.Description))
-	}
-
-	result.WriteString(fmt.Sprintf("Created: %s\n", time.Unix(team.CreateAt/1000, 0).Format("2006-01-02 15:04:05")))
-
-	// Get member count
-	teamStats, _, err := client.GetTeamStats(ctx, team.Id, "")
-	if err == nil {
-		result.WriteString(fmt.Sprintf("Member Count: %s\n", strconv.FormatInt(teamStats.TotalMemberCount, 10)))
-	}
+	format.WriteTeam(&result, format.TeamEntry{
+		Team:        team,
+		MemberCount: memberCount,
+	})
 
 	return result.String(), nil
+}
+
+// resolveTeamByName resolves a team by name using multiple strategies:
+// 1. Exact display name match (case-insensitive) from user's teams
+// 2. Exact URL name match from user's teams
+// 3. Substring display name match from user's teams
+// 4. SearchTeams API as final fallback
+//
+// Returns (team, "", nil) on unique match, ("", disambiguationMsg, nil) on multiple matches,
+// or ("", errorMsg, error) on failure.
+func (p *MattermostToolProvider) resolveTeamByName(mcpContext *MCPToolContext, name string) (*model.Team, string, error) {
+	client := mcpContext.Client
+	ctx := mcpContext.Ctx
+
+	user, _, userErr := client.GetMe(ctx, "")
+	if userErr != nil {
+		return nil, "failed to get current user", fmt.Errorf("error getting current user: %w", userErr)
+	}
+
+	teams, _, teamsErr := client.GetTeamsForUser(ctx, user.Id, "")
+	if teamsErr != nil {
+		return nil, "failed to fetch user teams", fmt.Errorf("error fetching user teams: %w", teamsErr)
+	}
+
+	// 1. Exact display name match (case-insensitive)
+	for _, t := range teams {
+		if strings.EqualFold(t.DisplayName, name) {
+			return t, "", nil
+		}
+	}
+
+	// 2. Exact URL name match
+	for _, t := range teams {
+		if strings.EqualFold(t.Name, name) {
+			return t, "", nil
+		}
+	}
+
+	// 3. Substring match on display name (case-insensitive)
+	nameLower := strings.ToLower(name)
+	var substringMatches []*model.Team
+	for _, t := range teams {
+		if strings.Contains(strings.ToLower(t.DisplayName), nameLower) {
+			substringMatches = append(substringMatches, t)
+		}
+	}
+
+	if len(substringMatches) == 1 {
+		return substringMatches[0], "", nil
+	}
+	if len(substringMatches) > 1 {
+		return nil, formatTeamDisambiguation(name, substringMatches), nil
+	}
+
+	// 4. SearchTeams API as fallback for teams the user may not be a member of
+	searchResults, _, searchErr := client.SearchTeams(ctx, &model.TeamSearch{Term: name})
+	if searchErr == nil && len(searchResults) == 1 {
+		return searchResults[0], "", nil
+	}
+	if searchErr == nil && len(searchResults) > 1 {
+		return nil, formatTeamDisambiguation(name, searchResults), nil
+	}
+
+	// Nothing found — return error with recovery guidance
+	msg := fmt.Sprintf("No team found matching '%s'.", name)
+	msg += "\n\nACTION REQUIRED - Try these alternatives before asking the user:\n"
+	msg += "1. Call get_user_channels to list all channels (includes team info) you have access to\n"
+	msg += "2. Only ask the user for help after trying alternatives above."
+	return nil, msg, fmt.Errorf("no team found matching: %s", name)
+}
+
+// formatTeamDisambiguation builds a message listing multiple team matches for the LLM to choose from.
+func formatTeamDisambiguation(searchTerm string, teams []*model.Team) string {
+	var msg strings.Builder
+	msg.WriteString(fmt.Sprintf("Multiple teams match '%s'. Please specify which one by calling get_team_info with team_id:\n\n", searchTerm))
+	for _, t := range teams {
+		msg.WriteString(fmt.Sprintf("- '%s' (URL name: %s, ID: %s)\n", t.DisplayName, t.Name, t.Id))
+	}
+	return msg.String()
 }
 
 // toolGetTeamMembers implements the get_team_members tool
@@ -194,6 +244,9 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
+	// Default exclude_bots to true
+	excludeBots := args.ExcludeBots == nil || *args.ExcludeBots
+
 	// Get team members
 	members, _, err := client.GetTeamMembers(ctx, args.TeamID, args.Page, args.Limit, "")
 	if err != nil {
@@ -204,40 +257,42 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 		return "no members found in this team", nil
 	}
 
-	// Get user details for each member
+	// Get user details for each member, optionally filtering bots
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Team Members (page %d, showing %d members):\n\n", args.Page, len(members)))
+	botsExcluded := 0
+	var written int
 
-	for i, member := range members {
+	for _, member := range members {
 		user, _, err := client.GetUser(ctx, member.UserId, "")
 		if err != nil {
 			p.logger.Warn("failed to get user details for member", "user_id", member.UserId, "error", err)
-			result.WriteString(fmt.Sprintf("%d. User ID: %s (details unavailable)\n", i+1, member.UserId))
+			format.WriteUser(&result, format.UserEntry{User: &model.User{Id: member.UserId, Username: "details unavailable"}})
+			written++
 			continue
 		}
 
-		result.WriteString(fmt.Sprintf("%d. **%s**", i+1, user.Username))
-
-		if user.FirstName != "" || user.LastName != "" {
-			result.WriteString(fmt.Sprintf(" (%s %s)", user.FirstName, user.LastName))
+		if excludeBots && user.IsBot {
+			botsExcluded++
+			continue
 		}
 
-		result.WriteString(fmt.Sprintf("\n   ID: %s\n", user.Id))
-
-		if user.Email != "" {
-			result.WriteString(fmt.Sprintf("   Email: %s\n", user.Email))
-		}
-
-		// Add role information
-		roles := strings.Split(member.Roles, " ")
-		if len(roles) > 0 && roles[0] != "" {
-			result.WriteString(fmt.Sprintf("   Roles: %s\n", strings.Join(roles, ", ")))
-		}
-
-		result.WriteString("\n")
+		format.WriteUser(&result, format.UserEntry{
+			User: user,
+			Role: format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),
+		})
+		written++
 	}
 
-	return result.String(), nil
+	// Build header and footer
+	var header strings.Builder
+	header.WriteString(fmt.Sprintf("Team Members (page %d, showing %d members):\n", args.Page, written))
+
+	var footer string
+	if botsExcluded > 0 {
+		footer = fmt.Sprintf("\n(%d bot account(s) excluded — set exclude_bots=false to include them)\n", botsExcluded)
+	}
+
+	return header.String() + result.String() + footer, nil
 }
 
 // toolCreateTeam implements the create_team tool using the context client

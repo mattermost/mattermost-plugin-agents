@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/mattermost/mattermost-plugin-ai/format"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -49,19 +50,27 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	var schema *jsonschema.Schema
 	var description string
 
+	contextHint := "Results show individual matching posts — to see the full conversation around a result, use read_channel with the channel_id."
+
 	if semanticEnabled {
 		schema = llm.NewJSONSchemaFromStruct[CombinedSearchArgs]()
 		description = "Search for posts in Mattermost using both semantic (AI-powered) and keyword search. " +
+			"Semantic search finds posts by meaning and does not require exact term matches. " +
+			"Keyword search uses AND logic — all terms must appear in a single post, so prefer short, focused queries (1-2 key terms) over long multi-word phrases. " +
 			"Parameters: query (required), team_id (optional), channel_id (optional). " +
 			"semantic_limit/semantic_offset control semantic results (default: 10). " +
 			"keyword_limit/keyword_offset control keyword results (default: 10). " +
-			"Returns matching posts with content, author, channel, and relevance score for semantic results."
+			"You can make separate calls with different queries optimized for each search type (e.g., a natural language query for semantic and specific keywords for keyword search). " +
+			"Returns matching posts with content, author, channel, and relevance score for semantic results. " +
+			contextHint
 	} else {
 		schema = llm.NewJSONSchemaFromStruct[KeywordOnlySearchArgs]()
 		description = "Search for posts in Mattermost using keyword search. " +
+			"Uses AND logic — all terms must appear in a single post, so prefer short, focused queries (1-2 key terms) over long multi-word phrases. " +
 			"Parameters: query (required), team_id (optional), channel_id (optional). " +
 			"keyword_limit/keyword_offset control results (default: 10). " +
-			"Returns matching posts with content, author, and channel."
+			"Returns matching posts with content, author, and channel. " +
+			contextHint
 	}
 
 	return []MCPTool{
@@ -380,7 +389,11 @@ func (p *MattermostToolProvider) formatCombinedResults(query string, semanticRes
 	total := totalSemantic + totalKeyword
 
 	if total == 0 {
-		return "No posts found matching the search criteria.", nil
+		terms := strings.Fields(query)
+		if len(terms) > 2 {
+			return fmt.Sprintf("No posts found for %q (%d terms). All terms must appear in a single post — try fewer terms (1-2).", query, len(terms)), nil
+		}
+		return fmt.Sprintf("No posts found for %q.", query), nil
 	}
 
 	var result strings.Builder
@@ -422,33 +435,23 @@ func (p *MattermostToolProvider) formatCombinedResults(query string, semanticRes
 
 // formatSingleResult formats a single search result.
 func (p *MattermostToolProvider) formatSingleResult(result *strings.Builder, index int, r searchPostResult, includeScore bool, channelIDFilter string) {
+	var score float32
+	if includeScore {
+		score = r.Score
+	}
 	username := r.Username
-	if username == "" {
-		username = "Unknown User"
+	if username != "" {
+		username = "@" + username
 	}
-
-	if includeScore && r.Score > 0 {
-		fmt.Fprintf(result, "**Result %d** (Score: %.2f) by @%s:\n", index, r.Score, username)
-	} else {
-		fmt.Fprintf(result, "**Result %d** by @%s:\n", index, username)
-	}
-
-	if r.ChannelName != "" {
-		if r.TeamName != "" {
-			fmt.Fprintf(result, "Channel: %s (Team: %s)\n", r.ChannelName, r.TeamName)
-		} else {
-			fmt.Fprintf(result, "Channel: %s\n", r.ChannelName)
-		}
-	}
-
-	fmt.Fprintf(result, "Post ID: %s\n", r.Post.Id)
-	if channelIDFilter == "" {
-		fmt.Fprintf(result, "Channel ID: %s\n", r.Post.ChannelId)
-	}
-	if r.Post.RootId != "" {
-		fmt.Fprintf(result, "Root ID: %s\n", r.Post.RootId)
-	}
-	fmt.Fprintf(result, "Message: %s\n\n", r.Post.Message)
+	format.WritePost(result, format.PostEntry{
+		HeaderLabel: fmt.Sprintf("Result %d", index),
+		Username:    username,
+		Score:       score,
+		Post:        r.Post,
+		ChannelName: r.ChannelName,
+		TeamName:    r.TeamName,
+		ShowChannel: channelIDFilter == "",
+	})
 }
 
 // toolSearchUsers implements the search_users tool.
@@ -496,24 +499,10 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 	result.WriteString(fmt.Sprintf("Found %d users matching '%s':\n\n", len(users), args.Term))
 
 	for i, user := range users {
-		result.WriteString(fmt.Sprintf("**User %d**:\n", i+1))
-		result.WriteString(fmt.Sprintf("Username: %s\n", user.Username))
-		result.WriteString(fmt.Sprintf("ID: %s\n", user.Id))
-
-		if user.FirstName != "" || user.LastName != "" {
-			result.WriteString(fmt.Sprintf("Name: %s %s\n", user.FirstName, user.LastName))
-		}
-		if user.Email != "" {
-			result.WriteString(fmt.Sprintf("Email: %s\n", user.Email))
-		}
-		if user.Nickname != "" {
-			result.WriteString(fmt.Sprintf("Nickname: %s\n", user.Nickname))
-		}
-		if user.Position != "" {
-			result.WriteString(fmt.Sprintf("Position: %s\n", user.Position))
-		}
-
-		result.WriteString("\n")
+		format.WriteUser(&result, format.UserEntry{
+			HeaderLabel: fmt.Sprintf("User %d", i+1),
+			User:        user,
+		})
 	}
 
 	return result.String(), nil
