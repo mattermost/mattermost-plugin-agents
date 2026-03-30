@@ -4,6 +4,7 @@
 import { test, expect, Page } from '@playwright/test';
 import fs from 'fs';
 import MattermostContainer from 'helpers/mmcontainer';
+import { REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
 import { MattermostPage } from 'helpers/mm';
 import {
     getAPIConfig,
@@ -350,6 +351,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
         let mattermost: MattermostContainer;
 
         test.beforeAll(async () => {
+            test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
             if (!config.shouldRunTests) return;
             await checkAPIHealth(provider.service);
             mattermost = await setupToolCallingContainer(provider);
