@@ -14,22 +14,14 @@ import (
 	mmcontainer "github.com/mattermost/testcontainers-mattermost-go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
 	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
 )
 
-// silentLogger suppresses all testcontainers lifecycle output (🐳, ✅, etc.).
-type silentLogger struct{}
-
-func (silentLogger) Printf(string, ...interface{}) {}
-
 func init() {
-	// Suppress testcontainers lifecycle logs that clutter verbose test output.
-	testcontainers.Logger = silentLogger{}
-	// Also suppress any stdlib log output from testcontainers internals.
+	// Suppress stdlib log output from testcontainers internals.
 	log.SetOutput(io.Discard)
 }
 

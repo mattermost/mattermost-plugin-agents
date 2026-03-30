@@ -210,7 +210,7 @@ func (s *embeddingSearchService) Search(ctx context.Context, query string, opts 
 	ragResults := make([]search.RAGResult, len(results))
 	for i, r := range results {
 		var channelName, username string
-		if ch, _, chErr := client.GetChannel(ctx, r.Document.ChannelID, ""); chErr == nil {
+		if ch, _, chErr := client.GetChannel(ctx, r.Document.ChannelID); chErr == nil {
 			channelName = ch.DisplayName
 		}
 		if u, _, uErr := client.GetUser(ctx, r.Document.UserID, ""); uErr == nil {
