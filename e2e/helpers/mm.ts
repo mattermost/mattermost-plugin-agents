@@ -1,5 +1,9 @@
 import { Page, Locator, expect } from '@playwright/test';
 
+type LoginOptions = {
+    landing?: 'channel' | 'authenticated';
+};
+
 export class MattermostPage {
     readonly page: Page;
     readonly postTextbox: Locator;
@@ -11,7 +15,9 @@ export class MattermostPage {
         this.sendButton = page.getByTestId('channel_view').getByTestId('SendMessageButton');
     }
 
-    async login(url: string, username: string, password: string) {
+    async login(url: string, username: string, password: string, options: LoginOptions = {}) {
+        const {landing = 'channel'} = options;
+
         await this.page.addInitScript(() => { localStorage.setItem('__landingPageSeen__', 'true'); });
 
         // Polyfill crypto.randomUUID for insecure contexts (e.g., Docker test environments
@@ -53,8 +59,21 @@ export class MattermostPage {
         await this.page.getByPlaceholder("Email or Username").fill(username);
         await this.page.getByTestId('saveSetting').click();
 
-        // Wait for navigation to complete and channel view to be visible
-        // Using a more generous timeout and proper wait strategy for parallel test runs
+        await expect.poll(async () => {
+            const currentURL = this.page.url();
+            const isLoginPage = currentURL.endsWith('/login');
+            const loginPromptVisible = await this.page.getByText('Log in to your account').isVisible().catch(() => false);
+
+            return !isLoginPage && !loginPromptVisible;
+        }, { timeout: 60000 }).toBe(true);
+
+        if (landing === 'authenticated') {
+            return;
+        }
+
+        // Wait for navigation to complete and channel view to be visible.
+        // Some tests immediately interact with the channel after login, so keep
+        // the stricter channel-view readiness check as the default behavior.
         await this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout: 60000 });
         await this.page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 60000});
     }

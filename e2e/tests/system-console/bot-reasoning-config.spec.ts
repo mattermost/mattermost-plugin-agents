@@ -268,7 +268,7 @@ test.describe.serial('Bot Reasoning Configuration', () => {
         const systemConsole = new SystemConsoleHelper(page);
 
         // 3. Login as sysadmin
-        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword, {landing: 'authenticated'});
 
         // 4. Navigate to system console
         await systemConsole.navigateToPluginConfig(mattermost.url());

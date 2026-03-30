@@ -342,16 +342,19 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await expect(acceptButton).toBeVisible({timeout: 30000});
         await acceptButton.click();
 
-        const latestBotPost = botPosts.last();
-        await expect(latestBotPost.getByText('Read Channel', {exact: true})).toBeVisible({timeout: 30000});
-        await expect(latestBotPost.getByText('Auto-approved')).toBeVisible({timeout: 30000});
+        const autoApprovedToolPost = botPosts.filter({
+            has: rhs.getByText('Read Channel', {exact: true}),
+        }).last();
+        await expect(autoApprovedToolPost).toBeVisible({timeout: 30000});
+        await expect(autoApprovedToolPost.getByText('Read Channel', {exact: true})).toBeVisible({timeout: 30000});
+        await expect(autoApprovedToolPost.getByText('Auto-approved')).toBeVisible({timeout: 30000});
 
         await expect(rhs.getByText('The follow-up read_channel tool completed successfully.')).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
-        await latestBotPost.getByText('Read Channel', {exact: true}).click();
+        await autoApprovedToolPost.getByText('Read Channel', {exact: true}).click();
         // read_channel result is rendered as markdown; the seed string is not a single text node (bold, etc.).
-        await expect(latestBotPost.getByText(seededMessage, {exact: false})).toBeVisible({timeout: 30000});
+        await expect(autoApprovedToolPost.getByText(seededMessage, {exact: false})).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
     });
 });
