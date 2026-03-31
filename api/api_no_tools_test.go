@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,12 +14,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
+	"github.com/mattermost/mattermost-plugin-ai/conversation"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	mmapimocks "github.com/mattermost/mattermost-plugin-ai/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
+	"github.com/mattermost/mattermost-plugin-ai/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/stretchr/testify/require"
@@ -75,6 +78,72 @@ func (s *noToolsStreamingService) GetStreamingContext(ctx context.Context, _ str
 
 func (s *noToolsStreamingService) FinishStreaming(string) {}
 
+// mockConvServiceStore is a simple in-memory implementation of conversation.Store
+// for API-layer tests that exercise the thread analysis path.
+type mockConvServiceStore struct {
+	conversations map[string]*store.Conversation
+	turns         map[string][]store.Turn
+}
+
+func newMockConvServiceStore() *mockConvServiceStore {
+	return &mockConvServiceStore{
+		conversations: make(map[string]*store.Conversation),
+		turns:         make(map[string][]store.Turn),
+	}
+}
+
+func (m *mockConvServiceStore) CreateConversation(conv *store.Conversation) error {
+	m.conversations[conv.ID] = conv
+	return nil
+}
+
+func (m *mockConvServiceStore) GetConversation(id string) (*store.Conversation, error) {
+	conv, ok := m.conversations[id]
+	if !ok {
+		return nil, store.ErrConversationNotFound
+	}
+	return conv, nil
+}
+
+func (m *mockConvServiceStore) GetConversationByThreadAndBot(_, _ string) (*store.Conversation, error) {
+	return nil, nil
+}
+
+func (m *mockConvServiceStore) UpdateConversationTitle(id, title string) error {
+	if conv, ok := m.conversations[id]; ok {
+		conv.Title = title
+	}
+	return nil
+}
+
+func (m *mockConvServiceStore) UpdateConversationRootPostID(id string, rootPostID string) error {
+	if conv, ok := m.conversations[id]; ok {
+		conv.RootPostID = &rootPostID
+	}
+	return nil
+}
+
+func (m *mockConvServiceStore) CreateTurn(turn *store.Turn) error {
+	m.turns[turn.ConversationID] = append(m.turns[turn.ConversationID], *turn)
+	return nil
+}
+
+func (m *mockConvServiceStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {
+	return m.turns[conversationID], nil
+}
+
+func (m *mockConvServiceStore) UpdateTurnContent(id string, content json.RawMessage) error {
+	return nil
+}
+
+func (m *mockConvServiceStore) UpdateTurnTokens(_ string, _, _ int64) error {
+	return nil
+}
+
+func (m *mockConvServiceStore) GetMaxSequenceForConversation(conversationID string) (int, error) {
+	return len(m.turns[conversationID]), nil
+}
+
 func setupNoToolsAPI(t *testing.T, mcpProvider *noToolsTestMCPProvider, mmClient *mmapimocks.MockClient) (*TestEnvironment, *noToolsStreamingService) {
 	t.Helper()
 
@@ -102,6 +171,12 @@ func setupNoToolsAPI(t *testing.T, mcpProvider *noToolsTestMCPProvider, mmClient
 
 	streamingService := &noToolsStreamingService{}
 	e.api.streamingService = streamingService
+
+	// Wire up a conversation service with an in-memory store so that
+	// thread analysis can create conversation entities.
+	convStore := newMockConvServiceStore()
+	convService := conversation.NewService(convStore, promptsObj, mmClient, e.bots)
+	e.api.SetConversationService(convService)
 
 	fakeLLM := NewFakeLLM("summary response")
 	bot := bots.NewBot(
