@@ -285,6 +285,7 @@ func TestAutoRunToolsWrapper_ChatCompletionNoStream(t *testing.T) {
 	}
 
 	text, err := wrapper.ChatCompletionNoStream(request, WithAutoRunTools([]string{ToolAutoRunKey("", "test_tool")}))
+
 	require.NoError(t, err)
 	assert.Equal(t, "thinking...done", text)
 	assert.Equal(t, 2, inner.callCount)

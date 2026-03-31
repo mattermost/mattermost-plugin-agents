@@ -1,32 +1,29 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package main
+package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
-	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMigrateSeparateServicesFromBots(t *testing.T) {
 	tests := []struct {
 		name           string
-		inputConfig    config.Config
+		inputConfig    Config
 		expectMigrated bool
 		expectError    bool
-		validateResult func(t *testing.T, result config.Config)
+		validateResult func(t *testing.T, result Config)
 	}{
 		{
 			name: "Services already populated - should skip",
-			inputConfig: config.Config{
+			inputConfig: Config{
 				Services: []llm.ServiceConfig{
 					{
 						ID:     "service1",
@@ -44,8 +41,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			},
 			expectMigrated: false,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
-				// Config should remain unchanged
+			validateResult: func(t *testing.T, result Config) {
 				assert.Len(t, result.Services, 1)
 				assert.Len(t, result.Bots, 1)
 				assert.Equal(t, "service1", result.Bots[0].ServiceID)
@@ -53,17 +49,17 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 		},
 		{
 			name:           "No bots exist - should skip",
-			inputConfig:    config.Config{},
+			inputConfig:    Config{},
 			expectMigrated: false,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
+			validateResult: func(t *testing.T, result Config) {
 				assert.Len(t, result.Services, 0)
 				assert.Len(t, result.Bots, 0)
 			},
 		},
 		{
 			name: "Bots already have ServiceID - should skip",
-			inputConfig: config.Config{
+			inputConfig: Config{
 				Bots: []llm.BotConfig{
 					{
 						ID:        "bot1",
@@ -74,7 +70,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			},
 			expectMigrated: false,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
+			validateResult: func(t *testing.T, result Config) {
 				assert.Len(t, result.Services, 0)
 				assert.Len(t, result.Bots, 1)
 				assert.Equal(t, "service1", result.Bots[0].ServiceID)
@@ -82,7 +78,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 		},
 		{
 			name: "Bot without embedded service - should skip",
-			inputConfig: config.Config{
+			inputConfig: Config{
 				Bots: []llm.BotConfig{
 					{
 						ID:      "bot1",
@@ -93,14 +89,14 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			},
 			expectMigrated: false,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
+			validateResult: func(t *testing.T, result Config) {
 				assert.Len(t, result.Services, 0)
 				assert.Len(t, result.Bots, 1)
 			},
 		},
 		{
 			name: "Single bot with embedded service - should extract and migrate",
-			inputConfig: config.Config{
+			inputConfig: Config{
 				Bots: []llm.BotConfig{
 					{
 						ID:   "bot1",
@@ -115,7 +111,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			},
 			expectMigrated: true,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
+			validateResult: func(t *testing.T, result Config) {
 				require.Len(t, result.Services, 1)
 				assert.Equal(t, llm.ServiceTypeOpenAI, result.Services[0].Type)
 				assert.Equal(t, "key1", result.Services[0].APIKey)
@@ -128,7 +124,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 		},
 		{
 			name: "Multiple bots with identical service - should deduplicate",
-			inputConfig: config.Config{
+			inputConfig: Config{
 				Bots: []llm.BotConfig{
 					{
 						ID:   "bot1",
@@ -168,13 +164,11 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			},
 			expectMigrated: true,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
-				// Should create only one service
+			validateResult: func(t *testing.T, result Config) {
 				require.Len(t, result.Services, 1)
 				assert.Equal(t, llm.ServiceTypeOpenAI, result.Services[0].Type)
 				assert.Equal(t, "key1", result.Services[0].APIKey)
 
-				// Both bots should reference the same service
 				require.Len(t, result.Bots, 2)
 				assert.Equal(t, result.Bots[0].ServiceID, result.Bots[1].ServiceID)
 				assert.Nil(t, result.Bots[0].Service)
@@ -183,7 +177,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 		},
 		{
 			name: "Multiple bots with services differing only in name - should deduplicate",
-			inputConfig: config.Config{
+			inputConfig: Config{
 				Bots: []llm.BotConfig{
 					{
 						ID:   "bot1",
@@ -206,7 +200,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 						ID:   "bot2",
 						Name: "bot2",
 						Service: &llm.ServiceConfig{
-							Name:                    "Service B", // Different name!
+							Name:                    "Service B",
 							Type:                    llm.ServiceTypeOpenAI,
 							APIKey:                  "key1",
 							OrgID:                   "org1",
@@ -223,13 +217,11 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			},
 			expectMigrated: true,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
-				// Should create only one service (name difference should be ignored)
+			validateResult: func(t *testing.T, result Config) {
 				require.Len(t, result.Services, 1)
 				assert.Equal(t, llm.ServiceTypeOpenAI, result.Services[0].Type)
 				assert.Equal(t, "key1", result.Services[0].APIKey)
 
-				// Both bots should reference the same service
 				require.Len(t, result.Bots, 2)
 				assert.Equal(t, result.Bots[0].ServiceID, result.Bots[1].ServiceID)
 				assert.Nil(t, result.Bots[0].Service)
@@ -238,7 +230,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 		},
 		{
 			name: "Multiple bots with different services - should create separate services",
-			inputConfig: config.Config{
+			inputConfig: Config{
 				Bots: []llm.BotConfig{
 					{
 						ID:   "bot1",
@@ -262,11 +254,9 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			},
 			expectMigrated: true,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
-				// Should create two services
+			validateResult: func(t *testing.T, result Config) {
 				require.Len(t, result.Services, 2)
 
-				// Bots should reference different services
 				require.Len(t, result.Bots, 2)
 				assert.NotEqual(t, result.Bots[0].ServiceID, result.Bots[1].ServiceID)
 				assert.Nil(t, result.Bots[0].Service)
@@ -275,7 +265,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 		},
 		{
 			name: "Mixed: some bots with ServiceID, some with embedded service",
-			inputConfig: config.Config{
+			inputConfig: Config{
 				Services: []llm.ServiceConfig{
 					{
 						ID:     "existing-service",
@@ -301,14 +291,11 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			},
 			expectMigrated: true,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
-				// Should have original service plus new extracted service
+			validateResult: func(t *testing.T, result Config) {
 				require.Len(t, result.Services, 2)
 
 				require.Len(t, result.Bots, 2)
-				// Bot1 should still reference existing service
 				assert.Equal(t, "existing-service", result.Bots[0].ServiceID)
-				// Bot2 should reference new service
 				assert.NotEqual(t, "existing-service", result.Bots[1].ServiceID)
 				assert.NotEmpty(t, result.Bots[1].ServiceID)
 				assert.Nil(t, result.Bots[1].Service)
@@ -316,7 +303,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 		},
 		{
 			name: "Real-world config: many bots with identical embedded services - should deduplicate",
-			inputConfig: config.Config{
+			inputConfig: Config{
 				Bots: []llm.BotConfig{
 					{
 						ID:          "OpenAI",
@@ -395,11 +382,9 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			},
 			expectMigrated: true,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
-				// Should create only 2 services (OpenAI and Anthropic), deduplicating the 4 identical OpenAI services
+			validateResult: func(t *testing.T, result Config) {
 				require.Len(t, result.Services, 2, "Expected 2 services: 1 deduplicated OpenAI + 1 Anthropic")
 
-				// Find the OpenAI and Anthropic services
 				var openAIService, anthropicService *llm.ServiceConfig
 				for i := range result.Services {
 					switch result.Services[i].Type {
@@ -421,28 +406,23 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 				assert.Equal(t, "claude-3-5-sonnet-20241022", anthropicService.DefaultModel)
 				assert.Equal(t, 100000, anthropicService.InputTokenLimit)
 
-				// All 5 bots should be migrated
 				require.Len(t, result.Bots, 5)
 
-				// First 4 bots should reference the same OpenAI service
 				for i := 0; i < 4; i++ {
 					assert.Equal(t, openAIService.ID, result.Bots[i].ServiceID,
 						"Bot %d (%s) should reference OpenAI service", i, result.Bots[i].Name)
 					assert.Nil(t, result.Bots[i].Service, "Embedded service should be cleared for bot %d", i)
 				}
 
-				// Last bot should reference the Anthropic service
 				assert.Equal(t, anthropicService.ID, result.Bots[4].ServiceID)
 				assert.Nil(t, result.Bots[4].Service)
 
-				// Verify bot names are preserved
 				assert.Equal(t, "ai", result.Bots[0].Name)
 				assert.Equal(t, "yoda-ai", result.Bots[1].Name)
 				assert.Equal(t, "loki", result.Bots[2].Name)
 				assert.Equal(t, "matter-ai", result.Bots[3].Name)
 				assert.Equal(t, "claude", result.Bots[4].Name)
 
-				// Verify custom instructions are preserved
 				assert.Contains(t, result.Bots[1].CustomInstructions, "wisdom")
 				assert.Contains(t, result.Bots[2].CustomInstructions, "Loki")
 			},
@@ -451,27 +431,8 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup mock API
-			mockAPI := &plugintest.API{}
+			resultConfig, migrated, err := MigrateSeparateServicesFromBots(tt.inputConfig)
 
-			// Mock mutex lock/unlock operations
-			mockAPI.On("KVSetWithOptions", mock.MatchedBy(func(key string) bool {
-				return key == "mutex_migrate_separate_services_from_bots"
-			}), mock.Anything, mock.Anything).Return(true, nil)
-
-			mockAPI.On("KVDelete", "mutex_migrate_separate_services_from_bots").Return(nil)
-
-			// Setup logging - accept variadic arguments for structured logging
-			mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
-			mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
-			mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
-
-			pluginAPI := pluginapi.NewClient(mockAPI, nil)
-
-			// Run migration
-			migrated, resultConfig, err := migrateSeparateServicesFromBots(pluginAPI, tt.inputConfig)
-
-			// Check expectations
 			if tt.expectError {
 				assert.Error(t, err)
 				return
@@ -480,7 +441,6 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectMigrated, migrated)
 
-			// Run custom validation if provided
 			if tt.validateResult != nil {
 				tt.validateResult(t, resultConfig)
 			}
@@ -488,7 +448,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 	}
 }
 
-func TestFindExistingServiceID(t *testing.T) {
+func TestFindIdenticalService(t *testing.T) {
 	baseService := llm.ServiceConfig{
 		ID:                      "base-id",
 		Name:                    "Base Service",
@@ -537,7 +497,7 @@ func TestFindExistingServiceID(t *testing.T) {
 			name: "Match found - different name but otherwise identical",
 			newService: &llm.ServiceConfig{
 				ID:                      "different-id",
-				Name:                    "Different Name", // Name should be ignored
+				Name:                    "Different Name",
 				Type:                    llm.ServiceTypeOpenAI,
 				APIKey:                  "key1",
 				OrgID:                   "org1",
@@ -557,7 +517,7 @@ func TestFindExistingServiceID(t *testing.T) {
 			newService: &llm.ServiceConfig{
 				ID:                      "different-id",
 				Name:                    "Base Service",
-				Type:                    llm.ServiceTypeAnthropic, // Different
+				Type:                    llm.ServiceTypeAnthropic,
 				APIKey:                  "key1",
 				OrgID:                   "org1",
 				DefaultModel:            "gpt-4",
@@ -577,7 +537,7 @@ func TestFindExistingServiceID(t *testing.T) {
 				ID:                      "different-id",
 				Name:                    "Base Service",
 				Type:                    llm.ServiceTypeOpenAI,
-				APIKey:                  "different-key", // Different
+				APIKey:                  "different-key",
 				OrgID:                   "org1",
 				DefaultModel:            "gpt-4",
 				APIURL:                  "https://api.openai.com",
@@ -598,7 +558,7 @@ func TestFindExistingServiceID(t *testing.T) {
 				Type:                    llm.ServiceTypeOpenAI,
 				APIKey:                  "key1",
 				OrgID:                   "org1",
-				DefaultModel:            "gpt-3.5", // Different
+				DefaultModel:            "gpt-3.5",
 				APIURL:                  "https://api.openai.com",
 				InputTokenLimit:         4000,
 				StreamingTimeoutSeconds: 30,
@@ -619,7 +579,7 @@ func TestFindExistingServiceID(t *testing.T) {
 				OrgID:                   "org1",
 				DefaultModel:            "gpt-4",
 				APIURL:                  "https://api.openai.com",
-				InputTokenLimit:         8000, // Different
+				InputTokenLimit:         8000,
 				StreamingTimeoutSeconds: 30,
 				SendUserID:              true,
 				OutputTokenLimit:        2000,
@@ -639,7 +599,7 @@ func TestFindExistingServiceID(t *testing.T) {
 				DefaultModel:            "gpt-4",
 				APIURL:                  "https://api.openai.com",
 				InputTokenLimit:         4000,
-				StreamingTimeoutSeconds: 60, // Different
+				StreamingTimeoutSeconds: 60,
 				SendUserID:              true,
 				OutputTokenLimit:        2000,
 				UseResponsesAPI:         false,
@@ -661,32 +621,13 @@ func TestFindExistingServiceID(t *testing.T) {
 				StreamingTimeoutSeconds: 30,
 				SendUserID:              true,
 				OutputTokenLimit:        2000,
-				UseResponsesAPI:         true, // Different
+				UseResponsesAPI:         true,
 			},
 			expectedID: "",
 			shouldFind: false,
 		},
 		{
-			name: "Match found - different EnabledNativeTools",
-			newService: &llm.ServiceConfig{
-				ID:                      "different-id",
-				Name:                    "Base Service",
-				Type:                    llm.ServiceTypeOpenAI,
-				APIKey:                  "key1",
-				OrgID:                   "org1",
-				DefaultModel:            "gpt-4",
-				APIURL:                  "https://api.openai.com",
-				InputTokenLimit:         4000,
-				StreamingTimeoutSeconds: 30,
-				SendUserID:              true,
-				OutputTokenLimit:        2000,
-				UseResponsesAPI:         false,
-			},
-			expectedID: "base-id",
-			shouldFind: true,
-		},
-		{
-			name: "Match found with empty OrgID and minimal fields",
+			name: "No match with minimal fields",
 			newService: &llm.ServiceConfig{
 				Type:   llm.ServiceTypeOpenAI,
 				APIKey: "key1",
@@ -741,7 +682,7 @@ func TestServicesAreIdentical(t *testing.T) {
 			name:     "Different ID but otherwise identical - should match",
 			serviceA: baseService,
 			serviceB: llm.ServiceConfig{
-				ID:                      "id2", // Different ID
+				ID:                      "id2",
 				Name:                    "Service A",
 				Type:                    llm.ServiceTypeOpenAI,
 				APIKey:                  "key1",
@@ -761,7 +702,7 @@ func TestServicesAreIdentical(t *testing.T) {
 			serviceA: baseService,
 			serviceB: llm.ServiceConfig{
 				ID:                      "id1",
-				Name:                    "Service B", // Different Name
+				Name:                    "Service B",
 				Type:                    llm.ServiceTypeOpenAI,
 				APIKey:                  "key1",
 				OrgID:                   "org1",
@@ -781,7 +722,7 @@ func TestServicesAreIdentical(t *testing.T) {
 			serviceB: llm.ServiceConfig{
 				ID:                      "id1",
 				Name:                    "Service A",
-				Type:                    llm.ServiceTypeAnthropic, // Different
+				Type:                    llm.ServiceTypeAnthropic,
 				APIKey:                  "key1",
 				OrgID:                   "org1",
 				DefaultModel:            "gpt-4",
@@ -801,7 +742,7 @@ func TestServicesAreIdentical(t *testing.T) {
 				ID:                      "id1",
 				Name:                    "Service A",
 				Type:                    llm.ServiceTypeOpenAI,
-				APIKey:                  "different-key", // Different
+				APIKey:                  "different-key",
 				OrgID:                   "org1",
 				DefaultModel:            "gpt-4",
 				APIURL:                  "https://api.openai.com",
@@ -821,7 +762,7 @@ func TestServicesAreIdentical(t *testing.T) {
 				Name:                    "Service A",
 				Type:                    llm.ServiceTypeOpenAI,
 				APIKey:                  "key1",
-				OrgID:                   "org2", // Different
+				OrgID:                   "org2",
 				DefaultModel:            "gpt-4",
 				APIURL:                  "https://api.openai.com",
 				InputTokenLimit:         4000,
@@ -841,7 +782,7 @@ func TestServicesAreIdentical(t *testing.T) {
 				Type:                    llm.ServiceTypeOpenAI,
 				APIKey:                  "key1",
 				OrgID:                   "org1",
-				DefaultModel:            "gpt-3.5", // Different
+				DefaultModel:            "gpt-3.5",
 				APIURL:                  "https://api.openai.com",
 				InputTokenLimit:         4000,
 				StreamingTimeoutSeconds: 30,
@@ -861,7 +802,7 @@ func TestServicesAreIdentical(t *testing.T) {
 				APIKey:                  "key1",
 				OrgID:                   "org1",
 				DefaultModel:            "gpt-4",
-				APIURL:                  "https://different.com", // Different
+				APIURL:                  "https://different.com",
 				InputTokenLimit:         4000,
 				StreamingTimeoutSeconds: 30,
 				SendUserID:              true,
@@ -881,7 +822,7 @@ func TestServicesAreIdentical(t *testing.T) {
 				OrgID:                   "org1",
 				DefaultModel:            "gpt-4",
 				APIURL:                  "https://api.openai.com",
-				InputTokenLimit:         8000, // Different
+				InputTokenLimit:         8000,
 				StreamingTimeoutSeconds: 30,
 				SendUserID:              true,
 				OutputTokenLimit:        2000,
@@ -901,7 +842,7 @@ func TestServicesAreIdentical(t *testing.T) {
 				DefaultModel:            "gpt-4",
 				APIURL:                  "https://api.openai.com",
 				InputTokenLimit:         4000,
-				StreamingTimeoutSeconds: 60, // Different
+				StreamingTimeoutSeconds: 60,
 				SendUserID:              true,
 				OutputTokenLimit:        2000,
 				UseResponsesAPI:         false,
@@ -921,7 +862,7 @@ func TestServicesAreIdentical(t *testing.T) {
 				APIURL:                  "https://api.openai.com",
 				InputTokenLimit:         4000,
 				StreamingTimeoutSeconds: 30,
-				SendUserID:              false, // Different
+				SendUserID:              false,
 				OutputTokenLimit:        2000,
 				UseResponsesAPI:         false,
 			},
@@ -941,7 +882,7 @@ func TestServicesAreIdentical(t *testing.T) {
 				InputTokenLimit:         4000,
 				StreamingTimeoutSeconds: 30,
 				SendUserID:              true,
-				OutputTokenLimit:        4000, // Different
+				OutputTokenLimit:        4000,
 				UseResponsesAPI:         false,
 			},
 			shouldMatch: false,
@@ -961,47 +902,9 @@ func TestServicesAreIdentical(t *testing.T) {
 				StreamingTimeoutSeconds: 30,
 				SendUserID:              true,
 				OutputTokenLimit:        2000,
-				UseResponsesAPI:         true, // Different
+				UseResponsesAPI:         true,
 			},
 			shouldMatch: false,
-		},
-		{
-			name:     "Different EnabledNativeTools length",
-			serviceA: baseService,
-			serviceB: llm.ServiceConfig{
-				ID:                      "id1",
-				Name:                    "Service A",
-				Type:                    llm.ServiceTypeOpenAI,
-				APIKey:                  "key1",
-				OrgID:                   "org1",
-				DefaultModel:            "gpt-4",
-				APIURL:                  "https://api.openai.com",
-				InputTokenLimit:         4000,
-				StreamingTimeoutSeconds: 30,
-				SendUserID:              true,
-				OutputTokenLimit:        2000,
-				UseResponsesAPI:         false,
-			},
-			shouldMatch: true,
-		},
-		{
-			name:     "Different EnabledNativeTools content",
-			serviceA: baseService,
-			serviceB: llm.ServiceConfig{
-				ID:                      "id1",
-				Name:                    "Service A",
-				Type:                    llm.ServiceTypeOpenAI,
-				APIKey:                  "key1",
-				OrgID:                   "org1",
-				DefaultModel:            "gpt-4",
-				APIURL:                  "https://api.openai.com",
-				InputTokenLimit:         4000,
-				StreamingTimeoutSeconds: 30,
-				SendUserID:              true,
-				OutputTokenLimit:        2000,
-				UseResponsesAPI:         false,
-			},
-			shouldMatch: true,
 		},
 	}
 
@@ -1020,7 +923,7 @@ func TestMigrateServicesToBots(t *testing.T) {
 		oldConfigJSON  string
 		expectMigrated bool
 		expectError    bool
-		validateResult func(t *testing.T, result config.Config)
+		validateResult func(t *testing.T, result Config)
 	}{
 		{
 			name: "Bots already exist - should skip",
@@ -1036,8 +939,7 @@ func TestMigrateServicesToBots(t *testing.T) {
 			oldConfigJSON:  `{"config": {"services": []}}`,
 			expectMigrated: false,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
-				// Config should remain unchanged (empty)
+			validateResult: func(t *testing.T, result Config) {
 				assert.Empty(t, result.Services)
 				assert.Empty(t, result.Bots)
 			},
@@ -1061,8 +963,7 @@ func TestMigrateServicesToBots(t *testing.T) {
 			}`,
 			expectMigrated: true,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
-				// Should create one service
+			validateResult: func(t *testing.T, result Config) {
 				require.Len(t, result.Services, 1)
 				assert.Equal(t, "openai", result.Services[0].Type)
 				assert.Equal(t, "OpenAI GPT-4", result.Services[0].Name)
@@ -1072,7 +973,6 @@ func TestMigrateServicesToBots(t *testing.T) {
 				assert.Equal(t, 4000, result.Services[0].InputTokenLimit)
 				assert.NotEmpty(t, result.Services[0].ID)
 
-				// Should create one bot
 				require.Len(t, result.Bots, 1)
 				assert.Equal(t, "ai1", result.Bots[0].Name)
 				assert.Equal(t, "OpenAI GPT-4", result.Bots[0].DisplayName)
@@ -1104,21 +1004,17 @@ func TestMigrateServicesToBots(t *testing.T) {
 			}`,
 			expectMigrated: true,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
-				// Should create two services
+			validateResult: func(t *testing.T, result Config) {
 				require.Len(t, result.Services, 2)
 
-				// Check first service
 				assert.Equal(t, "openai", result.Services[0].Type)
 				assert.Equal(t, "OpenAI GPT-4", result.Services[0].Name)
 				assert.Equal(t, "sk-openai-key", result.Services[0].APIKey)
 
-				// Check second service
 				assert.Equal(t, "anthropic", result.Services[1].Type)
 				assert.Equal(t, "Anthropic Claude", result.Services[1].Name)
 				assert.Equal(t, "sk-anthropic-key", result.Services[1].APIKey)
 
-				// Should create two bots - first one does NOT get standard name (multiple bots)
 				require.Len(t, result.Bots, 2)
 				assert.Equal(t, "OpenAI GPT-4", result.Bots[0].DisplayName)
 				assert.Equal(t, result.Services[0].ID, result.Bots[0].ServiceID)
@@ -1144,7 +1040,7 @@ func TestMigrateServicesToBots(t *testing.T) {
 			}`,
 			expectMigrated: true,
 			expectError:    false,
-			validateResult: func(t *testing.T, result config.Config) {
+			validateResult: func(t *testing.T, result Config) {
 				require.Len(t, result.Services, 1)
 				assert.Equal(t, "openaicompatible", result.Services[0].Type)
 				assert.Equal(t, "https://custom-llm.example.com/v1", result.Services[0].APIURL)
@@ -1155,45 +1051,36 @@ func TestMigrateServicesToBots(t *testing.T) {
 				assert.Equal(t, "ai1", result.Bots[0].Name)
 			},
 		},
+		{
+			name:           "loadLegacyConfig returns error - should propagate",
+			existingBots:   []llm.BotConfig{},
+			oldConfigJSON:  "",
+			expectMigrated: false,
+			expectError:    true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup mock API
-			mockAPI := &plugintest.API{}
-
-			// Mock mutex lock/unlock operations
-			mockAPI.On("KVSetWithOptions", mock.MatchedBy(func(key string) bool {
-				return key == "mutex_migrate_services_to_bots"
-			}), mock.Anything, mock.Anything).Return(true, nil)
-
-			mockAPI.On("KVDelete", "mutex_migrate_services_to_bots").Return(nil)
-
-			// Setup logging
-			mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
-			mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
-			mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
-
-			// Mock LoadPluginConfiguration for cases where we need to load old config
-			if tt.oldConfigJSON != "" {
-				mockAPI.On("LoadPluginConfiguration", mock.AnythingOfType("*main.BotMigrationConfig")).Return(nil).Run(func(args mock.Arguments) {
-					cfg := args.Get(0).(*BotMigrationConfig)
-					// Unmarshal the test JSON into the config struct
-					err := json.Unmarshal([]byte(tt.oldConfigJSON), cfg)
-					require.NoError(t, err)
-				})
-			}
-
-			pluginAPI := pluginapi.NewClient(mockAPI, nil)
-
-			cfg := config.Config{
+			cfg := Config{
 				Bots: tt.existingBots,
 			}
 
-			// Run migration
-			migrated, resultConfig, err := migrateServicesToBots(pluginAPI, cfg)
+			// Create loadLegacyConfig function from test JSON
+			loadLegacyConfig := func() (LegacyServiceConfig, error) {
+				if tt.oldConfigJSON == "" {
+					return LegacyServiceConfig{}, fmt.Errorf("no legacy config available")
+				}
+				var legacy LegacyServiceConfig
+				err := json.Unmarshal([]byte(tt.oldConfigJSON), &legacy)
+				if err != nil {
+					return LegacyServiceConfig{}, fmt.Errorf("failed to unmarshal test JSON: %w", err)
+				}
+				return legacy, nil
+			}
 
-			// Check expectations
+			resultConfig, migrated, err := MigrateServicesToBots(cfg, loadLegacyConfig)
+
 			if tt.expectError {
 				assert.Error(t, err)
 				return
@@ -1202,9 +1089,77 @@ func TestMigrateServicesToBots(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectMigrated, migrated)
 
-			// Run custom validation if provided
 			if tt.validateResult != nil {
 				tt.validateResult(t, resultConfig)
+			}
+		})
+	}
+}
+
+func TestRunAllLegacyMigrations(t *testing.T) {
+	tests := []struct {
+		name           string
+		inputConfig    Config
+		legacyJSON     string
+		expectChanged  bool
+		expectError    bool
+		validateResult func(t *testing.T, result Config)
+	}{
+		{
+			name:          "No migrations needed - empty config",
+			inputConfig:   Config{},
+			legacyJSON:    `{"config": {"services": []}}`,
+			expectChanged: false,
+			expectError:   false,
+		},
+		{
+			name:        "Both migrations run sequentially",
+			inputConfig: Config{},
+			legacyJSON: `{
+				"config": {
+					"services": [
+						{
+							"name": "OpenAI",
+							"serviceName": "openai",
+							"defaultModel": "gpt-4",
+							"apiKey": "key1",
+							"tokenLimit": 4000
+						}
+					]
+				}
+			}`,
+			expectChanged: true,
+			expectError:   false,
+			validateResult: func(t *testing.T, result Config) {
+				// After both migrations: should have services and bots with ServiceID set
+				require.Len(t, result.Services, 1)
+				require.Len(t, result.Bots, 1)
+				assert.NotEmpty(t, result.Bots[0].ServiceID)
+				assert.Equal(t, result.Services[0].ID, result.Bots[0].ServiceID)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loadLegacyConfig := func() (LegacyServiceConfig, error) {
+				var legacy LegacyServiceConfig
+				err := json.Unmarshal([]byte(tt.legacyJSON), &legacy)
+				return legacy, err
+			}
+
+			result, changed, err := RunAllLegacyMigrations(tt.inputConfig, loadLegacyConfig)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectChanged, changed)
+
+			if tt.validateResult != nil {
+				tt.validateResult(t, result)
 			}
 		})
 	}

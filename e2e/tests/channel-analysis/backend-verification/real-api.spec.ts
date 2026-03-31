@@ -2,7 +2,7 @@
 // seed: tests/seed.spec.ts
 
 import { test, expect, Page } from '@playwright/test';
-import RunRealAPIContainer from 'helpers/real-api-container';
+import RunRealAPIContainer, { REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -29,8 +29,6 @@ import { attachAPIErrorContext } from 'helpers/log-scanner';
 
 const username = 'regularuser';
 const password = 'regularuser';
-const REAL_API_SETUP_TIMEOUT_MS = 180000;
-
 const config = getAPIConfig();
 const skipMessage = getSkipMessage();
 
@@ -90,7 +88,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
         let mattermost: MattermostContainer;
 
         test.beforeAll(async () => {
-            test.setTimeout(REAL_API_SETUP_TIMEOUT_MS);
+            test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
             if (!config.shouldRunTests) return;
 
             const customProvider = {

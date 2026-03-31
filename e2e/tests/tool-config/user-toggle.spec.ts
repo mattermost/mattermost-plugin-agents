@@ -39,13 +39,12 @@ test.describe('User Provider Toggle', () => {
         const apiHelper = await createToolConfigAPIHelper(mattermost);
         const adminClient = await mattermost.getAdminClient();
         const token = adminClient.getToken();
-        const baseUrl = mattermost.url();
 
         // Get initial preferences
-        const prefsBefore = await apiHelper.getUserPreferences(baseUrl, token);
+        const prefsBefore = await apiHelper.getUserPreferences(token);
 
         // Set a disabled server preference
-        const updatedPrefs = await apiHelper.setUserPreferences(baseUrl, token, {
+        const updatedPrefs = await apiHelper.setUserPreferences(token, {
             disabled_servers: ['test-server-to-disable'],
         });
 
@@ -54,13 +53,13 @@ test.describe('User Provider Toggle', () => {
         expect(updatedPrefs.disabled_servers).toContain('test-server-to-disable');
 
         // Verify the preference was saved by reading it back
-        const prefsAfter = await apiHelper.getUserPreferences(baseUrl, token);
+        const prefsAfter = await apiHelper.getUserPreferences(token);
         expect(prefsAfter).toBeDefined();
         expect(prefsAfter.disabled_servers).toBeDefined();
         expect(prefsAfter.disabled_servers).toContain('test-server-to-disable');
 
         // Clean up by restoring empty preferences
-        await apiHelper.setUserPreferences(baseUrl, token, {
+        await apiHelper.setUserPreferences(token, {
             disabled_servers: [],
         });
     });
@@ -74,10 +73,9 @@ test.describe('User Provider Toggle', () => {
         const apiHelper = await createToolConfigAPIHelper(mattermost);
         const adminClient = await mattermost.getAdminClient();
         const token = adminClient.getToken();
-        const baseUrl = mattermost.url();
 
         // Get the full tool list with all providers enabled
-        const toolsBefore = await apiHelper.getUserMCPTools(baseUrl, token);
+        const toolsBefore = await apiHelper.getUserMCPTools(token);
         expect(toolsBefore.servers).toBeDefined();
         expect(toolsBefore.servers.length).toBeGreaterThan(0);
 
@@ -86,13 +84,13 @@ test.describe('User Provider Toggle', () => {
         expect(firstServer.tools).toBeDefined();
 
         // Disable the first provider via user preferences
-        await apiHelper.setUserPreferences(baseUrl, token, {
+        await apiHelper.setUserPreferences(token, {
             disabled_servers: [firstServer.name],
         });
 
         // The tool list should still include the disabled server so the user
         // can see it and re-enable it from the UI.
-        const toolsAfter = await apiHelper.getUserMCPTools(baseUrl, token);
+        const toolsAfter = await apiHelper.getUserMCPTools(token);
         expect(toolsAfter.servers).toBeDefined();
         expect(toolsAfter.servers.length).toBe(toolsBefore.servers.length);
         const serverStillPresent = toolsAfter.servers.find(
@@ -101,11 +99,11 @@ test.describe('User Provider Toggle', () => {
         expect(serverStillPresent).toBeDefined();
 
         // Verify the preference itself was persisted correctly
-        const prefs = await apiHelper.getUserPreferences(baseUrl, token);
+        const prefs = await apiHelper.getUserPreferences(token);
         expect(prefs.disabled_servers).toContain(firstServer.name);
 
         // Restore: re-enable all providers
-        await apiHelper.setUserPreferences(baseUrl, token, {
+        await apiHelper.setUserPreferences(token, {
             disabled_servers: [],
         });
     });

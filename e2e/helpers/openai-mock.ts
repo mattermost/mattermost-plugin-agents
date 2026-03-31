@@ -1,5 +1,34 @@
 import {StartedTestContainer, GenericContainer, StartedNetwork, Network, Wait} from "testcontainers";
 
+/**
+ * Smocker matches request paths exactly. Bifrost may POST to /v1/chat/completions or /chat/completions.
+ * Use a single path regex so we do not register two mocks with the same body matchers (which would
+ * cause the second request to match the duplicate rule instead of the next logical mock).
+ */
+export function normalizeChatCompletionMockPath(body: any): any {
+	const req = body?.request;
+	if (!req || typeof req.path !== 'string') {
+		return body;
+	}
+	const p = req.path;
+	const m = p.match(/^(.*)\/v1\/chat\/completions$/);
+	if (!m) {
+		return body;
+	}
+	const pathPrefix = m[1];
+	const escaped = pathPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	return {
+		...body,
+		request: {
+			...req,
+			path: {
+				matcher: 'ShouldMatch',
+				value: `^${escaped}(/v1)?/chat/completions$`,
+			},
+		},
+	};
+}
+
 export const responseTest = `
 data: {"id":"chatcmpl-8t1WLFfcSfmK0sfBcFbj8VEhOqNYd","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
 data: {"id":"chatcmpl-8t1WLFfcSfmK0sfBcFbj8VEhOqNYd","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"Hello"},"logprobs":null,"finish_reason":null}]}
@@ -79,7 +108,7 @@ export class OpenAIMockContainer {
 				headers: {
 					"Content-Type": "application/json",
 				},
-				body: JSON.stringify([body]),
+				body: JSON.stringify([normalizeChatCompletionMockPath(body)]),
 			});
 
 			if (!response.ok) {
@@ -112,7 +141,7 @@ export class OpenAIMockContainer {
 				headers: {
 					"Content-Type": "application/json",
 				},
-				body: JSON.stringify(bodies),
+				body: JSON.stringify(bodies.map(normalizeChatCompletionMockPath)),
 			});
 
 			if (!response.ok) {

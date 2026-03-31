@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
-import { RunRealAPIContainer } from 'helpers/real-api-container';
+import { RunRealAPIContainer, REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
 import {
     getAPIConfig,
     getAvailableProviders,
@@ -20,8 +20,6 @@ import {
 const config = getAPIConfig();
 const skipMessage =
     'Skipping ask-policy tests: No ANTHROPIC_API_KEY or OPENAI_API_KEY found in environment.';
-const REAL_API_SETUP_TIMEOUT_MS = 180000;
-
 const providers = config.shouldRunTests ? getAvailableProviders() : [];
 
 for (const provider of providers) {
@@ -29,7 +27,7 @@ for (const provider of providers) {
         let mattermost: MattermostContainer;
 
         test.beforeAll(async () => {
-            test.setTimeout(REAL_API_SETUP_TIMEOUT_MS);
+            test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
             mattermost = await RunRealAPIContainer({
                 service: provider.service,
                 bot: provider.bot,

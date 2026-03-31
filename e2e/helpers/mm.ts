@@ -11,7 +11,16 @@ export class MattermostPage {
         this.sendButton = page.getByTestId('channel_view').getByTestId('SendMessageButton');
     }
 
-    async login(url: string, username: string, password: string) {
+    /**
+     * @param options.channelViewTimeoutMs - Max wait after submit for channel URL + channel_view (CI can be slow late in a shard).
+     */
+    async login(
+        url: string,
+        username: string,
+        password: string,
+        options?: { channelViewTimeoutMs?: number },
+    ) {
+        const channelTimeout = options?.channelViewTimeoutMs ?? 60000;
         await this.page.addInitScript(() => { localStorage.setItem('__landingPageSeen__', 'true'); });
 
         // Polyfill crypto.randomUUID for insecure contexts (e.g., Docker test environments
@@ -55,8 +64,8 @@ export class MattermostPage {
 
         // Wait for navigation to complete and channel view to be visible
         // Using a more generous timeout and proper wait strategy for parallel test runs
-        await this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout: 60000 });
-        await this.page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 60000});
+        await this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout: channelTimeout });
+        await this.page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: channelTimeout });
     }
 
     async sendChannelMessage(message: string) {

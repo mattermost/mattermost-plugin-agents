@@ -5,7 +5,9 @@ package mcpserver_test
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
+	"io"
+	"log"
 	"testing"
 	"time"
 
@@ -15,8 +17,56 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
 	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
+	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
 )
+
+func init() {
+	// Suppress stdlib log output from testcontainers internals.
+	log.SetOutput(io.Discard)
+}
+
+// testLogger routes MCP server log output through t.Log so it only appears on failure.
+// Replaces the mlog stderr logger that unconditionally wrote to stderr.
+type testLogger struct {
+	t *testing.T
+}
+
+func (l *testLogger) Debug(msg string, keyValuePairs ...any) {
+	l.t.Helper()
+	l.t.Logf("[DEBUG] %s%s", msg, formatKV(keyValuePairs))
+}
+
+func (l *testLogger) Info(msg string, keyValuePairs ...any) {
+	l.t.Helper()
+	l.t.Logf("[INFO] %s%s", msg, formatKV(keyValuePairs))
+}
+
+func (l *testLogger) Warn(msg string, keyValuePairs ...any) {
+	l.t.Helper()
+	l.t.Logf("[WARN] %s%s", msg, formatKV(keyValuePairs))
+}
+
+func (l *testLogger) Error(msg string, keyValuePairs ...any) {
+	l.t.Helper()
+	l.t.Logf("[ERROR] %s%s", msg, formatKV(keyValuePairs))
+}
+
+func (l *testLogger) Flush() error { return nil }
+
+// formatKV formats key-value pairs into a " key=value key=value" string.
+func formatKV(kvs []any) string {
+	if len(kvs) == 0 {
+		return ""
+	}
+	var s string
+	for i := 0; i+1 < len(kvs); i += 2 {
+		s += fmt.Sprintf(" %v=%v", kvs[i], kvs[i+1])
+	}
+	return s
+}
+
+// Compile-time check that testLogger satisfies logger.Logger.
+var _ loggerlib.Logger = (*testLogger)(nil)
 
 // TestSuite represents the integration test suite
 type TestSuite struct {
@@ -69,28 +119,12 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	require.NoError(t, err, "Failed to create PAT token")
 	adminToken := pat.Token
 
-	// Set up logger for testing
-	mlogger, err := mlog.NewLogger()
-	require.NoError(t, err, "Failed to create logger")
-
-	cfg := make(mlog.LoggerConfiguration)
-	cfg["console"] = mlog.TargetCfg{
-		Type:          "console",
-		Levels:        []mlog.Level{mlog.LvlDebug, mlog.LvlInfo, mlog.LvlWarn, mlog.LvlError},
-		Format:        "plain",
-		FormatOptions: json.RawMessage(`{"enable_color": false}`),
-		Options:       json.RawMessage(`{"out": "stderr"}`),
-		MaxQueueSize:  1000,
-	}
-	err = mlogger.ConfigureTargets(cfg, nil)
-	require.NoError(t, err, "Failed to configure logger")
-
 	return &TestSuite{
 		t:          t,
 		container:  container,
 		serverURL:  serverURL,
 		adminToken: adminToken,
-		logger:     loggerlib.NewStandaloneLogger(mlogger),
+		logger:     &testLogger{t: t},
 	}
 }
 
@@ -109,6 +143,15 @@ func (suite *TestSuite) TearDown() {
 
 // CreateMCPServer creates and configures an MCP server for testing
 func (suite *TestSuite) CreateMCPServer(devMode bool) {
+	suite.createMCPServerWithConfig(devMode, nil)
+}
+
+// CreateMCPServerWithSearch creates an MCP server with a custom semantic search service
+func (suite *TestSuite) CreateMCPServerWithSearch(devMode bool, searchService tools.SemanticSearchService) {
+	suite.createMCPServerWithConfig(devMode, searchService)
+}
+
+func (suite *TestSuite) createMCPServerWithConfig(devMode bool, searchService tools.SemanticSearchService) {
 	require.NotNil(suite.t, suite.logger, "Logger must be initialized")
 	require.NotEmpty(suite.t, suite.serverURL, "Server URL must be set")
 	require.NotEmpty(suite.t, suite.adminToken, "Admin token must be set")
@@ -120,7 +163,7 @@ func (suite *TestSuite) CreateMCPServer(devMode bool) {
 		},
 		PersonalAccessToken: suite.adminToken,
 	}
-	mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger)
+	mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, searchService)
 	require.NoError(suite.t, err, "Failed to create MCP server")
 
 	suite.mcpServer = mcpServer

@@ -202,11 +202,10 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
 	}
 
-	// Wrap stream with MCP auto-approval for channel tool calls.
-	// When tools are enabled in channels and a per-tool policy checker exists,
-	// auto_run tools are auto-executed, skipping the call-approval UI and
-	// proceeding directly to result-sharing.
-	if allowToolsInChannel && context != nil && context.Tools != nil && c.toolPolicyChecker != nil {
+	// Wrap stream with MCP auto-approval when tools are active (DM or channel with
+	// tool calling enabled). DMs pass allowToolsInChannel=false but toolsDisabled is
+	// false, so we key off toolsDisabled rather than allowToolsInChannel alone.
+	if !toolsDisabled && context != nil && context.Tools != nil && c.toolPolicyChecker != nil {
 		result = wrapStreamWithMCPAutoApproval(result, context, c.toolPolicyChecker)
 	}
 

@@ -1,6 +1,13 @@
 import { Page, Locator, expect } from '@playwright/test';
 import { Client4 } from '@mattermost/client';
 import MattermostContainer from './mmcontainer';
+import {
+    mattermostAIAdminConfigApiFromClient,
+    mattermostAIPluginRoutes,
+    normalizeMattermostAiConfigFromApi,
+    type PluginAdminConfigApi,
+    type PluginRoutesApi,
+} from './plugin-http';
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -160,19 +167,28 @@ export class ToolConfigUIHelper {
 
 /**
  * ToolConfigAPIHelper - Programmatic config read/write for tool configs
+ *
+ * Uses GET/PUT /plugins/mattermost-ai/admin/config so reads and writes match
+ * database-backed configuration (not Mattermost PluginSettings).
  */
 export class ToolConfigAPIHelper {
-    private client: Client4;
-    private pluginId = 'mattermost-ai';
+    private adminApi: PluginAdminConfigApi;
+    private routes: PluginRoutesApi;
 
-    constructor(client: Client4) {
-        this.client = client;
+    constructor(client: Client4, baseUrl: string) {
+        this.adminApi = mattermostAIAdminConfigApiFromClient(client, baseUrl);
+        this.routes = mattermostAIPluginRoutes(baseUrl);
     }
 
     /** Get current plugin config */
     async getPluginConfig(): Promise<any> {
-        const systemConfig = await this.client.getConfig();
-        return systemConfig.PluginSettings?.Plugins?.[this.pluginId] || {};
+        const apiConfig = await this.adminApi.get();
+        const config = normalizeMattermostAiConfigFromApi(apiConfig);
+        return { config };
+    }
+
+    private async savePluginConfig(pluginConfig: { config: Record<string, unknown> }): Promise<void> {
+        await this.adminApi.put(pluginConfig.config);
     }
 
     /** Get MCP config from plugin settings */
@@ -192,14 +208,7 @@ export class ToolConfigAPIHelper {
         }
         pluginConfig.config.mcp.servers[serverIndex].tool_configs = toolConfigs;
 
-        await this.client.patchConfig({
-            PluginSettings: {
-                Plugins: {
-                    [this.pluginId]: pluginConfig,
-                },
-            },
-        });
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await this.savePluginConfig(pluginConfig);
     }
 
     /** Replace embedded MCP server tool configs (full list). */
@@ -216,14 +225,7 @@ export class ToolConfigAPIHelper {
             tool_configs: toolConfigs,
         };
 
-        await this.client.patchConfig({
-            PluginSettings: {
-                Plugins: {
-                    [this.pluginId]: pluginConfig,
-                },
-            },
-        });
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await this.savePluginConfig(pluginConfig);
     }
 
     /** Get tool configs for a specific server */
@@ -235,58 +237,18 @@ export class ToolConfigAPIHelper {
     }
 
     /** Call the user-facing GET /mcp/tools endpoint */
-    async getUserMCPTools(baseUrl: string, authToken: string): Promise<any> {
-        const response = await fetch(
-            `${baseUrl}/plugins/mattermost-ai/mcp/tools`,
-            {
-                headers: {
-                    Authorization: `Bearer ${authToken}`,
-                },
-            },
-        );
-        if (!response.ok) {
-            throw new Error(`getUserMCPTools failed: ${response.status} ${response.statusText}`);
-        }
-        return response.json();
+    async getUserMCPTools(authToken: string): Promise<any> {
+        return this.routes.getJson('mcp/tools', authToken);
     }
 
     /** Call GET /mcp/user-preferences */
-    async getUserPreferences(baseUrl: string, authToken: string): Promise<any> {
-        const response = await fetch(
-            `${baseUrl}/plugins/mattermost-ai/mcp/user-preferences`,
-            {
-                headers: {
-                    Authorization: `Bearer ${authToken}`,
-                },
-            },
-        );
-        if (!response.ok) {
-            throw new Error(`getUserPreferences failed: ${response.status} ${response.statusText}`);
-        }
-        return response.json();
+    async getUserPreferences(authToken: string): Promise<any> {
+        return this.routes.getJson('mcp/user-preferences', authToken);
     }
 
     /** Call PUT /mcp/user-preferences */
-    async setUserPreferences(
-        baseUrl: string,
-        authToken: string,
-        prefs: any,
-    ): Promise<any> {
-        const response = await fetch(
-            `${baseUrl}/plugins/mattermost-ai/mcp/user-preferences`,
-            {
-                method: 'PUT',
-                headers: {
-                    Authorization: `Bearer ${authToken}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(prefs),
-            },
-        );
-        if (!response.ok) {
-            throw new Error(`setUserPreferences failed: ${response.status} ${response.statusText}`);
-        }
-        return response.json();
+    async setUserPreferences(authToken: string, prefs: any): Promise<any> {
+        return this.routes.putJson('mcp/user-preferences', authToken, prefs);
     }
 }
 
@@ -295,5 +257,5 @@ export async function createToolConfigAPIHelper(
     mattermost: MattermostContainer,
 ): Promise<ToolConfigAPIHelper> {
     const adminClient = await mattermost.getAdminClient();
-    return new ToolConfigAPIHelper(adminClient);
+    return new ToolConfigAPIHelper(adminClient, mattermost.url());
 }
