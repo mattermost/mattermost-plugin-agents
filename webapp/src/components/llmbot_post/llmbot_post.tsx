@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {FormattedMessage} from 'react-intl';
 import {useSelector} from 'react-redux';
 import styled from 'styled-components';
@@ -9,16 +9,24 @@ import styled from 'styled-components';
 import {WebSocketMessage} from '@mattermost/client';
 import {GlobalState} from '@mattermost/types/store';
 
-import {doPostbackSummary, doRegenerate, doStopGenerating, getToolCallPrivate, getToolResultPrivate} from '@/client';
+import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
 import {useSelectNotAIPost} from '@/hooks';
+import {useConversation, useTurnForPost, invalidateConversation} from '@/hooks/use_conversation';
 import {PostMessagePreview} from '@/mm_webapp';
 
 import {SearchSources} from '../search_sources';
 import PostText from '../post_text';
 import ToolApprovalSet from '../tool_approval_set';
-import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
+import {ToolApprovalStage, ToolCall} from '../tool_types';
 import {Annotation} from '../citations/types';
 
+import {
+    extractToolCallsFromTurn,
+    extractReasoningFromTurn,
+    extractAnnotationsFromTurn,
+    deriveApprovalStage,
+    hasAutoApprovedTools,
+} from './turn_content_utils';
 import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
 import {ControlsBarComponent} from './controls_bar';
 import {extractPermalinkData} from './permalink_data';
@@ -43,221 +51,87 @@ const SearchResultsPropKey = 'search_results';
 
 export const LLMBotPost = (props: LLMBotPostProps) => {
     const selectPost = useSelectNotAIPost();
-    const [message, setMessage] = useState(props.post.message);
 
-    // Generating is true while we are receiving new content from the websocket
-    const [generating, setGenerating] = useState(false);
+    // Conversation entity data
+    const conversationId: string | undefined = props.post.props?.conversation_id;
+    const {conversation} = useConversation(conversationId);
+    const turn = useTurnForPost(conversation, props.post.id);
 
-    // State for tool calls - initialize from persisted tool calls if available
-    const [toolCalls, setToolCalls] = useState<ToolCall[]>(() => {
-        const toolCallsJson = props.post.props?.pending_tool_call;
-        if (toolCallsJson) {
-            try {
-                return JSON.parse(toolCallsJson);
-            } catch (error) {
-                return [];
-            }
-        }
-        return [];
-    });
-    const [privateToolCalls, setPrivateToolCalls] = useState<ToolCall[] | null>(null);
-    const [privateToolResults, setPrivateToolResults] = useState<ToolCall[] | null>(null);
-
-    // State for annotations/citations - initialize from persisted annotations if available
-    const [annotations, setAnnotations] = useState<Annotation[]>(() => {
-        const persistedAnnotations = props.post.props?.annotations || '';
-        if (persistedAnnotations) {
-            try {
-                return JSON.parse(persistedAnnotations);
-            } catch (error) {
-                return [];
-            }
-        }
-        return [];
-    });
-
-    // Precontent is true when we're waiting for the first content to arrive
-    // Initialize to true if post is empty AND has no reasoning AND no tool calls AND no annotations (fresh post)
-    const persistedReasoning = props.post.props?.reasoning_summary || '';
-    const [precontent, setPrecontent] = useState(
-        props.post.message === '' &&
-        persistedReasoning === '' &&
-        toolCalls.length === 0 &&
-        annotations.length === 0,
-    );
-
-    // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation
-    // Needs a ref because of the useEffect closure.
-    const [stopped, setStopped] = useState(false);
-    const stoppedRef = useRef(stopped);
-    stoppedRef.current = stopped;
-
-    const [error, setError] = useState('');
-
-    // State for reasoning summary display
-    // Use the same persistedReasoning from above
-    const [reasoningSummary, setReasoningSummary] = useState(persistedReasoning);
-    const [showReasoning, setShowReasoning] = useState(persistedReasoning !== '');
-    const [isReasoningCollapsed, setIsReasoningCollapsed] = useState(true);
-    const [isReasoningLoading, setIsReasoningLoading] = useState(false);
-
+    // Derive requester check from conversation entity
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
+    const requesterIsCurrentUser = Boolean(conversation && conversation.user_id === currentUserId);
+
     const channel = useSelector<GlobalState, {type?: string} | undefined>(
         (state) => state.entities.channels.channels[props.post.channel_id],
     );
     const isDM = channel?.type === 'D';
     const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
-    const requesterIsCurrentUser = (props.post.props?.llm_requester_user_id === currentUserId);
-    const isToolCallRedacted = String(props.post.props?.pending_tool_call_redacted).toLowerCase() === 'true';
-    const hasPendingToolResult = Boolean(props.post.props?.pending_tool_result);
-    const isAutoApproved = String(props.post.props?.auto_approved_tool_call).toLowerCase() === 'true';
-    const toolApprovalStage: ToolApprovalStage = hasPendingToolResult ? 'result' : 'call';
 
-    // Initialize reasoning from persisted data when navigating to different posts
-    const previousPostIdRef = useRef(props.post.id);
+    // Local state for streaming
+    const [message, setMessage] = useState(props.post.message);
+    const [generating, setGenerating] = useState(false);
+    const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+    const [toolApprovalStage, setToolApprovalStage] = useState<ToolApprovalStage>('call');
+    const [isAutoApproved, setIsAutoApproved] = useState(false);
+    const [annotations, setAnnotations] = useState<Annotation[]>([]);
+    const [precontent, setPrecontent] = useState(props.post.message === '');
+    const [error, setError] = useState('');
+
+    // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation.
+    // Needs a ref because of the useEffect closure.
+    const [stopped, setStopped] = useState(false);
+    const stoppedRef = useRef(stopped);
+    stoppedRef.current = stopped;
+
+    // State for reasoning summary display
+    const [reasoningSummary, setReasoningSummary] = useState('');
+    const [showReasoning, setShowReasoning] = useState(false);
+    const [isReasoningCollapsed, setIsReasoningCollapsed] = useState(true);
+    const [isReasoningLoading, setIsReasoningLoading] = useState(false);
+
+    // Populate local state from turn data when not streaming.
+    // This overwrites whatever was accumulated during streaming once
+    // the finalized turn arrives from the conversation API.
     useEffect(() => {
-        if (previousPostIdRef.current !== props.post.id) {
-            const persistedReasoning = props.post.props?.reasoning_summary || '';
-            if (persistedReasoning) {
-                setReasoningSummary(persistedReasoning);
-                setShowReasoning(true);
-                setIsReasoningCollapsed(true);
-                setIsReasoningLoading(false);
-            } else {
-                // Reset reasoning state for posts without reasoning
-                setReasoningSummary('');
-                setShowReasoning(false);
-                setIsReasoningCollapsed(true);
-                setIsReasoningLoading(false);
-            }
-
-            // Initialize annotations from persisted data
-            const persistedAnnotations = props.post.props?.annotations || '';
-            let parsedAnnotations: Annotation[] = [];
-            if (persistedAnnotations) {
-                try {
-                    parsedAnnotations = JSON.parse(persistedAnnotations);
-                    setAnnotations(parsedAnnotations);
-                } catch (error) {
-                    setAnnotations([]);
-                }
-            } else {
-                setAnnotations([]);
-            }
-
-            // Initialize tool calls from persisted data
-            const toolCallsJson = props.post.props?.pending_tool_call;
-            let parsedToolCalls: ToolCall[] = [];
-            if (toolCallsJson) {
-                try {
-                    parsedToolCalls = JSON.parse(toolCallsJson);
-                    setToolCalls(parsedToolCalls);
-                } catch (error) {
-                    setToolCalls([]);
-                }
-            } else {
-                setToolCalls([]);
-            }
-            setPrivateToolCalls(null);
-            setPrivateToolResults(null);
-
-            // Set precontent if this is a fresh empty post (no content, no reasoning, no tool calls, no annotations)
-            // Otherwise reset to false (historical posts or posts with any content)
-            setPrecontent(
-                props.post.message === '' &&
-                persistedReasoning === '' &&
-                parsedToolCalls.length === 0 &&
-                parsedAnnotations.length === 0,
-            );
-
-            previousPostIdRef.current = props.post.id;
+        if (!turn || generating) {
+            return;
         }
-    }, [props.post.id, props.post.props?.reasoning_summary, props.post.props?.annotations, props.post.props?.pending_tool_call, props.post.message]);
 
-    // Update tool calls from props when available
-    useEffect(() => {
-        const toolCallsJson = props.post.props?.pending_tool_call;
-        if (toolCallsJson) {
-            try {
-                const parsedToolCalls = JSON.parse(toolCallsJson);
-                setToolCalls(parsedToolCalls);
-            } catch (error) {
-                // Log error for debugging
-                setError('Error parsing tool calls');
-            }
+        // Tool calls
+        if (conversation) {
+            const derived = extractToolCallsFromTurn(turn, conversation);
+            setToolCalls(derived);
+            setToolApprovalStage(deriveApprovalStage(turn, conversation));
+            setIsAutoApproved(hasAutoApprovedTools(turn));
         }
-    }, [props.post.props?.pending_tool_call]);
 
-    useEffect(() => {
-        let cancelled = false;
-
-        if (requesterIsCurrentUser && isToolCallRedacted && toolCalls.length > 0) {
-            getToolCallPrivate(props.post.id).then((data) => {
-                if (cancelled) {
-                    return;
-                }
-
-                // Only update state if data is a non-empty array; preserve
-                // previously fetched data when the server returns null after
-                // the tool call flow completes.
-                if (Array.isArray(data) && data.length > 0) {
-                    setPrivateToolCalls(data);
-                }
-            }).catch(() => {
-                // Don't reset — preserve previously fetched data
-            });
+        // Reasoning
+        const reasoning = extractReasoningFromTurn(turn);
+        if (reasoning.summary) {
+            setReasoningSummary(reasoning.summary);
+            setShowReasoning(true);
+            setIsReasoningLoading(false);
         } else {
-            setPrivateToolCalls(null);
+            setReasoningSummary('');
+            setShowReasoning(false);
         }
 
-        return () => {
-            cancelled = true;
-        };
-    }, [props.post.id, requesterIsCurrentUser, isToolCallRedacted, toolApprovalStage, toolCalls.length, props.post.props?.pending_tool_call]);
+        // Annotations
+        const turnAnnotations = extractAnnotationsFromTurn(turn);
+        setAnnotations(turnAnnotations);
 
-    // Check if any tool calls have completed (Success or Error status) - used to
-    // determine when to fetch private results even after the approval flow completes.
-    const hasCompletedToolCalls = useMemo(() => {
-        return toolCalls.some((tc) =>
-            tc.status === ToolCallStatus.Success ||
-            tc.status === ToolCallStatus.Error ||
-            tc.status === ToolCallStatus.AutoApproved,
-        );
-    }, [toolCalls]);
+        // Precontent should be false when we have turn data
+        setPrecontent(false);
+    }, [turn, generating, conversation]);
 
-    useEffect(() => {
-        let cancelled = false;
-
-        if (requesterIsCurrentUser && isToolCallRedacted && hasCompletedToolCalls) {
-            getToolResultPrivate(props.post.id).then((data) => {
-                if (cancelled) {
-                    return;
-                }
-
-                // Only update state if data is a non-empty array; preserve
-                // previously fetched data when the server returns null after
-                // the tool call flow completes.
-                if (Array.isArray(data) && data.length > 0) {
-                    setPrivateToolResults(data);
-                }
-            }).catch(() => {
-                // Don't reset — preserve previously fetched data
-            });
-        } else {
-            setPrivateToolResults(null);
-        }
-
-        return () => {
-            cancelled = true;
-        };
-    }, [props.post.id, requesterIsCurrentUser, isToolCallRedacted, hasCompletedToolCalls, props.post.props?.pending_tool_result]);
-
+    // Sync message from post.message changes (e.g. after post update)
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
             setMessage(props.post.message);
         }
     }, [props.post.message]);
 
+    // WebSocket handler for streaming -- largely unchanged
     useEffect(() => {
         if (props.websocketRegister && props.websocketUnregister) {
             const listenerID = Math.random().toString(36).substring(7);
@@ -272,23 +146,17 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
                 // Handle reasoning summary events
                 if (data.control === 'reasoning_summary' && data.reasoning) {
-                    // Replace entire reasoning with accumulated text from backend
                     setReasoningSummary(data.reasoning);
                     setShowReasoning(true);
                     setIsReasoningLoading(true);
-
-                    // Explicitly set generating to false to prevent blinking cursor during reasoning
                     setGenerating(false);
-                    setPrecontent(false); // Clear "Starting..." when reasoning begins
+                    setPrecontent(false);
                     return;
                 }
 
                 if (data.control === 'reasoning_summary_done' && data.reasoning) {
-                    // Final reasoning text
                     setReasoningSummary(data.reasoning);
                     setIsReasoningLoading(false);
-
-                    // Don't change collapsed state - preserve user's choice
                     return;
                 }
 
@@ -297,11 +165,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     try {
                         const parsedToolCalls = JSON.parse(data.tool_call);
                         setToolCalls(parsedToolCalls);
-                        setPrivateToolCalls(null);
-                        setPrivateToolResults(null);
-                        setPrecontent(false); // Clear "Starting..." when tool calls arrive
-                    } catch (error) {
-                        // Handle error silently
+                        setPrecontent(false);
+                    } catch {
                         setError('Error parsing tool call data');
                     }
                     return;
@@ -312,9 +177,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     try {
                         const parsedAnnotations = JSON.parse(data.annotations);
                         setAnnotations(parsedAnnotations);
-                        setPrecontent(false); // Clear "Starting..." when annotations arrive
-                    } catch (error) {
-                        // Handle error silently
+                        setPrecontent(false);
+                    } catch {
                         setError('Error parsing annotation data');
                     }
                     return;
@@ -330,6 +194,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     setPrecontent(false);
                     setStopped(false);
                     setIsReasoningLoading(false);
+
+                    // Re-fetch the conversation to get finalized turn data
+                    if (conversationId) {
+                        invalidateConversation(conversationId);
+                    }
                 } else if (data.control === 'cancel') {
                     setGenerating(false);
                     setPrecontent(false);
@@ -349,8 +218,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     // Clear tool calls and annotations when starting new generation
                     setToolCalls([]);
                     setAnnotations([]);
-                    setPrivateToolCalls(null);
-                    setPrivateToolResults(null);
 
                     if (!message) {
                         setMessage('');
@@ -366,7 +233,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         }
 
         return () => {/* no cleanup */};
-    }, [props.post.id]);
+    }, [props.post.id, conversationId]);
 
     const regnerate = () => {
         setMessage('');
@@ -385,8 +252,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
         // Clear tool calls when regenerating
         setToolCalls([]);
-        setPrivateToolCalls(null);
-        setPrivateToolResults(null);
 
         doRegenerate(props.post.id);
     };
@@ -403,50 +268,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         selectPost(result.rootid, result.channelid);
     };
 
-    const mergedToolCalls = useMemo(() => {
-        if (!privateToolCalls || privateToolCalls.length === 0) {
-            return toolCalls;
-        }
-
-        const publicById = new Map(toolCalls.map((call) => [call.id, call]));
-        return privateToolCalls.map((call) => {
-            const publicCall = publicById.get(call.id);
-            if (!publicCall) {
-                return call;
-            }
-            return {
-                ...publicCall,
-                arguments: call.arguments,
-            };
-        });
-    }, [privateToolCalls, toolCalls]);
-
-    const resolvedToolCalls = useMemo(() => {
-        if (privateToolResults && privateToolResults.length > 0) {
-            return privateToolResults;
-        }
-        return mergedToolCalls;
-    }, [mergedToolCalls, privateToolResults]);
-
-    const showToolArguments = useMemo(() => {
-        if (!isToolCallRedacted) {
-            return true;
-        }
-        if (!requesterIsCurrentUser) {
-            return false;
-        }
-        return Boolean(privateToolCalls?.length || privateToolResults?.length);
-    }, [isToolCallRedacted, requesterIsCurrentUser, privateToolCalls, privateToolResults]);
-
-    const showToolResults = useMemo(() => {
-        if (!isToolCallRedacted) {
-            return true;
-        }
-        if (!requesterIsCurrentUser) {
-            return false;
-        }
-        return Boolean(privateToolResults?.length);
-    }, [isToolCallRedacted, requesterIsCurrentUser, privateToolResults]);
+    // Privacy: the API handles filtering. For the requester, all data is present.
+    // For non-requesters, `input` is null on redacted tool_use blocks and `content`
+    // is absent on redacted tool_result blocks. We reflect this directly.
+    const showToolArguments = toolCalls.length > 0 && toolCalls.some((tc) => tc.arguments != null);
+    const showToolResults = toolCalls.length > 0 && toolCalls.some((tc) => tc.result != null);
 
     const isThreadSummaryPost = (props.post.props?.referenced_thread && props.post.props?.referenced_thread !== '');
     const isNoShowRegen = (props.post.props?.no_regen && props.post.props?.no_regen !== '');
@@ -500,10 +326,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     </span>
                 </MinimalReasoningContainer>
             )}
-            {resolvedToolCalls && resolvedToolCalls.length > 0 && (
+            {toolCalls && toolCalls.length > 0 && (
                 <ToolApprovalSet
                     postID={props.post.id}
-                    toolCalls={resolvedToolCalls}
+                    toolCalls={toolCalls}
                     approvalStage={toolApprovalStage}
                     canApprove={requesterIsCurrentUser}
                     canExpand={requesterIsCurrentUser}
@@ -548,21 +374,20 @@ const PostBody = styled.div`
 `;
 
 const SpinnerWrapper = styled.div`
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
 `;
 
 const PostSummaryHelpMessage = styled.div`
-	font-size: 14px;
-	font-style: italic;
-	font-weight: 400;
-	line-height: 20px;
-	border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-	padding-top: 8px;
-	padding-bottom: 8px;
-	margin-top: 16px;
+    font-size: 14px;
+    font-style: italic;
+    font-weight: 400;
+    line-height: 20px;
+    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+    padding-top: 8px;
+    padding-bottom: 8px;
+    margin-top: 16px;
 `;
-
