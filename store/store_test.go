@@ -53,17 +53,24 @@ func TestMain(m *testing.M) {
 
 // setupTestStore creates a Store connected to the test container with a fresh schema.
 // Each test gets an isolated schema that is dropped on cleanup.
+// The search_path is set via the connection string so that all pooled connections
+// (including those used by concurrent goroutines) use the correct schema.
 func setupTestStore(t *testing.T) *Store {
 	t.Helper()
 
-	db, err := sqlx.Connect("postgres", testConnStr)
+	// Use a temporary connection to create the schema.
+	setupDB, err := sqlx.Connect("postgres", testConnStr)
 	require.NoError(t, err)
 
 	schemaName := fmt.Sprintf("test_%d", time.Now().UnixNano())
-	_, err = db.Exec(fmt.Sprintf("CREATE SCHEMA %s", schemaName))
+	_, err = setupDB.Exec(fmt.Sprintf("CREATE SCHEMA %s", schemaName))
 	require.NoError(t, err)
+	setupDB.Close()
 
-	_, err = db.Exec(fmt.Sprintf("SET search_path TO %s", schemaName))
+	// Reconnect with search_path in the connection string so every pooled
+	// connection inherits it — required for concurrent test goroutines.
+	connStr := testConnStr + "&search_path=" + schemaName
+	db, err := sqlx.Connect("postgres", connStr)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -113,6 +120,16 @@ func TestRunMigrations(t *testing.T) {
 				require.NoError(t, err)
 				assert.True(t, exists, "Agents_ConfigHistory table should exist")
 
+				// Check Agents_UserAgents table exists
+				err = s.db.Get(&exists, `
+					SELECT EXISTS (
+						SELECT 1 FROM information_schema.tables
+						WHERE table_name = 'agents_useragents'
+						AND table_schema = current_schema()
+					)`)
+				require.NoError(t, err)
+				assert.True(t, exists, "Agents_UserAgents table should exist")
+
 				// Check Agents_DB_Migrations tracking table exists
 				err = s.db.Get(&exists, `
 					SELECT EXISTS (
@@ -139,7 +156,7 @@ func TestRunMigrations(t *testing.T) {
 				err := s.db.Get(&count, `
 					SELECT COUNT(*) FROM Agents_DB_Migrations`)
 				require.NoError(t, err)
-				assert.Equal(t, 3, count, "Should have 3 migration records")
+				assert.Equal(t, 4, count, "Should have 4 migration records")
 			},
 		},
 	}

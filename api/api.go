@@ -29,6 +29,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-ai/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -63,6 +64,16 @@ type MCPClientManager interface {
 type ConfigStore interface {
 	GetConfig() (*config.Config, error)
 	SaveConfig(cfg config.Config) error
+}
+
+// AgentStore provides CRUD access to user-created agents in the database.
+type AgentStore interface {
+	CreateAgent(agent *useragents.UserAgent) error
+	GetAgent(id string) (*useragents.UserAgent, error)
+	ListAgents() ([]*useragents.UserAgent, error)
+	ListAgentsByCreator(creatorID string) ([]*useragents.UserAgent, error)
+	UpdateAgent(agent *useragents.UserAgent) error
+	DeleteAgent(id string) error
 }
 
 // ConfigUpdater updates the in-memory plugin configuration.
