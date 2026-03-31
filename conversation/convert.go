@@ -38,11 +38,21 @@ func BlocksToPost(blocks []ContentBlock, role string) llm.Post {
 			})
 
 		case BlockTypeToolResult:
-			post.ToolUse = append(post.ToolUse, llm.ToolCall{
-				ID:     block.ToolUseID,
-				Result: block.Content,
-				Status: StatusFromString(block.Status),
-			})
+			merged := false
+			for i := range post.ToolUse {
+				if post.ToolUse[i].ID == block.ToolUseID {
+					post.ToolUse[i].Result = block.Content
+					merged = true
+					break
+				}
+			}
+			if !merged {
+				post.ToolUse = append(post.ToolUse, llm.ToolCall{
+					ID:     block.ToolUseID,
+					Result: block.Content,
+					Status: StatusFromString(block.Status),
+				})
+			}
 
 		case BlockTypeFile, BlockTypeImage, BlockTypeAnnotations:
 			// Not mapped to llm.Post

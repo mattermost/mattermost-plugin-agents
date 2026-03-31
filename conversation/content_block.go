@@ -82,7 +82,11 @@ func BoolPtr(b bool) *bool { return &b }
 // field set to nil. Tool result blocks with shared != true have their Content
 // field set to empty string. All other block types pass through unchanged.
 // The original slice and its elements are never mutated.
+// Returns nil if the input is nil.
 func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
+	if blocks == nil {
+		return nil
+	}
 	result := make([]ContentBlock, len(blocks))
 	for i, block := range blocks {
 		result[i] = block

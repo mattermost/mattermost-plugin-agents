@@ -251,6 +251,11 @@ func TestFilterForNonRequester(t *testing.T) {
 			blocks:   []ContentBlock{},
 			expected: []ContentBlock{},
 		},
+		{
+			name:     "nil input returns nil",
+			blocks:   nil,
+			expected: nil,
+		},
 	}
 
 	for _, tt := range tests {

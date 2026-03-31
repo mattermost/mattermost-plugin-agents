@@ -122,6 +122,50 @@ func TestBlocksToPost(t *testing.T) {
 				Message: "answer",
 			},
 		},
+		{
+			name: "tool_result merges into matching tool_use entry",
+			blocks: []ContentBlock{
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", ServerOrigin: "https://mcp.example.com", Input: json.RawMessage(`{"q":"test"}`), Status: StatusSuccess},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "found it", Status: StatusSuccess},
+			},
+			role: "assistant",
+			expected: llm.Post{
+				Role: llm.PostRoleBot,
+				ToolUse: []llm.ToolCall{
+					{ID: "tc1", Name: "search", ServerOrigin: "https://mcp.example.com", Arguments: json.RawMessage(`{"q":"test"}`), Result: "found it", Status: llm.ToolCallStatusSuccess},
+				},
+			},
+		},
+		{
+			name: "tool_result without matching tool_use creates standalone entry",
+			blocks: []ContentBlock{
+				{Type: BlockTypeToolResult, ToolUseID: "tc_orphan", Content: "orphan result", Status: StatusSuccess},
+			},
+			role: "assistant",
+			expected: llm.Post{
+				Role: llm.PostRoleBot,
+				ToolUse: []llm.ToolCall{
+					{ID: "tc_orphan", Result: "orphan result", Status: llm.ToolCallStatusSuccess},
+				},
+			},
+		},
+		{
+			name: "multiple tool_use and tool_result blocks merge correctly",
+			blocks: []ContentBlock{
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{"q":"a"}`), Status: StatusSuccess},
+				{Type: BlockTypeToolUse, ID: "tc2", Name: "weather", Input: json.RawMessage(`{"city":"NYC"}`), Status: StatusSuccess},
+				{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "72F sunny", Status: StatusSuccess},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "found it", Status: StatusSuccess},
+			},
+			role: "assistant",
+			expected: llm.Post{
+				Role: llm.PostRoleBot,
+				ToolUse: []llm.ToolCall{
+					{ID: "tc1", Name: "search", Arguments: json.RawMessage(`{"q":"a"}`), Result: "found it", Status: llm.ToolCallStatusSuccess},
+					{ID: "tc2", Name: "weather", Arguments: json.RawMessage(`{"city":"NYC"}`), Result: "72F sunny", Status: llm.ToolCallStatusSuccess},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -292,6 +336,81 @@ func TestRoleToString(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.expected, func(t *testing.T) {
 			assert.Equal(t, tt.expected, RoleToString(tt.role))
+		})
+	}
+}
+
+func TestPostToBlocksToPostRoundTrip(t *testing.T) {
+	tests := []struct {
+		name   string
+		post   llm.Post
+		shared bool
+	}{
+		{
+			name:   "message only",
+			post:   llm.Post{Role: llm.PostRoleBot, Message: "Hello world"},
+			shared: true,
+		},
+		{
+			name: "reasoning and message",
+			post: llm.Post{
+				Role:               llm.PostRoleBot,
+				Message:            "The answer is 42",
+				Reasoning:          "Let me think about this",
+				ReasoningSignature: "sig_abc",
+			},
+			shared: true,
+		},
+		{
+			name: "tool use with result",
+			post: llm.Post{
+				Role:    llm.PostRoleBot,
+				Message: "Here are the results",
+				ToolUse: []llm.ToolCall{
+					{
+						ID:           "tc1",
+						Name:         "search",
+						ServerOrigin: "https://mcp.example.com",
+						Arguments:    json.RawMessage(`{"q":"test"}`),
+						Result:       "found it",
+						Status:       llm.ToolCallStatusSuccess,
+					},
+				},
+			},
+			shared: false,
+		},
+		{
+			name: "multiple tools mixed resolved and unresolved",
+			post: llm.Post{
+				Role: llm.PostRoleBot,
+				ToolUse: []llm.ToolCall{
+					{ID: "tc1", Name: "tool1", Arguments: json.RawMessage(`{}`), Result: "r1", Status: llm.ToolCallStatusSuccess},
+					{ID: "tc2", Name: "tool2", Arguments: json.RawMessage(`{"x":1}`), Status: llm.ToolCallStatusPending},
+				},
+			},
+			shared: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blocks := PostToBlocks(tt.post, tt.shared)
+			role := RoleToString(tt.post.Role)
+			roundTripped := BlocksToPost(blocks, role)
+
+			assert.Equal(t, tt.post.Role, roundTripped.Role)
+			assert.Equal(t, tt.post.Message, roundTripped.Message)
+			assert.Equal(t, tt.post.Reasoning, roundTripped.Reasoning)
+			assert.Equal(t, tt.post.ReasoningSignature, roundTripped.ReasoningSignature)
+			assert.Equal(t, len(tt.post.ToolUse), len(roundTripped.ToolUse))
+			for i := range tt.post.ToolUse {
+				assert.Equal(t, tt.post.ToolUse[i].ID, roundTripped.ToolUse[i].ID)
+				assert.Equal(t, tt.post.ToolUse[i].Name, roundTripped.ToolUse[i].Name)
+				assert.Equal(t, tt.post.ToolUse[i].ServerOrigin, roundTripped.ToolUse[i].ServerOrigin)
+				assert.JSONEq(t, string(tt.post.ToolUse[i].Arguments), string(roundTripped.ToolUse[i].Arguments))
+				assert.Equal(t, tt.post.ToolUse[i].Result, roundTripped.ToolUse[i].Result)
+				assert.Equal(t, tt.post.ToolUse[i].Status, roundTripped.ToolUse[i].Status)
+			}
 		})
 	}
 }
