@@ -20,6 +20,7 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 		  "disableFunctionCalls": false,
 		  "enableLLMTrace": true,
 		  "enableUserRestrictions": false,
+		  "allowUnsafeLinks": true,
 		  "defaultBotName": "mock",
 		  "mcp": {
 			  "embeddedServer": {
@@ -37,6 +38,7 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 				  "type": "openaicompatible",
 				  "apiKey": "mock",
 				  "apiURL": "http://openai:8080",
+				  "defaultModel": "gpt-mock",
 			  },
 			  {
 				  "id": "second-service",
@@ -44,6 +46,7 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 				  "type": "openaicompatible",
 				  "apiKey": "ohno",
 				  "apiURL": "http://openai:8080/second",
+				  "defaultModel": "gpt-mock",
 			  },
 		  ],
 		  "bots": [

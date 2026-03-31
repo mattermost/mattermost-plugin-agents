@@ -1,4 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { getAPIErrorContext } from './log-scanner';
 
 /**
  * LLMBotPostHelper - Page object for LLMBot post component interactions
@@ -37,8 +38,10 @@ export class LLMBotPostHelper {
      */
     getReasoningDisplay(postId?: string): Locator {
         const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        // Look for the minimal reasoning container or expanded reasoning header
-        return baseLocator.locator('[class*="MinimalReasoningContainer"], [class*="ExpandedReasoningHeader"]').first();
+        // Scope to reasoning rows that actually render the Thinking label.
+        // This avoids matching the precontent "Starting..." placeholder row,
+        // which reuses the MinimalReasoningContainer styles.
+        return baseLocator.locator('[class*="MinimalReasoningContainer"], [class*="ExpandedReasoningHeader"]').filter({hasText: 'Thinking'}).first();
     }
 
     /**
@@ -46,9 +49,7 @@ export class LLMBotPostHelper {
      * @param postId - Optional post ID to scope the search
      */
     getReasoningToggle(postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        // Target either minimal or expanded header that contains "Thinking"
-        return baseLocator.locator('[class*="MinimalReasoningContainer"], [class*="ExpandedReasoningHeader"]').first();
+        return this.getReasoningDisplay(postId);
     }
 
     /**
@@ -56,9 +57,9 @@ export class LLMBotPostHelper {
      * @param postId - Optional post ID to scope the search
      */
     getReasoningSpinner(postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        // LoadingSpinner is a styled div, not an SVG
-        return baseLocator.locator('div[class*="LoadingSpinner"]').first();
+        // Scope spinner lookup to the actual reasoning row to avoid matching
+        // the precontent "Starting..." spinner.
+        return this.getReasoningDisplay(postId).locator('div[class*="LoadingSpinner"]').first();
     }
 
     /**
@@ -103,8 +104,8 @@ export class LLMBotPostHelper {
      * @param postId - Optional post ID to scope the search
      */
     getCitationTooltip(postId?: string): Locator {
-        // Tooltip is rendered at page level, not inside post container
-        return this.page.locator('[data-testid="llm-citation-tooltip"]').first();
+        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
+        return baseLocator.locator('[data-testid="llm-citation"] [data-testid="llm-citation-tooltip"]:visible').last();
     }
 
     /**
@@ -310,6 +311,137 @@ export class LLMBotPostHelper {
         await expect(postText).toHaveText(text);
     }
 
+    // ==================== SEARCH SOURCES LOCATORS ====================
+
+    /**
+     * Get the search sources container
+     * @param postId - Optional post ID to scope the search
+     */
+    getSearchSourcesContainer(postId?: string): Locator {
+        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
+        return baseLocator.locator('[class*="SourcesContainer"]');
+    }
+
+    /**
+     * Get the search sources header (clickable to expand/collapse)
+     * @param postId - Optional post ID to scope the search
+     */
+    getSearchSourcesHeader(postId?: string): Locator {
+        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
+        return baseLocator.locator('[class*="SourcesHeader"]');
+    }
+
+    /**
+     * Get the search sources count badge
+     * @param postId - Optional post ID to scope the search
+     */
+    getSearchSourcesCount(postId?: string): Locator {
+        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
+        return baseLocator.locator('[class*="SourceCount"]');
+    }
+
+    /**
+     * Get all source items in the sources list
+     * @param postId - Optional post ID to scope the search
+     */
+    getSearchSourceItems(postId?: string): Locator {
+        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
+        return baseLocator.locator('[class*="SourceItem"]');
+    }
+
+    /**
+     * Get a specific source item by index
+     * @param index - Source index (0-based)
+     * @param postId - Optional post ID to scope the search
+     */
+    getSearchSourceItem(index: number, postId?: string): Locator {
+        return this.getSearchSourceItems(postId).nth(index);
+    }
+
+    /**
+     * Get relevance score element within a source item
+     * @param index - Source index (0-based)
+     * @param postId - Optional post ID to scope the search
+     */
+    getSearchSourceRelevanceScore(index: number, postId?: string): Locator {
+        return this.getSearchSourceItem(index, postId).locator('[class*="RelevanceScore"]');
+    }
+
+    // ==================== SEARCH SOURCES ACTIONS ====================
+
+    /**
+     * Click the search sources header to expand or collapse
+     * @param postId - Optional post ID to target specific post
+     */
+    async clickSearchSourcesHeader(postId?: string): Promise<void> {
+        const header = this.getSearchSourcesHeader(postId);
+        await header.click();
+    }
+
+    // ==================== SEARCH SOURCES ASSERTIONS ====================
+
+    /**
+     * Assert search sources container visibility
+     * @param expected - Expected visibility state
+     * @param postId - Optional post ID to scope the assertion
+     */
+    async expectSearchSourcesVisible(expected: boolean, postId?: string): Promise<void> {
+        const container = this.getSearchSourcesContainer(postId);
+        if (expected) {
+            await expect(container).toBeVisible();
+        } else {
+            await expect(container).not.toBeVisible();
+        }
+    }
+
+    /**
+     * Assert search sources count
+     * @param count - Expected number of sources
+     * @param postId - Optional post ID to scope the assertion
+     */
+    async expectSearchSourcesCount(count: number, postId?: string): Promise<void> {
+        const countBadge = this.getSearchSourcesCount(postId);
+        await expect(countBadge).toHaveText(String(count));
+    }
+
+    /**
+     * Assert search sources list is expanded
+     * @param expected - Expected expansion state
+     * @param postId - Optional post ID to scope the assertion
+     */
+    async expectSearchSourcesExpanded(expected: boolean, postId?: string): Promise<void> {
+        const items = this.getSearchSourceItems(postId);
+        if (expected) {
+            await expect(items.first()).toBeVisible();
+        } else {
+            await expect(items.first()).not.toBeVisible();
+        }
+    }
+
+    /**
+     * Assert relevance score format (should be percentage like "85%")
+     * @param index - Source index (0-based)
+     * @param postId - Optional post ID to scope the assertion
+     */
+    async expectRelevanceScoreFormat(index: number, postId?: string): Promise<void> {
+        const score = this.getSearchSourceRelevanceScore(index, postId);
+        await expect(score).toBeVisible();
+        const text = await score.textContent();
+        expect(text).toMatch(/\d+%/);
+    }
+
+    // ==================== SEARCH SOURCES WAITS ====================
+
+    /**
+     * Wait for search sources to appear with smart polling
+     * @param postId - Optional post ID to scope the wait
+     * @param maxTimeout - Maximum wait time in ms (default: 30 seconds)
+     */
+    async waitForSearchSources(postId?: string, maxTimeout: number = 30000): Promise<void> {
+        const container = this.getSearchSourcesContainer(postId);
+        await expect(container).toBeVisible({ timeout: maxTimeout });
+    }
+
     /**
      * Assert regenerate button visibility
      * @param visible - Expected visibility state
@@ -350,8 +482,8 @@ export class LLMBotPostHelper {
             await this.page.waitForTimeout(500);
         }
 
-        // If we hit max timeout, throw error
-        throw new Error(`Timeout waiting for post text to contain: ${text}`);
+        // If we hit max timeout, throw error with API context if available
+        throw new Error(`Timeout waiting for post text to contain: ${text}${getAPIErrorContext()}`);
     }
 
     /**
@@ -363,7 +495,11 @@ export class LLMBotPostHelper {
     async waitForReasoning(postId?: string, maxTimeout: number = 300000): Promise<void> {
         // First wait for reasoning display to appear (shorter timeout for initial appearance)
         const reasoning = this.getReasoningDisplay(postId);
-        await expect(reasoning).toBeVisible({ timeout: 60000 });
+        try {
+            await expect(reasoning).toBeVisible({ timeout: 60000 });
+        } catch (err) {
+            throw new Error(`Timeout waiting for reasoning display to appear${getAPIErrorContext()}`);
+        }
 
         // Then poll until reasoning spinner disappears (reasoning complete)
         const spinner = this.getReasoningSpinner(postId);
@@ -408,9 +544,9 @@ export class LLMBotPostHelper {
             await this.page.waitForTimeout(500);
         }
 
-        // If we hit max timeout, throw error
+        // If we hit max timeout, throw error with API context if available
         const count = await allCitations.count().catch(() => 0);
-        throw new Error(`Timeout waiting for citation ${index} to appear (found ${count})`);
+        throw new Error(`Timeout waiting for citation ${index} to appear (found ${count})${getAPIErrorContext()}`);
     }
 
     /**
@@ -435,9 +571,43 @@ export class LLMBotPostHelper {
                     throw error;
                 }
                 await this.regenerateResponse(postId);
-                await this.waitForStreamingComplete();
+                await this.waitForStreamingComplete(maxTimeout);
             }
         }
+    }
+
+    /**
+     * Assert that citations are positioned inline throughout the text, not clustered at the beginning.
+     * Uses the second citation to avoid flakes — an LLM might legitimately start with a cited sentence,
+     * but the second citation should always have substantive text before it.
+     * @param postId - Optional post ID to scope the assertion
+     */
+    async expectCitationsInline(postId?: string): Promise<void> {
+        const postText = this.getPostText(postId);
+        const textBeforeSecondCitation = await postText.evaluate((el) => {
+            const citations = el.querySelectorAll('[data-testid="llm-citation"]');
+            if (citations.length < 2) return '';
+            const secondCitation = citations[1];
+
+            const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+            let text = '';
+            let node = walker.nextNode();
+            while (node) {
+                if (secondCitation.compareDocumentPosition(node) &
+                    Node.DOCUMENT_POSITION_FOLLOWING) {
+                    break;
+                }
+                if (!secondCitation.contains(node)) {
+                    text += node.textContent;
+                }
+                node = walker.nextNode();
+            }
+            return text.trim();
+        });
+
+        // With the bug, this would be empty (all citations clustered at position 0).
+        // With the fix, there should be substantive text before the second citation.
+        expect(textBeforeSecondCitation.length).toBeGreaterThan(10);
     }
 
     /**
@@ -451,7 +621,11 @@ export class LLMBotPostHelper {
         // Wait for post text to appear
         const postText = this.getPostText();
         const remainingTime = maxTimeout - (Date.now() - startTime);
-        await expect(postText).toBeVisible({ timeout: remainingTime });
+        try {
+            await expect(postText).toBeVisible({ timeout: remainingTime });
+        } catch (err) {
+            throw new Error(`Timeout waiting for bot post text to appear${getAPIErrorContext()}`);
+        }
 
         // Wait for "Stop Generating" button to disappear (streaming complete)
         const stopButton = this.getStopGeneratingButton();

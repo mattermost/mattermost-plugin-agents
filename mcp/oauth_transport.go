@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -13,16 +14,26 @@ import (
 
 // authenticationTransport handles 401 responses for MCP
 type authenticationTransport struct {
-	userID     string
-	serverName string
-	serverURL  string
-	manager    *OAuthManager
-	base       http.RoundTripper
+	userID      string
+	serverName  string
+	serverURL   string
+	manager     *OAuthManager
+	staticCreds *StaticOAuthCredentials
+	base        http.RoundTripper
 }
 
 type mcpUnauthorized struct {
 	metadataURL string
 	err         error
+}
+
+func drainAndCloseResponseBody(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
 }
 
 func (e *mcpUnauthorized) Error() string {
@@ -58,7 +69,7 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 
 	// Include the token if found
 	if token != nil {
-		oauthConfig, configErr := t.manager.createOAuthConfig(req.Context(), t.serverURL, "")
+		oauthConfig, configErr := t.manager.createOAuthConfig(req.Context(), t.serverURL, "", t.staticCreds)
 		if configErr != nil {
 			return nil, fmt.Errorf("failed to create OAuth config: %w", configErr)
 		}
@@ -96,15 +107,22 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 		if wwwAuthHeader != "" {
 			metadataURL, parseErr := parseWWWAuthenticateHeader(wwwAuthHeader)
 			if parseErr != nil {
+				drainAndCloseResponseBody(resp)
 				return nil, &mcpUnauthorized{
 					metadataURL: "",
 					err:         fmt.Errorf("failed to parse WWW-Authenticate header: %w", parseErr),
 				}
 			}
 
+			drainAndCloseResponseBody(resp)
 			return nil, &mcpUnauthorized{
 				metadataURL: metadataURL,
 			}
+		}
+		drainAndCloseResponseBody(resp)
+		return nil, &mcpUnauthorized{
+			metadataURL: "",
+			err:         fmt.Errorf("received 401 response without WWW-Authenticate header"),
 		}
 	}
 

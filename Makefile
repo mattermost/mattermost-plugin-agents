@@ -323,12 +323,12 @@ evalviewer:
 ## Environment variables:
 ##   LLM_PROVIDER: openai, anthropic, azure, all, or comma-separated (default: all)
 ##   OPENAI_API_KEY: OpenAI API key
-##   OPENAI_MODEL: Model to use for OpenAI (default: gpt-4o)
+##   OPENAI_MODEL: Model to use for OpenAI (overrides code default)
 ##   ANTHROPIC_API_KEY: Anthropic API key
-##   ANTHROPIC_MODEL: Model to use for Anthropic (default: claude-sonnet-4-20250514)
+##   ANTHROPIC_MODEL: Model to use for Anthropic (overrides code default)
 ##   AZURE_OPENAI_API_KEY: Azure OpenAI API key
 ##   AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
-##   AZURE_OPENAI_MODEL: Model to use for Azure OpenAI (default: gpt-4o)
+##   AZURE_OPENAI_MODEL: Model to use for Azure OpenAI (overrides code default)
 .PHONY: evals
 evals: evalviewer
 	@echo Running evaluations interactively...
@@ -347,6 +347,14 @@ evals-ci: evalviewer
 evals-comment: evalviewer
 	@echo Running evaluations and generating GitHub comment...
 	./bin/evalviewer comment -v ./conversations ./threads ./channels ./react
+
+## Runs MCP server evaluations testing tool output quality and agentic flows.
+## Requires: OPENAI_API_KEY (or other provider keys), Docker for testcontainers.
+## Uses the same LLM_PROVIDER environment variable as the evals target.
+.PHONY: mcp-evals
+mcp-evals:
+	@echo Running MCP server evaluations...
+	GOEVALS=1 $(GO) test -v ./mcpserver/ -run "Eval" -timeout 10m
 
 ## Builds and installs the plugin to a server, updating the webapp automatically when changed.
 .PHONY: watch

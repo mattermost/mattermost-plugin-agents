@@ -26,11 +26,12 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 func (c *Client) httpClientForMCP(headers map[string]string) *http.Client {
 	// Wrap with discovery-aware transport for 401 handling
 	authenticationTransport := &authenticationTransport{
-		userID:     c.userID,
-		serverName: c.config.Name,
-		manager:    c.oauthManager,
-		serverURL:  c.config.BaseURL,
-		base:       c.httpClient.Transport,
+		userID:      c.userID,
+		serverName:  c.config.Name,
+		manager:     c.oauthManager,
+		serverURL:   c.config.BaseURL,
+		staticCreds: staticOAuthCreds(c.config),
+		base:        c.httpClient.Transport,
 	}
 
 	// Create HTTP client with discovery-aware transport

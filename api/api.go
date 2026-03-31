@@ -12,9 +12,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-ai/anthropic"
+	"github.com/mattermost/mattermost-plugin-ai/bifrost"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
+	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/indexer"
@@ -25,7 +26,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/meetings"
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/openai"
 	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -43,6 +43,7 @@ type Config interface {
 	GetDefaultBotName() string
 	MCP() mcp.Config
 	AllowUnsafeLinks() bool
+	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
 }
 
@@ -53,6 +54,8 @@ type MCPClientManager interface {
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (string, error)
+	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
+	GetConfig() mcp.Config
 }
 
 // API represents the HTTP API functionality for the plugin
@@ -76,6 +79,7 @@ type API struct {
 	mcpClientManager      MCPClientManager
 	mcpHandlers           *mcpserver.PluginMCPHandlers
 	llmUpstreamHTTPClient *http.Client
+	getSearchInitError    func() string
 }
 
 // New creates a new API instance
@@ -98,6 +102,7 @@ func New(
 	mcpClientManager MCPClientManager,
 	mcpHandlers *mcpserver.PluginMCPHandlers,
 	llmUpstreamHTTPClient *http.Client,
+	getSearchInitError func() string,
 ) *API {
 	return &API{
 		bots:                  bots,
@@ -119,6 +124,7 @@ func New(
 		mcpClientManager:      mcpClientManager,
 		mcpHandlers:           mcpHandlers,
 		llmUpstreamHTTPClient: llmUpstreamHTTPClient,
+		getSearchInitError:    getSearchInitError,
 	}
 }
 
@@ -169,6 +175,13 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
+	router.GET("/mcp/tools", a.handleGetUserMCPTools)
+	router.GET("/mcp/user-preferences", a.handleGetUserPreferences)
+	router.PUT("/mcp/user-preferences", a.handlePutUserPreferences)
+
+	// Raw search endpoint returns enriched semantic search results without LLM processing.
+	// Used by the MCP server for external search callbacks.
+	router.POST("/search/raw", a.handleRawSearch)
 
 	botRequiredRouter := router.Group("")
 	botRequiredRouter.Use(a.aiBotRequired)
@@ -189,15 +202,18 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 	channelRouter := botRequiredRouter.Group("/channel/:channelid")
 	channelRouter.Use(a.channelAuthorizationRequired)
-	channelRouter.POST("/analyze", a.handleChannelAnalysis)
-	channelRouter.POST("/interval", a.handleInterval)
+	channelRouter.POST("/analyze", a.channelAnalysisLicenseRequired, a.handleChannelAnalysis)
+	channelRouter.POST("/interval", a.channelAnalysisLicenseRequired, a.handleInterval)
 
 	adminRouter := router.Group("/admin")
 	adminRouter.Use(a.mattermostAdminAuthorizationRequired)
 	adminRouter.POST("/reindex", a.handleReindexPosts)
 	adminRouter.GET("/reindex/status", a.handleGetJobStatus)
 	adminRouter.POST("/reindex/cancel", a.handleCancelJob)
+	adminRouter.POST("/reindex/catchup", a.handleCatchUpIndex)
+	adminRouter.GET("/reindex/health-check", a.handleIndexHealthCheck)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
+	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
 
@@ -386,7 +402,7 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	// API key is required for most services, but optional for openaicompatible (some don't require auth)
+	// API key is required for most services, but optional for openaicompatible (some don't require auth).
 	if req.APIKey == "" && req.ServiceType != "openaicompatible" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey is required"))
 		return
@@ -398,19 +414,12 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	var models []llm.ModelInfo
-	var err error
-
-	switch req.ServiceType {
-	case "anthropic":
-		models, err = anthropic.FetchModels(req.APIKey, a.llmUpstreamHTTPClient)
-	case "openai", "azure", "openaicompatible":
-		models, err = openai.FetchModels(req.APIKey, req.APIURL, req.OrgID, a.llmUpstreamHTTPClient)
-	default:
+	if !bifrost.IsSupported(req.ServiceType) {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("model fetching not supported for service type: %s", req.ServiceType))
 		return
 	}
 
+	models, err := bifrost.FetchModelsForServiceType(req.ServiceType, req.APIKey, req.APIURL, req.OrgID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
 		return

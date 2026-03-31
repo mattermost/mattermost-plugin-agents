@@ -33,8 +33,10 @@ type Post struct {
 }
 
 type CompletionRequest struct {
-	Posts   []Post
-	Context *Context
+	Posts            []Post
+	Context          *Context
+	Operation        string
+	OperationSubType string
 }
 
 func (b *CompletionRequest) Truncate(maxTokens int, countTokens func(string) int) bool {

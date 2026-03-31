@@ -15,12 +15,14 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
+	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// MCPToolContext provides MCP-specific functionality with the authenticated client
+// MCPToolContext provides MCP-specific functionality with the authenticated client.
 type MCPToolContext struct {
+	Ctx        context.Context
 	Client     *model.Client4
 	AccessMode AccessMode
 	BotUserID  string // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
@@ -41,6 +43,14 @@ type ToolProvider interface {
 	ProvideTools(*mcp.Server)
 }
 
+// SemanticSearchService provides semantic search capabilities for the MCP server.
+// *search.Search implements this interface directly for embedded servers.
+// HTTPSemanticSearchService implements it for external servers via HTTP callbacks.
+type SemanticSearchService interface {
+	Enabled() bool
+	Search(ctx context.Context, query string, opts search.Options) ([]search.RAGResult, error)
+}
+
 // MattermostToolProvider provides Mattermost tools following the mmtools pattern
 type MattermostToolProvider struct {
 	authProvider        auth.AuthenticationProvider
@@ -49,12 +59,14 @@ type MattermostToolProvider struct {
 	mmInternalServerURL string // Internal server URL for API communication
 	devMode             bool
 	accessMode          AccessMode
-	trackAIGenerated    bool // Whether to add ai_generated_by props to posts
+	trackAIGenerated    bool                  // Whether to add ai_generated_by props to posts
+	searchService       SemanticSearchService // Optional semantic search service, can be nil
 }
 
 // NewMattermostToolProvider creates a new tool provider
 // Now accepts a ServerConfig interface to avoid circular dependencies
-func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config types.ServerConfig, accessMode AccessMode) *MattermostToolProvider {
+// searchService is optional and can be nil if semantic search is not available
+func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config types.ServerConfig, accessMode AccessMode, searchService SemanticSearchService) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	internalURL := config.GetMMInternalServerURL()
 	if internalURL == "" {
@@ -69,10 +81,11 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 		devMode:             config.GetDevMode(),
 		accessMode:          accessMode,
 		trackAIGenerated:    config.GetTrackAIGenerated(),
+		searchService:       searchService,
 	}
 }
 
-// ProvideTools provides all tools to the MCP server by registering them
+// ProvideTools registers all available MCP tools with the server.
 func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	mcpTools := []MCPTool{}
 
@@ -94,7 +107,7 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	}
 }
 
-// registerDynamicTool registers a single tool with the server using type erasure
+// registerDynamicTool registers a single tool with the MCP server.
 func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool MCPTool) {
 	tool := &mcp.Tool{
 		Name:        mcpTool.Name,
@@ -118,6 +131,9 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 	}
 
 	handler := func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// Log tool invocation
+		p.logger.Debug("MCP tool called", "tool", mcpTool.Name)
+
 		// Create MCP context from the authenticated client, passing along any metadata
 		mcpContext, err := p.createMCPToolContext(ctx, req.Params.Meta)
 		if err != nil {
@@ -149,7 +165,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		// Call the tool resolver
 		result, err := mcpTool.Resolver(mcpContext, argsGetter)
 		if err != nil {
-			p.logger.Debug("Tool resolver failed", "tool", mcpTool.Name, "error", err)
+			p.logger.Debug("MCP tool failed", "tool", mcpTool.Name, "error", err.Error())
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
 					&mcp.TextContent{Text: "Error: " + err.Error()},
@@ -157,6 +173,9 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 				IsError: true,
 			}, nil
 		}
+
+		// Log successful completion
+		p.logger.Debug("MCP tool completed successfully", "tool", mcpTool.Name)
 
 		// Return successful result
 		return &mcp.CallToolResult{
@@ -179,6 +198,7 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	}
 
 	mcpContext := &MCPToolContext{
+		Ctx:        ctx,
 		Client:     client,
 		AccessMode: p.accessMode,
 	}

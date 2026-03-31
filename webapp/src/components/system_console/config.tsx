@@ -89,7 +89,7 @@ const defaultConfig = {
     enableChannelMentionToolCalling: false,
     allowNativeWebSearchInChannels: false,
     embeddingSearchConfig: {
-        type: 'disabled',
+        type: '',
         vectorStore: {
             type: '',
             parameters: {},
@@ -108,8 +108,8 @@ const defaultConfig = {
     },
     mcp: {
         enabled: false,
-        servers: {},
-        idleTimeout: 30,
+        servers: [],
+        idleTimeoutMinutes: 30,
     },
     webSearch: {
         enabled: false,
@@ -355,7 +355,7 @@ const Config = (props: Props) => {
                 </ItemList>
             </Panel>
             <EmbeddingSearchPanel
-                value={value.embeddingSearchConfig || defaultConfig.embeddingSearchConfig}
+                value={{...defaultConfig.embeddingSearchConfig, ...(value.embeddingSearchConfig || {})}}
                 onChange={(config) => {
                     props.onChange(props.id, {...value, embeddingSearchConfig: config});
                     props.setSaveNeeded();
@@ -382,7 +382,7 @@ const Config = (props: Props) => {
                         // Ensure we're creating a valid structure for the server configuration
                         const updatedConfig = {
                             ...config,
-                            servers: config.servers || {},
+                            servers: config.servers || [],
                         };
                         props.onChange(props.id, {...value, mcp: updatedConfig});
                         props.setSaveNeeded();

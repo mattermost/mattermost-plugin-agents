@@ -18,10 +18,11 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
+const BOT_REASONING_TEST_TIMEOUT_MS = 180000;
 
 test.describe.serial('Bot Reasoning Configuration', () => {
     test('should configure OpenAI reasoning effort dropdown (minimal, low, medium, high)', async ({ page }) => {
-        test.setTimeout(60000);
+        test.setTimeout(BOT_REASONING_TEST_TIMEOUT_MS);
 
         // Start container with OpenAI service that has useResponsesAPI set to true
         mattermost = await RunSystemConsoleContainer({
@@ -126,7 +127,7 @@ test.describe.serial('Bot Reasoning Configuration', () => {
     });
 
     test('should configure Anthropic thinking budget with number input', async ({ page }) => {
-        test.setTimeout(60000);
+        test.setTimeout(BOT_REASONING_TEST_TIMEOUT_MS);
 
         // Start container with Anthropic service
         mattermost = await RunSystemConsoleContainer({
@@ -231,7 +232,7 @@ test.describe.serial('Bot Reasoning Configuration', () => {
     });
 
     test('should validate Anthropic thinking budget minimum (1024)', async ({ page }) => {
-        test.setTimeout(60000);
+        test.setTimeout(BOT_REASONING_TEST_TIMEOUT_MS);
 
         // Start container with Anthropic service with outputTokenLimit 8192
         mattermost = await RunSystemConsoleContainer({
@@ -338,7 +339,7 @@ test.describe.serial('Bot Reasoning Configuration', () => {
     });
 
     test('should validate Anthropic thinking budget maximum (based on outputTokenLimit)', async ({ page }) => {
-        test.setTimeout(60000);
+        test.setTimeout(BOT_REASONING_TEST_TIMEOUT_MS);
 
         // Start container with Anthropic service with outputTokenLimit 4096
         mattermost = await RunSystemConsoleContainer({
@@ -443,7 +444,7 @@ test.describe.serial('Bot Reasoning Configuration', () => {
     });
 
     test('should show different reasoning UI when switching service types', async ({ page }) => {
-        test.setTimeout(60000);
+        test.setTimeout(BOT_REASONING_TEST_TIMEOUT_MS);
 
         // Start container with two services: OpenAI with useResponsesAPI true and Anthropic
         mattermost = await RunSystemConsoleContainer({
@@ -572,7 +573,7 @@ test.describe.serial('Bot Reasoning Configuration', () => {
     });
 
     test('should disable reasoning configuration', async ({ page }) => {
-        test.setTimeout(60000);
+        test.setTimeout(BOT_REASONING_TEST_TIMEOUT_MS);
 
         // Start container with OpenAI service with useResponsesAPI true
         mattermost = await RunSystemConsoleContainer({
@@ -637,7 +638,7 @@ test.describe.serial('Bot Reasoning Configuration', () => {
 
         // 9. Verify 'Reasoning Effort' dropdown is NOT visible (hidden when disabled)
         // When reasoning is disabled, the dropdown should not exist in the DOM
-        const reasoningEffortLocator = botCard.locator('select').filter({ hasText: /minimal|low|medium|high/i });
+        const reasoningEffortLocator = botCard.locator('select').filter({ hasText: /none|low|medium|high|extra high/i });
         await expect(reasoningEffortLocator).toHaveCount(0);
 
         // 10. Click the 'Enable' checkbox to enable reasoning
@@ -647,7 +648,7 @@ test.describe.serial('Bot Reasoning Configuration', () => {
 
         // 11. Scroll and verify the 'Reasoning Effort' dropdown appears
         // After enabling, the dropdown should appear with the reasoning effort options
-        const reasoningEffortDropdown = botCard.locator('select').filter({ hasText: /minimal|low|medium|high/i }).first();
+        const reasoningEffortDropdown = botCard.locator('select').filter({ hasText: /none|low|medium|high|extra high/i }).first();
         await reasoningEffortDropdown.scrollIntoViewIfNeeded();
         await expect(reasoningEffortDropdown).toBeVisible();
 
@@ -688,7 +689,7 @@ test.describe.serial('Bot Reasoning Configuration', () => {
         await expect(reloadedEnableCheckbox).not.toBeChecked();
 
         // 20. Verify dropdown is not visible (should not exist in DOM)
-        const reloadedDropdownLocator = reloadedBotCard.locator('select').filter({ hasText: /minimal|low|medium|high/i });
+        const reloadedDropdownLocator = reloadedBotCard.locator('select').filter({ hasText: /none|low|medium|high|extra high/i });
         await expect(reloadedDropdownLocator).toHaveCount(0);
 
         await openAIMock.stop();
@@ -696,7 +697,7 @@ test.describe.serial('Bot Reasoning Configuration', () => {
     });
 
     test('should handle empty thinking budget (uses default)', async ({ page }) => {
-        test.setTimeout(60000);
+        test.setTimeout(BOT_REASONING_TEST_TIMEOUT_MS);
 
         // Start container with Anthropic service with outputTokenLimit 8192
         mattermost = await RunSystemConsoleContainer({

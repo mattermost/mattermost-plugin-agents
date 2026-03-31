@@ -169,6 +169,126 @@ func TestBridgeClientAgentCompletion(t *testing.T) {
 	}
 }
 
+func TestBridgeClientContextEnrichment(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	request := bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "hello"},
+		},
+		UserID:    testUserID,
+		ChannelID: testChannelID,
+	}
+
+	tests := []struct {
+		name              string
+		service           llm.ServiceConfig
+		call              func(client *bridgeclient.Client, req bridgeclient.CompletionRequest) error
+		expectedOperation string
+		expectedSubType   string
+	}{
+		{
+			name: "agent non-stream request",
+			service: llm.ServiceConfig{
+				ID:           "svc-agent",
+				Name:         "svc-agent",
+				Type:         "openai",
+				DefaultModel: "gpt-4.1",
+			},
+			call: func(client *bridgeclient.Client, req bridgeclient.CompletionRequest) error {
+				_, err := client.AgentCompletion(testBotUserID, req)
+				return err
+			},
+			expectedOperation: llm.OperationBridgeAgent,
+			expectedSubType:   llm.SubTypeNoStream,
+		},
+		{
+			name: "service stream request",
+			service: llm.ServiceConfig{
+				ID:           "svc-service",
+				Name:         "svc-service",
+				Type:         "anthropic",
+				DefaultModel: "claude-3-7-sonnet",
+			},
+			call: func(client *bridgeclient.Client, req bridgeclient.CompletionRequest) error {
+				streamResult, err := client.ServiceCompletionStream("svc-service", req)
+				if err != nil {
+					return err
+				}
+				_, err = streamResult.ReadAll()
+				return err
+			},
+			expectedOperation: llm.OperationBridgeService,
+			expectedSubType:   llm.SubTypeStreaming,
+		},
+		{
+			name: "agent non-stream request with caller operation override",
+			service: llm.ServiceConfig{
+				ID:           "svc-custom-operation",
+				Name:         "svc-custom-operation",
+				Type:         "openai",
+				DefaultModel: "gpt-4.1",
+			},
+			call: func(client *bridgeclient.Client, req bridgeclient.CompletionRequest) error {
+				req.Operation = "playbooks_summary"
+				req.OperationSubType = "incident_report"
+				_, err := client.AgentCompletion(testBotUserID, req)
+				return err
+			},
+			expectedOperation: "playbooks_summary",
+			expectedSubType:   "incident_report",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			botConfig := llm.BotConfig{
+				Name:               "testbot",
+				DisplayName:        "Test Bot",
+				UserAccessLevel:    llm.UserAccessLevelAll,
+				ChannelAccessLevel: llm.ChannelAccessLevelAll,
+				ServiceID:          tc.service.ID,
+			}
+			e.setupTestBot(botConfig)
+
+			fakeLLM := NewFakeLLM("Bridge response")
+			for _, bot := range e.bots.GetAllBots() {
+				bot.SetServiceForTest(tc.service)
+				bot.SetLLMForTest(fakeLLM)
+			}
+
+			e.mockAPI.On("GetChannel", testChannelID).Return(&model.Channel{
+				Id:     testChannelID,
+				Type:   model.ChannelTypeOpen,
+				TeamId: "team-bridge",
+			}, nil).Twice()
+
+			client := e.CreateBridgeClient()
+			require.NoError(t, tc.call(client, request))
+
+			lastRequest := fakeLLM.LastRequest()
+			require.NotNil(t, lastRequest.Context)
+			require.NotNil(t, lastRequest.Context.RequestingUser)
+			require.NotNil(t, lastRequest.Context.Channel)
+			require.NotNil(t, lastRequest.Context.Team)
+			require.Equal(t, testUserID, lastRequest.Context.RequestingUser.Id)
+			require.Equal(t, testChannelID, lastRequest.Context.Channel.Id)
+			require.Equal(t, model.ChannelTypeOpen, lastRequest.Context.Channel.Type)
+			require.Equal(t, "team-bridge", lastRequest.Context.Team.Id)
+			require.Equal(t, "testbot", lastRequest.Context.BotUsername)
+			require.Equal(t, testBotUserID, lastRequest.Context.BotUserID)
+			require.Equal(t, tc.service.DefaultModel, lastRequest.Context.BotModel)
+			require.Equal(t, tc.service.Type, lastRequest.Context.BotServiceType)
+			require.Equal(t, tc.expectedOperation, lastRequest.Operation)
+			require.Equal(t, tc.expectedSubType, lastRequest.OperationSubType)
+		})
+	}
+}
+
 func TestBridgeClientAgentCompletionStream(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -569,7 +689,7 @@ func TestBridgeClientPermissions(t *testing.T) {
 					Id:     testChannelID,
 					Type:   model.ChannelTypeOpen,
 					TeamId: "team-123",
-				}, nil).Once()
+				}, nil).Twice()
 			},
 			expectError: false,
 		},

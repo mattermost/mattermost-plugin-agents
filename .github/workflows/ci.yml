@@ -11,99 +11,238 @@ permissions:
   contents: write
 
 jobs:
+  e2e-build-artifact:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 24.11.0
+    - name: Build plugin bundle for e2e jobs
+      run: make dist
+    - uses: actions/upload-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/*.tar.gz
+        retention-days: 1
+
   e2e:
+    needs: e2e-build-artifact
     timeout-minutes: 60
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - name: shard-1
+            group: e2e-shard-1
+          - name: shard-2
+            group: e2e-shard-2
+          - name: shard-3
+            group: e2e-shard-3
+          - name: shard-4
+            group: e2e-shard-4
+    name: e2e-${{ matrix.shard.name }}
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:latest' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
       EXCLUDE_REAL_API_TESTS: 'true'
     defaults:
       run:
         working-directory: ./e2e
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
       with:
-        node-version: 18
-    - name: Build
-      run: make dist
-      working-directory: ./
+        node-version: 24.11.0
+    - uses: actions/download-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/
     - name: Install dependencies
       run: npm ci
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
-    - name: Run Playwright tests (excluding real API tests)
-      run: npx playwright test --project=chromium
+    - name: Validate CI test groups
+      run: node ./scripts/ci-test-groups.mjs validate
+    - name: Run Playwright tests for ${{ matrix.shard.name }}
+      shell: bash
+      run: |
+        SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list "${{ matrix.shard.group }}")"
+        [[ -n "${SPEC_OUTPUT}" ]]
+        mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
+        npx playwright test --project=chromium "${SPEC_FILES[@]}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: playwright-report
+        name: playwright-report-${{ matrix.shard.name }}
         path: ./e2e/playwright-report/
         retention-days: 30
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: server-logs
+        name: server-logs-${{ matrix.shard.name }}
         path: ./e2e/logs/server-logs.log
         retention-days: 30
 
   e2e-llmbot-real-apis:
+    needs: e2e-build-artifact
     timeout-minutes: 180
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - name: citations
+            group: llmbot-real-citations
+          - name: reasoning
+            group: llmbot-real-reasoning
+          - name: edge-cases
+            group: llmbot-real-edge-cases
+    name: e2e-llmbot-real-apis-${{ matrix.shard.name }}
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:latest' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
     defaults:
       run:
         working-directory: ./e2e
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
       with:
-        node-version: 18
-    - name: Build
-      run: make dist
-      working-directory: ./
+        node-version: 24.11.0
+    - uses: actions/download-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/
     - name: Install dependencies
       run: npm ci
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
-    - name: Run LLMBot tests with real APIs
+    - name: Validate CI test groups
+      run: node ./scripts/ci-test-groups.mjs validate
+    - name: Run LLMBot tests with real APIs for ${{ matrix.shard.name }}
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      run: npx playwright test tests/llmbot-post-component --project=chromium --reporter=list
+      shell: bash
+      run: |
+        SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list "${{ matrix.shard.group }}")"
+        [[ -n "${SPEC_OUTPUT}" ]]
+        mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
+        npx playwright test --project=chromium "${SPEC_FILES[@]}"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report-llmbot-real-apis-${{ matrix.shard.name }}
+        path: ./e2e/playwright-report/
+        retention-days: 30
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: server-logs-llmbot-real-apis-${{ matrix.shard.name }}
+        path: ./e2e/logs/server-logs.log
+        retention-days: 30
 
   e2e-channel-analysis-real-apis:
+    needs: e2e-build-artifact
     timeout-minutes: 180
     runs-on: ubuntu-latest
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:latest' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
     defaults:
       run:
         working-directory: ./e2e
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
       with:
-        node-version: 18
-    - name: Build
-      run: make dist
-      working-directory: ./
+        node-version: 24.11.0
+    - uses: actions/download-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/
     - name: Install dependencies
       run: npm ci
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
+    - name: Validate CI test groups
+      run: node ./scripts/ci-test-groups.mjs validate
     - name: Run Channel Analysis tests with real APIs
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      run: npx playwright test tests/channel-analysis/backend-verification/real-api.spec.ts --project=chromium --reporter=list
+      shell: bash
+      run: |
+        SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list channel-analysis-real)"
+        [[ -n "${SPEC_OUTPUT}" ]]
+        mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
+        npx playwright test --project=chromium "${SPEC_FILES[@]}"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report-channel-analysis-real-apis
+        path: ./e2e/playwright-report/
+        retention-days: 30
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: server-logs-channel-analysis-real-apis
+        path: ./e2e/logs/server-logs.log
+        retention-days: 30
 
-  e2e-tool-calling:
+  e2e-system-console-real-apis:
+    needs: e2e-build-artifact
     timeout-minutes: 180
     runs-on: ubuntu-latest
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:latest' }}
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
+    defaults:
+      run:
+        working-directory: ./e2e
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 24.11.0
+    - uses: actions/download-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/
+    - name: Install dependencies
+      run: npm ci
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+    - name: Validate CI test groups
+      run: node ./scripts/ci-test-groups.mjs validate
+    - name: Run System Console tests with real APIs
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      shell: bash
+      run: |
+        SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list system-console-real)"
+        [[ -n "${SPEC_OUTPUT}" ]]
+        mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
+        npx playwright test --project=chromium "${SPEC_FILES[@]}"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report-system-console-real-apis
+        path: ./e2e/playwright-report/
+        retention-days: 30
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: server-logs-system-console-real-apis
+        path: ./e2e/logs/server-logs.log
+        retention-days: 30
+
+  e2e-tool-config-real-apis:
+    needs: e2e-build-artifact
+    timeout-minutes: 180
+    runs-on: ubuntu-latest
+    env:
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
     defaults:
       run:
         working-directory: ./e2e
@@ -112,18 +251,95 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: 18
-    - name: Build
-      run: make dist
-      working-directory: ./
+    - uses: actions/download-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/
     - name: Install dependencies
       run: npm ci
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
-    - name: Run Tool Calling tests with real APIs
+    - name: Validate CI test groups
+      run: node ./scripts/ci-test-groups.mjs validate
+    - name: Run Tool Config tests with real APIs
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      run: npx playwright test tests/multiplayer-tool-calling --project=chromium --reporter=list
+      shell: bash
+      run: |
+        SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list tool-config-real)"
+        [[ -n "${SPEC_OUTPUT}" ]]
+        mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
+        npx playwright test --project=chromium "${SPEC_FILES[@]}"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report-tool-config-real-apis
+        path: ./e2e/playwright-report/
+        retention-days: 30
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: server-logs-tool-config-real-apis
+        path: ./e2e/logs/server-logs.log
+        retention-days: 30
+
+  e2e-tool-calling:
+    needs: e2e-build-artifact
+    timeout-minutes: 180
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        provider:
+          - name: anthropic
+            display_name: Anthropic
+          - name: openai
+            display_name: OpenAI
+    name: e2e-tool-calling-${{ matrix.provider.name }}
+    env:
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
+    defaults:
+      run:
+        working-directory: ./e2e
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 24.11.0
+    - uses: actions/download-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/
+    - name: Install dependencies
+      run: npm ci
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+    - name: Validate CI test groups
+      run: node ./scripts/ci-test-groups.mjs validate
+    - name: Run Tool Calling tests with real APIs for ${{ matrix.provider.display_name }}
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        E2E_PROVIDER: ${{ matrix.provider.name }}
+      shell: bash
+      run: |
+        SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list tool-calling-real)"
+        [[ -n "${SPEC_OUTPUT}" ]]
+        mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
+        npx playwright test --project=chromium "${SPEC_FILES[@]}"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report-tool-calling-${{ matrix.provider.name }}
+        path: ./e2e/playwright-report/
+        retention-days: 30
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: server-logs-tool-calling-${{ matrix.provider.name }}
+        path: ./e2e/logs/server-logs.log
+        retention-days: 30
 
   plugin-tests:
     runs-on: ubuntu-latest
@@ -142,10 +358,10 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v4
+      - uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
 
@@ -175,10 +391,10 @@ jobs:
             display_name: AWS Bedrock
     name: evals-${{ matrix.provider.name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v4
+      - uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
 
@@ -188,14 +404,14 @@ jobs:
           LLM_PROVIDER: ${{ matrix.provider.name }}
           # OpenAI
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o' }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.2' }}
           # Anthropic
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514' }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-6' }}
           # Azure
           AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
           AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_MODEL || 'gpt-4o' }}
+          AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_MODEL || 'gpt-5.2' }}
           # Mistral
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL || 'mistral-large-latest' }}
@@ -203,7 +419,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_BEDROCK_ACCESS_KEY_SECRET }}
           AWS_BEDROCK_REGION: ${{ vars.AWS_BEDROCK_REGION || 'us-east-1' }}
-          AWS_BEDROCK_MODEL: ${{ vars.AWS_BEDROCK_MODEL || 'global.anthropic.claude-sonnet-4-20250514-v1:0' }}
+          AWS_BEDROCK_MODEL: ${{ vars.AWS_BEDROCK_MODEL || 'global.anthropic.claude-sonnet-4-6-v1:0' }}
         run: |
           # Run evals - evalviewer writes directly to comment.md
           make evals-comment || true
@@ -229,7 +445,7 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download all evaluation results
         uses: actions/download-artifact@v4
@@ -246,10 +462,10 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v4
+      - uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
       - uses: mattermost/actions/plugin-ci/lint@main
@@ -257,13 +473,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - uses: mattermost/actions/plugin-ci/setup@main
         with:
           golangci-lint-version: "v1.54.2"
-          golang-version: "1.24"
       - uses: mattermost/actions/plugin-ci/build@main
 
   upload-s3-pr:
@@ -271,7 +486,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -294,11 +509,11 @@ jobs:
           aws s3 cp dist/mattermost-ai-*.tar.gz s3://${{ secrets.AWS_S3_BUCKET }}/mattermost-plugin-agents/mattermost-plugin-agents-${{ steps.short-sha.outputs.sha }}.tar.gz
 
   deploy:
-    needs: [lint, build, plugin-tests, e2e, e2e-tool-calling]
+    needs: [lint, build, plugin-tests, e2e, e2e-llmbot-real-apis, e2e-channel-analysis-real-apis, e2e-system-console-real-apis, e2e-tool-config-real-apis, e2e-tool-calling]
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 

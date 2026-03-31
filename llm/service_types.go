@@ -7,9 +7,9 @@ const (
 	ServiceTypeOpenAI           = "openai"
 	ServiceTypeOpenAICompatible = "openaicompatible"
 	ServiceTypeAzure            = "azure"
-	ServiceTypeASage            = "asage"
 	ServiceTypeAnthropic        = "anthropic"
 	ServiceTypeCohere           = "cohere"
 	ServiceTypeBedrock          = "bedrock"
 	ServiceTypeMistral          = "mistral"
+	ServiceTypeScale            = "scale"
 )

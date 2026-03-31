@@ -51,7 +51,7 @@ export function replaceCitationMarkers(element: any, annotations: Annotation[]):
                     if (annotation) {
                         result.push(
                             <CitationComponent
-                                key={`citation-${citationIndex}-${Math.random()}`}
+                                key={`citation-${citationIndex}-${i}`}
                                 annotation={annotation}
                             />,
                         );

@@ -1,3 +1,5 @@
+//go:build integration
+
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
@@ -179,7 +181,7 @@ func (s *EmbeddedTestSuite) SetupEmbeddedServer() {
 	}
 
 	// Create embedded server
-	server, err := mcpserver.NewInMemoryServer(config, s.logger)
+	server, err := mcpserver.NewInMemoryServer(config, s.logger, nil)
 	require.NoError(s.t, err, "Failed to create embedded MCP server")
 
 	s.embeddedServer = server

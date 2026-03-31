@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {Store, Action} from 'redux';
+import {Store, UnknownAction} from 'redux';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
@@ -34,8 +34,9 @@ import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands
 import SearchHints from './components/search_hints';
 import {useBotlist} from './bots';
 import AgentsTour from './components/tutorial/agents_tour';
+import {isEnterpriseLicensedOrDevelopment} from './license';
 
-type WebappStore = Store<GlobalState, Action<Record<string, unknown>>>
+type WebappStore = Store<GlobalState, UnknownAction>
 
 const IconAIContainer = styled.img`
 	border-radius: 50%;
@@ -185,6 +186,11 @@ export default class Plugin {
         // Register slash commands
         if (rhs) {
             registry.registerSlashCommandWillBePostedHook((message: string, args: any) => {
+                if ((message.startsWith('/ask-channel') || message.startsWith('/summarize-channel')) &&
+                    !isEnterpriseLicensedOrDevelopment(store.getState())) {
+                    return {message, args};
+                }
+
                 if (message.startsWith('/ask-channel')) {
                     const query = message.replace('/ask-channel', '').trim();
                     return handleAskChannelCommand(query, args, store, rhs);

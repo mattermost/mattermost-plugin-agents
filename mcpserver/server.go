@@ -21,8 +21,9 @@ type MattermostMCPServer struct {
 }
 
 // registerTools registers all tools using the tool provider
-func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode) {
-	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode)
+// searchService is optional and can be nil if semantic search is not available
+func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService) {
+	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode, searchService)
 	toolProvider.ProvideTools(s.mcpServer)
 }
 

@@ -313,24 +313,6 @@ func TestIsValidService(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "Valid ASage service with API key",
-			service: ServiceConfig{
-				ID:     "service-5",
-				Type:   ServiceTypeASage,
-				APIKey: "asage-key",
-			},
-			want: true,
-		},
-		{
-			name: "ASage service missing API key",
-			service: ServiceConfig{
-				ID:     "service-5",
-				Type:   ServiceTypeASage,
-				APIKey: "", // bad
-			},
-			want: false,
-		},
-		{
 			name: "Valid Cohere service with API key",
 			service: ServiceConfig{
 				ID:     "service-6",
@@ -391,6 +373,47 @@ func TestIsValidService(t *testing.T) {
 				ID:     "service-8",
 				Type:   ServiceTypeMistral,
 				APIKey: "", // bad
+			},
+			want: false,
+		},
+		{
+			name: "Valid Scale service with API key and API URL",
+			service: ServiceConfig{
+				ID:     "service-9",
+				Type:   ServiceTypeScale,
+				APIKey: "scale-key",
+				APIURL: "https://sgp-api.scalegov.com/v5",
+			},
+			want: true,
+		},
+		{
+			name: "Valid Scale service with API key, API URL, and OrgID",
+			service: ServiceConfig{
+				ID:     "service-9",
+				Type:   ServiceTypeScale,
+				APIKey: "scale-key",
+				APIURL: "https://sgp-api.scalegov.com/v5",
+				OrgID:  "account-123",
+			},
+			want: true,
+		},
+		{
+			name: "Scale service missing API key",
+			service: ServiceConfig{
+				ID:     "service-9",
+				Type:   ServiceTypeScale,
+				APIKey: "", // bad
+				APIURL: "https://sgp-api.scalegov.com/v5",
+			},
+			want: false,
+		},
+		{
+			name: "Scale service missing API URL",
+			service: ServiceConfig{
+				ID:     "service-9",
+				Type:   ServiceTypeScale,
+				APIKey: "scale-key",
+				APIURL: "", // bad
 			},
 			want: false,
 		},

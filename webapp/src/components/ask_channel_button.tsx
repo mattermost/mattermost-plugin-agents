@@ -7,9 +7,11 @@ import {useSelector, useDispatch} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
 //eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
 import {OverlayTrigger, Tooltip, Overlay} from 'react-bootstrap';
+import {FormattedMessage, useIntl} from 'react-intl';
 
 import {doChannelAnalysis} from '@/client';
 import {openRHS} from '@/redux_actions';
+import {useIsBasicsLicensed} from '@/license';
 
 import {useBotlist} from '@/bots';
 
@@ -101,10 +103,12 @@ const PopoverWrapper = React.forwardRef((props: any, ref: any) => {
 });
 
 const AskChannelButton = () => {
+    const intl = useIntl();
     const dispatch = useDispatch();
     const [showPopover, setShowPopover] = useState(false);
     const target = useRef<HTMLButtonElement>(null);
     const {bots, activeBot, setActiveBot} = useBotlist();
+    const isBasicsLicensed = useIsBasicsLicensed();
 
     const currentChannelId = useSelector((state: GlobalState) => state.entities.channels.currentChannelId);
     const currentTeamId = useSelector((state: GlobalState) => state.entities.teams.currentTeamId);
@@ -161,11 +165,14 @@ const AskChannelButton = () => {
         setShowPopover(!showPopover);
     };
 
+    if (!isBasicsLicensed) {
+        return null;
+    }
+
+    const buttonLabel = intl.formatMessage({defaultMessage: 'Ask Agents about this channel'});
     const tooltip = (
         <Tooltip id='ask-agents-tooltip'>
-            {'Ask Agents about'}
-            <br/>
-            {'this channel'}
+            <FormattedMessage defaultMessage='Ask Agents about this channel'/>
         </Tooltip>
     );
 
@@ -176,6 +183,9 @@ const AskChannelButton = () => {
                     ref={target}
                     onClick={handleToggle}
                     isActive={showPopover}
+                    aria-label={buttonLabel}
+                    title={buttonLabel}
+                    data-testid='ask-channel-button'
                 >
                     <IconAI/>
                 </ButtonContainer>
@@ -188,6 +198,9 @@ const AskChannelButton = () => {
                         ref={target}
                         onClick={handleToggle}
                         isActive={showPopover}
+                        aria-label={buttonLabel}
+                        title={buttonLabel}
+                        data-testid='ask-channel-button'
                     >
                         <IconAI/>
                     </ButtonContainer>

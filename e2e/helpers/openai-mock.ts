@@ -41,7 +41,7 @@ export class OpenAIMockContainer {
 			.withExposedPorts(8081)
 			.withNetwork(network)
 			.withNetworkAliases("openai")
-			.withWaitStrategy(Wait.forLogMessage("Starting mock server"))
+			.withWaitStrategy(Wait.forHttp("/version", 8081))
 			.start()
 
 		await this.resetMocks();
@@ -51,10 +51,23 @@ export class OpenAIMockContainer {
 		await this.container.stop()
 	}
 
-	resetMocks = async () => {
-		await fetch(`http://localhost:${this.container.getMappedPort(8081)}/reset`, {
-			method: "POST",
-		})
+	resetMocks = async (attempt = 0): Promise<void> => {
+		const maxAttempts = 5;
+
+		try {
+			await fetch(`http://localhost:${this.container.getMappedPort(8081)}/reset`, {
+				method: "POST",
+			});
+		} catch (error) {
+			if (attempt >= maxAttempts - 1) {
+				throw error;
+			}
+
+			const backoffMs = Math.min(2000, 250 * Math.pow(2, attempt));
+			await new Promise(resolve => setTimeout(resolve, backoffMs));
+
+			return this.resetMocks(attempt + 1);
+		}
 	}
 
 	addMock = async (body: any, attempt = 0): Promise<Response> => {
@@ -86,12 +99,45 @@ export class OpenAIMockContainer {
 		}
 	}
 
+	/**
+	 * Register multiple Smocker mocks in one request (replaces all mocks, same as addMock).
+	 * Use this when sequential completions need different responses (e.g. tool call then text).
+	 */
+	addMocks = async (bodies: any[], attempt = 0): Promise<Response> => {
+		const maxAttempts = 5;
+
+		try {
+			const response = await fetch(`http://localhost:${this.container.getMappedPort(8081)}/mocks?reset=true`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(bodies),
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to register mocks: ${response.status} ${response.statusText}`);
+			}
+
+			return response;
+		} catch (error) {
+			if (attempt >= maxAttempts - 1) {
+				throw error;
+			}
+
+			const backoffMs = Math.min(2000, 250 * Math.pow(2, attempt));
+			await new Promise(resolve => setTimeout(resolve, backoffMs));
+
+			return this.addMocks(bodies, attempt + 1);
+		}
+	}
+
 	addCompletionMock = async (response: string, botPrefix?: string) => {
 		const prefix = botPrefix ? ("/"+botPrefix) : ""
 		return this.addMock({
 			request: {
 				method: "POST",
-				path: prefix + "/chat/completions",
+				path: prefix + "/v1/chat/completions",
 			},
 			context: {
 				times: 100,
@@ -112,7 +158,7 @@ export class OpenAIMockContainer {
 		return this.addMock({
 			request: {
 				method: "POST",
-				path: prefix + "/chat/completions",
+				path: prefix + "/v1/chat/completions",
 				body: {
 					matcher: "ShouldContainSubstring",
 					value: requestBodyContains
@@ -137,7 +183,7 @@ export class OpenAIMockContainer {
 		return this.addMock({
 			request: {
 				method: "POST",
-				path: prefix + "/chat/completions",
+				path: prefix + "/v1/chat/completions",
 			},
 			context: {
 				times: 100,
@@ -165,3 +211,37 @@ export const RunOpenAIMocks = async (network: StartedNetwork): Promise<OpenAIMoc
 	return container
 }
 
+/**
+ * Create a streaming SSE response that includes a tool call.
+ * Follows OpenAI's chat.completions streaming format.
+ */
+export function buildToolCallResponse(toolCallId: string, toolName: string, args: string): string {
+	const escapedArgs = args.replace(/"/g, '\\"');
+	const chunks = [
+		`data: {"id":"chatcmpl-tc1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"${toolCallId}","type":"function","function":{"name":"${toolName}","arguments":""}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl-tc1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"${escapedArgs}"}}]},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl-tc1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		'data: [DONE]',
+	];
+	return chunks.join('\n\n') + '\n\n';
+}
+
+/**
+ * Create a streaming SSE text response (for after tool execution).
+ */
+export function buildTextResponse(text: string): string {
+	const words = text.split(' ');
+	const chunks = [
+		`data: {"id":"chatcmpl-tr1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}`,
+	];
+	for (const word of words) {
+		chunks.push(
+			`data: {"id":"chatcmpl-tr1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{"content":"${word} "},"finish_reason":null}]}`,
+		);
+	}
+	chunks.push(
+		`data: {"id":"chatcmpl-tr1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+	);
+	chunks.push('data: [DONE]');
+	return chunks.join('\n\n') + '\n\n';
+}
