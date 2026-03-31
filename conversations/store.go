@@ -35,9 +35,9 @@ func (c *Conversations) SaveTitle(threadID, title string) error {
 	return err
 }
 
-// DeletePostMetaForDeletedPost soft-deletes conversations associated with the given post.
+// DeleteConversationsForDeletedPost soft-deletes conversations associated with the given post.
 // If the post is a root post, conversations keyed by that RootPostID are marked as deleted.
-func (c *Conversations) DeletePostMetaForDeletedPost(post *model.Post) error {
+func (c *Conversations) DeleteConversationsForDeletedPost(post *model.Post) error {
 	if c.db == nil || post == nil || post.Id == "" {
 		return nil
 	}

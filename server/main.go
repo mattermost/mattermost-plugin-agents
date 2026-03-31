@@ -556,8 +556,8 @@ func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
 		}
 	}
 	if p.conversationsService != nil {
-		if err := p.conversationsService.DeletePostMetaForDeletedPost(post); err != nil {
-			p.pluginAPI.Log.Error("Failed to delete LLM thread title for deleted post", "error", err, "post_id", post.Id)
+		if err := p.conversationsService.DeleteConversationsForDeletedPost(post); err != nil {
+			p.pluginAPI.Log.Error("Failed to soft-delete conversations for deleted post", "error", err, "post_id", post.Id)
 		}
 	}
 }
