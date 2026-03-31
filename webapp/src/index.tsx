@@ -34,6 +34,7 @@ import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands
 import SearchHints from './components/search_hints';
 import {useBotlist} from './bots';
 import AgentsTour from './components/tutorial/agents_tour';
+import AgentsPage, {navigateToAgentsPage} from './components/agents/agents_page';
 import {isEnterpriseLicensedOrDevelopment} from './license';
 
 type WebappStore = Store<GlobalState, UnknownAction>
@@ -204,6 +205,14 @@ export default class Plugin {
 
         if (registry.registerRootComponent) {
             registry.registerRootComponent(AgentsTour);
+            registry.registerRootComponent(AgentsPage);
+        }
+
+        if (registry.registerMainMenuAction) {
+            registry.registerMainMenuAction(
+                'Agents',
+                () => navigateToAgentsPage(),
+            );
         }
 
         if (registry.registerSearchComponents) {

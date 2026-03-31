@@ -11,11 +11,13 @@ type WebappStore = Store<GlobalState, UnknownAction>
 
 const CallsClickHandler = 'calls_post_button_clicked_handler';
 export const BotsHandler = manifest.id + '_bots';
+export const AgentsHandler = manifest.id + '_agents';
 
 export async function setupRedux(registry: any, store: WebappStore) {
     const reducer = combineReducers({
         callsPostButtonClickedTranscription,
         bots,
+        agents,
         botChannelId,
         selectedPostId,
         searchEnabled,
@@ -61,6 +63,15 @@ function bots(state = null, action: any) {
     switch (action.type) {
     case BotsHandler:
         return action.bots;
+    default:
+        return state;
+    }
+}
+
+function agents(state: any = null, action: any) {
+    switch (action.type) {
+    case AgentsHandler:
+        return action.agents;
     default:
         return state;
     }
