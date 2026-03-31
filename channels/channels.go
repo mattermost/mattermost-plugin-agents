@@ -7,18 +7,29 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/mattermost/mattermost-plugin-ai/conversation"
 	"github.com/mattermost/mattermost-plugin-ai/format"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
+	"github.com/mattermost/mattermost-plugin-ai/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
+
+// AnalysisResult is the return type for channel analysis operations.
+// It contains the conversation ID (for linking to the post) and the
+// final LLM stream to be consumed by the streaming layer.
+type AnalysisResult struct {
+	ConversationID string
+	Stream         *llm.TextStreamResult
+}
 
 type Channels struct {
 	llm      llm.LanguageModel
 	prompts  *llm.Prompts
 	client   mmapi.Client
 	dbClient *mmapi.DBClient
+	convSvc  *conversation.Service
 }
 
 func New(
@@ -26,21 +37,27 @@ func New(
 	prompts *llm.Prompts,
 	client mmapi.Client,
 	dbClient *mmapi.DBClient,
+	convSvc *conversation.Service,
 ) *Channels {
 	return &Channels{
 		llm:      llm,
 		prompts:  prompts,
 		client:   client,
 		dbClient: dbClient,
+		convSvc:  convSvc,
 	}
 }
 
-// AnalyzeChannel uses MCP tools to analyze channel activity based on user request
+// AnalyzeChannel uses MCP tools to analyze channel activity based on user request.
+// It creates a conversation entity, runs the ToolRunner loop for tool execution,
+// persists tool turns, and returns the final stream for the streaming layer.
 func (c *Channels) AnalyzeChannel(
 	context *llm.Context,
 	channelID string,
+	userID string,
+	botID string,
 	analysisData map[string]any,
-) (*llm.TextStreamResult, error) {
+) (*AnalysisResult, error) {
 	// Inject analysis data into context for the prompt
 	displayName := context.Channel.DisplayName
 	if displayName == "" {
@@ -67,7 +84,6 @@ func (c *Channels) AnalyzeChannel(
 		return nil, fmt.Errorf("failed to format system prompt: %w", err)
 	}
 
-	// We can use a simple user prompt to trigger the agent
 	userPrompt := "Please summarize the channel activity as requested."
 	operationSubType, _ := analysisData["AnalysisType"].(string)
 	if operationSubType == "" {
@@ -92,43 +108,82 @@ func (c *Channels) AnalyzeChannel(
 	scopedTools.AddTools([]llm.Tool{boundReadChannel, boundGetChannelInfo})
 	context.Tools = scopedTools
 
-	completionRequest := llm.CompletionRequest{
-		Posts: []llm.Post{
-			{
-				Role:    llm.PostRoleSystem,
-				Message: systemPrompt,
-			},
-			{
-				Role:    llm.PostRoleUser,
-				Message: userPrompt,
-			},
-		},
-		Context:          context,
-		Operation:        llm.OperationChannelSummary,
-		OperationSubType: operationSubType,
-	}
-
-	// Auto-run the bound tools
-	resultStream, err := c.llm.ChatCompletion(completionRequest,
-		llm.WithAutoRunTools([]string{
-			llm.ToolAutoRunKey(boundReadChannel.ServerOrigin, "read_channel"),
-			llm.ToolAutoRunKey(boundGetChannelInfo.ServerOrigin, "get_channel_info"),
-		}),
-		llm.WithReasoningDisabled())
-	if err != nil {
-		return nil, err
-	}
-
-	return resultStream, nil
+	return c.AnalyzeChannelWithRequest(context, channelID, userID, botID, systemPrompt, userPrompt, operationSubType)
 }
 
+// AnalyzeChannelWithRequest creates a conversation and runs the ToolRunner with
+// pre-formatted prompts. This is the core of AnalyzeChannel, split out for
+// testability without needing real prompt formatting infrastructure.
+// The context must have Tools set to a ToolStore containing the tools to use.
+func (c *Channels) AnalyzeChannelWithRequest(
+	context *llm.Context,
+	channelID string,
+	userID string,
+	botID string,
+	systemPrompt string,
+	userPrompt string,
+	operationSubType string,
+) (*AnalysisResult, error) {
+	// Create conversation entity
+	convResult, err := c.convSvc.CreateConversation(conversation.CreateConversationParams{
+		UserID:       userID,
+		BotID:        botID,
+		ChannelID:    &channelID,
+		Operation:    llm.OperationChannelSummary,
+		SystemPrompt: systemPrompt,
+		UserMessage:  userPrompt,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create conversation: %w", err)
+	}
+
+	// Build CompletionRequest from the conversation turns.
+	conv, err := c.convSvc.GetConversation(convResult.ConversationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get conversation: %w", err)
+	}
+
+	completionRequest, err := c.convSvc.BuildCompletionRequest(conv, context)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build completion request: %w", err)
+	}
+	completionRequest.OperationSubType = operationSubType
+
+	// Run the ToolRunner loop: always approve bound tools.
+	runner := toolrunner.New(c.llm)
+	runResult, err := runner.Run(
+		*completionRequest,
+		func(_ llm.ToolCall) bool { return true },
+		llm.WithReasoningDisabled(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("tool runner failed: %w", err)
+	}
+
+	// Persist intermediate tool turns (shared=true for pre-bound safe tools).
+	if len(runResult.ToolTurns) > 0 {
+		if err := c.convSvc.WriteToolTurns(convResult.ConversationID, runResult.ToolTurns, true); err != nil {
+			return nil, fmt.Errorf("failed to write tool turns: %w", err)
+		}
+	}
+
+	return &AnalysisResult{
+		ConversationID: convResult.ConversationID,
+		Stream:         runResult.Stream,
+	}, nil
+}
+
+// Interval fetches posts for a time range and creates a conversation entity
+// for the analysis. No tools are used.
 func (c *Channels) Interval(
 	context *llm.Context,
 	channelID string,
+	userID string,
+	botID string,
 	startTime int64,
 	endTime int64,
 	promptName string,
-) (*llm.TextStreamResult, error) {
+) (*AnalysisResult, error) {
 	var posts *model.PostList
 	var err error
 	if endTime == 0 {
@@ -165,28 +220,55 @@ func (c *Channels) Interval(
 		return nil, err
 	}
 
-	completionRequest := llm.CompletionRequest{
-		Posts: []llm.Post{
-			{
-				Role:    llm.PostRoleSystem,
-				Message: systemPrompt,
-			},
-			{
-				Role:    llm.PostRoleUser,
-				Message: userPrompt,
-			},
-		},
-		Context:          context,
-		Operation:        llm.OperationChannelInterval,
-		OperationSubType: promptName,
+	return c.IntervalWithRequest(context, channelID, userID, botID, systemPrompt, userPrompt, promptName)
+}
+
+// IntervalWithRequest creates a conversation and runs the LLM with pre-formatted
+// prompts. This is the core of Interval, split out for testability without
+// needing real post-fetching infrastructure.
+func (c *Channels) IntervalWithRequest(
+	context *llm.Context,
+	channelID string,
+	userID string,
+	botID string,
+	systemPrompt string,
+	userPrompt string,
+	promptName string,
+) (*AnalysisResult, error) {
+	// Create conversation entity
+	convResult, err := c.convSvc.CreateConversation(conversation.CreateConversationParams{
+		UserID:       userID,
+		BotID:        botID,
+		ChannelID:    &channelID,
+		Operation:    llm.OperationChannelInterval,
+		SystemPrompt: systemPrompt,
+		UserMessage:  userPrompt,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create conversation: %w", err)
 	}
 
-	resultStream, err := c.llm.ChatCompletion(completionRequest, llm.WithToolsDisabled())
+	// Build CompletionRequest from conversation turns.
+	conv, err := c.convSvc.GetConversation(convResult.ConversationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get conversation: %w", err)
+	}
+
+	completionRequest, err := c.convSvc.BuildCompletionRequest(conv, context)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build completion request: %w", err)
+	}
+	completionRequest.OperationSubType = promptName
+
+	resultStream, err := c.llm.ChatCompletion(*completionRequest, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, err
 	}
 
-	return resultStream, nil
+	return &AnalysisResult{
+		ConversationID: convResult.ConversationID,
+		Stream:         resultStream,
+	}, nil
 }
 
 const (
