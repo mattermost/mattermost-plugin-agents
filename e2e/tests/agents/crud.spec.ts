@@ -1,0 +1,181 @@
+import { test, expect } from '@playwright/test';
+import MattermostContainer from 'helpers/mmcontainer';
+import { MattermostPage } from 'helpers/mm';
+import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/openai-mock';
+import {
+    RunAgentContainer,
+    agentAdminUsername, agentAdminPassword,
+    mockServiceId,
+} from 'helpers/agent-container';
+import { AgentAPIHelper } from 'helpers/agent-api';
+import { AgentPageHelper } from 'helpers/agent-page';
+
+let mattermost: MattermostContainer;
+let openAIMock: OpenAIMockContainer;
+
+test.describe('Agent CRUD', () => {
+    test.beforeAll(async () => {
+        mattermost = await RunAgentContainer();
+        openAIMock = await RunOpenAIMocks(mattermost.network);
+        await openAIMock.addCompletionMock(responseTest);
+    });
+
+    test.afterAll(async () => {
+        await openAIMock.stop();
+        await mattermost.stop();
+    });
+
+    test('should create a new agent via UI', async ({ page }) => {
+        test.setTimeout(60000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+
+        // Click create button
+        await agentPage.getCreateButton().click();
+        await agentPage.waitForModal();
+
+        // Fill Configuration tab
+        await agentPage.fillConfigTab({
+            displayName: 'My Test Agent',
+            username: 'mytestagent',
+            serviceLabel: 'Mock Service',
+            instructions: 'You are a helpful test agent.',
+        });
+
+        // Save
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
+
+        // Verify agent appears in listing
+        await expect(agentPage.getAgentRowByName('My Test Agent')).toBeVisible({ timeout: 10000 });
+    });
+
+    test('should edit an existing agent', async ({ page }) => {
+        test.setTimeout(60000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+
+        // Create agent via API for test setup
+        const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
+        const token = adminClient.getToken();
+        await agentApi.createTestAgent(token, {
+            display_name: 'Edit Me',
+            username: 'editmeagent',
+            service_id: mockServiceId,
+        });
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+
+        // Open edit via actions menu
+        await agentPage.openAgentActions('Edit Me');
+        await agentPage.clickEditAction();
+        await agentPage.waitForModal();
+
+        // Change display name
+        await agentPage.getDisplayNameInput().clear();
+        await agentPage.getDisplayNameInput().fill('Edited Agent');
+
+        // Save
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
+
+        // Verify updated name in listing
+        await expect(agentPage.getAgentRowByName('Edited Agent')).toBeVisible({ timeout: 10000 });
+        await expect(agentPage.getAgentRowByName('Edit Me')).not.toBeVisible();
+    });
+
+    test('should delete an agent with confirmation', async ({ page }) => {
+        test.setTimeout(60000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+
+        // Create agent via API
+        const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
+        const token = adminClient.getToken();
+        await agentApi.createTestAgent(token, {
+            display_name: 'Delete Me',
+            username: 'deletemeagent',
+            service_id: mockServiceId,
+        });
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+
+        // Open actions menu and click delete
+        await agentPage.openAgentActions('Delete Me');
+        await agentPage.clickDeleteAction();
+
+        // Confirm deletion dialog is visible
+        await expect(agentPage.getDeleteDialog()).toBeVisible();
+        await agentPage.getDeleteConfirmButton().click();
+
+        // Verify agent removed from listing
+        await expect(agentPage.getAgentRowByName('Delete Me')).not.toBeVisible({ timeout: 10000 });
+    });
+
+    test('should reject duplicate username with error', async ({ page }) => {
+        test.setTimeout(60000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+
+        // Create existing agent via API
+        const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
+        const token = adminClient.getToken();
+        await agentApi.createTestAgent(token, {
+            display_name: 'Existing Agent',
+            username: 'existingagent',
+            service_id: mockServiceId,
+        });
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+
+        // Try to create agent with same username
+        await agentPage.getCreateButton().click();
+        await agentPage.waitForModal();
+
+        await agentPage.fillConfigTab({
+            displayName: 'Duplicate Agent',
+            username: 'existingagent',
+            serviceLabel: 'Mock Service',
+        });
+
+        await agentPage.getModalSaveButton().click();
+
+        // Verify error message appears (modal stays open)
+        await expect(agentPage.getDisplayNameInput()).toBeVisible({ timeout: 5000 });
+    });
+
+    test('should show agent in "Your agents" tab for creator', async ({ page }) => {
+        test.setTimeout(60000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+
+        // Create agent via UI
+        await agentPage.getCreateButton().click();
+        await agentPage.waitForModal();
+        await agentPage.fillConfigTab({
+            displayName: 'My Personal Agent',
+            username: 'mypersonalagent',
+            serviceLabel: 'Mock Service',
+        });
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
+
+        // Switch to "Your agents" tab
+        await agentPage.getYourAgentsTab().click();
+
+        // Verify agent appears in Your agents tab
+        await expect(agentPage.getAgentRowByName('My Personal Agent')).toBeVisible({ timeout: 10000 });
+    });
+});
