@@ -80,7 +80,7 @@ const AgentConfigModal = (props: Props) => {
     const [draft, setDraft] = useState<AgentDraft>(emptyDraft);
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const [errors, setErrors] = useState<Record<string, string>>({});
 
     // Reset form when modal opens
     useEffect(() => {
@@ -88,7 +88,7 @@ const AgentConfigModal = (props: Props) => {
             setActiveTab('config');
             setDraft(agent ? agentToDraft(agent) : emptyDraft);
             setAvatarFile(null);
-            setError(null);
+            setErrors({});
         }
     }, [show, agent]);
 
@@ -108,36 +108,41 @@ const AgentConfigModal = (props: Props) => {
 
     const updateDraft = useCallback((updates: Partial<AgentDraft>) => {
         setDraft((prev) => ({...prev, ...updates}));
+        setErrors((prev) => {
+            const next = {...prev};
+            for (const key of Object.keys(updates)) {
+                delete next[key];
+            }
+            delete next._form;
+            return next;
+        });
     }, []);
 
-    const handleSave = useCallback(async () => {
-        // Validation
+    const validate = useCallback((): Record<string, string> => {
+        const errs: Record<string, string> = {};
         if (!draft.displayName.trim()) {
-            setError(intl.formatMessage({defaultMessage: 'Display name is required.'}));
-            setActiveTab('config');
-            return;
+            errs.displayName = intl.formatMessage({defaultMessage: 'Display name is required'});
         }
         if (!draft.username.trim()) {
-            setError(intl.formatMessage({defaultMessage: 'Username is required.'}));
-            setActiveTab('config');
-            return;
+            errs.username = intl.formatMessage({defaultMessage: 'Username is required'});
+        } else if (!/^[a-z][a-z0-9.\-_]*$/.test(draft.username)) {
+            errs.username = intl.formatMessage({defaultMessage: 'Username must start with a letter and contain only lowercase letters, numbers, periods, hyphens, and underscores'});
         }
         if (!draft.serviceId) {
-            setError(intl.formatMessage({defaultMessage: 'An AI service must be selected.'}));
+            errs.serviceId = intl.formatMessage({defaultMessage: 'AI Service is required'});
+        }
+        return errs;
+    }, [draft, intl]);
+
+    const handleSave = useCallback(async () => {
+        const validationErrors = validate();
+        if (Object.keys(validationErrors).length > 0) {
+            setErrors(validationErrors);
             setActiveTab('config');
             return;
         }
-
-        // Username validation: lowercase alphanumeric + dots/hyphens/underscores, starts with letter
-        const usernameRegex = /^[a-z][a-z0-9.\-_]*$/;
-        if (!usernameRegex.test(draft.username)) {
-            setError(intl.formatMessage({defaultMessage: 'Username must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores.'}));
-            setActiveTab('config');
-            return;
-        }
-
+        setErrors({});
         setSaving(true);
-        setError(null);
 
         try {
             let savedAgent: UserAgent;
@@ -185,18 +190,19 @@ const AgentConfigModal = (props: Props) => {
 
             onSaved(savedAgent);
         } catch (e: any) {
-            const status = e?.status_code;
-            if (status === 403) {
-                setError(intl.formatMessage({defaultMessage: 'You do not have permission to perform this action.'}));
-            } else if (status === 400) {
-                setError(intl.formatMessage({defaultMessage: 'Invalid input. Please check the form fields.'}));
+            const message = e?.message || '';
+            if (e?.status_code === 409 || (message.includes('username') && (message.includes('taken') || message.includes('conflict')))) {
+                setErrors({username: intl.formatMessage({defaultMessage: 'This username is already taken'})});
+                setActiveTab('config');
+            } else if (e?.status_code === 403) {
+                setErrors({_form: intl.formatMessage({defaultMessage: 'You do not have permission to perform this action.'})});
             } else {
-                setError(intl.formatMessage({defaultMessage: 'Failed to save agent. Please try again.'}));
+                setErrors({_form: intl.formatMessage({defaultMessage: 'Failed to save agent. Please try again.'})});
             }
         } finally {
             setSaving(false);
         }
-    }, [mode, agent, draft, avatarFile, intl, onSaved]);
+    }, [mode, agent, draft, avatarFile, intl, onSaved, validate]);
 
     if (!show) {
         return null;
@@ -238,7 +244,7 @@ const AgentConfigModal = (props: Props) => {
                 </TabsContainer>
 
                 <ModalBody>
-                    {error && <ErrorBanner>{error}</ErrorBanner>}
+                    {errors._form && <ErrorBanner>{errors._form}</ErrorBanner>}
 
                     {activeTab === 'config' && (
                         <ConfigTab
@@ -246,6 +252,7 @@ const AgentConfigModal = (props: Props) => {
                             onChange={updateDraft}
                             onAvatarChange={setAvatarFile}
                             botUserId={agent?.bot_user_id}
+                            errors={errors}
                         />
                     )}
                     {activeTab === 'access' && (

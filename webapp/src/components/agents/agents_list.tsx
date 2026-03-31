@@ -9,9 +9,9 @@ import {PlusIcon} from '@mattermost/compass-icons/components';
 
 import {GlobalState} from '@mattermost/types/store';
 
-import {getAgents, deleteAgent as deleteAgentAPI} from '@/client';
+import {getAgents, getServices, deleteAgent as deleteAgentAPI} from '@/client';
 import {PrimaryButton} from '@/components/assets/buttons';
-import {UserAgent} from '@/types/agents';
+import {UserAgent, ServiceInfo} from '@/types/agents';
 
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
@@ -24,10 +24,12 @@ const AgentsList = () => {
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
 
     const [agents, setAgents] = useState<UserAgent[]>([]);
+    const [services, setServices] = useState<ServiceInfo[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<Tab>('all');
     const [deletingAgent, setDeletingAgent] = useState<UserAgent | null>(null);
+    const [searchQuery, setSearchQuery] = useState('');
     const [modalOpen, setModalOpen] = useState(false);
     const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
     const [editingAgent, setEditingAgent] = useState<UserAgent | null>(null);
@@ -36,8 +38,12 @@ const AgentsList = () => {
         try {
             setLoading(true);
             setError(null);
-            const result = await getAgents();
-            setAgents(result || []);
+            const [agentResult, serviceResult] = await Promise.all([
+                getAgents(),
+                getServices().catch(() => []),
+            ]);
+            setAgents(agentResult || []);
+            setServices(serviceResult || []);
         } catch (e: any) {
             setError(intl.formatMessage({defaultMessage: 'Failed to load agents.'}));
         } finally {
@@ -94,10 +100,17 @@ const AgentsList = () => {
         fetchAgents();
     }, [fetchAgents]);
 
-    // Filter agents based on active tab
-    const filteredAgents = activeTab === 'yours'
-        ? agents.filter((a) => a.creator_id === currentUserId)
-        : agents;
+    // Filter agents based on active tab and search query
+    const filteredAgents = agents.filter((a) => {
+        if (activeTab === 'yours' && a.creator_id !== currentUserId) {
+            return false;
+        }
+        if (searchQuery.trim()) {
+            const query = searchQuery.toLowerCase();
+            return a.display_name.toLowerCase().includes(query) || a.username.toLowerCase().includes(query);
+        }
+        return true;
+    });
 
     return (
         <Container>
@@ -131,6 +144,15 @@ const AgentsList = () => {
                 </TabButton>
             </TabBar>
 
+            <SearchContainer>
+                <SearchInput
+                    type='text'
+                    placeholder={intl.formatMessage({defaultMessage: 'Search agents...'})}
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                />
+            </SearchContainer>
+
             {loading && (
                 <LoadingContainer>
                     <FormattedMessage defaultMessage='Loading agents...'/>
@@ -141,7 +163,16 @@ const AgentsList = () => {
                 <ErrorContainer>{error}</ErrorContainer>
             )}
 
-            {!loading && !error && filteredAgents.length === 0 && (
+            {!loading && !error && filteredAgents.length === 0 && searchQuery.trim() && (
+                <NoResultsMessage>
+                    <FormattedMessage
+                        defaultMessage='No agents match "{query}"'
+                        values={{query: searchQuery}}
+                    />
+                </NoResultsMessage>
+            )}
+
+            {!loading && !error && filteredAgents.length === 0 && !searchQuery.trim() && (
                 <EmptyState>
                     {activeTab === 'yours' ? (
                         <FormattedMessage defaultMessage="You haven't created any agents yet."/>
@@ -157,6 +188,7 @@ const AgentsList = () => {
                         <AgentRow
                             key={agent.id}
                             agent={agent}
+                            services={services}
                             isOwner={agent.creator_id === currentUserId || (agent.admin_user_ids?.includes(currentUserId) ?? false)}
                             onEdit={handleEdit}
                             onDelete={handleDeleteRequest}
@@ -258,6 +290,30 @@ const TabButton = styled.button<{$active: boolean}>`
     }
 `;
 
+const SearchContainer = styled.div`
+    padding: 0 0 16px 0;
+`;
+
+const SearchInput = styled.input`
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
+    border-radius: 4px;
+    background: var(--center-channel-bg);
+    color: var(--center-channel-color);
+    font-size: 14px;
+
+    &::placeholder {
+        color: rgba(var(--center-channel-color-rgb), 0.56);
+    }
+
+    &:focus {
+        outline: none;
+        border-color: var(--button-bg);
+        box-shadow: 0 0 0 2px rgba(var(--button-bg-rgb), 0.16);
+    }
+`;
+
 const AgentListContainer = styled.div`
     display: flex;
     flex-direction: column;
@@ -279,6 +335,13 @@ const ErrorContainer = styled.div`
     border-radius: 4px;
     border: 1px solid rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.3);
     color: var(--dnd-indicator, #D24B4E);
+`;
+
+const NoResultsMessage = styled.div`
+    padding: 24px;
+    text-align: center;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+    font-size: 14px;
 `;
 
 const EmptyState = styled.div`

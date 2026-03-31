@@ -12,23 +12,26 @@ import {
 
 import {getProfilePictureUrl} from '@/client';
 
-import {UserAgent} from '@/types/agents';
+import {UserAgent, ServiceInfo} from '@/types/agents';
 
 type Props = {
     agent: UserAgent;
+    services: ServiceInfo[];
     isOwner: boolean;
     onEdit: (agent: UserAgent) => void;
     onDelete: (agent: UserAgent) => void;
 }
 
 const AgentRow = (props: Props) => {
-    const {agent, isOwner, onEdit, onDelete} = props;
+    const {agent, services, isOwner, onEdit, onDelete} = props;
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
     const intl = useIntl();
 
     const avatarUrl = getProfilePictureUrl(agent.bot_user_id, 0);
     const toolCount = agent.enabled_tools?.length ?? 0;
+    const service = services.find((s) => s.id === agent.service_id);
+    const serviceUnavailable = agent.service_id && !service;
 
     // Close menu on outside click
     useEffect(() => {
@@ -62,6 +65,11 @@ const AgentRow = (props: Props) => {
                 <Username>{'@'}{agent.username}</Username>
             </NameColumn>
             <BadgesColumn>
+                {serviceUnavailable && (
+                    <ServiceWarningBadge>
+                        <FormattedMessage defaultMessage='Service unavailable'/>
+                    </ServiceWarningBadge>
+                )}
                 {toolCount > 0 && (
                     <Badge>
                         {intl.formatMessage(
@@ -162,6 +170,15 @@ const BadgesColumn = styled.div`
     gap: 8px;
     align-items: center;
     flex-shrink: 0;
+`;
+
+const ServiceWarningBadge = styled.span`
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08);
+    color: var(--dnd-indicator, #D24B4E);
+    font-size: 12px;
+    white-space: nowrap;
 `;
 
 const Badge = styled.span`

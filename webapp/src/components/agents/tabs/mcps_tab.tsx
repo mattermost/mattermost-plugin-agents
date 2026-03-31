@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
@@ -104,6 +104,33 @@ const McpsTab = (props: Props) => {
         }
     }, [enabledTools, isToolEnabled, onChange]);
 
+    // Detect orphaned tools (enabled but no longer available)
+    const orphanedTools = useMemo(() => {
+        if (servers.length === 0) {
+            return [];
+        }
+        return enabledTools.filter((et) =>
+            !servers.some((s) =>
+                s.serverOrigin === et.server_origin &&
+                s.tools.some((t) => t.name === et.tool_name),
+            ),
+        );
+    }, [enabledTools, servers]);
+
+    // Auto-remove orphaned tools from enabledTools so they're cleaned on save
+    useEffect(() => {
+        if (orphanedTools.length > 0 && servers.length > 0) {
+            const cleaned = enabledTools.filter((et) =>
+                servers.some((s) =>
+                    s.serverOrigin === et.server_origin &&
+                    s.tools.some((t) => t.name === et.tool_name),
+                ),
+            );
+            onChange(cleaned);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [servers]);
+
     // Filter servers/tools by search
     const filteredServers = servers.filter((server) => {
         if (!searchQuery) {
@@ -142,6 +169,15 @@ const McpsTab = (props: Props) => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
             />
+
+            {orphanedTools.length > 0 && (
+                <OrphanedToolsWarning>
+                    <FormattedMessage
+                        defaultMessage='{count, plural, one {# tool is} other {# tools are}} from servers that are no longer available. They will be removed on save.'
+                        values={{count: orphanedTools.length}}
+                    />
+                </OrphanedToolsWarning>
+            )}
 
             <ServerList>
                 {filteredServers.map((server) => {
@@ -391,6 +427,15 @@ const ToolToggle = styled(ServerToggle)`
     width: 36px;
     height: 20px;
     border-radius: 10px;
+`;
+
+const OrphanedToolsWarning = styled.div`
+    padding: 8px 12px;
+    background: rgba(var(--away-indicator-rgb, 255, 188, 66), 0.08);
+    border-radius: 4px;
+    border: 1px solid rgba(var(--away-indicator-rgb, 255, 188, 66), 0.3);
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+    font-size: 13px;
 `;
 
 const LoadingContainer = styled.div`

@@ -17,10 +17,11 @@ type Props = {
     onChange: (updates: Partial<AgentDraft>) => void;
     onAvatarChange: (file: File | null) => void;
     botUserId?: string;  // provided in edit mode — used for avatar display
+    errors?: Record<string, string>;
 }
 
 const ConfigTab = (props: Props) => {
-    const {draft, onChange, onAvatarChange} = props;
+    const {draft, onChange, onAvatarChange, errors = {}} = props;
     const intl = useIntl();
     const [services, setServices] = useState<ServiceInfo[]>([]);
 
@@ -46,6 +47,7 @@ const ConfigTab = (props: Props) => {
                     onChange={(e) => onChange({displayName: e.target.value})}
                     placeholder={intl.formatMessage({defaultMessage: 'e.g. Sales Assistant'})}
                 />
+                {errors.displayName && <FieldError>{errors.displayName}</FieldError>}
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Agent username'})}
                     value={draft.username}
@@ -53,6 +55,7 @@ const ConfigTab = (props: Props) => {
                     onChange={(e) => onChange({username: e.target.value})}
                     helptext={intl.formatMessage({defaultMessage: 'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores.'})}
                 />
+                {errors.username && <FieldError>{errors.username}</FieldError>}
                 <AvatarItem
                     botusername={draft.username}
                     changedAvatar={(image: File) => onAvatarChange(image)}
@@ -65,6 +68,14 @@ const ConfigTab = (props: Props) => {
                     <SelectionItemOption value=''>
                         {intl.formatMessage({defaultMessage: 'Select a service'})}
                     </SelectionItemOption>
+                    {draft.serviceId && !services.find((s) => s.id === draft.serviceId) && (
+                        <SelectionItemOption
+                            value={draft.serviceId}
+                            disabled={true}
+                        >
+                            {intl.formatMessage({defaultMessage: 'Unknown service (deleted)'})}
+                        </SelectionItemOption>
+                    )}
                     {services.map((svc) => (
                         <SelectionItemOption
                             key={svc.id}
@@ -74,6 +85,7 @@ const ConfigTab = (props: Props) => {
                         </SelectionItemOption>
                     ))}
                 </SelectionItem>
+                {errors.serviceId && <FieldError>{errors.serviceId}</FieldError>}
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Custom instructions'})}
                     placeholder={intl.formatMessage({defaultMessage: 'How would you like the agent to respond?'})}
@@ -85,6 +97,12 @@ const ConfigTab = (props: Props) => {
         </FormContainer>
     );
 };
+
+const FieldError = styled.div`
+    color: var(--dnd-indicator, #D24B4E);
+    font-size: 12px;
+    margin-top: -8px;
+`;
 
 const FormContainer = styled.div`
     display: flex;
