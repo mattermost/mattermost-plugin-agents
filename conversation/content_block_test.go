@@ -278,6 +278,6 @@ func TestFilterForNonRequesterDoesNotMutateOriginal(t *testing.T) {
 
 	_ = FilterForNonRequester(original)
 
-	assert.Equal(t, json.RawMessage(originalInputCopy), original[0].Input)
+	assert.Equal(t, originalInputCopy, original[0].Input)
 	assert.Equal(t, originalContentCopy, original[1].Content)
 }
