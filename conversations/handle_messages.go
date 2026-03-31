@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
+	"github.com/mattermost/mattermost-plugin-ai/mmtools"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost-plugin-ai/toolrunner"
@@ -280,6 +281,12 @@ func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, posting
 		return err
 	}
 
+	// Use the new conversation entity path when the service is available.
+	if c.convService != nil {
+		return c.handleDMViaConversation(bot, channel, postingUser, post)
+	}
+
+	// Legacy fallback: process via thread-based context reconstruction.
 	responseRootID := post.Id
 	if post.RootId != "" {
 		responseRootID = post.RootId
@@ -292,10 +299,92 @@ func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, posting
 	return c.respondToPost(bot, postingUser, channel, responsePost, post.Id, func() (*llm.TextStreamResult, error) {
 		stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, false)
 		if err != nil {
-			return nil, fmt.Errorf("unable to process bot mention: %w", err)
+			return nil, fmt.Errorf("unable to process bot DM: %w", err)
 		}
 		return stream, nil
 	})
+}
+
+// handleDMViaConversation processes a DM message using the conversation entity model.
+func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
+	contextOpts := []llm.ContextOption{
+		c.contextBuilder.WithLLMContextTools(bot),
+	}
+	webSearchParams := c.extractWebSearchContext(post)
+	if len(webSearchParams) > 0 {
+		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
+	}
+	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, contextOpts...)
+	if llmContext.Parameters == nil {
+		llmContext.Parameters = make(map[string]interface{})
+	}
+	if _, hasCount := llmContext.Parameters[mmtools.WebSearchCountKey]; !hasCount {
+		llmContext.Parameters[mmtools.WebSearchCountKey] = 0
+	}
+	if _, hasQueries := llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey]; !hasQueries {
+		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
+	}
+
+	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
+		if err != nil {
+			c.mmClient.LogWarn("Failed to load user tool preferences", "error", err.Error(), "userID", postingUser.Id)
+		} else if len(prefs.DisabledServers) > 0 {
+			if llmContext.Tools != nil {
+				llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
+			}
+		}
+	}
+
+	if llmContext.Tools != nil {
+		authErrors := llmContext.Tools.GetAuthErrors()
+		if len(authErrors) > 0 {
+			rootID := post.RootId
+			if rootID == "" {
+				rootID = post.Id
+			}
+			c.sendOAuthNotifications(bot, postingUser.Id, channel.Id, rootID, authErrors)
+		}
+	}
+
+	responseRootID := post.Id
+	if post.RootId != "" {
+		responseRootID = post.RootId
+	}
+
+	responsePost := &model.Post{
+		ChannelId: channel.Id,
+		RootId:    responseRootID,
+	}
+	if err := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); err != nil {
+		return fmt.Errorf("unable to create response placeholder: %w", err)
+	}
+
+	dmResult, err := c.ProcessDMRequest(bot.GetMMBot().UserId, bot.LLM(), postingUser, channel, post, llmContext)
+	if err != nil {
+		c.failResponsePlaceholder(responsePost, postingUser.Locale)
+		return fmt.Errorf("unable to process DM request: %w", err)
+	}
+
+	responsePost.AddProp(streaming.ConversationIDProp, dmResult.ConversationID)
+	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
+		c.mmClient.LogError("Failed to set conversation_id prop", "error", updateErr)
+	}
+
+	if streamErr := c.streamResponseToExistingPost(dmResult.Stream, responsePost, postingUser, channel); streamErr != nil {
+		c.failResponsePlaceholder(responsePost, postingUser.Locale)
+		return fmt.Errorf("unable to stream response: %w", streamErr)
+	}
+
+	if dmResult.IsNew {
+		go func() {
+			if titleErr := c.convService.GenerateTitle(dmResult.ConversationID, bot.LLM(), post.Message, llmContext); titleErr != nil {
+				c.mmClient.LogError("Failed to generate title", "error", titleErr.Error())
+			}
+		}()
+	}
+
+	return nil
 }
 
 func (c *Conversations) respondToPost(
