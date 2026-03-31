@@ -16,6 +16,7 @@ Access AI features through the right pane in one of the following ways:
 - @mention an AI bot in any channel where you have access (such as `@copilot`).
 - Use the **AI Actions** menu by hovering over the first message in any conversation thread (see [license requirements](admin_guide.md#license-requirements))
 - Use the **Ask AI** option in channels with unread messages (see [license requirements](admin_guide.md#license-requirements))
+- Use **Ask Agents about this channel** in a channel header to summarize recent activity, focus on a date range, or ask a question about the current channel. See [Channel Summaries](features/channel_summaries.md).
 
 ### Mobile
 
