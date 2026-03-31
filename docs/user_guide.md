@@ -81,6 +81,8 @@ To summarize unread Mattermost channels:
 
 The channel summary is generated in the Agents pane, and only you can view the summary.
 
+For more flexible channel analysis options, including **Ask Agents about this channel**, custom prompts, and date ranges, see [Channel Summaries](features/channel_summaries.md).
+
 ## Search with AI
 
 You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. Semantic AI search requires a license (see [license requirements](admin_guide.md#license-requirements)), and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
