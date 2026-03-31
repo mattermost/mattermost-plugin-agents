@@ -183,6 +183,13 @@ func (m *mockConversationStore) UpdateTurnContent(id string, content json.RawMes
 	return nil
 }
 
+func (m *mockConversationStore) GetConversationSummariesForUser(_ string, _, _ int) ([]store.ConversationSummary, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return []store.ConversationSummary{}, nil
+}
+
 func (e *TestEnvironment) Cleanup(t *testing.T) {
 	if e.mockAPI != nil {
 		e.mockAPI.AssertExpectations(t)
@@ -570,7 +577,7 @@ func TestHandleGetAIBots(t *testing.T) {
 			name: "search enabled - non-nil service with non-nil embedding search",
 			searchService: func() *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil, nil)
 			}(),
 			expectedSearchEnabled:    true,
 			expectedAllowUnsafeLinks: false,
@@ -581,7 +588,7 @@ func TestHandleGetAIBots(t *testing.T) {
 		},
 		{
 			name:                     "search disabled - non-nil service with nil embedding search",
-			searchService:            search.New(nil, nil, nil, nil, nil),
+			searchService:            search.New(nil, nil, nil, nil, nil, nil),
 			expectedSearchEnabled:    false,
 			expectedAllowUnsafeLinks: false,
 			expectedStatus:           http.StatusOK,

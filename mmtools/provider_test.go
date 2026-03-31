@@ -27,12 +27,12 @@ func TestMMToolProvider_GetTools(t *testing.T) {
 	}{
 		{
 			name:                      "search tool available - search enabled",
-			searchService:             search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil),
+			searchService:             search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil),
 			expectedSearchToolPresent: true,
 		},
 		{
 			name:                      "search tool not available - search disabled",
-			searchService:             search.New(nil, nil, nil, nil, nil),
+			searchService:             search.New(nil, nil, nil, nil, nil, nil),
 			expectedSearchToolPresent: false,
 		},
 		{
@@ -82,7 +82,7 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 			searchService: func() *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
 				me.On("Search", mock.Anything, "test search term", mock.Anything).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil, nil)
 			}(),
 			searchTerm:  "test search term",
 			expectError: false,
@@ -90,7 +90,7 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 		},
 		{
 			name:          "search fails - service disabled",
-			searchService: search.New(nil, nil, nil, nil, nil),
+			searchService: search.New(nil, nil, nil, nil, nil, nil),
 			searchTerm:    "test search term",
 			expectError:   true,
 			expectedMsg:   "search functionality is not configured",
@@ -106,7 +106,7 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 			name: "search fails - term too short",
 			searchService: func() *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil, nil)
 			}(),
 			searchTerm:  "hi",
 			expectError: true,

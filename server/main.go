@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/api"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/config"
+	"github.com/mattermost/mattermost-plugin-ai/conversation"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
@@ -286,6 +287,7 @@ func (p *Plugin) OnActivate() error {
 		prompts,
 		streamingService,
 		licenseChecker,
+		nil, // conversation service wired in a later step
 	)
 
 	// Register update listener for embedding search config changes
@@ -406,6 +408,9 @@ func (p *Plugin) OnActivate() error {
 		&p.configuration,
 	)
 
+	convService := conversation.NewService(p.store, prompts, mmClient, bots)
+	conversationsService.SetConversationService(convService)
+
 	meetingsService := meetings.NewService(
 		pluginAPI,
 		streamingService,
@@ -482,6 +487,8 @@ func (p *Plugin) OnActivate() error {
 		p.store,
 		getSearchInitError,
 	)
+
+	apiService.SetConversationService(convService)
 
 	// Keep only what we need
 	p.pluginAPI = pluginAPI
