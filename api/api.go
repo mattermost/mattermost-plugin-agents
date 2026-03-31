@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +29,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/search"
+	"github.com/mattermost/mattermost-plugin-ai/store"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -75,6 +77,14 @@ type ClusterNotifier interface {
 	PublishConfigUpdate() error
 }
 
+// ConversationStore provides read/write access to conversation and turn data.
+type ConversationStore interface {
+	GetConversation(id string) (*store.Conversation, error)
+	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
+	GetTurnByPostID(postID string) (*store.Turn, error)
+	UpdateTurnContent(id string, content json.RawMessage) error
+}
+
 // API represents the HTTP API functionality for the plugin
 type API struct {
 	bots                  *bots.MMBots
@@ -99,6 +109,7 @@ type API struct {
 	configStore           ConfigStore
 	configUpdater         ConfigUpdater
 	clusterNotifier       ClusterNotifier
+	conversationStore     ConversationStore
 	getSearchInitError    func() string
 }
 
@@ -125,6 +136,7 @@ func New(
 	configStore ConfigStore,
 	configUpdater ConfigUpdater,
 	clusterNotifier ClusterNotifier,
+	conversationStore ConversationStore,
 	getSearchInitError func() string,
 ) *API {
 	return &API{
@@ -150,6 +162,7 @@ func New(
 		configStore:           configStore,
 		configUpdater:         configUpdater,
 		clusterNotifier:       clusterNotifier,
+		conversationStore:     conversationStore,
 		getSearchInitError:    getSearchInitError,
 	}
 }
@@ -197,6 +210,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	}
 
 	router.Use(a.MattermostAuthorizationRequired)
+
+	router.GET("/conversations/:conversationid", a.handleGetConversation)
 
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)

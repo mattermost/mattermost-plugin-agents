@@ -479,6 +479,7 @@ func (p *Plugin) OnActivate() error {
 		p.store,
 		&p.configuration,
 		p,
+		p.store,
 		getSearchInitError,
 	)
 

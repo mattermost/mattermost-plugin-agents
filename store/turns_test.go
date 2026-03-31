@@ -289,6 +289,168 @@ func TestUpdateTurnTokens(t *testing.T) {
 	}
 }
 
+func TestGetMaxSequenceForConversation(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, s *Store) string // returns conversationID
+		validate func(t *testing.T, s *Store, convID string)
+	}{
+		{
+			name: "returns 0 for conversation with no turns",
+			setup: func(t *testing.T, s *Store) string {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+				return conv.ID
+			},
+			validate: func(t *testing.T, s *Store, convID string) {
+				maxSeq, err := s.GetMaxSequenceForConversation(convID)
+				require.NoError(t, err)
+				assert.Equal(t, 0, maxSeq)
+			},
+		},
+		{
+			name: "returns 0 for nonexistent conversation",
+			setup: func(t *testing.T, s *Store) string {
+				return "nonexistent"
+			},
+			validate: func(t *testing.T, s *Store, convID string) {
+				maxSeq, err := s.GetMaxSequenceForConversation(convID)
+				require.NoError(t, err)
+				assert.Equal(t, 0, maxSeq)
+			},
+		},
+		{
+			name: "returns correct max after multiple turns",
+			setup: func(t *testing.T, s *Store) string {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				for i := 1; i <= 5; i++ {
+					turn := makeTurn(conv.ID, i)
+					err = s.CreateTurn(turn)
+					require.NoError(t, err)
+				}
+				return conv.ID
+			},
+			validate: func(t *testing.T, s *Store, convID string) {
+				maxSeq, err := s.GetMaxSequenceForConversation(convID)
+				require.NoError(t, err)
+				assert.Equal(t, 5, maxSeq)
+			},
+		},
+		{
+			name: "returns max even with non-contiguous sequences",
+			setup: func(t *testing.T, s *Store) string {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				for _, seq := range []int{1, 3, 7} {
+					turn := makeTurn(conv.ID, seq)
+					err = s.CreateTurn(turn)
+					require.NoError(t, err)
+				}
+				return conv.ID
+			},
+			validate: func(t *testing.T, s *Store, convID string) {
+				maxSeq, err := s.GetMaxSequenceForConversation(convID)
+				require.NoError(t, err)
+				assert.Equal(t, 7, maxSeq)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+
+			err := s.RunMigrations()
+			require.NoError(t, err)
+
+			convID := tt.setup(t, s)
+			tt.validate(t, s, convID)
+		})
+	}
+}
+
+func TestGetTurnByPostID(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, s *Store) string // returns conversationID
+		validate func(t *testing.T, s *Store, convID string)
+	}{
+		{
+			name: "returns turn matching post ID",
+			setup: func(t *testing.T, s *Store) string {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				turn := makeTurn(conv.ID, 1, func(tu *Turn) {
+					tu.PostID = stringPtr("target-post-id")
+					tu.Content = json.RawMessage(`[{"type":"text","text":"found me"}]`)
+				})
+				err = s.CreateTurn(turn)
+				require.NoError(t, err)
+
+				return conv.ID
+			},
+			validate: func(t *testing.T, s *Store, _ string) {
+				turn, err := s.GetTurnByPostID("target-post-id")
+				require.NoError(t, err)
+				require.NotNil(t, turn)
+				assert.JSONEq(t, `[{"type":"text","text":"found me"}]`, string(turn.Content))
+				require.NotNil(t, turn.PostID)
+				assert.Equal(t, "target-post-id", *turn.PostID)
+			},
+		},
+		{
+			name: "returns nil for non-existent post ID",
+			setup: func(t *testing.T, s *Store) string {
+				return ""
+			},
+			validate: func(t *testing.T, s *Store, _ string) {
+				turn, err := s.GetTurnByPostID("nonexistent")
+				require.NoError(t, err)
+				assert.Nil(t, turn)
+			},
+		},
+		{
+			name: "does not match turns with nil post ID",
+			setup: func(t *testing.T, s *Store) string {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				turn := makeTurn(conv.ID, 1) // PostID is nil by default
+				err = s.CreateTurn(turn)
+				require.NoError(t, err)
+
+				return conv.ID
+			},
+			validate: func(t *testing.T, s *Store, _ string) {
+				turn, err := s.GetTurnByPostID("anything")
+				require.NoError(t, err)
+				assert.Nil(t, turn)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+
+			err := s.RunMigrations()
+			require.NoError(t, err)
+
+			convID := tt.setup(t, s)
+			tt.validate(t, s, convID)
+		})
+	}
+}
+
 func TestTurnCleanupWithConversation(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -6,6 +6,7 @@ import {Store, UnknownAction} from 'redux';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
+import {WebSocketMessage} from '@mattermost/client';
 import {GlobalState} from '@mattermost/types/store';
 
 //@ts-ignore it exists
@@ -30,6 +31,7 @@ import {isRHSCompatable} from './mm_webapp';
 import SearchButton from './components/search_button';
 import AskChannelButton from './components/ask_channel_button';
 import {doSelectPost} from './hooks';
+import {invalidateConversation} from './hooks/use_conversation';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
 import {useBotlist} from './bots';
@@ -130,6 +132,14 @@ export default class Plugin {
         // Handle all post-related websocket events with one handler
         registry.registerWebSocketEventHandler('custom_mattermost-ai_postupdate', this.postEventListener.handlePostUpdateWebsockets);
         registry.registerWebSocketEventHandler('custom_mattermost-ai_tool_call_status_updated', this.postEventListener.handlePostUpdateWebsockets);
+
+        // Invalidate conversation cache when backend publishes conversation updates
+        registry.registerWebSocketEventHandler(
+            'custom_mattermost-ai_conversation_updated',
+            (msg: WebSocketMessage<{conversation_id: string}>) => {
+                invalidateConversation(msg.data.conversation_id);
+            },
+        );
 
         const LLMBotPostWithWebsockets = (props: any) => {
             return (

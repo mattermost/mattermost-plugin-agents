@@ -23,6 +23,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/metrics"
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-ai/search"
+	"github.com/mattermost/mattermost-plugin-ai/store"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -42,11 +43,12 @@ const (
 )
 
 type TestEnvironment struct {
-	api     *API
-	mockAPI *plugintest.API
-	bots    *bots.MMBots
-	config  *testConfigImpl
-	client  *pluginapi.Client
+	api               *API
+	mockAPI           *plugintest.API
+	bots              *bots.MMBots
+	config            *testConfigImpl
+	client            *pluginapi.Client
+	conversationStore *mockConversationStore
 }
 
 // testConfigImpl is a minimal implementation of Config for testing
@@ -115,6 +117,70 @@ func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.
 
 func (m *mockMCPClientManager) GetConfig() mcp.Config {
 	return m.config
+}
+
+// mockConversationStore is a simple in-memory implementation of ConversationStore for API-layer tests.
+type mockConversationStore struct {
+	conversations map[string]*store.Conversation
+	turns         map[string][]store.Turn // keyed by conversation ID
+	turnsByPost   map[string]*store.Turn  // keyed by post ID
+	err           error                   // if set, all methods return this error
+}
+
+func newMockConversationStore() *mockConversationStore {
+	return &mockConversationStore{
+		conversations: make(map[string]*store.Conversation),
+		turns:         make(map[string][]store.Turn),
+		turnsByPost:   make(map[string]*store.Turn),
+	}
+}
+
+func (m *mockConversationStore) GetConversation(id string) (*store.Conversation, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	conv, ok := m.conversations[id]
+	if !ok {
+		return nil, store.ErrConversationNotFound
+	}
+	return conv, nil
+}
+
+func (m *mockConversationStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	turns, ok := m.turns[conversationID]
+	if !ok {
+		return []store.Turn{}, nil
+	}
+	return turns, nil
+}
+
+func (m *mockConversationStore) GetTurnByPostID(postID string) (*store.Turn, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	turn, ok := m.turnsByPost[postID]
+	if !ok {
+		return nil, nil
+	}
+	return turn, nil
+}
+
+func (m *mockConversationStore) UpdateTurnContent(id string, content json.RawMessage) error {
+	if m.err != nil {
+		return m.err
+	}
+	for convID, turns := range m.turns {
+		for i, turn := range turns {
+			if turn.ID == id {
+				m.turns[convID][i].Content = content
+				return nil
+			}
+		}
+	}
+	return nil
 }
 
 func (e *TestEnvironment) Cleanup(t *testing.T) {
@@ -189,15 +255,17 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	conversationsService := &conversations.Conversations{}
 
 	cfg := &testConfigImpl{}
+	mockConvStore := newMockConversationStore()
 
-	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil, nil, nil, nil)
+	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil, nil, nil, mockConvStore, nil)
 
 	return &TestEnvironment{
-		api:     api,
-		mockAPI: mockAPI,
-		bots:    testBots,
-		config:  cfg,
-		client:  client,
+		api:               api,
+		mockAPI:           mockAPI,
+		bots:              testBots,
+		config:            cfg,
+		client:            client,
+		conversationStore: mockConvStore,
 	}
 }
 

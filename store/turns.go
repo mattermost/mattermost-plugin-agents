@@ -4,7 +4,9 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
@@ -83,6 +85,45 @@ func (s *Store) UpdateTurnContent(id string, content json.RawMessage) error {
 		return fmt.Errorf("failed to update turn content: %w", err)
 	}
 	return nil
+}
+
+// GetMaxSequenceForConversation returns the maximum sequence number for turns in the
+// given conversation, or 0 if no turns exist.
+func (s *Store) GetMaxSequenceForConversation(conversationID string) (int, error) {
+	query, args, err := s.builder.
+		Select("COALESCE(MAX(Sequence), 0)").
+		From("LLM_Turns").
+		Where(sq.Eq{"ConversationID": conversationID}).
+		ToSql()
+	if err != nil {
+		return 0, fmt.Errorf("failed to build max sequence query: %w", err)
+	}
+	var maxSeq int
+	if err := s.db.Get(&maxSeq, query, args...); err != nil {
+		return 0, fmt.Errorf("failed to get max sequence: %w", err)
+	}
+	return maxSeq, nil
+}
+
+// GetTurnByPostID retrieves a turn by its PostID.
+// Returns nil, nil if no turn with the given PostID exists.
+func (s *Store) GetTurnByPostID(postID string) (*Turn, error) {
+	query, args, err := s.builder.
+		Select(turnColumns...).
+		From("LLM_Turns").
+		Where(sq.Eq{"PostID": postID}).
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build get turn by post ID query: %w", err)
+	}
+	var turn Turn
+	if err := s.db.Get(&turn, query, args...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get turn by post ID: %w", err)
+	}
+	return &turn, nil
 }
 
 // UpdateTurnTokens updates the TokensIn and TokensOut fields on a turn.
