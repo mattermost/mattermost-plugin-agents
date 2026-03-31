@@ -982,9 +982,19 @@ go build ./...
 
 ## Definition of Done Checklist
 
-- [ ] `go build ./...` succeeds (no compilation errors)
-- [ ] `go test ./store/... -run TestRunMigrations -v` passes (migration 000004 runs cleanly)
-- [ ] `go test ./store/... -run TestAgent -v` passes (all 11 CRUD test functions green)
-- [ ] `go test ./store/... -v` passes (existing tests still pass with migration count update)
-- [ ] `go build ./useragents/...` succeeds
-- [ ] `go build ./api/...` succeeds (AgentStore interface compiles)
+- [x] `go build ./...` succeeds (pre-existing server/main.go manifest error unrelated to our changes; `go build ./useragents/... ./store/... ./api/...` all clean)
+- [x] `go test ./store/... -run TestRunMigrations -v` passes (migration 000004 runs cleanly)
+- [x] `go test ./store/... -run TestAgent -v` passes (all 12 CRUD test functions green)
+- [x] `go test ./store/... -v` passes (all 30+ tests pass with migration count update)
+- [x] `go build ./useragents/...` succeeds
+- [x] `go build ./api/...` succeeds (AgentStore interface compiles)
+
+---
+
+## Implementation Notes
+
+**Bugs fixed during implementation:**
+1. **`agentRow` db tags** — PostgreSQL folds unquoted column names to lowercase, so `db:"ID"` didn't match the actual column `id`. Changed all tags to lowercase (e.g., `db:"id"`, `db:"botuserid"`).
+2. **`setupTestStore` search_path** — `SET search_path` only applied to one pooled connection; concurrent goroutines got different connections without the schema set. Fixed by setting `search_path` via the connection string parameter so all pooled connections inherit it.
+
+**Commit:** `f4e7d8e` — Add UserAgent model, store CRUD, migration, and AgentStore interface

@@ -477,6 +477,7 @@ func (p *Plugin) OnActivate() error {
 		mcpHandlers,
 		llmUpstreamHTTPClient,
 		p.store,
+		p.store,
 		&p.configuration,
 		p,
 		getSearchInitError,

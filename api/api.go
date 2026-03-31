@@ -108,6 +108,7 @@ type API struct {
 	mcpHandlers           *mcpserver.PluginMCPHandlers
 	llmUpstreamHTTPClient *http.Client
 	configStore           ConfigStore
+	agentStore            AgentStore
 	configUpdater         ConfigUpdater
 	clusterNotifier       ClusterNotifier
 	getSearchInitError    func() string
@@ -134,6 +135,7 @@ func New(
 	mcpHandlers *mcpserver.PluginMCPHandlers,
 	llmUpstreamHTTPClient *http.Client,
 	configStore ConfigStore,
+	agentStore AgentStore,
 	configUpdater ConfigUpdater,
 	clusterNotifier ClusterNotifier,
 	getSearchInitError func() string,
@@ -159,6 +161,7 @@ func New(
 		mcpHandlers:           mcpHandlers,
 		llmUpstreamHTTPClient: llmUpstreamHTTPClient,
 		configStore:           configStore,
+		agentStore:            agentStore,
 		configUpdater:         configUpdater,
 		clusterNotifier:       clusterNotifier,
 		getSearchInitError:    getSearchInitError,
@@ -215,6 +218,19 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/mcp/tools", a.handleGetUserMCPTools)
 	router.GET("/mcp/user-preferences", a.handleGetUserPreferences)
 	router.PUT("/mcp/user-preferences", a.handlePutUserPreferences)
+
+	// Agent CRUD routes — authenticated, license-gated
+	agentRouter := router.Group("/agents")
+	agentRouter.Use(a.agentLicenseRequired)
+	agentRouter.POST("", a.handleCreateAgent)
+	agentRouter.GET("", a.handleListAgents)
+	agentRouter.GET("/:agentid", a.handleGetAgent)
+	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
+	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
+	agentRouter.POST("/:agentid/avatar", a.handleUploadAgentAvatar)
+
+	// Service listing — authenticated, license-gated (same gate)
+	router.GET("/services", a.agentLicenseRequired, a.handleListServices)
 
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
 	// Used by the MCP server for external search callbacks.

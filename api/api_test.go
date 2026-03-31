@@ -6,11 +6,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
@@ -24,6 +26,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-ai/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -42,11 +45,12 @@ const (
 )
 
 type TestEnvironment struct {
-	api     *API
-	mockAPI *plugintest.API
-	bots    *bots.MMBots
-	config  *testConfigImpl
-	client  *pluginapi.Client
+	api        *API
+	mockAPI    *plugintest.API
+	bots       *bots.MMBots
+	config     *testConfigImpl
+	client     *pluginapi.Client
+	agentStore *mockAgentStore
 }
 
 // testConfigImpl is a minimal implementation of Config for testing
@@ -115,6 +119,71 @@ func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.
 
 func (m *mockMCPClientManager) GetConfig() mcp.Config {
 	return m.config
+}
+
+// mockAgentStore is a minimal in-memory implementation of AgentStore for testing.
+type mockAgentStore struct {
+	agents map[string]*useragents.UserAgent
+}
+
+func newMockAgentStore() *mockAgentStore {
+	return &mockAgentStore{agents: make(map[string]*useragents.UserAgent)}
+}
+
+func (m *mockAgentStore) CreateAgent(agent *useragents.UserAgent) error {
+	agent.ID = "agen" + fmt.Sprintf("%022d", len(m.agents)+1)
+	now := time.Now().UnixMilli()
+	agent.CreateAt = now
+	agent.UpdateAt = now
+	m.agents[agent.ID] = agent
+	return nil
+}
+
+func (m *mockAgentStore) GetAgent(id string) (*useragents.UserAgent, error) {
+	agent, ok := m.agents[id]
+	if !ok || agent.DeleteAt != 0 {
+		return nil, nil
+	}
+	return agent, nil
+}
+
+func (m *mockAgentStore) ListAgents() ([]*useragents.UserAgent, error) {
+	result := make([]*useragents.UserAgent, 0, len(m.agents))
+	for _, agent := range m.agents {
+		if agent.DeleteAt == 0 {
+			result = append(result, agent)
+		}
+	}
+	return result, nil
+}
+
+func (m *mockAgentStore) ListAgentsByCreator(creatorID string) ([]*useragents.UserAgent, error) {
+	result := make([]*useragents.UserAgent, 0)
+	for _, agent := range m.agents {
+		if agent.DeleteAt == 0 && agent.CreatorID == creatorID {
+			result = append(result, agent)
+		}
+	}
+	return result, nil
+}
+
+func (m *mockAgentStore) UpdateAgent(agent *useragents.UserAgent) error {
+	existing, ok := m.agents[agent.ID]
+	if !ok || existing.DeleteAt != 0 {
+		return fmt.Errorf("agent %q not found or already deleted", agent.ID)
+	}
+	agent.UpdateAt = time.Now().UnixMilli()
+	m.agents[agent.ID] = agent
+	return nil
+}
+
+func (m *mockAgentStore) DeleteAgent(id string) error {
+	agent, ok := m.agents[id]
+	if !ok || agent.DeleteAt != 0 {
+		return fmt.Errorf("agent %q not found or already deleted", id)
+	}
+	agent.DeleteAt = time.Now().UnixMilli()
+	return nil
 }
 
 func (e *TestEnvironment) Cleanup(t *testing.T) {
@@ -190,14 +259,16 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 
 	cfg := &testConfigImpl{}
 
-	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil, nil, nil, nil)
+	agentStore := newMockAgentStore()
+	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil, agentStore, nil, nil, nil)
 
 	return &TestEnvironment{
-		api:     api,
-		mockAPI: mockAPI,
-		bots:    testBots,
-		config:  cfg,
-		client:  client,
+		api:        api,
+		mockAPI:    mockAPI,
+		bots:       testBots,
+		config:     cfg,
+		client:     client,
+		agentStore: agentStore,
 	}
 }
 
