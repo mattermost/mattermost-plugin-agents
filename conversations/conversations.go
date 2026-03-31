@@ -23,6 +23,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
+	"github.com/mattermost/mattermost-plugin-ai/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -110,11 +111,121 @@ func (c *Conversations) SetConversationService(svc *conversation.Service) {
 	c.convService = svc
 }
 
+// DMRequestResult is the return value of ProcessDMRequest.
+type DMRequestResult struct {
+	ConversationID string
+	IsNew          bool
+	Stream         *llm.TextStreamResult
+}
+
+// ProcessDMRequest handles a DM message using the conversation entity model.
+func (c *Conversations) ProcessDMRequest(
+	botID string,
+	lm llm.LanguageModel,
+	postingUser *model.User,
+	channel *model.Channel,
+	post *model.Post,
+	llmCtx *llm.Context,
+) (*DMRequestResult, error) {
+	if c.convService == nil {
+		return nil, fmt.Errorf("conversation service not configured")
+	}
+	if llmCtx == nil {
+		llmCtx = &llm.Context{}
+	}
+	if llmCtx.RequestingUser == nil {
+		llmCtx.RequestingUser = postingUser
+	}
+	if llmCtx.Channel == nil {
+		llmCtx.Channel = channel
+	}
+
+	systemPrompt := ""
+	if c.prompts != nil {
+		sp, err := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, llmCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to format system prompt: %w", err)
+		}
+		systemPrompt = sp
+	}
+
+	var convID string
+	var isNew bool
+	postID := post.Id
+
+	if post.RootId == "" {
+		channelID := channel.Id
+		result, err := c.convService.CreateConversation(conversation.CreateConversationParams{
+			UserID:       postingUser.Id,
+			BotID:        botID,
+			ChannelID:    &channelID,
+			RootPostID:   &postID,
+			Operation:    "conversation",
+			SystemPrompt: systemPrompt,
+			UserMessage:  post.Message,
+			UserPostID:   &postID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create conversation: %w", err)
+		}
+		convID = result.ConversationID
+		isNew = true
+	} else {
+		result, err := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
+			UserID:       postingUser.Id,
+			BotID:        botID,
+			ChannelID:    channel.Id,
+			RootPostID:   post.RootId,
+			Operation:    "conversation",
+			SystemPrompt: systemPrompt,
+			UserMessage:  post.Message,
+			UserPostID:   &postID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get or create conversation: %w", err)
+		}
+		convID = result.Conversation.ID
+		isNew = result.IsNew
+	}
+
+	conv, err := c.convService.GetConversation(convID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get conversation: %w", err)
+	}
+	completionReq, err := c.convService.BuildCompletionRequest(conv, llmCtx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build completion request: %w", err)
+	}
+
+	shouldExecute := func(tc llm.ToolCall) bool {
+		if c.toolPolicyChecker == nil {
+			return false
+		}
+		policy, enabled := c.toolPolicyChecker.GetToolPolicy(tc.ServerOrigin, tc.Name)
+		return policy == mcp.ToolPolicyAutoRun && enabled
+	}
+
+	runner := toolrunner.New(lm)
+	runResult, err := runner.Run(*completionReq, shouldExecute)
+	if err != nil {
+		return nil, fmt.Errorf("tool runner failed: %w", err)
+	}
+	if len(runResult.ToolTurns) > 0 {
+		if writeErr := c.convService.WriteToolTurns(convID, runResult.ToolTurns, true); writeErr != nil {
+			return nil, fmt.Errorf("failed to write tool turns: %w", writeErr)
+		}
+	}
+	return &DMRequestResult{
+		ConversationID: convID,
+		IsNew:          isNew,
+		Stream:         runResult.Stream,
+	}, nil
+}
+
 func (c *Conversations) appendDMAutoRunOptions(isDM bool, llmContext *llm.Context, opts []llm.LanguageModelOption) []llm.LanguageModelOption {
 	if !isDM || c.toolPolicyChecker == nil || llmContext == nil || llmContext.Tools == nil {
 		return opts
 	}
-
 	allTools := llmContext.Tools.GetTools()
 	var autoRunNames []string
 	for _, t := range allTools {
@@ -126,7 +237,6 @@ func (c *Conversations) appendDMAutoRunOptions(isDM bool, llmContext *llm.Contex
 	if len(autoRunNames) > 0 {
 		opts = append(opts, llm.WithAutoRunTools(autoRunNames))
 	}
-
 	return opts
 }
 
@@ -144,25 +254,17 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 
 	var posts []llm.Post
 	if post.RootId == "" {
-		// A new conversation
 		prompt, err := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, context)
 		if err != nil {
 			return nil, fmt.Errorf("failed to format prompt: %w", err)
 		}
-		posts = []llm.Post{
-			{
-				Role:    llm.PostRoleSystem,
-				Message: prompt,
-			},
-		}
+		posts = []llm.Post{{Role: llm.PostRoleSystem, Message: prompt}}
 	} else {
-		// Continuing an existing conversation
 		previousConversation, errThread := mmapi.GetThreadData(c.mmClient, post.Id)
 		if errThread != nil {
 			return nil, fmt.Errorf("failed to get previous conversation: %w", errThread)
 		}
 		previousConversation.CutoffBeforePostID(post.Id)
-
 		var err error
 		posts, err = c.existingConversationToLLMPosts(bot, previousConversation, context)
 		if err != nil {
@@ -171,22 +273,14 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 	}
 
 	posts = append(posts, c.PostToAIPost(bot, post))
-
-	completionRequest := llm.CompletionRequest{
-		Posts:     posts,
-		Context:   context,
-		Operation: llm.OperationConversation,
-	}
+	completionRequest := llm.CompletionRequest{Posts: posts, Context: context, Operation: llm.OperationConversation}
 	var opts []llm.LanguageModelOption
 	if toolsDisabled {
-		// Tools are disabled in this context but we still inform the LLM about DM-only tools.
 		opts = append(opts, llm.WithToolsDisabled())
-
 		if c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled() {
 			opts = append(opts, llm.WithNativeWebSearchAllowed())
 		}
 	}
-
 	opts = c.appendDMAutoRunOptions(isDM, context, opts)
 
 	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
@@ -194,23 +288,16 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		return nil, err
 	}
 
-	// Enrich tool calls with server origin for auto-approval decisions
 	var toolsStore *llm.ToolStore
 	if context != nil && context.Tools != nil {
 		toolsStore = context.Tools
 	}
 	result = llm.EnrichToolCallsWithServerOrigin(result, toolsStore)
-
-	// Decorate the stream with web search annotations if available
 	webSearchData := mmtools.ConsumeWebSearchContexts(context)
 	c.mmClient.LogDebug("Checking for web search data in ProcessUserRequestWithContext", "has_data", len(webSearchData) > 0, "num_contexts", len(webSearchData))
 	if len(webSearchData) > 0 {
 		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
 	}
-
-	// Wrap stream with MCP auto-approval when tools are active (DM or channel with
-	// tool calling enabled). DMs pass allowToolsInChannel=false but toolsDisabled is
-	// false, so we key off toolsDisabled rather than allowToolsInChannel alone.
 	if !toolsDisabled && context != nil && context.Tools != nil && c.toolPolicyChecker != nil {
 		result = wrapStreamWithMCPAutoApproval(result, context, c.toolPolicyChecker)
 	}
@@ -228,25 +315,13 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 
 // ProcessUserRequest processes a user request to a bot
 func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
-	// Extract web search context from conversation history to preserve citations
-	// This ensures citations from previous searches work in follow-up messages
 	webSearchParams := c.extractWebSearchContext(post)
-
 	var contextOpts []llm.ContextOption
 	contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextTools(bot))
 	if len(webSearchParams) > 0 {
 		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
-
-	// Create a context with default tools and preserved web search context
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(
-		bot,
-		postingUser,
-		channel,
-		contextOpts...,
-	)
-
-	// If web search context wasn't found, initialize fresh tracking
+	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, contextOpts...)
 	if llmContext.Parameters == nil {
 		llmContext.Parameters = make(map[string]interface{})
 	}
@@ -257,10 +332,6 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
 	}
 
-	// Apply user-disabled-provider filtering for DM/group channels only (Copilot RHS).
-	// In-channel @mentions use the agent's EnabledTools and do not apply user toggles.
-	// This must happen before auth-error notifications so users don't receive OAuth
-	// prompts for providers they have explicitly disabled.
 	var disabledOrigins map[string]bool
 	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
@@ -277,7 +348,6 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 		}
 	}
 
-	// Check for auth errors in the tool store, excluding disabled providers.
 	if llmContext.Tools != nil {
 		authErrors := llmContext.Tools.GetAuthErrors()
 		if len(disabledOrigins) > 0 {
@@ -308,31 +378,21 @@ func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID stri
 		Operation:        llm.OperationTitleGeneration,
 		OperationSubType: llm.SubTypeNoStream,
 	}
-
-	conversationTitle, err := bot.LLM().ChatCompletionNoStream(
-		titleRequest,
-		llm.WithMaxGeneratedTokens(25),
-		llm.WithReasoningDisabled(),
-		llm.WithToolsDisabled(),
-	)
+	conversationTitle, err := bot.LLM().ChatCompletionNoStream(titleRequest, llm.WithMaxGeneratedTokens(25), llm.WithReasoningDisabled(), llm.WithToolsDisabled())
 	if err != nil {
 		return fmt.Errorf("failed to get title: %w", err)
 	}
-
 	conversationTitle = strings.Trim(conversationTitle, "\n \"'")
-
 	if err := c.SaveTitle(postID, conversationTitle); err != nil {
 		return fmt.Errorf("failed to save title: %w", err)
 	}
-
 	return nil
 }
 
 // existingConversationToLLMPosts converts existing conversation to LLM posts format
-func (c *Conversations) existingConversationToLLMPosts(bot *bots.Bot, conversation *mmapi.ThreadData, context *llm.Context) ([]llm.Post, error) {
-	// Handle thread summarization requests
-	originalThreadID, ok := conversation.Posts[0].GetProp(ThreadIDProp).(string)
-	if ok && originalThreadID != "" && conversation.Posts[0].UserId == bot.GetMMBot().UserId {
+func (c *Conversations) existingConversationToLLMPosts(bot *bots.Bot, conv *mmapi.ThreadData, context *llm.Context) ([]llm.Post, error) {
+	originalThreadID, ok := conv.Posts[0].GetProp(ThreadIDProp).(string)
+	if ok && originalThreadID != "" && conv.Posts[0].UserId == bot.GetMMBot().UserId {
 		threadPost, err := c.mmClient.GetPost(originalThreadID)
 		if err != nil {
 			return nil, err
@@ -341,7 +401,6 @@ func (c *Conversations) existingConversationToLLMPosts(bot *bots.Bot, conversati
 		if err != nil {
 			return nil, err
 		}
-
 		if !c.mmClient.HasPermissionToChannel(context.RequestingUser.Id, threadChannel.Id, model.PermissionReadChannel) ||
 			c.bots.CheckUsageRestrictions(context.RequestingUser.Id, bot, threadChannel) != nil {
 			T := i18n.LocalizerFunc(c.i18n, context.RequestingUser.Locale)
@@ -355,41 +414,27 @@ func (c *Conversations) existingConversationToLLMPosts(bot *bots.Bot, conversati
 			}
 			return nil, fmt.Errorf("user no longer has access to original thread")
 		}
-
-		analysisType, ok := conversation.Posts[0].GetProp(AnalysisTypeProp).(string)
+		analysisType, ok := conv.Posts[0].GetProp(AnalysisTypeProp).(string)
 		if !ok {
 			return nil, fmt.Errorf("missing analysis type")
 		}
-
-		// Backward-compat fallback: rebuild initial posts from the original thread.
-		// This path is for pre-v2 analysis threads that lack a conversation entity.
 		posts, err := c.buildAnalysisFallbackPosts(originalThreadID, context, analysisType)
 		if err != nil {
 			return nil, err
 		}
-		posts = append(posts, c.ThreadToLLMPosts(bot, conversation)...)
+		posts = append(posts, c.ThreadToLLMPosts(bot, conv)...)
 		return posts, nil
 	}
 
-	// Plain DM conversation
 	prompt, err := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, context)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format prompt: %w", err)
 	}
-	posts := []llm.Post{
-		{
-			Role:    llm.PostRoleSystem,
-			Message: prompt,
-		},
-	}
-	posts = append(posts, c.ThreadToLLMPosts(bot, conversation)...)
-
+	posts := []llm.Post{{Role: llm.PostRoleSystem, Message: prompt}}
+	posts = append(posts, c.ThreadToLLMPosts(bot, conv)...)
 	return posts, nil
 }
 
-// buildAnalysisFallbackPosts constructs the initial system+user posts for a thread analysis
-// from the original thread. This is a backward-compatibility fallback for pre-v2 analysis
-// threads that lack a conversation entity. It will be removed in Step L.
 func (c *Conversations) buildAnalysisFallbackPosts(originalThreadID string, context *llm.Context, analysisType string) ([]llm.Post, error) {
 	threadData, err := mmapi.GetThreadData(c.mmClient, originalThreadID)
 	if err != nil {
@@ -397,7 +442,6 @@ func (c *Conversations) buildAnalysisFallbackPosts(originalThreadID string, cont
 	}
 	formattedThread := format.ThreadData(threadData)
 	context.Parameters = map[string]any{"Thread": formattedThread}
-
 	systemPromptName := prompts.PromptSummarizeThreadSystem
 	userPromptName := prompts.PromptThreadUser
 	switch analysisType {
@@ -408,17 +452,14 @@ func (c *Conversations) buildAnalysisFallbackPosts(originalThreadID string, cont
 		systemPromptName = prompts.PromptFindOpenQuestionsSystem
 		userPromptName = prompts.PromptFindOpenQuestionsUser
 	}
-
 	systemPrompt, err := c.prompts.Format(systemPromptName, context)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format system prompt: %w", err)
 	}
-
 	userPrompt, err := c.prompts.Format(userPromptName, context)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format user prompt: %w", err)
 	}
-
 	return []llm.Post{
 		{Role: llm.PostRoleSystem, Message: systemPrompt},
 		{Role: llm.PostRoleUser, Message: userPrompt},
@@ -428,29 +469,23 @@ func (c *Conversations) buildAnalysisFallbackPosts(originalThreadID string, cont
 // GetAIThreads gets AI conversation threads for a user
 func (c *Conversations) GetAIThreads(userID string) ([]AIThread, error) {
 	allBots := c.bots.GetAllBots()
-
 	dmChannelIDs := []string{}
 	for _, bot := range allBots {
 		channelName := model.GetDMNameFromIds(userID, bot.GetMMBot().UserId)
 		botDMChannel, err := c.mmClient.GetChannelByName("", channelName, false)
 		if err != nil {
 			if errors.Is(err, pluginapi.ErrNotFound) {
-				// Channel doesn't exist yet, so we'll skip it
 				continue
 			}
 			c.mmClient.LogError("unable to get DM channel for bot", "error", err, "bot_id", bot.GetMMBot().UserId)
 			continue
 		}
-
-		// Extra permissions checks are not totally necessary since a user should always have permission to read their own DMs
 		if !c.mmClient.HasPermissionToChannel(userID, botDMChannel.Id, model.PermissionReadChannel) {
 			c.mmClient.LogDebug("user doesn't have permission to read channel", "user_id", userID, "channel_id", botDMChannel.Id, "bot_id", bot.GetMMBot().UserId)
 			continue
 		}
-
 		dmChannelIDs = append(dmChannelIDs, botDMChannel.Id)
 	}
-
 	return c.getAIThreads(dmChannelIDs)
 }
 
@@ -459,11 +494,9 @@ const defaultMaxFileSize = int64(1024 * 1024 * 5) // 5MB
 func (c *Conversations) BotCreateNonResponsePost(botid string, requesterUserID string, post *model.Post) error {
 	streaming.ModifyPostForBot(botid, requesterUserID, post, "")
 	post.AddProp(streaming.NoRegen, true)
-
 	if err := c.mmClient.CreatePost(post); err != nil {
 		return err
 	}
-
 	return nil
 }
 
@@ -475,20 +508,16 @@ func (c *Conversations) PostToAIPost(bot *bots.Bot, post *model.Post) llm.Post {
 	var filesForUpstream []llm.File
 	message := format.PostBody(post)
 	var extractedFileContents []string
-
 	maxFileSize := defaultMaxFileSize
 	if bot.GetConfig().MaxFileSize > 0 {
 		maxFileSize = bot.GetConfig().MaxFileSize
 	}
-
 	for _, fileID := range post.FileIds {
 		fileInfo, err := c.mmClient.GetFileInfo(fileID)
 		if err != nil {
 			c.mmClient.LogError("Error getting file info", "error", err)
 			continue
 		}
-
-		// Check for files that have been interpreted already by the server or are text files.
 		content := ""
 		if trimmedContent := strings.TrimSpace(fileInfo.Content); trimmedContent != "" {
 			content = trimmedContent
@@ -508,37 +537,26 @@ func (c *Conversations) PostToAIPost(bot *bots.Bot, post *model.Post) llm.Post {
 				content += "\n... (content truncated due to size limit)"
 			}
 		}
-
 		if content != "" {
 			fileContent := fmt.Sprintf("File Name: %s\nContent: %s", fileInfo.Name, content)
 			extractedFileContents = append(extractedFileContents, fileContent)
 		}
-
 		if bot.GetConfig().EnableVision && isImageMimeType(fileInfo.MimeType) {
 			file, err := c.mmClient.GetFile(fileID)
 			if err != nil {
 				c.mmClient.LogError("Error getting file", "error", err)
 				continue
 			}
-			filesForUpstream = append(filesForUpstream, llm.File{
-				Reader:   file,
-				MimeType: fileInfo.MimeType,
-				Size:     fileInfo.Size,
-			})
+			filesForUpstream = append(filesForUpstream, llm.File{Reader: file, MimeType: fileInfo.MimeType, Size: fileInfo.Size})
 		}
 	}
-
-	// Add structured file contents to the message
 	if len(extractedFileContents) > 0 {
 		message += "\nAttached File Contents:\n" + strings.Join(extractedFileContents, "\n\n")
 	}
-
 	role := llm.PostRoleUser
 	if c.bots.IsAnyBot(post.UserId) {
 		role = llm.PostRoleBot
 	}
-
-	// Check for tools
 	pendingToolsProp := post.GetProp(streaming.ToolCallProp)
 	tools := []llm.ToolCall{}
 	pendingTools, ok := pendingToolsProp.(string)
@@ -555,77 +573,49 @@ func (c *Conversations) PostToAIPost(bot *bots.Bot, post *model.Post) llm.Post {
 			}
 		}
 	}
-
-	// Check for reasoning/thinking content
 	reasoning := ""
 	if reasoningProp := post.GetProp(streaming.ReasoningSummaryProp); reasoningProp != nil {
 		if reasoningStr, ok := reasoningProp.(string); ok {
 			reasoning = reasoningStr
 		}
 	}
-
-	// Check for reasoning signature (opaque verification field)
 	reasoningSignature := ""
 	if signatureProp := post.GetProp(streaming.ReasoningSignatureProp); signatureProp != nil {
 		if signatureStr, ok := signatureProp.(string); ok {
 			reasoningSignature = signatureStr
 		}
 	}
-
 	return llm.Post{
-		Role:               role,
-		Message:            message,
-		Files:              filesForUpstream,
-		ToolUse:            tools,
-		Reasoning:          reasoning,
-		ReasoningSignature: reasoningSignature,
+		Role: role, Message: message, Files: filesForUpstream,
+		ToolUse: tools, Reasoning: reasoning, ReasoningSignature: reasoningSignature,
 	}
 }
 
 func (c *Conversations) ThreadToLLMPosts(bot *bots.Bot, threadData *mmapi.ThreadData) []llm.Post {
 	result := make([]llm.Post, 0, len(threadData.Posts))
-
 	for _, post := range threadData.Posts {
 		aiPost := c.PostToAIPost(bot, post)
-
-		// Add username prefix for user messages in multi-user threads
 		if aiPost.Role == llm.PostRoleUser {
 			if user, exists := threadData.UsersByID[post.UserId]; exists {
 				aiPost.Message = "@" + user.Username + ": " + aiPost.Message
 			}
 		}
-
 		result = append(result, aiPost)
 	}
-
 	return result
 }
 
-// sendOAuthNotifications sends an ephemeral post to notify the user about MCP servers that require authentication
 func (c *Conversations) sendOAuthNotifications(bot *bots.Bot, userID, channelID, rootID string, authErrors []llm.ToolAuthError) {
 	if len(authErrors) == 0 {
 		return
 	}
-
-	// Build the message
 	var message strings.Builder
 	message.WriteString("**Authentication Required**\n\n")
 	message.WriteString("The following MCP servers require authentication:\n\n")
-
 	for _, authErr := range authErrors {
 		message.WriteString(fmt.Sprintf("• **%s**: [Click here to authenticate](%s)\n", authErr.ServerName, authErr.AuthURL))
 	}
-
 	message.WriteString("\nPlease authenticate with the required servers and try again.")
-
-	// Create the ephemeral post
-	post := &model.Post{
-		RootId:    rootID,
-		UserId:    bot.GetMMBot().UserId,
-		ChannelId: channelID,
-		Message:   message.String(),
-	}
-
-	// Send the ephemeral post
+	post := &model.Post{RootId: rootID, UserId: bot.GetMMBot().UserId, ChannelId: channelID, Message: message.String()}
 	c.mmClient.SendEphemeralPost(userID, post)
 }

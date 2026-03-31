@@ -9,9 +9,14 @@ import (
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
+	"github.com/mattermost/mattermost-plugin-ai/conversation"
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-ai/mmapi"
+	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-ai/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
@@ -133,6 +138,12 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 		responseRootID = post.RootId
 	}
 
+	// Use the new conversation entity path when the service is available.
+	if c.convService != nil {
+		return c.handleMentionViaConversation(bot, post, postingUser, channel, allowToolsInChannel, responseRootID)
+	}
+
+	// Legacy fallback: process via thread-based context reconstruction.
 	responsePost := &model.Post{
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
@@ -145,6 +156,123 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 		}
 		return stream, nil
 	})
+}
+
+// handleMentionViaConversation processes a channel mention using the conversation entity model.
+// It creates/continues a conversation for (RootPostID, BotID), runs the ToolRunner for
+// auto-run tools, writes intermediate tool turns, and streams the final response.
+func (c *Conversations) handleMentionViaConversation(
+	bot *bots.Bot,
+	post *model.Post,
+	postingUser *model.User,
+	channel *model.Channel,
+	allowToolsInChannel bool,
+	responseRootID string,
+) error {
+	contextOpts := []llm.ContextOption{
+		c.contextBuilder.WithLLMContextTools(bot),
+	}
+	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, contextOpts...)
+
+	toolsDisabled := !allowToolsInChannel
+	if llmContext != nil {
+		if toolsDisabled && llmContext.Tools != nil {
+			llmContext.DisabledToolsInfo = llmContext.Tools.GetToolsInfo()
+		} else {
+			llmContext.DisabledToolsInfo = nil
+		}
+	}
+
+	systemPrompt, fmtErr := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)
+	if fmtErr != nil {
+		return fmt.Errorf("failed to format system prompt: %w", fmtErr)
+	}
+
+	userPostID := post.Id
+	convResult, convErr := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
+		UserID:       postingUser.Id,
+		BotID:        bot.GetMMBot().UserId,
+		ChannelID:    channel.Id,
+		RootPostID:   responseRootID,
+		Operation:    "conversation",
+		SystemPrompt: systemPrompt,
+		UserMessage:  post.Message,
+		UserPostID:   &userPostID,
+	})
+	if convErr != nil {
+		return fmt.Errorf("failed to get or create conversation: %w", convErr)
+	}
+
+	responsePost := &model.Post{
+		ChannelId: channel.Id,
+		RootId:    responseRootID,
+	}
+	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
+		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
+	}
+
+	responsePost.AddProp(streaming.ConversationIDProp, convResult.Conversation.ID)
+	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
+		c.mmClient.LogError("Failed to set conversation_id prop", "error", updateErr)
+	}
+
+	threadData, threadErr := mmapi.GetThreadData(c.mmClient, responseRootID)
+	if threadErr != nil {
+		c.failResponsePlaceholder(responsePost, postingUser.Locale)
+		return fmt.Errorf("failed to get thread data: %w", threadErr)
+	}
+
+	completionRequest, reqErr := c.convService.BuildChannelMentionRequest(convResult.Conversation, llmContext, threadData)
+	if reqErr != nil {
+		c.failResponsePlaceholder(responsePost, postingUser.Locale)
+		return fmt.Errorf("failed to build completion request: %w", reqErr)
+	}
+
+	var opts []llm.LanguageModelOption
+	if toolsDisabled {
+		opts = append(opts, llm.WithToolsDisabled())
+		if c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled() {
+			opts = append(opts, llm.WithNativeWebSearchAllowed())
+		}
+	}
+
+	runner := toolrunner.New(bot.LLM())
+	result, runErr := runner.Run(*completionRequest, func(tc llm.ToolCall) bool {
+		if !allowToolsInChannel || c.toolPolicyChecker == nil {
+			return false
+		}
+		policy, enabled := c.toolPolicyChecker.GetToolPolicy(tc.ServerOrigin, tc.Name)
+		return policy == mcp.ToolPolicyAutoRun && enabled
+	}, opts...)
+	if runErr != nil {
+		c.failResponsePlaceholder(responsePost, postingUser.Locale)
+		return fmt.Errorf("tool runner failed: %w", runErr)
+	}
+
+	if len(result.ToolTurns) > 0 {
+		if writeErr := c.convService.WriteToolTurns(convResult.Conversation.ID, result.ToolTurns, false); writeErr != nil {
+			c.mmClient.LogError("Failed to write tool turns", "error", writeErr)
+		}
+	}
+
+	if streamErr := c.streamResponseToExistingPost(result.Stream, responsePost, postingUser, channel); streamErr != nil {
+		c.failResponsePlaceholder(responsePost, postingUser.Locale)
+		return fmt.Errorf("unable to stream response: %w", streamErr)
+	}
+
+	go func() {
+		if genErr := c.convService.GenerateTitle(
+			convResult.Conversation.ID,
+			bot.LLM(),
+			post.Message,
+			llmContext,
+		); genErr != nil {
+			c.mmClient.LogError("Failed to generate title", "error", genErr.Error())
+		}
+	}()
+
+	return nil
 }
 
 func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {

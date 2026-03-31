@@ -447,6 +447,7 @@ func (p *Plugin) OnActivate() error {
 	})
 	streamingService.SetToolPolicyChecker(policyChecker)
 	streamingService.SetAutoExecuteCallback(conversationsService.AutoExecuteApprovedToolCalls)
+	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)
 
 	// Initialize embedded MCP server handlers for plugin endpoints
