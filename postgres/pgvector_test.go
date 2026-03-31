@@ -37,9 +37,7 @@ func testDB(t *testing.T) *sqlx.DB {
 	var hasVector bool
 	err = rootDB.Get(&hasVector, "SELECT EXISTS(SELECT 1 FROM pg_available_extensions WHERE name = 'vector')")
 	require.NoError(t, err, "Failed to check for vector extension")
-	if !hasVector {
-		t.Skip("pgvector extension not available in PostgreSQL. Skipping pgvector-dependent tests.")
-	}
+	require.True(t, hasVector, "pgvector extension not available in PostgreSQL. Please install it to run these tests.")
 
 	// Create a unique database name with a timestamp
 	dbName := fmt.Sprintf("pgvector_test_%d", model.GetMillis())

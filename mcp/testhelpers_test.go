@@ -78,29 +78,7 @@ func GetSharedTestSuite(t *testing.T) *EmbeddedTestSuite {
 
 // setupSharedSuite initializes the shared Mattermost container
 func setupSharedSuite(t *testing.T) *EmbeddedTestSuite {
-	const maxInitAttempts = 3
-
-	var lastErr error
-	for attempt := 1; attempt <= maxInitAttempts; attempt++ {
-		suite, err := setupSharedSuiteAttempt(t)
-		if err == nil {
-			return suite
-		}
-
-		lastErr = err
-		t.Logf("Shared test suite init attempt %d/%d failed: %v", attempt, maxInitAttempts, err)
-
-		if attempt < maxInitAttempts {
-			time.Sleep(2 * time.Second)
-		}
-	}
-
-	t.Fatalf("Failed to start shared Mattermost container after %d attempts: %v", maxInitAttempts, lastErr)
-	return nil
-}
-
-func setupSharedSuiteAttempt(t *testing.T) (*EmbeddedTestSuite, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
 	// Create config with required settings
@@ -115,21 +93,21 @@ func setupSharedSuiteAttempt(t *testing.T) (*EmbeddedTestSuite, error) {
 		mmcontainer.WithConfig(cfg),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to start shared Mattermost container: %w", err)
+		t.Fatalf("Failed to start shared Mattermost container: %v", err)
 	}
 
 	// Get connection details
 	serverURL, err := container.URL(ctx)
 	if err != nil {
 		_ = container.Terminate(ctx)
-		return nil, fmt.Errorf("failed to get server URL: %w", err)
+		t.Fatalf("Failed to get server URL: %v", err)
 	}
 
 	// Get admin client
 	adminClient, err := container.GetAdminClient(ctx)
 	if err != nil {
 		_ = container.Terminate(ctx)
-		return nil, fmt.Errorf("failed to get admin client: %w", err)
+		t.Fatalf("Failed to get admin client: %v", err)
 	}
 
 	return &EmbeddedTestSuite{
@@ -137,7 +115,7 @@ func setupSharedSuiteAttempt(t *testing.T) (*EmbeddedTestSuite, error) {
 		container:   container,
 		serverURL:   serverURL,
 		adminClient: adminClient,
-	}, nil
+	}
 }
 
 // EmbeddedTestSuite provides infrastructure for testing the embedded MCP server
