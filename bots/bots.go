@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
+	"github.com/mattermost/mattermost-plugin-ai/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
@@ -35,6 +36,12 @@ type Config interface {
 	GetTranscriptGenerator() string
 }
 
+// AgentStore provides read access to user-created agents from the database.
+// This is a subset of the full store.AgentStore — only read methods needed here.
+type AgentStore interface {
+	ListAgents() ([]*useragents.UserAgent, error)
+}
+
 // Transcriber interface defines the contract for transcription services
 type Transcriber interface {
 	Transcribe(file io.Reader) (*subtitles.Subtitles, error)
@@ -45,6 +52,7 @@ type MMBots struct {
 	pluginAPI              *pluginapi.Client
 	licenseChecker         *enterprise.LicenseChecker
 	config                 Config
+	agentStore             AgentStore
 	llmUpstreamHTTPClient  *http.Client
 	tokenUsageSinks        *llm.TokenUsageSinks
 	metrics                llm.MetricsObserver
@@ -59,9 +67,13 @@ type MMBots struct {
 	// lastEnsuredServiceCfgs stores the resolved service configs keyed by service ID
 	// that were last successfully ensured, for optimistic change detection.
 	lastEnsuredServiceCfgs map[string]llm.ServiceConfig
+
+	// forceRefresh bypasses the optimistic config-equality check in EnsureBots.
+	// Set to true by the cluster event handler or API handlers after agent CRUD.
+	forceRefresh bool
 }
 
-func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
+func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, agentStore AgentStore, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
 	var pluginTokenLogger llm.TokenUsagePluginLogger
 	if pluginAPI != nil {
 		pluginTokenLogger = &pluginAPI.Log
@@ -72,6 +84,7 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 		pluginAPI:              pluginAPI,
 		licenseChecker:         licenseChecker,
 		config:                 config,
+		agentStore:             agentStore,
 		llmUpstreamHTTPClient:  llmUpstreamHTTPClient,
 		tokenUsageSinks:        llm.NewTokenUsageSinks(pluginTokenLogger),
 		metrics:                metrics,
@@ -90,6 +103,34 @@ func (b *MMBots) resolveServiceCfgs(botCfgs []llm.BotConfig) map[string]llm.Serv
 		}
 	}
 	return result
+}
+
+// ForceRefreshOnNextEnsure sets a flag that causes the next EnsureBots() call
+// to skip the optimistic config-equality check. This is used when DB-backed
+// agents change (create/update/delete) since those changes are not reflected
+// in the config.GetBots() comparison.
+func (b *MMBots) ForceRefreshOnNextEnsure() {
+	b.botsLock.Lock()
+	b.forceRefresh = true
+	b.botsLock.Unlock()
+}
+
+// userAgentToBotConfig converts a useragents.UserAgent to an llm.BotConfig
+// so that DB-backed agents can participate in the same EnsureBots pipeline
+// as config-defined bots.
+func userAgentToBotConfig(agent *useragents.UserAgent) llm.BotConfig {
+	return llm.BotConfig{
+		ID:                 agent.ID,
+		Name:               agent.Username,
+		DisplayName:        agent.DisplayName,
+		CustomInstructions: agent.CustomInstructions,
+		ServiceID:          agent.ServiceID,
+		ChannelAccessLevel: llm.ChannelAccessLevel(agent.ChannelAccessLevel),
+		ChannelIDs:         agent.ChannelIDs,
+		UserAccessLevel:    llm.UserAccessLevel(agent.UserAccessLevel),
+		UserIDs:            agent.UserIDs,
+		TeamIDs:            agent.TeamIDs,
+	}
 }
 
 // botConfigsEqual compares two bot config slices for equality.
@@ -176,6 +217,10 @@ func (b *MMBots) reconcileTokenUsageSinks() {
 }
 
 func (b *MMBots) EnsureBots() error {
+	if b.config == nil {
+		return nil
+	}
+
 	// Optimistic check: if bot and service configuration hasn't changed since last ensure,
 	// skip the expensive cluster mutex acquisition. This prevents HA timeout issues
 	// when multiple nodes all try to acquire the mutex simultaneously on config changes.
@@ -187,9 +232,10 @@ func (b *MMBots) EnsureBots() error {
 	botsAlreadyInitialized := len(b.bots) > 0
 	lastBotCfgs := b.lastEnsuredBotCfgs
 	lastServiceCfgs := b.lastEnsuredServiceCfgs
+	forceRefresh := b.forceRefresh
 	b.botsLock.RUnlock()
 
-	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
+	if botsAlreadyInitialized && !forceRefresh && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
 		b.pluginAPI.Log.Debug("EnsureBots: skipping - bot/service configuration unchanged")
 		return nil
 	}
@@ -210,9 +256,10 @@ func (b *MMBots) EnsureBots() error {
 	botsAlreadyInitialized = len(b.bots) > 0
 	lastBotCfgs = b.lastEnsuredBotCfgs
 	lastServiceCfgs = b.lastEnsuredServiceCfgs
+	forceRefresh = b.forceRefresh
 	b.botsLock.RUnlock()
 
-	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
+	if botsAlreadyInitialized && !forceRefresh && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
 		b.pluginAPI.Log.Debug("EnsureBots: skipping after lock - bot/service configuration unchanged")
 		return nil
 	}
@@ -227,6 +274,21 @@ func (b *MMBots) EnsureBots() error {
 	if len(botCfgs) > 1 && !b.licenseChecker.IsMultiLLMLicensed() {
 		b.pluginAPI.Log.Error("Only one bot allowed with current license.")
 		botCfgs = botCfgs[:1]
+	}
+
+	// Load DB-backed user agents and merge into the bot config list.
+	// These bypass the license multi-LLM check — they are gated by
+	// PermissionCreateAgent at the API layer (Phase 2).
+	if b.agentStore != nil {
+		userAgents, err := b.agentStore.ListAgents()
+		if err != nil {
+			b.pluginAPI.Log.Error("Failed to load user agents from database", "error", err.Error())
+			// Continue with config-only bots — don't fail the whole ensure
+		} else {
+			for _, ua := range userAgents {
+				botCfgs = append(botCfgs, userAgentToBotConfig(ua))
+			}
+		}
 	}
 
 	var bots []*Bot
@@ -334,6 +396,7 @@ func (b *MMBots) EnsureBots() error {
 	}
 	b.lastEnsuredBotCfgs = copiedBotCfgs
 	b.lastEnsuredServiceCfgs = currentServiceCfgs
+	b.forceRefresh = false
 	b.botsLock.Unlock()
 
 	return nil

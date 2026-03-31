@@ -79,6 +79,23 @@ func isAgentAdmin(agent *useragents.UserAgent, userID string) bool {
 	return agent.CreatorID == userID || slices.Contains(agent.AdminUserIDs, userID)
 }
 
+// refreshBotsAndNotify forces the bot registry to re-read DB-backed agents,
+// re-runs EnsureBots on this node, and publishes a cluster event so other
+// nodes do the same.
+func (a *API) refreshBotsAndNotify() {
+	if a.bots != nil {
+		a.bots.ForceRefreshOnNextEnsure()
+		if err := a.bots.EnsureBots(); err != nil {
+			a.pluginAPI.Log.Error("Failed to refresh bots after agent change", "error", err.Error())
+		}
+	}
+	if a.clusterAgentNotifier != nil {
+		if err := a.clusterAgentNotifier.PublishAgentUpdate(); err != nil {
+			a.pluginAPI.Log.Error("Failed to publish agent update cluster event", "error", err.Error())
+		}
+	}
+}
+
 // --- Handlers ---
 
 // handleCreateAgent creates a new user agent with its backing bot account.
@@ -153,6 +170,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
+	a.refreshBotsAndNotify()
 	c.JSON(http.StatusCreated, agent)
 }
 
@@ -271,6 +289,8 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
+	a.refreshBotsAndNotify()
+
 	// Sync display name change to the underlying Mattermost bot account
 	if displayNameChanged {
 		if _, err := a.pluginAPI.Bot.Patch(agent.BotUserID, &model.BotPatch{
@@ -310,6 +330,8 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to delete agent: %w", err))
 		return
 	}
+
+	a.refreshBotsAndNotify()
 
 	// Deactivate the backing bot account
 	if _, err := a.pluginAPI.Bot.UpdateActive(agent.BotUserID, false); err != nil {

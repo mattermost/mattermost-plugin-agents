@@ -188,7 +188,7 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.configMigrated = true
 
-	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient, metricsService)
+	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService)
 	p.configuration.RegisterUpdateListener(func() {
 		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
@@ -479,6 +479,7 @@ func (p *Plugin) OnActivate() error {
 		p.store,
 		p.store,
 		&p.configuration,
+		p,
 		p,
 		getSearchInitError,
 	)

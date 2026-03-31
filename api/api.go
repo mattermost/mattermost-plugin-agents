@@ -86,6 +86,11 @@ type ClusterNotifier interface {
 	PublishConfigUpdate() error
 }
 
+// ClusterAgentNotifier broadcasts agent update events to other cluster nodes.
+type ClusterAgentNotifier interface {
+	PublishAgentUpdate() error
+}
+
 // API represents the HTTP API functionality for the plugin
 type API struct {
 	bots                  *bots.MMBots
@@ -111,6 +116,7 @@ type API struct {
 	agentStore            AgentStore
 	configUpdater         ConfigUpdater
 	clusterNotifier       ClusterNotifier
+	clusterAgentNotifier  ClusterAgentNotifier
 	getSearchInitError    func() string
 }
 
@@ -138,6 +144,7 @@ func New(
 	agentStore AgentStore,
 	configUpdater ConfigUpdater,
 	clusterNotifier ClusterNotifier,
+	clusterAgentNotifier ClusterAgentNotifier,
 	getSearchInitError func() string,
 ) *API {
 	return &API{
@@ -164,6 +171,7 @@ func New(
 		agentStore:            agentStore,
 		configUpdater:         configUpdater,
 		clusterNotifier:       clusterNotifier,
+		clusterAgentNotifier:  clusterAgentNotifier,
 		getSearchInitError:    getSearchInitError,
 	}
 }
