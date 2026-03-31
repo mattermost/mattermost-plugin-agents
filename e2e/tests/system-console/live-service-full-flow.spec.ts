@@ -331,6 +331,33 @@ async function ensureBotCardExpanded(botCard: Locator): Promise<void> {
     await expect(displayNameInput).toBeVisible({timeout: 30000});
 }
 
+async function waitForPersistedBotModel(botCard: Locator, selectedModel: string): Promise<void> {
+    await ensureBotCardExpanded(botCard);
+    await expect.poll(async () => {
+        const modelCombobox = botCard.locator('input[id^="react-select-"][id$="-input"]').first();
+        if (await modelCombobox.isVisible().catch(() => false)) {
+            const value = await modelCombobox.inputValue().catch(() => '');
+            if (isPersistedModelMatch(value, selectedModel)) {
+                return true;
+            }
+        }
+
+        const modelTextInput = botCard.getByPlaceholder(/leave empty to use service default/i).first();
+        if (await modelTextInput.isVisible().catch(() => false)) {
+            const value = await modelTextInput.inputValue().catch(() => '');
+            if (isPersistedModelMatch(value, selectedModel)) {
+                return true;
+            }
+        }
+
+        const cardText = (await botCard.textContent()) || '';
+        return isPersistedModelMatch(cardText, selectedModel);
+    }, {
+        timeout: 30000,
+        intervals: [1000, 2000, 5000],
+    }).toBe(true);
+}
+
 async function ensureLoggedOut(page: Page, baseURL: string): Promise<void> {
     await page.context().clearCookies();
     await page.goto(baseURL, {waitUntil: 'domcontentloaded'});
@@ -470,11 +497,7 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
 
         if (selectedBotModel) {
             const reloadedBotCard = page.locator('[class*="BotContainer"]').filter({hasText: botDisplayName}).first();
-            await reloadedBotCard.click();
-            await expect.poll(async () => {
-                const cardText = (await reloadedBotCard.textContent()) || '';
-                return isPersistedModelMatch(cardText, selectedBotModel);
-            }).toBe(true);
+            await waitForPersistedBotModel(reloadedBotCard, selectedBotModel);
         }
 
         // 2) Validate bot account exists after saving.
