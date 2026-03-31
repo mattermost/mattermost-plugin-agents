@@ -13,7 +13,6 @@ import (
 	"github.com/gin-gonic/gin/render"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/react"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
@@ -147,35 +146,46 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 		a.contextBuilder.WithLLMContextNoTools(),
 	)
 
-	// Create thread analyzer
-	analyzer := threads.New(bot.LLM(), a.prompts, a.mmClient)
-	var analysisStream *llm.TextStreamResult
+	// Create thread analyzer with conversation service
+	botUserID := bot.GetMMBot().UserId
+	analyzer := threads.New(bot.LLM(), a.prompts, a.mmClient, a.convService)
+	var analyzeResult *threads.AnalyzeResult
 	var title string
 	switch data.AnalysisType {
 	case "summarize_thread":
 		title = TitleThreadSummary
-		analysisStream, err = analyzer.Summarize(post.Id, llmContext)
+		analyzeResult, err = analyzer.Summarize(post.Id, llmContext, botUserID, userID)
 	case "action_items":
 		title = TitleFindActionItems
-		analysisStream, err = analyzer.FindActionItems(post.Id, llmContext)
+		analyzeResult, err = analyzer.FindActionItems(post.Id, llmContext, botUserID, userID)
 	case "open_questions":
 		title = TitleFindOpenQuestions
-		analysisStream, err = analyzer.FindOpenQuestions(post.Id, llmContext)
+		analyzeResult, err = analyzer.FindOpenQuestions(post.Id, llmContext, botUserID, userID)
 	}
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to analyze thread: %w", err))
 		return
 	}
 
-	// Create analysis post
+	// Create analysis post with conversation ID
 	siteURL := a.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
-	analysisPost := a.makeAnalysisPost(user.Locale, post.Id, data.AnalysisType, *siteURL)
-	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), bot.GetMMBot().UserId, analysisStream, user.Id, analysisPost, post.Id); err != nil {
+	analysisPost := a.makeAnalysisPost(user.Locale, post.Id, data.AnalysisType, *siteURL, analyzeResult.ConversationID)
+	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 
-	a.conversationsService.SaveTitleAsync(post.Id, title)
+	// Update conversation's RootPostID to the analysis DM post (now that it's been created)
+	if a.convService != nil {
+		if updateErr := a.convService.UpdateConversationRootPostID(analyzeResult.ConversationID, analysisPost.Id); updateErr != nil {
+			// Log the error but don't fail the request -- the analysis was already streamed
+			a.mmClient.LogError("Failed to update conversation root post ID", "error", updateErr.Error())
+		}
+		// Set title directly (no LLM call needed for fixed analysis titles)
+		if titleErr := a.convService.UpdateConversationTitle(analyzeResult.ConversationID, title); titleErr != nil {
+			a.mmClient.LogError("Failed to set conversation title", "error", titleErr.Error())
+		}
+	}
 
 	c.JSON(http.StatusOK, map[string]string{
 		"postid":    analysisPost.Id,
@@ -321,84 +331,6 @@ func (a *API) handleToolCall(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func (a *API) handleToolCallPrivate(c *gin.Context) {
-	userID := c.GetHeader("Mattermost-User-Id")
-	post := c.MustGet(ContextPostKey).(*model.Post)
-	channel := c.MustGet(ContextChannelKey).(*model.Channel)
-
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
-		return
-	}
-
-	// Defense-in-depth: block channel tool call access if config flag is off.
-	// Use post.UserId (the bot that created the post) to check the DM,
-	// because the botUsername query parameter may resolve to a different bot.
-	isDM := mmapi.IsDMWith(post.UserId, channel)
-	if !isDM && !a.config.EnableChannelMentionToolCalling() {
-		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
-		return
-	}
-
-	// Only the original requester can view private tool calls
-	if post.GetProp(streaming.LLMRequesterUserID) != userID {
-		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can view tool calls"))
-		return
-	}
-
-	kvKey := streaming.ToolCallPrivateKVKey(post.Id, userID)
-	var toolCalls []llm.ToolCall
-	if err := a.mmClient.KVGet(kvKey, &toolCalls); err != nil {
-		if mmapi.IsKVNotFound(err) {
-			c.AbortWithError(http.StatusBadRequest, errors.New("post missing pending tool calls"))
-		} else {
-			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load tool calls from KV store: %w", err))
-		}
-		return
-	}
-
-	c.JSON(http.StatusOK, toolCalls)
-}
-
-func (a *API) handleToolResultPrivate(c *gin.Context) {
-	userID := c.GetHeader("Mattermost-User-Id")
-	post := c.MustGet(ContextPostKey).(*model.Post)
-	channel := c.MustGet(ContextChannelKey).(*model.Channel)
-
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
-		return
-	}
-
-	// Defense-in-depth: block channel tool result access if config flag is off.
-	// Use post.UserId (the bot that created the post) to check the DM,
-	// because the botUsername query parameter may resolve to a different bot.
-	isDM := mmapi.IsDMWith(post.UserId, channel)
-	if !isDM && !a.config.EnableChannelMentionToolCalling() {
-		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
-		return
-	}
-
-	// Only the original requester can view private tool results
-	if post.GetProp(streaming.LLMRequesterUserID) != userID {
-		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can view tool results"))
-		return
-	}
-
-	kvKey := streaming.ToolResultPrivateKVKey(post.Id, userID)
-	var toolResults []llm.ToolCall
-	if err := a.mmClient.KVGet(kvKey, &toolResults); err != nil {
-		if mmapi.IsKVNotFound(err) {
-			c.AbortWithError(http.StatusBadRequest, errors.New("post missing pending tool results"))
-		} else {
-			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load tool results from KV store: %w", err))
-		}
-		return
-	}
-
-	c.JSON(http.StatusOK, toolResults)
-}
-
 func (a *API) handleToolResult(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
@@ -471,10 +403,13 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 }
 
 // makeAnalysisPost creates a post for thread analysis results
-func (a *API) makeAnalysisPost(locale string, postIDToAnalyze string, analysisType string, siteURL string) *model.Post {
+func (a *API) makeAnalysisPost(locale string, postIDToAnalyze string, analysisType string, siteURL string, conversationID string) *model.Post {
 	post := &model.Post{}
 	post.AddProp(conversations.ThreadIDProp, postIDToAnalyze)
 	post.AddProp(conversations.AnalysisTypeProp, analysisType)
+	if conversationID != "" {
+		post.AddProp(streaming.ConversationIDProp, conversationID)
+	}
 
 	return post
 }

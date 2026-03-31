@@ -372,6 +372,218 @@ func TestSoftDeleteConversation(t *testing.T) {
 	}
 }
 
+func TestGetConversationSummariesForUser(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, s *Store)
+		validate func(t *testing.T, s *Store)
+	}{
+		{
+			name:  "returns empty slice for user with no conversations",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				summaries, err := s.GetConversationSummariesForUser("nonexistent_user", 60, 0)
+				require.NoError(t, err)
+				assert.NotNil(t, summaries)
+				assert.Empty(t, summaries)
+			},
+		},
+		{
+			name: "returns conversations ordered by UpdatedAt DESC",
+			setup: func(t *testing.T, s *Store) {
+			},
+			validate: func(t *testing.T, s *Store) {
+				userID := model.NewId()
+
+				conv1 := makeConversation(func(c *Conversation) {
+					c.UserID = userID
+					c.Title = "Older"
+					c.UpdatedAt = 1000
+				})
+				err := s.CreateConversation(conv1)
+				require.NoError(t, err)
+
+				conv2 := makeConversation(func(c *Conversation) {
+					c.UserID = userID
+					c.Title = "Newer"
+					c.UpdatedAt = 2000
+				})
+				err = s.CreateConversation(conv2)
+				require.NoError(t, err)
+
+				summaries, err := s.GetConversationSummariesForUser(userID, 60, 0)
+				require.NoError(t, err)
+				require.Len(t, summaries, 2)
+				assert.Equal(t, "Newer", summaries[0].Title)
+				assert.Equal(t, "Older", summaries[1].Title)
+			},
+		},
+		{
+			name:  "excludes soft-deleted conversations",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				userID := model.NewId()
+
+				conv1 := makeConversation(func(c *Conversation) {
+					c.UserID = userID
+					c.Title = "Active"
+				})
+				err := s.CreateConversation(conv1)
+				require.NoError(t, err)
+
+				conv2 := makeConversation(func(c *Conversation) {
+					c.UserID = userID
+					c.Title = "Deleted"
+				})
+				err = s.CreateConversation(conv2)
+				require.NoError(t, err)
+
+				err = s.SoftDeleteConversation(conv2.ID, model.GetMillis())
+				require.NoError(t, err)
+
+				summaries, err := s.GetConversationSummariesForUser(userID, 60, 0)
+				require.NoError(t, err)
+				require.Len(t, summaries, 1)
+				assert.Equal(t, "Active", summaries[0].Title)
+			},
+		},
+		{
+			name:  "respects limit and offset",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				userID := model.NewId()
+
+				for i := 0; i < 5; i++ {
+					conv := makeConversation(func(c *Conversation) {
+						c.UserID = userID
+						c.UpdatedAt = int64(1000 + i)
+					})
+					err := s.CreateConversation(conv)
+					require.NoError(t, err)
+				}
+
+				// Limit to 2
+				summaries, err := s.GetConversationSummariesForUser(userID, 2, 0)
+				require.NoError(t, err)
+				assert.Len(t, summaries, 2)
+
+				// Offset 2, limit 2
+				summaries, err = s.GetConversationSummariesForUser(userID, 2, 2)
+				require.NoError(t, err)
+				assert.Len(t, summaries, 2)
+
+				// Offset past all results
+				summaries, err = s.GetConversationSummariesForUser(userID, 10, 10)
+				require.NoError(t, err)
+				assert.Empty(t, summaries)
+			},
+		},
+		{
+			name:  "returns correct turn count per conversation",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				userID := model.NewId()
+
+				conv1 := makeConversation(func(c *Conversation) {
+					c.UserID = userID
+					c.Title = "With Turns"
+					c.UpdatedAt = 2000
+				})
+				err := s.CreateConversation(conv1)
+				require.NoError(t, err)
+
+				for i := 1; i <= 3; i++ {
+					turn := makeTurn(conv1.ID, i)
+					err = s.CreateTurn(turn)
+					require.NoError(t, err)
+				}
+
+				conv2 := makeConversation(func(c *Conversation) {
+					c.UserID = userID
+					c.Title = "No Turns"
+					c.UpdatedAt = 1000
+				})
+				err = s.CreateConversation(conv2)
+				require.NoError(t, err)
+
+				summaries, err := s.GetConversationSummariesForUser(userID, 60, 0)
+				require.NoError(t, err)
+				require.Len(t, summaries, 2)
+
+				assert.Equal(t, "With Turns", summaries[0].Title)
+				assert.Equal(t, 3, summaries[0].TurnCount)
+
+				assert.Equal(t, "No Turns", summaries[1].Title)
+				assert.Equal(t, 0, summaries[1].TurnCount)
+			},
+		},
+		{
+			name:  "only returns conversations for the specified user",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				userA := model.NewId()
+				userB := model.NewId()
+
+				convA := makeConversation(func(c *Conversation) {
+					c.UserID = userA
+					c.Title = "User A Conv"
+				})
+				err := s.CreateConversation(convA)
+				require.NoError(t, err)
+
+				convB := makeConversation(func(c *Conversation) {
+					c.UserID = userB
+					c.Title = "User B Conv"
+				})
+				err = s.CreateConversation(convB)
+				require.NoError(t, err)
+
+				summaries, err := s.GetConversationSummariesForUser(userA, 60, 0)
+				require.NoError(t, err)
+				require.Len(t, summaries, 1)
+				assert.Equal(t, "User A Conv", summaries[0].Title)
+			},
+		},
+		{
+			name:  "includes RootPostID and BotID in summary",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				userID := model.NewId()
+				botID := model.NewId()
+				rootPostID := model.NewId()
+
+				conv := makeConversation(func(c *Conversation) {
+					c.UserID = userID
+					c.BotID = botID
+					c.RootPostID = stringPtr(rootPostID)
+					c.Title = "Thread Conv"
+				})
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				summaries, err := s.GetConversationSummariesForUser(userID, 60, 0)
+				require.NoError(t, err)
+				require.Len(t, summaries, 1)
+				assert.Equal(t, botID, summaries[0].BotID)
+				require.NotNil(t, summaries[0].RootPostID)
+				assert.Equal(t, rootPostID, *summaries[0].RootPostID)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+
+			err := s.RunMigrations()
+			require.NoError(t, err)
+
+			tt.setup(t, s)
+			tt.validate(t, s)
+		})
+	}
+}
+
 func TestCleanupDeletedConversations(t *testing.T) {
 	tests := []struct {
 		name     string

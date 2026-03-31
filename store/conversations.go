@@ -136,6 +136,25 @@ func (s *Store) UpdateConversationTitle(id, title string) error {
 	return nil
 }
 
+// UpdateConversationRootPostID sets the RootPostID and updates the UpdatedAt timestamp.
+// This is used when the post ID is only known after creation (e.g., thread analysis DM posts).
+func (s *Store) UpdateConversationRootPostID(id string, rootPostID string) error {
+	query, args, err := s.builder.
+		Update("LLM_Conversations").
+		Set("RootPostID", rootPostID).
+		Set("UpdatedAt", model.GetMillis()).
+		Where(sq.Eq{"ID": id}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build update root post ID query: %w", err)
+	}
+	_, err = s.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update conversation root post ID: %w", err)
+	}
+	return nil
+}
+
 // SoftDeleteConversation sets the DeleteAt timestamp on a conversation.
 // Turns are not deleted until CleanupDeletedConversations runs.
 func (s *Store) SoftDeleteConversation(id string, deleteAt int64) error {
@@ -153,6 +172,53 @@ func (s *Store) SoftDeleteConversation(id string, deleteAt int64) error {
 		return fmt.Errorf("failed to soft delete conversation: %w", err)
 	}
 	return nil
+}
+
+// ConversationSummary is a lightweight view of a conversation with its turn count,
+// used for listing conversations in the RHS threads panel.
+type ConversationSummary struct {
+	ID         string  `json:"id"           db:"id"`
+	UserID     string  `json:"user_id"      db:"userid"`
+	BotID      string  `json:"bot_id"       db:"botid"`
+	ChannelID  *string `json:"channel_id"   db:"channelid"`
+	RootPostID *string `json:"root_post_id" db:"rootpostid"`
+	Title      string  `json:"title"        db:"title"`
+	TurnCount  int     `json:"turn_count"   db:"turncount"`
+	UpdatedAt  int64   `json:"updated_at"   db:"updatedat"`
+}
+
+// GetConversationSummariesForUser returns conversations for a user ordered by UpdatedAt DESC,
+// including a turn count per conversation. Only non-deleted conversations are returned.
+func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int) ([]ConversationSummary, error) {
+	query, args, err := s.builder.
+		Select(
+			"c.ID",
+			"c.UserID",
+			"c.BotID",
+			"c.ChannelID",
+			"c.RootPostID",
+			"c.Title",
+			"(SELECT COUNT(*) FROM LLM_Turns WHERE ConversationID = c.ID) AS TurnCount",
+			"c.UpdatedAt",
+		).
+		From("LLM_Conversations c").
+		Where(sq.Eq{"c.UserID": userID}).
+		Where(sq.Eq{"c.DeleteAt": 0}).
+		OrderBy("c.UpdatedAt DESC").
+		Limit(uint64(limit)).
+		Offset(uint64(offset)).
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build get conversation summaries query: %w", err)
+	}
+	var summaries []ConversationSummary
+	if err := s.db.Select(&summaries, query, args...); err != nil {
+		return nil, fmt.Errorf("failed to get conversation summaries: %w", err)
+	}
+	if summaries == nil {
+		summaries = []ConversationSummary{}
+	}
+	return summaries, nil
 }
 
 // CleanupDeletedConversations permanently deletes all soft-deleted conversations

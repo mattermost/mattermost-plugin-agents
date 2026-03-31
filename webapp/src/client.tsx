@@ -11,8 +11,6 @@ import type {ConversationResponse} from '@/types/conversation';
 
 import manifest from './manifest';
 
-import {ToolCall} from './components/tool_types';
-
 const Client4 = new Client4Class();
 
 export function setSiteURL(siteURL: string) {
@@ -168,40 +166,6 @@ export async function doToolCall(postid: string, toolIDs: string[]) {
 
     if (response.ok) {
         return;
-    }
-
-    throw new ClientError(Client4.url, {
-        message: '',
-        status_code: response.status,
-        url,
-    });
-}
-
-export async function getToolCallPrivate(postid: string): Promise<ToolCall[]> {
-    const url = `${postRoute(postid)}/tool_call_private`;
-    const response = await fetch(url, Client4.getOptions({
-        method: 'GET',
-    }));
-
-    if (response.ok) {
-        return response.json() as Promise<ToolCall[]>;
-    }
-
-    throw new ClientError(Client4.url, {
-        message: '',
-        status_code: response.status,
-        url,
-    });
-}
-
-export async function getToolResultPrivate(postid: string): Promise<ToolCall[]> {
-    const url = `${postRoute(postid)}/tool_result_private`;
-    const response = await fetch(url, Client4.getOptions({
-        method: 'GET',
-    }));
-
-    if (response.ok) {
-        return response.json() as Promise<ToolCall[]>;
     }
 
     throw new ClientError(Client4.url, {

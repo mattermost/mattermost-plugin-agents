@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/bifrost"
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/config"
+	"github.com/mattermost/mattermost-plugin-ai/conversation"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
@@ -83,6 +84,7 @@ type ConversationStore interface {
 	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnContent(id string, content json.RawMessage) error
+	GetConversationSummariesForUser(userID string, limit, offset int) ([]store.ConversationSummary, error)
 }
 
 // API represents the HTTP API functionality for the plugin
@@ -110,6 +112,7 @@ type API struct {
 	configUpdater         ConfigUpdater
 	clusterNotifier       ClusterNotifier
 	conversationStore     ConversationStore
+	convService           *conversation.Service
 	getSearchInitError    func() string
 }
 
@@ -165,6 +168,11 @@ func New(
 		conversationStore:     conversationStore,
 		getSearchInitError:    getSearchInitError,
 	}
+}
+
+// SetConversationService sets the conversation entity service for channel analysis.
+func (a *API) SetConversationService(svc *conversation.Service) {
+	a.convService = svc
 }
 
 // ServeHTTP handles HTTP requests to the plugin
@@ -236,8 +244,6 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	postRouter.POST("/stop", a.handleStop)
 	postRouter.POST("/regenerate", a.handleRegenerate)
 	postRouter.POST("/tool_call", a.handleToolCall)
-	postRouter.GET("/tool_call_private", a.handleToolCallPrivate)
-	postRouter.GET("/tool_result_private", a.handleToolResultPrivate)
 	postRouter.POST("/tool_result", a.handleToolResult)
 	postRouter.POST("/postback_summary", a.handlePostbackSummary)
 
@@ -336,13 +342,41 @@ func (a *API) enforceEmptyBody(c *gin.Context) error {
 	return nil
 }
 
+// aiThreadResponse is the JSON shape for items in the GET /ai_threads response.
+// It preserves backward compatibility with the old AIThread struct while adding
+// root_post_id and bot_id from conversation entities.
+type aiThreadResponse struct {
+	ID         string  `json:"id"`
+	Message    string  `json:"message"`
+	Title      string  `json:"title"`
+	ChannelID  *string `json:"channel_id"`
+	BotID      string  `json:"bot_id"`
+	RootPostID *string `json:"root_post_id"`
+	ReplyCount int     `json:"reply_count"`
+	UpdateAt   int64   `json:"update_at"`
+}
+
 func (a *API) handleGetAIThreads(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
-	threads, err := a.conversationsService.GetAIThreads(userID)
+	summaries, err := a.conversationStore.GetConversationSummariesForUser(userID, 60, 0)
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get posts for bot DM: %w", err))
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get conversation summaries: %w", err))
 		return
+	}
+
+	threads := make([]aiThreadResponse, len(summaries))
+	for i, s := range summaries {
+		threads[i] = aiThreadResponse{
+			ID:         s.ID,
+			Message:    "",
+			Title:      s.Title,
+			ChannelID:  s.ChannelID,
+			BotID:      s.BotID,
+			RootPostID: s.RootPostID,
+			ReplyCount: s.TurnCount,
+			UpdateAt:   s.UpdatedAt,
+		}
 	}
 
 	c.JSON(http.StatusOK, threads)
