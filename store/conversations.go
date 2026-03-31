@@ -190,6 +190,12 @@ type ConversationSummary struct {
 // GetConversationSummariesForUser returns conversations for a user ordered by UpdatedAt DESC,
 // including a turn count per conversation. Only non-deleted conversations are returned.
 func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int) ([]ConversationSummary, error) {
+	if limit < 0 {
+		limit = 0
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	query, args, err := s.builder.
 		Select(
 			"c.ID",
@@ -205,8 +211,8 @@ func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int
 		Where(sq.Eq{"c.UserID": userID}).
 		Where(sq.Eq{"c.DeleteAt": 0}).
 		OrderBy("c.UpdatedAt DESC").
-		Limit(uint64(limit)).
-		Offset(uint64(offset)).
+		Limit(uint64(limit)).   // #nosec G115 -- guarded above
+		Offset(uint64(offset)). // #nosec G115 -- guarded above
 		ToSql()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build get conversation summaries query: %w", err)
