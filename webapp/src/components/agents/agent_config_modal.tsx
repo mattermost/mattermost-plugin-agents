@@ -50,17 +50,17 @@ const emptyDraft: AgentDraft = {
 
 function agentToDraft(agent: UserAgent): AgentDraft {
     return {
-        displayName: agent.displayName,
+        displayName: agent.display_name,
         username: agent.username,
-        serviceId: agent.serviceId,
-        customInstructions: agent.customInstructions,
-        channelAccessLevel: agent.channelAccessLevel,
-        channelIds: agent.channelIds ?? [],
-        userAccessLevel: agent.userAccessLevel,
-        userIds: agent.userIds ?? [],
-        teamIds: agent.teamIds ?? [],
-        adminUserIds: agent.adminUserIds ?? [],
-        enabledTools: agent.enabledTools ?? [],
+        serviceId: agent.service_id,
+        customInstructions: agent.custom_instructions,
+        channelAccessLevel: agent.channel_access_level,
+        channelIds: agent.channel_ids ?? [],
+        userAccessLevel: agent.user_access_level,
+        userIds: agent.user_ids ?? [],
+        teamIds: agent.team_ids ?? [],
+        adminUserIds: agent.admin_user_ids ?? [],
+        enabledTools: agent.enabled_tools ?? [],
     };
 }
 
@@ -245,7 +245,7 @@ const AgentConfigModal = (props: Props) => {
                             draft={draft}
                             onChange={updateDraft}
                             onAvatarChange={setAvatarFile}
-                            botUserId={agent?.botUserId}
+                            botUserId={agent?.bot_user_id}
                         />
                     )}
                     {activeTab === 'access' && (

@@ -96,7 +96,7 @@ const AgentsList = () => {
 
     // Filter agents based on active tab
     const filteredAgents = activeTab === 'yours'
-        ? agents.filter((a) => a.creatorId === currentUserId)
+        ? agents.filter((a) => a.creator_id === currentUserId)
         : agents;
 
     return (
@@ -157,7 +157,7 @@ const AgentsList = () => {
                         <AgentRow
                             key={agent.id}
                             agent={agent}
-                            isOwner={agent.creatorId === currentUserId || (agent.adminUserIds?.includes(currentUserId) ?? false)}
+                            isOwner={agent.creator_id === currentUserId || (agent.admin_user_ids?.includes(currentUserId) ?? false)}
                             onEdit={handleEdit}
                             onDelete={handleDeleteRequest}
                         />
@@ -167,7 +167,7 @@ const AgentsList = () => {
 
             {deletingAgent && (
                 <DeleteAgentDialog
-                    agentName={deletingAgent.displayName}
+                    agentName={deletingAgent.display_name}
                     onConfirm={handleDeleteConfirm}
                     onCancel={handleDeleteCancel}
                 />

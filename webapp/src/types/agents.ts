@@ -13,22 +13,22 @@ export type EnabledTool = {
 // The backend API (GET /agents, GET /agents/:id) returns this shape.
 export type UserAgent = {
     id: string;
-    botUserId: string;
-    creatorId: string;
-    displayName: string;
+    bot_user_id: string;
+    creator_id: string;
+    display_name: string;
     username: string;
-    serviceId: string;
-    customInstructions: string;
-    channelAccessLevel: ChannelAccessLevel;
-    channelIds: string[];
-    userAccessLevel: UserAccessLevel;
-    userIds: string[];
-    teamIds: string[];
-    adminUserIds: string[];
-    enabledTools: EnabledTool[];
-    createAt: number;
-    updateAt: number;
-    deleteAt: number;
+    service_id: string;
+    custom_instructions: string;
+    channel_access_level: ChannelAccessLevel;
+    channel_ids: string[];
+    user_access_level: UserAccessLevel;
+    user_ids: string[];
+    team_ids: string[];
+    admin_user_ids: string[];
+    enabled_tools: EnabledTool[];
+    create_at: number;
+    update_at: number;
+    delete_at: number;
 }
 
 // CreateAgentRequest matches api.CreateAgentRequest in Go.

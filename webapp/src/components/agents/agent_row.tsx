@@ -27,8 +27,8 @@ const AgentRow = (props: Props) => {
     const menuRef = useRef<HTMLDivElement>(null);
     const intl = useIntl();
 
-    const avatarUrl = getProfilePictureUrl(agent.botUserId, 0);
-    const toolCount = agent.enabledTools?.length ?? 0;
+    const avatarUrl = getProfilePictureUrl(agent.bot_user_id, 0);
+    const toolCount = agent.enabled_tools?.length ?? 0;
 
     // Close menu on outside click
     useEffect(() => {
@@ -58,7 +58,7 @@ const AgentRow = (props: Props) => {
         <RowContainer>
             <Avatar src={avatarUrl}/>
             <NameColumn>
-                <DisplayName>{agent.displayName}</DisplayName>
+                <DisplayName>{agent.display_name}</DisplayName>
                 <Username>{'@'}{agent.username}</Username>
             </NameColumn>
             <BadgesColumn>
