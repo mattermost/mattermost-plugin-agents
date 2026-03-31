@@ -197,7 +197,12 @@ func (c *Conversations) ProcessDMRequest(
 		if c.toolPolicyChecker == nil {
 			return false
 		}
-		policy, enabled := c.toolPolicyChecker.GetToolPolicy(tc.ServerOrigin, tc.Name)
+		// LLM-returned tool calls may lack ServerOrigin; resolve from tool store.
+		origin := tc.ServerOrigin
+		if origin == "" && llmCtx.Tools != nil {
+			origin = llmCtx.Tools.GetServerOrigin(tc.Name)
+		}
+		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
 		return policy == mcp.ToolPolicyAutoRun && enabled
 	}
 

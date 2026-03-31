@@ -710,6 +710,14 @@ func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
 				UserId:    botUserID,
 				ChannelId: "channelid",
 			}
+			post.AddProp("conversation_id", "conv-test-dm-toolcall")
+
+			// Seed mock conversation store so isConversationOwner returns true for the DM owner
+			e.conversationStore.conversations["conv-test-dm-toolcall"] = &store.Conversation{
+				ID:     "conv-test-dm-toolcall",
+				UserID: userID,
+				BotID:  botUserID,
+			}
 
 			// DM channel name contains both user IDs
 			dmChannelName := botUserID + "__" + userID

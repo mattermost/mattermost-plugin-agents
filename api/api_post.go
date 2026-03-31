@@ -282,32 +282,99 @@ func (a *API) handleRegenerate(c *gin.Context) {
 }
 
 func (a *API) handleToolCall(c *gin.Context) {
-	// Tool call approval is now handled through the conversation entity model.
-	// The old post-prop-based flow has been removed.
-	c.AbortWithError(http.StatusNotImplemented, errors.New("tool call approval via post props has been removed; use the conversation entity API"))
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+
+	if !a.licenseChecker.IsBasicsLicensed() {
+		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	if !a.isConversationOwner(post, userID) {
+		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can approve/reject tool calls"))
+		return
+	}
+
+	var data struct {
+		AcceptedToolIDs []string `json:"accepted_tool_ids" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&data); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	err := a.conversationsService.HandleToolCall(userID, post, channel, data.AcceptedToolIDs)
+	if err != nil {
+		switch {
+		case err.Error() == "no pending tool calls found in conversation" || err.Error() == "post missing conversation_id":
+			c.AbortWithError(http.StatusBadRequest, err)
+		default:
+			c.AbortWithError(http.StatusInternalServerError, err)
+		}
+		return
+	}
+
+	c.Status(http.StatusOK)
 }
 
 func (a *API) handleToolResult(c *gin.Context) {
-	// Tool result approval is now handled through the conversation entity model.
-	// The old post-prop-based flow has been removed.
-	c.AbortWithError(http.StatusNotImplemented, errors.New("tool result approval via post props has been removed; use the conversation entity API"))
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+
+	if !a.licenseChecker.IsBasicsLicensed() {
+		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	if !a.isConversationOwner(post, userID) {
+		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can approve/reject tool results"))
+		return
+	}
+
+	var data struct {
+		AcceptedToolIDs []string `json:"accepted_tool_ids" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&data); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if err := a.conversationsService.HandleToolResult(userID, post, channel, data.AcceptedToolIDs); err != nil {
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+
+	c.Status(http.StatusOK)
 }
 
 // isConversationOwner checks whether the given user is the owner of the
 // conversation associated with the post (via the conversation_id prop).
 func (a *API) isConversationOwner(post *model.Post, userID string) bool {
-	if a.convService == nil {
-		return false
-	}
 	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
 	if !ok || convID == "" {
 		return false
 	}
-	conv, err := a.convService.GetConversation(convID)
-	if err != nil {
-		return false
+
+	// Try the full conversation service first, then fall back to the store interface.
+	if a.convService != nil {
+		conv, err := a.convService.GetConversation(convID)
+		if err != nil {
+			return false
+		}
+		return conv.UserID == userID
 	}
-	return conv.UserID == userID
+	if a.conversationStore != nil {
+		conv, err := a.conversationStore.GetConversation(convID)
+		if err != nil {
+			return false
+		}
+		return conv.UserID == userID
+	}
+	return false
 }
 
 func (a *API) handlePostbackSummary(c *gin.Context) {

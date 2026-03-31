@@ -225,7 +225,12 @@ func (c *Conversations) handleMentionViaConversation(
 		if !allowToolsInChannel || c.toolPolicyChecker == nil {
 			return false
 		}
-		policy, enabled := c.toolPolicyChecker.GetToolPolicy(tc.ServerOrigin, tc.Name)
+		// LLM-returned tool calls may lack ServerOrigin; resolve from tool store.
+		origin := tc.ServerOrigin
+		if origin == "" && llmContext.Tools != nil {
+			origin = llmContext.Tools.GetServerOrigin(tc.Name)
+		}
+		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
 		return policy == mcp.ToolPolicyAutoRun && enabled
 	}, opts...)
 	if runErr != nil {

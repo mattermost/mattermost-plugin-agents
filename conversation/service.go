@@ -131,6 +131,26 @@ func (s *Service) GetConversation(id string) (*store.Conversation, error) {
 	return s.store.GetConversation(id)
 }
 
+// GetTurns returns all turns for a conversation, ordered by sequence.
+func (s *Service) GetTurns(conversationID string) ([]store.Turn, error) {
+	return s.store.GetTurnsForConversation(conversationID)
+}
+
+// UpdateTurnContent updates the content JSON of a turn.
+func (s *Service) UpdateTurnContent(turnID string, content json.RawMessage) error {
+	return s.store.UpdateTurnContent(turnID, content)
+}
+
+// GetMaxSequence returns the highest sequence number for turns in a conversation.
+func (s *Service) GetMaxSequence(conversationID string) (int, error) {
+	return s.store.GetMaxSequenceForConversation(conversationID)
+}
+
+// CreateTurn persists a new turn in the store.
+func (s *Service) CreateTurn(turn *store.Turn) error {
+	return s.store.CreateTurn(turn)
+}
+
 // UpdateConversationRootPostID sets the RootPostID on a conversation.
 // Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
 func (s *Service) UpdateConversationRootPostID(id string, rootPostID string) error {
