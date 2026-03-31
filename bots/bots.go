@@ -130,7 +130,25 @@ func userAgentToBotConfig(agent *useragents.UserAgent) llm.BotConfig {
 		UserAccessLevel:    llm.UserAccessLevel(agent.UserAccessLevel),
 		UserIDs:            agent.UserIDs,
 		TeamIDs:            agent.TeamIDs,
+		EnabledMCPTools:    convertEnabledTools(agent.EnabledTools),
 	}
+}
+
+// convertEnabledTools converts useragents.EnabledTool to llm.EnabledMCPTool.
+// Preserves nil vs empty semantics: nil input → nil output (all tools allowed),
+// empty input → empty output (no tools allowed).
+func convertEnabledTools(tools []useragents.EnabledTool) []llm.EnabledMCPTool {
+	if tools == nil {
+		return nil
+	}
+	result := make([]llm.EnabledMCPTool, len(tools))
+	for i, t := range tools {
+		result[i] = llm.EnabledMCPTool{
+			ServerOrigin: t.ServerOrigin,
+			ToolName:     t.ToolName,
+		}
+	}
+	return result
 }
 
 // botConfigsEqual compares two bot config slices for equality.

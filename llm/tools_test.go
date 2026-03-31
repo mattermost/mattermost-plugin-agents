@@ -5,6 +5,7 @@ package llm
 
 import (
 	"encoding/json"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -498,4 +499,104 @@ func TestEnrichToolCallsPassesThroughNonToolEvents(t *testing.T) {
 	require.True(t, ok, "EventTypeToolCalls value must be []ToolCall, got %T", events[1].Value)
 	assert.Equal(t, "https://example.com", toolCalls[0].ServerOrigin)
 	assert.Equal(t, EventTypeEnd, events[2].Type)
+}
+
+func TestRetainOnlyMCPTools(t *testing.T) {
+	tests := []struct {
+		name          string
+		tools         []Tool
+		allowlist     []EnabledMCPTool
+		wantToolNames []string
+	}{
+		{
+			name: "nil allowlist retains all tools",
+			tools: []Tool{
+				{Name: "builtin_search", ServerOrigin: ""},
+				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "slack_post", ServerOrigin: "https://mcp.slack.com"},
+			},
+			allowlist:     nil,
+			wantToolNames: []string{"builtin_search", "jira_get", "slack_post"},
+		},
+		{
+			name: "empty allowlist removes all MCP tools but keeps built-in",
+			tools: []Tool{
+				{Name: "builtin_search", ServerOrigin: ""},
+				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
+			},
+			allowlist:     []EnabledMCPTool{},
+			wantToolNames: []string{"builtin_search"},
+		},
+		{
+			name: "allowlist retains only matching MCP tools",
+			tools: []Tool{
+				{Name: "builtin_search", ServerOrigin: ""},
+				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "jira_create", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "slack_post", ServerOrigin: "https://mcp.slack.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://mcp.atlassian.com", ToolName: "jira_get"},
+				{ServerOrigin: "https://mcp.slack.com", ToolName: "slack_post"},
+			},
+			wantToolNames: []string{"builtin_search", "jira_get", "slack_post"},
+		},
+		{
+			name: "allowlist with non-matching entries filters correctly",
+			tools: []Tool{
+				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://mcp.slack.com", ToolName: "slack_post"},
+			},
+			wantToolNames: []string{},
+		},
+		{
+			name: "same tool name different server origins — last write wins",
+			tools: []Tool{
+				{Name: "search", ServerOrigin: "https://server-a.com"},
+				{Name: "search", ServerOrigin: "https://server-b.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://server-a.com", ToolName: "search"},
+			},
+			// ToolStore uses tool.Name as map key, so server-b overwrites
+			// server-a. The allowlist references server-a, which no longer
+			// exists in the store, so the result is empty.
+			wantToolNames: []string{},
+		},
+		{
+			name:  "nil ToolStore is safe",
+			tools: nil, // will test on nil *ToolStore
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://mcp.example.com", ToolName: "foo"},
+			},
+			wantToolNames: nil, // special case: test on nil receiver
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.tools == nil {
+				// Test nil receiver safety
+				var s *ToolStore
+				s.RetainOnlyMCPTools(tt.allowlist) // must not panic
+				return
+			}
+
+			s := NewToolStore(nil, false)
+			s.AddTools(tt.tools)
+			s.RetainOnlyMCPTools(tt.allowlist)
+
+			got := s.GetTools()
+			gotNames := make([]string, 0, len(got))
+			for _, tool := range got {
+				gotNames = append(gotNames, tool.Name)
+			}
+			// Sort for deterministic comparison (map iteration order)
+			sort.Strings(gotNames)
+			sort.Strings(tt.wantToolNames)
+			assert.Equal(t, tt.wantToolNames, gotNames)
+		})
+	}
 }

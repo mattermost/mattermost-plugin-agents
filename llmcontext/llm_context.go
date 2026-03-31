@@ -182,6 +182,14 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 			store.AddTools(mcpTools)
 		}
 
+		// Per-agent MCP tool filtering: if the bot has an explicit allowlist,
+		// retain only tools in that list. Config-defined bots have nil (= no filtering).
+		// This runs AFTER admin policy (filterToolsByConfig inside GetToolsForUser)
+		// and BEFORE per-user filtering (RemoveToolsByServerOrigin in conversations.go).
+		if enabledTools := bot.GetConfig().EnabledMCPTools; enabledTools != nil {
+			store.RetainOnlyMCPTools(enabledTools)
+		}
+
 		// Handle MCP errors if any occurred
 		if mcpErrors != nil {
 			for _, authError := range mcpErrors.ToolAuthErrors {

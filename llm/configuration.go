@@ -48,6 +48,13 @@ const (
 	UserAccessLevelNone
 )
 
+// EnabledMCPTool identifies a single MCP tool on a specific server.
+// Mirrors useragents.EnabledTool but lives in the llm package to avoid import cycles.
+type EnabledMCPTool struct {
+	ServerOrigin string `json:"server_origin"`
+	ToolName     string `json:"tool_name"`
+}
+
 type BotConfig struct {
 	ID                 string `json:"id"`
 	Name               string `json:"name"`
@@ -75,6 +82,12 @@ type BotConfig struct {
 	// For OpenAI: ["web_search", "file_search", "code_interpreter"] (only works when UseResponsesAPI is true)
 	// For Anthropic: ["web_search"]
 	EnabledNativeTools []string `json:"enabledNativeTools"`
+
+	// EnabledMCPTools is the per-agent allowlist of MCP tools.
+	// When non-nil, only tools matching these (ServerOrigin, ToolName) pairs are kept.
+	// A nil value means "all MCP tools allowed" (config-defined bots, backward compat).
+	// An empty non-nil slice means "no MCP tools allowed".
+	EnabledMCPTools []EnabledMCPTool `json:"enabledMCPTools,omitempty"`
 
 	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot
 	// Applicable to OpenAI (with ResponsesAPI) and Anthropic

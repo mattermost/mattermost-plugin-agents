@@ -9,6 +9,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -248,6 +249,51 @@ func TestUsageRestrictions(t *testing.T) {
 			channel:        &model.Channel{Id: "channel1"},
 			requestingUser: "user1",
 			expectedError:  ErrUsageRestriction,
+		},
+		// DB-backed agent test cases: verify userAgentToBotConfig output
+		// flows correctly through CheckUsageRestrictions.
+		{
+			name: "DB-backed agent: user allowed by allowlist",
+			bot: &Bot{cfg: userAgentToBotConfig(&useragents.UserAgent{
+				ID:              "agent-1",
+				Username:        "db-agent",
+				DisplayName:     "DB Agent",
+				ServiceID:       "svc-1",
+				UserAccessLevel: int(llm.UserAccessLevelAllow),
+				UserIDs:         []string{"user1"},
+			}), mmBot: nil},
+			channel:        &model.Channel{Id: "channel1"},
+			requestingUser: "user1",
+			expectedError:  nil,
+		},
+		{
+			name: "DB-backed agent: user blocked by blocklist",
+			bot: &Bot{cfg: userAgentToBotConfig(&useragents.UserAgent{
+				ID:              "agent-2",
+				Username:        "db-agent-2",
+				DisplayName:     "DB Agent 2",
+				ServiceID:       "svc-1",
+				UserAccessLevel: int(llm.UserAccessLevelBlock),
+				UserIDs:         []string{"blocked_user"},
+			}), mmBot: nil},
+			channel:        &model.Channel{Id: "channel1"},
+			requestingUser: "blocked_user",
+			expectedError:  ErrUsageRestriction,
+		},
+		{
+			name: "DB-backed agent: channel allowed",
+			bot: &Bot{cfg: userAgentToBotConfig(&useragents.UserAgent{
+				ID:                 "agent-3",
+				Username:           "db-agent-3",
+				DisplayName:        "DB Agent 3",
+				ServiceID:          "svc-1",
+				ChannelAccessLevel: int(llm.ChannelAccessLevelAllow),
+				ChannelIDs:         []string{"allowed_channel"},
+				UserAccessLevel:    int(llm.UserAccessLevelAll),
+			}), mmBot: nil},
+			channel:        &model.Channel{Id: "allowed_channel"},
+			requestingUser: "user1",
+			expectedError:  nil,
 		},
 	}
 

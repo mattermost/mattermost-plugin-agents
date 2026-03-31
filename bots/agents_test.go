@@ -107,6 +107,64 @@ func TestDBBackedAgentInBotRegistry(t *testing.T) {
 	assert.Equal(t, "db-agent", mentioned.GetMMBot().Username)
 }
 
+func TestConvertEnabledTools(t *testing.T) {
+	t.Run("nil input returns nil", func(t *testing.T) {
+		result := convertEnabledTools(nil)
+		assert.Nil(t, result)
+	})
+
+	t.Run("empty input returns empty non-nil", func(t *testing.T) {
+		result := convertEnabledTools([]useragents.EnabledTool{})
+		require.NotNil(t, result)
+		assert.Empty(t, result)
+	})
+
+	t.Run("populated input converts correctly", func(t *testing.T) {
+		input := []useragents.EnabledTool{
+			{ServerOrigin: "https://server.com", ToolName: "tool_a"},
+			{ServerOrigin: "https://other.com", ToolName: "tool_b"},
+		}
+		result := convertEnabledTools(input)
+		require.Len(t, result, 2)
+		assert.Equal(t, "https://server.com", result[0].ServerOrigin)
+		assert.Equal(t, "tool_a", result[0].ToolName)
+		assert.Equal(t, "https://other.com", result[1].ServerOrigin)
+		assert.Equal(t, "tool_b", result[1].ToolName)
+	})
+}
+
+func TestUserAgentToBotConfigEnabledTools(t *testing.T) {
+	agent := &useragents.UserAgent{
+		ID:          "agent-123",
+		Username:    "test-agent",
+		DisplayName: "Test Agent",
+		ServiceID:   "svc-1",
+		EnabledTools: []useragents.EnabledTool{
+			{ServerOrigin: "https://mcp.example.com", ToolName: "search"},
+		},
+	}
+
+	cfg := userAgentToBotConfig(agent)
+
+	require.NotNil(t, cfg.EnabledMCPTools)
+	require.Len(t, cfg.EnabledMCPTools, 1)
+	assert.Equal(t, "https://mcp.example.com", cfg.EnabledMCPTools[0].ServerOrigin)
+	assert.Equal(t, "search", cfg.EnabledMCPTools[0].ToolName)
+}
+
+func TestUserAgentToBotConfigNilEnabledTools(t *testing.T) {
+	agent := &useragents.UserAgent{
+		ID:           "agent-456",
+		Username:     "no-tools-agent",
+		DisplayName:  "No Tools",
+		ServiceID:    "svc-1",
+		EnabledTools: nil,
+	}
+
+	cfg := userAgentToBotConfig(agent)
+	assert.Nil(t, cfg.EnabledMCPTools)
+}
+
 func TestForceRefreshFlag(t *testing.T) {
 	bots := &MMBots{}
 
