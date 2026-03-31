@@ -1,0 +1,170 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+package store
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+
+	sq "github.com/Masterminds/squirrel"
+	"github.com/lib/pq"
+	"github.com/mattermost/mattermost/server/public/model"
+)
+
+var (
+	// ErrConversationNotFound is returned when a conversation lookup finds no matching row.
+	ErrConversationNotFound = errors.New("conversation not found")
+
+	// ErrConversationConflict is returned when creating a conversation violates
+	// the unique index on (RootPostID, BotID).
+	ErrConversationConflict = errors.New("conversation already exists for this thread and bot")
+)
+
+// Conversation represents a first-class conversation entity stored in LLM_Conversations.
+type Conversation struct {
+	ID           string  `json:"id"            db:"id"`
+	UserID       string  `json:"user_id"       db:"userid"`
+	BotID        string  `json:"bot_id"        db:"botid"`
+	ChannelID    *string `json:"channel_id"    db:"channelid"`
+	RootPostID   *string `json:"root_post_id"  db:"rootpostid"`
+	Title        string  `json:"title"         db:"title"`
+	SystemPrompt string  `json:"system_prompt" db:"systemprompt"`
+	Operation    string  `json:"operation"     db:"operation"`
+	CreatedAt    int64   `json:"created_at"    db:"createdat"`
+	UpdatedAt    int64   `json:"updated_at"    db:"updatedat"`
+	DeleteAt     int64   `json:"delete_at"     db:"deleteat"`
+}
+
+func isUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) {
+		return pqErr.Code == "23505"
+	}
+	return false
+}
+
+var conversationColumns = []string{
+	"ID", "UserID", "BotID", "ChannelID", "RootPostID",
+	"Title", "SystemPrompt", "Operation",
+	"CreatedAt", "UpdatedAt", "DeleteAt",
+}
+
+// CreateConversation inserts a new conversation row.
+// The caller must set ID, UserID, BotID, CreatedAt, and UpdatedAt before calling.
+func (s *Store) CreateConversation(conv *Conversation) error {
+	query, args, err := s.builder.Insert("LLM_Conversations").
+		Columns(conversationColumns...).
+		Values(conv.ID, conv.UserID, conv.BotID, conv.ChannelID, conv.RootPostID,
+			conv.Title, conv.SystemPrompt, conv.Operation,
+			conv.CreatedAt, conv.UpdatedAt, conv.DeleteAt).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build create conversation query: %w", err)
+	}
+	_, err = s.db.Exec(query, args...)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrConversationConflict
+		}
+		return fmt.Errorf("failed to create conversation: %w", err)
+	}
+	return nil
+}
+
+// GetConversation retrieves a non-deleted conversation by ID.
+// Returns ErrConversationNotFound if the conversation does not exist or is soft-deleted.
+func (s *Store) GetConversation(id string) (*Conversation, error) {
+	query, args, err := s.builder.
+		Select(conversationColumns...).
+		From("LLM_Conversations").
+		Where(sq.Eq{"ID": id}).
+		Where(sq.Eq{"DeleteAt": 0}).
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build get conversation query: %w", err)
+	}
+	var conv Conversation
+	if err := s.db.Get(&conv, query, args...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrConversationNotFound
+		}
+		return nil, fmt.Errorf("failed to get conversation: %w", err)
+	}
+	return &conv, nil
+}
+
+// GetConversationByThreadAndBot looks up a non-deleted conversation by RootPostID and BotID.
+// Returns nil, nil if no conversation exists for the given pair.
+func (s *Store) GetConversationByThreadAndBot(rootPostID, botID string) (*Conversation, error) {
+	query, args, err := s.builder.
+		Select(conversationColumns...).
+		From("LLM_Conversations").
+		Where(sq.Eq{"RootPostID": rootPostID}).
+		Where(sq.Eq{"BotID": botID}).
+		Where(sq.Eq{"DeleteAt": 0}).
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build get conversation by thread query: %w", err)
+	}
+	var conv Conversation
+	if err := s.db.Get(&conv, query, args...); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get conversation by thread and bot: %w", err)
+	}
+	return &conv, nil
+}
+
+// UpdateConversationTitle updates the title and UpdatedAt timestamp of a conversation.
+func (s *Store) UpdateConversationTitle(id, title string) error {
+	query, args, err := s.builder.
+		Update("LLM_Conversations").
+		Set("Title", title).
+		Set("UpdatedAt", model.GetMillis()).
+		Where(sq.Eq{"ID": id}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build update title query: %w", err)
+	}
+	_, err = s.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update conversation title: %w", err)
+	}
+	return nil
+}
+
+// SoftDeleteConversation sets the DeleteAt timestamp on a conversation.
+// Turns are not deleted until CleanupDeletedConversations runs.
+func (s *Store) SoftDeleteConversation(id string, deleteAt int64) error {
+	query, args, err := s.builder.
+		Update("LLM_Conversations").
+		Set("DeleteAt", deleteAt).
+		Set("UpdatedAt", deleteAt).
+		Where(sq.Eq{"ID": id}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build soft delete query: %w", err)
+	}
+	_, err = s.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to soft delete conversation: %w", err)
+	}
+	return nil
+}
+
+// CleanupDeletedConversations permanently deletes all soft-deleted conversations
+// and their associated turns.
+func (s *Store) CleanupDeletedConversations() error {
+	_, err := s.db.Exec("DELETE FROM LLM_Turns WHERE ConversationID IN (SELECT ID FROM LLM_Conversations WHERE DeleteAt > 0)")
+	if err != nil {
+		return fmt.Errorf("failed to delete turns for deleted conversations: %w", err)
+	}
+	_, err = s.db.Exec("DELETE FROM LLM_Conversations WHERE DeleteAt > 0")
+	if err != nil {
+		return fmt.Errorf("failed to delete soft-deleted conversations: %w", err)
+	}
+	return nil
+}

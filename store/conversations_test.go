@@ -1,0 +1,469 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+package store
+
+import (
+	"testing"
+
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func stringPtr(s string) *string {
+	return &s
+}
+
+func makeConversation(overrides ...func(*Conversation)) *Conversation {
+	conv := &Conversation{
+		ID:        model.NewId(),
+		UserID:    model.NewId(),
+		BotID:     model.NewId(),
+		Title:     "",
+		Operation: "conversation",
+		CreatedAt: model.GetMillis(),
+		UpdatedAt: model.GetMillis(),
+		DeleteAt:  0,
+	}
+	for _, fn := range overrides {
+		fn(conv)
+	}
+	return conv
+}
+
+func TestCreateConversation(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, s *Store)
+		validate func(t *testing.T, s *Store)
+	}{
+		{
+			name:  "creates conversation with all fields",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation(func(c *Conversation) {
+					c.ChannelID = stringPtr("channel1")
+					c.RootPostID = stringPtr("post1")
+					c.Title = "Test Title"
+					c.SystemPrompt = "You are a helpful assistant"
+					c.Operation = "conversation"
+				})
+
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				got, err := s.GetConversation(conv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, conv.ID, got.ID)
+				assert.Equal(t, conv.UserID, got.UserID)
+				assert.Equal(t, conv.BotID, got.BotID)
+				assert.Equal(t, conv.ChannelID, got.ChannelID)
+				assert.Equal(t, conv.RootPostID, got.RootPostID)
+				assert.Equal(t, conv.Title, got.Title)
+				assert.Equal(t, conv.SystemPrompt, got.SystemPrompt)
+				assert.Equal(t, conv.Operation, got.Operation)
+				assert.Equal(t, conv.CreatedAt, got.CreatedAt)
+				assert.Equal(t, conv.UpdatedAt, got.UpdatedAt)
+				assert.Equal(t, conv.DeleteAt, got.DeleteAt)
+			},
+		},
+		{
+			name:  "creates conversation with nil optional fields",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation()
+
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				got, err := s.GetConversation(conv.ID)
+				require.NoError(t, err)
+				assert.Nil(t, got.ChannelID)
+				assert.Nil(t, got.RootPostID)
+			},
+		},
+		{
+			name: "duplicate RootPostID+BotID returns conflict error",
+			setup: func(t *testing.T, s *Store) {
+				conv := makeConversation(func(c *Conversation) {
+					c.RootPostID = stringPtr("post1")
+					c.BotID = "bot1"
+				})
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+			},
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation(func(c *Conversation) {
+					c.RootPostID = stringPtr("post1")
+					c.BotID = "bot1"
+				})
+				err := s.CreateConversation(conv)
+				assert.ErrorIs(t, err, ErrConversationConflict)
+			},
+		},
+		{
+			name: "allows same RootPostID with different BotID",
+			setup: func(t *testing.T, s *Store) {
+				conv := makeConversation(func(c *Conversation) {
+					c.RootPostID = stringPtr("post1")
+					c.BotID = "bot1"
+				})
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+			},
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation(func(c *Conversation) {
+					c.RootPostID = stringPtr("post1")
+					c.BotID = "bot2"
+				})
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				got, err := s.GetConversation(conv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, conv.ID, got.ID)
+			},
+		},
+		{
+			name: "allows multiple nil RootPostID rows",
+			setup: func(t *testing.T, s *Store) {
+				conv := makeConversation(func(c *Conversation) {
+					c.BotID = "bot1"
+				})
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+			},
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation(func(c *Conversation) {
+					c.BotID = "bot1"
+				})
+				err := s.CreateConversation(conv)
+				assert.NoError(t, err)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+
+			err := s.RunMigrations()
+			require.NoError(t, err)
+
+			tt.setup(t, s)
+			tt.validate(t, s)
+		})
+	}
+}
+
+func TestGetConversation(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, s *Store)
+		validate func(t *testing.T, s *Store)
+	}{
+		{
+			name: "returns conversation by ID",
+			setup: func(t *testing.T, s *Store) {
+				// Created via validate to capture the ID
+			},
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation(func(c *Conversation) {
+					c.Title = "Test Conversation"
+				})
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				got, err := s.GetConversation(conv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, conv.ID, got.ID)
+				assert.Equal(t, conv.Title, got.Title)
+			},
+		},
+		{
+			name:  "returns ErrConversationNotFound for nonexistent ID",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				got, err := s.GetConversation("nonexistent")
+				assert.Nil(t, got)
+				assert.ErrorIs(t, err, ErrConversationNotFound)
+			},
+		},
+		{
+			name:  "does not return soft-deleted conversation",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				err = s.SoftDeleteConversation(conv.ID, model.GetMillis())
+				require.NoError(t, err)
+
+				got, err := s.GetConversation(conv.ID)
+				assert.Nil(t, got)
+				assert.ErrorIs(t, err, ErrConversationNotFound)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+
+			err := s.RunMigrations()
+			require.NoError(t, err)
+
+			tt.setup(t, s)
+			tt.validate(t, s)
+		})
+	}
+}
+
+func TestGetConversationByThreadAndBot(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, s *Store)
+		validate func(t *testing.T, s *Store)
+	}{
+		{
+			name:  "returns conversation by RootPostID and BotID",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation(func(c *Conversation) {
+					c.RootPostID = stringPtr("post1")
+					c.BotID = "bot1"
+					c.Title = "Thread Conversation"
+				})
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				got, err := s.GetConversationByThreadAndBot("post1", "bot1")
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				assert.Equal(t, conv.ID, got.ID)
+				assert.Equal(t, conv.Title, got.Title)
+			},
+		},
+		{
+			name:  "returns nil for nonexistent pair",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				got, err := s.GetConversationByThreadAndBot("nonexistent", "nonexistent")
+				assert.NoError(t, err)
+				assert.Nil(t, got)
+			},
+		},
+		{
+			name:  "does not return soft-deleted conversation",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation(func(c *Conversation) {
+					c.RootPostID = stringPtr("post1")
+					c.BotID = "bot1"
+				})
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				err = s.SoftDeleteConversation(conv.ID, model.GetMillis())
+				require.NoError(t, err)
+
+				got, err := s.GetConversationByThreadAndBot("post1", "bot1")
+				assert.NoError(t, err)
+				assert.Nil(t, got)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+
+			err := s.RunMigrations()
+			require.NoError(t, err)
+
+			tt.setup(t, s)
+			tt.validate(t, s)
+		})
+	}
+}
+
+func TestUpdateConversationTitle(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, s *Store)
+		validate func(t *testing.T, s *Store)
+	}{
+		{
+			name:  "updates title and UpdatedAt",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				err = s.UpdateConversationTitle(conv.ID, "New Title")
+				require.NoError(t, err)
+
+				got, err := s.GetConversation(conv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, "New Title", got.Title)
+				assert.GreaterOrEqual(t, got.UpdatedAt, conv.UpdatedAt)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+
+			err := s.RunMigrations()
+			require.NoError(t, err)
+
+			tt.setup(t, s)
+			tt.validate(t, s)
+		})
+	}
+}
+
+func TestSoftDeleteConversation(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, s *Store)
+		validate func(t *testing.T, s *Store)
+	}{
+		{
+			name:  "sets DeleteAt on conversation",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				now := model.GetMillis()
+				err = s.SoftDeleteConversation(conv.ID, now)
+				require.NoError(t, err)
+
+				// Direct DB query to verify DeleteAt was set
+				var deleteAt int64
+				err = s.db.Get(&deleteAt, "SELECT DeleteAt FROM LLM_Conversations WHERE ID = $1", conv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, now, deleteAt)
+
+				// GetConversation should not return it
+				got, err := s.GetConversation(conv.ID)
+				assert.Nil(t, got)
+				assert.ErrorIs(t, err, ErrConversationNotFound)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+
+			err := s.RunMigrations()
+			require.NoError(t, err)
+
+			tt.setup(t, s)
+			tt.validate(t, s)
+		})
+	}
+}
+
+func TestCleanupDeletedConversations(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, s *Store)
+		validate func(t *testing.T, s *Store)
+	}{
+		{
+			name:  "removes soft-deleted conversations and their turns",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				// Create two conversations
+				conv1 := makeConversation()
+				err := s.CreateConversation(conv1)
+				require.NoError(t, err)
+
+				conv2 := makeConversation()
+				err = s.CreateConversation(conv2)
+				require.NoError(t, err)
+
+				// Add turns to both
+				turn1 := makeTurn(conv1.ID, 1)
+				err = s.CreateTurn(turn1)
+				require.NoError(t, err)
+
+				turn2 := makeTurn(conv2.ID, 1)
+				err = s.CreateTurn(turn2)
+				require.NoError(t, err)
+
+				// Soft-delete conv1
+				err = s.SoftDeleteConversation(conv1.ID, model.GetMillis())
+				require.NoError(t, err)
+
+				// Cleanup
+				err = s.CleanupDeletedConversations()
+				require.NoError(t, err)
+
+				// conv1 and its turns should be gone
+				var count int
+				err = s.db.Get(&count, "SELECT COUNT(*) FROM LLM_Conversations WHERE ID = $1", conv1.ID)
+				require.NoError(t, err)
+				assert.Equal(t, 0, count)
+
+				err = s.db.Get(&count, "SELECT COUNT(*) FROM LLM_Turns WHERE ConversationID = $1", conv1.ID)
+				require.NoError(t, err)
+				assert.Equal(t, 0, count)
+
+				// conv2 and its turns should remain
+				got, err := s.GetConversation(conv2.ID)
+				require.NoError(t, err)
+				assert.Equal(t, conv2.ID, got.ID)
+
+				turns, err := s.GetTurnsForConversation(conv2.ID)
+				require.NoError(t, err)
+				assert.Len(t, turns, 1)
+			},
+		},
+		{
+			name:  "no-op when nothing soft-deleted",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation()
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				turn := makeTurn(conv.ID, 1)
+				err = s.CreateTurn(turn)
+				require.NoError(t, err)
+
+				err = s.CleanupDeletedConversations()
+				require.NoError(t, err)
+
+				// Everything still exists
+				got, err := s.GetConversation(conv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, conv.ID, got.ID)
+
+				turns, err := s.GetTurnsForConversation(conv.ID)
+				require.NoError(t, err)
+				assert.Len(t, turns, 1)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+
+			err := s.RunMigrations()
+			require.NoError(t, err)
+
+			tt.setup(t, s)
+			tt.validate(t, s)
+		})
+	}
+}
