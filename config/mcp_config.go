@@ -3,9 +3,22 @@
 
 package config
 
+const (
+	MCPToolPolicyAsk     = "ask"
+	MCPToolPolicyAutoRun = "auto_run"
+)
+
+// MCPToolConfig represents per-tool configuration for an MCP server.
+type MCPToolConfig struct {
+	Name    string `json:"name"`
+	Policy  string `json:"policy"` // "auto_run" | "ask"
+	Enabled bool   `json:"enabled"`
+}
+
 // MCPEmbeddedServerConfig contains configuration for the embedded MCP server
 type MCPEmbeddedServerConfig struct {
-	Enabled bool `json:"enabled"`
+	Enabled     bool            `json:"enabled"`
+	ToolConfigs []MCPToolConfig `json:"tool_configs,omitempty"`
 }
 
 // MCPConfig contains the configuration for the MCP servers
@@ -25,4 +38,48 @@ type MCPServerConfig struct {
 	Headers      map[string]string `json:"headers,omitempty"`
 	ClientID     string            `json:"clientID,omitempty"`
 	ClientSecret string            `json:"clientSecret,omitempty"`
+	ToolConfigs  []MCPToolConfig   `json:"tool_configs,omitempty"`
+}
+
+// GetToolPolicy returns the policy and enabled state for a tool.
+// If the receiver is nil or the tool name is empty, it returns ("ask", false).
+// If no matching config entry exists, it returns ("ask", true) — unconfigured
+// tools default to enabled with ask policy. Invalid or empty policies are
+// normalized to "ask". When duplicate entries exist the last matching entry wins.
+func (s *MCPServerConfig) GetToolPolicy(toolName string) (string, bool) {
+	if s == nil || toolName == "" {
+		return MCPToolPolicyAsk, false
+	}
+
+	if !s.Enabled {
+		return MCPToolPolicyAsk, false
+	}
+
+	found := false
+	policy := MCPToolPolicyAsk
+	enabled := false
+
+	for _, tc := range s.ToolConfigs {
+		if tc.Name == toolName {
+			found = true
+			policy = tc.Policy
+			enabled = tc.Enabled
+		}
+	}
+
+	if !found {
+		return MCPToolPolicyAsk, true
+	}
+
+	if policy != MCPToolPolicyAutoRun && policy != MCPToolPolicyAsk {
+		policy = MCPToolPolicyAsk
+	}
+
+	return policy, enabled
+}
+
+// IsToolAutoRun returns true only when the tool has policy "auto_run" and is enabled.
+func (s *MCPServerConfig) IsToolAutoRun(toolName string) bool {
+	policy, enabled := s.GetToolPolicy(toolName)
+	return policy == MCPToolPolicyAutoRun && enabled
 }

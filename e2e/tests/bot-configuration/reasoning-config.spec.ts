@@ -32,44 +32,56 @@ function createTestSuite() {
 
         test('should require Responses API for OpenAI reasoning', async () => {
             const botConfig = await createBotConfigHelper(mattermost);
+            const serviceId = 'no-responses-api-service';
+            const botId = generateBotId();
 
             // Create a service without Responses API
             await botConfig.addService({
-                id: 'no-responses-api-service',
+                id: serviceId,
                 name: 'No Responses API Service',
                 type: 'openai',
                 apiKey: 'test-key',
                 apiURL: 'http://openai:8080',
                 useResponsesAPI: false, // Responses API disabled
-                reasoningEnabled: false
+            });
+
+            await botConfig.addBot({
+                id: botId,
+                name: `reasoningbot-${botId}`,
+                displayName: 'Reasoning Bot',
+                customInstructions: 'You use advanced reasoning.',
+                serviceID: serviceId,
+                reasoningEnabled: false,
             });
 
             // Verify service was created
-            const service = await botConfig.getService('no-responses-api-service');
+            const service = await botConfig.getService(serviceId);
             expect(service).toBeDefined();
             expect(service?.useResponsesAPI).toBe(false);
 
-            // Attempt to enable reasoning (should work in config, but may not work at runtime)
-            await botConfig.updateService('no-responses-api-service', {
-                reasoningEnabled: true
+            // Enable reasoning on the bot
+            await botConfig.updateBot(botId, {
+                reasoningEnabled: true,
             });
 
             // Verify configuration accepts this (validation happens at runtime)
-            const updatedService = await botConfig.getService('no-responses-api-service');
-            expect(updatedService?.reasoningEnabled).toBe(true);
+            const updatedBot = await botConfig.getBot(botId);
+            expect(updatedBot?.reasoningEnabled).toBe(true);
+            const updatedService = await botConfig.getService(serviceId);
             expect(updatedService?.useResponsesAPI).toBe(false);
 
             // Note: At runtime, reasoning would fail or be ignored without Responses API
             // This is expected behavior - configuration allows it but runtime enforces the requirement
 
             // Clean up
-            await botConfig.deleteService('no-responses-api-service');
+            await botConfig.deleteBot(botId);
+            await botConfig.deleteService(serviceId);
         });
 
         test('should allow switching bot between OpenAI and Anthropic services with reasoning', async () => {
             const botConfig = await createBotConfigHelper(mattermost);
 
-            // Create OpenAI service with reasoning
+            // Create OpenAI service
             await botConfig.addService({
                 id: 'openai-reasoning',
                 name: 'OpenAI Reasoning Service',
@@ -77,18 +89,16 @@ function createTestSuite() {
                 apiKey: 'openai-key',
                 apiURL: 'http://openai:8080',
                 useResponsesAPI: true,
-                reasoningEnabled: true
             });
 
-            // Create Anthropic service with reasoning
+            // Create Anthropic service
             await botConfig.addService({
                 id: 'anthropic-reasoning',
                 name: 'Anthropic Reasoning Service',
                 type: 'anthropic',
                 apiKey: 'anthropic-key',
                 apiURL: 'https://api.anthropic.com',
-                reasoningEnabled: true,
-                tokenLimit: 4096
+                tokenLimit: 4096,
             });
 
             // Create bot using OpenAI service
@@ -98,21 +108,24 @@ function createTestSuite() {
                 name: 'reasoningbot',
                 displayName: 'Reasoning Bot',
                 customInstructions: 'You use advanced reasoning.',
-                serviceID: 'openai-reasoning'
+                serviceID: 'openai-reasoning',
+                reasoningEnabled: true,
             });
 
             // Verify bot uses OpenAI service
             let bot = await botConfig.getBot(botId);
             expect(bot?.serviceID).toBe('openai-reasoning');
+            expect(bot?.reasoningEnabled).toBe(true);
 
             // Switch to Anthropic service
             await botConfig.updateBot(botId, {
-                serviceID: 'anthropic-reasoning'
+                serviceID: 'anthropic-reasoning',
             });
 
             // Verify switch
             bot = await botConfig.getBot(botId);
             expect(bot?.serviceID).toBe('anthropic-reasoning');
+            expect(bot?.reasoningEnabled).toBe(true);
 
             // Clean up
             await botConfig.deleteBot(botId);
@@ -122,35 +135,47 @@ function createTestSuite() {
 
         test('should persist reasoning configuration across service updates', async () => {
             const botConfig = await createBotConfigHelper(mattermost);
+            const serviceId = 'reasoning-persist-test';
+            const botId = generateBotId();
 
-            // Create service with reasoning disabled
+            // Create service
             await botConfig.addService({
-                id: 'reasoning-persist-test',
+                id: serviceId,
                 name: 'Reasoning Persist Test',
                 type: 'openaicompatible',
                 apiKey: 'test-key',
                 apiURL: 'http://openai:8080',
                 useResponsesAPI: true,
-                reasoningEnabled: false
             });
 
-            // Enable reasoning
-            await botConfig.updateService('reasoning-persist-test', {
-                reasoningEnabled: true
+            await botConfig.addBot({
+                id: botId,
+                name: `reasoningbot-${botId}`,
+                displayName: 'Reasoning Persist Bot',
+                customInstructions: 'You use advanced reasoning.',
+                serviceID: serviceId,
+                reasoningEnabled: false,
             });
 
-            // Make other updates
-            await botConfig.updateService('reasoning-persist-test', {
-                apiKey: 'updated-key'
+            // Enable reasoning on the bot
+            await botConfig.updateBot(botId, {
+                reasoningEnabled: true,
             });
 
-            // Verify reasoning is still enabled
-            const service = await botConfig.getService('reasoning-persist-test');
-            expect(service?.reasoningEnabled).toBe(true);
+            // Make service updates
+            await botConfig.updateService(serviceId, {
+                apiKey: 'updated-key',
+            });
+
+            // Verify reasoning is still enabled on the bot
+            const bot = await botConfig.getBot(botId);
+            expect(bot?.reasoningEnabled).toBe(true);
+            const service = await botConfig.getService(serviceId);
             expect(service?.apiKey).toBe('updated-key');
 
             // Clean up
-            await botConfig.deleteService('reasoning-persist-test');
+            await botConfig.deleteBot(botId);
+            await botConfig.deleteService(serviceId);
         });
     });
 }

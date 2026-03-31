@@ -13,6 +13,7 @@ import {BotDropdown} from '../bot_selector';
 import {LLMBot} from '@/bots';
 
 import {Button} from './common';
+import ToolProviderPopover, {UserMCPServerInfo} from './tool_provider_popover';
 
 type Props = {
     currentTab: string
@@ -21,6 +22,9 @@ type Props = {
     setCurrentTab: (tab: string) => void
     selectPost: (postId: string) => void
     setActiveBot: (bot: LLMBot) => void
+    disabledServers: string[]
+    onDisabledServersChange: (servers: string[]) => void
+    preloadedServers?: UserMCPServerInfo[]
 }
 
 const RHSHeader = (props: Props) => {
@@ -63,19 +67,28 @@ const RHSHeader = (props: Props) => {
                     <FormattedMessage defaultMessage='New chat'/>
                 </NewChatButton>
             )}
-            {(props.currentTab === 'new' && props.bots) && (
-                <BotDropdown
-                    bots={props.bots}
-                    activeBot={props.activeBot}
-                    setActiveBot={props.setActiveBot}
-                    container={SelectorDropdown}
-                    testId='bot-selector-rhs'
-                >
-                    <>
-                        {currentBotName}
-                        <ChevronDownIcon/>
-                    </>
-                </BotDropdown>
+            {props.currentTab === 'new' && (
+                <RightControls>
+                    <ToolProviderPopover
+                        disabledServers={props.disabledServers}
+                        onDisabledServersChange={props.onDisabledServersChange}
+                        preloadedServers={props.preloadedServers}
+                    />
+                    {props.bots && (
+                        <BotDropdown
+                            bots={props.bots}
+                            activeBot={props.activeBot}
+                            setActiveBot={props.setActiveBot}
+                            container={SelectorDropdown}
+                            testId='bot-selector-rhs'
+                        >
+                            <>
+                                {currentBotName}
+                                <ChevronDownIcon/>
+                            </>
+                        </BotDropdown>
+                    )}
+                </RightControls>
             )}
         </Header>
     );
@@ -113,6 +126,13 @@ const Header = styled.div`
 	align-items: center;
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
     flex-wrap: wrap;
+`;
+
+const RightControls = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
 `;
 
 const SelectorDropdown = styled(DotMenuButton)<{isActive: boolean}>`

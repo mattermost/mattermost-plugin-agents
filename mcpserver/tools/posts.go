@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-ai/format"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -212,17 +213,18 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 	}
 
 	for i, post := range posts {
-		// Get user info for the post
 		user, _, err := client.GetUser(ctx, post.UserId, "")
+		username := ""
 		if err != nil {
 			p.logger.Warn("failed to get user for post", "user_id", post.UserId, "error", err)
-			result.WriteString(fmt.Sprintf("**Post %d** by Unknown User:\n", i+1))
 		} else {
-			result.WriteString(fmt.Sprintf("**Post %d** by %s:\n", i+1, user.Username))
+			username = user.Username
 		}
-
-		result.WriteString(fmt.Sprintf("Post ID: %s\n", post.Id))
-		result.WriteString(fmt.Sprintf("%s\n\n", post.Message))
+		format.WritePost(&result, format.PostEntry{
+			HeaderLabel: fmt.Sprintf("Post %d", i+1),
+			Username:    username,
+			Post:        post,
+		})
 	}
 
 	return result.String(), nil

@@ -15,6 +15,7 @@ import {
     getAPIConfig,
 } from 'helpers/api-config';
 import {checkAPIHealth} from 'helpers/api-health-check';
+import {REAL_API_BEFORE_ALL_TIMEOUT_MS} from 'helpers/real-api-container';
 import {attachAPIErrorContext} from 'helpers/log-scanner';
 
 const adminUsername = 'admin';
@@ -363,6 +364,8 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         if (!shouldRunProvider) {
             return;
         }
+
+        test.setTimeout(REAL_API_BEFORE_ALL_TIMEOUT_MS);
 
         provider = createCustomProvider(selectedProviderType, {
             name: selectedProviderType === 'anthropic' ? 'Anthropic Live Service' : 'OpenAI Live Service',

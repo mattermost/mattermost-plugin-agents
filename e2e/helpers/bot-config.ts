@@ -1,5 +1,10 @@
 import { Client4 } from '@mattermost/client';
 import MattermostContainer from './mmcontainer';
+import {
+    mattermostAIAdminConfigApiFromClient,
+    normalizeMattermostAiConfigFromApi,
+    type PluginAdminConfigApi,
+} from './plugin-http';
 
 export interface BotConfig {
     id: string;
@@ -9,6 +14,9 @@ export interface BotConfig {
     serviceID: string;
     enableVision?: boolean;
     disableTools?: boolean;
+    reasoningEnabled?: boolean;
+    reasoningEffort?: string;
+    thinkingBudget?: number;
 }
 
 export interface ServiceConfig {
@@ -21,7 +29,19 @@ export interface ServiceConfig {
     tokenLimit?: number;
     streamingTimeoutSeconds?: number;
     useResponsesAPI?: boolean;
-    reasoningEnabled?: boolean;
+}
+
+export interface MCPEmbeddedServerConfig {
+    enabled?: boolean;
+    tool_configs?: Array<{ name: string; policy: string; enabled: boolean }>;
+}
+
+export interface PluginMCPConfig {
+    enabled?: boolean;
+    enablePluginServer?: boolean;
+    idleTimeoutMinutes?: number;
+    servers?: unknown[];
+    embeddedServer?: MCPEmbeddedServerConfig;
 }
 
 export interface PluginConfig {
@@ -34,49 +54,33 @@ export interface PluginConfig {
         enableVectorIndex?: boolean;
         services: ServiceConfig[];
         bots: BotConfig[];
+        mcp?: PluginMCPConfig;
     };
 }
 
 export class BotConfigHelper {
-    private client: Client4;
-    private pluginId = 'mattermost-ai';
+    private adminApi: PluginAdminConfigApi;
 
-    constructor(client: Client4) {
-        this.client = client;
+    constructor(client: Client4, baseUrl: string) {
+        this.adminApi = mattermostAIAdminConfigApiFromClient(client, baseUrl);
     }
 
     /**
-     * Get the current plugin configuration
+     * Get the current plugin configuration via the plugin's admin config API.
+     * Configuration is stored in the plugin database when using database-config.
      */
     async getPluginConfig(): Promise<PluginConfig> {
-        // Plugin configuration is stored in the system config under PluginSettings.Plugins
-        const systemConfig = await this.client.getConfig();
-        const pluginConfig = systemConfig.PluginSettings?.Plugins?.[this.pluginId];
-
-        if (!pluginConfig) {
-            throw new Error(`Plugin ${this.pluginId} configuration not found`);
-        }
-
-        return pluginConfig as PluginConfig;
+        const apiConfig = await this.adminApi.get();
+        const config = normalizeMattermostAiConfigFromApi(apiConfig);
+        // API returns config.Config (flat); helper expects { config: {...} }
+        return { config } as PluginConfig;
     }
 
     /**
-     * Update the plugin configuration
+     * Update the plugin configuration via the plugin's admin config API.
      */
     async updatePluginConfig(config: PluginConfig): Promise<void> {
-        // Update plugin configuration by patching the system config
-        const patch = {
-            PluginSettings: {
-                Plugins: {
-                    [this.pluginId]: config
-                }
-            }
-        };
-
-        await this.client.patchConfig(patch);
-
-        // Wait a bit for configuration to persist to database
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await this.adminApi.put(config.config as Record<string, unknown>);
     }
 
     /**
@@ -178,24 +182,23 @@ export class BotConfigHelper {
     }
 
     /**
-     * Verify bot configuration in database
+     * Verify bot configuration in database.
+     * Config is stored in Agents_ConfigHistory when using database-config.
      */
     async verifyBotInDatabase(mattermost: MattermostContainer, botId: string): Promise<boolean> {
         let db;
         try {
             db = await mattermost.db();
             const result = await db.query(
-                `SELECT pvalue FROM pluginkeyvaluestore
-                 WHERE pluginid = $1 AND pkey = $2`,
-                [this.pluginId, 'config']
+                `SELECT Config FROM Agents_ConfigHistory WHERE Active = true LIMIT 1`
             );
 
             if (result.rows.length === 0) {
                 return false;
             }
 
-            const config = JSON.parse(result.rows[0].pvalue);
-            const bot = config.config?.bots?.find((b: BotConfig) => b.id === botId);
+            const config = JSON.parse(result.rows[0].config);
+            const bot = config.bots?.find((b: BotConfig) => b.id === botId);
 
             return !!bot;
         } catch (error) {
@@ -208,24 +211,23 @@ export class BotConfigHelper {
     }
 
     /**
-     * Get bot configuration from database
+     * Get bot configuration from database.
+     * Config is stored in Agents_ConfigHistory when using database-config.
      */
     async getBotFromDatabase(mattermost: MattermostContainer, botId: string): Promise<BotConfig | null> {
         let db;
         try {
             db = await mattermost.db();
             const result = await db.query(
-                `SELECT pvalue FROM pluginkeyvaluestore
-                 WHERE pluginid = $1 AND pkey = $2`,
-                [this.pluginId, 'config']
+                `SELECT Config FROM Agents_ConfigHistory WHERE Active = true LIMIT 1`
             );
 
             if (result.rows.length === 0) {
                 return null;
             }
 
-            const config = JSON.parse(result.rows[0].pvalue);
-            const bot = config.config?.bots?.find((b: BotConfig) => b.id === botId);
+            const config = JSON.parse(result.rows[0].config);
+            const bot = config.bots?.find((b: BotConfig) => b.id === botId);
 
             return bot || null;
         } catch (error) {
@@ -243,7 +245,7 @@ export class BotConfigHelper {
  */
 export async function createBotConfigHelper(mattermost: MattermostContainer): Promise<BotConfigHelper> {
     const adminClient = await mattermost.getAdminClient();
-    return new BotConfigHelper(adminClient);
+    return new BotConfigHelper(adminClient, mattermost.url());
 }
 
 /**
