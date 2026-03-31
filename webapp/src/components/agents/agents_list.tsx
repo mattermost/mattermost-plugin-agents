@@ -15,6 +15,7 @@ import {UserAgent} from '@/types/agents';
 
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
+import AgentConfigModal from './agent_config_modal';
 
 type Tab = 'all' | 'yours';
 
@@ -27,6 +28,9 @@ const AgentsList = () => {
     const [error, setError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<Tab>('all');
     const [deletingAgent, setDeletingAgent] = useState<UserAgent | null>(null);
+    const [modalOpen, setModalOpen] = useState(false);
+    const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
+    const [editingAgent, setEditingAgent] = useState<UserAgent | null>(null);
 
     const fetchAgents = useCallback(async () => {
         try {
@@ -45,8 +49,10 @@ const AgentsList = () => {
         fetchAgents();
     }, [fetchAgents]);
 
-    const handleEdit = useCallback((_agent: UserAgent) => {
-        // Phase 5 will implement the edit modal.
+    const handleEdit = useCallback((agent: UserAgent) => {
+        setEditingAgent(agent);
+        setModalMode('edit');
+        setModalOpen(true);
     }, []);
 
     const handleDeleteRequest = useCallback((agent: UserAgent) => {
@@ -72,8 +78,21 @@ const AgentsList = () => {
     }, []);
 
     const handleCreateAgent = useCallback(() => {
-        // Phase 5 will implement the create modal.
+        setEditingAgent(null);
+        setModalMode('create');
+        setModalOpen(true);
     }, []);
+
+    const handleModalClose = useCallback(() => {
+        setModalOpen(false);
+        setEditingAgent(null);
+    }, []);
+
+    const handleModalSaved = useCallback((_agent: UserAgent) => {
+        setModalOpen(false);
+        setEditingAgent(null);
+        fetchAgents();
+    }, [fetchAgents]);
 
     // Filter agents based on active tab
     const filteredAgents = activeTab === 'yours'
@@ -157,6 +176,14 @@ const AgentsList = () => {
             <Footer>
                 <FormattedMessage defaultMessage='AI services are third party services. Mattermost is not responsible for output.'/>
             </Footer>
+
+            <AgentConfigModal
+                show={modalOpen}
+                mode={modalMode}
+                agent={editingAgent ?? undefined}
+                onClose={handleModalClose}
+                onSaved={handleModalSaved}
+            />
         </Container>
     );
 };
