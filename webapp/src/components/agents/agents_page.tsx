@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useEffect, useState} from 'react';
 import styled from 'styled-components';
 
 import manifest from '@/manifest';
@@ -9,25 +9,53 @@ import manifest from '@/manifest';
 import AgentsLicenseGate from './agents_license_gate';
 import AgentsList from './agents_list';
 
-export const AGENTS_ROUTE = `plug/${manifest.id}/agents`;
+const AGENTS_PATH = `/plug/${manifest.id}/agents`;
 
-// Product mainComponent — rendered by registerProduct when the route matches.
-// No URL-matching or overlay needed; Mattermost's product routing handles it.
 const AgentsPage = () => {
+    const [visible, setVisible] = useState(false);
+
+    useEffect(() => {
+        const checkPath = () => {
+            setVisible(window.location.pathname.includes(AGENTS_PATH));
+        };
+
+        checkPath();
+
+        // Listen for popstate (browser back/forward)
+        window.addEventListener('popstate', checkPath);
+
+        // Listen for pushstate/replacestate via a short interval
+        // since browserHistory.push doesn't fire popstate.
+        const interval = setInterval(checkPath, 200);
+
+        return () => {
+            window.removeEventListener('popstate', checkPath);
+            clearInterval(interval);
+        };
+    }, []);
+
+    if (!visible) {
+        return null;
+    }
+
     return (
-        <PageWrapper>
+        <PageOverlay>
             <PageContainer>
                 <AgentsLicenseGate>
                     <AgentsList/>
                 </AgentsLicenseGate>
             </PageContainer>
-        </PageWrapper>
+        </PageOverlay>
     );
 };
 
-const PageWrapper = styled.div`
-    width: 100%;
-    height: 100%;
+const PageOverlay = styled.div`
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
     background: var(--center-channel-bg, #fff);
     overflow-y: auto;
 `;
@@ -39,3 +67,22 @@ const PageContainer = styled.div`
 `;
 
 export default AgentsPage;
+
+// Navigation helper — call this to navigate to the agents page.
+// Mattermost routes are team-scoped: /<teamName>/plug/...
+export function navigateToAgentsPage() {
+    const teamName = window.location.pathname.split('/')[1] || '';
+    const fullPath = `/${teamName}${AGENTS_PATH}`;
+    if ((window as any).WebappUtils?.browserHistory) {
+        (window as any).WebappUtils.browserHistory.push(fullPath);
+    } else {
+        window.location.pathname = fullPath;
+    }
+}
+
+// Navigation helper — call this to navigate back from the agents page.
+export function navigateFromAgentsPage() {
+    if ((window as any).WebappUtils?.browserHistory) {
+        (window as any).WebappUtils.browserHistory.goBack();
+    }
+}

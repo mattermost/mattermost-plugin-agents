@@ -34,8 +34,7 @@ import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands
 import SearchHints from './components/search_hints';
 import {useBotlist} from './bots';
 import AgentsTour from './components/tutorial/agents_tour';
-import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
-import IconAI from './components/assets/icon_ai';
+import AgentsPage, {navigateToAgentsPage} from './components/agents/agents_page';
 import {isEnterpriseLicensedOrDevelopment} from './license';
 
 type WebappStore = Store<GlobalState, UnknownAction>
@@ -206,17 +205,13 @@ export default class Plugin {
 
         if (registry.registerRootComponent) {
             registry.registerRootComponent(AgentsTour);
+            registry.registerRootComponent(AgentsPage);
         }
 
-        // Register Agents as a product so it appears in the product switcher (grid icon).
-        // registerProduct is an internal Mattermost API available on the plugin registry.
-        if ((registry as any).registerProduct) {
-            (registry as any).registerProduct(
-                AGENTS_ROUTE,
-                IconAI,
+        if (registry.registerMainMenuAction) {
+            registry.registerMainMenuAction(
                 'Agents',
-                AGENTS_ROUTE,
-                AgentsPage,
+                () => navigateToAgentsPage(),
             );
         }
 
