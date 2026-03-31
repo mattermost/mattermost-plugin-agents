@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS Agents_UserAgents (
     CreatorID VARCHAR(26) NOT NULL,
     DisplayName VARCHAR(256) NOT NULL DEFAULT '',
     Username VARCHAR(64) NOT NULL,
-    ServiceID VARCHAR(26) NOT NULL,
+    ServiceID VARCHAR(36) NOT NULL,
     CustomInstructions TEXT NOT NULL DEFAULT '',
     ChannelAccessLevel INT NOT NULL DEFAULT 0,
     ChannelIDs TEXT NOT NULL DEFAULT '[]',
