@@ -9,12 +9,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"slices"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-ai/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
 )
+
+var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 
 // --- Request/Response types ---
 
@@ -115,6 +118,12 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
+	// Validate username format before hitting the server
+	if !validUsernameRe.MatchString(req.Username) {
+		c.AbortWithError(http.StatusBadRequest, errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores"))
+		return
+	}
+
 	// Validate that the referenced service exists in the config
 	cfg, err := a.configStore.GetConfig()
 	if err != nil {
@@ -142,6 +151,11 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		Description: "User-created AI agent",
 	}
 	if err := a.pluginAPI.Bot.Create(mmBot); err != nil {
+		var appErr *model.AppError
+		if errors.As(err, &appErr) && appErr.Id == "app.user.save.username_exists.app_error" {
+			c.AbortWithError(http.StatusConflict, fmt.Errorf("username %q is already taken", req.Username))
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to create bot account: %w", err))
 		return
 	}
