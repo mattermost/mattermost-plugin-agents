@@ -10,10 +10,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/mattermost/mattermost-plugin-ai/conversation"
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
+	"github.com/mattermost/mattermost-plugin-ai/store"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -94,6 +96,85 @@ type postStreamContext struct {
 	cancel context.CancelFunc
 }
 
+// TurnStore is the subset of store operations needed by the streaming layer
+// for persisting assistant turns during streaming.
+type TurnStore interface {
+	CreateTurn(turn *store.Turn) error
+	UpdateTurnContent(id string, content json.RawMessage) error
+	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
+	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
+}
+
+// turnAccumulator collects stream state for turn persistence.
+// It is created at stream start and finalized at stream end/error/cancel.
+type turnAccumulator struct {
+	turnID         string
+	conversationID string
+	postID         string
+
+	// Accumulated content
+	text          strings.Builder
+	reasoning     strings.Builder
+	reasoningData llm.ReasoningData
+	annotations   []llm.Annotation
+	toolCalls     []llm.ToolCall
+
+	// Token usage
+	tokensIn  int64
+	tokensOut int64
+}
+
+// buildContentBlocks constructs content blocks from accumulated stream state.
+func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
+	var blocks []conversation.ContentBlock
+
+	// 1. Thinking block (if reasoning completed)
+	if a.reasoningData.Text != "" {
+		blocks = append(blocks, conversation.ContentBlock{
+			Type:      conversation.BlockTypeThinking,
+			Text:      a.reasoningData.Text,
+			Signature: a.reasoningData.Signature,
+		})
+	} else if a.reasoning.Len() > 0 {
+		// Partial reasoning (error/cancel before ReasoningEnd)
+		blocks = append(blocks, conversation.ContentBlock{
+			Type: conversation.BlockTypeThinking,
+			Text: a.reasoning.String(),
+		})
+	}
+
+	// 2. Text block
+	if a.text.Len() > 0 {
+		blocks = append(blocks, conversation.ContentBlock{
+			Type: conversation.BlockTypeText,
+			Text: a.text.String(),
+		})
+	}
+
+	// 3. Annotations block (web search context)
+	if len(a.annotations) > 0 {
+		block := conversation.ContentBlock{
+			Type: conversation.BlockTypeAnnotations,
+		}
+		blocks = append(blocks, block)
+	}
+
+	// 4. Tool call blocks (DM tool progress)
+	for _, tc := range a.toolCalls {
+		blocks = append(blocks, conversation.ContentBlock{
+			Type:         conversation.BlockTypeToolUse,
+			ID:           tc.ID,
+			Name:         tc.Name,
+			ServerOrigin: tc.ServerOrigin,
+			Input:        tc.Arguments,
+			Status:       conversation.StatusToString(tc.Status),
+			Shared:       conversation.BoolPtr(true),
+		})
+	}
+
+	return blocks
+}
+
 var ErrAlreadyStreamingToPost = fmt.Errorf("already streaming to post")
 
 type MMPostStreamService struct {
@@ -103,6 +184,7 @@ type MMPostStreamService struct {
 	i18n                *i18n.Bundle
 	toolPolicyChecker   ToolPolicyChecker
 	autoExecuteCallback AutoExecuteCallback
+	turnStore           TurnStore
 }
 
 func NewMMPostStreamService(mmClient Client, i18n *i18n.Bundle) *MMPostStreamService {
@@ -122,6 +204,12 @@ func (p *MMPostStreamService) SetToolPolicyChecker(checker ToolPolicyChecker) {
 // in a batch are auto-approvable.
 func (p *MMPostStreamService) SetAutoExecuteCallback(callback AutoExecuteCallback) {
 	p.autoExecuteCallback = callback
+}
+
+// SetTurnStore sets the store used for persisting assistant turns.
+// When nil (the default), turn persistence is silently skipped.
+func (p *MMPostStreamService) SetTurnStore(ts TurnStore) {
+	p.turnStore = ts
 }
 
 // areAllToolCallsAutoApprovable checks if all tool calls in the batch
@@ -391,12 +479,84 @@ func (p *MMPostStreamService) handleAutoApprovedToolCalls(post *model.Post, tool
 	p.mmClient.LogDebug("Auto-approved MCP tool calls executed", "post_id", post.Id, "tool_count", len(toolCalls))
 }
 
+// createPlaceholderTurn creates a placeholder turn row for the streaming assistant response.
+// Returns nil if the turn cannot be created (error is logged).
+func (p *MMPostStreamService) createPlaceholderTurn(conversationID, postID string) *turnAccumulator {
+	turns, err := p.turnStore.GetTurnsForConversation(conversationID)
+	if err != nil {
+		p.mmClient.LogError("Failed to get turns for sequence number", "error", err, "conversation_id", conversationID)
+		return nil
+	}
+
+	nextSeq := 0
+	if len(turns) > 0 {
+		nextSeq = turns[len(turns)-1].Sequence + 1
+	}
+
+	turnID := model.NewId()
+	postIDPtr := &postID
+
+	turn := &store.Turn{
+		ID:             turnID,
+		ConversationID: conversationID,
+		PostID:         postIDPtr,
+		Role:           "assistant",
+		Content:        json.RawMessage("[]"),
+		Sequence:       nextSeq,
+		CreatedAt:      model.GetMillis(),
+	}
+
+	if err := p.turnStore.CreateTurn(turn); err != nil {
+		p.mmClient.LogError("Failed to create placeholder turn", "error", err, "conversation_id", conversationID)
+		return nil
+	}
+
+	return &turnAccumulator{
+		turnID:         turnID,
+		conversationID: conversationID,
+		postID:         postID,
+	}
+}
+
+// finalizeTurn builds content blocks from accumulated state and persists them.
+func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator) {
+	blocks := acc.buildContentBlocks()
+
+	contentJSON, err := json.Marshal(blocks)
+	if err != nil {
+		p.mmClient.LogError("Failed to marshal turn content blocks", "error", err, "turn_id", acc.turnID)
+		return
+	}
+
+	if err := p.turnStore.UpdateTurnContent(acc.turnID, contentJSON); err != nil {
+		p.mmClient.LogError("Failed to update turn content", "error", err, "turn_id", acc.turnID)
+	}
+
+	if acc.tokensIn > 0 || acc.tokensOut > 0 {
+		if err := p.turnStore.UpdateTurnTokens(acc.turnID, acc.tokensIn, acc.tokensOut); err != nil {
+			p.mmClient.LogError("Failed to update turn tokens", "error", err, "turn_id", acc.turnID)
+		}
+	}
+}
+
 // StreamToPost streams the result of a TextStreamResult to a post.
 // it will internally handle logging needs and updating the post.
 func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string) {
 	broadcast := &model.WebsocketBroadcast{ChannelId: post.ChannelId}
 	p.sendPostStreamingControlEventWithBroadcast(post, PostStreamingControlStart, broadcast)
+
+	// Create turn accumulator if turn persistence is enabled and a conversation_id is set
+	var acc *turnAccumulator
+	if p.turnStore != nil {
+		if convID, ok := post.GetProp(ConversationIDProp).(string); ok && convID != "" {
+			acc = p.createPlaceholderTurn(convID, post.Id)
+		}
+	}
+
 	defer func() {
+		if acc != nil {
+			p.finalizeTurn(acc)
+		}
 		p.sendPostStreamingControlEventWithBroadcast(post, PostStreamingControlEnd, broadcast)
 	}()
 
@@ -424,6 +584,9 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					messageBuilder.WriteString(textChunk)
 					post.Message = messageBuilder.String()
 					p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
+					if acc != nil {
+						acc.text.WriteString(textChunk)
+					}
 				}
 			case llm.EventTypeEnd:
 				// Stream has closed cleanly
@@ -484,6 +647,9 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					reasoningBuffer.WriteString(reasoningChunk)
 					// Send reasoning event with accumulated text so far
 					p.sendPostStreamingReasoningEventWithBroadcast(post, reasoningBuffer.String(), "reasoning_summary", broadcast)
+					if acc != nil {
+						acc.reasoning.WriteString(reasoningChunk)
+					}
 				}
 			case llm.EventTypeReasoningEnd:
 				// Reasoning summary completed - stream final and persist
@@ -502,6 +668,9 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 						p.mmClient.LogDebug("Added reasoning signature to post props", "post_id", post.Id)
 					}
 					reasoningBuffer.Reset()
+					if acc != nil {
+						acc.reasoningData = reasoningData
+					}
 				}
 			case llm.EventTypeToolCalls:
 				// Handle tool call event
@@ -552,6 +721,9 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 								dmToolCalls = append(dmToolCalls, tc)
 							}
 						}
+						if acc != nil {
+							acc.toolCalls = dmToolCalls
+						}
 						allAutoApprovable := p.markAutoApprovedStatusesAndCheck(dmToolCalls)
 
 						toolCallJSON, jsonErr := json.Marshal(dmToolCalls)
@@ -576,6 +748,9 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 						// Continue processing the stream - don't return
 					} else {
 						// Channel/GM: standard approval flow with redaction
+						if acc != nil {
+							acc.toolCalls = toolCalls
+						}
 						requesterID, ok := post.GetProp(LLMRequesterUserID).(string)
 						if !ok || requesterID == "" {
 							p.mmClient.LogError("Missing requester ID for tool call, cannot persist private data", "post_id", post.Id)
@@ -643,6 +818,9 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 							p.mmClient.LogDebug("Added annotations to post props", "post_id", post.Id, "count", len(annotations))
 							p.sendPostStreamingAnnotationsEventWithBroadcast(post, string(annotationsJSON), broadcast)
 						}
+						if acc != nil {
+							acc.annotations = annotations
+						}
 					}
 				} else if annotations, ok := event.Value.([]llm.Annotation); ok {
 					// Regular annotations without cleaned message
@@ -653,6 +831,17 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 						post.AddProp(AnnotationsProp, string(annotationsJSON))
 						p.mmClient.LogDebug("Added annotations to post props", "post_id", post.Id, "count", len(annotations))
 						p.sendPostStreamingAnnotationsEventWithBroadcast(post, string(annotationsJSON), broadcast)
+					}
+					if acc != nil {
+						acc.annotations = annotations
+					}
+				}
+			case llm.EventTypeUsage:
+				// Handle token usage data
+				if usage, ok := event.Value.(llm.TokenUsage); ok {
+					if acc != nil {
+						acc.tokensIn += usage.InputTokens
+						acc.tokensOut += usage.OutputTokens
 					}
 				}
 			}
