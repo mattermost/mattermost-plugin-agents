@@ -89,6 +89,12 @@ func New(
 	}
 }
 
+// SetConversationService sets the conversation service after construction to
+// break circular initialisation order in the plugin wiring.
+func (s *Search) SetConversationService(svc *conversation.Service) {
+	s.conversationService = svc
+}
+
 // Enabled returns true if the search service is enabled and functional
 func (s *Search) Enabled() bool {
 	return s != nil && s.getSearch != nil && s.getSearch() != nil
