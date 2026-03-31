@@ -69,11 +69,14 @@ const PageContainer = styled.div`
 export default AgentsPage;
 
 // Navigation helper — call this to navigate to the agents page.
+// Mattermost routes are team-scoped: /<teamName>/plug/...
 export function navigateToAgentsPage() {
+    const teamName = window.location.pathname.split('/')[1] || '';
+    const fullPath = `/${teamName}${AGENTS_PATH}`;
     if ((window as any).WebappUtils?.browserHistory) {
-        (window as any).WebappUtils.browserHistory.push(AGENTS_PATH);
+        (window as any).WebappUtils.browserHistory.push(fullPath);
     } else {
-        window.location.pathname = AGENTS_PATH;
+        window.location.pathname = fullPath;
     }
 }
 
