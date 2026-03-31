@@ -568,7 +568,6 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
 		post.AddProp(ConversationIDProp, conversationID)
-		post.AddProp(LLMRequesterUserID, requesterID)
 
 		toolCalls := []llm.ToolCall{
 			{ID: "tc-1", Name: "search", ServerOrigin: "https://mcp.example.com", Arguments: json.RawMessage(`{"q":"test"}`), Status: llm.ToolCallStatusSuccess},
@@ -610,7 +609,6 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
 		post.AddProp(ConversationIDProp, conversationID)
-		post.AddProp(LLMRequesterUserID, requesterID)
 
 		toolCalls := []llm.ToolCall{
 			{ID: "tc-1", Name: "read_file", ServerOrigin: "https://mcp.example.com", Arguments: json.RawMessage(`{"path":"a.txt"}`)},

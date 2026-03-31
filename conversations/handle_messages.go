@@ -139,24 +139,7 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 		responseRootID = post.RootId
 	}
 
-	// Use the new conversation entity path when the service is available.
-	if c.convService != nil {
-		return c.handleMentionViaConversation(bot, post, postingUser, channel, allowToolsInChannel, responseRootID)
-	}
-
-	// Legacy fallback: process via thread-based context reconstruction.
-	responsePost := &model.Post{
-		ChannelId: channel.Id,
-		RootId:    responseRootID,
-	}
-	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
-	return c.respondToPost(bot, postingUser, channel, responsePost, post.Id, func() (*llm.TextStreamResult, error) {
-		stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, allowToolsInChannel)
-		if err != nil {
-			return nil, fmt.Errorf("unable to process bot mention: %w", err)
-		}
-		return stream, nil
-	})
+	return c.handleMentionViaConversation(bot, post, postingUser, channel, allowToolsInChannel, responseRootID)
 }
 
 // handleMentionViaConversation processes a channel mention using the conversation entity model.
@@ -208,7 +191,6 @@ func (c *Conversations) handleMentionViaConversation(
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
 	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
@@ -281,28 +263,7 @@ func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, posting
 		return err
 	}
 
-	// Use the new conversation entity path when the service is available.
-	if c.convService != nil {
-		return c.handleDMViaConversation(bot, channel, postingUser, post)
-	}
-
-	// Legacy fallback: process via thread-based context reconstruction.
-	responseRootID := post.Id
-	if post.RootId != "" {
-		responseRootID = post.RootId
-	}
-
-	responsePost := &model.Post{
-		ChannelId: channel.Id,
-		RootId:    responseRootID,
-	}
-	return c.respondToPost(bot, postingUser, channel, responsePost, post.Id, func() (*llm.TextStreamResult, error) {
-		stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, false)
-		if err != nil {
-			return nil, fmt.Errorf("unable to process bot DM: %w", err)
-		}
-		return stream, nil
-	})
+	return c.handleDMViaConversation(bot, channel, postingUser, post)
 }
 
 // handleDMViaConversation processes a DM message using the conversation entity model.
@@ -382,32 +343,6 @@ func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Ch
 				c.mmClient.LogError("Failed to generate title", "error", titleErr.Error())
 			}
 		}()
-	}
-
-	return nil
-}
-
-func (c *Conversations) respondToPost(
-	bot *bots.Bot,
-	postingUser *model.User,
-	channel *model.Channel,
-	responsePost *model.Post,
-	respondingToPostID string,
-	buildStream func() (*llm.TextStreamResult, error),
-) error {
-	if err := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, respondingToPostID); err != nil {
-		return fmt.Errorf("unable to create response placeholder: %w", err)
-	}
-
-	stream, err := buildStream()
-	if err != nil {
-		c.failResponsePlaceholder(responsePost, postingUser.Locale)
-		return err
-	}
-
-	if err := c.streamResponseToExistingPost(stream, responsePost, postingUser, channel); err != nil {
-		c.failResponsePlaceholder(responsePost, postingUser.Locale)
-		return fmt.Errorf("unable to stream response: %w", err)
 	}
 
 	return nil

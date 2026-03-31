@@ -14,7 +14,6 @@ import {useSelectNotAIPost} from '@/hooks';
 import {useConversation, useTurnForPost, invalidateConversation} from '@/hooks/use_conversation';
 import {PostMessagePreview} from '@/mm_webapp';
 
-import {SearchSources} from '../search_sources';
 import PostText from '../post_text';
 import ToolApprovalSet from '../tool_approval_set';
 import {ToolApprovalStage, ToolCall} from '../tool_types';
@@ -46,8 +45,6 @@ interface LLMBotPostProps {
     websocketRegister?: (postID: string, listenerID: string, handler: (msg: WebSocketMessage<any>) => void) => void;
     websocketUnregister?: (postID: string, listenerID: string) => void;
 }
-
-const SearchResultsPropKey = 'search_results';
 
 export const LLMBotPost = (props: LLMBotPostProps) => {
     const selectPost = useSelectNotAIPost();
@@ -345,11 +342,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 showCursor={generating && !precontent}
                 annotations={annotations.length > 0 ? annotations : undefined} // eslint-disable-line no-undefined
             />
-            {props.post.props?.[SearchResultsPropKey] && (
-                <SearchSources
-                    sources={JSON.parse(props.post.props[SearchResultsPropKey])}
-                />
-            )}
             { showPostbackButton &&
             <PostSummaryHelpMessage>
                 <FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>

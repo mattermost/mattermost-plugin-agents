@@ -5,7 +5,6 @@ package search
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -17,11 +16,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
-)
-
-const (
-	SearchResultsProp = "search_results"
-	SearchQueryProp   = "search_query"
 )
 
 // Request represents a search query request
@@ -281,7 +275,6 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 		UserId:  userID,
 		Message: query,
 	}
-	questionPost.AddProp(SearchQueryProp, "true")
 	if err := s.mmclient.DM(userID, bot.GetMMBot().UserId, questionPost); err != nil {
 		return nil, fmt.Errorf("failed to create question post: %w", err)
 	}
@@ -398,21 +391,6 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 	if err != nil {
 		s.mmclient.LogError("Error generating answer", "error", err)
 		processingError = err
-		return
-	}
-
-	resultsJSON, err := json.Marshal(results)
-	if err != nil {
-		s.mmclient.LogError("Error marshaling results", "error", err)
-		processingError = err
-		return
-	}
-
-	// Update post to add sources (kept for webapp, removed in Step L)
-	responsePost.AddProp(SearchResultsProp, string(resultsJSON))
-	if updateErr := s.mmclient.UpdatePost(responsePost); updateErr != nil {
-		s.mmclient.LogError("Error updating post for search results", "error", updateErr)
-		processingError = updateErr
 		return
 	}
 

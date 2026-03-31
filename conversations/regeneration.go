@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
 	"github.com/mattermost/mattermost-plugin-ai/threads"
+	"github.com/mattermost/mattermost-plugin-ai/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -29,8 +31,15 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		return fmt.Errorf("unable to get bot")
 	}
 
-	if post.GetProp(streaming.LLMRequesterUserID) != userID {
-		return errors.New("only the original poster can regenerate")
+	// Check ownership via conversation entity if available, otherwise
+	// the post's conversation_id lookup will fail gracefully.
+	if c.convService != nil {
+		if convIDProp, ok := post.GetProp(streaming.ConversationIDProp).(string); ok && convIDProp != "" {
+			conv, err := c.convService.GetConversation(convIDProp)
+			if err == nil && conv.UserID != userID {
+				return errors.New("only the original poster can regenerate")
+			}
+		}
 	}
 
 	if post.GetProp(streaming.NoRegen) != nil {
@@ -52,7 +61,6 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 	analysisTypeProp := post.GetProp(AnalysisTypeProp)
 	referenceRecordingFileIDProp := post.GetProp(ReferencedRecordingFileID)
 	referencedTranscriptPostProp := post.GetProp(ReferencedTranscriptPostID)
-	post.DelProp(streaming.ToolCallProp)
 	var result *llm.TextStreamResult
 	switch {
 	case threadIDProp != nil:
@@ -170,50 +178,16 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		if !ok {
 			return errors.New("post missing responding to prop")
 		}
-		respondingToPost, getErr := c.mmClient.GetPost(respondingToPostID)
-		if getErr != nil {
-			return fmt.Errorf("could not get post being responded to: %w", getErr)
-		}
 
-		// Extract web search context from conversation history to preserve citations
-		// This ensures citations from previous searches work in regenerated responses
-		webSearchParams := c.extractWebSearchContext(respondingToPost)
-
-		var contextOpts []llm.ContextOption
-		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextDefaultTools(bot))
-		if len(webSearchParams) > 0 {
-			contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
-		}
-
-		// Create a context with the tool call callback and preserved web search context
-		contextWithCallback := c.contextBuilder.BuildLLMContextUserRequest(
-			bot,
-			user,
-			channel,
-			contextOpts...,
-		)
-
-		// Apply user-disabled-provider filtering for DM/group channels only (Copilot RHS).
-		if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
-			prefs, prefsErr := mcp.LoadUserPreferences(c.mmClient, user.Id)
-			if prefsErr != nil {
-				c.mmClient.LogWarn("Failed to load user tool preferences on regen, proceeding without filtering", "error", prefsErr.Error(), "userID", user.Id)
-			} else if len(prefs.DisabledServers) > 0 && contextWithCallback.Tools != nil {
-				contextWithCallback.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
+		// Use the conversation entity path for regeneration.
+		if c.convService != nil {
+			regenResult, regenErr := c.regenerateViaConversation(bot, user, channel, post, respondingToPostID)
+			if regenErr != nil {
+				return fmt.Errorf("could not regenerate via conversation: %w", regenErr)
 			}
-		}
-
-		// Process the user request with the context that has the callback
-		allowToolsInChannel := allowToolsInChannelFromPost(post)
-		// Defense-in-depth: if config flag is off and not a DM, disable tools regardless of post prop
-		isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
-		if !isDM && (c.configProvider == nil || !c.configProvider.EnableChannelMentionToolCalling()) {
-			allowToolsInChannel = false
-		}
-		var processErr error
-		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback, allowToolsInChannel)
-		if processErr != nil {
-			return fmt.Errorf("could not continue conversation on regen: %w", processErr)
+			result = regenResult
+		} else {
+			return errors.New("conversation service not configured for regeneration")
 		}
 	}
 
@@ -228,4 +202,86 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 	c.streamingService.StreamToPost(ctx, result, post, *config.LocalizationSettings.DefaultServerLocale)
 
 	return nil
+}
+
+// regenerateViaConversation rebuilds the completion request from the conversation entity
+// and runs the ToolRunner to produce a new response stream.
+func (c *Conversations) regenerateViaConversation(
+	bot *bots.Bot,
+	user *model.User,
+	channel *model.Channel,
+	post *model.Post,
+	respondingToPostID string,
+) (*llm.TextStreamResult, error) {
+	convIDProp, _ := post.GetProp(streaming.ConversationIDProp).(string)
+	if convIDProp == "" {
+		return nil, errors.New("post missing conversation_id for regeneration")
+	}
+
+	conv, err := c.convService.GetConversation(convIDProp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get conversation for regen: %w", err)
+	}
+
+	contextOpts := []llm.ContextOption{
+		c.contextBuilder.WithLLMContextDefaultTools(bot),
+	}
+	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
+
+	// Apply user-disabled-provider filtering for DM/group channels only.
+	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+		prefs, prefsErr := mcp.LoadUserPreferences(c.mmClient, user.Id)
+		if prefsErr != nil {
+			c.mmClient.LogWarn("Failed to load user tool preferences on regen, proceeding without filtering", "error", prefsErr.Error(), "userID", user.Id)
+		} else if len(prefs.DisabledServers) > 0 && llmContext.Tools != nil {
+			llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
+		}
+	}
+
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	toolsDisabled := !isDM
+	if !isDM && c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling() {
+		toolsDisabled = false
+	}
+	if llmContext != nil {
+		if toolsDisabled && llmContext.Tools != nil {
+			llmContext.DisabledToolsInfo = llmContext.Tools.GetToolsInfo()
+		} else {
+			llmContext.DisabledToolsInfo = nil
+		}
+	}
+
+	completionReq, buildErr := c.convService.BuildCompletionRequest(conv, llmContext)
+	if buildErr != nil {
+		return nil, fmt.Errorf("failed to build completion request for regen: %w", buildErr)
+	}
+
+	var opts []llm.LanguageModelOption
+	if toolsDisabled {
+		opts = append(opts, llm.WithToolsDisabled())
+		if c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled() {
+			opts = append(opts, llm.WithNativeWebSearchAllowed())
+		}
+	}
+
+	runner := toolrunner.New(bot.LLM())
+	runResult, runErr := runner.Run(*completionReq, func(tc llm.ToolCall) bool {
+		if c.toolPolicyChecker == nil {
+			return false
+		}
+		policy, enabled := c.toolPolicyChecker.GetToolPolicy(tc.ServerOrigin, tc.Name)
+		return policy == mcp.ToolPolicyAutoRun && enabled
+	}, opts...)
+	if runErr != nil {
+		return nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
+	}
+
+	if len(runResult.ToolTurns) > 0 {
+		shared := isDM
+		if writeErr := c.convService.WriteToolTurns(conv.ID, runResult.ToolTurns, shared); writeErr != nil {
+			c.mmClient.LogError("Failed to write tool turns on regen", "error", writeErr)
+		}
+	}
+
+	return runResult.Stream, nil
 }

@@ -24,7 +24,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-ai/search"
 	"github.com/mattermost/mattermost-plugin-ai/store"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -682,16 +681,6 @@ func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
 			body:     `{"accepted_tool_ids": ["tool-1"]}`,
 		},
 		{
-			name:     "tool_call_private in DM is allowed",
-			endpoint: "/post/postid/tool_call_private",
-			method:   http.MethodGet,
-		},
-		{
-			name:     "tool_result_private in DM is allowed",
-			endpoint: "/post/postid/tool_result_private",
-			method:   http.MethodGet,
-		},
-		{
 			name:     "tool_result in DM is allowed",
 			endpoint: "/post/postid/tool_result",
 			method:   http.MethodPost,
@@ -721,7 +710,6 @@ func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
 				UserId:    botUserID,
 				ChannelId: "channelid",
 			}
-			post.AddProp(streaming.LLMRequesterUserID, userID)
 
 			// DM channel name contains both user IDs
 			dmChannelName := botUserID + "__" + userID
@@ -752,64 +740,6 @@ func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
 			// but it must not be blocked by the config guard.
 			require.NotEqual(t, http.StatusForbidden, resp.StatusCode,
 				"DM tool call should not be blocked by EnableChannelMentionToolCalling config")
-		})
-	}
-}
-
-func TestToolPrivateRequiresRequester(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	tests := []struct {
-		name     string
-		endpoint string
-	}{
-		{
-			name:     "tool call private endpoint rejects non-requester",
-			endpoint: "/post/postid/tool_call_private?botUsername=permtest",
-		},
-		{
-			name:     "tool result private endpoint rejects non-requester",
-			endpoint: "/post/postid/tool_result_private?botUsername=permtest",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			e := SetupTestEnvironment(t)
-			defer e.Cleanup(t)
-
-			// Enable channel tool calling so the config guard passes and
-			// the handler actually reaches the requester identity check.
-			e.config.enableChannelMentionToolCalling = true
-
-			e.setupTestBot(llm.BotConfig{Name: "permtest", DisplayName: "Permission Bot"})
-
-			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-			e.mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-			e.mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
-
-			post := &model.Post{
-				Id:        "postid",
-				ChannelId: "channelid",
-			}
-			post.AddProp(streaming.LLMRequesterUserID, "requester")
-
-			e.mockAPI.On("GetPost", "postid").Return(post, nil)
-			e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{
-				Id:   "channelid",
-				Type: model.ChannelTypeOpen,
-			}, nil)
-			e.mockAPI.On("HasPermissionToChannel", "other-user", "channelid", model.PermissionReadChannel).Return(true)
-			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
-
-			request := httptest.NewRequest(http.MethodGet, test.endpoint, nil)
-			request.Header.Add("Mattermost-User-ID", "other-user")
-
-			recorder := httptest.NewRecorder()
-			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
-			resp := recorder.Result()
-			require.Equal(t, http.StatusForbidden, resp.StatusCode)
 		})
 	}
 }

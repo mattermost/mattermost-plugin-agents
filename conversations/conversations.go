@@ -4,22 +4,18 @@
 package conversations
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/conversation"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/format"
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
 	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/mmtools"
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
@@ -59,7 +55,7 @@ type Conversations struct {
 	i18n              *i18n.Bundle
 	meetingsService   MeetingsService
 	configProvider    ConfigProvider
-	toolPolicyChecker streaming.ToolPolicyChecker
+	toolPolicyChecker mcp.ToolPolicyChecker
 	convService       *conversation.Service
 }
 
@@ -102,7 +98,7 @@ func (c *Conversations) SetMeetingsService(meetingsService MeetingsService) {
 
 // SetToolPolicyChecker sets the per-tool policy checker used for auto-approval
 // and DM auto-run decisions.
-func (c *Conversations) SetToolPolicyChecker(checker streaming.ToolPolicyChecker) {
+func (c *Conversations) SetToolPolicyChecker(checker mcp.ToolPolicyChecker) {
 	c.toolPolicyChecker = checker
 }
 
@@ -222,155 +218,6 @@ func (c *Conversations) ProcessDMRequest(
 	}, nil
 }
 
-func (c *Conversations) appendDMAutoRunOptions(isDM bool, llmContext *llm.Context, opts []llm.LanguageModelOption) []llm.LanguageModelOption {
-	if !isDM || c.toolPolicyChecker == nil || llmContext == nil || llmContext.Tools == nil {
-		return opts
-	}
-	allTools := llmContext.Tools.GetTools()
-	var autoRunNames []string
-	for _, t := range allTools {
-		policy, enabled := c.toolPolicyChecker.GetToolPolicy(t.ServerOrigin, t.Name)
-		if policy == mcp.ToolPolicyAutoRun && enabled {
-			autoRunNames = append(autoRunNames, llm.ToolAutoRunKey(t.ServerOrigin, t.Name))
-		}
-	}
-	if len(autoRunNames) > 0 {
-		opts = append(opts, llm.WithAutoRunTools(autoRunNames))
-	}
-	return opts
-}
-
-// ProcessUserRequestWithContext is an internal helper that uses an existing context to process a message
-func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
-	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
-	toolsDisabled := !isDM && !allowToolsInChannel
-	if context != nil {
-		if toolsDisabled && context.Tools != nil {
-			context.DisabledToolsInfo = context.Tools.GetToolsInfo()
-		} else {
-			context.DisabledToolsInfo = nil
-		}
-	}
-
-	var posts []llm.Post
-	if post.RootId == "" {
-		prompt, err := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, context)
-		if err != nil {
-			return nil, fmt.Errorf("failed to format prompt: %w", err)
-		}
-		posts = []llm.Post{{Role: llm.PostRoleSystem, Message: prompt}}
-	} else {
-		previousConversation, errThread := mmapi.GetThreadData(c.mmClient, post.Id)
-		if errThread != nil {
-			return nil, fmt.Errorf("failed to get previous conversation: %w", errThread)
-		}
-		previousConversation.CutoffBeforePostID(post.Id)
-		var err error
-		posts, err = c.existingConversationToLLMPosts(bot, previousConversation, context)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert existing conversation to LLM posts: %w", err)
-		}
-	}
-
-	posts = append(posts, c.PostToAIPost(bot, post))
-	completionRequest := llm.CompletionRequest{Posts: posts, Context: context, Operation: llm.OperationConversation}
-	var opts []llm.LanguageModelOption
-	if toolsDisabled {
-		opts = append(opts, llm.WithToolsDisabled())
-		if c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled() {
-			opts = append(opts, llm.WithNativeWebSearchAllowed())
-		}
-	}
-	opts = c.appendDMAutoRunOptions(isDM, context, opts)
-
-	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	var toolsStore *llm.ToolStore
-	if context != nil && context.Tools != nil {
-		toolsStore = context.Tools
-	}
-	result = llm.EnrichToolCallsWithServerOrigin(result, toolsStore)
-	webSearchData := mmtools.ConsumeWebSearchContexts(context)
-	c.mmClient.LogDebug("Checking for web search data in ProcessUserRequestWithContext", "has_data", len(webSearchData) > 0, "num_contexts", len(webSearchData))
-	if len(webSearchData) > 0 {
-		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
-	}
-	if !toolsDisabled && context != nil && context.Tools != nil && c.toolPolicyChecker != nil {
-		result = wrapStreamWithMCPAutoApproval(result, context, c.toolPolicyChecker)
-	}
-
-	go func() {
-		request := "Write a short title for the following request. Include only the title and nothing else, no quotations. Request:\n" + post.Message
-		if err := c.GenerateTitle(bot, request, post.Id, context); err != nil {
-			c.mmClient.LogError("Failed to generate title", "error", err.Error())
-			return
-		}
-	}()
-
-	return result, nil
-}
-
-// ProcessUserRequest processes a user request to a bot
-func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
-	webSearchParams := c.extractWebSearchContext(post)
-	var contextOpts []llm.ContextOption
-	contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextTools(bot))
-	if len(webSearchParams) > 0 {
-		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
-	}
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, contextOpts...)
-	if llmContext.Parameters == nil {
-		llmContext.Parameters = make(map[string]interface{})
-	}
-	if _, hasCount := llmContext.Parameters[mmtools.WebSearchCountKey]; !hasCount {
-		llmContext.Parameters[mmtools.WebSearchCountKey] = 0
-	}
-	if _, hasQueries := llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey]; !hasQueries {
-		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
-	}
-
-	var disabledOrigins map[string]bool
-	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
-		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
-		if err != nil {
-			c.mmClient.LogWarn("Failed to load user tool preferences, proceeding without filtering", "error", err.Error(), "userID", postingUser.Id)
-		} else if len(prefs.DisabledServers) > 0 {
-			disabledOrigins = make(map[string]bool, len(prefs.DisabledServers))
-			for _, origin := range prefs.DisabledServers {
-				disabledOrigins[origin] = true
-			}
-			if llmContext.Tools != nil {
-				llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
-			}
-		}
-	}
-
-	if llmContext.Tools != nil {
-		authErrors := llmContext.Tools.GetAuthErrors()
-		if len(disabledOrigins) > 0 {
-			filtered := authErrors[:0]
-			for _, ae := range authErrors {
-				if !disabledOrigins[ae.ServerOrigin] {
-					filtered = append(filtered, ae)
-				}
-			}
-			authErrors = filtered
-		}
-		if len(authErrors) > 0 {
-			rootID := post.RootId
-			if rootID == "" {
-				rootID = post.Id
-			}
-			c.sendOAuthNotifications(bot, postingUser.Id, channel.Id, rootID, authErrors)
-		}
-	}
-
-	return c.ProcessUserRequestWithContext(bot, postingUser, channel, post, llmContext, allowToolsInChannel)
-}
-
 func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID string, context *llm.Context) error {
 	titleRequest := llm.CompletionRequest{
 		Posts:            []llm.Post{{Role: llm.PostRoleUser, Message: request}},
@@ -387,83 +234,6 @@ func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID stri
 		return fmt.Errorf("failed to save title: %w", err)
 	}
 	return nil
-}
-
-// existingConversationToLLMPosts converts existing conversation to LLM posts format
-func (c *Conversations) existingConversationToLLMPosts(bot *bots.Bot, conv *mmapi.ThreadData, context *llm.Context) ([]llm.Post, error) {
-	originalThreadID, ok := conv.Posts[0].GetProp(ThreadIDProp).(string)
-	if ok && originalThreadID != "" && conv.Posts[0].UserId == bot.GetMMBot().UserId {
-		threadPost, err := c.mmClient.GetPost(originalThreadID)
-		if err != nil {
-			return nil, err
-		}
-		threadChannel, err := c.mmClient.GetChannel(threadPost.ChannelId)
-		if err != nil {
-			return nil, err
-		}
-		if !c.mmClient.HasPermissionToChannel(context.RequestingUser.Id, threadChannel.Id, model.PermissionReadChannel) ||
-			c.bots.CheckUsageRestrictions(context.RequestingUser.Id, bot, threadChannel) != nil {
-			T := i18n.LocalizerFunc(c.i18n, context.RequestingUser.Locale)
-			responsePost := &model.Post{
-				ChannelId: context.Channel.Id,
-				RootId:    originalThreadID,
-				Message:   T("agents.no_longer_access_error", "Sorry, you no longer have access to the original thread."),
-			}
-			if err = c.BotCreateNonResponsePost(bot.GetMMBot().UserId, context.RequestingUser.Id, responsePost); err != nil {
-				return nil, err
-			}
-			return nil, fmt.Errorf("user no longer has access to original thread")
-		}
-		analysisType, ok := conv.Posts[0].GetProp(AnalysisTypeProp).(string)
-		if !ok {
-			return nil, fmt.Errorf("missing analysis type")
-		}
-		posts, err := c.buildAnalysisFallbackPosts(originalThreadID, context, analysisType)
-		if err != nil {
-			return nil, err
-		}
-		posts = append(posts, c.ThreadToLLMPosts(bot, conv)...)
-		return posts, nil
-	}
-
-	prompt, err := c.prompts.Format(prompts.PromptDirectMessageQuestionSystem, context)
-	if err != nil {
-		return nil, fmt.Errorf("failed to format prompt: %w", err)
-	}
-	posts := []llm.Post{{Role: llm.PostRoleSystem, Message: prompt}}
-	posts = append(posts, c.ThreadToLLMPosts(bot, conv)...)
-	return posts, nil
-}
-
-func (c *Conversations) buildAnalysisFallbackPosts(originalThreadID string, context *llm.Context, analysisType string) ([]llm.Post, error) {
-	threadData, err := mmapi.GetThreadData(c.mmClient, originalThreadID)
-	if err != nil {
-		return nil, err
-	}
-	formattedThread := format.ThreadData(threadData)
-	context.Parameters = map[string]any{"Thread": formattedThread}
-	systemPromptName := prompts.PromptSummarizeThreadSystem
-	userPromptName := prompts.PromptThreadUser
-	switch analysisType {
-	case "action_items":
-		systemPromptName = prompts.PromptFindActionItemsSystem
-		userPromptName = prompts.PromptFindActionItemsUser
-	case "open_questions":
-		systemPromptName = prompts.PromptFindOpenQuestionsSystem
-		userPromptName = prompts.PromptFindOpenQuestionsUser
-	}
-	systemPrompt, err := c.prompts.Format(systemPromptName, context)
-	if err != nil {
-		return nil, fmt.Errorf("failed to format system prompt: %w", err)
-	}
-	userPrompt, err := c.prompts.Format(userPromptName, context)
-	if err != nil {
-		return nil, fmt.Errorf("failed to format user prompt: %w", err)
-	}
-	return []llm.Post{
-		{Role: llm.PostRoleSystem, Message: systemPrompt},
-		{Role: llm.PostRoleUser, Message: userPrompt},
-	}, nil
 }
 
 // GetAIThreads gets AI conversation threads for a user
@@ -489,8 +259,6 @@ func (c *Conversations) GetAIThreads(userID string) ([]AIThread, error) {
 	return c.getAIThreads(dmChannelIDs)
 }
 
-const defaultMaxFileSize = int64(1024 * 1024 * 5) // 5MB
-
 func (c *Conversations) BotCreateNonResponsePost(botid string, requesterUserID string, post *model.Post) error {
 	streaming.ModifyPostForBot(botid, requesterUserID, post, "")
 	post.AddProp(streaming.NoRegen, true)
@@ -498,111 +266,6 @@ func (c *Conversations) BotCreateNonResponsePost(botid string, requesterUserID s
 		return err
 	}
 	return nil
-}
-
-func isImageMimeType(mimeType string) bool {
-	return strings.HasPrefix(mimeType, "image/")
-}
-
-func (c *Conversations) PostToAIPost(bot *bots.Bot, post *model.Post) llm.Post {
-	var filesForUpstream []llm.File
-	message := format.PostBody(post)
-	var extractedFileContents []string
-	maxFileSize := defaultMaxFileSize
-	if bot.GetConfig().MaxFileSize > 0 {
-		maxFileSize = bot.GetConfig().MaxFileSize
-	}
-	for _, fileID := range post.FileIds {
-		fileInfo, err := c.mmClient.GetFileInfo(fileID)
-		if err != nil {
-			c.mmClient.LogError("Error getting file info", "error", err)
-			continue
-		}
-		content := ""
-		if trimmedContent := strings.TrimSpace(fileInfo.Content); trimmedContent != "" {
-			content = trimmedContent
-		} else if strings.HasPrefix(fileInfo.MimeType, "text/") {
-			file, err := c.mmClient.GetFile(fileID)
-			if err != nil {
-				c.mmClient.LogError("Error getting file", "error", err)
-				continue
-			}
-			contentBytes, err := io.ReadAll(io.LimitReader(file, maxFileSize))
-			if err != nil {
-				c.mmClient.LogError("Error reading file content", "error", err)
-				continue
-			}
-			content = string(contentBytes)
-			if int64(len(contentBytes)) == maxFileSize {
-				content += "\n... (content truncated due to size limit)"
-			}
-		}
-		if content != "" {
-			fileContent := fmt.Sprintf("File Name: %s\nContent: %s", fileInfo.Name, content)
-			extractedFileContents = append(extractedFileContents, fileContent)
-		}
-		if bot.GetConfig().EnableVision && isImageMimeType(fileInfo.MimeType) {
-			file, err := c.mmClient.GetFile(fileID)
-			if err != nil {
-				c.mmClient.LogError("Error getting file", "error", err)
-				continue
-			}
-			filesForUpstream = append(filesForUpstream, llm.File{Reader: file, MimeType: fileInfo.MimeType, Size: fileInfo.Size})
-		}
-	}
-	if len(extractedFileContents) > 0 {
-		message += "\nAttached File Contents:\n" + strings.Join(extractedFileContents, "\n\n")
-	}
-	role := llm.PostRoleUser
-	if c.bots.IsAnyBot(post.UserId) {
-		role = llm.PostRoleBot
-	}
-	pendingToolsProp := post.GetProp(streaming.ToolCallProp)
-	tools := []llm.ToolCall{}
-	pendingTools, ok := pendingToolsProp.(string)
-	if ok {
-		var toolCalls []llm.ToolCall
-		if err := json.Unmarshal([]byte(pendingTools), &toolCalls); err != nil {
-			c.mmClient.LogError("Error unmarshalling tool calls", "error", err)
-		} else {
-			for _, toolCall := range toolCalls {
-				if toolCall.Status == llm.ToolCallStatusRejected {
-					continue
-				}
-				tools = append(tools, toolCall)
-			}
-		}
-	}
-	reasoning := ""
-	if reasoningProp := post.GetProp(streaming.ReasoningSummaryProp); reasoningProp != nil {
-		if reasoningStr, ok := reasoningProp.(string); ok {
-			reasoning = reasoningStr
-		}
-	}
-	reasoningSignature := ""
-	if signatureProp := post.GetProp(streaming.ReasoningSignatureProp); signatureProp != nil {
-		if signatureStr, ok := signatureProp.(string); ok {
-			reasoningSignature = signatureStr
-		}
-	}
-	return llm.Post{
-		Role: role, Message: message, Files: filesForUpstream,
-		ToolUse: tools, Reasoning: reasoning, ReasoningSignature: reasoningSignature,
-	}
-}
-
-func (c *Conversations) ThreadToLLMPosts(bot *bots.Bot, threadData *mmapi.ThreadData) []llm.Post {
-	result := make([]llm.Post, 0, len(threadData.Posts))
-	for _, post := range threadData.Posts {
-		aiPost := c.PostToAIPost(bot, post)
-		if aiPost.Role == llm.PostRoleUser {
-			if user, exists := threadData.UsersByID[post.UserId]; exists {
-				aiPost.Message = "@" + user.Username + ": " + aiPost.Message
-			}
-		}
-		result = append(result, aiPost)
-	}
-	return result
 }
 
 func (c *Conversations) sendOAuthNotifications(bot *bots.Bot, userID, channelID, rootID string, authErrors []llm.ToolAuthError) {

@@ -429,7 +429,7 @@ func (p *Plugin) OnActivate() error {
 	conversationsService.SetMeetingsService(meetingsService)
 
 	// Wire per-tool policy checker for auto-approval in streaming and conversations
-	policyChecker := streaming.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
+	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
 		mcpCfg := p.configuration.MCP()
 		if serverBaseURL == mcp.EmbeddedClientKey && mcpCfg.EmbeddedServer.Enabled {
 			toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
@@ -446,8 +446,6 @@ func (p *Plugin) OnActivate() error {
 		}
 		return "ask", false
 	})
-	streamingService.SetToolPolicyChecker(policyChecker)
-	streamingService.SetAutoExecuteCallback(conversationsService.AutoExecuteApprovedToolCalls)
 	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)
 
