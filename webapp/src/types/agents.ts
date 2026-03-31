@@ -5,10 +5,8 @@ import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/b
 
 // EnabledTool matches useragents.EnabledTool in Go
 export type EnabledTool = {
-    type: string;         // "mcp" or "builtin"
-    id: string;           // tool identifier
-    name: string;         // display name
-    serverName?: string;  // MCP server name (for type "mcp")
+    server_origin: string;  // MCP server origin URL
+    tool_name: string;      // tool identifier on that server
 }
 
 // UserAgent matches the JSON serialization of useragents.UserAgent from the backend.

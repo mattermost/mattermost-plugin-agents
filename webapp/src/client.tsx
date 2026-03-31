@@ -792,7 +792,7 @@ export async function uploadAgentAvatar(agentId: string, file: File): Promise<vo
 }
 
 export async function getServices(): Promise<ServiceInfo[]> {
-    const url = `${baseRoute()}/agents/services`;
+    const url = `${baseRoute()}/services`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
