@@ -271,14 +271,22 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.Len(t, ts.updateCalls, 1)
 		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
 		require.GreaterOrEqual(t, len(blocks), 2)
-		// Find the annotations block.
-		var foundAnnotations bool
-		for _, b := range blocks {
-			if b.Type == conversation.BlockTypeAnnotations {
-				foundAnnotations = true
+		// Find the annotations block and verify it has data.
+		var annotationsBlock *conversation.ContentBlock
+		for i := range blocks {
+			if blocks[i].Type == conversation.BlockTypeAnnotations {
+				annotationsBlock = &blocks[i]
+				break
 			}
 		}
-		require.True(t, foundAnnotations, "expected an annotations block in finalized content")
+		require.NotNil(t, annotationsBlock, "expected an annotations block in finalized content")
+		require.NotNil(t, annotationsBlock.WebSearchContext, "annotations block should have WebSearchContext")
+		require.Equal(t, 1, annotationsBlock.WebSearchContext.Count)
+		// Verify the results contain the annotation data.
+		var parsedAnnotations []llm.Annotation
+		require.NoError(t, json.Unmarshal(annotationsBlock.WebSearchContext.Results, &parsedAnnotations))
+		require.Len(t, parsedAnnotations, 1)
+		require.Equal(t, "https://example.com", parsedAnnotations[0].URL)
 	})
 
 	t.Run("finalizes with token usage", func(t *testing.T) {
@@ -691,12 +699,27 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		defer ts.mu.Unlock()
 		require.Len(t, ts.updateCalls, 1)
 		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
-		var foundAnnotations bool
-		for _, b := range blocks {
-			if b.Type == conversation.BlockTypeAnnotations {
-				foundAnnotations = true
+
+		// Verify the text block uses the cleaned message, not the original with citation markers.
+		var textBlock *conversation.ContentBlock
+		var annotationsBlock *conversation.ContentBlock
+		for i := range blocks {
+			switch blocks[i].Type {
+			case conversation.BlockTypeText:
+				textBlock = &blocks[i]
+			case conversation.BlockTypeAnnotations:
+				annotationsBlock = &blocks[i]
 			}
 		}
-		require.True(t, foundAnnotations, "expected annotations block from map event")
+		require.NotNil(t, textBlock, "expected text block")
+		require.Equal(t, "Cleaned text", textBlock.Text, "text block should use the cleaned message")
+
+		require.NotNil(t, annotationsBlock, "expected annotations block from map event")
+		require.NotNil(t, annotationsBlock.WebSearchContext, "annotations block should have WebSearchContext")
+		require.Equal(t, 1, annotationsBlock.WebSearchContext.Count)
+		var parsedAnnotations []llm.Annotation
+		require.NoError(t, json.Unmarshal(annotationsBlock.WebSearchContext.Results, &parsedAnnotations))
+		require.Len(t, parsedAnnotations, 1)
+		require.Equal(t, "https://example.com", parsedAnnotations[0].URL)
 	})
 }

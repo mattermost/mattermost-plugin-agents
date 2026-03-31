@@ -153,10 +153,16 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 
 	// 3. Annotations block (web search context)
 	if len(a.annotations) > 0 {
-		block := conversation.ContentBlock{
-			Type: conversation.BlockTypeAnnotations,
+		resultsJSON, err := json.Marshal(a.annotations)
+		if err == nil {
+			blocks = append(blocks, conversation.ContentBlock{
+				Type: conversation.BlockTypeAnnotations,
+				WebSearchContext: &conversation.WebSearchContext{
+					Results: resultsJSON,
+					Count:   len(a.annotations),
+				},
+			})
 		}
-		blocks = append(blocks, block)
 	}
 
 	// 4. Tool call blocks (DM tool progress)
@@ -808,6 +814,11 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 							post.Message = cleanedMsg
 							p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 							p.mmClient.LogDebug("Replaced post message with cleaned version", "post_id", post.Id, "original_length", len(post.Message), "cleaned_length", len(cleanedMsg))
+							// Also reset the accumulator text so the persisted turn matches the post
+							if acc != nil {
+								acc.text.Reset()
+								acc.text.WriteString(cleanedMsg)
+							}
 						}
 
 						annotationsJSON, err := json.Marshal(annotations)
