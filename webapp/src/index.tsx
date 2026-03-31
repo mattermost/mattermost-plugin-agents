@@ -188,7 +188,11 @@ export default class Plugin {
             registry.registerSlashCommandWillBePostedHook((message: string, args: any) => {
                 if ((message.startsWith('/ask-channel') || message.startsWith('/summarize-channel')) &&
                     !isEnterpriseLicensedOrDevelopment(store.getState())) {
-                    return {message, args};
+                    return {
+                        error: {
+                            message: 'The /ask-channel and /summarize-channel commands are available on Enterprise plans.',
+                        },
+                    };
                 }
 
                 if (message.startsWith('/ask-channel')) {

@@ -11,6 +11,7 @@ import {
 } from 'helpers/openai-mock';
 import { RunToolConfigContainerWithPolicies } from 'helpers/tool-config-container';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
+import { createBotConfigHelper } from 'helpers/bot-config';
 
 /**
  * Test Suite: Tool Call Policies with Mocked LLM (4.13)
@@ -29,11 +30,10 @@ type EmbeddedToolConfig = {
 };
 
 async function setEmbeddedToolPolicies(toolConfigs: EmbeddedToolConfig[]) {
-    const adminClient = await mattermost.getAdminClient();
-    const systemConfig = await adminClient.getConfig();
-    const pluginConfig = systemConfig.PluginSettings?.Plugins?.['mattermost-ai'];
+    const helper = await createBotConfigHelper(mattermost);
+    const pluginConfig = await helper.getPluginConfig();
 
-    if (!pluginConfig?.config?.mcp) {
+    if (!pluginConfig.config.mcp) {
         throw new Error('mattermost-ai MCP config is not available');
     }
 
@@ -43,15 +43,7 @@ async function setEmbeddedToolPolicies(toolConfigs: EmbeddedToolConfig[]) {
         tool_configs: toolConfigs,
     };
 
-    await adminClient.patchConfig({
-        PluginSettings: {
-            Plugins: {
-                'mattermost-ai': pluginConfig,
-            },
-        },
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await helper.updatePluginConfig(pluginConfig);
 }
 
 async function getTownSquareChannelID(): Promise<string> {
@@ -265,7 +257,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     body: buildToolCallResponse(
                         'call_manual_channel_lookup',
                         'get_channel_info',
-                        '{"channel_display_name":"Town Square"}',
+                        '{"channel_name":"Town Square"}',
                     ),
                 },
             },
@@ -344,9 +336,10 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
         const latestBotPost = botPosts.last();
         await expect(latestBotPost.getByText('Read Channel', {exact: true})).toBeVisible({timeout: 30000});
-        await expect(latestBotPost.getByText('Auto-approved')).toBeVisible({timeout: 30000});
 
-        await expect(rhs.getByText('The follow-up read_channel tool completed successfully.')).toBeVisible({timeout: 30000});
+        // Completion text proves the final mock ran; wait for it before badge (post props may update after stream).
+        await expect(rhs.getByText('The follow-up read_channel tool completed successfully.')).toBeVisible({timeout: 45000});
+        await expect(rhs.getByText('Auto-approved')).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
         await latestBotPost.getByText('Read Channel', {exact: true}).click();

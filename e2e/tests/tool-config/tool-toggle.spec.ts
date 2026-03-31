@@ -84,10 +84,9 @@ test.describe('Per-Tool Enable/Disable', () => {
         const apiHelper = await createToolConfigAPIHelper(mattermost);
         const adminClient = await mattermost.getAdminClient();
         const token = adminClient.getToken();
-        const baseUrl = mattermost.url();
 
         // First, get the current tool list with all tools enabled
-        const toolsBefore = await apiHelper.getUserMCPTools(baseUrl, token);
+        const toolsBefore = await apiHelper.getUserMCPTools(token);
 
         // Verify tools are returned
         expect(toolsBefore.servers).toBeDefined();
@@ -106,7 +105,7 @@ test.describe('Per-Tool Enable/Disable', () => {
         await toolConfig.clickSave();
 
         // Verify the API no longer returns read_post
-        const toolsAfter = await apiHelper.getUserMCPTools(baseUrl, token);
+        const toolsAfter = await apiHelper.getUserMCPTools(token);
         const serverAfter = toolsAfter.servers?.find((s: any) =>
             s.tools?.some((t: any) => t.name === 'read_post'),
         );

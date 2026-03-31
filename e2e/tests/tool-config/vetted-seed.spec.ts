@@ -79,7 +79,7 @@ test.describe('Vetted Server Seed', () => {
         const adminClient = await mattermost.getAdminClient();
         const token = adminClient.getToken();
 
-        const toolsResponse = await apiHelper.getUserMCPTools(mattermost.url(), token);
+        const toolsResponse = await apiHelper.getUserMCPTools(token);
 
         // Verify servers are returned
         expect(toolsResponse.servers).toBeDefined();
