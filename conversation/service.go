@@ -22,6 +22,7 @@ type Store interface {
 	GetConversation(id string) (*store.Conversation, error)
 	GetConversationByThreadAndBot(rootPostID, botID string) (*store.Conversation, error)
 	UpdateConversationTitle(id, title string) error
+	UpdateConversationRootPostID(id string, rootPostID string) error
 	CreateTurn(turn *store.Turn) error
 	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
 	UpdateTurnContent(id string, content json.RawMessage) error
@@ -123,6 +124,22 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 		ConversationID: convID,
 		UserTurnID:     turnID,
 	}, nil
+}
+
+// GetConversation retrieves a conversation by ID. Returns an error if not found.
+func (s *Service) GetConversation(id string) (*store.Conversation, error) {
+	return s.store.GetConversation(id)
+}
+
+// UpdateConversationRootPostID sets the RootPostID on a conversation.
+// Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
+func (s *Service) UpdateConversationRootPostID(id string, rootPostID string) error {
+	return s.store.UpdateConversationRootPostID(id, rootPostID)
+}
+
+// UpdateConversationTitle updates the title of a conversation.
+func (s *Service) UpdateConversationTitle(id, title string) error {
+	return s.store.UpdateConversationTitle(id, title)
 }
 
 // GetOrCreateParams contains parameters for GetOrCreateConversation.

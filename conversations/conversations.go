@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
+	"github.com/mattermost/mattermost-plugin-ai/conversation"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/format"
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
@@ -22,7 +23,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/prompts"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost-plugin-ai/subtitles"
-	"github.com/mattermost/mattermost-plugin-ai/threads"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -59,6 +59,7 @@ type Conversations struct {
 	meetingsService   MeetingsService
 	configProvider    ConfigProvider
 	toolPolicyChecker streaming.ToolPolicyChecker
+	convService       *conversation.Service
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations
@@ -102,6 +103,11 @@ func (c *Conversations) SetMeetingsService(meetingsService MeetingsService) {
 // and DM auto-run decisions.
 func (c *Conversations) SetToolPolicyChecker(checker streaming.ToolPolicyChecker) {
 	c.toolPolicyChecker = checker
+}
+
+// SetConversationService sets the conversation entity service.
+func (c *Conversations) SetConversationService(svc *conversation.Service) {
+	c.convService = svc
 }
 
 func (c *Conversations) appendDMAutoRunOptions(isDM bool, llmContext *llm.Context, opts []llm.LanguageModelOption) []llm.LanguageModelOption {
@@ -355,7 +361,9 @@ func (c *Conversations) existingConversationToLLMPosts(bot *bots.Bot, conversati
 			return nil, fmt.Errorf("missing analysis type")
 		}
 
-		posts, err := threads.New(bot.LLM(), c.prompts, c.mmClient).FollowUpAnalyze(originalThreadID, context, analysisType)
+		// Backward-compat fallback: rebuild initial posts from the original thread.
+		// This path is for pre-v2 analysis threads that lack a conversation entity.
+		posts, err := c.buildAnalysisFallbackPosts(originalThreadID, context, analysisType)
 		if err != nil {
 			return nil, err
 		}
@@ -377,6 +385,44 @@ func (c *Conversations) existingConversationToLLMPosts(bot *bots.Bot, conversati
 	posts = append(posts, c.ThreadToLLMPosts(bot, conversation)...)
 
 	return posts, nil
+}
+
+// buildAnalysisFallbackPosts constructs the initial system+user posts for a thread analysis
+// from the original thread. This is a backward-compatibility fallback for pre-v2 analysis
+// threads that lack a conversation entity. It will be removed in Step L.
+func (c *Conversations) buildAnalysisFallbackPosts(originalThreadID string, context *llm.Context, analysisType string) ([]llm.Post, error) {
+	threadData, err := mmapi.GetThreadData(c.mmClient, originalThreadID)
+	if err != nil {
+		return nil, err
+	}
+	formattedThread := format.ThreadData(threadData)
+	context.Parameters = map[string]any{"Thread": formattedThread}
+
+	systemPromptName := prompts.PromptSummarizeThreadSystem
+	userPromptName := prompts.PromptThreadUser
+	switch analysisType {
+	case "action_items":
+		systemPromptName = prompts.PromptFindActionItemsSystem
+		userPromptName = prompts.PromptFindActionItemsUser
+	case "open_questions":
+		systemPromptName = prompts.PromptFindOpenQuestionsSystem
+		userPromptName = prompts.PromptFindOpenQuestionsUser
+	}
+
+	systemPrompt, err := c.prompts.Format(systemPromptName, context)
+	if err != nil {
+		return nil, fmt.Errorf("failed to format system prompt: %w", err)
+	}
+
+	userPrompt, err := c.prompts.Format(userPromptName, context)
+	if err != nil {
+		return nil, fmt.Errorf("failed to format user prompt: %w", err)
+	}
+
+	return []llm.Post{
+		{Role: llm.PostRoleSystem, Message: systemPrompt},
+		{Role: llm.PostRoleUser, Message: userPrompt},
+	}, nil
 }
 
 // GetAIThreads gets AI conversation threads for a user

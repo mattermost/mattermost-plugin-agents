@@ -74,20 +74,22 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			c.contextBuilder.WithLLMContextNoTools(),
 		)
 
-		analyzer := threads.New(bot.LLM(), c.prompts, c.mmClient)
+		analyzer := threads.New(bot.LLM(), c.prompts, c.mmClient, c.convService)
+		var analyzeResult *threads.AnalyzeResult
 		switch analysisType {
 		case "summarize_thread":
-			result, err = analyzer.Summarize(threadID, llmContext)
+			analyzeResult, err = analyzer.Summarize(threadID, llmContext, bot.GetMMBot().UserId, userID)
 		case "action_items":
-			result, err = analyzer.FindActionItems(threadID, llmContext)
+			analyzeResult, err = analyzer.FindActionItems(threadID, llmContext, bot.GetMMBot().UserId, userID)
 		case "open_questions":
-			result, err = analyzer.FindOpenQuestions(threadID, llmContext)
+			analyzeResult, err = analyzer.FindOpenQuestions(threadID, llmContext, bot.GetMMBot().UserId, userID)
 		default:
 			return fmt.Errorf("invalid analysis type: %s", analysisType)
 		}
 		if err != nil {
 			return fmt.Errorf("could not analyze thread on regen: %w", err)
 		}
+		result = analyzeResult.Stream
 
 	case referenceRecordingFileIDProp != nil:
 		post.Message = ""
