@@ -27,7 +27,7 @@ test.describe('Agent Access Control', () => {
     });
 
     test('should block user when UserAccessLevel=Block', async ({ page }) => {
-        test.setTimeout(90000);
+        test.setTimeout(120000);
         const agentApi = new AgentAPIHelper(mattermost.url());
         const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
         const token = adminClient.getToken();
@@ -110,7 +110,7 @@ test.describe('Agent Access Control', () => {
     });
 
     test('should block user not on allowlist when UserAccessLevel=Allow', async ({ page }) => {
-        test.setTimeout(90000);
+        test.setTimeout(120000);
         const agentApi = new AgentAPIHelper(mattermost.url());
         const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
         const token = adminClient.getToken();

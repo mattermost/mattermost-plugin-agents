@@ -125,21 +125,23 @@ export class MattermostPage {
 
     /**
      * After the user sends a message in the DM (call with sinceMs from just before send), assert the
-     * bot never creates a new post within [minObserveMs, maxWaitMs]. Uses Mattermost API — not thread UI.
+     * bot never creates a new post for the **entire** observation window. Polls the channel via API
+     * until `observeDurationMs` elapses (default matches {@link expectBotDmReplyFromApi} timeout so
+     * slow-reply false negatives are unlikely). Fails immediately if a bot post appears.
      */
     async expectNoBotDmReplyFromApi(
         client: Client4,
         channelId: string,
         botUserId: string,
         sinceMs: number,
-        options?: { minObserveMs?: number; maxWaitMs?: number },
+        options?: { observeDurationMs?: number; pollIntervalMs?: number },
     ): Promise<void> {
-        const minObserve = options?.minObserveMs ?? 8000;
-        const maxWait = options?.maxWaitMs ?? 22000;
-        const start = Date.now();
+        const observeDuration = options?.observeDurationMs ?? 45000;
+        const pollInterval = options?.pollIntervalMs ?? 500;
         const skewMs = 5000;
+        const deadline = Date.now() + observeDuration;
 
-        while (Date.now() - start < maxWait) {
+        while (Date.now() < deadline) {
             const posts = await fetchPostsForChannel(client, channelId);
             const botPosts = posts.filter(
                 (p) => p.user_id === botUserId && p.create_at >= sinceMs - skewMs,
@@ -149,10 +151,11 @@ export class MattermostPage {
                     `Expected no bot reply post, but found ${botPosts.length} bot post(s) after user message (sinceMs=${sinceMs}).`,
                 );
             }
-            if (Date.now() - start >= minObserve) {
-                return;
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) {
+                break;
             }
-            await this.page.waitForTimeout(500);
+            await this.page.waitForTimeout(Math.min(pollInterval, remaining));
         }
     }
 
