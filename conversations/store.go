@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // SaveTitleAsync saves a title asynchronously
@@ -27,6 +28,16 @@ func (c *Conversations) SaveTitle(threadID, title string) error {
 		Columns("RootPostID", "Title").
 		Values(threadID, title).
 		Suffix("ON CONFLICT (RootPostID) DO UPDATE SET Title = ?", title))
+	return err
+}
+
+// DeletePostMetaForDeletedPost removes the stored thread title when the given post is deleted.
+// Rows are keyed by root post ID only; deleting a reply is a no-op at the database layer.
+func (c *Conversations) DeletePostMetaForDeletedPost(post *model.Post) error {
+	if c.db == nil || post == nil || post.Id == "" {
+		return nil
+	}
+	_, err := c.db.ExecBuilder(c.db.Builder().Delete("LLM_PostMeta").Where(sq.Eq{"RootPostID": post.Id}))
 	return err
 }
 

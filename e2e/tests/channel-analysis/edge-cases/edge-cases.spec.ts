@@ -19,6 +19,7 @@ import { LLMBotPostHelper } from 'helpers/llmbot-post';
 
 const username = 'regularuser';
 const password = 'regularuser';
+const CHANNEL_ANALYSIS_EDGE_CASE_TIMEOUT_MS = 120000;
 
 /**
  * Helper class for Edge Cases test interactions
@@ -59,6 +60,8 @@ async function setupTestPage(page: Page) {
 }
 
 test.describe('Channel Analysis Edge Cases', () => {
+    test.describe.configure({timeout: CHANNEL_ANALYSIS_EDGE_CASE_TIMEOUT_MS});
+
     let mattermost: MattermostContainer;
     let openAIMock: OpenAIMockContainer;
 

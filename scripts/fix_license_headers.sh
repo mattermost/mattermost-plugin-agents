@@ -21,7 +21,13 @@ find . -name "*.go" | while read -r file; do
 
   # Get the first line of the file
   FIRST_LINE=$(head -n 1 "$file")
-  
+
+  # Files with a leading Go build tag must keep the tag as the first line; skip automatic
+  # header rewriting so we do not strip //go:build (see mcp/*_test.go integration tests).
+  if [[ "$FIRST_LINE" == "//go:build"* ]] || [[ "$FIRST_LINE" == "// +build"* ]]; then
+    continue
+  fi
+
   # Check if the file already has the correct license header
   if [[ "$FIRST_LINE" == "// Copyright (c) "* && "$FIRST_LINE" == *"Mattermost, Inc. All Rights Reserved." ]]; then
     # Already has a copyright line, check the second line

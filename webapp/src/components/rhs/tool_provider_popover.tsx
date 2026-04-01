@@ -1,0 +1,202 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+import React, {useState, useCallback, useEffect} from 'react';
+import styled from 'styled-components';
+import {FormattedMessage} from 'react-intl';
+import {ChevronDownIcon} from '@mattermost/compass-icons/components';
+
+import {getUserMCPTools, updateUserToolPreferences} from '@/client';
+
+import DotMenu, {DotMenuButton, DropdownMenu} from '../dot_menu';
+import {ToggleSwitch} from '../toggle_switch';
+
+export type UserMCPServerInfo = {
+    name: string;
+    serverOrigin: string;
+    authenticated: boolean;
+    tools: Array<{
+        name: string;
+        description: string;
+        enabled: boolean;
+        policy: string;
+    }>;
+};
+
+type ToolProviderPopoverProps = {
+    disabledServers: string[];
+    onDisabledServersChange: (servers: string[]) => void;
+    preloadedServers?: UserMCPServerInfo[];
+};
+
+const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers}: ToolProviderPopoverProps) => {
+    const [servers, setServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (preloadedServers && preloadedServers.length > 0) {
+            setServers(preloadedServers);
+        }
+    }, [preloadedServers]);
+
+    const fetchServers = useCallback(async () => {
+        setLoading(true);
+        try {
+            const response = await getUserMCPTools();
+            setServers(response.servers);
+        } catch {
+            // Silently fail - servers stay empty
+        }
+        setLoading(false);
+    }, []);
+
+    const handleToggle = useCallback(async (serverOrigin: string, enabled: boolean) => {
+        let updatedDisabled: string[];
+        if (enabled) {
+            updatedDisabled = disabledServers.filter((s) => s !== serverOrigin);
+        } else {
+            updatedDisabled = [...disabledServers, serverOrigin];
+        }
+        onDisabledServersChange(updatedDisabled);
+
+        try {
+            await updateUserToolPreferences({disabled_servers: updatedDisabled});
+        } catch {
+            // Revert on error
+            onDisabledServersChange(disabledServers);
+        }
+    }, [disabledServers, onDisabledServersChange]);
+
+    return (
+        <DotMenu
+            icon={
+                <ToolProviderButtonContent>
+                    <FormattedMessage defaultMessage='Tools'/>
+                    <ChevronDownIcon size={12}/>
+                </ToolProviderButtonContent>
+            }
+            dotMenuButton={ToolProviderButton}
+            dropdownMenu={ProviderDropdownMenu}
+            portal={false}
+            placement='bottom-end'
+            onOpenChange={(isOpen) => {
+                if (isOpen) {
+                    fetchServers();
+                }
+            }}
+            closeOnClick={false}
+        >
+            <PopoverHeader>
+                <FormattedMessage defaultMessage='Tool Providers'/>
+            </PopoverHeader>
+            {loading && servers.length === 0 && (
+                <LoadingRow>
+                    <FormattedMessage defaultMessage='Loading providers...'/>
+                </LoadingRow>
+            )}
+            {!loading && servers.length === 0 && (
+                <EmptyRow>
+                    <FormattedMessage defaultMessage='No tool providers available'/>
+                </EmptyRow>
+            )}
+            {servers.map((server) => (
+                <ProviderRow key={server.serverOrigin}>
+                    <ProviderAvatar>
+                        {server.name.charAt(0).toUpperCase()}
+                    </ProviderAvatar>
+                    <ProviderName>{server.name}</ProviderName>
+                    <ToggleSwitch
+                        checked={!disabledServers.includes(server.serverOrigin)}
+                        onChange={(checked) => handleToggle(server.serverOrigin, checked)}
+                    />
+                </ProviderRow>
+            ))}
+        </DotMenu>
+    );
+};
+
+const ToolProviderButton = styled(DotMenuButton)<{isActive: boolean}>`
+    display: flex;
+    align-items: center;
+    padding: 2px 4px 2px 6px;
+    border-radius: 4px;
+    height: 20px;
+    width: auto;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 16px;
+    color: ${(props) => (props.isActive ? 'var(--button-bg)' : 'var(--center-channel-color-rgb)')};
+    background-color: ${(props) => (props.isActive ? 'rgba(var(--button-bg-rgb), 0.16)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
+
+    &:hover {
+        color: ${(props) => (props.isActive ? 'var(--button-bg)' : 'var(--center-channel-color-rgb)')};
+        background-color: ${(props) => (props.isActive ? 'rgba(var(--button-bg-rgb), 0.16)' : 'rgba(var(--center-channel-color-rgb), 0.16)')};
+    }
+`;
+
+const ToolProviderButtonContent = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 4px;
+`;
+
+const ProviderDropdownMenu = styled(DropdownMenu)`
+    width: 262px;
+    padding: 8px 0;
+`;
+
+const PopoverHeader = styled.div`
+    padding: 8px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 16px;
+    letter-spacing: 0.48px;
+    text-transform: uppercase;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+`;
+
+const ProviderRow = styled.div`
+    display: flex;
+    align-items: center;
+    padding: 6px 16px;
+    gap: 8px;
+
+    &:hover {
+        background: rgba(var(--center-channel-color-rgb), 0.08);
+    }
+`;
+
+const ProviderAvatar = styled.div`
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    background: rgba(var(--center-channel-color-rgb), 0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+    font-size: 11px;
+    font-weight: 600;
+    flex-shrink: 0;
+`;
+
+const ProviderName = styled.div`
+    flex: 1;
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--center-channel-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+`;
+
+const LoadingRow = styled.div`
+    padding: 12px 16px;
+    text-align: center;
+    font-size: 12px;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+`;
+
+const EmptyRow = styled(LoadingRow)``;
+
+export default ToolProviderPopover;

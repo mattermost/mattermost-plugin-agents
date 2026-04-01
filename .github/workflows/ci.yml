@@ -10,15 +10,18 @@ on:
 permissions:
   contents: write
 
+# Set the CI_RUNNER repository or organization variable to a larger runner label
+# for the heavier e2e path jobs. Other CI jobs intentionally stay on the
+# standard GitHub-hosted Ubuntu runner.
 jobs:
   e2e-build-artifact:
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
       with:
-        node-version: 18
+        node-version: 24.11.0
     - name: Build plugin bundle for e2e jobs
       run: make dist
     - uses: actions/upload-artifact@v4
@@ -30,7 +33,7 @@ jobs:
   e2e:
     needs: e2e-build-artifact
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -51,10 +54,10 @@ jobs:
       run:
         working-directory: ./e2e
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
       with:
-        node-version: 18
+        node-version: 24.11.0
     - uses: actions/download-artifact@v4
       with:
         name: e2e-plugin-dist
@@ -88,7 +91,7 @@ jobs:
   e2e-llmbot-real-apis:
     needs: e2e-build-artifact
     timeout-minutes: 180
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -106,10 +109,10 @@ jobs:
       run:
         working-directory: ./e2e
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
       with:
-        node-version: 18
+        node-version: 24.11.0
     - uses: actions/download-artifact@v4
       with:
         name: e2e-plugin-dist
@@ -146,17 +149,17 @@ jobs:
   e2e-channel-analysis-real-apis:
     needs: e2e-build-artifact
     timeout-minutes: 180
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
     defaults:
       run:
         working-directory: ./e2e
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
       with:
-        node-version: 18
+        node-version: 24.11.0
     - uses: actions/download-artifact@v4
       with:
         name: e2e-plugin-dist
@@ -193,17 +196,17 @@ jobs:
   e2e-system-console-real-apis:
     needs: e2e-build-artifact
     timeout-minutes: 180
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
     defaults:
       run:
         working-directory: ./e2e
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
       with:
-        node-version: 18
+        node-version: 24.11.0
     - uses: actions/download-artifact@v4
       with:
         name: e2e-plugin-dist
@@ -237,10 +240,57 @@ jobs:
         path: ./e2e/logs/server-logs.log
         retention-days: 30
 
+  e2e-tool-config-real-apis:
+    needs: e2e-build-artifact
+    timeout-minutes: 180
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    env:
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
+    defaults:
+      run:
+        working-directory: ./e2e
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 18
+    - uses: actions/download-artifact@v4
+      with:
+        name: e2e-plugin-dist
+        path: ./dist/
+    - name: Install dependencies
+      run: npm ci
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+    - name: Validate CI test groups
+      run: node ./scripts/ci-test-groups.mjs validate
+    - name: Run Tool Config tests with real APIs
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      shell: bash
+      run: |
+        SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list tool-config-real)"
+        [[ -n "${SPEC_OUTPUT}" ]]
+        mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
+        npx playwright test --project=chromium "${SPEC_FILES[@]}"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report-tool-config-real-apis
+        path: ./e2e/playwright-report/
+        retention-days: 30
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: server-logs-tool-config-real-apis
+        path: ./e2e/logs/server-logs.log
+        retention-days: 30
+
   e2e-tool-calling:
     needs: e2e-build-artifact
     timeout-minutes: 180
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -256,10 +306,10 @@ jobs:
       run:
         working-directory: ./e2e
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
       with:
-        node-version: 18
+        node-version: 24.11.0
     - uses: actions/download-artifact@v4
       with:
         name: e2e-plugin-dist
@@ -311,10 +361,10 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v4
+      - uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
 
@@ -344,10 +394,10 @@ jobs:
             display_name: AWS Bedrock
     name: evals-${{ matrix.provider.name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v4
+      - uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
 
@@ -398,7 +448,7 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download all evaluation results
         uses: actions/download-artifact@v4
@@ -415,10 +465,10 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v4
+      - uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
       - uses: mattermost/actions/plugin-ci/lint@main
@@ -426,16 +476,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Get Go version from go.mod
-        id: go-version
-        run: echo "version=$(grep '^go ' go.mod | awk '{print $2}')" >> $GITHUB_OUTPUT
       - uses: mattermost/actions/plugin-ci/setup@main
         with:
           golangci-lint-version: "v1.54.2"
-          golang-version: ${{ steps.go-version.outputs.version }}
       - uses: mattermost/actions/plugin-ci/build@main
 
   upload-s3-pr:
@@ -443,7 +489,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -466,11 +512,11 @@ jobs:
           aws s3 cp dist/mattermost-ai-*.tar.gz s3://${{ secrets.AWS_S3_BUCKET }}/mattermost-plugin-agents/mattermost-plugin-agents-${{ steps.short-sha.outputs.sha }}.tar.gz
 
   deploy:
-    needs: [lint, build, plugin-tests, e2e, e2e-llmbot-real-apis, e2e-channel-analysis-real-apis, e2e-system-console-real-apis, e2e-tool-calling]
+    needs: [lint, build, plugin-tests, e2e, e2e-llmbot-real-apis, e2e-channel-analysis-real-apis, e2e-system-console-real-apis, e2e-tool-config-real-apis, e2e-tool-calling]
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 

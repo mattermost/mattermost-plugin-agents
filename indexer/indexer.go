@@ -70,29 +70,8 @@ func (s *Indexer) IndexPost(ctx context.Context, post *model.Post, channel *mode
 		Content:   format.PostBody(post),
 	}
 
-	// Store the document with retry logic
-	return s.storeWithRetryIncremental(ctx, []embeddings.PostDocument{doc}, search)
-}
-
-// storeWithRetryIncremental stores documents with retry logic optimized for single post indexing
-func (s *Indexer) storeWithRetryIncremental(ctx context.Context, docs []embeddings.PostDocument, search embeddings.EmbeddingSearch) error {
-	var lastErr error
-	for attempt := 0; attempt < maxIncrementalRetries; attempt++ {
-		err := search.Store(ctx, docs)
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-
-		if attempt < maxIncrementalRetries-1 {
-			s.pluginAPI.LogWarn("Incremental embedding store failed, retrying",
-				"attempt", attempt+1,
-				"max_retries", maxIncrementalRetries,
-				"error", err)
-			time.Sleep(incrementalRetryBackoff * time.Duration(1<<attempt))
-		}
-	}
-	return lastErr
+	// Store the document
+	return search.Store(ctx, []embeddings.PostDocument{doc})
 }
 
 // DeletePost deletes a post from the index
@@ -202,10 +181,12 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		}
 	}
 
+	// Snapshot status for return value before the background job mutates newJobStatus.
+	returnStatus := newJobStatus
 	// Start the reindexing job in background
 	go s.runReindexJob(&newJobStatus, clearIndex)
 
-	return newJobStatus, nil
+	return returnStatus, nil
 }
 
 // getNodeID returns a unique identifier for this node
@@ -348,10 +329,12 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	// Set cursor to start from last indexed timestamp
 	s.saveCursor(Cursor{LastCreateAt: lastIndexed, LastID: ""})
 
+	// Snapshot status for return value before the background job mutates newJobStatus.
+	returnStatus := newJobStatus
 	// Start catch-up job (reuses runReindexJob with clearIndex=false)
 	go s.runReindexJob(&newJobStatus, false)
 
-	return newJobStatus, nil
+	return returnStatus, nil
 }
 
 // CheckIndexHealth compares database posts with indexed posts
