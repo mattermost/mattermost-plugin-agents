@@ -13,6 +13,11 @@ import manifest from './manifest';
 import {BotsHandler} from './redux';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
 
+export type EnabledMCPTool = {
+    server_origin: string;
+    tool_name: string;
+};
+
 export interface LLMBot {
     id: string;
     displayName: string;
@@ -24,6 +29,7 @@ export interface LLMBot {
     userAccessLevel: UserAccessLevel;
     userIDs: string[];
     teamIDs: string[];
+    enabledMCPTools: EnabledMCPTool[] | null;
 }
 
 const defaultBotLocalStorageKey = 'defaultBot';

@@ -378,6 +378,7 @@ type AIBotInfo struct {
 	ChannelIDs         []string               `json:"channelIDs"`
 	UserAccessLevel    llm.UserAccessLevel    `json:"userAccessLevel"`
 	UserIDs            []string               `json:"userIDs"`
+	EnabledMCPTools    []llm.EnabledMCPTool   `json:"enabledMCPTools"`
 }
 
 type AIBotsResponse struct {
@@ -419,6 +420,7 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 			ChannelIDs:         bot.GetConfig().ChannelIDs,
 			UserAccessLevel:    bot.GetConfig().UserAccessLevel,
 			UserIDs:            bot.GetConfig().UserIDs,
+			EnabledMCPTools:    bot.GetConfig().EnabledMCPTools,
 		})
 		if bot.GetMMBot().Username == defaultBotName {
 			bots[0], bots[i] = bots[i], bots[0]

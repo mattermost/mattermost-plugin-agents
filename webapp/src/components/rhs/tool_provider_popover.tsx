@@ -7,6 +7,7 @@ import {FormattedMessage} from 'react-intl';
 import {ChevronDownIcon} from '@mattermost/compass-icons/components';
 
 import {getUserMCPTools, updateUserToolPreferences} from '@/client';
+import {EnabledMCPTool} from '@/bots';
 
 import DotMenu, {DotMenuButton, DropdownMenu} from '../dot_menu';
 import {ToggleSwitch} from '../toggle_switch';
@@ -27,23 +28,40 @@ type ToolProviderPopoverProps = {
     disabledServers: string[];
     onDisabledServersChange: (servers: string[]) => void;
     preloadedServers?: UserMCPServerInfo[];
+    enabledMCPTools?: EnabledMCPTool[] | null;
 };
 
-const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers}: ToolProviderPopoverProps) => {
-    const [servers, setServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
+// filterServersByEnabledTools filters the server list to only show servers
+// that the active agent is allowed to use. null = no filtering (all servers).
+// [] = no servers. [{...}] = only matching servers.
+function filterServersByEnabledTools(
+    servers: UserMCPServerInfo[],
+    enabledTools: EnabledMCPTool[] | null | undefined,
+): UserMCPServerInfo[] {
+    if (enabledTools == null) {
+        return servers;
+    }
+    const allowedOrigins = new Set(enabledTools.map((t) => t.server_origin));
+    return servers.filter((s) => allowedOrigins.has(s.serverOrigin));
+}
+
+const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools}: ToolProviderPopoverProps) => {
+    const [allServers, setAllServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
         if (preloadedServers && preloadedServers.length > 0) {
-            setServers(preloadedServers);
+            setAllServers(preloadedServers);
         }
     }, [preloadedServers]);
+
+    const servers = filterServersByEnabledTools(allServers, enabledMCPTools);
 
     const fetchServers = useCallback(async () => {
         setLoading(true);
         try {
             const response = await getUserMCPTools();
-            setServers(response.servers);
+            setAllServers(response.servers);
         } catch {
             // Silently fail - servers stay empty
         }
