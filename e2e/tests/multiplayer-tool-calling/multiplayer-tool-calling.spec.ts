@@ -1,7 +1,7 @@
 // spec: tests/multiplayer-tool-calling/multiplayer-tool-calling.plan.md
 // seed: tests/seed.spec.ts
 
-import { test, expect, Page } from '@playwright/test';
+import { test, expect, Page, Locator } from '@playwright/test';
 import fs from 'fs';
 import MattermostContainer from 'helpers/mmcontainer';
 import { REAL_API_BEFORE_ALL_TIMEOUT_MS } from 'helpers/real-api-container';
@@ -170,6 +170,44 @@ async function openLatestThread(page: Page, timeout: number = 30000): Promise<vo
     await page.waitForTimeout(1000);
 }
 
+async function hasVisibleButton(buttons: Locator): Promise<boolean> {
+    const count = await buttons.count();
+    for (let i = 0; i < count; i++) {
+        if (await buttons.nth(i).isVisible().catch(() => false)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+async function clickVisibleButtons(page: Page, buttons: Locator): Promise<number> {
+    let clickedCount = 0;
+
+    while (true) {
+        const count = await buttons.count();
+        let clickedThisPass = false;
+
+        for (let i = 0; i < count; i++) {
+            const button = buttons.nth(i);
+            const isVisible = await button.isVisible().catch(() => false);
+            if (!isVisible) {
+                continue;
+            }
+
+            await button.click();
+            clickedCount++;
+            clickedThisPass = true;
+            await page.waitForTimeout(250);
+            break;
+        }
+
+        if (!clickedThisPass) {
+            return clickedCount;
+        }
+    }
+}
+
 /**
  * Wait for a specific button to appear in the RHS thread panel.
  * Returns true if found, false if timeout (when throwOnTimeout is false).
@@ -179,7 +217,7 @@ async function waitForButtonInThread(page: Page, buttonName: string, timeout: nu
     const rhs = page.locator('#rhsContainer');
     while (Date.now() - startTime < timeout) {
         const button = rhs.getByRole('button', { name: buttonName });
-        const isVisible = await button.first().isVisible().catch(() => false);
+        const isVisible = await hasVisibleButton(button);
         if (isVisible) {
             await page.waitForTimeout(500);
             return true;
@@ -207,7 +245,7 @@ async function waitForAnyButtonInThread(
     while (Date.now() - startTime < timeout) {
         for (const buttonName of buttonNames) {
             const button = rhs.getByRole('button', { name: buttonName });
-            const isVisible = await button.first().isVisible().catch(() => false);
+            const isVisible = await hasVisibleButton(button);
             if (isVisible) {
                 await page.waitForTimeout(500);
                 return buttonName;
@@ -245,20 +283,14 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
         if (action === 'reject') {
             // Reject all tool calls in this round
             const rejectButtons = rhs.getByRole('button', { name: 'Reject' });
-            const count = await rejectButtons.count();
-            for (let i = 0; i < count; i++) {
-                await rejectButtons.nth(i).click();
-            }
+            await clickVisibleButtons(page, rejectButtons);
             await page.waitForTimeout(2000);
             return true;
         }
 
         // Accept all tool calls in this round
         const acceptButtons = rhs.getByRole('button', { name: 'Accept' });
-        const acceptCount = await acceptButtons.count();
-        for (let i = 0; i < acceptCount; i++) {
-            await acceptButtons.nth(i).click();
-        }
+        await clickVisibleButtons(page, acceptButtons);
 
         // Wait for Share/Keep private buttons (result stage)
         await waitForButtonInThread(page, 'Share', 120000);
@@ -269,17 +301,11 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
     // next round where non-auto-approved WRITE tools can still be rejected.
     if (action === 'accept-share' || action === 'reject') {
         const shareButtons = rhs.getByRole('button', { name: 'Share' });
-        const shareCount = await shareButtons.count();
-        for (let i = 0; i < shareCount; i++) {
-            await shareButtons.nth(i).click();
-        }
+        await clickVisibleButtons(page, shareButtons);
     } else {
         // accept-keep-private
         const keepPrivateButtons = rhs.getByRole('button', { name: 'Keep private' });
-        const keepPrivateCount = await keepPrivateButtons.count();
-        for (let i = 0; i < keepPrivateCount; i++) {
-            await keepPrivateButtons.nth(i).click();
-        }
+        await clickVisibleButtons(page, keepPrivateButtons);
     }
 
     await page.waitForTimeout(2000);
@@ -531,10 +557,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
                     if (firstDecisionButton === 'Accept') {
                         // Accept all tool calls in this round
                         const acceptButtons = rhs.getByRole('button', { name: 'Accept' });
-                        const acceptCount = await acceptButtons.count();
-                        for (let i = 0; i < acceptCount; i++) {
-                            await acceptButtons.nth(i).click();
-                        }
+                        await clickVisibleButtons(invokerPage, acceptButtons);
 
                         // Wait for Share/Keep private
                         await waitForButtonInThread(invokerPage, 'Share', 120000);
@@ -550,19 +573,13 @@ function createProviderTestSuite(provider: ProviderBundle) {
                     if (isCreatePostResult) {
                         // This is the create_post result — Keep Private
                         const keepPrivateButtons = rhs.getByRole('button', { name: 'Keep private' });
-                        const keepPrivateCount = await keepPrivateButtons.count();
-                        for (let i = 0; i < keepPrivateCount; i++) {
-                            await keepPrivateButtons.nth(i).click();
-                        }
+                        await clickVisibleButtons(invokerPage, keepPrivateButtons);
                         await invokerPage.waitForTimeout(2000);
                         break;
                     } else {
                         // Intermediate round (e.g. get_channel_info) — Share so LLM can continue
                         const shareButtons = rhs.getByRole('button', { name: 'Share' });
-                        const shareCount = await shareButtons.count();
-                        for (let i = 0; i < shareCount; i++) {
-                            await shareButtons.nth(i).click();
-                        }
+                        await clickVisibleButtons(invokerPage, shareButtons);
                         await invokerPage.waitForTimeout(2000);
                     }
                 }
