@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useEffect} from 'react';
 import styled from 'styled-components';
 
 import manifest from '@/manifest';
@@ -14,6 +14,22 @@ export const AGENTS_ROUTE = `plug/${manifest.id}/agents`;
 // Product mainComponent — rendered by registerProduct when the route matches.
 // No URL-matching or overlay needed; Mattermost's product routing handles it.
 const AgentsPage = () => {
+    useEffect(() => {
+        // ChannelController normally sets these classes, but it's not loaded in
+        // product views. Without them the global header loses its themed colors.
+        // Playbooks and Boards do the same thing in their top-level components.
+        document.body.classList.add('app__body');
+
+        const root = document.getElementById('root');
+        if (root && !root.classList.contains('channel-view')) {
+            root.classList.add('channel-view');
+        }
+
+        return () => {
+            document.body.classList.remove('app__body');
+        };
+    }, []);
+
     return (
         <PageWrapper>
             <PageContainer>
