@@ -10,6 +10,10 @@ import {
 } from 'helpers/agent-container';
 import { AgentAPIHelper } from 'helpers/agent-api';
 import { AgentPageHelper } from 'helpers/agent-page';
+import { AIPlugin } from 'helpers/ai-plugin';
+
+/** Matches mcp.EmbeddedClientKey — MCP server origin for the embedded Mattermost tools server. */
+const embeddedMattermostOrigin = 'embedded://mattermost';
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
@@ -18,7 +22,7 @@ test.describe('Agent MCP Tools', () => {
     test.beforeAll(async () => {
         mattermost = await RunAgentContainer();
         openAIMock = await RunOpenAIMocks(mattermost.network);
-    });
+    }, { timeout: 180000 });
 
     test.afterAll(async () => {
         await openAIMock.stop();
@@ -31,32 +35,28 @@ test.describe('Agent MCP Tools', () => {
         const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
         const token = adminClient.getToken();
 
-        // Create agent with empty enabled_tools (= no MCP tools allowed)
-        await agentApi.createTestAgent(token, {
+        const noToolsAgent = await agentApi.createTestAgent(token, {
             display_name: 'No Tools Agent',
             username: 'notoolsagent',
             service_id: mockServiceId,
             enabled_tools: [],
         });
 
-        // Mock LLM with a simple text response
         await openAIMock.addCompletionMock(buildTextResponse('I have no tools available.'));
 
-        // Login and DM the agent
         const mmPage = new MattermostPage(page);
+        const aiPlugin = new AIPlugin(page);
         await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
-        await mmPage.createAndNavigateToDMWithBot(
-            mattermost, agentRegularUsername, agentRegularPassword, 'notoolsagent'
-        );
+        await page.goto(`${mattermost.url()}/test/channels/town-square`);
+        await page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: 60000 });
 
-        await mmPage.sendChannelMessage('Hello');
-        await mmPage.waitForReply();
-
-        // The response should come through without tool calls
-        await expect(page.locator('text=I have no tools available')).toBeVisible({ timeout: 15000 });
+        await aiPlugin.openRHS();
+        await aiPlugin.switchBotWhenListed(noToolsAgent.display_name);
+        await aiPlugin.sendMessage('Hello');
+        await aiPlugin.waitForBotResponse('I have no tools available.');
     });
 
-    test('MCPs tab shows tool toggles in config modal', async ({ page }) => {
+    test('MCPs tab shows embedded server and tool affordances in config modal', async ({ page }) => {
         test.setTimeout(60000);
         const mmPage = new MattermostPage(page);
         const agentPage = new AgentPageHelper(page);
@@ -64,18 +64,14 @@ test.describe('Agent MCP Tools', () => {
         await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
         await agentPage.navigateToAgents(mattermost.url());
 
-        // Create a new agent
         await agentPage.getCreateButton().click();
         await agentPage.waitForModal();
 
-        // Navigate to MCPs tab
         await agentPage.getModalTab('MCPs').click();
 
-        // Verify the MCPs tab content is visible (search input or tool toggles)
-        await expect(
-            agentPage.getMCPSearchInput()
-                .or(agentPage.getToolToggles().first())
-        ).toBeVisible({ timeout: 10000 });
+        await expect(agentPage.getMCPSearchInput()).toBeVisible({ timeout: 15000 });
+        // Provider name from GET /mcp/tools (mcp.EmbeddedServerName)
+        await expect(agentPage.getModal().getByText('Mattermost')).toBeVisible({ timeout: 15000 });
     });
 
     test('agent with specific enabled_tools responds correctly', async ({ page }) => {
@@ -84,30 +80,108 @@ test.describe('Agent MCP Tools', () => {
         const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
         const token = adminClient.getToken();
 
-        // Create agent with a specific tool enabled
-        await agentApi.createTestAgent(token, {
+        const selectiveAgent = await agentApi.createTestAgent(token, {
             display_name: 'Selective Tools Agent',
             username: 'selectivetoolsagent',
             service_id: mockServiceId,
             enabled_tools: [
-                { server_origin: 'mattermost://embedded', tool_name: 'GetChannelPosts' },
+                { server_origin: embeddedMattermostOrigin, tool_name: 'read_post' },
             ],
         });
 
-        // Mock LLM with a text response
         await openAIMock.addCompletionMock(buildTextResponse('I used the selected tool.'));
 
-        // Login and DM the agent
         const mmPage = new MattermostPage(page);
+        const aiPlugin = new AIPlugin(page);
+        await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
+        await page.goto(`${mattermost.url()}/test/channels/town-square`);
+        await page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: 60000 });
+
+        await aiPlugin.openRHS();
+        await aiPlugin.switchBotWhenListed(selectiveAgent.display_name);
+        await aiPlugin.sendMessage('Summarize this channel');
+        await aiPlugin.waitForBotResponse('I used the selected tool.');
+    });
+
+    // RHS Tool Providers popover filters by server (provider) using activeBot.enabledMCPTools origins;
+    // individual tools are not listed here — only MCPs tab / server policy cover tool-level affordances.
+    test('RHS Tools popover shows no providers when agent has empty enabled_tools', async ({ page }) => {
+        test.setTimeout(90000);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+        const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
+        const token = adminClient.getToken();
+
+        const agent = await agentApi.createTestAgent(token, {
+            display_name: 'RHS Empty MCP Agent',
+            service_id: mockServiceId,
+            enabled_tools: [],
+        });
+
+        const mmPage = new MattermostPage(page);
+        const aiPlugin = new AIPlugin(page);
+
         await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
         await mmPage.createAndNavigateToDMWithBot(
-            mattermost, agentRegularUsername, agentRegularPassword, 'selectivetoolsagent'
+            mattermost, agentRegularUsername, agentRegularPassword, agent.username,
         );
 
-        await mmPage.sendChannelMessage('Get the channel posts');
-        await mmPage.waitForReply();
+        await aiPlugin.openRHS();
+        await expect(page.getByTestId('bot-selector-rhs')).toBeVisible({ timeout: 15000 });
+        await aiPlugin.switchBotWhenListed(agent.display_name);
 
-        // Verify the agent responded
-        await expect(page.locator('text=I used the selected tool')).toBeVisible({ timeout: 15000 });
+        const menu = await aiPlugin.openRhsToolProvidersMenu();
+        await expect(menu.getByText('Tool Providers', { exact: true })).toBeVisible();
+        await expect(menu.getByText('No tool providers available')).toBeVisible({ timeout: 20000 });
+    });
+
+    test('RHS Tools popover shows Mattermost provider when only embedded tools are enabled', async ({ page }) => {
+        test.setTimeout(90000);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+        const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
+        const token = adminClient.getToken();
+
+        const agent = await agentApi.createTestAgent(token, {
+            display_name: 'RHS Embedded Only Agent',
+            service_id: mockServiceId,
+            enabled_tools: [
+                { server_origin: embeddedMattermostOrigin, tool_name: 'read_post' },
+            ],
+        });
+
+        const mmPage = new MattermostPage(page);
+        const aiPlugin = new AIPlugin(page);
+
+        await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
+        await mmPage.createAndNavigateToDMWithBot(
+            mattermost, agentRegularUsername, agentRegularPassword, agent.username,
+        );
+
+        await aiPlugin.openRHS();
+        await expect(page.getByTestId('bot-selector-rhs')).toBeVisible({ timeout: 15000 });
+        await aiPlugin.switchBotWhenListed(agent.display_name);
+
+        const menu = await aiPlugin.openRhsToolProvidersMenu();
+        await expect(menu.getByText('Tool Providers', { exact: true })).toBeVisible();
+        await expect(menu.getByText('Mattermost')).toBeVisible({ timeout: 20000 });
+        await expect(menu.getByText('No tool providers available')).not.toBeVisible();
+    });
+
+    test('RHS Tools popover lists Mattermost for default Mock Bot (no per-agent MCP restriction)', async ({
+        page,
+    }) => {
+        test.setTimeout(90000);
+        const mmPage = new MattermostPage(page);
+        const aiPlugin = new AIPlugin(page);
+
+        await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
+        await page.goto(`${mattermost.url()}/test/channels/town-square`);
+        await page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: 60000 });
+
+        await aiPlugin.openRHS();
+        await expect(page.getByTestId('bot-selector-rhs')).toBeVisible({ timeout: 15000 });
+        await aiPlugin.switchBotWhenListed('Mock Bot');
+
+        const menu = await aiPlugin.openRhsToolProvidersMenu();
+        await expect(menu.getByText('Mattermost')).toBeVisible({ timeout: 20000 });
     });
 });

@@ -5,6 +5,8 @@ import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/opena
 import {
     RunAgentContainer,
     agentAdminUsername, agentAdminPassword,
+    agentRegularUsername, agentRegularPassword,
+    agentUnprivilegedUsername, agentUnprivilegedPassword,
     mockServiceId,
 } from 'helpers/agent-container';
 import { AgentAPIHelper } from 'helpers/agent-api';
@@ -18,7 +20,7 @@ test.describe('Agent CRUD', () => {
         mattermost = await RunAgentContainer();
         openAIMock = await RunOpenAIMocks(mattermost.network);
         await openAIMock.addCompletionMock(responseTest);
-    });
+    }, { timeout: 180000 });
 
     test.afterAll(async () => {
         await openAIMock.stop();
@@ -149,8 +151,8 @@ test.describe('Agent CRUD', () => {
 
         await agentPage.getModalSaveButton().click();
 
-        // Verify error message appears (modal stays open)
-        await expect(agentPage.getDisplayNameInput()).toBeVisible({ timeout: 5000 });
+        await expect(page.getByText('This username is already taken')).toBeVisible({ timeout: 15000 });
+        await expect(agentPage.getDisplayNameInput()).toBeVisible();
     });
 
     test('should show agent in "Your agents" tab for creator', async ({ page }) => {
@@ -177,5 +179,66 @@ test.describe('Agent CRUD', () => {
 
         // Verify agent appears in Your agents tab
         await expect(agentPage.getAgentRowByName('My Personal Agent')).toBeVisible({ timeout: 10000 });
+    });
+
+    test('regular user sees UserAccessLevel=All agents in the listing', async ({ page }) => {
+        test.setTimeout(60000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+        const suffix = Date.now().toString(36);
+
+        const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
+        const token = adminClient.getToken();
+        await agentApi.createTestAgent(token, {
+            display_name: `Visible To Regular ${suffix}`,
+            username: `visibletoreg${suffix}`,
+            service_id: mockServiceId,
+            user_access_level: 0,
+        });
+
+        await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+        await expect(agentPage.getAgentRowByName(`Visible To Regular ${suffix}`)).toBeVisible({ timeout: 10000 });
+    });
+
+    test('denies create in UI when user lacks create_agent permission', async ({ page }) => {
+        test.setTimeout(60000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+        const suffix = Date.now().toString(36);
+
+        await mmPage.login(mattermost.url(), agentUnprivilegedUsername, agentUnprivilegedPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+
+        await agentPage.getCreateButton().click();
+        await agentPage.waitForModal();
+
+        await agentPage.fillConfigTab({
+            displayName: 'Should Fail',
+            username: `shouldfail${suffix}`,
+            serviceLabel: 'Mock Service',
+        });
+
+        await agentPage.getModalSaveButton().click();
+
+        await expect(page.getByText('You do not have permission to perform this action.')).toBeVisible({
+            timeout: 15000,
+        });
+        await expect(agentPage.getDisplayNameInput()).toBeVisible();
+    });
+
+    test('search shows no-results message when nothing matches', async ({ page }) => {
+        test.setTimeout(60000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+
+        await agentPage.getSearchInput().fill('zzzznonexistentquery9999');
+        await expect(page.getByText('No agents match "zzzznonexistentquery9999"')).toBeVisible({
+            timeout: 10000,
+        });
     });
 });

@@ -90,9 +90,13 @@ export async function RunAgentContainer(): Promise<MattermostContainer> {
         ]);
     }
 
-    // Grant create_agent permission to regular users
+    // Grant create_agent on system_user when the server exposes that permission (Enterprise).
+    // Non-admin users need this for POST /agents; sysadmin can still create via ManageSystem fallback.
     await mattermost.container.exec([
         'mmctl', '--local', 'permissions', 'add', 'system_user', 'create_agent',
+    ]);
+    await mattermost.container.exec([
+        'mmctl', '--local', 'permissions', 'add', 'system_admin', 'create_agent',
     ]);
 
     return mattermost;

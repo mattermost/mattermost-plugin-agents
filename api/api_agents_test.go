@@ -132,12 +132,43 @@ func TestCreateAgentWithPermission(t *testing.T) {
 	assert.NotEmpty(t, agent.ID)
 }
 
+func TestCreateAgentWithManageSystemOnly(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, PermissionCreateAgent).Return(false)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true)
+	e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+		UserId:      "bot-user-id-created",
+		Username:    "sysadmin-agent",
+		DisplayName: "Sysadmin Agent",
+		Description: "User-created AI agent",
+	}, nil)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	body := CreateAgentRequest{
+		DisplayName: "Sysadmin Agent",
+		Username:    "sysadmin-agent",
+		ServiceID:   "svc-1",
+	}
+
+	recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
+	resp := recorder.Result()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	var agent useragents.UserAgent
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&agent))
+	assert.Equal(t, "Sysadmin Agent", agent.DisplayName)
+}
+
 func TestCreateAgentWithoutPermission(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("HasPermissionTo", testUserID, PermissionCreateAgent).Return(false)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	body := CreateAgentRequest{

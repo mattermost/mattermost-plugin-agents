@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-ai/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
@@ -82,6 +83,16 @@ func isAgentAdmin(agent *useragents.UserAgent, userID string) bool {
 	return agent.CreatorID == userID || slices.Contains(agent.AdminUserIDs, userID)
 }
 
+// canCreateAgent returns true if the user may create new agents via POST /agents.
+// Prefer the dedicated create_agent permission; when it is not yet registered on the server
+// (older DBs), allow system administrators via PermissionManageSystem.
+func canCreateAgent(client *pluginapi.Client, userID string) bool {
+	if client.User.HasPermissionTo(userID, PermissionCreateAgent) {
+		return true
+	}
+	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
+}
+
 // refreshBotsAndNotify forces the bot registry to re-read DB-backed agents,
 // re-runs EnsureBots on this node, and publishes a cluster event so other
 // nodes do the same.
@@ -106,8 +117,7 @@ func (a *API) refreshBotsAndNotify() {
 func (a *API) handleCreateAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
-	// Permission check: user must have create_agent permission
-	if !a.pluginAPI.User.HasPermissionTo(userID, PermissionCreateAgent) {
+	if !canCreateAgent(a.pluginAPI, userID) {
 		c.AbortWithError(http.StatusForbidden, errors.New("user does not have permission to create agents"))
 		return
 	}
