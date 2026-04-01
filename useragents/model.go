@@ -88,8 +88,10 @@ func (u *UserAgent) SetAdminUserIDsFromJSON(raw string) error {
 }
 
 // SetEnabledToolsFromJSON parses a JSON string into the EnabledTools field.
+// Preserves nil vs empty semantics: "" → nil (all tools), "null" → nil,
+// "[]" → empty slice (no tools), "[{…}]" → populated slice (specific tools).
 func (u *UserAgent) SetEnabledToolsFromJSON(raw string) error {
-	if raw == "" || raw == "[]" {
+	if raw == "" {
 		u.EnabledTools = nil
 		return nil
 	}
