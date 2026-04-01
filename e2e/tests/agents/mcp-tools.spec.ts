@@ -1,7 +1,12 @@
 import { test, expect } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
-import { OpenAIMockContainer, RunOpenAIMocks, buildTextResponse } from 'helpers/openai-mock';
+import {
+    OpenAIMockContainer,
+    RunOpenAIMocks,
+    buildTextResponse,
+    buildChatCompletionMockRule,
+} from 'helpers/openai-mock';
 import {
     RunAgentContainer,
     agentAdminUsername, agentAdminPassword,
@@ -42,7 +47,15 @@ test.describe('Agent MCP Tools', () => {
             enabled_tools: [],
         });
 
-        await openAIMock.addCompletionMock(buildTextResponse('I have no tools available.'));
+        // Prove enabled_tools=[] reaches the LLM without read_post in the completion payload: first rule
+        // would match if "read_post" were sent; second rule is the catch-all success response.
+        await openAIMock.addMocks([
+            buildChatCompletionMockRule(
+                buildTextResponse('WRONG: read_post in completion request when enabled_tools is empty'),
+                { bodyContains: 'read_post' },
+            ),
+            buildChatCompletionMockRule(buildTextResponse('I have no tools available.')),
+        ]);
 
         const mmPage = new MattermostPage(page);
         const aiPlugin = new AIPlugin(page);
@@ -89,7 +102,14 @@ test.describe('Agent MCP Tools', () => {
             ],
         });
 
-        await openAIMock.addCompletionMock(buildTextResponse('I used the selected tool.'));
+        // Prove read_post appears in at least one completion payload (tool-enabled round). Follow-up
+        // completions may omit tools from the body, so the catch-all returns the same success text.
+        await openAIMock.addMocks([
+            buildChatCompletionMockRule(buildTextResponse('I used the selected tool.'), {
+                bodyContains: 'read_post',
+            }),
+            buildChatCompletionMockRule(buildTextResponse('I used the selected tool.')),
+        ]);
 
         const mmPage = new MattermostPage(page);
         const aiPlugin = new AIPlugin(page);

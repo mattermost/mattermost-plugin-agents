@@ -45,16 +45,18 @@ test.describe('Agent Access Control', () => {
             user_ids: [regularUser.id],
         });
 
-        // Login as blocked user and try to DM the agent
         const mmPage = new MattermostPage(page);
+        const { client, channelId, botUserId } = await mmPage.getClientAndDmChannelForBot(
+            mattermost, agentRegularUsername, agentRegularPassword, 'blockingagent',
+        );
+
         await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
         await mmPage.createAndNavigateToDMWithBot(mattermost, agentRegularUsername, agentRegularPassword, 'blockingagent');
 
-        // Send a message
+        const sinceMs = Date.now();
         await mmPage.sendChannelMessage('Hello agent');
 
-        // Should NOT get a reply (bot rejects blocked user)
-        await mmPage.expectNoReply();
+        await mmPage.expectNoBotDmReplyFromApi(client, channelId, botUserId, sinceMs);
     });
 
     test('should allow user when UserAccessLevel=Allow and user is in allowlist', async ({ page }) => {
@@ -76,13 +78,17 @@ test.describe('Agent Access Control', () => {
             user_ids: [regularUser.id],
         });
 
-        // Login as allowed user and DM the agent
         const mmPage = new MattermostPage(page);
+        const { client, channelId, botUserId } = await mmPage.getClientAndDmChannelForBot(
+            mattermost, agentRegularUsername, agentRegularPassword, 'restrictedagent',
+        );
+
         await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
         await mmPage.createAndNavigateToDMWithBot(mattermost, agentRegularUsername, agentRegularPassword, 'restrictedagent');
 
+        const sinceMs = Date.now();
         await mmPage.sendChannelMessage('Hello agent');
-        await mmPage.waitForReply();
+        await mmPage.expectBotDmReplyFromApi(client, channelId, botUserId, sinceMs);
     });
 
     test('creator should have access to their own agent via API', async () => {
@@ -119,13 +125,18 @@ test.describe('Agent Access Control', () => {
         });
 
         const mmPage = new MattermostPage(page);
+        const { client, channelId, botUserId } = await mmPage.getClientAndDmChannelForBot(
+            mattermost, agentRegularUsername, agentRegularPassword, 'allowonlyadmin',
+        );
+
         await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
         await mmPage.createAndNavigateToDMWithBot(
             mattermost, agentRegularUsername, agentRegularPassword, 'allowonlyadmin',
         );
 
+        const sinceMs = Date.now();
         await mmPage.sendChannelMessage('Hello agent');
-        await mmPage.expectNoReply();
+        await mmPage.expectNoBotDmReplyFromApi(client, channelId, botUserId, sinceMs);
     });
 
     test('UserAccessLevel=None hides agent from non-creators in the agents list', async ({ page }) => {
