@@ -17,6 +17,8 @@ import {LLMBot} from '@/bots';
 import {BotsHandler} from '@/redux';
 import manifest from '@/manifest';
 
+import RHSPromptButtons from '../custom_prompts/rhs_prompt_buttons';
+
 import {RHSPaddingContainer, RHSText, RHSTitle} from './common';
 
 const CreatePostContainer = styled.div`
@@ -171,7 +173,14 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
             <ReverseScroll>
                 <RHSImage/>
                 <RHSTitle><FormattedMessage defaultMessage='Ask Agents anything'/></RHSTitle>
-                <RHSText><FormattedMessage defaultMessage='Agents are here to help. Ask a question below to get started.'/></RHSText>
+                <RHSText><FormattedMessage defaultMessage='Agents can help you with almost anything. Choose from the prompts below or write your own.'/></RHSText>
+                {botChannelId && (
+                    <RHSPromptButtons
+                        channelId={botChannelId}
+                        selectPost={selectPost}
+                        setCurrentTab={setCurrentTab}
+                    />
+                )}
                 <CreatePostContainer
                     data-testid='rhs-new-tab-create-post'
                 >

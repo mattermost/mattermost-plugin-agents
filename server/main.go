@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost-plugin-ai/conversations"
+	"github.com/mattermost/mattermost-plugin-ai/customprompts"
 	"github.com/mattermost/mattermost-plugin-ai/embeddings"
 	"github.com/mattermost/mattermost-plugin-ai/enterprise"
 	"github.com/mattermost/mattermost-plugin-ai/i18n"
@@ -456,6 +457,8 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Info("Embedded MCP server handlers initialized successfully")
 	}
 
+	customPromptsStore := customprompts.NewStore(dbClient)
+
 	apiService := api.New(
 		bots,
 		conversationsService,
@@ -479,6 +482,7 @@ func (p *Plugin) OnActivate() error {
 		&p.configuration,
 		p,
 		getSearchInitError,
+		customPromptsStore,
 	)
 
 	// Keep only what we need
