@@ -339,5 +339,74 @@ func TestListServicesNoSecrets(t *testing.T) {
 	assert.NotContains(t, string(raw), "awsSecret")
 }
 
+func TestUpdateMigratedAgentAsSystemAdmin(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+		ID: "agent-1", CreatorID: "", BotUserID: "bot-1",
+		DisplayName: "Migrated", Username: "migrated", ServiceID: "svc-1",
+	}
+
+	newName := "Updated Migrated"
+	body := UpdateAgentRequest{DisplayName: &newName}
+	e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
+
+	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	var agent useragents.UserAgent
+	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agent))
+	assert.Equal(t, "Updated Migrated", agent.DisplayName)
+}
+
+func TestUpdateMigratedAgentForbiddenWithoutSystemManage(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+		ID: "agent-1", CreatorID: "", BotUserID: "bot-1",
+		DisplayName: "Migrated", Username: "migrated", ServiceID: "svc-1",
+	}
+
+	newName := "Hacked"
+	body := UpdateAgentRequest{DisplayName: &newName}
+
+	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+	require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
+}
+
+func TestFetchModelsForServiceMissingCredentials(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	body := map[string]string{"service_id": "svc-1"}
+	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
+	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+}
+
+func TestFetchModelsForServiceUnknownService(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	body := map[string]string{"service_id": "missing-svc"}
+	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
+	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+}
+
 // Suppress unused import warnings for multipart (used for avatar test below)
 var _ = multipart.NewWriter

@@ -24,6 +24,14 @@ type UserAgent struct {
 	TeamIDs            []string           `json:"team_ids"`
 	AdminUserIDs       []string           `json:"admin_user_ids"`
 	EnabledTools       []EnabledTool      `json:"enabled_tools"`
+	Model              string             `json:"model"`
+	EnableVision       bool               `json:"enable_vision"`
+	DisableTools       bool               `json:"disable_tools"`
+	EnabledNativeTools []string           `json:"enabled_native_tools"`
+	ReasoningEnabled   bool               `json:"reasoning_enabled"`
+	ReasoningEffort    string             `json:"reasoning_effort"`
+	ThinkingBudget     int                `json:"thinking_budget"`
+	StructuredOutputEnabled bool          `json:"structured_output_enabled"`
 	CreateAt           int64              `json:"create_at" db:"CreateAt"`
 	UpdateAt           int64              `json:"update_at" db:"UpdateAt"`
 	DeleteAt           int64              `json:"delete_at" db:"DeleteAt"`
@@ -65,6 +73,27 @@ func (u *UserAgent) EnabledToolsJSON() string {
 		return "[]"
 	}
 	return string(b)
+}
+
+// EnabledNativeToolsJSON returns JSON for provider-native tool IDs (e.g. web_search).
+func (u *UserAgent) EnabledNativeToolsJSON() string {
+	if u.EnabledNativeTools == nil {
+		return "[]"
+	}
+	b, err := json.Marshal(u.EnabledNativeTools)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// SetEnabledNativeToolsFromJSON parses EnabledNativeTools from DB JSON text.
+func (u *UserAgent) SetEnabledNativeToolsFromJSON(raw string) error {
+	if raw == "" {
+		u.EnabledNativeTools = nil
+		return nil
+	}
+	return json.Unmarshal([]byte(raw), &u.EnabledNativeTools)
 }
 
 // SetChannelIDsFromJSON parses a JSON string into the ChannelIDs field.

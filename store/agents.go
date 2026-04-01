@@ -30,6 +30,14 @@ type agentRow struct {
 	TeamIDs            string `db:"teamids"`
 	AdminUserIDs       string `db:"adminuserids"`
 	EnabledTools       string `db:"enabledtools"`
+	Model              string `db:"model"`
+	EnableVision       bool   `db:"enablevision"`
+	DisableTools       bool   `db:"disabletools"`
+	EnabledNativeTools string `db:"enablednativetools"`
+	ReasoningEnabled   bool   `db:"reasoningenabled"`
+	ReasoningEffort    string `db:"reasoningeffort"`
+	ThinkingBudget     int    `db:"thinkingbudget"`
+	StructuredOutputEnabled bool `db:"structuredoutputenabled"`
 	CreateAt           int64  `db:"createat"`
 	UpdateAt           int64  `db:"updateat"`
 	DeleteAt           int64  `db:"deleteat"`
@@ -38,18 +46,25 @@ type agentRow struct {
 // toUserAgent converts an agentRow (DB scan result) to a useragents.UserAgent.
 func (r *agentRow) toUserAgent() (*useragents.UserAgent, error) {
 	agent := &useragents.UserAgent{
-		ID:                 r.ID,
-		BotUserID:          r.BotUserID,
-		CreatorID:          r.CreatorID,
-		DisplayName:        r.DisplayName,
-		Username:           r.Username,
-		ServiceID:          r.ServiceID,
-		CustomInstructions: r.CustomInstructions,
-		ChannelAccessLevel: r.ChannelAccessLevel,
-		UserAccessLevel:    r.UserAccessLevel,
-		CreateAt:           r.CreateAt,
-		UpdateAt:           r.UpdateAt,
-		DeleteAt:           r.DeleteAt,
+		ID:                      r.ID,
+		BotUserID:               r.BotUserID,
+		CreatorID:               r.CreatorID,
+		DisplayName:             r.DisplayName,
+		Username:                r.Username,
+		ServiceID:               r.ServiceID,
+		CustomInstructions:      r.CustomInstructions,
+		ChannelAccessLevel:      r.ChannelAccessLevel,
+		UserAccessLevel:         r.UserAccessLevel,
+		Model:                   r.Model,
+		EnableVision:            r.EnableVision,
+		DisableTools:            r.DisableTools,
+		ReasoningEnabled:        r.ReasoningEnabled,
+		ReasoningEffort:         r.ReasoningEffort,
+		ThinkingBudget:          r.ThinkingBudget,
+		StructuredOutputEnabled: r.StructuredOutputEnabled,
+		CreateAt:                r.CreateAt,
+		UpdateAt:                r.UpdateAt,
+		DeleteAt:                r.DeleteAt,
 	}
 
 	if err := agent.SetChannelIDsFromJSON(r.ChannelIDs); err != nil {
@@ -66,6 +81,9 @@ func (r *agentRow) toUserAgent() (*useragents.UserAgent, error) {
 	}
 	if err := agent.SetEnabledToolsFromJSON(r.EnabledTools); err != nil {
 		return nil, fmt.Errorf("failed to parse EnabledTools: %w", err)
+	}
+	if err := agent.SetEnabledNativeToolsFromJSON(r.EnabledNativeTools); err != nil {
+		return nil, fmt.Errorf("failed to parse EnabledNativeTools: %w", err)
 	}
 
 	return agent, nil
@@ -85,8 +103,11 @@ func (s *Store) CreateAgent(agent *useragents.UserAgent) error {
 			ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
 			CustomInstructions, ChannelAccessLevel, ChannelIDs,
 			UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
-			EnabledTools, CreateAt, UpdateAt, DeleteAt
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+			EnabledTools,
+			Model, EnableVision, DisableTools, EnabledNativeTools,
+			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
+			CreateAt, UpdateAt, DeleteAt
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
 		agent.ID,
 		agent.BotUserID,
 		agent.CreatorID,
@@ -101,6 +122,14 @@ func (s *Store) CreateAgent(agent *useragents.UserAgent) error {
 		agent.TeamIDsJSON(),
 		agent.AdminUserIDsJSON(),
 		agent.EnabledToolsJSON(),
+		agent.Model,
+		agent.EnableVision,
+		agent.DisableTools,
+		agent.EnabledNativeToolsJSON(),
+		agent.ReasoningEnabled,
+		agent.ReasoningEffort,
+		agent.ThinkingBudget,
+		agent.StructuredOutputEnabled,
 		agent.CreateAt,
 		agent.UpdateAt,
 		agent.DeleteAt,
@@ -120,7 +149,10 @@ func (s *Store) GetAgent(id string) (*useragents.UserAgent, error) {
 		`SELECT ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
 			CustomInstructions, ChannelAccessLevel, ChannelIDs,
 			UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
-			EnabledTools, CreateAt, UpdateAt, DeleteAt
+			EnabledTools,
+			Model, EnableVision, DisableTools, EnabledNativeTools,
+			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
+			CreateAt, UpdateAt, DeleteAt
 		FROM Agents_UserAgents
 		WHERE ID = $1 AND DeleteAt = 0`,
 		id,
@@ -142,7 +174,10 @@ func (s *Store) ListAgents() ([]*useragents.UserAgent, error) {
 		`SELECT ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
 			CustomInstructions, ChannelAccessLevel, ChannelIDs,
 			UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
-			EnabledTools, CreateAt, UpdateAt, DeleteAt
+			EnabledTools,
+			Model, EnableVision, DisableTools, EnabledNativeTools,
+			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
+			CreateAt, UpdateAt, DeleteAt
 		FROM Agents_UserAgents
 		WHERE DeleteAt = 0
 		ORDER BY CreateAt DESC`,
@@ -170,7 +205,10 @@ func (s *Store) ListAgentsByCreator(creatorID string) ([]*useragents.UserAgent, 
 		`SELECT ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
 			CustomInstructions, ChannelAccessLevel, ChannelIDs,
 			UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
-			EnabledTools, CreateAt, UpdateAt, DeleteAt
+			EnabledTools,
+			Model, EnableVision, DisableTools, EnabledNativeTools,
+			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
+			CreateAt, UpdateAt, DeleteAt
 		FROM Agents_UserAgents
 		WHERE CreatorID = $1 AND DeleteAt = 0
 		ORDER BY CreateAt DESC`,
@@ -211,8 +249,16 @@ func (s *Store) UpdateAgent(agent *useragents.UserAgent) error {
 			TeamIDs = $9,
 			AdminUserIDs = $10,
 			EnabledTools = $11,
-			UpdateAt = $12
-		WHERE ID = $13 AND DeleteAt = 0`,
+			Model = $12,
+			EnableVision = $13,
+			DisableTools = $14,
+			EnabledNativeTools = $15,
+			ReasoningEnabled = $16,
+			ReasoningEffort = $17,
+			ThinkingBudget = $18,
+			StructuredOutputEnabled = $19,
+			UpdateAt = $20
+		WHERE ID = $21 AND DeleteAt = 0`,
 		agent.DisplayName,
 		agent.Username,
 		agent.ServiceID,
@@ -224,6 +270,14 @@ func (s *Store) UpdateAgent(agent *useragents.UserAgent) error {
 		agent.TeamIDsJSON(),
 		agent.AdminUserIDsJSON(),
 		agent.EnabledToolsJSON(),
+		agent.Model,
+		agent.EnableVision,
+		agent.DisableTools,
+		agent.EnabledNativeToolsJSON(),
+		agent.ReasoningEnabled,
+		agent.ReasoningEffort,
+		agent.ThinkingBudget,
+		agent.StructuredOutputEnabled,
 		agent.UpdateAt,
 		agent.ID,
 	)

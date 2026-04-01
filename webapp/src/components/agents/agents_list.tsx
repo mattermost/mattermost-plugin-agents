@@ -22,6 +22,8 @@ type Tab = 'all' | 'yours';
 const AgentsList = () => {
     const intl = useIntl();
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
+    const currentUser = useSelector((state: GlobalState) => state.entities.users.profiles[currentUserId]);
+    const isSystemAdmin = Boolean(currentUser?.roles && currentUser.roles.split(' ').includes('system_admin'));
 
     const [agents, setAgents] = useState<UserAgent[]>([]);
     const [services, setServices] = useState<ServiceInfo[]>([]);
@@ -101,6 +103,11 @@ const AgentsList = () => {
     }, [fetchAgents]);
 
     // Filter agents based on active tab and search query
+    const userCanManageAgent = useCallback((a: UserAgent) => {
+        const isOwner = a.creator_id === currentUserId || (a.admin_user_ids?.includes(currentUserId) ?? false);
+        return isOwner || (isSystemAdmin && a.creator_id === '');
+    }, [currentUserId, isSystemAdmin]);
+
     const filteredAgents = agents.filter((a) => {
         if (activeTab === 'yours' && a.creator_id !== currentUserId) {
             return false;
@@ -189,7 +196,7 @@ const AgentsList = () => {
                             key={agent.id}
                             agent={agent}
                             services={services}
-                            isOwner={agent.creator_id === currentUserId || (agent.admin_user_ids?.includes(currentUserId) ?? false)}
+                            canManage={userCanManageAgent(agent)}
                             onEdit={handleEdit}
                             onDelete={handleDeleteRequest}
                         />

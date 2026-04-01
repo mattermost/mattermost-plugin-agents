@@ -17,13 +17,13 @@ import {UserAgent, ServiceInfo} from '@/types/agents';
 type Props = {
     agent: UserAgent;
     services: ServiceInfo[];
-    isOwner: boolean;
+    canManage: boolean;
     onEdit: (agent: UserAgent) => void;
     onDelete: (agent: UserAgent) => void;
 }
 
 const AgentRow = (props: Props) => {
-    const {agent, services, isOwner, onEdit, onDelete} = props;
+    const {agent, services, canManage, onEdit, onDelete} = props;
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
     const intl = useIntl();
@@ -79,7 +79,7 @@ const AgentRow = (props: Props) => {
                     </Badge>
                 )}
             </BadgesColumn>
-            {isOwner && (
+            {canManage && (
                 <ActionsColumn ref={menuRef}>
                     <MenuButton
                         onClick={(e) => {

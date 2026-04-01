@@ -22,7 +22,8 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-test.describe.serial('Bot Validation Badges', () => {
+// Legacy System Console bot editor removed (MM-65671). Replace with Agents product-page coverage.
+test.describe.skip('Bot Validation Badges', () => {
     test('should show "No Username" badge when username is empty', async ({ page }) => {
         test.setTimeout(60000);
 

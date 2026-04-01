@@ -807,3 +807,27 @@ export async function getServices(): Promise<ServiceInfo[]> {
         url,
     });
 }
+
+export type ModelListItem = {
+    id: string;
+    displayName: string;
+}
+
+/** Fetches models for a configured service using server-stored credentials (POST /agents/models/fetch). */
+export async function fetchModelsForAgentService(serviceId: string): Promise<ModelListItem[]> {
+    const url = `${baseRoute()}/agents/models/fetch`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({service_id: serviceId}),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}

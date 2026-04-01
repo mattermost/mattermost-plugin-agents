@@ -120,17 +120,25 @@ func (b *MMBots) ForceRefreshOnNextEnsure() {
 // as config-defined bots.
 func userAgentToBotConfig(agent *useragents.UserAgent) llm.BotConfig {
 	return llm.BotConfig{
-		ID:                 agent.ID,
-		Name:               agent.Username,
-		DisplayName:        agent.DisplayName,
-		CustomInstructions: agent.CustomInstructions,
-		ServiceID:          agent.ServiceID,
-		ChannelAccessLevel: llm.ChannelAccessLevel(agent.ChannelAccessLevel),
-		ChannelIDs:         agent.ChannelIDs,
-		UserAccessLevel:    llm.UserAccessLevel(agent.UserAccessLevel),
-		UserIDs:            agent.UserIDs,
-		TeamIDs:            agent.TeamIDs,
-		EnabledMCPTools:    convertEnabledTools(agent.EnabledTools),
+		ID:                      agent.ID,
+		Name:                    agent.Username,
+		DisplayName:             agent.DisplayName,
+		CustomInstructions:      agent.CustomInstructions,
+		ServiceID:               agent.ServiceID,
+		Model:                   agent.Model,
+		EnableVision:            agent.EnableVision,
+		DisableTools:            agent.DisableTools,
+		EnabledNativeTools:      agent.EnabledNativeTools,
+		ReasoningEnabled:        agent.ReasoningEnabled,
+		ReasoningEffort:         agent.ReasoningEffort,
+		ThinkingBudget:          agent.ThinkingBudget,
+		StructuredOutputEnabled: agent.StructuredOutputEnabled,
+		ChannelAccessLevel:      llm.ChannelAccessLevel(agent.ChannelAccessLevel),
+		ChannelIDs:              agent.ChannelIDs,
+		UserAccessLevel:         llm.UserAccessLevel(agent.UserAccessLevel),
+		UserIDs:                 agent.UserIDs,
+		TeamIDs:                 agent.TeamIDs,
+		EnabledMCPTools:         convertEnabledTools(agent.EnabledTools),
 	}
 }
 

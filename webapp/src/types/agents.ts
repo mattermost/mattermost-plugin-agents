@@ -26,6 +26,14 @@ export type UserAgent = {
     team_ids: string[];
     admin_user_ids: string[];
     enabled_tools: EnabledTool[];
+    model: string;
+    enable_vision: boolean;
+    disable_tools: boolean;
+    enabled_native_tools: string[];
+    reasoning_enabled: boolean;
+    reasoning_effort: string;
+    thinking_budget: number;
+    structured_output_enabled: boolean;
     create_at: number;
     update_at: number;
     delete_at: number;
@@ -44,6 +52,14 @@ export type CreateAgentRequest = {
     team_ids?: string[];
     admin_user_ids?: string[];
     enabled_tools?: EnabledTool[];
+    model?: string;
+    enable_vision?: boolean;
+    disable_tools?: boolean;
+    enabled_native_tools?: string[];
+    reasoning_enabled?: boolean;
+    reasoning_effort?: string;
+    thinking_budget?: number;
+    structured_output_enabled?: boolean;
 }
 
 // UpdateAgentRequest matches api.UpdateAgentRequest in Go.
@@ -60,6 +76,14 @@ export type UpdateAgentRequest = {
     team_ids?: string[];
     admin_user_ids?: string[];
     enabled_tools?: EnabledTool[];
+    model?: string;
+    enable_vision?: boolean;
+    disable_tools?: boolean;
+    enabled_native_tools?: string[];
+    reasoning_enabled?: boolean;
+    reasoning_effort?: string;
+    thinking_budget?: number;
+    structured_output_enabled?: boolean;
 }
 
 // ServiceInfo matches api.ServiceInfo in Go (safe subset, no secrets).
@@ -68,4 +92,6 @@ export type ServiceInfo = {
     name: string;
     type: string;
     default_model: string;
+    output_token_limit: number;
+    use_responses_api: boolean;
 }

@@ -202,6 +202,14 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Error("failed to ensure bots", "error", ensureBotsErr)
 	}
 
+	if migErr := migrateLegacyConfigBotsToUserAgents(p.API, pluginAPI, p.store, &p.configuration); migErr != nil {
+		pluginAPI.Log.Error("failed to migrate legacy config bots to user agents", "error", migErr)
+	}
+	bots.ForceRefreshOnNextEnsure()
+	if ensureBotsErr := bots.EnsureBots(); ensureBotsErr != nil {
+		pluginAPI.Log.Error("failed to ensure bots after legacy bot migration", "error", ensureBotsErr)
+	}
+
 	prompts, promptManagerErr := llm.NewPrompts(prompts.PromptsFolder)
 	if promptManagerErr != nil {
 		pluginAPI.Log.Error("failed to initialize prompts", "error", promptManagerErr)

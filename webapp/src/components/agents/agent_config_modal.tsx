@@ -32,6 +32,14 @@ export type AgentDraft = {
     teamIds: string[];
     adminUserIds: string[];
     enabledTools: EnabledTool[];
+    model: string;
+    enableVision: boolean;
+    disableTools: boolean;
+    enabledNativeTools: string[];
+    reasoningEnabled: boolean;
+    reasoningEffort: string;
+    thinkingBudget: number;
+    structuredOutputEnabled: boolean;
 }
 
 const emptyDraft: AgentDraft = {
@@ -46,6 +54,14 @@ const emptyDraft: AgentDraft = {
     teamIds: [],
     adminUserIds: [],
     enabledTools: [],
+    model: '',
+    enableVision: true,
+    disableTools: false,
+    enabledNativeTools: [],
+    reasoningEnabled: true,
+    reasoningEffort: 'medium',
+    thinkingBudget: 0,
+    structuredOutputEnabled: false,
 };
 
 function agentToDraft(agent: UserAgent): AgentDraft {
@@ -61,6 +77,14 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         teamIds: agent.team_ids ?? [],
         adminUserIds: agent.admin_user_ids ?? [],
         enabledTools: agent.enabled_tools ?? [],
+        model: agent.model ?? '',
+        enableVision: agent.enable_vision ?? true,
+        disableTools: agent.disable_tools ?? false,
+        enabledNativeTools: agent.enabled_native_tools ?? [],
+        reasoningEnabled: agent.reasoning_enabled ?? true,
+        reasoningEffort: agent.reasoning_effort || 'medium',
+        thinkingBudget: agent.thinking_budget ?? 0,
+        structuredOutputEnabled: agent.structured_output_enabled ?? false,
     };
 }
 
@@ -91,6 +115,13 @@ const AgentConfigModal = (props: Props) => {
             setErrors({});
         }
     }, [show, agent]);
+
+    // Leave MCPs tab if tools are disabled
+    useEffect(() => {
+        if (draft.disableTools && activeTab === 'mcps') {
+            setActiveTab('config');
+        }
+    }, [draft.disableTools, activeTab]);
 
     // Escape key to close
     useEffect(() => {
@@ -160,6 +191,14 @@ const AgentConfigModal = (props: Props) => {
                     team_ids: draft.teamIds,
                     admin_user_ids: draft.adminUserIds,
                     enabled_tools: draft.enabledTools,
+                    model: draft.model,
+                    enable_vision: draft.enableVision,
+                    disable_tools: draft.disableTools,
+                    enabled_native_tools: draft.enabledNativeTools,
+                    reasoning_enabled: draft.reasoningEnabled,
+                    reasoning_effort: draft.reasoningEffort,
+                    thinking_budget: draft.thinkingBudget,
+                    structured_output_enabled: draft.structuredOutputEnabled,
                 };
                 savedAgent = await createAgent(req);
             } else {
@@ -175,6 +214,14 @@ const AgentConfigModal = (props: Props) => {
                     team_ids: draft.teamIds,
                     admin_user_ids: draft.adminUserIds,
                     enabled_tools: draft.enabledTools,
+                    model: draft.model,
+                    enable_vision: draft.enableVision,
+                    disable_tools: draft.disableTools,
+                    enabled_native_tools: draft.enabledNativeTools,
+                    reasoning_enabled: draft.reasoningEnabled,
+                    reasoning_effort: draft.reasoningEffort,
+                    thinking_budget: draft.thinkingBudget,
+                    structured_output_enabled: draft.structuredOutputEnabled,
                 };
                 savedAgent = await updateAgent(agent!.id, req);
             }
@@ -237,7 +284,13 @@ const AgentConfigModal = (props: Props) => {
                     </TabButton>
                     <TabButton
                         $active={activeTab === 'mcps'}
-                        onClick={() => setActiveTab('mcps')}
+                        disabled={draft.disableTools}
+                        title={draft.disableTools ? intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}) : undefined}
+                        onClick={() => {
+                            if (!draft.disableTools) {
+                                setActiveTab('mcps');
+                            }
+                        }}
                     >
                         <FormattedMessage defaultMessage='MCPs'/>
                     </TabButton>
@@ -308,8 +361,10 @@ const ModalContainer = styled.div`
     border-radius: 12px;
     width: 700px;
     max-height: 85vh;
+    min-height: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.12);
 `;
 
@@ -362,8 +417,13 @@ const TabButton = styled.button<{$active: boolean}>`
     transition: color 0.2s ease, border-color 0.2s ease;
     margin-bottom: -1px;
 
-    &:hover {
+    &:hover:not(:disabled) {
         color: ${(p) => (p.$active ? 'var(--button-bg)' : 'var(--center-channel-color)')};
+    }
+
+    &:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
     }
 
     &:first-child {
@@ -375,6 +435,7 @@ const ModalBody = styled.div`
     padding: 24px 32px;
     overflow-y: auto;
     flex: 1;
+    min-height: 0;
 `;
 
 const ErrorBanner = styled.div`

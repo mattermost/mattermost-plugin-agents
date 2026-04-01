@@ -232,6 +232,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentRouter.Use(a.agentLicenseRequired)
 	agentRouter.POST("", a.handleCreateAgent)
 	agentRouter.GET("", a.handleListAgents)
+	agentRouter.POST("/models/fetch", a.handleFetchModelsForService)
 	agentRouter.GET("/:agentid", a.handleGetAgent)
 	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
 	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)

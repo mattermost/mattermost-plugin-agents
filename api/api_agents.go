@@ -13,6 +13,8 @@ import (
 	"slices"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-ai/bifrost"
+	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -35,6 +37,14 @@ type CreateAgentRequest struct {
 	TeamIDs            []string                `json:"team_ids"`
 	AdminUserIDs       []string                `json:"admin_user_ids"`
 	EnabledTools       []useragents.EnabledTool `json:"enabled_tools"`
+	Model              string                  `json:"model"`
+	EnableVision       *bool                   `json:"enable_vision"`
+	DisableTools       *bool                   `json:"disable_tools"`
+	EnabledNativeTools []string                `json:"enabled_native_tools"`
+	ReasoningEnabled   *bool                   `json:"reasoning_enabled"`
+	ReasoningEffort    string                  `json:"reasoning_effort"`
+	ThinkingBudget     int                     `json:"thinking_budget"`
+	StructuredOutputEnabled *bool              `json:"structured_output_enabled"`
 }
 
 // UpdateAgentRequest is the JSON body for PUT /agents/:agentid.
@@ -51,14 +61,24 @@ type UpdateAgentRequest struct {
 	TeamIDs            *[]string                `json:"team_ids"`
 	AdminUserIDs       *[]string                `json:"admin_user_ids"`
 	EnabledTools       *[]useragents.EnabledTool `json:"enabled_tools"`
+	Model              *string                   `json:"model"`
+	EnableVision       *bool                     `json:"enable_vision"`
+	DisableTools       *bool                     `json:"disable_tools"`
+	EnabledNativeTools *[]string                 `json:"enabled_native_tools"`
+	ReasoningEnabled   *bool                     `json:"reasoning_enabled"`
+	ReasoningEffort    *string                   `json:"reasoning_effort"`
+	ThinkingBudget     *int                      `json:"thinking_budget"`
+	StructuredOutputEnabled *bool                `json:"structured_output_enabled"`
 }
 
 // ServiceInfo is a safe-to-expose subset of llm.ServiceConfig (no API keys or secrets).
 type ServiceInfo struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	DefaultModel string `json:"default_model"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Type             string `json:"type"`
+	DefaultModel     string `json:"default_model"`
+	OutputTokenLimit int    `json:"output_token_limit"`
+	UseResponsesAPI  bool   `json:"use_responses_api"`
 }
 
 // --- Middleware ---
@@ -81,6 +101,18 @@ var PermissionCreateAgent = &model.Permission{Id: "create_agent", Name: "", Desc
 // isAgentAdmin returns true if userID is the creator or an explicit admin of the agent.
 func isAgentAdmin(agent *useragents.UserAgent, userID string) bool {
 	return agent.CreatorID == userID || slices.Contains(agent.AdminUserIDs, userID)
+}
+
+// canManageAgent returns true if the user may update or delete the agent.
+// Migrated legacy config bots use an empty CreatorID; system admins retain management.
+func canManageAgent(client *pluginapi.Client, agent *useragents.UserAgent, userID string) bool {
+	if isAgentAdmin(agent, userID) {
+		return true
+	}
+	if agent.CreatorID == "" && client.User.HasPermissionTo(userID, model.PermissionManageSystem) {
+		return true
+	}
+	return false
 }
 
 // canCreateAgent returns true if the user may create new agents via POST /agents.
@@ -170,21 +202,46 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
-	// Build the UserAgent record
+	// Build the UserAgent record (defaults match legacy System Console new bot defaults).
 	agent := &useragents.UserAgent{
-		BotUserID:          mmBot.UserId,
-		CreatorID:          userID,
-		DisplayName:        req.DisplayName,
-		Username:           req.Username,
-		ServiceID:          req.ServiceID,
-		CustomInstructions: req.CustomInstructions,
-		ChannelAccessLevel: req.ChannelAccessLevel,
-		ChannelIDs:         req.ChannelIDs,
-		UserAccessLevel:    req.UserAccessLevel,
-		UserIDs:            req.UserIDs,
-		TeamIDs:            req.TeamIDs,
-		AdminUserIDs:       req.AdminUserIDs,
-		EnabledTools:       req.EnabledTools,
+		BotUserID:               mmBot.UserId,
+		CreatorID:               userID,
+		DisplayName:             req.DisplayName,
+		Username:                req.Username,
+		ServiceID:               req.ServiceID,
+		CustomInstructions:      req.CustomInstructions,
+		ChannelAccessLevel:      req.ChannelAccessLevel,
+		ChannelIDs:              req.ChannelIDs,
+		UserAccessLevel:         req.UserAccessLevel,
+		UserIDs:                 req.UserIDs,
+		TeamIDs:                 req.TeamIDs,
+		AdminUserIDs:            req.AdminUserIDs,
+		EnabledTools:            req.EnabledTools,
+		Model:                   req.Model,
+		EnableVision:            true,
+		DisableTools:            false,
+		ReasoningEnabled:        true,
+		ReasoningEffort:         "medium",
+		ThinkingBudget:          req.ThinkingBudget,
+		StructuredOutputEnabled: false,
+	}
+	if req.EnableVision != nil {
+		agent.EnableVision = *req.EnableVision
+	}
+	if req.DisableTools != nil {
+		agent.DisableTools = *req.DisableTools
+	}
+	if req.ReasoningEnabled != nil {
+		agent.ReasoningEnabled = *req.ReasoningEnabled
+	}
+	if req.StructuredOutputEnabled != nil {
+		agent.StructuredOutputEnabled = *req.StructuredOutputEnabled
+	}
+	if req.ReasoningEffort != "" {
+		agent.ReasoningEffort = req.ReasoningEffort
+	}
+	if len(req.EnabledNativeTools) > 0 {
+		agent.EnabledNativeTools = req.EnabledNativeTools
 	}
 
 	if err := a.agentStore.CreateAgent(agent); err != nil {
@@ -259,8 +316,7 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
-	// Only creator or explicit admin can modify
-	if !isAgentAdmin(agent, userID) {
+	if !canManageAgent(a.pluginAPI, agent, userID) {
 		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to modify this agent"))
 		return
 	}
@@ -307,6 +363,30 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	if req.EnabledTools != nil {
 		agent.EnabledTools = *req.EnabledTools
 	}
+	if req.Model != nil {
+		agent.Model = *req.Model
+	}
+	if req.EnableVision != nil {
+		agent.EnableVision = *req.EnableVision
+	}
+	if req.DisableTools != nil {
+		agent.DisableTools = *req.DisableTools
+	}
+	if req.EnabledNativeTools != nil {
+		agent.EnabledNativeTools = *req.EnabledNativeTools
+	}
+	if req.ReasoningEnabled != nil {
+		agent.ReasoningEnabled = *req.ReasoningEnabled
+	}
+	if req.ReasoningEffort != nil {
+		agent.ReasoningEffort = *req.ReasoningEffort
+	}
+	if req.ThinkingBudget != nil {
+		agent.ThinkingBudget = *req.ThinkingBudget
+	}
+	if req.StructuredOutputEnabled != nil {
+		agent.StructuredOutputEnabled = *req.StructuredOutputEnabled
+	}
 
 	if err := a.agentStore.UpdateAgent(agent); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to update agent: %w", err))
@@ -344,8 +424,7 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 		return
 	}
 
-	// Only creator or explicit admin can delete
-	if !isAgentAdmin(agent, userID) {
+	if !canManageAgent(a.pluginAPI, agent, userID) {
 		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to delete this agent"))
 		return
 	}
@@ -382,7 +461,7 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 		return
 	}
 
-	if !isAgentAdmin(agent, userID) {
+	if !canManageAgent(a.pluginAPI, agent, userID) {
 		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to modify this agent"))
 		return
 	}
@@ -425,14 +504,86 @@ func (a *API) handleListServices(c *gin.Context) {
 	services := make([]ServiceInfo, 0, len(cfg.Services))
 	for _, svc := range cfg.Services {
 		services = append(services, ServiceInfo{
-			ID:           svc.ID,
-			Name:         svc.Name,
-			Type:         svc.Type,
-			DefaultModel: svc.DefaultModel,
+			ID:               svc.ID,
+			Name:             svc.Name,
+			Type:             svc.Type,
+			DefaultModel:     svc.DefaultModel,
+			OutputTokenLimit: svc.OutputTokenLimit,
+			UseResponsesAPI:  svc.UseResponsesAPI,
 		})
 	}
 
 	c.JSON(http.StatusOK, services)
+}
+
+// FetchModelsForServiceRequest is the JSON body for POST /agents/models/fetch.
+type FetchModelsForServiceRequest struct {
+	ServiceID string `json:"service_id" binding:"required"`
+}
+
+// handleFetchModelsForService lists models for a configured service using stored credentials (non-admin).
+func (a *API) handleFetchModelsForService(c *gin.Context) {
+	var req FetchModelsForServiceRequest
+	if err := c.BindJSON(&req); err != nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	cfg, err := a.configStore.GetConfig()
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to read config: %w", err))
+		return
+	}
+	if cfg == nil {
+		c.AbortWithError(http.StatusBadRequest, errors.New("no plugin configuration"))
+		return
+	}
+
+	var svc *llm.ServiceConfig
+	for i := range cfg.Services {
+		if cfg.Services[i].ID == req.ServiceID {
+			svc = &cfg.Services[i]
+			break
+		}
+	}
+	if svc == nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", req.ServiceID))
+		return
+	}
+
+	supportsModelFetching := svc.Type == "anthropic" ||
+		svc.Type == "openai" ||
+		svc.Type == "azure" ||
+		svc.Type == "openaicompatible"
+	if !supportsModelFetching {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("model listing not supported for service type %q", svc.Type))
+		return
+	}
+
+	hasRequiredCredentials := svc.APIKey != ""
+	switch svc.Type {
+	case "openaicompatible":
+		hasRequiredCredentials = svc.APIKey != "" || svc.APIURL != ""
+	case "azure":
+		hasRequiredCredentials = svc.APIKey != "" && svc.APIURL != ""
+	}
+	if !hasRequiredCredentials {
+		c.AbortWithError(http.StatusBadRequest, errors.New("service is missing credentials required to list models"))
+		return
+	}
+
+	if !bifrost.IsSupported(svc.Type) {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("model fetching not supported for service type: %s", svc.Type))
+		return
+	}
+
+	models, err := bifrost.FetchModelsForServiceType(svc.Type, svc.APIKey, svc.APIURL, svc.OrgID)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, models)
 }
 
 // --- Access control helper ---

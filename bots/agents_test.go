@@ -40,11 +40,15 @@ func TestUserAgentToBotConfig(t *testing.T) {
 	assert.Nil(t, cfg.UserIDs)
 	assert.Equal(t, []string{"team-1"}, cfg.TeamIDs)
 
-	// Verify defaults for fields not in UserAgent
+	// Bot-level fields map from UserAgent when set
 	assert.Equal(t, "", cfg.Model)
 	assert.False(t, cfg.DisableTools)
 	assert.False(t, cfg.EnableVision)
 	assert.Nil(t, cfg.EnabledNativeTools)
+	assert.False(t, cfg.ReasoningEnabled)
+	assert.Equal(t, "", cfg.ReasoningEffort)
+	assert.Equal(t, 0, cfg.ThinkingBudget)
+	assert.False(t, cfg.StructuredOutputEnabled)
 }
 
 func TestUserAgentToBotConfigIsValid(t *testing.T) {

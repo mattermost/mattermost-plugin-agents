@@ -56,13 +56,13 @@ export type LLMBotConfig = {
 }
 
 // Component for configuring native tools (OpenAI/Anthropic)
-type NativeToolsItemProps = {
+export type NativeToolsItemProps = {
     enabledTools: string[]
     onChange: (tools: string[]) => void
     provider?: 'openai' | 'anthropic'
 }
 
-const NativeToolsItem = (props: NativeToolsItemProps) => {
+export const NativeToolsItem = (props: NativeToolsItemProps) => {
     const intl = useIntl();
     const provider = props.provider || 'openai';
 
@@ -100,7 +100,7 @@ const NativeToolsItem = (props: NativeToolsItemProps) => {
                     <NativeToolContainer key={tool.id}>
                         <StyledCheckbox
                             type='checkbox'
-                            checked={props.enabledTools.includes(tool.id)}
+                            checked={(props.enabledTools || []).includes(tool.id)}
                             onChange={() => toggleTool(tool.id)}
                         />
                         <NativeToolLabel>

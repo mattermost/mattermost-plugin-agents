@@ -241,4 +241,29 @@ test.describe('Agent CRUD', () => {
             timeout: 10000,
         });
     });
+
+    test('disables MCPs tab when Enable Tools is off', async ({ page }) => {
+        test.setTimeout(60000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+
+        await agentPage.getCreateButton().click();
+        await agentPage.waitForModal();
+
+        await agentPage.fillConfigTab({
+            displayName: 'MCP Tab Test',
+            username: 'mcptabtest',
+            serviceLabel: 'Mock Service',
+        });
+
+        const enableToolsLabel = page.getByText('Enable Tools').first();
+        await expect(enableToolsLabel).toBeVisible({ timeout: 10000 });
+        await enableToolsLabel.locator('xpath=following-sibling::*[1]').locator('input[type="radio"]').nth(1).click();
+
+        const mcpsTab = page.getByRole('button', { name: 'MCPs' });
+        await expect(mcpsTab).toBeDisabled();
+    });
 });

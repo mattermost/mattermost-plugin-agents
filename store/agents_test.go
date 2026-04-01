@@ -32,6 +32,14 @@ func testAgent(creatorID, username, displayName string) *useragents.UserAgent {
 			{ServerOrigin: "https://mcp.example.com", ToolName: "web_search"},
 			{ServerOrigin: "https://mcp.example.com", ToolName: "file_search"},
 		},
+		Model:                   "gpt-4",
+		EnableVision:            true,
+		DisableTools:            false,
+		EnabledNativeTools:      []string{"web_search"},
+		ReasoningEnabled:        true,
+		ReasoningEffort:         "medium",
+		ThinkingBudget:          10000,
+		StructuredOutputEnabled: true,
 	}
 }
 
@@ -79,6 +87,15 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.Equal(t, "web_search", fetched.EnabledTools[0].ToolName)
 	assert.Equal(t, "https://mcp.example.com", fetched.EnabledTools[0].ServerOrigin)
 	assert.Equal(t, "file_search", fetched.EnabledTools[1].ToolName)
+
+	assert.Equal(t, "gpt-4", fetched.Model)
+	assert.True(t, fetched.EnableVision)
+	assert.False(t, fetched.DisableTools)
+	assert.Equal(t, []string{"web_search"}, fetched.EnabledNativeTools)
+	assert.True(t, fetched.ReasoningEnabled)
+	assert.Equal(t, "medium", fetched.ReasoningEffort)
+	assert.Equal(t, 10000, fetched.ThinkingBudget)
+	assert.True(t, fetched.StructuredOutputEnabled)
 }
 
 func TestAgentGetNonexistent(t *testing.T) {
