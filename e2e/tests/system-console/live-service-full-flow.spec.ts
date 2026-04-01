@@ -475,7 +475,7 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
             await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents`);
             await page.waitForLoadState('domcontentloaded');
             await agentPage.openAgentActions(botDisplayName);
-            await agentPage.clickEditAction();
+            await agentPage.clickEditAction(botDisplayName);
             await agentPage.waitForModal();
             await expect.poll(async () => {
                 const modalRoot = page.getByText('Configuration').first().locator('xpath=ancestor::div[contains(@class, "sc-")][1]');

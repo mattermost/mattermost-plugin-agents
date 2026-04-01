@@ -9,7 +9,7 @@ import { createBotConfigHelper, generateBotId } from 'helpers/bot-config';
  * Reasoning Configuration Integration Tests
  *
  * Tests complex integration scenarios for reasoning configuration.
- * Basic reasoning config tests are covered by system-console/bot-reasoning-config.spec.ts
+ * Basic agent-builder reasoning coverage is in tests/agents/provider-config.spec.ts.
  * These tests focus on cross-service behavior and persistence.
  */
 

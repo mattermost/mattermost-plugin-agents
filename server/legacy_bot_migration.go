@@ -51,9 +51,9 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 	if dbCfg == nil || len(dbCfg.Bots) == 0 {
-		if err := st.SetSystemValue(legacyConfigBotsMigratedKey, "true"); err != nil {
-			return fmt.Errorf("failed to set migration flag: %w", err)
-		}
+		// Do not mark migration complete when there are no config bots yet.
+		// Plugin enable can run before initial admin config is applied (e.g. e2e installs),
+		// and bots may arrive on a later configuration update.
 		return nil
 	}
 
@@ -130,7 +130,7 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 		return fmt.Errorf("failed to reload config: %w", err)
 	}
 	if reloaded != nil {
-		cfg.Update(reloaded)
+		cfg.StorePersistedConfigWithoutNotify(reloaded)
 	}
 
 	if err := st.SetSystemValue(legacyConfigBotsMigratedKey, "true"); err != nil {

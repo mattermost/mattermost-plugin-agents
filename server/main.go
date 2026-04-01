@@ -194,6 +194,13 @@ func (p *Plugin) OnActivate() error {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
 			return
 		}
+		if migErr := migrateLegacyConfigBotsToUserAgents(p.API, pluginAPI, p.store, &p.configuration); migErr != nil {
+			pluginAPI.Log.Error("failed to migrate legacy config bots to user agents on configuration update", "error", migErr)
+		}
+		bots.ForceRefreshOnNextEnsure()
+		if ensureErr := bots.EnsureBots(); ensureErr != nil {
+			pluginAPI.Log.Error("failed to ensure bots after legacy bot migration on configuration update", "error", ensureErr)
+		}
 	})
 
 	if ensureBotsErr := bots.EnsureBots(); ensureBotsErr != nil {

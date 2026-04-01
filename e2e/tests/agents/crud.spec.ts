@@ -23,8 +23,8 @@ test.describe('Agent CRUD', () => {
     }, { timeout: 180000 });
 
     test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+        await openAIMock?.stop();
+        await mattermost?.stop();
     });
 
     test('should create a new agent via UI', async ({ page }) => {
@@ -75,7 +75,7 @@ test.describe('Agent CRUD', () => {
 
         // Open edit via actions menu
         await agentPage.openAgentActions('Edit Me');
-        await agentPage.clickEditAction();
+        await agentPage.clickEditAction('Edit Me');
         await agentPage.waitForModal();
 
         // Change display name

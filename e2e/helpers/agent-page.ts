@@ -11,6 +11,20 @@ export class AgentPageHelper {
         this.page = page;
     }
 
+    private escapeRegExp(value: string): string {
+        return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    private getExactLabel(label: string): Locator {
+        return this.page.locator('label').filter({
+            hasText: new RegExp(`^${this.escapeRegExp(label)}$`),
+        }).first();
+    }
+
+    private getLabeledSection(label: string): Locator {
+        return this.getExactLabel(label).locator('xpath=following-sibling::*[1]');
+    }
+
     // --- Navigation ---
 
     /** Navigate to the agents listing page */
@@ -40,8 +54,7 @@ export class AgentPageHelper {
     }
 
     getAgentRowByName(displayName: string): Locator {
-        // Agent rows contain the display name text; scope narrowly
-        return this.page.locator(`text=${displayName}`).first();
+        return this.page.getByText(displayName, {exact: true}).first();
     }
 
     // --- Agent Row Actions ---
@@ -51,18 +64,21 @@ export class AgentPageHelper {
     }
 
     async openAgentActions(displayName: string): Promise<void> {
-        // The ... menu button has aria-label="Agent actions"
-        // Find the row containing the display name, then locate the actions button nearby
-        const row = this.page.locator(`text=${displayName}`).locator('..');
-        // Walk up to find the row container and then the actions button
-        const actionsBtn = row.locator('[aria-label="Agent actions"]')
-            .or(row.locator('..').locator('[aria-label="Agent actions"]'))
-            .or(row.locator('../..').locator('[aria-label="Agent actions"]'));
-        await actionsBtn.first().click();
+        const actionsBtn = this.page.getByText(displayName, {exact: true}).locator(
+            'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]//button[@aria-label="Agent actions"]',
+        );
+        await actionsBtn.click();
     }
 
-    async clickEditAction(): Promise<void> {
-        await this.page.getByText('Edit', { exact: true }).click();
+    /**
+     * Click Edit in the agent row actions menu. Scoped to the row so we do not hit other
+     * global "Edit" controls elsewhere in the Mattermost product shell.
+     */
+    async clickEditAction(displayName: string): Promise<void> {
+        const rowScope = this.page.getByText(displayName, { exact: true }).locator(
+            'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
+        );
+        await rowScope.getByRole('button', { name: 'Edit' }).click();
     }
 
     async clickDeleteAction(): Promise<void> {
@@ -79,7 +95,7 @@ export class AgentPageHelper {
     }
 
     getModalTab(tabName: 'Configuration' | 'Access' | 'MCPs'): Locator {
-        return this.page.getByText(tabName, { exact: true });
+        return this.page.getByRole('button', {name: tabName, exact: true});
     }
 
     getModalSaveButton(): Locator {
@@ -100,12 +116,48 @@ export class AgentPageHelper {
         return this.page.getByPlaceholder('Agent username');
     }
 
+    getAIServiceSelect(): Locator {
+        return this.getExactLabel('AI Service').locator('xpath=following-sibling::*[1]//select[1]');
+    }
+
     getServiceSelect(): Locator {
-        return this.page.locator('select').first();
+        return this.getAIServiceSelect();
     }
 
     getCustomInstructionsInput(): Locator {
         return this.page.getByPlaceholder('How would you like the agent to respond?');
+    }
+
+    getBooleanFieldRadios(label: string): Locator {
+        return this.getLabeledSection(label).locator('input[type="radio"]');
+    }
+
+    async setBooleanField(label: string, value: boolean): Promise<void> {
+        await this.getBooleanFieldRadios(label).nth(value ? 0 : 1).click();
+    }
+
+    getNativeToolsSection(sectionTitle: 'Native Claude Tools' | 'Native OpenAI Tools'): Locator {
+        return this.getLabeledSection(sectionTitle);
+    }
+
+    getNativeToolCheckbox(sectionTitle: 'Native Claude Tools' | 'Native OpenAI Tools'): Locator {
+        return this.getNativeToolsSection(sectionTitle).locator('input[type="checkbox"]').first();
+    }
+
+    getReasoningEnableCheckbox(sectionTitle: 'Reasoning' | 'Extended Thinking'): Locator {
+        return this.getLabeledSection(sectionTitle).locator('input[type="checkbox"]').first();
+    }
+
+    getReasoningEffortSelect(): Locator {
+        return this.getExactLabel('Reasoning Effort').locator('xpath=following-sibling::select[1]');
+    }
+
+    getThinkingBudgetInput(): Locator {
+        return this.getExactLabel('Thinking Budget (tokens)').locator('xpath=following-sibling::input[1]');
+    }
+
+    getStructuredOutputNote(): Locator {
+        return this.page.getByText('Extended thinking is turned off while structured output is enabled', {exact: false});
     }
 
     // --- Delete Dialog ---

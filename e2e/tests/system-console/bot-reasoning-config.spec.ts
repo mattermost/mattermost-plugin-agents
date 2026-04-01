@@ -20,7 +20,7 @@ let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 const BOT_REASONING_TEST_TIMEOUT_MS = 180000;
 
-// Legacy System Console bot editor removed (MM-65671). Replace with Agents product-page coverage.
+// Legacy System Console bot editor removed (MM-65671). Covered by tests/agents/provider-config.spec.ts.
 test.describe.skip('Bot Reasoning Configuration', () => {
     test('should configure OpenAI reasoning effort dropdown (minimal, low, medium, high)', async ({ page }) => {
         test.setTimeout(BOT_REASONING_TEST_TIMEOUT_MS);

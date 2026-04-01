@@ -192,7 +192,7 @@ test.describe('Agent Access Control', () => {
         await agentPage.navigateToAgents(mattermost.url());
 
         await agentPage.openAgentActions('Delegate Me');
-        await agentPage.clickEditAction();
+        await agentPage.clickEditAction('Delegate Me');
         await agentPage.waitForModal();
 
         await agentPage.getDisplayNameInput().clear();
