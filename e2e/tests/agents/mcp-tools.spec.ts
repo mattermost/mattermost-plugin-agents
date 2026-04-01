@@ -6,6 +6,7 @@ import {
     RunOpenAIMocks,
     buildTextResponse,
     buildChatCompletionMockRule,
+    buildToolCallResponse,
 } from 'helpers/openai-mock';
 import {
     RunAgentContainer,
@@ -92,6 +93,14 @@ test.describe('Agent MCP Tools', () => {
         const agentApi = new AgentAPIHelper(mattermost.url());
         const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
         const token = adminClient.getToken();
+        const teams = await adminClient.getMyTeams();
+        const defaultTeam = teams[0];
+        const channels = await adminClient.getMyChannels(defaultTeam.id);
+        const townSquare = channels.find((channel) => channel.name === 'town-square');
+
+        if (!townSquare) {
+            throw new Error('town-square channel not found');
+        }
 
         const selectiveAgent = await agentApi.createTestAgent(token, {
             display_name: 'Selective Tools Agent',
@@ -102,13 +111,40 @@ test.describe('Agent MCP Tools', () => {
             ],
         });
 
-        // Prove read_post appears in at least one completion payload (tool-enabled round). Follow-up
-        // completions may omit tools from the body, so the catch-all returns the same success text.
+        const seededPost = await adminClient.createPost({
+            channel_id: townSquare.id,
+            message: `Selective tool seeded post ${Date.now()}`,
+        });
+        const toolCallId = 'call_specific_enabled_tools_read_post';
+        const selectiveAgentSystemPrompt =
+            'You are called Selective Tools Agent with the username selectivetoolsagent';
+        const toolPrompt =
+            `Use the read_post tool to read the Mattermost post with ID ${seededPost.id}. ` +
+            'Summarize its contents. Do not answer from memory. Call the tool now.';
+
+        // Prove the allowed tool reaches runtime by requiring a read_post tool call first, then only
+        // returning the success text once the follow-up completion includes that tool call ID.
         await openAIMock.addMocks([
-            buildChatCompletionMockRule(buildTextResponse('I used the selected tool.'), {
-                bodyContains: 'read_post',
+            buildChatCompletionMockRule(buildTextResponse('Selective tool title'), {
+                bodyContains:
+                    'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
+                times: 1,
             }),
-            buildChatCompletionMockRule(buildTextResponse('I used the selected tool.')),
+            buildChatCompletionMockRule(
+                buildToolCallResponse(
+                    toolCallId,
+                    'read_post',
+                    JSON.stringify({post_id: seededPost.id}),
+                ),
+                {
+                    bodyContains: selectiveAgentSystemPrompt,
+                    times: 1,
+                },
+            ),
+            buildChatCompletionMockRule(buildTextResponse('I used the selected tool at runtime.'), {
+                bodyContains: toolCallId,
+                times: 1,
+            }),
         ]);
 
         const mmPage = new MattermostPage(page);
@@ -119,8 +155,8 @@ test.describe('Agent MCP Tools', () => {
 
         await aiPlugin.openRHS();
         await aiPlugin.switchBotWhenListed(selectiveAgent.display_name);
-        await aiPlugin.sendMessage('Summarize this channel');
-        await aiPlugin.waitForBotResponse('I used the selected tool.');
+        await aiPlugin.sendMessage(toolPrompt);
+        await aiPlugin.waitForBotResponse('I used the selected tool at runtime.');
     });
 
     // RHS Tool Providers popover filters by server (provider) using activeBot.enabledMCPTools origins;

@@ -264,7 +264,7 @@ export function buildToolCallResponse(toolCallId: string, toolName: string, args
  */
 export function buildChatCompletionMockRule(
     sseBody: string,
-    opts?: { bodyContains?: string; botPrefix?: string },
+    opts?: { bodyContains?: string; botPrefix?: string; times?: number },
 ): any {
     const prefix = opts?.botPrefix ? `/${opts.botPrefix}` : '';
     const req: Record<string, unknown> = {
@@ -280,7 +280,7 @@ export function buildChatCompletionMockRule(
     return normalizeChatCompletionMockPath({
         request: req,
         context: {
-            times: 100,
+            times: opts?.times ?? 100,
         },
         response: {
             status: 200,
