@@ -25,7 +25,7 @@ let openAIMock: OpenAIMockContainer;
 
 type EmbeddedToolConfig = {
     name: string;
-    policy: 'ask' | 'auto_run';
+    policy: 'ask' | 'auto_run' | 'auto_run_everywhere';
     enabled: boolean;
 };
 
@@ -58,6 +58,14 @@ async function getTownSquareChannelID(): Promise<string> {
     }
 
     return townSquare.id;
+}
+
+async function openLatestThread(page: import('@playwright/test').Page, timeout: number = 30000): Promise<void> {
+    const replyIndicator = page.getByText(/\d+ repl/i);
+    await expect(replyIndicator.last()).toBeVisible({timeout});
+    await replyIndicator.last().click();
+    await page.locator('#rhsContainer').waitFor({state: 'visible', timeout: 10000});
+    await page.waitForTimeout(1000);
 }
 
 test.describe('Tool Call Policies (Mocked LLM)', () => {
@@ -346,5 +354,121 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         // read_channel result is rendered as markdown; the seed string is not a single text node (bold, etc.).
         await expect(latestBotPost.getByText(seededMessage, {exact: false})).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
+    });
+
+    test('channel auto_run still requires Share, while auto_run_everywhere skips it', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const townSquareChannelID = await getTownSquareChannelID();
+        const mmPage = new MattermostPage(page);
+
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await page.goto(`${mattermost.url()}/test/channels/off-topic`);
+        await page.waitForTimeout(2000);
+
+        await setEmbeddedToolPolicies([
+            {name: 'read_post', policy: 'auto_run', enabled: true},
+            {name: 'get_channel_info', policy: 'ask', enabled: true},
+            {name: 'read_channel', policy: 'auto_run', enabled: true},
+        ]);
+
+        await openAIMock.addMocks([
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: 'tool policy channel dm-only',
+                    },
+                },
+                context: {
+                    times: 1,
+                },
+                response: {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                    },
+                    body: buildToolCallResponse(
+                        'call_channel_dm_only',
+                        'read_channel',
+                        `{"channel_id":"${townSquareChannelID}","limit":5}`,
+                    ),
+                },
+            },
+        ]);
+
+        await mmPage.mentionBot('toolbot', 'tool policy channel dm-only');
+        await openLatestThread(page);
+
+        const rhs = page.locator('#rhsContainer');
+        await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible({timeout: 30000});
+        await expect(rhs.getByRole('button', {name: /^share$/i})).toBeVisible({timeout: 30000});
+        await expect(rhs.getByRole('button', {name: /keep private/i})).toBeVisible();
+
+        await setEmbeddedToolPolicies([
+            {name: 'read_post', policy: 'auto_run', enabled: true},
+            {name: 'get_channel_info', policy: 'ask', enabled: true},
+            {name: 'read_channel', policy: 'auto_run_everywhere', enabled: true},
+        ]);
+
+        await openAIMock.addMocks([
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: 'tool policy channel everywhere',
+                    },
+                },
+                context: {
+                    times: 1,
+                },
+                response: {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                    },
+                    body: buildToolCallResponse(
+                        'call_channel_everywhere',
+                        'read_channel',
+                        `{"channel_id":"${townSquareChannelID}","limit":5}`,
+                    ),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: 'call_channel_everywhere',
+                    },
+                },
+                context: {
+                    times: 1,
+                },
+                response: {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                    },
+                    body: buildTextResponse('Channel everywhere auto-run completed without share approval.'),
+                },
+            },
+        ]);
+
+        await page.goto(`${mattermost.url()}/test/channels/off-topic`);
+        await page.waitForTimeout(2000);
+        await mmPage.mentionBot('toolbot', 'tool policy channel everywhere');
+        await openLatestThread(page);
+
+        await expect(rhs.getByText('Channel everywhere auto-run completed without share approval.')).toBeVisible({timeout: 45000});
+        await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
+        await expect(rhs.getByRole('button', {name: /^share$/i})).not.toBeVisible();
+        await expect(rhs.getByRole('button', {name: /keep private/i})).not.toBeVisible();
+        await expect(rhs.getByText('Auto-approved')).toBeVisible();
     });
 });

@@ -218,6 +218,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	}
 
 	if !isDM {
+		post.DelProp(streaming.AutoShareToolResultProp)
 		hasReviewableResult := slices.ContainsFunc(tools, func(tc llm.ToolCall) bool {
 			return tc.Status == llm.ToolCallStatusSuccess || tc.Status == llm.ToolCallStatusError
 		})
@@ -230,6 +231,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 			post.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
 			post.AddProp(streaming.ToolCallRedactedProp, "true")
 			post.DelProp(streaming.PendingToolResultProp)
+			post.DelProp(streaming.AutoShareToolResultProp)
 			if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
 				return fmt.Errorf("failed to update post with tool call results: %w", updateErr)
 			}
@@ -252,6 +254,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		post.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
 		post.AddProp(streaming.ToolCallRedactedProp, "true")
 		post.AddProp(streaming.PendingToolResultProp, "true")
+		post.DelProp(streaming.AutoShareToolResultProp)
 		// Persist web search context so HandleToolResult and subsequent messages can find it
 		if params := llmContext.Parameters; len(params) > 0 {
 			if _, hasWebSearch := params[mmtools.WebSearchContextKey]; hasWebSearch {
@@ -279,6 +282,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return fmt.Errorf("failed to marshal tool call results: %w", err)
 	}
 	post.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
+	post.DelProp(streaming.AutoShareToolResultProp)
 
 	// Persist web search context if it exists (so it's available for subsequent tool calls)
 	if webSearchParams := llmContext.Parameters; len(webSearchParams) > 0 {
@@ -368,6 +372,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		post.AddProp(streaming.ToolCallProp, string(redactedToolsJSON))
 		post.AddProp(streaming.ToolCallRedactedProp, "true")
 		post.DelProp(streaming.PendingToolResultProp)
+		post.DelProp(streaming.AutoShareToolResultProp)
 		if updateErr := c.mmClient.UpdatePost(post); updateErr != nil {
 			return fmt.Errorf("failed to update post after tool result rejection: %w", updateErr)
 		}
@@ -418,6 +423,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	post.AddProp(streaming.ToolCallProp, string(resolvedToolsJSON))
 	post.DelProp(streaming.ToolCallRedactedProp)
 	post.DelProp(streaming.PendingToolResultProp)
+	post.DelProp(streaming.AutoShareToolResultProp)
 	// Persist web search context so subsequent messages in the thread preserve citations
 	if params := llmContext.Parameters; len(params) > 0 {
 		if _, hasWebSearch := params[mmtools.WebSearchContextKey]; hasWebSearch {
@@ -500,9 +506,9 @@ func (c *Conversations) completeAndStreamToolResponse(
 		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
 	}
 
-	// Same MCP auto_run execution as ProcessUserRequestWithContext (DMs use
-	// allowToolsInChannel=false; toolsDisabled reflects whether tools are off).
-	if !toolsDisabled && llmContext != nil && llmContext.Tools != nil && c.toolPolicyChecker != nil {
+	// Same channel-only MCP auto-approval as ProcessUserRequestWithContext. DMs
+	// use the model-level auto-run wrapper via WithAutoRunTools.
+	if !mmapi.IsDMWith(bot.GetMMBot().UserId, channel) && !toolsDisabled && llmContext != nil && llmContext.Tools != nil && c.toolPolicyChecker != nil {
 		result = wrapStreamWithMCPAutoApproval(result, llmContext, c.toolPolicyChecker)
 	}
 
@@ -537,6 +543,29 @@ func (c *Conversations) AutoExecuteApprovedToolCalls(postID string, requesterID 
 
 	if err := c.HandleToolCall(requesterID, post, channel, approvedToolIDs); err != nil {
 		c.mmClient.LogError("Auto-execute: HandleToolCall failed", "error", err, "post_id", postID)
+		return
+	}
+
+	if post.GetProp(streaming.AutoShareToolResultProp) == nil {
+		return
+	}
+
+	var tools []llm.ToolCall
+	resultKVKey := streaming.ToolResultPrivateKVKey(postID, requesterID)
+	if kvErr := c.mmClient.KVGet(resultKVKey, &tools); kvErr != nil {
+		c.mmClient.LogError("Auto-execute: failed to load tool results for auto-share", "error", kvErr, "post_id", postID, "kv_key", resultKVKey)
+		return
+	}
+
+	approvedResultIDs := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Status == llm.ToolCallStatusSuccess || tool.Status == llm.ToolCallStatusError {
+			approvedResultIDs = append(approvedResultIDs, tool.ID)
+		}
+	}
+
+	if err := c.HandleToolResult(requesterID, post, channel, approvedResultIDs); err != nil {
+		c.mmClient.LogError("Auto-execute: HandleToolResult failed", "error", err, "post_id", postID)
 	}
 }
 

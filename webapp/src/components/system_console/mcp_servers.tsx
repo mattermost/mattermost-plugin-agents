@@ -15,7 +15,7 @@ import {BooleanItem, ItemList, TextItem} from './item';
 
 export type MCPToolConfig = {
     name: string;
-    policy: 'auto_run' | 'ask';
+    policy: 'auto_run' | 'auto_run_everywhere' | 'ask';
     enabled: boolean;
 };
 

@@ -104,6 +104,15 @@ func (c *Conversations) SetToolPolicyChecker(checker streaming.ToolPolicyChecker
 	c.toolPolicyChecker = checker
 }
 
+func (c *Conversations) isToolAutoRunnable(serverOrigin, toolName string) bool {
+	if c.toolPolicyChecker == nil {
+		return false
+	}
+
+	policy, enabled := c.toolPolicyChecker.GetToolPolicy(serverOrigin, toolName)
+	return mcp.IsToolPolicyAutoRun(policy) && enabled
+}
+
 func (c *Conversations) appendDMAutoRunOptions(isDM bool, llmContext *llm.Context, opts []llm.LanguageModelOption) []llm.LanguageModelOption {
 	if !isDM || c.toolPolicyChecker == nil || llmContext == nil || llmContext.Tools == nil {
 		return opts
@@ -112,8 +121,7 @@ func (c *Conversations) appendDMAutoRunOptions(isDM bool, llmContext *llm.Contex
 	allTools := llmContext.Tools.GetTools()
 	var autoRunNames []string
 	for _, t := range allTools {
-		policy, enabled := c.toolPolicyChecker.GetToolPolicy(t.ServerOrigin, t.Name)
-		if policy == mcp.ToolPolicyAutoRun && enabled {
+		if c.isToolAutoRunnable(t.ServerOrigin, t.Name) {
 			autoRunNames = append(autoRunNames, llm.ToolAutoRunKey(t.ServerOrigin, t.Name))
 		}
 	}
@@ -202,10 +210,9 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		result = mmtools.DecorateStreamWithAnnotations(result, webSearchData, nil)
 	}
 
-	// Wrap stream with MCP auto-approval when tools are active (DM or channel with
-	// tool calling enabled). DMs pass allowToolsInChannel=false but toolsDisabled is
-	// false, so we key off toolsDisabled rather than allowToolsInChannel alone.
-	if !toolsDisabled && context != nil && context.Tools != nil && c.toolPolicyChecker != nil {
+	// Wrap stream with MCP auto-approval only for channels. DMs use the model-level
+	// auto-run wrapper via WithAutoRunTools and should not be pre-executed twice.
+	if !isDM && !toolsDisabled && context != nil && context.Tools != nil && c.toolPolicyChecker != nil {
 		result = wrapStreamWithMCPAutoApproval(result, context, c.toolPolicyChecker)
 	}
 

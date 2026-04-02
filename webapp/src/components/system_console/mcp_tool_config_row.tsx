@@ -25,7 +25,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled}
     const handlePolicyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         onToolConfigChange({
             ...toolConfig,
-            policy: e.target.value as 'auto_run' | 'ask',
+            policy: e.target.value as 'auto_run' | 'auto_run_everywhere' | 'ask',
         });
     };
 
@@ -53,7 +53,10 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled}
                             disabled={serverDisabled}
                         >
                             <option value='auto_run'>
-                                {intl.formatMessage({defaultMessage: 'Auto Run'})}
+                                {intl.formatMessage({defaultMessage: 'Auto Run (DM)'})}
+                            </option>
+                            <option value='auto_run_everywhere'>
+                                {intl.formatMessage({defaultMessage: 'Auto Run (Everywhere)'})}
                             </option>
                             <option value='ask'>
                                 {intl.formatMessage({defaultMessage: 'Ask Every Time'})}
@@ -133,7 +136,7 @@ const PolicySelectWrapper = styled.div`
     flex-direction: column;
     align-items: flex-end;
     justify-content: center;
-    width: 116px;
+    width: 176px;
 `;
 
 const PolicySelect = styled.select`

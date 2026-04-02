@@ -57,7 +57,7 @@ func wrapStreamWithMCPAutoApproval(
 					toolCalls[i].ServerOrigin = tool.ServerOrigin
 				}
 				policy, enabled := policyChecker.GetToolPolicy(toolCalls[i].ServerOrigin, toolCalls[i].Name)
-				if policy != mcp.ToolPolicyAutoRun || !enabled {
+				if !mcp.IsToolPolicyAutoRun(policy) || !enabled {
 					allAutoRun = false
 				}
 			}
