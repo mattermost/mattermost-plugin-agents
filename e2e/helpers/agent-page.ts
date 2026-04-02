@@ -84,8 +84,15 @@ export class AgentPageHelper {
         await rowScope.getByRole('button', { name: 'Edit' }).click();
     }
 
-    async clickDeleteAction(): Promise<void> {
-        await this.page.getByText('Delete', { exact: true }).click();
+    /**
+     * Click Delete in the agent row actions menu. Scoped to the row so we do not hit other
+     * global "Delete" controls elsewhere in the Mattermost product shell.
+     */
+    async clickDeleteAction(displayName: string): Promise<void> {
+        const rowScope = this.page.getByText(displayName, { exact: true }).locator(
+            'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
+        );
+        await rowScope.getByRole('button', { name: 'Delete' }).click();
     }
 
     // --- Config Modal Locators ---

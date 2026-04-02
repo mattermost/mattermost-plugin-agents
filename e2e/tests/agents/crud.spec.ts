@@ -111,7 +111,7 @@ test.describe('Agent CRUD', () => {
 
         // Open actions menu and click delete
         await agentPage.openAgentActions('Delete Me');
-        await agentPage.clickDeleteAction();
+        await agentPage.clickDeleteAction('Delete Me');
 
         // Confirm deletion dialog is visible
         await expect(agentPage.getDeleteDialog()).toBeVisible();
