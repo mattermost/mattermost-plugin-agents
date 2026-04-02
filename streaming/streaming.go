@@ -195,7 +195,7 @@ func (p *MMPostStreamService) markAutoApprovedStatusesAndCheck(toolCalls []llm.T
 	return allAutoApprovable
 }
 
-func (p *MMPostStreamService) allToolResultsRequireReview(toolCalls []llm.ToolCall) bool {
+func (p *MMPostStreamService) anyToolResultRequiresReview(toolCalls []llm.ToolCall) bool {
 	if p.toolPolicyChecker == nil || len(toolCalls) == 0 {
 		return true
 	}
@@ -405,7 +405,7 @@ func (p *MMPostStreamService) handleAutoApprovedToolCalls(post *model.Post, tool
 	post.AddProp(ToolCallProp, string(toolCallJSON))
 	post.AddProp(ToolCallRedactedProp, "true")
 	post.AddProp(AutoApprovedToolCallProp, "true")
-	requiresResultReview := p.allToolResultsRequireReview(toolCalls)
+	requiresResultReview := p.anyToolResultRequiresReview(toolCalls)
 	if requiresResultReview {
 		// Set up result-sharing stage: the post shows redacted tools with
 		// PendingToolResultProp so the frontend presents the result-approval UI
@@ -637,7 +637,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 							return
 						}
 						autoApproved := p.markAutoApprovedStatusesAndCheck(toolCalls)
-						requiresResultReview := p.allToolResultsRequireReview(toolCalls)
+						requiresResultReview := p.anyToolResultRequiresReview(toolCalls)
 
 						toolCallsForPost := RedactToolCalls(toolCalls)
 						post.AddProp(ToolCallRedactedProp, "true")

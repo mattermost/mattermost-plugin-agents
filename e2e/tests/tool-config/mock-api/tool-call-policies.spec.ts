@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page, type Locator } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -22,9 +22,6 @@ import { createBotConfigHelper } from 'helpers/bot-config';
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
-
-type Page = import('@playwright/test').Page;
-type Locator = import('@playwright/test').Locator;
 
 type EmbeddedToolConfig = {
     name: string;
@@ -75,8 +72,9 @@ async function openThreadForPost(post: Locator, timeout: number = 30000): Promis
     const replyIndicator = post.getByText(/\d+ repl/i);
     await expect(replyIndicator).toBeVisible({timeout});
     await replyIndicator.click();
-    await post.page().locator('#rhsContainer').waitFor({state: 'visible', timeout: 10000});
-    await post.page().waitForTimeout(1000);
+    const rhs = post.page().locator('#rhsContainer');
+    await rhs.waitFor({state: 'visible', timeout: 10000});
+    await rhs.locator('[data-testid="llm-bot-post"]').first().waitFor({state: 'visible', timeout: 10000});
 }
 
 async function mentionBotAndOpenThread(page: Page, mmPage: MattermostPage, botName: string, message: string, timeout: number = 30000): Promise<void> {
@@ -351,8 +349,6 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
             'toolbot',
         );
 
-        await mmPage.sendChannelMessage(mainTurnUserMessage);
-
         await mentionBotAndOpenThread(page, mmPage, 'toolbot', mainTurnUserMessage);
 
         const rhs = page.locator('#rhsContainer');
@@ -403,6 +399,27 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     path: '/v1/chat/completions',
                     body: {
                         matcher: 'ShouldContainSubstring',
+                        value:
+                            'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
+                    },
+                },
+                context: {
+                    times: 1,
+                },
+                response: {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                    },
+                    body: buildTextResponse('tool policy channel dm-only'),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
                         value: 'tool policy channel dm-only',
                     },
                 },
@@ -437,6 +454,27 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         ]);
 
         await openAIMock.addMocks([
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value:
+                            'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
+                    },
+                },
+                context: {
+                    times: 1,
+                },
+                response: {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                    },
+                    body: buildTextResponse('tool policy channel everywhere'),
+                },
+            },
             {
                 request: {
                     method: 'POST',
