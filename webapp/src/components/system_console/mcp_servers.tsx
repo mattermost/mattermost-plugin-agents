@@ -348,10 +348,11 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
     const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
+    const normalizedServers = Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [];
 
     // Tool-affecting config fingerprint (must be declared before prefetch effect)
     const configFingerprint = JSON.stringify({
-        servers: (mcpConfig?.servers || []).map((s) => ({url: s.baseURL, enabled: s.enabled})),
+        servers: normalizedServers.map((s) => ({url: s.baseURL, enabled: s.enabled})),
         embeddedEnabled: mcpConfig?.embeddedServer?.enabled,
         enablePluginServer: mcpConfig?.enablePluginServer,
     });
@@ -408,7 +409,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     const config: MCPConfig = {
         enabled: mcpConfig?.enabled || false,
         enablePluginServer: mcpConfig?.enablePluginServer ?? false,
-        servers: Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [],
+        servers: normalizedServers,
         embeddedServer: mcpConfig?.embeddedServer || {
             enabled: !mcpConfig?.enabled,
         },

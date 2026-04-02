@@ -358,7 +358,6 @@ func (p *Plugin) OnActivate() error {
 	toolProvider := mmtools.NewMMToolProvider(
 		mmClient,
 		searchService,
-		untrustedHTTPClient,
 		webSearchService,
 	)
 

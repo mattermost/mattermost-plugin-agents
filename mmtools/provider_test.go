@@ -5,7 +5,6 @@ package mmtools
 
 import (
 	"errors"
-	"net/http"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
@@ -45,7 +44,7 @@ func TestMMToolProvider_GetTools(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			// Create tool provider
-			provider := NewMMToolProvider(nil, test.searchService, &http.Client{}, nil)
+			provider := NewMMToolProvider(nil, test.searchService, nil)
 
 			// Create a mock bot
 			bot := &bots.Bot{}
@@ -117,7 +116,7 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			// Create tool provider
-			provider := NewMMToolProvider(nil, test.searchService, &http.Client{}, nil)
+			provider := NewMMToolProvider(nil, test.searchService, nil)
 
 			// Create mock LLM context
 			llmContext := &llm.Context{
