@@ -13,8 +13,8 @@ import {EnabledTool} from '@/types/agents';
 type UserMCPToolInfo = {
     name: string;
     description: string;
-    enabled: boolean;   // admin-level enabled state
-    policy: string;     // "auto_run" | "ask"
+    enabled: boolean; // admin-level enabled state
+    policy: string; // "auto_run" | "ask"
 }
 
 type UserMCPServerInfo = {
@@ -196,12 +196,12 @@ const McpsTab = (props: Props) => {
                                 <ServerInfo>
                                     <ServerName>{server.name}</ServerName>
                                     <ServerMeta>
-                                        {enabledCount > 0
-                                            ? intl.formatMessage(
+                                        {enabledCount > 0 ?
+                                            intl.formatMessage(
                                                 {defaultMessage: '{enabled} of {total} tools enabled'},
                                                 {enabled: enabledCount, total: totalCount},
-                                            )
-                                            : intl.formatMessage(
+                                            ) :
+                                            intl.formatMessage(
                                                 {defaultMessage: '{total} tools available'},
                                                 {total: totalCount},
                                             )
@@ -368,7 +368,7 @@ const ServerToggle = styled.button<{$enabled: boolean}>`
     position: relative;
     flex-shrink: 0;
     transition: background 0.2s ease;
-    background: ${(p) => p.$enabled ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.24)'};
+    background: ${(p) => (p.$enabled ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.24)')};
 `;
 
 const ToggleKnob = styled.div<{$enabled: boolean}>`
@@ -379,7 +379,7 @@ const ToggleKnob = styled.div<{$enabled: boolean}>`
     position: absolute;
     top: 2px;
     transition: left 0.2s ease;
-    left: ${(p) => p.$enabled ? '20px' : '2px'};
+    left: ${(p) => (p.$enabled ? '20px' : '2px')};
 `;
 
 const ToolList = styled.div`

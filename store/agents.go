@@ -25,31 +25,31 @@ const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, Ser
 // All JSON slice fields are stored as TEXT and scanned as strings.
 // Note: db tags must be lowercase because PostgreSQL folds unquoted identifiers to lowercase.
 type agentRow struct {
-	ID                 string `db:"id"`
-	BotUserID          string `db:"botuserid"`
-	CreatorID          string `db:"creatorid"`
-	DisplayName        string `db:"displayname"`
-	Username           string `db:"username"`
-	ServiceID          string `db:"serviceid"`
-	CustomInstructions string `db:"custominstructions"`
-	ChannelAccessLevel int    `db:"channelaccesslevel"`
-	ChannelIDs         string `db:"channelids"`
-	UserAccessLevel    int    `db:"useraccesslevel"`
-	UserIDs            string `db:"userids"`
-	TeamIDs            string `db:"teamids"`
-	AdminUserIDs       string `db:"adminuserids"`
-	EnabledTools       string `db:"enabledtools"`
-	Model              string `db:"model"`
-	EnableVision       bool   `db:"enablevision"`
-	DisableTools       bool   `db:"disabletools"`
-	EnabledNativeTools string `db:"enablednativetools"`
-	ReasoningEnabled   bool   `db:"reasoningenabled"`
-	ReasoningEffort    string `db:"reasoningeffort"`
-	ThinkingBudget     int    `db:"thinkingbudget"`
-	StructuredOutputEnabled bool `db:"structuredoutputenabled"`
-	CreateAt           int64  `db:"createat"`
-	UpdateAt           int64  `db:"updateat"`
-	DeleteAt           int64  `db:"deleteat"`
+	ID                      string `db:"id"`
+	BotUserID               string `db:"botuserid"`
+	CreatorID               string `db:"creatorid"`
+	DisplayName             string `db:"displayname"`
+	Username                string `db:"username"`
+	ServiceID               string `db:"serviceid"`
+	CustomInstructions      string `db:"custominstructions"`
+	ChannelAccessLevel      int    `db:"channelaccesslevel"`
+	ChannelIDs              string `db:"channelids"`
+	UserAccessLevel         int    `db:"useraccesslevel"`
+	UserIDs                 string `db:"userids"`
+	TeamIDs                 string `db:"teamids"`
+	AdminUserIDs            string `db:"adminuserids"`
+	EnabledTools            string `db:"enabledtools"`
+	Model                   string `db:"model"`
+	EnableVision            bool   `db:"enablevision"`
+	DisableTools            bool   `db:"disabletools"`
+	EnabledNativeTools      string `db:"enablednativetools"`
+	ReasoningEnabled        bool   `db:"reasoningenabled"`
+	ReasoningEffort         string `db:"reasoningeffort"`
+	ThinkingBudget          int    `db:"thinkingbudget"`
+	StructuredOutputEnabled bool   `db:"structuredoutputenabled"`
+	CreateAt                int64  `db:"createat"`
+	UpdateAt                int64  `db:"updateat"`
+	DeleteAt                int64  `db:"deleteat"`
 }
 
 // toUserAgent converts an agentRow (DB scan result) to a useragents.UserAgent.

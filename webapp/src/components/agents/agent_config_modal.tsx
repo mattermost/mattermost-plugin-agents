@@ -91,10 +91,10 @@ function agentToDraft(agent: UserAgent): AgentDraft {
 type Props = {
     show: boolean;
     mode: Mode;
-    agent?: UserAgent;           // provided when mode === 'edit'
-    services: ServiceInfo[];     // pre-fetched from parent
+    agent?: UserAgent; // provided when mode === 'edit'
+    services: ServiceInfo[]; // pre-fetched from parent
     onClose: () => void;
-    onSaved: (agent: UserAgent) => void;  // called after successful create or update
+    onSaved: (agent: UserAgent) => void; // called after successful create or update
 }
 
 const AgentConfigModal = (props: Props) => {
@@ -127,7 +127,9 @@ const AgentConfigModal = (props: Props) => {
     // Escape key to close
     useEffect(() => {
         if (!show) {
-            return;
+            return () => {
+                // No keydown listener registered while modal is hidden
+            };
         }
         const handler = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
@@ -145,7 +147,7 @@ const AgentConfigModal = (props: Props) => {
             for (const key of Object.keys(updates)) {
                 delete next[key];
             }
-            delete next._form;
+            delete next.general;
             return next;
         });
     }, []);
@@ -157,7 +159,7 @@ const AgentConfigModal = (props: Props) => {
         }
         if (!draft.username.trim()) {
             errs.username = intl.formatMessage({defaultMessage: 'Username is required'});
-        } else if (!/^[a-z][a-z0-9.\-_]*$/.test(draft.username)) {
+        } else if (!(/^[a-z][a-z0-9.\-_]*$/).test(draft.username)) {
             errs.username = intl.formatMessage({defaultMessage: 'Username must start with a letter and contain only lowercase letters, numbers, periods, hyphens, and underscores'});
         }
         if (!draft.serviceId) {
@@ -243,9 +245,9 @@ const AgentConfigModal = (props: Props) => {
                 setErrors({username: intl.formatMessage({defaultMessage: 'This username is already taken'})});
                 setActiveTab('config');
             } else if (e?.status_code === 403) {
-                setErrors({_form: intl.formatMessage({defaultMessage: 'You do not have permission to perform this action.'})});
+                setErrors({general: intl.formatMessage({defaultMessage: 'You do not have permission to perform this action.'})});
             } else {
-                setErrors({_form: intl.formatMessage({defaultMessage: 'Failed to save agent. Please try again.'})});
+                setErrors({general: intl.formatMessage({defaultMessage: 'Failed to save agent. Please try again.'})});
             }
         } finally {
             setSaving(false);
@@ -256,9 +258,9 @@ const AgentConfigModal = (props: Props) => {
         return null;
     }
 
-    const title = mode === 'create'
-        ? intl.formatMessage({defaultMessage: 'New Agent'})
-        : draft.displayName || intl.formatMessage({defaultMessage: 'Edit Agent'});
+    const title = mode === 'create' ?
+        intl.formatMessage({defaultMessage: 'New Agent'}) :
+        draft.displayName || intl.formatMessage({defaultMessage: 'Edit Agent'});
 
     return (
         <ModalOverlay onClick={onClose}>
@@ -286,7 +288,7 @@ const AgentConfigModal = (props: Props) => {
                     <TabButton
                         $active={activeTab === 'mcps'}
                         disabled={draft.disableTools}
-                        title={draft.disableTools ? intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}) : undefined}
+                        title={draft.disableTools ? intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}) : ''}
                         onClick={() => {
                             if (!draft.disableTools) {
                                 setActiveTab('mcps');
@@ -298,7 +300,7 @@ const AgentConfigModal = (props: Props) => {
                 </TabsContainer>
 
                 <ModalBody>
-                    {errors._form && <ErrorBanner>{errors._form}</ErrorBanner>}
+                    {errors.general && <ErrorBanner>{errors.general}</ErrorBanner>}
 
                     {activeTab === 'config' && (
                         <ConfigTab
@@ -332,9 +334,9 @@ const AgentConfigModal = (props: Props) => {
                         onClick={handleSave}
                         disabled={saving}
                     >
-                        {saving
-                            ? <FormattedMessage defaultMessage='Saving...'/>
-                            : <FormattedMessage defaultMessage='Save'/>
+                        {saving ?
+                            <FormattedMessage defaultMessage='Saving...'/> :
+                            <FormattedMessage defaultMessage='Save'/>
                         }
                     </SaveButton>
                 </ModalFooter>

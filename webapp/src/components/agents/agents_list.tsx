@@ -10,6 +10,7 @@ import {PlusIcon} from '@mattermost/compass-icons/components';
 import {GlobalState} from '@mattermost/types/store';
 
 import {getAgents, getServices, deleteAgent as deleteAgentAPI} from '@/client';
+import {userHasSystemPermission} from '@/utils/permissions';
 import {PrimaryButton} from '@/components/assets/buttons';
 import {UserAgent, ServiceInfo} from '@/types/agents';
 
@@ -22,8 +23,8 @@ type Tab = 'all' | 'yours';
 const AgentsList = () => {
     const intl = useIntl();
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
-    const currentUser = useSelector((state: GlobalState) => state.entities.users.profiles[currentUserId]);
-    const isSystemAdmin = Boolean(currentUser?.roles && currentUser.roles.split(' ').includes('system_admin'));
+    const hasManageOthersAgent = useSelector((state: GlobalState) =>
+        userHasSystemPermission(state, currentUserId, 'manage_others_agent'));
 
     const [agents, setAgents] = useState<UserAgent[]>([]);
     const [services, setServices] = useState<ServiceInfo[]>([]);
@@ -96,7 +97,7 @@ const AgentsList = () => {
         setEditingAgent(null);
     }, []);
 
-    const handleModalSaved = useCallback((_agent: UserAgent) => {
+    const handleModalSaved = useCallback(() => {
         setModalOpen(false);
         setEditingAgent(null);
         fetchAgents();
@@ -105,8 +106,8 @@ const AgentsList = () => {
     // Filter agents based on active tab and search query
     const userCanManageAgent = useCallback((a: UserAgent) => {
         const isOwner = a.creator_id === currentUserId || (a.admin_user_ids?.includes(currentUserId) ?? false);
-        return isOwner || (isSystemAdmin && a.creator_id === '');
-    }, [currentUserId, isSystemAdmin]);
+        return isOwner || hasManageOthersAgent;
+    }, [currentUserId, hasManageOthersAgent]);
 
     const filteredAgents = agents.filter((a) => {
         if (activeTab === 'yours' && a.creator_id !== currentUserId) {
@@ -219,7 +220,7 @@ const AgentsList = () => {
             <AgentConfigModal
                 show={modalOpen}
                 mode={modalMode}
-                agent={editingAgent ?? undefined}
+                {...(editingAgent ? {agent: editingAgent} : {})}
                 services={services}
                 onClose={handleModalClose}
                 onSaved={handleModalSaved}
@@ -290,11 +291,11 @@ const TabButton = styled.button<{$active: boolean}>`
     font-weight: 600;
     line-height: 20px;
     cursor: pointer;
-    background: ${(p) => p.$active ? 'rgba(var(--button-bg-rgb, 28, 88, 217), 0.08)' : 'transparent'};
-    color: ${(p) => p.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)'};
+    background: ${(p) => (p.$active ? 'rgba(var(--button-bg-rgb, 28, 88, 217), 0.08)' : 'transparent')};
+    color: ${(p) => (p.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
 
     &:hover {
-        background: ${(p) => p.$active ? 'rgba(var(--button-bg-rgb, 28, 88, 217), 0.08)' : 'rgba(var(--center-channel-color-rgb), 0.08)'};
+        background: ${(p) => (p.$active ? 'rgba(var(--button-bg-rgb, 28, 88, 217), 0.08)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
     }
 `;
 

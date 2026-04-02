@@ -304,7 +304,7 @@ func (b *MMBots) EnsureBots() error {
 
 	// Load DB-backed user agents and merge into the bot config list.
 	// These bypass the license multi-LLM check — they are gated by
-	// PermissionCreateAgent at the API layer (Phase 2).
+	// PermissionManageOwnAgent at the API layer.
 	if b.agentStore != nil {
 		userAgents, err := b.agentStore.ListAgents()
 		if err != nil {

@@ -24,49 +24,49 @@ var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 
 // CreateAgentRequest is the JSON body for POST /agents.
 type CreateAgentRequest struct {
-	DisplayName        string                  `json:"display_name" binding:"required"`
-	Username           string                  `json:"username" binding:"required"`
-	ServiceID          string                  `json:"service_id" binding:"required"`
-	CustomInstructions string                  `json:"custom_instructions"`
-	ChannelAccessLevel int                     `json:"channel_access_level"`
-	ChannelIDs         []string                `json:"channel_ids"`
-	UserAccessLevel    int                     `json:"user_access_level"`
-	UserIDs            []string                `json:"user_ids"`
-	TeamIDs            []string                `json:"team_ids"`
-	AdminUserIDs       []string                `json:"admin_user_ids"`
-	EnabledTools       []useragents.EnabledTool `json:"enabled_tools"`
-	Model              string                  `json:"model"`
-	EnableVision       *bool                   `json:"enable_vision"`
-	DisableTools       *bool                   `json:"disable_tools"`
-	EnabledNativeTools []string                `json:"enabled_native_tools"`
-	ReasoningEnabled   *bool                   `json:"reasoning_enabled"`
-	ReasoningEffort    string                  `json:"reasoning_effort"`
-	ThinkingBudget     int                     `json:"thinking_budget"`
-	StructuredOutputEnabled *bool              `json:"structured_output_enabled"`
+	DisplayName             string                   `json:"display_name" binding:"required"`
+	Username                string                   `json:"username" binding:"required"`
+	ServiceID               string                   `json:"service_id" binding:"required"`
+	CustomInstructions      string                   `json:"custom_instructions"`
+	ChannelAccessLevel      int                      `json:"channel_access_level"`
+	ChannelIDs              []string                 `json:"channel_ids"`
+	UserAccessLevel         int                      `json:"user_access_level"`
+	UserIDs                 []string                 `json:"user_ids"`
+	TeamIDs                 []string                 `json:"team_ids"`
+	AdminUserIDs            []string                 `json:"admin_user_ids"`
+	EnabledTools            []useragents.EnabledTool `json:"enabled_tools"`
+	Model                   string                   `json:"model"`
+	EnableVision            *bool                    `json:"enable_vision"`
+	DisableTools            *bool                    `json:"disable_tools"`
+	EnabledNativeTools      []string                 `json:"enabled_native_tools"`
+	ReasoningEnabled        *bool                    `json:"reasoning_enabled"`
+	ReasoningEffort         string                   `json:"reasoning_effort"`
+	ThinkingBudget          int                      `json:"thinking_budget"`
+	StructuredOutputEnabled *bool                    `json:"structured_output_enabled"`
 }
 
 // UpdateAgentRequest is the JSON body for PUT /agents/:agentid.
 // All fields are optional — only provided fields are applied via read-modify-write.
 type UpdateAgentRequest struct {
-	DisplayName        *string                  `json:"display_name"`
-	Username           *string                  `json:"username"`
-	ServiceID          *string                  `json:"service_id"`
-	CustomInstructions *string                  `json:"custom_instructions"`
-	ChannelAccessLevel *int                     `json:"channel_access_level"`
-	ChannelIDs         *[]string                `json:"channel_ids"`
-	UserAccessLevel    *int                     `json:"user_access_level"`
-	UserIDs            *[]string                `json:"user_ids"`
-	TeamIDs            *[]string                `json:"team_ids"`
-	AdminUserIDs       *[]string                `json:"admin_user_ids"`
-	EnabledTools       *[]useragents.EnabledTool `json:"enabled_tools"`
-	Model              *string                   `json:"model"`
-	EnableVision       *bool                     `json:"enable_vision"`
-	DisableTools       *bool                     `json:"disable_tools"`
-	EnabledNativeTools *[]string                 `json:"enabled_native_tools"`
-	ReasoningEnabled   *bool                     `json:"reasoning_enabled"`
-	ReasoningEffort    *string                   `json:"reasoning_effort"`
-	ThinkingBudget     *int                      `json:"thinking_budget"`
-	StructuredOutputEnabled *bool                `json:"structured_output_enabled"`
+	DisplayName             *string                   `json:"display_name"`
+	Username                *string                   `json:"username"`
+	ServiceID               *string                   `json:"service_id"`
+	CustomInstructions      *string                   `json:"custom_instructions"`
+	ChannelAccessLevel      *int                      `json:"channel_access_level"`
+	ChannelIDs              *[]string                 `json:"channel_ids"`
+	UserAccessLevel         *int                      `json:"user_access_level"`
+	UserIDs                 *[]string                 `json:"user_ids"`
+	TeamIDs                 *[]string                 `json:"team_ids"`
+	AdminUserIDs            *[]string                 `json:"admin_user_ids"`
+	EnabledTools            *[]useragents.EnabledTool `json:"enabled_tools"`
+	Model                   *string                   `json:"model"`
+	EnableVision            *bool                     `json:"enable_vision"`
+	DisableTools            *bool                     `json:"disable_tools"`
+	EnabledNativeTools      *[]string                 `json:"enabled_native_tools"`
+	ReasoningEnabled        *bool                     `json:"reasoning_enabled"`
+	ReasoningEffort         *string                   `json:"reasoning_effort"`
+	ThinkingBudget          *int                      `json:"thinking_budget"`
+	StructuredOutputEnabled *bool                     `json:"structured_output_enabled"`
 }
 
 // ServiceInfo is a safe-to-expose subset of llm.ServiceConfig (no API keys or secrets).
@@ -87,36 +87,27 @@ func (a *API) agentLicenseRequired(c *gin.Context) {
 	}
 }
 
-// PermissionCreateAgent is defined here because the core MM model package may not
-// yet export this constant. Once mattermost/mattermost merges the permission definition,
-// replace this with model.PermissionCreateAgent.
-var PermissionCreateAgent = &model.Permission{Id: "create_agent", Name: "", Description: "", Scope: ""}
-
 // isAgentAdmin returns true if userID is the creator or an explicit admin of the agent.
 func isAgentAdmin(agent *useragents.UserAgent, userID string) bool {
 	return agent.CreatorID == userID || slices.Contains(agent.AdminUserIDs, userID)
 }
 
 // canManageAgent returns true if the user may update or delete the agent.
-// Migrated legacy config bots use an empty CreatorID; system admins retain management.
+// Holders of PermissionManageOthersAgent may manage any agent (including others' agents
+// and migrated legacy bots with no owner).
 func canManageAgent(client *pluginapi.Client, agent *useragents.UserAgent, userID string) bool {
 	if isAgentAdmin(agent, userID) {
 		return true
 	}
-	if agent.CreatorID == "" && client.User.HasPermissionTo(userID, model.PermissionManageSystem) {
+	if client.User.HasPermissionTo(userID, model.PermissionManageOthersAgent) {
 		return true
 	}
 	return false
 }
 
 // canCreateAgent returns true if the user may create new agents via POST /agents.
-// Prefer the dedicated create_agent permission; when it is not yet registered on the server
-// (older DBs), allow system administrators via PermissionManageSystem.
 func canCreateAgent(client *pluginapi.Client, userID string) bool {
-	if client.User.HasPermissionTo(userID, PermissionCreateAgent) {
-		return true
-	}
-	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
+	return client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent)
 }
 
 // refreshBotsAndNotify forces the bot registry to re-read DB-backed agents,
@@ -399,7 +390,7 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 			DisplayName: &agent.DisplayName,
 		}); err != nil {
 			// Non-fatal: the DB is already updated, log and continue
-			c.Error(fmt.Errorf("failed to patch bot display name: %w", err))
+			_ = c.Error(fmt.Errorf("failed to patch bot display name: %w", err))
 		}
 	}
 
@@ -437,7 +428,7 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 	// Deactivate the backing bot account
 	if _, err := a.pluginAPI.Bot.UpdateActive(agent.BotUserID, false); err != nil {
 		// Non-fatal: the DB record is already soft-deleted
-		c.Error(fmt.Errorf("failed to deactivate bot: %w", err))
+		_ = c.Error(fmt.Errorf("failed to deactivate bot: %w", err))
 	}
 
 	c.Status(http.StatusOK)

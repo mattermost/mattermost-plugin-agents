@@ -15,7 +15,7 @@ export const secondServiceId = 'second-service';
  * Run a Mattermost container configured for agent E2E tests.
  * - Two mock LLM services (for service switching tests)
  * - MCP enabled with embedded server (for tool selection tests)
- * - Three users: admin, regularuser (with create_agent perm), unprivileged
+ * - Three users: admin, regularuser (with manage_own_agent perm), unprivileged
  */
 export async function RunAgentContainer(): Promise<MattermostContainer> {
     const mattermost = await RunSystemConsoleContainer({
@@ -90,13 +90,12 @@ export async function RunAgentContainer(): Promise<MattermostContainer> {
         ]);
     }
 
-    // Grant create_agent on system_user when the server exposes that permission (Enterprise).
-    // Non-admin users need this for POST /agents; sysadmin can still create via ManageSystem fallback.
+    // Grant manage_own_agent on system_user and system_admin (Enterprise).
     await mattermost.container.exec([
-        'mmctl', '--local', 'permissions', 'add', 'system_user', 'create_agent',
+        'mmctl', '--local', 'permissions', 'add', 'system_user', 'manage_own_agent',
     ]);
     await mattermost.container.exec([
-        'mmctl', '--local', 'permissions', 'add', 'system_admin', 'create_agent',
+        'mmctl', '--local', 'permissions', 'add', 'system_admin', 'manage_own_agent',
     ]);
 
     return mattermost;

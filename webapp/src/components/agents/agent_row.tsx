@@ -36,7 +36,9 @@ const AgentRow = (props: Props) => {
     // Close menu on outside click
     useEffect(() => {
         if (!menuOpen) {
-            return;
+            return () => {
+                // No mousedown listener while menu is closed
+            };
         }
         const handler = (e: MouseEvent) => {
             if (menuRef.current && !menuRef.current.contains(e.target as Node)) {

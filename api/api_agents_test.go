@@ -105,7 +105,7 @@ func TestCreateAgentWithPermission(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
-	e.mockAPI.On("HasPermissionTo", testUserID, PermissionCreateAgent).Return(true)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
 		UserId:      "bot-user-id-created",
 		Username:    "my-agent",
@@ -132,19 +132,12 @@ func TestCreateAgentWithPermission(t *testing.T) {
 	assert.NotEmpty(t, agent.ID)
 }
 
-func TestCreateAgentWithManageSystemOnly(t *testing.T) {
+func TestCreateAgentForbiddenWithoutManageOwnPermission(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
-	e.mockAPI.On("HasPermissionTo", testUserID, PermissionCreateAgent).Return(false)
-	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true)
-	e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
-		UserId:      "bot-user-id-created",
-		Username:    "sysadmin-agent",
-		DisplayName: "Sysadmin Agent",
-		Description: "User-created AI agent",
-	}, nil)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	body := CreateAgentRequest{
@@ -154,12 +147,7 @@ func TestCreateAgentWithManageSystemOnly(t *testing.T) {
 	}
 
 	recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
-	resp := recorder.Result()
-	require.Equal(t, http.StatusCreated, resp.StatusCode)
-
-	var agent useragents.UserAgent
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&agent))
-	assert.Equal(t, "Sysadmin Agent", agent.DisplayName)
+	require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
 }
 
 func TestCreateAgentWithoutPermission(t *testing.T) {
@@ -167,8 +155,7 @@ func TestCreateAgentWithoutPermission(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
-	e.mockAPI.On("HasPermissionTo", testUserID, PermissionCreateAgent).Return(false)
-	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	body := CreateAgentRequest{
@@ -278,6 +265,7 @@ func TestUpdateAgentAsNonAdmin(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	// Seed an agent NOT owned by testUserID
@@ -291,6 +279,31 @@ func TestUpdateAgentAsNonAdmin(t *testing.T) {
 
 	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
 	require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
+}
+
+func TestUpdateAgentOwnedByOtherWithManageOthersPermission(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(true)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+		ID: "agent-1", CreatorID: "other-user", BotUserID: "bot-1",
+		DisplayName: "Theirs", Username: "theirs", ServiceID: "svc-1",
+	}
+
+	newName := "Admin Renamed"
+	body := UpdateAgentRequest{DisplayName: &newName}
+	e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
+
+	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	var agent useragents.UserAgent
+	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agent))
+	assert.Equal(t, "Admin Renamed", agent.DisplayName)
 }
 
 func TestDeleteAgentDeactivatesBot(t *testing.T) {
@@ -339,12 +352,12 @@ func TestListServicesNoSecrets(t *testing.T) {
 	assert.NotContains(t, string(raw), "awsSecret")
 }
 
-func TestUpdateMigratedAgentAsSystemAdmin(t *testing.T) {
+func TestUpdateMigratedAgentWithManageOthersPermission(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
-	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
@@ -364,12 +377,12 @@ func TestUpdateMigratedAgentAsSystemAdmin(t *testing.T) {
 	assert.Equal(t, "Updated Migrated", agent.DisplayName)
 }
 
-func TestUpdateMigratedAgentForbiddenWithoutSystemManage(t *testing.T) {
+func TestUpdateMigratedAgentForbiddenWithoutManageOthersPermission(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
-	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	e.agentStore.agents["agent-1"] = &useragents.UserAgent{

@@ -10,7 +10,6 @@ import {getPluginConfig, getAIBots, savePluginConfig} from '@/client';
 import {Pill} from '../pill';
 
 import Panel, {PanelFooterText} from './panel';
-import {LLMBotConfig} from './bot';
 import Services, {firstNewService} from './services';
 import {LLMService} from './service';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from './item';

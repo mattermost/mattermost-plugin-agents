@@ -202,7 +202,7 @@ test.describe('Agent CRUD', () => {
         await expect(agentPage.getAgentRowByName(`Visible To Regular ${suffix}`)).toBeVisible({ timeout: 10000 });
     });
 
-    test('denies create in UI when user lacks create_agent permission', async ({ page }) => {
+    test('denies create in UI when user lacks manage_own_agent permission', async ({ page }) => {
         test.setTimeout(60000);
         const mmPage = new MattermostPage(page);
         const agentPage = new AgentPageHelper(page);

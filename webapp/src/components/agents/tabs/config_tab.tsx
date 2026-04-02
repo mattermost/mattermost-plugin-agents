@@ -43,6 +43,7 @@ const ConfigTab = (props: Props) => {
     const [availableModels, setAvailableModels] = useState<{id: string; displayName: string}[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState('');
+
     /** Captures `reasoningEnabled` before turning structured output on so we can restore it when structured output is turned off. */
     const reasoningBeforeStructuredRef = useRef<boolean | null>(null);
 
@@ -58,9 +59,9 @@ const ConfigTab = (props: Props) => {
          selectedService.type === 'azure' ||
          selectedService.type === 'openaicompatible'));
 
-    const selectedServiceAsLLM: LLMService | undefined = useMemo(() => {
+    const selectedServiceAsLLM: LLMService | null = useMemo(() => {
         if (!selectedService) {
-            return undefined;
+            return null;
         }
         return {
             id: selectedService.id,
@@ -295,7 +296,7 @@ const ConfigTab = (props: Props) => {
                                             reasoningBeforeStructuredRef.current = null;
                                             onChange({
                                                 structuredOutputEnabled: false,
-                                                reasoningEnabled: restore !== null ? restore : true,
+                                                reasoningEnabled: restore === null ? true : restore,
                                             });
                                         }
                                     }}

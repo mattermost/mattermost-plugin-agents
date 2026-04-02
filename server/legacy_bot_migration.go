@@ -115,16 +115,16 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 			StructuredOutputEnabled: bc.StructuredOutputEnabled,
 		}
 
-		if err := st.CreateAgent(ua); err != nil {
-			return false, fmt.Errorf("failed to create user agent for legacy bot %q: %w", bc.Name, err)
+		if createErr := st.CreateAgent(ua); createErr != nil {
+			return false, fmt.Errorf("failed to create user agent for legacy bot %q: %w", bc.Name, createErr)
 		}
 		byUsername[bc.Name] = struct{}{}
 	}
 
 	newCfg := *dbCfg
 	newCfg.Bots = nil
-	if err := st.SaveConfig(newCfg); err != nil {
-		return false, fmt.Errorf("failed to save config after legacy bot migration: %w", err)
+	if saveErr := st.SaveConfig(newCfg); saveErr != nil {
+		return false, fmt.Errorf("failed to save config after legacy bot migration: %w", saveErr)
 	}
 	reloaded, err := st.GetConfig()
 	if err != nil {
