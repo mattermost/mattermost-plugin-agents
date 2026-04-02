@@ -113,6 +113,28 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 	}
 
+	// Enforce execution scope: force team_id, auto-fill or validate channel_id
+	if mcpContext.MattermostAccessScope != nil {
+		if mcpContext.MattermostAccessScope.TeamID != "" {
+			if args.TeamID == "" {
+				args.TeamID = mcpContext.MattermostAccessScope.TeamID
+			} else if !mcpContext.MattermostAccessScope.AllowsTeam(args.TeamID) {
+				return "team is outside execution scope", mcpContext.MattermostAccessScope.TeamDeniedError(args.TeamID)
+			}
+		}
+		if args.ChannelID != "" {
+			channel, _, chErr := mcpContext.Client.GetChannel(mcpContext.Ctx, args.ChannelID)
+			if chErr != nil {
+				return "failed to fetch channel for scope check", fmt.Errorf("error fetching channel %s: %w", args.ChannelID, chErr)
+			}
+			if !mcpContext.MattermostAccessScope.AllowsChannel(channel) {
+				return "channel is outside execution scope", mcpContext.MattermostAccessScope.ChannelDeniedError(args.ChannelID)
+			}
+		} else if len(mcpContext.MattermostAccessScope.AllowedChannelIDs) == 1 {
+			args.ChannelID = mcpContext.MattermostAccessScope.AllowedChannelIDs[0]
+		}
+	}
+
 	if args.SemanticLimit <= 0 {
 		args.SemanticLimit = 10
 	}
@@ -181,6 +203,12 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 			return "search failed", fmt.Errorf("both search methods failed: semantic: %v, keyword: %v", semanticErr, keywordErr)
 		}
 		return "search failed", fmt.Errorf("keyword search failed: %v", keywordErr)
+	}
+
+	// Post-filter results by execution scope
+	if mcpContext.MattermostAccessScope != nil {
+		semanticResults = p.filterSearchResultsByScope(mcpContext, semanticResults)
+		keywordResults = p.filterSearchResultsByScope(mcpContext, keywordResults)
 	}
 
 	return p.formatCombinedResults(args.Query, semanticResults, keywordResults, semanticEnabled, args.ChannelID)
@@ -449,6 +477,37 @@ func (p *MattermostToolProvider) formatSingleResult(result *strings.Builder, ind
 		fmt.Fprintf(result, "Root ID: %s\n", r.Post.RootId)
 	}
 	fmt.Fprintf(result, "Message: %s\n\n", r.Post.Message)
+}
+
+// filterSearchResultsByScope removes search results whose channel is outside the execution scope.
+// It fetches channel metadata for each unique channel ID to perform the scope check.
+func (p *MattermostToolProvider) filterSearchResultsByScope(mcpContext *MCPToolContext, results []searchPostResult) []searchPostResult {
+	if mcpContext.MattermostAccessScope == nil || len(results) == 0 {
+		return results
+	}
+
+	channelCache := make(map[string]*model.Channel)
+	filtered := make([]searchPostResult, 0, len(results))
+
+	for _, r := range results {
+		channelID := r.Post.ChannelId
+		channel, exists := channelCache[channelID]
+		if !exists {
+			fetched, _, err := mcpContext.Client.GetChannel(mcpContext.Ctx, channelID)
+			if err != nil {
+				// Can't verify scope -- drop the result to be safe
+				continue
+			}
+			channel = fetched
+			channelCache[channelID] = channel
+		}
+
+		if mcpContext.MattermostAccessScope.AllowsChannel(channel) {
+			filtered = append(filtered, r)
+		}
+	}
+
+	return filtered
 }
 
 // toolSearchUsers implements the search_users tool.

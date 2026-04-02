@@ -103,13 +103,24 @@ type SendMessageActionConfig struct {
 	Body          string `json:"body"`
 }
 
+// MattermostAccessScopeConfig holds optional guardrails for ai_prompt tool execution,
+// matching the channel-automation plugin JSON field mattermost_access_scope.
+type MattermostAccessScopeConfig struct {
+	TeamID string `json:"team_id" jsonschema:"Team ID to anchor the run to. Required when allowed_channel_types or allowed_channel_ids is set."`
+	// AllowedChannelTypes restricts which channel types tools may access (O, P, D, G).
+	AllowedChannelTypes []string `json:"allowed_channel_types,omitempty" jsonschema:"Optional channel type codes to allow: O (public), P (private), D (DM), G (group message). If omitted all types are allowed."`
+	// AllowedChannelIDs is an optional allowlist intersected with team and type constraints.
+	AllowedChannelIDs []string `json:"allowed_channel_ids,omitempty" jsonschema:"Optional allowlist of specific channel IDs. Intersected with team and type constraints."`
+}
+
 // AIPromptActionConfig holds config for the ai_prompt action type.
 type AIPromptActionConfig struct {
-	SystemPrompt string   `json:"system_prompt,omitempty"`
-	Prompt       string   `json:"prompt"`
-	ProviderType string   `json:"provider_type"`
-	ProviderID   string   `json:"provider_id"`
-	AllowedTools []string `json:"allowed_tools,omitempty"`
+	SystemPrompt          string                       `json:"system_prompt,omitempty"`
+	Prompt                string                       `json:"prompt"`
+	ProviderType          string                       `json:"provider_type"`
+	ProviderID            string                       `json:"provider_id"`
+	AllowedTools          []string                     `json:"allowed_tools,omitempty"`
+	MattermostAccessScope *MattermostAccessScopeConfig `json:"mattermost_access_scope,omitempty"`
 }
 
 // AutomationFlow mirrors the channel-automation plugin's Flow model.
@@ -228,12 +239,18 @@ The summary must include:
      read any Mattermost data or take any actions.
    - With tools, the agent inherits YOUR permissions — it can access anything you can access.
    Explain what each granted tool does so the user understands the access they are giving.
-3. OUTPUT: Where the automation will post results — name the specific channel(s).
+3. ACCESS SCOPE: For every ai_prompt step that has allowed_tools, state the mattermost_access_scope
+   (team_id and any allowed_channel_types / allowed_channel_ids), or explicitly warn that without
+   mattermost_access_scope the agent may use those tools across ALL teams and channels the automation
+   creator can access (read/search/post broadly). This is a security decision — the user must
+   understand the blast radius. Prefer recommending scope whenever tools are enabled, especially
+   for powerful tools (search, posts, channels, teams).
+4. OUTPUT: Where the automation will post results — name the specific channel(s).
 
 Format as a numbered list, then ask the user to confirm. Only call create_automation after
 the user says yes.
 
-If the user's request is missing details (trigger channel, output channel, which tools),
+If the user's request is missing details (trigger channel, output channel, which tools, access scope for tool-using steps),
 ask clarifying questions BEFORE presenting the summary.
 
 ACTION SELECTION: For each step in the automation, choose the right action type:
@@ -268,6 +285,10 @@ Action types:
    - as_bot_id (optional): the Mattermost user ID of the bot to post as. Must be a bot account. If omitted, the message is posted as the default automation bot. Use list_agents to find bot IDs. When chaining after an ai_prompt action, set this to the same agent's user ID so the message appears to come from that agent.
 2. "ai_prompt": Runs an AI agent with a prompt and optional tools. With tools, the agent can perform actions (e.g. modify channels, manage members, search) — not just generate text. Does NOT post a message — chain a send_message or send_dm action after to post the response.
    {"id": "ask", "ai_prompt": {"prompt": "...", "provider_type": "agent", "provider_id": "<agent-user-id>", "system_prompt": "...", "allowed_tools": ["tool1"]}}
+   Optional mattermost_access_scope (recommended whenever allowed_tools is non-empty) restricts which teams and channels MCP tools may touch during that run; it is passed to the AI bridge as execution guardrails.
+   {"id": "ask", "ai_prompt": {"prompt": "...", "provider_type": "agent", "provider_id": "<agent-user-id>", "allowed_tools": ["search_messages"], "mattermost_access_scope": {"team_id": "<team-id>", "allowed_channel_types": ["O","P"], "allowed_channel_ids": ["<optional-channel-id>"]}}}
+   - mattermost_access_scope (optional): team_id anchors the run to one team (required if allowed_channel_types or allowed_channel_ids is set). allowed_channel_types: O (public), P (private), D (DM), G (group); omit or empty means all types allowed within the team constraint. allowed_channel_ids: optional allowlist of channel IDs; intersected with team and type rules, not an override.
+   SECURITY: If allowed_tools is set but mattermost_access_scope is omitted, the agent can use those tools against any team and channel the automation creator can access — same blast radius as the user's account for those tool operations. Explain this in your summary; steer users toward the smallest scope that still meets the automation's goal.
    - provider_type: "agent" (a bot) or "service" (a raw LLM service)
    - provider_id: the agent's Mattermost user ID (26-char ID). Call list_agents to discover available agents and their IDs.
    - system_prompt (optional): system instructions for the AI
@@ -294,11 +315,11 @@ CHAINING ACTIONS: A single ai_prompt action can call tools multiple times AND ge
 		},
 		{
 			Name: "update_automation",
-			Description: `Update an existing channel automation. Replaces the full automation definition — provide all fields, not just changed ones. Same trigger types, action types, template syntax, and allowed_tools guidance as create_automation.
+			Description: `Update an existing channel automation. Replaces the full automation definition — provide all fields, not just changed ones. Same trigger types, action types, template syntax, allowed_tools, and mattermost_access_scope guidance as create_automation.
 Use list_automations first to get the current definition, then modify and pass the full updated flow. Remember: ai_prompt actions need allowed_tools to be useful.
 
 IMPORTANT: Before calling this tool, show the user what will change in plain language and
-get their confirmation. Highlight any changes to trigger scope, allowed_tools, or output channels.`,
+get their confirmation. Highlight any changes to trigger scope, allowed_tools, mattermost_access_scope (team/channel guardrails), or output channels. Removing mattermost_access_scope from an ai_prompt that still has allowed_tools widens tool execution to all teams and channels the creator can access — call that out explicitly.`,
 			Schema:   llm.NewJSONSchemaFromStruct[UpdateAutomationArgs](),
 			Resolver: p.toolUpdateAutomation,
 		},

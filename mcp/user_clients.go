@@ -188,10 +188,31 @@ func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Co
 
 	var metadata map[string]any
 
-	// For embedded server, inject Bot UserID for AI-generated content tracking
-	if client.config.Name == EmbeddedClientKey && llmContext.BotUserID != "" {
+	// Only inject metadata for the embedded server
+	if client.config.Name != EmbeddedClientKey {
+		return nil
+	}
+
+	if llmContext.BotUserID != "" {
 		metadata = make(map[string]any)
 		metadata["bot_user_id"] = llmContext.BotUserID
+	}
+
+	scope := llmContext.Tools.GetMattermostAccessScope()
+	if scope != nil {
+		if metadata == nil {
+			metadata = make(map[string]any)
+		}
+		scopeMap := map[string]any{
+			"team_id": scope.TeamID,
+		}
+		if len(scope.AllowedChannelTypes) > 0 {
+			scopeMap["allowed_channel_types"] = scope.AllowedChannelTypes
+		}
+		if len(scope.AllowedChannelIDs) > 0 {
+			scopeMap["allowed_channel_ids"] = scope.AllowedChannelIDs
+		}
+		metadata["mattermost_access_scope"] = scopeMap
 	}
 
 	return metadata

@@ -1860,3 +1860,135 @@ func TestBridgeClientAgentCompletionAllowedToolsFailsWhenNoEligibleToolsAvailabl
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no eligible tools available for this agent")
 }
+
+func TestBridgeClientAgentCompletionMattermostAccessScope(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	validTeamID := model.NewId()
+
+	tests := []struct {
+		name        string
+		scope       *bridgeclient.MattermostAccessScope
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "nil scope succeeds (backward compatible)",
+			scope:       nil,
+			expectError: false,
+		},
+		{
+			name:        "valid scope with team_id only",
+			scope:       &bridgeclient.MattermostAccessScope{TeamID: validTeamID},
+			expectError: false,
+		},
+		{
+			name:        "valid scope with team and channel types",
+			scope:       &bridgeclient.MattermostAccessScope{TeamID: validTeamID, AllowedChannelTypes: []string{"O"}},
+			expectError: false,
+		},
+		{
+			name:        "invalid scope: channel types without team_id",
+			scope:       &bridgeclient.MattermostAccessScope{AllowedChannelTypes: []string{"O"}},
+			expectError: true,
+			errorMsg:    "team_id is required",
+		},
+		{
+			name:        "invalid scope: bad channel type",
+			scope:       &bridgeclient.MattermostAccessScope{TeamID: validTeamID, AllowedChannelTypes: []string{"X"}},
+			expectError: true,
+			errorMsg:    "invalid channel type",
+		},
+		{
+			name:        "invalid scope: bad team_id format",
+			scope:       &bridgeclient.MattermostAccessScope{TeamID: "bad"},
+			expectError: true,
+			errorMsg:    "team_id must be a valid ID",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			botConfig := llm.BotConfig{
+				Name:            "testbot",
+				DisplayName:     "Test Bot",
+				UserAccessLevel: llm.UserAccessLevelAll,
+			}
+			e.setupTestBot(botConfig)
+
+			fakeLLM := NewFakeLLM("scope response")
+			for _, bot := range e.bots.GetAllBots() {
+				bot.SetLLMForTest(fakeLLM)
+			}
+
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			client := e.CreateBridgeClient()
+			_, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{
+					{Role: "user", Message: "test"},
+				},
+				MattermostAccessScope: tc.scope,
+			})
+
+			if tc.expectError {
+				require.Error(t, err)
+				if tc.errorMsg != "" {
+					require.Contains(t, err.Error(), tc.errorMsg)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestBridgeClientAgentCompletionMattermostAccessScopePropagation(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	validTeamID := model.NewId()
+	validChannelID := model.NewId()
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	fakeLLM := NewFakeLLM("scope propagated")
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(fakeLLM)
+	}
+
+	client := e.CreateBridgeClient()
+	result, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "test"},
+		},
+		MattermostAccessScope: &bridgeclient.MattermostAccessScope{
+			TeamID:              validTeamID,
+			AllowedChannelTypes: []string{"O", "P"},
+			AllowedChannelIDs:   []string{validChannelID},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "scope propagated", result)
+
+	lastReq := fakeLLM.LastRequest()
+	require.NotNil(t, lastReq.Context)
+	require.NotNil(t, lastReq.Context.Tools)
+	scope := lastReq.Context.Tools.GetMattermostAccessScope()
+	require.NotNil(t, scope)
+	require.Equal(t, validTeamID, scope.TeamID)
+	require.Equal(t, []string{"O", "P"}, scope.AllowedChannelTypes)
+	require.Equal(t, []string{validChannelID}, scope.AllowedChannelIDs)
+}

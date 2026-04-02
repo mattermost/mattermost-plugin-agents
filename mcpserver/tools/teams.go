@@ -93,6 +93,11 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
+	// Enforce execution scope on the team being looked up
+	if args.TeamID != "" && !mcpContext.MattermostAccessScope.AllowsTeam(args.TeamID) {
+		return "team is outside execution scope", mcpContext.MattermostAccessScope.TeamDeniedError(args.TeamID)
+	}
+
 	var team *model.Team
 
 	// Try different lookup methods based on provided parameters
@@ -140,6 +145,11 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 		return "either team_id, team_display_name, or team_name must be provided", fmt.Errorf("insufficient parameters for team lookup")
 	}
 
+	// Post-lookup scope check (for cases where team was looked up by name/display name)
+	if !mcpContext.MattermostAccessScope.AllowsTeam(team.Id) {
+		return "team is outside execution scope", mcpContext.MattermostAccessScope.TeamDeniedError(team.Id)
+	}
+
 	// Format the response
 	var result strings.Builder
 	result.WriteString("Team Information:\n")
@@ -185,6 +195,11 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 	}
 	if args.Page < 0 {
 		args.Page = 0
+	}
+
+	// Enforce execution scope
+	if !mcpContext.MattermostAccessScope.AllowsTeam(args.TeamID) {
+		return "team is outside execution scope", mcpContext.MattermostAccessScope.TeamDeniedError(args.TeamID)
 	}
 
 	// Get client from context

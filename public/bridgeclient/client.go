@@ -36,6 +36,20 @@ type Post struct {
 	FileIDs []string `json:"file_ids,omitempty"` // Mattermost file IDs
 }
 
+// MattermostAccessScope defines runtime guardrails for a bridge completion run.
+// When nil, no restrictions are applied.
+type MattermostAccessScope struct {
+	// TeamID anchors the run to a single team. Required when any other scope field is set.
+	TeamID string `json:"team_id"`
+	// AllowedChannelTypes restricts which channel types the run may access.
+	// Valid values: "O" (public), "P" (private), "D" (DM), "G" (group message).
+	// If omitted or empty, all channel types are allowed.
+	AllowedChannelTypes []string `json:"allowed_channel_types,omitempty"`
+	// AllowedChannelIDs is an optional allowlist of specific channel IDs.
+	// Treated as an intersection with team + channel type constraints, not an override.
+	AllowedChannelIDs []string `json:"allowed_channel_ids,omitempty"`
+}
+
 // CompletionRequest represents a completion request
 type CompletionRequest struct {
 	Posts              []Post                 `json:"posts"`
@@ -56,6 +70,9 @@ type CompletionRequest struct {
 	// ChannelID is the optional Mattermost channel ID context for the request.
 	// If provided along with UserID, the bridge will check both user and channel permissions.
 	ChannelID string `json:"channel_id,omitempty"`
+	// MattermostAccessScope defines runtime guardrails restricting which teams and channels
+	// tools may access during this run. If nil, no restrictions are applied.
+	MattermostAccessScope *MattermostAccessScope `json:"mattermost_access_scope,omitempty"`
 }
 
 // CompletionResponse represents a non-streaming completion response

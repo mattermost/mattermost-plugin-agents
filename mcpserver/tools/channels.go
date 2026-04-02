@@ -149,6 +149,11 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 		return "failed to fetch channel info", fmt.Errorf("error fetching channel: %w", err)
 	}
 
+	// Enforce execution scope
+	if !mcpContext.MattermostAccessScope.AllowsChannel(channel) {
+		return "channel is outside execution scope", mcpContext.MattermostAccessScope.ChannelDeniedError(args.ChannelID)
+	}
+
 	// Determine team display name; DMs/Groups have no team
 	channelDisplayName := channel.DisplayName
 	if channelDisplayName == "" {
@@ -270,6 +275,23 @@ func (p *MattermostToolProvider) toolCreateChannel(mcpContext *MCPToolContext, a
 		return "type must be 'O' for public or 'P' for private", fmt.Errorf("invalid channel type: %s", args.Type)
 	}
 
+	// Enforce execution scope on team and channel type
+	if !mcpContext.MattermostAccessScope.AllowsTeam(args.TeamID) {
+		return "team is outside execution scope", mcpContext.MattermostAccessScope.TeamDeniedError(args.TeamID)
+	}
+	if scope := mcpContext.MattermostAccessScope; scope != nil && len(scope.AllowedChannelTypes) > 0 {
+		allowed := false
+		for _, ct := range scope.AllowedChannelTypes {
+			if ct == args.Type {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return "channel type is not allowed by execution scope", fmt.Errorf("channel type %q is not allowed by the execution scope for this run", args.Type)
+		}
+	}
+
 	// Get client and context
 	if mcpContext.Client == nil {
 		return "client not available", fmt.Errorf("client not available in context")
@@ -313,6 +335,17 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	// Validate team ID if provided
 	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
 		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+	}
+
+	// If execution scope constrains the team and no explicit team_id was provided, use the scoped team
+	if args.TeamID == "" && mcpContext.MattermostAccessScope != nil && mcpContext.MattermostAccessScope.TeamID != "" {
+		args.TeamID = mcpContext.MattermostAccessScope.TeamID
+	}
+
+	// Auto-fill channel_id when scope restricts to exactly one channel and no identifier was provided
+	if args.ChannelID == "" && args.ChannelDisplayName == "" && args.ChannelName == "" &&
+		mcpContext.MattermostAccessScope != nil && len(mcpContext.MattermostAccessScope.AllowedChannelIDs) == 1 {
+		args.ChannelID = mcpContext.MattermostAccessScope.AllowedChannelIDs[0]
 	}
 
 	var channels []*model.Channel
@@ -416,6 +449,20 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 		}
 	default:
 		return "either channel_id or channel_name/channel_display_name must be provided", fmt.Errorf("insufficient parameters for channel lookup")
+	}
+
+	// Filter channels by execution scope
+	if mcpContext.MattermostAccessScope != nil {
+		filtered := make([]*model.Channel, 0, len(channels))
+		for _, ch := range channels {
+			if mcpContext.MattermostAccessScope.AllowsChannel(ch) {
+				filtered = append(filtered, ch)
+			}
+		}
+		channels = filtered
+		if len(channels) == 0 {
+			return "no channels found matching criteria within the execution scope", nil
+		}
 	}
 
 	// If multiple channels found, return all with disambiguation guidance
@@ -540,6 +587,17 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
+	// Enforce execution scope
+	if mcpContext.MattermostAccessScope != nil {
+		channel, _, chErr := client.GetChannel(ctx, args.ChannelID)
+		if chErr != nil {
+			return "failed to fetch channel for scope check", fmt.Errorf("error fetching channel: %w", chErr)
+		}
+		if !mcpContext.MattermostAccessScope.AllowsChannel(channel) {
+			return "channel is outside execution scope", mcpContext.MattermostAccessScope.ChannelDeniedError(args.ChannelID)
+		}
+	}
+
 	// Get channel members
 	members, _, err := client.GetChannelMembers(ctx, args.ChannelID, args.Page, args.Limit, "")
 	if err != nil {
@@ -608,6 +666,17 @@ func (p *MattermostToolProvider) toolAddUserToChannel(mcpContext *MCPToolContext
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
+
+	// Enforce execution scope
+	if mcpContext.MattermostAccessScope != nil {
+		channel, _, chErr := client.GetChannel(ctx, args.ChannelID)
+		if chErr != nil {
+			return "failed to fetch channel for scope check", fmt.Errorf("error fetching channel: %w", chErr)
+		}
+		if !mcpContext.MattermostAccessScope.AllowsChannel(channel) {
+			return "channel is outside execution scope", mcpContext.MattermostAccessScope.ChannelDeniedError(args.ChannelID)
+		}
+	}
 
 	// Add user to channel
 	_, _, err = client.AddChannelMember(ctx, args.ChannelID, args.UserID)
@@ -758,6 +827,11 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
 
+	// If execution scope constrains the team and no explicit team_id was provided, use the scoped team
+	if args.TeamID == "" && mcpContext.MattermostAccessScope != nil && mcpContext.MattermostAccessScope.TeamID != "" {
+		args.TeamID = mcpContext.MattermostAccessScope.TeamID
+	}
+
 	// Set defaults and cap to match schema (consistent with get_channel_members and get_team_members).
 	// Guard against negative values to prevent slice panics from user input.
 	if args.PerPage <= 0 {
@@ -806,6 +880,17 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 		}
 	} else {
 		channels = allChannels
+	}
+
+	// Filter by execution scope
+	if mcpContext.MattermostAccessScope != nil {
+		scopedChannels := make([]*model.Channel, 0, len(channels))
+		for _, channel := range channels {
+			if mcpContext.MattermostAccessScope.AllowsChannel(channel) {
+				scopedChannels = append(scopedChannels, channel)
+			}
+		}
+		channels = scopedChannels
 	}
 
 	// Store total count before pagination

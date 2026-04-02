@@ -174,6 +174,10 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, argsGe
 	if len(posts) > 0 {
 		channel, _, err := client.GetChannel(ctx, posts[0].ChannelId)
 		if err == nil {
+			// Enforce execution scope on the post's channel
+			if !mcpContext.MattermostAccessScope.AllowsChannel(channel) {
+				return "post's channel is outside execution scope", mcpContext.MattermostAccessScope.ChannelDeniedError(channel.Id)
+			}
 			channelName = channel.DisplayName
 			team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
 			if teamErr == nil {
@@ -265,6 +269,11 @@ func (p *MattermostToolProvider) toolCreatePost(mcpContext *MCPToolContext, args
 	channel, _, err := client.GetChannel(ctx, args.ChannelID)
 	if err != nil {
 		return "failed to validate channel", fmt.Errorf("error fetching channel for validation: %w", err)
+	}
+
+	// Enforce execution scope
+	if !mcpContext.MattermostAccessScope.AllowsChannel(channel) {
+		return "channel is outside execution scope", mcpContext.MattermostAccessScope.ChannelDeniedError(args.ChannelID)
 	}
 
 	// Check if channel display name matches
@@ -405,6 +414,11 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, argsGetter l
 		return "message is required", fmt.Errorf("message cannot be empty")
 	}
 
+	// Enforce execution scope: DMs are blocked when scope restricts channel types
+	if mcpContext.MattermostAccessScope.BlocksDMGM() {
+		return "direct messages are not allowed by the execution scope for this run", fmt.Errorf("dm blocked by execution scope")
+	}
+
 	// Get client from context
 	if mcpContext.Client == nil {
 		return "client not available", fmt.Errorf("client not available in context")
@@ -497,6 +511,11 @@ func (p *MattermostToolProvider) toolGroupMessage(mcpContext *MCPToolContext, ar
 
 	if args.Message == "" {
 		return "message is required", fmt.Errorf("message cannot be empty")
+	}
+
+	// Enforce execution scope: group messages are blocked when scope restricts channel types
+	if mcpContext.MattermostAccessScope.BlocksDMGM() {
+		return "group messages are not allowed by the execution scope for this run", fmt.Errorf("group_message blocked by execution scope")
 	}
 
 	if mcpContext.Client == nil {

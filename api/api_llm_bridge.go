@@ -243,6 +243,26 @@ func validateCompletionRequestIDs(req bridgeclient.CompletionRequest) (int, erro
 	return 0, nil
 }
 
+// convertBridgeMattermostAccessScope converts a bridge MattermostAccessScope to the internal llm.MattermostAccessScope
+// and validates it. Returns nil if the input is nil (no scope).
+func convertBridgeMattermostAccessScope(scope *bridgeclient.MattermostAccessScope) (*llm.MattermostAccessScope, error) {
+	if scope == nil {
+		return nil, nil
+	}
+
+	internal := &llm.MattermostAccessScope{
+		TeamID:              scope.TeamID,
+		AllowedChannelTypes: scope.AllowedChannelTypes,
+		AllowedChannelIDs:   scope.AllowedChannelIDs,
+	}
+
+	if err := internal.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid execution_scope: %w", err)
+	}
+
+	return internal, nil
+}
+
 func (a *API) prepareAgentBridgeCompletion(
 	agent string,
 	req bridgeclient.CompletionRequest,
@@ -250,6 +270,11 @@ func (a *API) prepareAgentBridgeCompletion(
 ) (*bots.Bot, llm.CompletionRequest, []llm.LanguageModelOption, int, error) {
 	if statusCode, err := validateCompletionRequestIDs(req); err != nil {
 		return nil, llm.CompletionRequest{}, nil, statusCode, err
+	}
+
+	executionScope, err := convertBridgeMattermostAccessScope(req.MattermostAccessScope)
+	if err != nil {
+		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, err
 	}
 
 	allowedTools, err := normalizeAllowedTools(req.AllowedTools)
@@ -291,6 +316,15 @@ func (a *API) prepareAgentBridgeCompletion(
 			scopedTools.AddTools([]llm.Tool{*tool})
 		}
 		llmRequest.Context.Tools = scopedTools
+	}
+
+	// Set execution scope on the ToolStore (after any allowed_tools scoping).
+	// Create an empty ToolStore if needed so scope is always available for propagation.
+	if executionScope != nil {
+		if llmRequest.Context.Tools == nil {
+			llmRequest.Context.Tools = llm.NewNoTools()
+		}
+		llmRequest.Context.Tools.SetMattermostAccessScope(executionScope)
 	}
 
 	opts, err := a.convertRequestToLLMOptions(req)

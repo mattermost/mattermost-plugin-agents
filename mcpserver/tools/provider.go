@@ -24,10 +24,11 @@ import (
 
 // MCPToolContext provides MCP-specific functionality with the authenticated client.
 type MCPToolContext struct {
-	Ctx        context.Context
-	Client     *model.Client4
-	AccessMode AccessMode
-	BotUserID  string // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
+	Ctx            context.Context
+	Client         *model.Client4
+	AccessMode     AccessMode
+	BotUserID      string              // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
+	MattermostAccessScope *llm.MattermostAccessScope // Runtime guardrails for bridge runs; nil means no restrictions
 }
 
 // MCPToolResolver defines the signature for MCP tool resolvers
@@ -286,6 +287,31 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	if p.trackAIGenerated && metadata != nil {
 		if botUserID, ok := metadata["bot_user_id"].(string); ok {
 			mcpContext.BotUserID = botUserID
+		}
+	}
+
+	// Extract execution_scope from metadata if present (for embedded servers)
+	if metadata != nil {
+		if scopeMap, ok := metadata["mattermost_access_scope"].(map[string]any); ok {
+			scope := &llm.MattermostAccessScope{}
+			if teamID, ok := scopeMap["team_id"].(string); ok {
+				scope.TeamID = teamID
+			}
+			if types, ok := scopeMap["allowed_channel_types"].([]any); ok {
+				for _, t := range types {
+					if s, ok := t.(string); ok {
+						scope.AllowedChannelTypes = append(scope.AllowedChannelTypes, s)
+					}
+				}
+			}
+			if ids, ok := scopeMap["allowed_channel_ids"].([]any); ok {
+				for _, id := range ids {
+					if s, ok := id.(string); ok {
+						scope.AllowedChannelIDs = append(scope.AllowedChannelIDs, s)
+					}
+				}
+			}
+			mcpContext.MattermostAccessScope = scope
 		}
 	}
 
