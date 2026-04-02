@@ -534,6 +534,7 @@ func (c *Conversations) AutoExecuteApprovedToolCalls(postID string, requesterID 
 		c.mmClient.LogError("Auto-execute: failed to get post", "error", err, "post_id", postID)
 		return
 	}
+	autoShareResults := post.GetProp(streaming.AutoShareToolResultProp) != nil
 
 	channel, err := c.mmClient.GetChannel(post.ChannelId)
 	if err != nil {
@@ -546,7 +547,7 @@ func (c *Conversations) AutoExecuteApprovedToolCalls(postID string, requesterID 
 		return
 	}
 
-	if post.GetProp(streaming.AutoShareToolResultProp) == nil {
+	if !autoShareResults {
 		return
 	}
 
