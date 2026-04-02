@@ -399,14 +399,53 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
             {name: 'read_channel', policy: 'auto_run', enabled: true},
         ]);
 
-        await openAIMock.addCompletionMockWithRequestBody(
-            buildToolCallResponse(
-                'call_channel_dm_only',
-                'read_channel',
-                `{"channel_id":"${townSquareChannelID}","limit":5}`,
-            ),
-            'tool policy channel dm-only',
-        );
+        await openAIMock.addMocks([
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value:
+                            'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
+                    },
+                },
+                context: {
+                    times: 1,
+                },
+                response: {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                    },
+                    body: buildTextResponse('tool policy channel dm-only'),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: 'read_channel',
+                    },
+                },
+                context: {
+                    times: 1,
+                },
+                response: {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                    },
+                    body: buildToolCallResponse(
+                        'call_channel_dm_only',
+                        'read_channel',
+                        `{"channel_id":"${townSquareChannelID}","limit":5}`,
+                    ),
+                },
+            },
+        ]);
 
         await mentionBotAndOpenThread(page, mmPage, 'toolbot', 'tool policy channel dm-only');
 
