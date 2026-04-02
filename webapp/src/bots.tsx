@@ -12,11 +12,9 @@ import {getAIBots} from '@/client';
 import manifest from './manifest';
 import {BotsHandler} from './redux';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
+import {EnabledTool} from './types/agents';
 
-export type EnabledMCPTool = {
-    server_origin: string;
-    tool_name: string;
-};
+export type EnabledMCPTool = EnabledTool;
 
 export interface LLMBot {
     id: string;

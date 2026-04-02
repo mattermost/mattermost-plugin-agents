@@ -40,8 +40,13 @@ const DeleteAgentDialog = (props: Props) => {
 
     return (
         <Backdrop>
-            <Dialog ref={dialogRef}>
-                <DialogTitle>
+            <Dialog
+                ref={dialogRef}
+                role='dialog'
+                aria-modal='true'
+                aria-labelledby='delete-agent-dialog-title'
+            >
+                <DialogTitle id='delete-agent-dialog-title'>
                     <FormattedMessage defaultMessage='Delete agent'/>
                 </DialogTitle>
                 <DialogBody>

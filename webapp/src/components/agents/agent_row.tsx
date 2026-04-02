@@ -59,7 +59,10 @@ const AgentRow = (props: Props) => {
 
     return (
         <RowContainer>
-            <Avatar src={avatarUrl}/>
+            <Avatar
+                src={avatarUrl}
+                alt={agent.display_name || agent.username || 'agent avatar'}
+            />
             <NameColumn>
                 <DisplayName>{agent.display_name}</DisplayName>
                 <Username>{'@'}{agent.username}</Username>

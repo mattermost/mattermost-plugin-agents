@@ -7,7 +7,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {CloseIcon} from '@mattermost/compass-icons/components';
 
 import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
-import {UserAgent, CreateAgentRequest, UpdateAgentRequest, EnabledTool} from '@/types/agents';
+import {UserAgent, CreateAgentRequest, UpdateAgentRequest, EnabledTool, ServiceInfo} from '@/types/agents';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 
@@ -92,12 +92,13 @@ type Props = {
     show: boolean;
     mode: Mode;
     agent?: UserAgent;           // provided when mode === 'edit'
+    services: ServiceInfo[];     // pre-fetched from parent
     onClose: () => void;
     onSaved: (agent: UserAgent) => void;  // called after successful create or update
 }
 
 const AgentConfigModal = (props: Props) => {
-    const {show, mode, agent, onClose, onSaved} = props;
+    const {show, mode, agent, services, onClose, onSaved} = props;
     const intl = useIntl();
 
     const [activeTab, setActiveTab] = useState<Tab>('config');
@@ -305,6 +306,7 @@ const AgentConfigModal = (props: Props) => {
                             onChange={updateDraft}
                             onAvatarChange={setAvatarFile}
                             botUserId={agent?.bot_user_id}
+                            services={services}
                             errors={errors}
                         />
                     )}

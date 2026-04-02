@@ -89,7 +89,7 @@ func (u *UserAgent) EnabledNativeToolsJSON() string {
 
 // SetEnabledNativeToolsFromJSON parses EnabledNativeTools from DB JSON text.
 func (u *UserAgent) SetEnabledNativeToolsFromJSON(raw string) error {
-	if raw == "" {
+	if raw == "" || raw == "[]" {
 		u.EnabledNativeTools = nil
 		return nil
 	}

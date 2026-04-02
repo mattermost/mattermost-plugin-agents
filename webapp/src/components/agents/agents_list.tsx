@@ -220,6 +220,7 @@ const AgentsList = () => {
                 show={modalOpen}
                 mode={modalMode}
                 agent={editingAgent ?? undefined}
+                services={services}
                 onClose={handleModalClose}
                 onSaved={handleModalSaved}
             />

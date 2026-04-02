@@ -30,36 +30,37 @@ func mcpToolsToEnabled(tools []llm.EnabledMCPTool) []useragents.EnabledTool {
 
 // migrateLegacyConfigBotsToUserAgents copies config-defined bots into Agents_UserAgents once,
 // then removes them from stored plugin config to avoid duplicate bot registration in EnsureBots.
-func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Client, st *store.Store, cfg *config.Container) error {
+// Returns true if migration was actually performed (agents were created), false if already done or no-op.
+func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Client, st *store.Store, cfg *config.Container) (bool, error) {
 	mtx, err := cluster.NewMutex(api, "ai_legacy_bots_migration")
 	if err != nil {
-		return fmt.Errorf("failed to create legacy bot migration mutex: %w", err)
+		return false, fmt.Errorf("failed to create legacy bot migration mutex: %w", err)
 	}
 	mtx.Lock()
 	defer mtx.Unlock()
 
 	done, err := st.GetSystemValue(legacyConfigBotsMigratedKey)
 	if err != nil {
-		return fmt.Errorf("failed to read migration flag: %w", err)
+		return false, fmt.Errorf("failed to read migration flag: %w", err)
 	}
 	if done == "true" {
-		return nil
+		return false, nil
 	}
 
 	dbCfg, err := st.GetConfig()
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return false, fmt.Errorf("failed to load config: %w", err)
 	}
 	if dbCfg == nil || len(dbCfg.Bots) == 0 {
 		// Do not mark migration complete when there are no config bots yet.
 		// Plugin enable can run before initial admin config is applied (e.g. e2e installs),
 		// and bots may arrive on a later configuration update.
-		return nil
+		return false, nil
 	}
 
 	existingAgents, err := st.ListAgents()
 	if err != nil {
-		return fmt.Errorf("failed to list agents: %w", err)
+		return false, fmt.Errorf("failed to list agents: %w", err)
 	}
 	byUsername := make(map[string]struct{}, len(existingAgents))
 	for _, a := range existingAgents {
@@ -68,7 +69,7 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 
 	previousMMBots, err := pluginAPI.Bot.List(0, 1000, pluginapi.BotOwner("mattermost-ai"), pluginapi.BotIncludeDeleted())
 	if err != nil {
-		return fmt.Errorf("failed to list mattermost bots: %w", err)
+		return false, fmt.Errorf("failed to list mattermost bots: %w", err)
 	}
 	mmByUsername := make(map[string]string)
 	for _, b := range previousMMBots {
@@ -115,7 +116,7 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 		}
 
 		if err := st.CreateAgent(ua); err != nil {
-			return fmt.Errorf("failed to create user agent for legacy bot %q: %w", bc.Name, err)
+			return false, fmt.Errorf("failed to create user agent for legacy bot %q: %w", bc.Name, err)
 		}
 		byUsername[bc.Name] = struct{}{}
 	}
@@ -123,20 +124,22 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 	newCfg := *dbCfg
 	newCfg.Bots = nil
 	if err := st.SaveConfig(newCfg); err != nil {
-		return fmt.Errorf("failed to save config after legacy bot migration: %w", err)
+		return false, fmt.Errorf("failed to save config after legacy bot migration: %w", err)
 	}
 	reloaded, err := st.GetConfig()
 	if err != nil {
-		return fmt.Errorf("failed to reload config: %w", err)
+		return false, fmt.Errorf("failed to reload config: %w", err)
 	}
 	if reloaded != nil {
-		cfg.StorePersistedConfigWithoutNotify(reloaded)
+		if err := cfg.StorePersistedConfigWithoutNotify(reloaded); err != nil {
+			return false, fmt.Errorf("failed to store config after legacy bot migration: %w", err)
+		}
 	}
 
 	if err := st.SetSystemValue(legacyConfigBotsMigratedKey, "true"); err != nil {
-		return fmt.Errorf("failed to set migration flag: %w", err)
+		return false, fmt.Errorf("failed to set migration flag: %w", err)
 	}
 
 	pluginAPI.Log.Info("Migrated legacy config bots to self-service agents table")
-	return nil
+	return true, nil
 }

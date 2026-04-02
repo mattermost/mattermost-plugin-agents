@@ -12,6 +12,15 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// agentSelectColumns is the column list shared by all agent queries.
+const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
+	CustomInstructions, ChannelAccessLevel, ChannelIDs,
+	UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
+	EnabledTools,
+	Model, EnableVision, DisableTools, EnabledNativeTools,
+	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
+	CreateAt, UpdateAt, DeleteAt`
+
 // agentRow is the DB-level representation of a UserAgent row.
 // All JSON slice fields are stored as TEXT and scanned as strings.
 // Note: db tags must be lowercase because PostgreSQL folds unquoted identifiers to lowercase.
@@ -146,13 +155,7 @@ func (s *Store) CreateAgent(agent *useragents.UserAgent) error {
 func (s *Store) GetAgent(id string) (*useragents.UserAgent, error) {
 	var row agentRow
 	err := s.db.Get(&row,
-		`SELECT ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
-			CustomInstructions, ChannelAccessLevel, ChannelIDs,
-			UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
-			EnabledTools,
-			Model, EnableVision, DisableTools, EnabledNativeTools,
-			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-			CreateAt, UpdateAt, DeleteAt
+		`SELECT `+agentSelectColumns+`
 		FROM Agents_UserAgents
 		WHERE ID = $1 AND DeleteAt = 0`,
 		id,
@@ -171,13 +174,7 @@ func (s *Store) GetAgent(id string) (*useragents.UserAgent, error) {
 func (s *Store) ListAgents() ([]*useragents.UserAgent, error) {
 	var rows []agentRow
 	err := s.db.Select(&rows,
-		`SELECT ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
-			CustomInstructions, ChannelAccessLevel, ChannelIDs,
-			UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
-			EnabledTools,
-			Model, EnableVision, DisableTools, EnabledNativeTools,
-			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-			CreateAt, UpdateAt, DeleteAt
+		`SELECT `+agentSelectColumns+`
 		FROM Agents_UserAgents
 		WHERE DeleteAt = 0
 		ORDER BY CreateAt DESC`,
@@ -202,13 +199,7 @@ func (s *Store) ListAgents() ([]*useragents.UserAgent, error) {
 func (s *Store) ListAgentsByCreator(creatorID string) ([]*useragents.UserAgent, error) {
 	var rows []agentRow
 	err := s.db.Select(&rows,
-		`SELECT ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
-			CustomInstructions, ChannelAccessLevel, ChannelIDs,
-			UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
-			EnabledTools,
-			Model, EnableVision, DisableTools, EnabledNativeTools,
-			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-			CreateAt, UpdateAt, DeleteAt
+		`SELECT `+agentSelectColumns+`
 		FROM Agents_UserAgents
 		WHERE CreatorID = $1 AND DeleteAt = 0
 		ORDER BY CreateAt DESC`,

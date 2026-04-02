@@ -31,8 +31,8 @@ test.describe('Agent MCP Tools', () => {
     }, { timeout: 180000 });
 
     test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+        await openAIMock?.stop();
+        await mattermost?.stop();
     });
 
     test('agent with no enabled_tools gets no MCP tools', async ({ page }) => {

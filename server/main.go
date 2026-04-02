@@ -189,18 +189,28 @@ func (p *Plugin) OnActivate() error {
 	p.configMigrated = true
 
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService)
+
+	// migrateAndRefresh runs the one-time legacy bot migration, then forces
+	// a bot refresh only if the migration actually created new agents.
+	migrateAndRefresh := func(context string) {
+		migrated, migErr := migrateLegacyConfigBotsToUserAgents(p.API, pluginAPI, p.store, &p.configuration)
+		if migErr != nil {
+			pluginAPI.Log.Error("failed to migrate legacy config bots to user agents", "context", context, "error", migErr)
+		}
+		if migrated {
+			bots.ForceRefreshOnNextEnsure()
+			if ensureErr := bots.EnsureBots(); ensureErr != nil {
+				pluginAPI.Log.Error("failed to ensure bots after legacy bot migration", "context", context, "error", ensureErr)
+			}
+		}
+	}
+
 	p.configuration.RegisterUpdateListener(func() {
 		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
 			return
 		}
-		if migErr := migrateLegacyConfigBotsToUserAgents(p.API, pluginAPI, p.store, &p.configuration); migErr != nil {
-			pluginAPI.Log.Error("failed to migrate legacy config bots to user agents on configuration update", "error", migErr)
-		}
-		bots.ForceRefreshOnNextEnsure()
-		if ensureErr := bots.EnsureBots(); ensureErr != nil {
-			pluginAPI.Log.Error("failed to ensure bots after legacy bot migration on configuration update", "error", ensureErr)
-		}
+		migrateAndRefresh("config_update")
 	})
 
 	if ensureBotsErr := bots.EnsureBots(); ensureBotsErr != nil {
@@ -208,14 +218,7 @@ func (p *Plugin) OnActivate() error {
 		// as it would leave the plugin in a state where it can't be configured from the system console.
 		pluginAPI.Log.Error("failed to ensure bots", "error", ensureBotsErr)
 	}
-
-	if migErr := migrateLegacyConfigBotsToUserAgents(p.API, pluginAPI, p.store, &p.configuration); migErr != nil {
-		pluginAPI.Log.Error("failed to migrate legacy config bots to user agents", "error", migErr)
-	}
-	bots.ForceRefreshOnNextEnsure()
-	if ensureBotsErr := bots.EnsureBots(); ensureBotsErr != nil {
-		pluginAPI.Log.Error("failed to ensure bots after legacy bot migration", "error", ensureBotsErr)
-	}
+	migrateAndRefresh("activation")
 
 	prompts, promptManagerErr := llm.NewPrompts(prompts.PromptsFolder)
 	if promptManagerErr != nil {

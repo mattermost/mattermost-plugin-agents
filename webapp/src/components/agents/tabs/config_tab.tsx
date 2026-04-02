@@ -5,7 +5,7 @@ import React, {useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {useIntl} from 'react-intl';
 
-import {fetchModelsForAgentService, getServices} from '@/client';
+import {fetchModelsForAgentService} from '@/client';
 import {ServiceInfo} from '@/types/agents';
 import {
     BooleanItem,
@@ -30,6 +30,7 @@ type Props = {
     onChange: (updates: Partial<AgentDraft>) => void;
     onAvatarChange: (file: File | null) => void;
     botUserId?: string;
+    services: ServiceInfo[];
     errors?: Record<string, string>;
 }
 
@@ -37,9 +38,8 @@ type Props = {
 const visionToolServiceTypes = ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral'];
 
 const ConfigTab = (props: Props) => {
-    const {draft, onChange, onAvatarChange, errors = {}} = props;
+    const {draft, onChange, onAvatarChange, services, errors = {}} = props;
     const intl = useIntl();
-    const [services, setServices] = useState<ServiceInfo[]>([]);
     const [availableModels, setAvailableModels] = useState<{id: string; displayName: string}[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState('');
@@ -49,18 +49,6 @@ const ConfigTab = (props: Props) => {
     useEffect(() => {
         reasoningBeforeStructuredRef.current = null;
     }, [draft.serviceId]);
-
-    useEffect(() => {
-        const load = async () => {
-            try {
-                const result = await getServices();
-                setServices(result || []);
-            } catch {
-                setServices([]);
-            }
-        };
-        load();
-    }, []);
 
     const selectedService = services.find((s) => s.id === draft.serviceId);
 

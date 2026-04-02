@@ -22,8 +22,6 @@ import (
 
 var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 
-// --- Request/Response types ---
-
 // CreateAgentRequest is the JSON body for POST /agents.
 type CreateAgentRequest struct {
 	DisplayName        string                  `json:"display_name" binding:"required"`
@@ -81,8 +79,6 @@ type ServiceInfo struct {
 	UseResponsesAPI  bool   `json:"use_responses_api"`
 }
 
-// --- Middleware ---
-
 // agentLicenseRequired is a gin middleware that gates agent endpoints behind an E20+ license.
 func (a *API) agentLicenseRequired(c *gin.Context) {
 	if !a.licenseChecker.IsMultiLLMLicensed() {
@@ -90,8 +86,6 @@ func (a *API) agentLicenseRequired(c *gin.Context) {
 		return
 	}
 }
-
-// --- Permission helpers ---
 
 // PermissionCreateAgent is defined here because the core MM model package may not
 // yet export this constant. Once mattermost/mattermost merges the permission definition,
@@ -142,8 +136,6 @@ func (a *API) refreshBotsAndNotify() {
 	}
 }
 
-// --- Handlers ---
-
 // handleCreateAgent creates a new user agent with its backing bot account.
 // POST /agents
 func (a *API) handleCreateAgent(c *gin.Context) {
@@ -172,18 +164,20 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to read config: %w", err))
 		return
 	}
-	if cfg != nil {
-		found := false
-		for _, svc := range cfg.Services {
-			if svc.ID == req.ServiceID {
-				found = true
-				break
-			}
+	if cfg == nil {
+		c.AbortWithError(http.StatusInternalServerError, errors.New("no plugin configuration available"))
+		return
+	}
+	found := false
+	for _, svc := range cfg.Services {
+		if svc.ID == req.ServiceID {
+			found = true
+			break
 		}
-		if !found {
-			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", req.ServiceID))
-			return
-		}
+	}
+	if !found {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", req.ServiceID))
+		return
 	}
 
 	// Create the backing Mattermost bot account.
@@ -268,7 +262,7 @@ func (a *API) handleListAgents(c *gin.Context) {
 
 	accessible := make([]*useragents.UserAgent, 0, len(agents))
 	for _, agent := range agents {
-		if canUserAccessAgent(agent, userID) {
+		if a.canUserAccessAgent(agent, userID) {
 			accessible = append(accessible, agent)
 		}
 	}
@@ -292,7 +286,7 @@ func (a *API) handleGetAgent(c *gin.Context) {
 		return
 	}
 
-	if !canUserAccessAgent(agent, userID) {
+	if !a.canUserAccessAgent(agent, userID) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -334,6 +328,10 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		agent.DisplayName = *req.DisplayName
 	}
 	if req.Username != nil {
+		if !validUsernameRe.MatchString(*req.Username) {
+			c.AbortWithError(http.StatusBadRequest, errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores"))
+			return
+		}
 		agent.Username = *req.Username
 	}
 	if req.ServiceID != nil {
@@ -473,9 +471,15 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 	}
 	defer file.Close()
 
-	imageBytes, err := io.ReadAll(file)
+	const maxAvatarSize = 10 << 20 // 10 MB
+	limitedReader := io.LimitReader(file, maxAvatarSize+1)
+	imageBytes, err := io.ReadAll(limitedReader)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to read image: %w", err))
+		return
+	}
+	if len(imageBytes) > maxAvatarSize {
+		c.AbortWithError(http.StatusRequestEntityTooLarge, errors.New("image file too large (max 10MB)"))
 		return
 	}
 
@@ -572,11 +576,6 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 		return
 	}
 
-	if !bifrost.IsSupported(svc.Type) {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("model fetching not supported for service type: %s", svc.Type))
-		return
-	}
-
 	models, err := bifrost.FetchModelsForServiceType(svc.Type, svc.APIKey, svc.APIURL, svc.OrgID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
@@ -586,26 +585,49 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	c.JSON(http.StatusOK, models)
 }
 
-// --- Access control helper ---
-
 // canUserAccessAgent checks whether the given user can see/use the agent,
-// based on the agent's UserAccessLevel and UserIDs/TeamIDs.
-func canUserAccessAgent(agent *useragents.UserAgent, userID string) bool {
+// based on the agent's UserAccessLevel, UserIDs, and TeamIDs.
+func (a *API) canUserAccessAgent(agent *useragents.UserAgent, userID string) bool {
 	// Creators and admins always have access
 	if isAgentAdmin(agent, userID) {
 		return true
 	}
 
-	switch agent.UserAccessLevel {
-	case 0: // UserAccessLevelAll
+	switch llm.UserAccessLevel(agent.UserAccessLevel) {
+	case llm.UserAccessLevelAll:
 		return true
-	case 1: // UserAccessLevelAllow
-		return slices.Contains(agent.UserIDs, userID)
-	case 2: // UserAccessLevelBlock
-		return !slices.Contains(agent.UserIDs, userID)
-	case 3: // UserAccessLevelNone
+	case llm.UserAccessLevelAllow:
+		if slices.Contains(agent.UserIDs, userID) {
+			return true
+		}
+		for _, teamID := range agent.TeamIDs {
+			if a.isMemberOfTeam(teamID, userID) {
+				return true
+			}
+		}
+		return false
+	case llm.UserAccessLevelBlock:
+		if slices.Contains(agent.UserIDs, userID) {
+			return false
+		}
+		for _, teamID := range agent.TeamIDs {
+			if a.isMemberOfTeam(teamID, userID) {
+				return false
+			}
+		}
+		return true
+	case llm.UserAccessLevelNone:
 		return false
 	default:
 		return false
 	}
+}
+
+// isMemberOfTeam checks whether the user is an active member of the given team.
+func (a *API) isMemberOfTeam(teamID, userID string) bool {
+	member, err := a.pluginAPI.Team.GetMember(teamID, userID)
+	if err != nil {
+		return false
+	}
+	return member != nil && member.DeleteAt == 0
 }
