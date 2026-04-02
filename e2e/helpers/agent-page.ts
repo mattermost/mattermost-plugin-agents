@@ -173,13 +173,11 @@ export class AgentPageHelper {
     // --- Delete Dialog ---
 
     getDeleteDialog(): Locator {
-        return this.page.getByText('Are you sure you want to delete').locator('..');
+        return this.page.getByRole('dialog', { name: 'Delete agent' });
     }
 
     getDeleteConfirmButton(): Locator {
-        // The delete confirm button is inside the delete dialog
-        // There are multiple "Delete" texts on screen; use the dialog-scoped one
-        return this.page.getByRole('button', { name: 'Delete' }).last();
+        return this.getDeleteDialog().getByRole('button', { name: 'Delete' });
     }
 
     // --- MCPs Tab ---
