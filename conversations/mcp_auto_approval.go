@@ -12,7 +12,7 @@ import (
 )
 
 // wrapStreamWithMCPAutoApproval wraps a text stream to automatically execute
-// MCP tool calls whose per-tool policy is ToolPolicyAutoRun + enabled.
+// MCP tool calls whose per-tool policy satisfies mcp.IsToolPolicyAutoRun + enabled.
 //
 // When ALL tool calls in a batch are auto-runnable, the wrapper:
 //  1. Executes each tool via the ToolStore

@@ -23,6 +23,9 @@ import { createBotConfigHelper } from 'helpers/bot-config';
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
+type Page = import('@playwright/test').Page;
+type Locator = import('@playwright/test').Locator;
+
 type EmbeddedToolConfig = {
     name: string;
     policy: 'ask' | 'auto_run' | 'auto_run_everywhere';
@@ -60,12 +63,35 @@ async function getTownSquareChannelID(): Promise<string> {
     return townSquare.id;
 }
 
-async function openLatestThread(page: import('@playwright/test').Page, timeout: number = 30000): Promise<void> {
-    const replyIndicator = page.getByText(/\d+ repl/i);
-    await expect(replyIndicator.last()).toBeVisible({timeout});
-    await replyIndicator.last().click();
-    await page.locator('#rhsContainer').waitFor({state: 'visible', timeout: 10000});
-    await page.waitForTimeout(1000);
+async function waitForSentPost(page: Page, message: string, timeout: number = 30000): Promise<Locator> {
+    const post = page.locator('.post').filter({
+        has: page.locator('.post-message__text').getByText(message, {exact: true}),
+    }).last();
+    await expect(post).toBeVisible({timeout});
+    return post;
+}
+
+async function openThreadForPost(post: Locator, timeout: number = 30000): Promise<void> {
+    const replyIndicator = post.getByText(/\d+ repl/i);
+    await expect(replyIndicator).toBeVisible({timeout});
+    await replyIndicator.click();
+    await post.page().locator('#rhsContainer').waitFor({state: 'visible', timeout: 10000});
+    await post.page().waitForTimeout(1000);
+}
+
+async function mentionBotAndOpenThread(page: Page, mmPage: MattermostPage, botName: string, message: string, timeout: number = 30000): Promise<void> {
+    await mmPage.mentionBot(botName, message);
+    const post = await waitForSentPost(page, `@${botName} ${message}`, timeout);
+    await openThreadForPost(post, timeout);
+}
+
+async function closeRHSIfOpen(page: Page): Promise<void> {
+    const closeButton = page.locator('#rhsContainer').getByRole('button', {name: /close rhs|close/i}).first();
+    const rhs = page.locator('#rhsContainer');
+    if (await rhs.isVisible().catch(() => false) && await closeButton.isVisible().catch(() => false)) {
+        await closeButton.click();
+        await expect(rhs).not.toBeVisible({timeout: 10000});
+    }
 }
 
 test.describe('Tool Call Policies (Mocked LLM)', () => {
@@ -327,9 +353,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
         await mmPage.sendChannelMessage(mainTurnUserMessage);
 
-        const replyIndicator = page.getByText(/\d+ repl/i);
-        await expect(replyIndicator.last()).toBeVisible({timeout: 30000});
-        await replyIndicator.last().click();
+        await mentionBotAndOpenThread(page, mmPage, 'toolbot', mainTurnUserMessage);
 
         const rhs = page.locator('#rhsContainer');
         await rhs.waitFor({state: 'visible', timeout: 10000});
@@ -399,8 +423,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
             },
         ]);
 
-        await mmPage.mentionBot('toolbot', 'tool policy channel dm-only');
-        await openLatestThread(page);
+        await mentionBotAndOpenThread(page, mmPage, 'toolbot', 'tool policy channel dm-only');
 
         const rhs = page.locator('#rhsContainer');
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible({timeout: 30000});
@@ -460,10 +483,8 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
             },
         ]);
 
-        await page.goto(`${mattermost.url()}/test/channels/off-topic`);
-        await page.waitForTimeout(2000);
-        await mmPage.mentionBot('toolbot', 'tool policy channel everywhere');
-        await openLatestThread(page);
+        await closeRHSIfOpen(page);
+        await mentionBotAndOpenThread(page, mmPage, 'toolbot', 'tool policy channel everywhere');
 
         await expect(rhs.getByText('Channel everywhere auto-run completed without share approval.')).toBeVisible({timeout: 45000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();

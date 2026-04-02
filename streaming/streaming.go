@@ -420,6 +420,7 @@ func (p *MMPostStreamService) handleAutoApprovedToolCalls(post *model.Post, tool
 
 	if err := p.mmClient.UpdatePost(post); err != nil {
 		p.mmClient.LogError("Failed to update post with auto-approved tool call", "error", err)
+		return
 	}
 
 	// Send websocket event for the result-sharing UI
@@ -661,6 +662,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 
 						if updErr := p.mmClient.UpdatePost(post); updErr != nil {
 							p.mmClient.LogError("Failed to update post with tool call", "error", updErr)
+							return
 						}
 
 						p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
