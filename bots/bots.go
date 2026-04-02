@@ -308,12 +308,10 @@ func (b *MMBots) EnsureBots() error {
 	if b.agentStore != nil {
 		userAgents, err := b.agentStore.ListAgents()
 		if err != nil {
-			b.pluginAPI.Log.Error("Failed to load user agents from database", "error", err.Error())
-			// Continue with config-only bots — don't fail the whole ensure
-		} else {
-			for _, ua := range userAgents {
-				botCfgs = append(botCfgs, userAgentToBotConfig(ua))
-			}
+			return fmt.Errorf("failed to list user agents: %w", err)
+		}
+		for _, ua := range userAgents {
+			botCfgs = append(botCfgs, userAgentToBotConfig(ua))
 		}
 	}
 

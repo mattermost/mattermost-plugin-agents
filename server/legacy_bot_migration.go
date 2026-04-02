@@ -78,6 +78,8 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 		}
 	}
 
+	// If any legacy config bot still needs migration but has no Mattermost bot row,
+	// defer the entire migration: do not create partial agents, wipe config, or set the flag.
 	for _, bc := range dbCfg.Bots {
 		if bc.Name == "" {
 			continue
@@ -85,11 +87,20 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 		if _, ok := byUsername[bc.Name]; ok {
 			continue
 		}
-		botUserID, ok := mmByUsername[bc.Name]
-		if !ok {
-			pluginAPI.Log.Warn("Skipping legacy bot migration: Mattermost bot not found", "username", bc.Name)
+		if _, ok := mmByUsername[bc.Name]; !ok {
+			pluginAPI.Log.Warn("Deferring legacy bot migration: Mattermost bot not found", "username", bc.Name)
+			return false, nil
+		}
+	}
+
+	for _, bc := range dbCfg.Bots {
+		if bc.Name == "" {
 			continue
 		}
+		if _, ok := byUsername[bc.Name]; ok {
+			continue
+		}
+		botUserID := mmByUsername[bc.Name]
 
 		ua := &useragents.UserAgent{
 			BotUserID:               botUserID,

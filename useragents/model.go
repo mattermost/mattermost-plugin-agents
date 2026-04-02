@@ -67,7 +67,15 @@ func (u *UserAgent) AdminUserIDsJSON() string {
 }
 
 // EnabledToolsJSON returns the JSON-encoded string for the EnabledTools slice.
+// Preserves nil vs empty semantics (same as json.Marshal): nil → "null" (all tools),
+// empty slice → "[]" (no tools). On marshal error, returns "[]", matching mustMarshalSlice.
 func (u *UserAgent) EnabledToolsJSON() string {
+	if u.EnabledTools == nil {
+		return "null"
+	}
+	if len(u.EnabledTools) == 0 {
+		return "[]"
+	}
 	b, err := json.Marshal(u.EnabledTools)
 	if err != nil {
 		return "[]"

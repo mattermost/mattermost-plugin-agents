@@ -46,10 +46,27 @@ const ConfigTab = (props: Props) => {
 
     /** Captures `reasoningEnabled` before turning structured output on so we can restore it when structured output is turned off. */
     const reasoningBeforeStructuredRef = useRef<boolean | null>(null);
+    const prevServiceIdRef = useRef<string | null>(null);
 
     useEffect(() => {
         reasoningBeforeStructuredRef.current = null;
     }, [draft.serviceId]);
+
+    // Reset provider-specific fields when the AI service changes (avoid stale model / native tools / reasoning).
+    useEffect(() => {
+        const prev = prevServiceIdRef.current;
+        if (prev !== null && prev !== draft.serviceId) {
+            onChange({
+                model: '',
+                enabledNativeTools: [],
+                reasoningEnabled: true,
+                reasoningEffort: 'medium',
+                thinkingBudget: 0,
+                structuredOutputEnabled: false,
+            });
+        }
+        prevServiceIdRef.current = draft.serviceId;
+    }, [draft.serviceId, onChange]);
 
     const selectedService = services.find((s) => s.id === draft.serviceId);
 
@@ -107,24 +124,45 @@ const ConfigTab = (props: Props) => {
         if (!supportsModelFetching || !draft.serviceId) {
             setAvailableModels([]);
             setModelsFetchError('');
-            return;
+            setLoadingModels(false);
         }
+    }, [supportsModelFetching, draft.serviceId]);
+
+    useEffect(() => {
+        if (!supportsModelFetching || !draft.serviceId) {
+            return () => {
+                // No fetch in flight
+            };
+        }
+
+        const ac = new AbortController();
+        let stale = false;
 
         const loadModels = async () => {
             setLoadingModels(true);
             setModelsFetchError('');
             try {
-                const data = await fetchModelsForAgentService(draft.serviceId);
-                setAvailableModels(data || []);
+                const data = await fetchModelsForAgentService(draft.serviceId, ac.signal);
+                if (!stale) {
+                    setAvailableModels(data || []);
+                }
             } catch {
-                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check the service configuration.'}));
-                setAvailableModels([]);
+                if (!stale && !ac.signal.aborted) {
+                    setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check the service configuration.'}));
+                    setAvailableModels([]);
+                }
             } finally {
-                setLoadingModels(false);
+                if (!stale && !ac.signal.aborted) {
+                    setLoadingModels(false);
+                }
             }
         };
 
         loadModels();
+        return () => {
+            stale = true;
+            ac.abort();
+        };
     }, [draft.serviceId, supportsModelFetching, intl]);
 
     const supportsVisionAndTools = selectedService &&

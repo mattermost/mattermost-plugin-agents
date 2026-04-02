@@ -110,6 +110,13 @@ func canCreateAgent(client *pluginapi.Client, userID string) bool {
 	return client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent)
 }
 
+// canConfigureAgentServices returns true if the user may list services or fetch models
+// for agent configuration (ManageOwn or ManageOthers, same union as non-owner admin access).
+func canConfigureAgentServices(client *pluginapi.Client, userID string) bool {
+	return client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent) ||
+		client.User.HasPermissionTo(userID, model.PermissionManageOthersAgent)
+}
+
 // refreshBotsAndNotify forces the bot registry to re-read DB-backed agents,
 // re-runs EnsureBots on this node, and publishes a cluster event so other
 // nodes do the same.
@@ -231,7 +238,9 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 
 	if err := a.agentStore.CreateAgent(agent); err != nil {
 		// Best effort: deactivate the bot we just created since the DB insert failed
-		_, _ = a.pluginAPI.Bot.UpdateActive(mmBot.UserId, false)
+		if _, deactivateErr := a.pluginAPI.Bot.UpdateActive(mmBot.UserId, false); deactivateErr != nil {
+			a.pluginAPI.Log.Error("Failed to deactivate bot after agent persist failure", "bot_user_id", mmBot.UserId, "error", deactivateErr.Error())
+		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to persist agent: %w", err))
 		return
 	}
@@ -319,13 +328,32 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		agent.DisplayName = *req.DisplayName
 	}
 	if req.Username != nil {
-		if !validUsernameRe.MatchString(*req.Username) {
-			c.AbortWithError(http.StatusBadRequest, errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores"))
+		if *req.Username != agent.Username {
+			c.AbortWithError(http.StatusBadRequest, errors.New("username cannot be changed after the agent is created"))
 			return
 		}
-		agent.Username = *req.Username
 	}
 	if req.ServiceID != nil {
+		cfg, cfgErr := a.configStore.GetConfig()
+		if cfgErr != nil {
+			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to read config: %w", cfgErr))
+			return
+		}
+		if cfg == nil {
+			c.AbortWithError(http.StatusInternalServerError, errors.New("no plugin configuration available"))
+			return
+		}
+		found := false
+		for _, svc := range cfg.Services {
+			if svc.ID == *req.ServiceID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", *req.ServiceID))
+			return
+		}
 		agent.ServiceID = *req.ServiceID
 	}
 	if req.CustomInstructions != nil {
@@ -485,6 +513,12 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 // handleListServices returns a list of configured AI services without exposing secrets.
 // GET /services
 func (a *API) handleListServices(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	if !canConfigureAgentServices(a.pluginAPI, userID) {
+		c.AbortWithError(http.StatusForbidden, errors.New("user does not have permission to list services"))
+		return
+	}
+
 	cfg, err := a.configStore.GetConfig()
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to read config: %w", err))
@@ -518,6 +552,12 @@ type FetchModelsForServiceRequest struct {
 
 // handleFetchModelsForService lists models for a configured service using stored credentials (non-admin).
 func (a *API) handleFetchModelsForService(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	if !canConfigureAgentServices(a.pluginAPI, userID) {
+		c.AbortWithError(http.StatusForbidden, errors.New("user does not have permission to fetch models"))
+		return
+	}
+
 	var req FetchModelsForServiceRequest
 	if err := c.BindJSON(&req); err != nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))

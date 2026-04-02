@@ -20,3 +20,4 @@ CREATE TABLE IF NOT EXISTS Agents_UserAgents (
 
 CREATE INDEX idx_useragents_creator ON Agents_UserAgents(CreatorID) WHERE DeleteAt = 0;
 CREATE INDEX idx_useragents_active ON Agents_UserAgents(DeleteAt);
+CREATE UNIQUE INDEX idx_useragents_bot_user_id_active ON Agents_UserAgents(BotUserID) WHERE DeleteAt = 0;

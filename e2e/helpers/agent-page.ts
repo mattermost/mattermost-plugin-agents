@@ -31,8 +31,11 @@ export class AgentPageHelper {
     async navigateToAgents(baseUrl: string): Promise<void> {
         await this.page.goto(`${baseUrl}/plug/mattermost-ai/agents`);
         await this.page.waitForLoadState('domcontentloaded');
-        // Wait for the create button to be visible (indicates page is loaded)
-        await this.getCreateButton().waitFor({ state: 'visible', timeout: 15000 });
+        // Neutral ready: shell (heading + tabs/search) and agents fetch finished — not only the create button
+        // (e.g. users without manage permission might differ in future).
+        await this.page.getByRole('heading', { name: 'Agents' }).waitFor({ state: 'visible', timeout: 15000 });
+        await this.getSearchInput().waitFor({ state: 'visible', timeout: 15000 });
+        await expect(this.page.getByText('Loading agents...')).not.toBeVisible({ timeout: 15000 });
     }
 
     // --- Listing Page Locators ---

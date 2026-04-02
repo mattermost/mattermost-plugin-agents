@@ -30,6 +30,8 @@ const AgentsList = () => {
     const [services, setServices] = useState<ServiceInfo[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [servicesError, setServicesError] = useState<string | null>(null);
+    const [deleteInFlight, setDeleteInFlight] = useState(false);
     const [activeTab, setActiveTab] = useState<Tab>('all');
     const [deletingAgent, setDeletingAgent] = useState<UserAgent | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
@@ -41,12 +43,15 @@ const AgentsList = () => {
         try {
             setLoading(true);
             setError(null);
-            const [agentResult, serviceResult] = await Promise.all([
-                getAgents(),
-                getServices().catch(() => []),
-            ]);
+            setServicesError(null);
+            const agentResult = await getAgents();
             setAgents(agentResult || []);
-            setServices(serviceResult || []);
+            try {
+                const serviceResult = await getServices();
+                setServices(serviceResult || []);
+            } catch {
+                setServicesError(intl.formatMessage({defaultMessage: 'Failed to load AI services. Using the last loaded list.'}));
+            }
         } catch (e: any) {
             setError(intl.formatMessage({defaultMessage: 'Failed to load agents.'}));
         } finally {
@@ -69,18 +74,20 @@ const AgentsList = () => {
     }, []);
 
     const handleDeleteConfirm = useCallback(async () => {
-        if (!deletingAgent) {
+        if (!deletingAgent || deleteInFlight) {
             return;
         }
+        setDeleteInFlight(true);
         try {
             await deleteAgentAPI(deletingAgent.id);
             setAgents((prev) => prev.filter((a) => a.id !== deletingAgent.id));
         } catch (e: any) {
             setError(intl.formatMessage({defaultMessage: 'Failed to delete agent.'}));
         } finally {
+            setDeleteInFlight(false);
             setDeletingAgent(null);
         }
-    }, [deletingAgent, intl]);
+    }, [deletingAgent, deleteInFlight, intl]);
 
     const handleDeleteCancel = useCallback(() => {
         setDeletingAgent(null);
@@ -171,6 +178,10 @@ const AgentsList = () => {
                 <ErrorContainer>{error}</ErrorContainer>
             )}
 
+            {servicesError && !error && (
+                <ServicesWarningBanner>{servicesError}</ServicesWarningBanner>
+            )}
+
             {!loading && !error && filteredAgents.length === 0 && searchQuery.trim() && (
                 <NoResultsMessage>
                     <FormattedMessage
@@ -208,6 +219,7 @@ const AgentsList = () => {
             {deletingAgent && (
                 <DeleteAgentDialog
                     agentName={deletingAgent.display_name}
+                    confirmPending={deleteInFlight}
                     onConfirm={handleDeleteConfirm}
                     onCancel={handleDeleteCancel}
                 />
@@ -344,6 +356,18 @@ const ErrorContainer = styled.div`
     border-radius: 4px;
     border: 1px solid rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.3);
     color: var(--dnd-indicator, #D24B4E);
+`;
+
+const ServicesWarningBanner = styled.div`
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: rgba(var(--away-indicator-rgb, 255, 188, 66), 0.12);
+    border-radius: 4px;
+    border: 1px solid rgba(var(--away-indicator-rgb, 255, 188, 66), 0.35);
+    color: rgba(var(--center-channel-color-rgb), 0.88);
+    font-size: 14px;
 `;
 
 const NoResultsMessage = styled.div`

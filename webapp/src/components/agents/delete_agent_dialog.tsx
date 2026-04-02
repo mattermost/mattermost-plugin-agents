@@ -9,26 +9,79 @@ import {PrimaryButton} from '@/components/assets/buttons';
 
 type Props = {
     agentName: string;
+    confirmPending?: boolean;
     onConfirm: () => void;
     onCancel: () => void;
 }
 
 const DeleteAgentDialog = (props: Props) => {
     const dialogRef = useRef<HTMLDivElement>(null);
+    const deleteButtonRef = useRef<HTMLButtonElement>(null);
+    const confirmPendingRef = useRef(props.confirmPending);
+    const onCancelRef = useRef(props.onCancel);
+    confirmPendingRef.current = props.confirmPending;
+    onCancelRef.current = props.onCancel;
 
-    // Close on Escape key
+    // Focus primary control on open; restore focus on unmount
     useEffect(() => {
-        const handler = (e: KeyboardEvent) => {
+        const previousFocus = document.activeElement instanceof HTMLElement ?
+            document.activeElement :
+            null;
+
+        const focusId = window.requestAnimationFrame(() => {
+            deleteButtonRef.current?.focus();
+        });
+
+        return () => {
+            window.cancelAnimationFrame(focusId);
+            previousFocus?.focus?.({preventScroll: true});
+        };
+    }, []);
+
+    // Escape + Tab trap (use refs so handlers stay current without re-running focus effect)
+    useEffect(() => {
+        const dialog = dialogRef.current;
+        const focusableSelector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+        const onKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
-                props.onCancel();
+                if (!confirmPendingRef.current) {
+                    onCancelRef.current();
+                }
+                return;
+            }
+            if (e.key !== 'Tab' || !dialog) {
+                return;
+            }
+            const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector)).
+                filter((el) => !el.hasAttribute('disabled') && el.offsetParent !== null);
+            if (focusables.length === 0) {
+                return;
+            }
+            const first = focusables[0];
+            const last = focusables[focusables.length - 1];
+            if (e.shiftKey) {
+                if (document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                }
+            } else if (document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
             }
         };
-        document.addEventListener('keydown', handler);
-        return () => document.removeEventListener('keydown', handler);
-    }, [props.onCancel]);
 
-    // Close on click outside
+        document.addEventListener('keydown', onKeyDown);
+        return () => document.removeEventListener('keydown', onKeyDown);
+    }, []);
+
+    // Close on click outside (disabled while confirm is in flight)
     useEffect(() => {
+        if (props.confirmPending) {
+            return () => {
+                // No mousedown listener while pending
+            };
+        }
         const handler = (e: MouseEvent) => {
             if (dialogRef.current && !dialogRef.current.contains(e.target as Node)) {
                 props.onCancel();
@@ -36,7 +89,7 @@ const DeleteAgentDialog = (props: Props) => {
         };
         document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
-    }, [props.onCancel]);
+    }, [props.onCancel, props.confirmPending]);
 
     return (
         <Backdrop>
@@ -59,10 +112,19 @@ const DeleteAgentDialog = (props: Props) => {
                     />
                 </DialogBody>
                 <DialogFooter>
-                    <CancelButton onClick={props.onCancel}>
+                    <CancelButton
+                        type='button'
+                        disabled={props.confirmPending}
+                        onClick={props.onCancel}
+                    >
                         <FormattedMessage defaultMessage='Cancel'/>
                     </CancelButton>
-                    <DeleteButton onClick={props.onConfirm}>
+                    <DeleteButton
+                        ref={deleteButtonRef}
+                        type='button'
+                        disabled={props.confirmPending}
+                        onClick={props.onConfirm}
+                    >
                         <FormattedMessage defaultMessage='Delete'/>
                     </DeleteButton>
                 </DialogFooter>
@@ -126,8 +188,13 @@ const CancelButton = styled.button`
     font-size: 14px;
     cursor: pointer;
 
-    &:hover {
+    &:hover:not(:disabled) {
         background: rgba(var(--center-channel-color-rgb), 0.12);
+    }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
     }
 `;
 

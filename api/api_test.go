@@ -130,12 +130,39 @@ func newMockAgentStore() *mockAgentStore {
 	return &mockAgentStore{agents: make(map[string]*useragents.UserAgent)}
 }
 
+// cloneUserAgent returns a deep copy so API callers cannot mutate mock store internals via returned pointers.
+func cloneUserAgent(src *useragents.UserAgent) *useragents.UserAgent {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	if len(src.ChannelIDs) > 0 {
+		dst.ChannelIDs = append([]string(nil), src.ChannelIDs...)
+	}
+	if len(src.UserIDs) > 0 {
+		dst.UserIDs = append([]string(nil), src.UserIDs...)
+	}
+	if len(src.TeamIDs) > 0 {
+		dst.TeamIDs = append([]string(nil), src.TeamIDs...)
+	}
+	if len(src.AdminUserIDs) > 0 {
+		dst.AdminUserIDs = append([]string(nil), src.AdminUserIDs...)
+	}
+	if len(src.EnabledTools) > 0 {
+		dst.EnabledTools = append([]useragents.EnabledTool(nil), src.EnabledTools...)
+	}
+	if len(src.EnabledNativeTools) > 0 {
+		dst.EnabledNativeTools = append([]string(nil), src.EnabledNativeTools...)
+	}
+	return &dst
+}
+
 func (m *mockAgentStore) CreateAgent(agent *useragents.UserAgent) error {
 	agent.ID = "agen" + fmt.Sprintf("%022d", len(m.agents)+1)
 	now := time.Now().UnixMilli()
 	agent.CreateAt = now
 	agent.UpdateAt = now
-	m.agents[agent.ID] = agent
+	m.agents[agent.ID] = cloneUserAgent(agent)
 	return nil
 }
 
@@ -144,14 +171,14 @@ func (m *mockAgentStore) GetAgent(id string) (*useragents.UserAgent, error) {
 	if !ok || agent.DeleteAt != 0 {
 		return nil, nil
 	}
-	return agent, nil
+	return cloneUserAgent(agent), nil
 }
 
 func (m *mockAgentStore) ListAgents() ([]*useragents.UserAgent, error) {
 	result := make([]*useragents.UserAgent, 0, len(m.agents))
 	for _, agent := range m.agents {
 		if agent.DeleteAt == 0 {
-			result = append(result, agent)
+			result = append(result, cloneUserAgent(agent))
 		}
 	}
 	return result, nil
@@ -161,7 +188,7 @@ func (m *mockAgentStore) ListAgentsByCreator(creatorID string) ([]*useragents.Us
 	result := make([]*useragents.UserAgent, 0)
 	for _, agent := range m.agents {
 		if agent.DeleteAt == 0 && agent.CreatorID == creatorID {
-			result = append(result, agent)
+			result = append(result, cloneUserAgent(agent))
 		}
 	}
 	return result, nil
@@ -173,7 +200,7 @@ func (m *mockAgentStore) UpdateAgent(agent *useragents.UserAgent) error {
 		return fmt.Errorf("agent %q not found or already deleted", agent.ID)
 	}
 	agent.UpdateAt = time.Now().UnixMilli()
-	m.agents[agent.ID] = agent
+	m.agents[agent.ID] = cloneUserAgent(agent)
 	return nil
 }
 

@@ -814,12 +814,15 @@ export type ModelListItem = {
 }
 
 /** Fetches models for a configured service using server-stored credentials (POST /agents/models/fetch). */
-export async function fetchModelsForAgentService(serviceId: string): Promise<ModelListItem[]> {
+export async function fetchModelsForAgentService(serviceId: string, signal?: AbortSignal): Promise<ModelListItem[]> {
     const url = `${baseRoute()}/agents/models/fetch`;
-    const response = await fetch(url, Client4.getOptions({
-        method: 'POST',
-        body: JSON.stringify({service_id: serviceId}),
-    }));
+    const response = await fetch(url, {
+        ...Client4.getOptions({
+            method: 'POST',
+            body: JSON.stringify({service_id: serviceId}),
+        }),
+        signal,
+    });
 
     if (response.ok) {
         return response.json();

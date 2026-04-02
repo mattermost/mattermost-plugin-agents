@@ -30,6 +30,10 @@ type Props = {
     onChange: (tools: EnabledTool[]) => void;
 }
 
+function serverToolsPanelId(serverOrigin: string): string {
+    return `mcp-tools-${serverOrigin.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+}
+
 const McpsTab = (props: Props) => {
     const {enabledTools, onChange} = props;
     const intl = useIntl();
@@ -187,66 +191,116 @@ const McpsTab = (props: Props) => {
                     ).length;
                     const totalCount = server.tools.filter((t) => t.enabled).length;
 
+                    const toolsPanelId = serverToolsPanelId(server.serverOrigin);
+                    const allOn = enabledCount === totalCount && totalCount > 0;
+                    const serverToggleLabel = allOn ?
+                        intl.formatMessage(
+                            {defaultMessage: 'Disable all tools for {serverName}'},
+                            {serverName: server.name},
+                        ) :
+                        intl.formatMessage(
+                            {defaultMessage: 'Enable all tools for {serverName}'},
+                            {serverName: server.name},
+                        );
+
                     return (
                         <ServerBlock key={server.serverOrigin}>
-                            <ServerHeader onClick={() => toggleServer(server.serverOrigin)}>
-                                <ChevronContainer>
-                                    {isExpanded ? <ChevronDownIcon size={16}/> : <ChevronRightIcon size={16}/>}
-                                </ChevronContainer>
-                                <ServerInfo>
-                                    <ServerName>{server.name}</ServerName>
-                                    <ServerMeta>
-                                        {enabledCount > 0 ?
-                                            intl.formatMessage(
-                                                {defaultMessage: '{enabled} of {total} tools enabled'},
-                                                {enabled: enabledCount, total: totalCount},
-                                            ) :
-                                            intl.formatMessage(
-                                                {defaultMessage: '{total} tools available'},
-                                                {total: totalCount},
-                                            )
-                                        }
-                                        {server.authenticated && (
-                                            <AuthBadge>
-                                                <FormattedMessage defaultMessage='Connected'/>
-                                            </AuthBadge>
-                                        )}
-                                        {!server.authenticated && server.authEmail === '' && server.tools.length === 0 && (
-                                            <NotConnectedBadge>
-                                                <FormattedMessage defaultMessage='Not connected'/>
-                                            </NotConnectedBadge>
-                                        )}
-                                    </ServerMeta>
-                                </ServerInfo>
-                                <ServerToggle
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        toggleAllServerTools(server);
-                                    }}
-                                    $enabled={enabledCount === totalCount && totalCount > 0}
+                            <ServerTopRow>
+                                <ServerHeaderButton
+                                    type='button'
+                                    aria-expanded={isExpanded}
+                                    aria-controls={toolsPanelId}
+                                    aria-label={intl.formatMessage(
+                                        {defaultMessage: '{serverName}, {detail}. Press to expand or collapse tools.'},
+                                        {
+                                            serverName: server.name,
+                                            detail: enabledCount > 0 ?
+                                                intl.formatMessage(
+                                                    {defaultMessage: '{enabled} of {total} tools enabled'},
+                                                    {enabled: enabledCount, total: totalCount},
+                                                ) :
+                                                intl.formatMessage(
+                                                    {defaultMessage: '{total} tools available'},
+                                                    {total: totalCount},
+                                                ),
+                                        },
+                                    )}
+                                    onClick={() => toggleServer(server.serverOrigin)}
                                 >
-                                    <ToggleKnob $enabled={enabledCount === totalCount && totalCount > 0}/>
+                                    <ChevronContainer aria-hidden={true}>
+                                        {isExpanded ? <ChevronDownIcon size={16}/> : <ChevronRightIcon size={16}/>}
+                                    </ChevronContainer>
+                                    <ServerInfo>
+                                        <ServerName>{server.name}</ServerName>
+                                        <ServerMeta>
+                                            {enabledCount > 0 ?
+                                                intl.formatMessage(
+                                                    {defaultMessage: '{enabled} of {total} tools enabled'},
+                                                    {enabled: enabledCount, total: totalCount},
+                                                ) :
+                                                intl.formatMessage(
+                                                    {defaultMessage: '{total} tools available'},
+                                                    {total: totalCount},
+                                                )
+                                            }
+                                            {server.authenticated && (
+                                                <AuthBadge>
+                                                    <FormattedMessage defaultMessage='Connected'/>
+                                                </AuthBadge>
+                                            )}
+                                            {!server.authenticated && server.authEmail === '' && server.tools.length === 0 && (
+                                                <NotConnectedBadge>
+                                                    <FormattedMessage defaultMessage='Not connected'/>
+                                                </NotConnectedBadge>
+                                            )}
+                                        </ServerMeta>
+                                    </ServerInfo>
+                                </ServerHeaderButton>
+                                <ServerToggle
+                                    type='button'
+                                    aria-label={serverToggleLabel}
+                                    onClick={() => toggleAllServerTools(server)}
+                                    $enabled={allOn}
+                                >
+                                    <ToggleKnob $enabled={allOn}/>
                                 </ServerToggle>
-                            </ServerHeader>
+                            </ServerTopRow>
 
                             {isExpanded && (
-                                <ToolList>
-                                    {server.tools.filter((t) => t.enabled).map((tool) => (
-                                        <ToolRow key={tool.name}>
-                                            <ToolInfo>
-                                                <ToolName>{tool.name}</ToolName>
-                                                {tool.description && (
-                                                    <ToolDescription>{tool.description}</ToolDescription>
-                                                )}
-                                            </ToolInfo>
-                                            <ToolToggle
-                                                onClick={() => toggleTool(server.serverOrigin, tool.name)}
-                                                $enabled={isToolEnabled(server.serverOrigin, tool.name)}
-                                            >
-                                                <ToggleKnob $enabled={isToolEnabled(server.serverOrigin, tool.name)}/>
-                                            </ToolToggle>
-                                        </ToolRow>
-                                    ))}
+                                <ToolList
+                                    id={toolsPanelId}
+                                    role='region'
+                                    aria-label={server.name}
+                                >
+                                    {server.tools.filter((t) => t.enabled).map((tool) => {
+                                        const toolOn = isToolEnabled(server.serverOrigin, tool.name);
+                                        return (
+                                            <ToolRow key={tool.name}>
+                                                <ToolInfo>
+                                                    <ToolName>{tool.name}</ToolName>
+                                                    {tool.description && (
+                                                        <ToolDescription>{tool.description}</ToolDescription>
+                                                    )}
+                                                </ToolInfo>
+                                                <ToolToggle
+                                                    type='button'
+                                                    aria-label={toolOn ?
+                                                        intl.formatMessage(
+                                                            {defaultMessage: 'Disable tool {toolName} on {serverName}'},
+                                                            {toolName: tool.name, serverName: server.name},
+                                                        ) :
+                                                        intl.formatMessage(
+                                                            {defaultMessage: 'Enable tool {toolName} on {serverName}'},
+                                                            {toolName: tool.name, serverName: server.name},
+                                                        )}
+                                                    onClick={() => toggleTool(server.serverOrigin, tool.name)}
+                                                    $enabled={toolOn}
+                                                >
+                                                    <ToggleKnob $enabled={toolOn}/>
+                                                </ToolToggle>
+                                            </ToolRow>
+                                        );
+                                    })}
                                 </ToolList>
                             )}
                         </ServerBlock>
@@ -296,15 +350,36 @@ const ServerBlock = styled.div`
     overflow: hidden;
 `;
 
-const ServerHeader = styled.div`
+const ServerTopRow = styled.div`
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 16px;
-    cursor: pointer;
+    padding: 12px 16px 12px 16px;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
+    }
+`;
+
+const ServerHeaderButton = styled.button`
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    padding: 0;
+    text-align: left;
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+
+    &:focus-visible {
+        outline: 2px solid var(--button-bg);
+        outline-offset: 2px;
+        border-radius: 4px;
     }
 `;
 

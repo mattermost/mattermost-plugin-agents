@@ -4,7 +4,7 @@
 import React from 'react';
 import {Store, UnknownAction} from 'redux';
 import styled from 'styled-components';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, createIntl} from 'react-intl';
 
 import {GlobalState} from '@mattermost/types/store';
 
@@ -40,6 +40,25 @@ import {isEnterpriseLicensedOrDevelopment} from './license';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
+function getAgentsProductLabel(store: WebappStore): string {
+    const state = store.getState() as any;
+    const locale = state.entities?.i18n?.locale ?? 'en';
+    let messages: Record<string, string>;
+    try {
+        // eslint-disable-next-line global-require, import/no-dynamic-require
+        messages = require(`./i18n/${locale}.json`);
+    } catch {
+        // eslint-disable-next-line global-require
+        messages = require('./i18n/en.json');
+    }
+    const intl = createIntl({
+        locale,
+        messages,
+        defaultLocale: 'en',
+    });
+    return intl.formatMessage({defaultMessage: 'Agents'});
+}
+
 const IconAIContainer = styled.img`
 	border-radius: 50%;
     width: 24px;
@@ -57,7 +76,7 @@ const RHSTitle = () => {
     return (
         <RHSTitleContainer>
             <IconAIContainer src={aiIcon}/>
-            {'Agents'}
+            <FormattedMessage defaultMessage='Agents'/>
         </RHSTitleContainer>
     );
 };
@@ -168,12 +187,14 @@ export default class Plugin {
         }
 
         registry.registerAdminConsoleCustomSetting('Config', Config);
+        const agentsProductLabel = getAgentsProductLabel(store);
+
         if (rhs) {
             registry.registerChannelHeaderButtonAction(<ChannelHeaderIcon/>, () => {
                 store.dispatch(rhs.toggleRHSPlugin);
             },
-            'Agents',
-            'Agents',
+            agentsProductLabel,
+            agentsProductLabel,
             );
         }
 
@@ -214,7 +235,7 @@ export default class Plugin {
             (registry as any).registerProduct(
                 AGENTS_ROUTE,
                 IconAI,
-                'Agents',
+                agentsProductLabel,
                 AGENTS_ROUTE,
                 AgentsPage,
             );

@@ -22,8 +22,10 @@ test.describe('Agent Access Control', () => {
     }, { timeout: 180000 });
 
     test.afterAll(async () => {
-        await openAIMock.stop();
-        await mattermost.stop();
+        await Promise.allSettled([
+            openAIMock ? openAIMock.stop() : Promise.resolve(),
+            mattermost ? mattermost.stop() : Promise.resolve(),
+        ]);
     });
 
     test('should block user when UserAccessLevel=Block', async ({ page }) => {

@@ -333,6 +333,7 @@ func TestListServicesNoSecrets(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	recorder := doRequest(e.api, http.MethodGet, "/services", nil, testUserID)
@@ -402,6 +403,7 @@ func TestFetchModelsForServiceMissingCredentials(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	body := map[string]string{"service_id": "svc-1"}
@@ -414,10 +416,103 @@ func TestFetchModelsForServiceUnknownService(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	body := map[string]string{"service_id": "missing-svc"}
 	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
+	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+}
+
+func TestListServicesForbiddenWithoutManageOwnPermission(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	recorder := doRequest(e.api, http.MethodGet, "/services", nil, testUserID)
+	require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
+}
+
+func TestFetchModelsForbiddenWithoutManageOwnPermission(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	body := map[string]string{"service_id": "svc-1"}
+	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
+	require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
+}
+
+func TestListServicesWithManageOthersPermission(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(true)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	recorder := doRequest(e.api, http.MethodGet, "/services", nil, testUserID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+}
+
+func TestFetchModelsForServiceWithManageOthersPermission(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(true)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	body := map[string]string{"service_id": "svc-1"}
+	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
+	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+}
+
+func TestUpdateAgentUsernameChangeForbidden(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+		ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
+		DisplayName: "Agent", Username: "same-user", ServiceID: "svc-1",
+	}
+
+	newUsername := "other-user"
+	body := UpdateAgentRequest{Username: &newUsername}
+
+	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+}
+
+func TestUpdateAgentInvalidServiceID(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+		ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
+		DisplayName: "Agent", Username: "my-agent", ServiceID: "svc-1",
+	}
+
+	badSvc := "not-a-configured-service"
+	body := UpdateAgentRequest{ServiceID: &badSvc}
+
+	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 }
 

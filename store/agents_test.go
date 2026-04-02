@@ -129,9 +129,12 @@ func TestAgentListReturnsOnlyActive(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, agents, 2)
 
-	// Should be ordered by CreateAt DESC (a3 last created, so first in list)
-	assert.Equal(t, a3.ID, agents[0].ID)
-	assert.Equal(t, a1.ID, agents[1].ID)
+	// Ordered by CreateAt DESC (tiebreak: order is undefined if CreateAt matches)
+	ids := map[string]struct{}{agents[0].ID: {}, agents[1].ID: {}}
+	_, okA1 := ids[a1.ID]
+	_, okA3 := ids[a3.ID]
+	assert.True(t, okA1 && okA3, "list should contain the two active agents")
+	assert.GreaterOrEqual(t, agents[0].CreateAt, agents[1].CreateAt)
 }
 
 func TestAgentListByCreator(t *testing.T) {

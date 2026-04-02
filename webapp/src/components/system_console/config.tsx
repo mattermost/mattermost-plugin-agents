@@ -85,6 +85,17 @@ const ErrorContainer = styled.div`
     color: #D24B4E;
 `;
 
+const RuntimeBotsErrorBanner = styled.div`
+    grid-column: 1 / -1;
+    padding: 10px 12px;
+    margin-bottom: 4px;
+    background: rgba(var(--away-indicator-rgb, 255, 188, 66), 0.12);
+    border-radius: 4px;
+    border: 1px solid rgba(var(--away-indicator-rgb, 255, 188, 66), 0.35);
+    color: rgba(var(--center-channel-color-rgb), 0.88);
+    font-size: 14px;
+`;
+
 const defaultConfig: Config = {
     services: [],
     bots: [],
@@ -169,6 +180,7 @@ const Config = (props: Props) => {
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [runtimeBots, setRuntimeBots] = useState<RuntimeBotOption[]>([]);
+    const [runtimeBotsError, setRuntimeBotsError] = useState<string | null>(null);
     const intl = useIntl();
 
     // Load config from plugin API on mount
@@ -195,8 +207,9 @@ const Config = (props: Props) => {
             try {
                 const res = await getAIBots();
                 setRuntimeBots(res.bots ?? []);
+                setRuntimeBotsError(null);
             } catch {
-                setRuntimeBots([]);
+                setRuntimeBotsError(intl.formatMessage({defaultMessage: 'Failed to load the runtime bot list. The previous list is kept.'}));
             }
         };
         loadRuntimeBots();
@@ -296,6 +309,9 @@ const Config = (props: Props) => {
                 subtitle={intl.formatMessage({defaultMessage: 'Choose a default bot.'})}
             >
                 <ItemList>
+                    {runtimeBotsError && (
+                        <RuntimeBotsErrorBanner>{runtimeBotsError}</RuntimeBotsErrorBanner>
+                    )}
                     <SelectionItem
                         label={intl.formatMessage({defaultMessage: 'Default bot'})}
                         value={value.defaultBotName}
