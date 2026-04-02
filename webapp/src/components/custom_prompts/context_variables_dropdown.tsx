@@ -70,11 +70,11 @@ function useTemplateVariables(): TemplateVariable[] {
     });
     const currentChannelId = useSelector((state: any) => state.entities?.channels?.currentChannelId);
     const currentChannel = useSelector((state: any) =>
-        currentChannelId ? state.entities?.channels?.channels?.[currentChannelId] : null,
+        (currentChannelId ? state.entities?.channels?.channels?.[currentChannelId] : null),
     );
     const currentTeamId = useSelector((state: any) => state.entities?.teams?.currentTeamId);
     const currentTeam = useSelector((state: any) =>
-        currentTeamId ? state.entities?.teams?.teams?.[currentTeamId] : null,
+        (currentTeamId ? state.entities?.teams?.teams?.[currentTeamId] : null),
     );
     const siteName = useSelector((state: any) => state.entities?.general?.config?.SiteName);
 

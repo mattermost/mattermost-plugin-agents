@@ -15,13 +15,49 @@ import {CustomPrompt} from '@/types';
 import {LLMBot} from '@/bots';
 import manifest from '@/manifest';
 import {DropdownBotSelector} from '@/components/bot_selector';
-import {MenuItem, MenuSeparator} from '@/mm_webapp';
 
 const EMPTY_BOTS: LLMBot[] = [];
+
+function dismissMenu() {
+    document.getElementById('backdropForMenuComponent')?.click();
+}
 
 const AgentSelectorWrapper = styled.div`
     padding: 0 4px;
     margin-bottom: 4px;
+`;
+
+const StyledMenuItem = styled.li`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 20px;
+    cursor: pointer;
+    font-family: 'Open Sans', sans-serif;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--center-channel-color);
+    list-style: none;
+
+    &:hover {
+        background: rgba(var(--center-channel-color-rgb), 0.08);
+    }
+
+    &[aria-disabled='true'] {
+        cursor: default;
+        color: rgba(var(--center-channel-color-rgb), 0.40);
+
+        &:hover {
+            background: none;
+        }
+    }
+`;
+
+const StyledMenuSeparator = styled.li`
+    height: 1px;
+    margin: 4px 0;
+    background: rgba(var(--center-channel-color-rgb), 0.08);
+    list-style: none;
 `;
 
 interface SubMenuHeaderProps {
@@ -103,6 +139,7 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
     }, [bots, selectedBotId, dispatch]);
 
     const handlePromptClick = useCallback(async (prompt: CustomPrompt) => {
+        dismissMenu();
         try {
             const botUsername = selectedBot?.username;
             const result = await renderCustomPrompt(prompt.id, channelId, botUsername);
@@ -117,6 +154,7 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
     }, [channelId, updateText, selectedBot, isRHS]);
 
     const handleCreateClick = useCallback(() => {
+        dismissMenu();
         dispatch({type: ShowCustomPromptsModalHandler, show: true});
     }, [dispatch]);
 
@@ -124,24 +162,30 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
         <>
             {prompts && prompts.length > 0 ? (
                 prompts.map((prompt) => (
-                    <MenuItem
+                    <StyledMenuItem
                         key={prompt.id}
-                        labels={<span>{prompt.name}</span>}
+                        role='menuitem'
                         onClick={() => handlePromptClick(prompt)}
-                    />
+                    >
+                        <span>{prompt.name}</span>
+                    </StyledMenuItem>
                 ))
             ) : (
-                <MenuItem
-                    labels={<span><FormattedMessage defaultMessage='No custom prompts yet'/></span>}
-                    isDisabled={true}
-                />
+                <StyledMenuItem
+                    role='menuitem'
+                    aria-disabled='true'
+                >
+                    <span><FormattedMessage defaultMessage='No custom prompts yet'/></span>
+                </StyledMenuItem>
             )}
-            <MenuSeparator/>
-            <MenuItem
-                labels={<span><FormattedMessage defaultMessage='Create a prompt'/></span>}
-                leadingElement={<PlusIcon size={16}/>}
+            <StyledMenuSeparator role='separator'/>
+            <StyledMenuItem
+                role='menuitem'
                 onClick={handleCreateClick}
-            />
+            >
+                <PlusIcon size={16}/>
+                <span><FormattedMessage defaultMessage='Create a prompt'/></span>
+            </StyledMenuItem>
         </>
     );
 };
