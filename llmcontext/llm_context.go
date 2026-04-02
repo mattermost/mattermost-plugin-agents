@@ -4,6 +4,7 @@
 package llmcontext
 
 import (
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -121,6 +122,30 @@ func (b *Builder) WithLLMContextRequestingUser(user *model.User) llm.ContextOpti
 	}
 }
 
+// normalizeMCPServerOrigin trims whitespace and trailing slashes so allowlist
+// ServerOrigin values match ToolAuthError.ServerOrigin across formatting variants.
+func normalizeMCPServerOrigin(s string) string {
+	return strings.TrimRight(strings.TrimSpace(s), "/")
+}
+
+// toolAuthErrorMatchesAllowlist reports whether authErr refers to a server that still
+// appears in the per-agent MCP allowlist (by ServerOrigin).
+func toolAuthErrorMatchesAllowlist(authErr llm.ToolAuthError, allowlist []llm.EnabledMCPTool) bool {
+	errOrigin := normalizeMCPServerOrigin(authErr.ServerOrigin)
+	for i := range allowlist {
+		if normalizeMCPServerOrigin(allowlist[i].ServerOrigin) == errOrigin {
+			return true
+		}
+	}
+	return false
+}
+
+func filterToolAuthErrorsForAllowlist(errors []llm.ToolAuthError, allowlist []llm.EnabledMCPTool) []llm.ToolAuthError {
+	return slices.DeleteFunc(slices.Clone(errors), func(e llm.ToolAuthError) bool {
+		return !toolAuthErrorMatchesAllowlist(e, allowlist)
+	})
+}
+
 // sanitizeUserProfileField strips characters that could be used for prompt injection
 // in user profile fields rendered into the system prompt. It collapses newlines, carriage
 // returns, and tabs to spaces, removes other control characters, and trims the result.
@@ -186,13 +211,18 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 		// retain only tools in that list. Config-defined bots have nil (= no filtering).
 		// This runs AFTER admin policy (filterToolsByConfig inside GetToolsForUser)
 		// and BEFORE per-user filtering (RemoveToolsByServerOrigin in conversations.go).
-		if enabledTools := bot.GetConfig().EnabledMCPTools; enabledTools != nil {
-			store.RetainOnlyMCPTools(enabledTools)
+		enabledMCPAllowlist := bot.GetConfig().EnabledMCPTools
+		if enabledMCPAllowlist != nil {
+			store.RetainOnlyMCPTools(enabledMCPAllowlist)
 		}
 
 		// Handle MCP errors if any occurred
 		if mcpErrors != nil {
-			for _, authError := range mcpErrors.ToolAuthErrors {
+			authErrors := mcpErrors.ToolAuthErrors
+			if enabledMCPAllowlist != nil {
+				authErrors = filterToolAuthErrorsForAllowlist(mcpErrors.ToolAuthErrors, enabledMCPAllowlist)
+			}
+			for _, authError := range authErrors {
 				store.AddAuthError(authError)
 			}
 		}

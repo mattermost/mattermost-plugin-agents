@@ -91,6 +91,7 @@ func (l *pluginLogger) Error(message string, keyValuePairs ...any) {
 
 func (p *Plugin) OnActivate() error {
 	pluginAPI := pluginapi.NewClient(p.API, p.Driver)
+	p.pluginAPI = pluginAPI
 	mmClient := mmapi.NewClient(pluginAPI)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
 	dbClient := mmapi.NewDBClient(pluginAPI)
@@ -201,6 +202,8 @@ func (p *Plugin) OnActivate() error {
 			bots.ForceRefreshOnNextEnsure()
 			if ensureErr := bots.EnsureBots(); ensureErr != nil {
 				pluginAPI.Log.Error("failed to ensure bots after legacy bot migration", "context", context, "error", ensureErr)
+			} else if pubErr := p.PublishAgentUpdate(); pubErr != nil {
+				pluginAPI.Log.Error("Failed to publish agent update cluster event", "error", pubErr.Error())
 			}
 		}
 	}
@@ -208,7 +211,6 @@ func (p *Plugin) OnActivate() error {
 	p.configuration.RegisterUpdateListener(func() {
 		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
-			return
 		}
 		migrateAndRefresh("config_update")
 	})
@@ -502,7 +504,6 @@ func (p *Plugin) OnActivate() error {
 	)
 
 	// Keep only what we need
-	p.pluginAPI = pluginAPI
 	p.apiService = apiService
 	p.bots = bots
 	p.indexerService = indexerService

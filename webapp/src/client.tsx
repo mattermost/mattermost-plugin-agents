@@ -772,11 +772,12 @@ export async function uploadAgentAvatar(agentId: string, file: File): Promise<vo
     const formData = new FormData();
     formData.append('image', file);
 
+    const headers = {...(Client4.getOptions({method: 'POST'}).headers as Record<string, string>)};
+    delete headers['Content-Type'];
+
     const response = await fetch(url, {
         method: 'POST',
-        headers: {
-            ...Client4.getOptions({method: 'POST'}).headers as Record<string, string>,
-        },
+        headers,
         body: formData,
     });
 

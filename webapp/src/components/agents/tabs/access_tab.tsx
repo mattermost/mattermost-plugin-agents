@@ -73,7 +73,10 @@ const AccessTab = (props: Props) => {
                 <SelectUser
                     userIDs={draft.adminUserIds}
                     teamIDs={[]}
-                    onChangeIDs={(userIds: string[]) => onChange({adminUserIds: userIds})}
+                    onChangeIDs={(
+                        userIds: string[],
+                        _teamIds: string[], // eslint-disable-line @typescript-eslint/no-unused-vars -- SelectUser passes (userIds, teamIds)
+                    ) => onChange({adminUserIds: userIds})}
                 />
             </Section>
         </SectionsContainer>

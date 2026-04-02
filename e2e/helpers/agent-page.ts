@@ -67,10 +67,10 @@ export class AgentPageHelper {
     }
 
     async openAgentActions(displayName: string): Promise<void> {
-        const actionsBtn = this.page.getByText(displayName, {exact: true}).locator(
-            'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]//button[@aria-label="Agent actions"]',
+        const rowScope = this.page.getByText(displayName, { exact: true }).locator(
+            'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
         );
-        await actionsBtn.click();
+        await rowScope.getByRole('button', { name: 'Agent actions' }).click();
     }
 
     /**
