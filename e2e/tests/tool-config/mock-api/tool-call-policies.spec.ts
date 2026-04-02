@@ -92,6 +92,13 @@ async function closeRHSIfOpen(page: Page): Promise<void> {
     }
 }
 
+async function waitForChannelReady(page: Page, channelDisplayName: string): Promise<void> {
+    await page.locator('#channelHeaderTitle').getByText(channelDisplayName, {exact: true}).waitFor({
+        state: 'visible',
+        timeout: 10000,
+    });
+}
+
 test.describe('Tool Call Policies (Mocked LLM)', () => {
     test.beforeAll(async () => {
         mattermost = await RunToolConfigContainerWithPolicies();
@@ -384,7 +391,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
         await page.goto(`${mattermost.url()}/test/channels/off-topic`);
-        await page.waitForTimeout(2000);
+        await waitForChannelReady(page, 'Off-Topic');
 
         await setEmbeddedToolPolicies([
             {name: 'read_post', policy: 'auto_run', enabled: true},
