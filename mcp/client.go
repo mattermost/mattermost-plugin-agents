@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-ai/config"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -20,6 +21,9 @@ const (
 	MMUserIDHeader     = "X-Mattermost-UserID"
 	EmbeddedServerName = "Mattermost"
 	EmbeddedClientKey  = "embedded://mattermost"
+
+	ToolPolicyAsk     = config.MCPToolPolicyAsk
+	ToolPolicyAutoRun = config.MCPToolPolicyAutoRun
 )
 
 // EmbeddedMCPServer interface for dependency injection
@@ -104,7 +108,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 	// Create client instance
 	client := &Client{
 		session:        mcpSession,
-		config:         ServerConfig{Name: EmbeddedClientKey},
+		config:         ServerConfig{Name: EmbeddedClientKey, BaseURL: EmbeddedClientKey, Enabled: true},
 		tools:          make(map[string]*mcp.Tool),
 		userID:         userID,
 		log:            c.log,
@@ -407,16 +411,28 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 			return "", fmt.Errorf("failed to call tool %s on server %s: %w", toolName, c.config.Name, err)
 		}
 	}
-
 	// Extract text content from the result
+	text := ""
 	if len(result.Content) > 0 {
-		text := ""
 		for _, content := range result.Content {
 			// Use type assertion to extract text content
 			if textContent, ok := content.(*mcp.TextContent); ok {
 				text += textContent.Text + "\n"
 			}
 		}
+	}
+
+	// MCP tools can return IsError=true without transport-level errors.
+	// Surface this as a resolver error so tool-call status is set correctly.
+	if result.IsError {
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "" {
+			return "", fmt.Errorf("tool %s on server %s returned an error", toolName, c.config.Name)
+		}
+		return trimmed, errors.New(trimmed)
+	}
+
+	if text != "" {
 		return text, nil
 	}
 

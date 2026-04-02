@@ -654,6 +654,9 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 
 			// Handle tool calls in assistant messages
 			if len(post.ToolUse) > 0 {
+				if post.Message == "" {
+					msg.Content = nil
+				}
 				toolCalls := make([]schemas.ChatAssistantMessageToolCall, 0, len(post.ToolUse))
 				for i, tc := range post.ToolUse {
 					toolCalls = append(toolCalls, schemas.ChatAssistantMessageToolCall{
@@ -1007,19 +1010,17 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 			}
 
 		case llm.PostRoleBot:
-			msg := schemas.ResponsesMessage{
-				Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
-				Content: &schemas.ResponsesMessageContent{
-					ContentStr: Ptr(post.Message),
-				},
-			}
-
-			messages = append(messages, msg)
-
 			// Handle tool calls in assistant messages
 			if len(post.ToolUse) > 0 {
+				if post.Message != "" {
+					messages = append(messages, schemas.ResponsesMessage{
+						Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
+						Content: &schemas.ResponsesMessageContent{
+							ContentStr: Ptr(post.Message),
+						},
+					})
+				}
 				for _, tc := range post.ToolUse {
-					// Add function call message
 					funcCallMsg := schemas.ResponsesMessage{
 						Type: Ptr(schemas.ResponsesMessageTypeFunctionCall),
 						ResponsesToolMessage: &schemas.ResponsesToolMessage{
@@ -1030,7 +1031,6 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 					}
 					messages = append(messages, funcCallMsg)
 
-					// Add function call output message
 					funcOutputMsg := schemas.ResponsesMessage{
 						Type: Ptr(schemas.ResponsesMessageTypeFunctionCallOutput),
 						ResponsesToolMessage: &schemas.ResponsesToolMessage{
@@ -1042,7 +1042,13 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 					}
 					messages = append(messages, funcOutputMsg)
 				}
-				continue // Skip adding msg again since we handled tool calls
+			} else if post.Message != "" {
+				messages = append(messages, schemas.ResponsesMessage{
+					Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
+					Content: &schemas.ResponsesMessageContent{
+						ContentStr: Ptr(post.Message),
+					},
+				})
 			}
 		}
 	}
@@ -1241,6 +1247,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	// Process stream
 	var toolCalls []llm.ToolCall
 	toolCallsBuffer := make(map[string]*responsesToolCallBuffer)
+	var currentFuncCallID string // tracks the active function call for argument deltas
 
 	// Reasoning buffers
 	var reasoningBuffer strings.Builder
@@ -1377,7 +1384,9 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				blockStartPos = textLen
 
 			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
-				// Tool call arguments delta
+				// Tool call arguments delta.
+				// Bifrost often does not populate resp.Item on delta events; the call ID
+				// may come from the preceding OutputItemAdded event (currentFuncCallID).
 				if resp.Item != nil && resp.Item.ResponsesToolMessage != nil {
 					tm := resp.Item.ResponsesToolMessage
 					callID := ""
@@ -1395,6 +1404,11 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
 						}
 					}
+				} else if currentFuncCallID != "" && resp.Delta != nil {
+					if toolCallsBuffer[currentFuncCallID] == nil {
+						toolCallsBuffer[currentFuncCallID] = &responsesToolCallBuffer{id: currentFuncCallID}
+					}
+					toolCallsBuffer[currentFuncCallID].arguments.WriteString(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
@@ -1407,6 +1421,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							callID = *tm.CallID
 						}
 						if callID != "" {
+							currentFuncCallID = callID
 							if toolCallsBuffer[callID] == nil {
 								toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
 							}

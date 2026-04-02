@@ -102,6 +102,9 @@ type mockMCPClientManager struct {
 	oauthManager   *mcp.OAuthManager
 	toolsCache     *mcp.ToolsCache
 	httpClient     *http.Client
+	tools          []llm.Tool
+	mcpErrors      *mcp.Errors
+	config         mcp.Config
 	embeddedServer mcp.EmbeddedMCPServer
 }
 
@@ -139,6 +142,14 @@ func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error)
 
 func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
 	return m.httpClient
+}
+
+func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors) {
+	return m.tools, m.mcpErrors
+}
+
+func (m *mockMCPClientManager) GetConfig() mcp.Config {
+	return m.config
 }
 
 func (e *TestEnvironment) Cleanup(t *testing.T) {
@@ -274,6 +285,9 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		nil,
 		nil,
 		nil,
+		nil,
+		nil,
+		nil,
 	)
 
 	return &TestEnvironment{
@@ -366,8 +380,9 @@ func TestAdminRouter(t *testing.T) {
 	gin.DefaultWriter = io.Discard
 
 	for urlName, url := range map[string]string{
-		"reindex_status": "/admin/reindex/status",
-		"mcp_tools":      "/admin/mcp/tools",
+		"reindex_status":  "/admin/reindex/status",
+		"mcp_tools":       "/admin/mcp/tools",
+		"mcp_vetted_seed": "/admin/mcp/vetted-tool-seed",
 	} {
 		for name, test := range map[string]struct {
 			request        *http.Request

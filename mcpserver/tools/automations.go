@@ -347,6 +347,9 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 
 	// If a specific automation ID was requested, fetch just that one.
 	if args.AutomationID != "" {
+		if !model.IsValidId(args.AutomationID) {
+			return "invalid automation_id", fmt.Errorf("invalid automation_id")
+		}
 		return p.getAutomationByID(ctx, mcpContext, args.AutomationID)
 	}
 
@@ -444,8 +447,8 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool update_automation: %w", err)
 	}
 
-	if args.AutomationID == "" {
-		return "automation_id is required", fmt.Errorf("automation_id cannot be empty")
+	if !model.IsValidId(args.AutomationID) {
+		return "invalid automation_id", fmt.Errorf("invalid automation_id")
 	}
 
 	if mcpContext.Client == nil {
@@ -494,8 +497,8 @@ func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool delete_automation: %w", err)
 	}
 
-	if args.AutomationID == "" {
-		return "automation_id is required", fmt.Errorf("automation_id cannot be empty")
+	if !model.IsValidId(args.AutomationID) {
+		return "invalid automation_id", fmt.Errorf("invalid automation_id")
 	}
 
 	if mcpContext.Client == nil {

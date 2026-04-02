@@ -324,7 +324,9 @@ func (b *MMBots) EnsureBots() error {
 	b.bots = bots
 	// Store deep copies of the successfully ensured configs for optimistic checking.
 	// Deep copy is needed because BotConfig contains slice fields (EnabledNativeTools, etc.)
-	// that would otherwise share backing arrays with the live config.
+	// that would otherwise share backing arrays with the live config. The JSON-based
+	// copy has non-trivial cost for large bot sets, but this path runs only when
+	// optimistic checks above detect bot/service config changes.
 	copiedBotCfgs, copyErr := config.DeepCopyJSON(currentBotCfgs)
 	if copyErr != nil {
 		b.botsLock.Unlock()

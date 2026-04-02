@@ -10,12 +10,13 @@ import {GlobalState} from '@mattermost/types/store';
 
 import manifest from '@/manifest';
 
-import {getAIThreads, updateRead} from '@/client';
+import {getAIThreads, getUserMCPTools, getUserToolPreferences, updateRead} from '@/client';
 
 import {useBotlist} from '@/bots';
 
 import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
 
+import type {UserMCPServerInfo} from './tool_provider_popover';
 import ThreadItem from './thread_item';
 import RHSHeader from './rhs_header';
 import RHSNewTab from './rhs_new_tab';
@@ -54,6 +55,30 @@ export default function RHS() {
     const currentTeamId = useSelector<GlobalState, string>((state) => state.entities.teams.currentTeamId);
 
     const [threads, setThreads] = useState<AIThread[] | null>(null);
+    const [disabledServers, setDisabledServers] = useState<string[]>([]);
+    const [preloadedServers, setPreloadedServers] = useState<UserMCPServerInfo[]>([]);
+
+    useEffect(() => {
+        const fetchPreferences = async () => {
+            try {
+                const prefs = await getUserToolPreferences();
+                setDisabledServers(prefs.disabled_servers || []);
+            } catch {
+                // Preferences unavailable, default to all enabled
+            }
+        };
+        fetchPreferences();
+
+        const fetchServers = async () => {
+            try {
+                const response = await getUserMCPTools();
+                setPreloadedServers(response.servers);
+            } catch {
+                // Silently fail - servers will load when popover opens
+            }
+        };
+        fetchServers();
+    }, []);
 
     useEffect(() => {
         const fetchThreads = async () => {
@@ -143,6 +168,9 @@ export default function RHS() {
                 bots={bots}
                 activeBot={activeBot}
                 setActiveBot={setActiveBot}
+                disabledServers={disabledServers}
+                onDisabledServersChange={setDisabledServers}
+                preloadedServers={preloadedServers}
             />
             {content}
         </RhsContainer>

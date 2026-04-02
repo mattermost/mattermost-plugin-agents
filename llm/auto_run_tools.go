@@ -62,6 +62,7 @@ func (w *AutoRunToolsWrapper) runToolLoop(request CompletionRequest, opts []Lang
 			switch event.Type {
 			case EventTypeToolCalls:
 				if tc, ok := event.Value.([]ToolCall); ok {
+					enrichToolCallOrigins(tc, request.Context)
 					toolCalls = append(toolCalls, tc...)
 					receivedToolCalls = true
 				}
@@ -90,6 +91,9 @@ func (w *AutoRunToolsWrapper) runToolLoop(request CompletionRequest, opts []Lang
 			return
 		}
 
+		// Forward pending tool calls so the UI can show spinners
+		output <- TextStreamEvent{Type: EventTypeToolCalls, Value: toolCalls}
+
 		// Execute auto-run tools
 		results := ExecuteAutoRunTools(toolCalls, request.Context.Tools.ResolveTool, request.Context)
 
@@ -101,13 +105,17 @@ func (w *AutoRunToolsWrapper) runToolLoop(request CompletionRequest, opts []Lang
 				status = ToolCallStatusError
 			}
 			resolvedToolCalls[j] = ToolCall{
-				ID:        toolCalls[j].ID,
-				Name:      toolCalls[j].Name,
-				Arguments: toolCalls[j].Arguments,
-				Result:    r.Result,
-				Status:    status,
+				ID:           toolCalls[j].ID,
+				Name:         toolCalls[j].Name,
+				Arguments:    toolCalls[j].Arguments,
+				Result:       r.Result,
+				Status:       status,
+				ServerOrigin: toolCalls[j].ServerOrigin,
 			}
 		}
+
+		// Forward resolved tool calls so the UI can show success/error states
+		output <- TextStreamEvent{Type: EventTypeToolCalls, Value: resolvedToolCalls}
 
 		// Append a bot post with accumulated text and tool results for re-submission
 		request.Posts = append(request.Posts, Post{
@@ -138,4 +146,18 @@ func (w *AutoRunToolsWrapper) CountTokens(text string) int {
 // InputTokenLimit delegates to the inner model.
 func (w *AutoRunToolsWrapper) InputTokenLimit() int {
 	return w.inner.InputTokenLimit()
+}
+
+// enrichToolCallOrigins populates ServerOrigin on tool calls from the ToolStore
+// so that composite-key auto-run checks can distinguish identically-named tools
+// from different servers.
+func enrichToolCallOrigins(toolCalls []ToolCall, ctx *Context) {
+	if ctx == nil || ctx.Tools == nil {
+		return
+	}
+	for i := range toolCalls {
+		if toolCalls[i].ServerOrigin == "" {
+			toolCalls[i].ServerOrigin = ctx.Tools.GetServerOrigin(toolCalls[i].Name)
+		}
+	}
 }

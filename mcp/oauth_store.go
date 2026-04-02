@@ -50,6 +50,21 @@ func (m *OAuthManager) loadToken(userID, serverID string) (*oauth2.Token, error)
 	return &oauth2Token, nil
 }
 
+// HasStoredToken returns true when a non-expired OAuth token exists for the
+// given user and server. It does not refresh the token or contact upstream.
+func (m *OAuthManager) HasStoredToken(userID, serverID string) (bool, error) {
+	tok, err := m.loadToken(userID, serverID)
+	if err != nil {
+		return false, err
+	}
+	if tok == nil {
+		return false, nil
+	}
+	// Consider a token present even if it might be expired — the caller only
+	// needs to know whether the user has ever authenticated with this server.
+	return true, nil
+}
+
 func (m *OAuthManager) storeToken(userID, serverID string, token *oauth2.Token) error {
 	tokenKey := buildTokenKey(userID, serverID)
 
