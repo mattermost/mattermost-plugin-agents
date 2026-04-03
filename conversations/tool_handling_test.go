@@ -1040,7 +1040,7 @@ func TestAutoExecuteApprovedToolCalls(t *testing.T) {
 	})
 }
 
-func TestHandleToolResultDoesNotContinueWhenNoToolCallSucceeded(t *testing.T) {
+func TestHandleToolResultContinuesWhenToolCallErrors(t *testing.T) {
 	const (
 		postID      = "post-id"
 		channelID   = "channel-id"
@@ -1060,8 +1060,10 @@ func TestHandleToolResultDoesNotContinueWhenNoToolCallSucceeded(t *testing.T) {
 
 	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{}}, nil, &testConfigProvider{})
 
+	streamingService := &fakeStreamingService{}
+	capturingLLM := &capturingLanguageModel{}
 	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
-	bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, nil)
+	bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, capturingLLM)
 	botService.SetBotsForTesting([]*bots.Bot{bot})
 
 	post := &model.Post{
@@ -1117,18 +1119,22 @@ func TestHandleToolResultDoesNotContinueWhenNoToolCallSucceeded(t *testing.T) {
 	}
 
 	toolCallingConfig := &testToolCallingConfig{enableChannelMentionToolCalling: true}
-	// Nil streaming service: completeAndStreamToolResponse would panic if invoked
-	conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
+	promptSet, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+	conversationService := conversations.New(promptSet, fakeClient, streamingService, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
 
 	err = conversationService.HandleToolResult(requesterID, post, channel, []string{"tool-1"})
 	require.NoError(t, err)
 
-	// Post was updated with final tool results
+	// Post was updated with final tool results before the follow-up turn.
 	require.Len(t, fakeClient.updatedPosts, 1)
 	updatedPost := fakeClient.updatedPosts[0]
 	require.Nil(t, updatedPost.GetProp(streaming.PendingToolResultProp))
 
-	// KV entries were cleaned up (no continuation = no need to keep them)
+	// A follow-up turn is streamed so the agent can inspect the error and recover.
+	require.Len(t, streamingService.streamedPosts, 1)
+
+	// KV entries are still cleaned up after the continuation runs.
 	require.Contains(t, fakeClient.kvDeletes, resultKVKey)
 	require.Contains(t, fakeClient.kvDeletes, toolCallKVKey)
 }
