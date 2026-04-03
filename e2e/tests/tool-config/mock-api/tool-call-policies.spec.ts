@@ -488,7 +488,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     path: '/v1/chat/completions',
                     body: {
                         matcher: 'ShouldContainSubstring',
-                        value: 'tool policy channel everywhere',
+                        value: 'read_channel',
                     },
                 },
                 context: {
