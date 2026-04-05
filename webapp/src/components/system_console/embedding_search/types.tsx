@@ -20,6 +20,8 @@ export interface EmbeddingSearchConfig {
     parameters: Record<string, unknown>;
     dimensions: number;
     chunkingOptions?: ChunkingOptions;
+    enableDocumentIndexing?: boolean;
+    maxFileSizeMB?: number;
 }
 
 // Match the server's JobStatus struct field names

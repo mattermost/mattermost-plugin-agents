@@ -111,6 +111,8 @@ const defaultConfig: Config = {
             minChunkSize: 0.75,
             chunkingStrategy: 'sentences',
         },
+        enableDocumentIndexing: false,
+        maxFileSizeMB: 50,
     },
     mcp: {
         enabled: false,

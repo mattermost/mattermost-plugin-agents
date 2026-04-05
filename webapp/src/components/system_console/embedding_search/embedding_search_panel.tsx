@@ -125,6 +125,8 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     minChunkSize: 0.75,
                                     chunkingStrategy: 'sentences',
                                 },
+                                enableDocumentIndexing: false,
+                                maxFileSizeMB: 50,
                             });
                         } else {
                             onChange({
@@ -139,6 +141,8 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     minChunkSize: 0.75,
                                     chunkingStrategy: 'sentences',
                                 },
+                                enableDocumentIndexing: false,
+                                maxFileSizeMB: 50,
                             });
                         }
                     }}
@@ -218,6 +222,34 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                             value={value}
                             onChange={onChange}
                         />
+
+                        <BooleanItem
+                            label={intl.formatMessage({defaultMessage: 'Enable Document Indexing'})}
+                            value={Boolean(value.enableDocumentIndexing)}
+                            onChange={(enabled) => {
+                                onChange({
+                                    ...value,
+                                    enableDocumentIndexing: enabled,
+                                });
+                            }}
+                            helpText={intl.formatMessage({defaultMessage: 'When enabled, uploaded documents (PDF, DOCX, XLSX) will be automatically indexed for semantic search. Users can ask AI questions about document content with cited answers.'})}
+                        />
+
+                        {value.enableDocumentIndexing && (
+                            <IntItem
+                                label={intl.formatMessage({defaultMessage: 'Maximum File Size (MB)'})}
+                                placeholder='50'
+                                value={value?.maxFileSizeMB ?? 50}
+                                onChange={(maxSize) => {
+                                    onChange({
+                                        ...value,
+                                        maxFileSizeMB: maxSize,
+                                    });
+                                }}
+                                min={1}
+                                helptext={intl.formatMessage({defaultMessage: 'Maximum file size in megabytes for document indexing. Files larger than this will be skipped. Supported formats: PDF, DOCX, XLSX.'})}
+                            />
+                        )}
                     </>
                 )}
 
