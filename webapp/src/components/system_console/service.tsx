@@ -31,6 +31,10 @@ export type LLMService = {
     region: string
     awsAccessKeyID: string
     awsSecretAccessKey: string
+
+    // fallbackServiceID is the ID of another service to fall back to when this
+    // service's provider/model is unavailable. Chains are supported (A→B→C).
+    fallbackServiceID: string
 }
 
 const mapServiceTypeToDisplayName = new Map<string, string>([
@@ -62,6 +66,7 @@ type ModelInfo = {
 
 type ServiceFieldsProps = {
     service: LLMService
+    services: LLMService[]
     onChange: (service: LLMService) => void
 }
 
@@ -278,12 +283,33 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     }}
                 />
             )}
+            <SelectionItem
+                label={intl.formatMessage({defaultMessage: 'Fallback Service'})}
+                value={props.service.fallbackServiceID || ''}
+                onChange={(e) => props.onChange({...props.service, fallbackServiceID: e.target.value})}
+                helptext={intl.formatMessage({defaultMessage: 'If this service is unavailable, requests will automatically fall back to the selected service. Fallback chains are supported (e.g., Service A → Service B → Service C).'})}
+            >
+                <SelectionItemOption value=''>
+                    {intl.formatMessage({defaultMessage: 'No fallback'})}
+                </SelectionItemOption>
+                {props.services
+                    .filter((s) => s.id !== props.service.id)
+                    .map((s) => (
+                        <SelectionItemOption
+                            key={s.id}
+                            value={s.id}
+                        >
+                            {s.name || serviceTypeToDisplayName(intl, s.type)}
+                        </SelectionItemOption>
+                    ))}
+            </SelectionItem>
         </>
     );
 };
 
 type Props = {
     service: LLMService
+    services: LLMService[]
     onChange: (service: LLMService) => void
     onDelete: () => void
 }
@@ -325,6 +351,7 @@ const Service = (props: Props) => {
                     <ItemList>
                         <ServiceFields
                             service={props.service}
+                            services={props.services}
                             onChange={props.onChange}
                         />
                     </ItemList>

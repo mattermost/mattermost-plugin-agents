@@ -28,6 +28,7 @@ const defaultNewService: LLMService = {
     region: '',
     awsAccessKeyID: '',
     awsSecretAccessKey: '',
+    fallbackServiceID: '',
 };
 
 export const firstNewService = {
@@ -91,6 +92,7 @@ const Services = (props: Props) => {
                     <Service
                         key={service.id}
                         service={service}
+                        services={props.services}
                         onChange={onChange}
                         onDelete={() => onDelete(service.id)}
                     />
