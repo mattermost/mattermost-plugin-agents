@@ -75,7 +75,7 @@ func TestSearchCitationFormat(t *testing.T) {
 		evals.Run(t, "search citation format: "+config.name, func(t *evals.EvalT) {
 			// Mock embedding search to return canned results
 			mockEmbedding := embeddingmocks.NewMockEmbeddingSearch(t.T)
-			mockEmbedding.On("Search", mock.Anything, config.query, mock.Anything).
+			mockEmbedding.On("SearchAll", mock.Anything, config.query, mock.Anything).
 				Return(searchResults, nil)
 
 			// Mock mmapi.Client for enrichment and prompt context

@@ -79,6 +79,23 @@ func (s *stubVectorStore) DeleteOrphaned(ctx context.Context, nowTime, batchSize
 	return 0, nil
 }
 
+func (s *stubVectorStore) StoreFileDocuments(ctx context.Context, docs []FileDocument, embeddings [][]float32) error {
+	return nil
+}
+
+func (s *stubVectorStore) DeleteFileDocuments(ctx context.Context, fileIDs []string) error {
+	return nil
+}
+
+func (s *stubVectorStore) ClearFileDocuments(ctx context.Context) error {
+	return nil
+}
+
+func (s *stubVectorStore) SearchAll(ctx context.Context, embedding []float32, opts SearchOptions) ([]SearchResult, error) {
+	// Default: delegate to Search for backwards compatibility
+	return s.Search(ctx, embedding, opts)
+}
+
 // stubEmbeddingProvider is a simple test double for EmbeddingProvider
 type stubEmbeddingProvider struct {
 	createEmbeddingFunc       func(ctx context.Context, text string) ([]float32, error)

@@ -309,7 +309,7 @@ func TestExecuteSearch(t *testing.T) {
 			query: "test query",
 			opts:  Options{Limit: 5},
 			setupMocks: func(me *mocks.MockEmbeddingSearch, mc *mmapimocks.MockClient) {
-				me.On("Search", mock.Anything, "test query", mock.Anything).
+				me.On("SearchAll", mock.Anything, "test query", mock.Anything).
 					Return(nil, errors.New("search service unavailable"))
 			},
 			expectError: "search failed: search service unavailable",
@@ -319,7 +319,7 @@ func TestExecuteSearch(t *testing.T) {
 			query: "obscure query",
 			opts:  Options{Limit: 5},
 			setupMocks: func(me *mocks.MockEmbeddingSearch, mc *mmapimocks.MockClient) {
-				me.On("Search", mock.Anything, "obscure query", mock.Anything).
+				me.On("SearchAll", mock.Anything, "obscure query", mock.Anything).
 					Return([]embeddings.SearchResult{}, nil)
 			},
 			expectError: "",
@@ -337,7 +337,7 @@ func TestExecuteSearch(t *testing.T) {
 				UserID:    "user1",
 			},
 			setupMocks: func(me *mocks.MockEmbeddingSearch, mc *mmapimocks.MockClient) {
-				me.On("Search", mock.Anything, "test query", embeddings.SearchOptions{
+				me.On("SearchAll", mock.Anything, "test query", embeddings.SearchOptions{
 					Limit:     5,
 					TeamID:    "team1",
 					ChannelID: "channel1",
@@ -377,7 +377,7 @@ func TestExecuteSearch(t *testing.T) {
 			query: "test query",
 			opts:  Options{Limit: 0}, // Should default to 5
 			setupMocks: func(me *mocks.MockEmbeddingSearch, mc *mmapimocks.MockClient) {
-				me.On("Search", mock.Anything, "test query", embeddings.SearchOptions{
+				me.On("SearchAll", mock.Anything, "test query", embeddings.SearchOptions{
 					Limit: 5, // Should be 5, not 0
 				}).Return([]embeddings.SearchResult{}, nil)
 			},
@@ -500,7 +500,7 @@ func TestSearchQuery(t *testing.T) {
 		{
 			name: "zero results returns empty response with message",
 			setupMocks: func(me *mocks.MockEmbeddingSearch, mc *mmapimocks.MockClient, ml *llmmocks.MockLanguageModel) {
-				me.On("Search", mock.Anything, "no results query", mock.Anything).
+				me.On("SearchAll", mock.Anything, "no results query", mock.Anything).
 					Return([]embeddings.SearchResult{}, nil)
 			},
 			query:       "no results query",
@@ -513,7 +513,7 @@ func TestSearchQuery(t *testing.T) {
 		{
 			name: "LLM failure returns error",
 			setupMocks: func(me *mocks.MockEmbeddingSearch, mc *mmapimocks.MockClient, ml *llmmocks.MockLanguageModel) {
-				me.On("Search", mock.Anything, "test query", mock.Anything).
+				me.On("SearchAll", mock.Anything, "test query", mock.Anything).
 					Return([]embeddings.SearchResult{
 						{
 							Document: embeddings.PostDocument{
@@ -547,7 +547,7 @@ func TestSearchQuery(t *testing.T) {
 		{
 			name: "successful search with LLM response",
 			setupMocks: func(me *mocks.MockEmbeddingSearch, mc *mmapimocks.MockClient, ml *llmmocks.MockLanguageModel) {
-				me.On("Search", mock.Anything, "test query", mock.Anything).
+				me.On("SearchAll", mock.Anything, "test query", mock.Anything).
 					Return([]embeddings.SearchResult{
 						{
 							Document: embeddings.PostDocument{
@@ -586,7 +586,7 @@ func TestSearchQuery(t *testing.T) {
 		{
 			name: "search failure propagates error",
 			setupMocks: func(me *mocks.MockEmbeddingSearch, mc *mmapimocks.MockClient, ml *llmmocks.MockLanguageModel) {
-				me.On("Search", mock.Anything, "test query", mock.Anything).
+				me.On("SearchAll", mock.Anything, "test query", mock.Anything).
 					Return(nil, errors.New("search service unavailable"))
 			},
 			query:       "test query",
@@ -688,8 +688,8 @@ func TestRunSearch(t *testing.T) {
 		// The goroutine may call LogError if the search fails - use Maybe to handle both cases
 		mockClient.On("LogError", mock.Anything, mock.Anything).Maybe()
 
-		// The goroutine may call Search - set up to return empty results to avoid further processing
-		mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).
+		// The goroutine may call SearchAll - set up to return empty results to avoid further processing
+		mockEmbedding.On("SearchAll", mock.Anything, mock.Anything, mock.Anything).
 			Return([]embeddings.SearchResult{}, nil).Maybe()
 
 		// If zero results, UpdatePost is called

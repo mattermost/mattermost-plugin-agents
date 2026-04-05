@@ -166,7 +166,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			name: "search query succeeds - service enabled",
 			setupMock: func(t *testing.T) *search.Search {
 				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
-				mockEmbedding.On("Search", mock.Anything, "test query", mock.Anything).Return([]embeddings.SearchResult{}, nil)
+				mockEmbedding.On("SearchAll", mock.Anything, "test query", mock.Anything).Return([]embeddings.SearchResult{}, nil)
 				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil)
 			},
 			requestBody: SearchRequest{
@@ -207,7 +207,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			setupMock: func(t *testing.T) *search.Search {
 				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 				// Verify that the limit is set to 5 (default) when negative value is passed
-				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
+				mockEmbedding.On("SearchAll", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 5
 				})).Return([]embeddings.SearchResult{}, nil)
 				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil)
@@ -226,7 +226,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			setupMock: func(t *testing.T) *search.Search {
 				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 				// Verify that the limit is set to 5 (default) when zero value is passed
-				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
+				mockEmbedding.On("SearchAll", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 5
 				})).Return([]embeddings.SearchResult{}, nil)
 				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil)
@@ -245,7 +245,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			setupMock: func(t *testing.T) *search.Search {
 				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 				// Verify that the limit is capped at 100 when a very large value is passed
-				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
+				mockEmbedding.On("SearchAll", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 100
 				})).Return([]embeddings.SearchResult{}, nil)
 				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil)
@@ -278,7 +278,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			name: "search query succeeds - query at max length",
 			setupMock: func(t *testing.T) *search.Search {
 				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
-				mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
+				mockEmbedding.On("SearchAll", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
 				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil)
 			},
 			requestBody: SearchRequest{
@@ -295,7 +295,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			setupMock: func(t *testing.T) *search.Search {
 				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 				// Verify that the limit stays at 100 when exactly 100 is passed
-				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
+				mockEmbedding.On("SearchAll", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 100
 				})).Return([]embeddings.SearchResult{}, nil)
 				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil)
@@ -314,7 +314,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			setupMock: func(t *testing.T) *search.Search {
 				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 				// Verify that the limit is capped at 100 when 101 is passed
-				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
+				mockEmbedding.On("SearchAll", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 100
 				})).Return([]embeddings.SearchResult{}, nil)
 				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil)
@@ -496,7 +496,7 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 			// Setup search service (enabled)
 			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 			if test.expectedStatus == http.StatusOK {
-				mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
+				mockEmbedding.On("SearchAll", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
 			}
 			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil)
 
@@ -567,7 +567,7 @@ func TestHandleSearchQueryMissingUserHeader(t *testing.T) {
 			// Setup search service (enabled)
 			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 			if test.expectedStatus == http.StatusOK {
-				mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
+				mockEmbedding.On("SearchAll", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
 			}
 			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil)
 

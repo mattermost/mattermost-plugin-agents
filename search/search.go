@@ -52,11 +52,11 @@ type RAGResult struct {
 	Score       float32 `json:"score"`
 
 	// File-specific fields (populated when SourceType == "file")
-	SourceType string `json:"sourceType"`            // "post" or "file"
-	FileID     string `json:"fileId,omitempty"`       // Mattermost file attachment ID
-	FileName   string `json:"fileName,omitempty"`     // Original filename
-	FileType   string `json:"fileType,omitempty"`     // "pdf", "docx", "xlsx"
-	PageNum    int    `json:"pageNum,omitempty"`      // Page/sheet number
+	SourceType string `json:"sourceType"`         // "post" or "file"
+	FileID     string `json:"fileId,omitempty"`   // Mattermost file attachment ID
+	FileName   string `json:"fileName,omitempty"` // Original filename
+	FileType   string `json:"fileType,omitempty"` // "pdf", "docx", "xlsx"
+	PageNum    int    `json:"pageNum,omitempty"`  // Page/sheet number
 }
 
 // Options configures a search operation

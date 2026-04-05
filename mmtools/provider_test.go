@@ -80,12 +80,12 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 			name: "search succeeds - service enabled",
 			searchService: func() *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				me.On("Search", mock.Anything, "test search term", mock.Anything).Return([]embeddings.SearchResult{}, nil)
+				me.On("SearchAll", mock.Anything, "test search term", mock.Anything).Return([]embeddings.SearchResult{}, nil)
 				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
 			}(),
 			searchTerm:  "test search term",
 			expectError: false,
-			expectedMsg: "No relevant messages found.", // mock returns empty results
+			expectedMsg: "No relevant results found.", // mock returns empty results
 		},
 		{
 			name:          "search fails - service disabled",

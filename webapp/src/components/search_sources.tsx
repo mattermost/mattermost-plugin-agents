@@ -180,7 +180,7 @@ const SearchSource = ({source, index}: SourceItemProps & {index: number}) => {
                     {source.fileType && (
                         <FileTypeBadge>{source.fileType}</FileTypeBadge>
                     )}
-                    {source.pageNum !== undefined && source.pageNum > 0 && (
+                    {source.pageNum != null && source.pageNum > 0 && (
                         <PageInfo>
                             <FormattedMessage
                                 defaultMessage='Page {pageNum}'
