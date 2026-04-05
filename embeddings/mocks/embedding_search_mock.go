@@ -243,6 +243,85 @@ func (_c *MockEmbeddingSearch_Search_Call) RunAndReturn(run func(ctx context.Con
 	return _c
 }
 
+// StoreFiles provides a mock function for the type MockEmbeddingSearch
+func (_mock *MockEmbeddingSearch) StoreFiles(ctx context.Context, docs []embeddings.FileDocument) error {
+	ret := _mock.Called(ctx, docs)
+
+	if len(ret) == 0 {
+		panic("no return value specified for StoreFiles")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, []embeddings.FileDocument) error); ok {
+		r0 = returnFunc(ctx, docs)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// DeleteFiles provides a mock function for the type MockEmbeddingSearch
+func (_mock *MockEmbeddingSearch) DeleteFiles(ctx context.Context, fileIDs []string) error {
+	ret := _mock.Called(ctx, fileIDs)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteFiles")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, []string) error); ok {
+		r0 = returnFunc(ctx, fileIDs)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// ClearFiles provides a mock function for the type MockEmbeddingSearch
+func (_mock *MockEmbeddingSearch) ClearFiles(ctx context.Context) error {
+	ret := _mock.Called(ctx)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ClearFiles")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context) error); ok {
+		r0 = returnFunc(ctx)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// SearchAll provides a mock function for the type MockEmbeddingSearch
+func (_mock *MockEmbeddingSearch) SearchAll(ctx context.Context, query string, opts embeddings.SearchOptions) ([]embeddings.SearchResult, error) {
+	ret := _mock.Called(ctx, query, opts)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SearchAll")
+	}
+
+	var r0 []embeddings.SearchResult
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, embeddings.SearchOptions) ([]embeddings.SearchResult, error)); ok {
+		return returnFunc(ctx, query, opts)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, embeddings.SearchOptions) []embeddings.SearchResult); ok {
+		r0 = returnFunc(ctx, query, opts)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]embeddings.SearchResult)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, embeddings.SearchOptions) error); ok {
+		r1 = returnFunc(ctx, query, opts)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
 // Store provides a mock function for the type MockEmbeddingSearch
 func (_mock *MockEmbeddingSearch) Store(ctx context.Context, docs []embeddings.PostDocument) error {
 	ret := _mock.Called(ctx, docs)

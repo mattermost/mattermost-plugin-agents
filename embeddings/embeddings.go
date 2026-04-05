@@ -41,10 +41,35 @@ type PostDocument struct {
 	chunking.ChunkInfo
 }
 
+// FileDocument represents a document extracted from a file attachment
+type FileDocument struct {
+	FileID    string // Mattermost file attachment ID
+	PostID    string // Post the file was attached to
+	FileName  string // Original filename
+	FileType  string // "pdf", "docx", "xlsx"
+	CreateAt  int64  // Upload timestamp
+	TeamID    string
+	ChannelID string
+	UserID    string
+	Content   string // Extracted text content
+	PageNum   int    // Page/sheet number (0 for whole-doc chunks)
+
+	// Embed chunk info to track if this is a chunk
+	chunking.ChunkInfo
+}
+
+// Source types for search results
+const (
+	SourceTypePost = "post"
+	SourceTypeFile = "file"
+)
+
 // SearchResult represents a single search result with its similarity score
 type SearchResult struct {
-	Document PostDocument
-	Score    float32
+	Document     PostDocument  // Post result (populated when SourceType == "post")
+	FileDocument *FileDocument // File result (non-nil when SourceType == "file")
+	Score        float32
+	SourceType   string // "post" or "file"
 }
 
 // SearchOptions contains parameters for search operations
@@ -64,7 +89,7 @@ type EmbeddingSearch interface {
 	// Store stores documents and handles embedding generation internally
 	Store(ctx context.Context, docs []PostDocument) error
 
-	// Search performs a similarity search using the query text
+	// Search performs a similarity search using the query text (posts only)
 	Search(ctx context.Context, query string, opts SearchOptions) ([]SearchResult, error)
 
 	// Delete removes documents
@@ -77,6 +102,18 @@ type EmbeddingSearch interface {
 	// nowTime is the retention cutoff (Unix millis), batchSize limits rows deleted per call.
 	// Returns the number of rows deleted.
 	DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error)
+
+	// StoreFiles stores file documents and handles embedding generation internally
+	StoreFiles(ctx context.Context, docs []FileDocument) error
+
+	// DeleteFiles removes file documents by file IDs
+	DeleteFiles(ctx context.Context, fileIDs []string) error
+
+	// ClearFiles removes all file documents
+	ClearFiles(ctx context.Context) error
+
+	// SearchAll performs a similarity search across both posts and files
+	SearchAll(ctx context.Context, query string, opts SearchOptions) ([]SearchResult, error)
 }
 
 // VectorStore defines the interface for vector storage and search operations
@@ -84,7 +121,7 @@ type VectorStore interface {
 	// Store stores documents and their embeddings
 	Store(ctx context.Context, docs []PostDocument, embeddings [][]float32) error
 
-	// Search performs a similarity search using the provided embedding
+	// Search performs a similarity search using the provided embedding (posts only)
 	Search(ctx context.Context, embedding []float32, opts SearchOptions) ([]SearchResult, error)
 
 	// Delete removes documents from the vector store
@@ -97,6 +134,18 @@ type VectorStore interface {
 	// nowTime is the retention cutoff (Unix millis), batchSize limits rows deleted per call.
 	// Returns the number of rows deleted.
 	DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error)
+
+	// StoreFileDocuments stores file documents and their embeddings
+	StoreFileDocuments(ctx context.Context, docs []FileDocument, embeddings [][]float32) error
+
+	// DeleteFileDocuments removes file documents by file IDs
+	DeleteFileDocuments(ctx context.Context, fileIDs []string) error
+
+	// ClearFileDocuments removes all file documents
+	ClearFileDocuments(ctx context.Context) error
+
+	// SearchAll performs a similarity search across both posts and files
+	SearchAll(ctx context.Context, embedding []float32, opts SearchOptions) ([]SearchResult, error)
 }
 
 // EmbeddingProvider defines the interface for embedding generation
@@ -117,14 +166,16 @@ type UpstreamConfig struct {
 	Parameters json.RawMessage `json:"parameters"`
 }
 
-// ServiceConfig holds configuration for the embedding search service
+// EmbeddingSearchConfig holds configuration for the embedding search service
 type EmbeddingSearchConfig struct {
-	Type              string           `json:"type"`
-	VectorStore       UpstreamConfig   `json:"vectorStore"`
-	EmbeddingProvider UpstreamConfig   `json:"embeddingProvider"`
-	Parameters        json.RawMessage  `json:"parameters"`
-	Dimensions        int              `json:"dimensions"`
-	ChunkingOptions   chunking.Options `json:"chunkingOptions"`
+	Type                   string           `json:"type"`
+	VectorStore            UpstreamConfig   `json:"vectorStore"`
+	EmbeddingProvider      UpstreamConfig   `json:"embeddingProvider"`
+	Parameters             json.RawMessage  `json:"parameters"`
+	Dimensions             int              `json:"dimensions"`
+	ChunkingOptions        chunking.Options `json:"chunkingOptions"`
+	EnableDocumentIndexing bool             `json:"enableDocumentIndexing"`
+	MaxFileSizeMB          int              `json:"maxFileSizeMB"`
 }
 
 // GetProviderType returns the embedding provider type

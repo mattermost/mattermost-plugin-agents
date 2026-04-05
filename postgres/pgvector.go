@@ -53,14 +53,40 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 		return nil, fmt.Errorf("failed to create llm_posts_embeddings table: %w", err)
 	}
 
+	// Create the llm_file_embeddings table for document file indexing
+	createFileTableQuery := `
+		CREATE TABLE IF NOT EXISTS llm_file_embeddings (
+			id TEXT PRIMARY KEY,
+			file_id TEXT NOT NULL,
+			post_id TEXT NOT NULL,
+			file_name TEXT NOT NULL,
+			file_type TEXT NOT NULL,
+			team_id TEXT NOT NULL,
+			channel_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			content TEXT NOT NULL,
+			embedding vector(` + strconv.Itoa(config.Dimensions) + `),
+			created_at BIGINT NOT NULL,
+			page_num INTEGER NOT NULL DEFAULT 0,
+			is_chunk BOOLEAN NOT NULL DEFAULT FALSE,
+			chunk_index INTEGER,
+			total_chunks INTEGER
+		)`
+	if _, err := db.Exec(createFileTableQuery); err != nil {
+		return nil, fmt.Errorf("failed to create llm_file_embeddings table: %w", err)
+	}
+
 	// Create indexes
 	queries := []string{
-		// Index for similarity search using HNSW
+		// Post embeddings indexes
 		"CREATE INDEX IF NOT EXISTS llm_posts_embeddings_embedding_idx ON llm_posts_embeddings USING hnsw (embedding vector_l2_ops)",
-		// Index on post_id for efficient lookups and deletions
 		"CREATE INDEX IF NOT EXISTS llm_posts_embeddings_post_id_idx ON llm_posts_embeddings(post_id)",
-		// Index on is_chunk to filter by chunks
 		"CREATE INDEX IF NOT EXISTS llm_posts_embeddings_is_chunk_idx ON llm_posts_embeddings(is_chunk)",
+		// File embeddings indexes
+		"CREATE INDEX IF NOT EXISTS llm_file_embeddings_embedding_idx ON llm_file_embeddings USING hnsw (embedding vector_l2_ops)",
+		"CREATE INDEX IF NOT EXISTS llm_file_embeddings_file_id_idx ON llm_file_embeddings(file_id)",
+		"CREATE INDEX IF NOT EXISTS llm_file_embeddings_channel_id_idx ON llm_file_embeddings(channel_id)",
+		"CREATE INDEX IF NOT EXISTS llm_file_embeddings_post_id_idx ON llm_file_embeddings(post_id)",
 	}
 
 	for _, query := range queries {
@@ -304,8 +330,9 @@ func scanSearchResults(rows *sqlx.Rows, minScore float32) ([]embeddings.SearchRe
 		}
 
 		results = append(results, embeddings.SearchResult{
-			Document: doc,
-			Score:    score,
+			Document:   doc,
+			Score:      score,
+			SourceType: embeddings.SourceTypePost,
 		})
 	}
 
@@ -360,4 +387,323 @@ func (pv *PGVector) DeleteOrphaned(ctx context.Context, nowTime, batchSize int64
 	}
 
 	return rowsAffected, nil
+}
+
+// StoreFileDocuments stores file document embeddings in the llm_file_embeddings table
+func (pv *PGVector) StoreFileDocuments(ctx context.Context, docs []embeddings.FileDocument, embeds [][]float32) error {
+	if len(docs) != len(embeds) {
+		return fmt.Errorf("mismatched input lengths: got %d documents but %d embeddings", len(docs), len(embeds))
+	}
+
+	if len(docs) == 0 {
+		return nil
+	}
+
+	// Collect unique file IDs to clean up before insert
+	fileIDSet := make(map[string]struct{})
+	for _, doc := range docs {
+		fileIDSet[doc.FileID] = struct{}{}
+	}
+	fileIDs := make([]string, 0, len(fileIDSet))
+	for id := range fileIDSet {
+		fileIDs = append(fileIDs, id)
+	}
+
+	tx, err := pv.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Delete existing entries for files being updated
+	deleteQuery, deleteArgs, err := sq.
+		Delete("llm_file_embeddings").
+		Where(sq.Eq{"file_id": fileIDs}).
+		PlaceholderFormat(sq.Dollar).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build delete query: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, deleteQuery, deleteArgs...); err != nil {
+		return fmt.Errorf("failed to delete existing file chunks: %w", err)
+	}
+
+	for i, doc := range docs {
+		id := fmt.Sprintf("%s_p%d", doc.FileID, doc.PageNum)
+		if doc.IsChunk {
+			id = fmt.Sprintf("%s_p%d_chunk_%d", doc.FileID, doc.PageNum, doc.ChunkIndex)
+		}
+		_, err := tx.NamedExecContext(ctx, `
+			INSERT INTO llm_file_embeddings (
+				id, file_id, post_id, file_name, file_type,
+				team_id, channel_id, user_id, content, embedding,
+				created_at, page_num, is_chunk, chunk_index, total_chunks
+			)
+			VALUES (
+				:id, :file_id, :post_id, :file_name, :file_type,
+				:team_id, :channel_id, :user_id, :content, :embedding,
+				:created_at, :page_num, :is_chunk, :chunk_index, :total_chunks
+			)`,
+			map[string]interface{}{
+				"id":           id,
+				"file_id":      doc.FileID,
+				"post_id":      doc.PostID,
+				"file_name":    doc.FileName,
+				"file_type":    doc.FileType,
+				"team_id":      doc.TeamID,
+				"channel_id":   doc.ChannelID,
+				"user_id":      doc.UserID,
+				"content":      doc.Content,
+				"embedding":    pgvector.NewVector(embeds[i]),
+				"created_at":   doc.CreateAt,
+				"page_num":     doc.PageNum,
+				"is_chunk":     doc.IsChunk,
+				"chunk_index":  sqlNullInt(doc.IsChunk, doc.ChunkIndex),
+				"total_chunks": sqlNullInt(doc.IsChunk, doc.TotalChunks),
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert file vector: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteFileDocuments removes file document embeddings by file IDs
+func (pv *PGVector) DeleteFileDocuments(ctx context.Context, fileIDs []string) error {
+	query, args, err := sq.
+		Delete("llm_file_embeddings").
+		Where(sq.Eq{"file_id": fileIDs}).
+		PlaceholderFormat(sq.Dollar).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to create query: %w", err)
+	}
+	_, err = pv.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to delete file vectors: %w", err)
+	}
+	return nil
+}
+
+// ClearFileDocuments removes all file document embeddings
+func (pv *PGVector) ClearFileDocuments(ctx context.Context) error {
+	_, err := pv.db.ExecContext(ctx, "TRUNCATE TABLE llm_file_embeddings")
+	if err != nil {
+		return fmt.Errorf("failed to clear file vectors: %w", err)
+	}
+	return nil
+}
+
+// SearchAll performs a similarity search across both posts and files, merging results by score
+func (pv *PGVector) SearchAll(ctx context.Context, embedding []float32, opts embeddings.SearchOptions) ([]embeddings.SearchResult, error) {
+	if opts.UserID == "" {
+		return nil, fmt.Errorf("user ID is required to validate permissions")
+	}
+
+	const maxSearchLimit = 1000
+	limit := opts.Limit
+	if limit <= 0 || limit > maxSearchLimit {
+		limit = maxSearchLimit
+	}
+
+	vecParam := pgvector.NewVector(embedding)
+
+	// Build a UNION ALL query across both tables
+	// Post results
+	postQuery := sq.Select(
+		"'post' as source_type",
+		"e.post_id",
+		"e.team_id",
+		"e.channel_id",
+		"e.user_id",
+		"e.created_at",
+		"e.content",
+		"e.is_chunk",
+		"e.chunk_index",
+		"e.total_chunks",
+		"'' as file_id",
+		"'' as file_name",
+		"'' as file_type",
+		"0 as page_num",
+		"(e.embedding <-> ?) as similarity",
+	).
+		From("llm_posts_embeddings e").
+		Join("Channels c ON e.channel_id = c.Id").
+		Join("ChannelMembers cm ON e.channel_id = cm.ChannelId").
+		Join("Posts p ON e.post_id = p.Id").
+		Where("cm.UserId = ?", opts.UserID).
+		Where("c.DeleteAt = 0").
+		Where("p.DeleteAt = 0").
+		PlaceholderFormat(sq.Dollar)
+
+	// File results
+	fileQuery := sq.Select(
+		"'file' as source_type",
+		"f.post_id",
+		"f.team_id",
+		"f.channel_id",
+		"f.user_id",
+		"f.created_at",
+		"f.content",
+		"f.is_chunk",
+		"f.chunk_index",
+		"f.total_chunks",
+		"f.file_id",
+		"f.file_name",
+		"f.file_type",
+		"f.page_num",
+		"(f.embedding <-> ?) as similarity",
+	).
+		From("llm_file_embeddings f").
+		Join("Channels c ON f.channel_id = c.Id").
+		Join("ChannelMembers cm ON f.channel_id = cm.ChannelId").
+		Where("cm.UserId = ?", opts.UserID).
+		Where("c.DeleteAt = 0").
+		PlaceholderFormat(sq.Dollar)
+
+	// Apply filters to both queries
+	if opts.TeamID != "" {
+		postQuery = postQuery.Where(sq.Eq{"e.team_id": opts.TeamID})
+		fileQuery = fileQuery.Where(sq.Eq{"f.team_id": opts.TeamID})
+	}
+	if opts.ChannelID != "" {
+		postQuery = postQuery.Where(sq.Eq{"e.channel_id": opts.ChannelID})
+		fileQuery = fileQuery.Where(sq.Eq{"f.channel_id": opts.ChannelID})
+	}
+	if opts.CreatedAfter != 0 {
+		postQuery = postQuery.Where(sq.Gt{"e.created_at": opts.CreatedAfter})
+		fileQuery = fileQuery.Where(sq.Gt{"f.created_at": opts.CreatedAfter})
+	}
+	if opts.CreatedBefore != 0 {
+		postQuery = postQuery.Where(sq.Lt{"e.created_at": opts.CreatedBefore})
+		fileQuery = fileQuery.Where(sq.Lt{"f.created_at": opts.CreatedBefore})
+	}
+
+	postSQL, postArgs, err := postQuery.ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build post SQL: %w", err)
+	}
+
+	fileSQL, fileArgs, err := fileQuery.ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build file SQL: %w", err)
+	}
+
+	// Prepend the embedding vector arg for each sub-query's SELECT similarity expression
+	postArgs = append([]interface{}{vecParam}, postArgs...)
+	fileArgs = append([]interface{}{vecParam}, fileArgs...)
+
+	// Build the UNION ALL with ORDER BY and LIMIT
+	unionSQL := fmt.Sprintf(
+		"SELECT * FROM ((%s) UNION ALL (%s)) combined ORDER BY similarity ASC LIMIT %d",
+		postSQL, fileSQL, limit,
+	)
+	if opts.Offset > 0 {
+		unionSQL += fmt.Sprintf(" OFFSET %d", opts.Offset)
+	}
+
+	// Combine args: post args first, then file args
+	allArgs := append(postArgs, fileArgs...)
+
+	rows, err := pv.db.QueryxContext(ctx, unionSQL, allArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query combined vectors: %w", err)
+	}
+	defer rows.Close()
+
+	return scanCombinedSearchResults(rows, opts.MinScore)
+}
+
+// scanCombinedSearchResults extracts search results from the unified query rows
+func scanCombinedSearchResults(rows *sqlx.Rows, minScore float32) ([]embeddings.SearchResult, error) {
+	var results []embeddings.SearchResult
+	for rows.Next() {
+		var sourceType, postID, teamID, channelID, userID, content string
+		var fileID, fileName, fileType string
+		var isChunk bool
+		var chunkIndex, totalChunks *int
+		var pageNum int
+		var similarity float32
+		var createAt int64
+
+		if err := rows.Scan(
+			&sourceType,
+			&postID,
+			&teamID,
+			&channelID,
+			&userID,
+			&createAt,
+			&content,
+			&isChunk,
+			&chunkIndex,
+			&totalChunks,
+			&fileID,
+			&fileName,
+			&fileType,
+			&pageNum,
+			&similarity,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		score := 1 - (similarity*similarity)/2
+		if score < 0 {
+			score = 0
+		}
+
+		if score < minScore {
+			continue
+		}
+
+		chunkInfo := chunking.ChunkInfo{IsChunk: isChunk}
+		if isChunk {
+			if chunkIndex != nil {
+				chunkInfo.ChunkIndex = *chunkIndex
+			}
+			if totalChunks != nil {
+				chunkInfo.TotalChunks = *totalChunks
+			}
+		}
+
+		result := embeddings.SearchResult{
+			Score:      score,
+			SourceType: sourceType,
+		}
+
+		if sourceType == embeddings.SourceTypeFile {
+			result.FileDocument = &embeddings.FileDocument{
+				FileID:    fileID,
+				PostID:    postID,
+				FileName:  fileName,
+				FileType:  fileType,
+				CreateAt:  createAt,
+				TeamID:    teamID,
+				ChannelID: channelID,
+				UserID:    userID,
+				Content:   content,
+				PageNum:   pageNum,
+				ChunkInfo: chunkInfo,
+			}
+		} else {
+			result.Document = embeddings.PostDocument{
+				PostID:    postID,
+				CreateAt:  createAt,
+				TeamID:    teamID,
+				ChannelID: channelID,
+				UserID:    userID,
+				Content:   content,
+				ChunkInfo: chunkInfo,
+			}
+		}
+
+		results = append(results, result)
+	}
+
+	return results, nil
 }

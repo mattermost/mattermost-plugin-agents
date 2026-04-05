@@ -100,3 +100,67 @@ func (c *CompositeSearch) Clear(ctx context.Context) error {
 func (c *CompositeSearch) DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error) {
 	return c.store.DeleteOrphaned(ctx, nowTime, batchSize)
 }
+
+// StoreFiles chunks file documents, generates embeddings, and stores them
+func (c *CompositeSearch) StoreFiles(ctx context.Context, docs []FileDocument) error {
+	// Apply chunking to each file document
+	var chunkedDocs []FileDocument
+	for _, doc := range docs {
+		chunks := chunking.ChunkText(doc.Content, c.options)
+
+		for _, chunk := range chunks {
+			chunkDoc := doc // Copy all metadata
+			chunkDoc.Content = chunk.Content
+			chunkDoc.ChunkInfo = chunk.ChunkInfo
+
+			chunkedDocs = append(chunkedDocs, chunkDoc)
+		}
+	}
+
+	if len(chunkedDocs) == 0 {
+		return nil
+	}
+
+	// Extract texts for embedding
+	texts := make([]string, len(chunkedDocs))
+	for i, doc := range chunkedDocs {
+		texts[i] = doc.Content
+	}
+
+	// Generate embeddings for all chunks
+	embeddings, err := c.provider.BatchCreateEmbeddings(ctx, texts)
+	if err != nil {
+		return err
+	}
+
+	if len(embeddings) != len(chunkedDocs) {
+		return fmt.Errorf("embedding count mismatch: got %d embeddings for %d file documents", len(embeddings), len(chunkedDocs))
+	}
+
+	return c.store.StoreFileDocuments(ctx, chunkedDocs, embeddings)
+}
+
+// DeleteFiles removes file documents by file IDs
+func (c *CompositeSearch) DeleteFiles(ctx context.Context, fileIDs []string) error {
+	return c.store.DeleteFileDocuments(ctx, fileIDs)
+}
+
+// ClearFiles removes all file documents
+func (c *CompositeSearch) ClearFiles(ctx context.Context) error {
+	return c.store.ClearFileDocuments(ctx)
+}
+
+// SearchAll performs a semantic search across both posts and files
+func (c *CompositeSearch) SearchAll(ctx context.Context, query string, opts SearchOptions) ([]SearchResult, error) {
+	embedding, err := c.provider.CreateEmbedding(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	results, err := c.store.SearchAll(ctx, embedding, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
