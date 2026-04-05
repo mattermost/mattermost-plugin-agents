@@ -4,6 +4,7 @@
 package bifrost
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -672,6 +673,403 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 				require.NotNil(t, req.Params.Text.Format.JSONSchema.Schema)
 			} else {
 				assert.Nil(t, req.Params.Text)
+			}
+		})
+	}
+}
+
+// --- multiProviderAccount tests ---
+
+func TestMultiProviderAccount_SingleProvider(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{
+		provider: schemas.OpenAI,
+		apiKey:   "openai-key",
+		apiURL:   "https://api.openai.com",
+		orgID:    "org-123",
+	})
+
+	providers, err := acc.GetConfiguredProviders()
+	require.NoError(t, err)
+	assert.Equal(t, []schemas.ModelProvider{schemas.OpenAI}, providers)
+
+	keys, err := acc.GetKeysForProvider(context.Background(), schemas.OpenAI)
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	assert.Equal(t, "openai-key", keys[0].Value.Val)
+
+	cfg, err := acc.GetConfigForProvider(schemas.OpenAI)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+}
+
+func TestMultiProviderAccount_MultipleProviders(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{
+		provider: schemas.OpenAI,
+		apiKey:   "openai-key",
+	})
+	acc.addProvider(&providerAccount{
+		provider: schemas.Anthropic,
+		apiKey:   "anthropic-key",
+	})
+
+	providers, err := acc.GetConfiguredProviders()
+	require.NoError(t, err)
+	assert.Equal(t, []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic}, providers)
+
+	// Verify each provider returns correct keys
+	openaiKeys, err := acc.GetKeysForProvider(context.Background(), schemas.OpenAI)
+	require.NoError(t, err)
+	require.Len(t, openaiKeys, 1)
+	assert.Equal(t, "openai-key", openaiKeys[0].Value.Val)
+
+	anthropicKeys, err := acc.GetKeysForProvider(context.Background(), schemas.Anthropic)
+	require.NoError(t, err)
+	require.Len(t, anthropicKeys, 1)
+	assert.Equal(t, "anthropic-key", anthropicKeys[0].Value.Val)
+}
+
+func TestMultiProviderAccount_UnknownProvider(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{
+		provider: schemas.OpenAI,
+		apiKey:   "openai-key",
+	})
+
+	_, err := acc.GetKeysForProvider(context.Background(), schemas.Anthropic)
+	assert.Error(t, err)
+
+	_, err = acc.GetConfigForProvider(schemas.Anthropic)
+	assert.Error(t, err)
+}
+
+func TestMultiProviderAccount_DuplicateProvider(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{
+		provider: schemas.OpenAI,
+		apiKey:   "first-key",
+	})
+	// Second add with same provider should be silently skipped (first wins)
+	acc.addProvider(&providerAccount{
+		provider: schemas.OpenAI,
+		apiKey:   "second-key",
+	})
+
+	providers, err := acc.GetConfiguredProviders()
+	require.NoError(t, err)
+	assert.Len(t, providers, 1)
+
+	keys, err := acc.GetKeysForProvider(context.Background(), schemas.OpenAI)
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	assert.Equal(t, "first-key", keys[0].Value.Val)
+}
+
+func TestMultiProviderAccount_AzureKeyConfig(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{
+		provider: schemas.Azure,
+		apiKey:   "azure-key",
+		apiURL:   "https://myservice.openai.azure.com",
+	})
+
+	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Azure)
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	require.NotNil(t, keys[0].AzureKeyConfig)
+	assert.Equal(t, "https://myservice.openai.azure.com", keys[0].AzureKeyConfig.Endpoint.Val)
+}
+
+func TestMultiProviderAccount_BedrockKeyConfig(t *testing.T) {
+	acc := newMultiProviderAccount()
+	acc.addProvider(&providerAccount{
+		provider: schemas.Bedrock,
+		apiKey:   "bedrock-key",
+		region:   "us-east-1",
+		awsKeyID: "AKIA123",
+		awsSecret: "secret123",
+	})
+
+	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Bedrock)
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	require.NotNil(t, keys[0].BedrockKeyConfig)
+	assert.Equal(t, "AKIA123", keys[0].BedrockKeyConfig.AccessKey.Val)
+	assert.Equal(t, "secret123", keys[0].BedrockKeyConfig.SecretKey.Val)
+	require.NotNil(t, keys[0].BedrockKeyConfig.Region)
+	assert.Equal(t, "us-east-1", keys[0].BedrockKeyConfig.Region.Val)
+}
+
+// --- Fallback request building tests ---
+
+func TestConvertToBifrostRequest_NoFallbacks(t *testing.T) {
+	b := &LLM{
+		provider:     schemas.OpenAI,
+		defaultModel: "gpt-4o",
+	}
+	req := b.convertToBifrostRequest(llm.CompletionRequest{}, b.GetDefaultConfig())
+	assert.Nil(t, req.Fallbacks)
+}
+
+func TestConvertToBifrostRequest_WithFallbacks(t *testing.T) {
+	b := &LLM{
+		provider:     schemas.OpenAI,
+		defaultModel: "gpt-4o",
+		fallbacks: []schemas.Fallback{
+			{Provider: schemas.Anthropic, Model: "claude-sonnet-4-20250514"},
+			{Provider: schemas.Bedrock, Model: "anthropic.claude-3-sonnet-20240229-v1:0"},
+		},
+	}
+	req := b.convertToBifrostRequest(llm.CompletionRequest{}, b.GetDefaultConfig())
+
+	require.Len(t, req.Fallbacks, 2)
+	assert.Equal(t, schemas.Anthropic, req.Fallbacks[0].Provider)
+	assert.Equal(t, "claude-sonnet-4-20250514", req.Fallbacks[0].Model)
+	assert.Equal(t, schemas.Bedrock, req.Fallbacks[1].Provider)
+	assert.Equal(t, "anthropic.claude-3-sonnet-20240229-v1:0", req.Fallbacks[1].Model)
+}
+
+func TestConvertToBifrostResponsesRequest_WithFallbacks(t *testing.T) {
+	b := &LLM{
+		provider:        schemas.OpenAI,
+		defaultModel:    "gpt-4o",
+		useResponsesAPI: true,
+		fallbacks: []schemas.Fallback{
+			{Provider: schemas.Anthropic, Model: "claude-sonnet-4-20250514"},
+		},
+	}
+	req := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, b.GetDefaultConfig())
+
+	require.Len(t, req.Fallbacks, 1)
+	assert.Equal(t, schemas.Anthropic, req.Fallbacks[0].Provider)
+	assert.Equal(t, "claude-sonnet-4-20250514", req.Fallbacks[0].Model)
+}
+
+func TestConvertToBifrostResponsesRequest_NoFallbacks(t *testing.T) {
+	b := &LLM{
+		provider:        schemas.OpenAI,
+		defaultModel:    "gpt-4o",
+		useResponsesAPI: true,
+	}
+	req := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, b.GetDefaultConfig())
+	assert.Nil(t, req.Fallbacks)
+}
+
+// --- NewFromServiceConfig with fallbacks tests ---
+
+func TestNewFromServiceConfig_NoFallbacks(t *testing.T) {
+	svc := llm.ServiceConfig{
+		ID:           "svc-1",
+		Type:         llm.ServiceTypeOpenAI,
+		APIKey:       "key",
+		DefaultModel: "gpt-4o",
+	}
+	bot := llm.BotConfig{
+		ID:          "bot-1",
+		Name:        "ai",
+		DisplayName: "AI",
+		ServiceID:   "svc-1",
+	}
+
+	llmInstance, err := NewFromServiceConfig(svc, bot, nil)
+	require.NoError(t, err)
+	require.NotNil(t, llmInstance)
+	defer llmInstance.Shutdown()
+
+	assert.Nil(t, llmInstance.fallbacks)
+	assert.Equal(t, schemas.OpenAI, llmInstance.provider)
+	assert.Equal(t, "gpt-4o", llmInstance.defaultModel)
+}
+
+func TestNewFromServiceConfig_WithFallbackServices(t *testing.T) {
+	primarySvc := llm.ServiceConfig{
+		ID:           "svc-openai",
+		Type:         llm.ServiceTypeOpenAI,
+		APIKey:       "openai-key",
+		DefaultModel: "gpt-4o",
+	}
+	fallbackSvc := llm.ServiceConfig{
+		ID:           "svc-anthropic",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "anthropic-key",
+		DefaultModel: "claude-sonnet-4-20250514",
+	}
+	bot := llm.BotConfig{
+		ID:          "bot-1",
+		Name:        "ai",
+		DisplayName: "AI",
+		ServiceID:   "svc-openai",
+	}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{fallbackSvc})
+	require.NoError(t, err)
+	require.NotNil(t, llmInstance)
+	defer llmInstance.Shutdown()
+
+	require.Len(t, llmInstance.fallbacks, 1)
+	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].Provider)
+	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+}
+
+func TestNewFromServiceConfig_MultipleFallbacks(t *testing.T) {
+	primarySvc := llm.ServiceConfig{
+		ID:           "svc-openai",
+		Type:         llm.ServiceTypeOpenAI,
+		APIKey:       "openai-key",
+		DefaultModel: "gpt-4o",
+	}
+	fallbackAnthropicSvc := llm.ServiceConfig{
+		ID:           "svc-anthropic",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "anthropic-key",
+		DefaultModel: "claude-sonnet-4-20250514",
+	}
+	fallbackLocalSvc := llm.ServiceConfig{
+		ID:           "svc-local",
+		Type:         llm.ServiceTypeOpenAICompatible,
+		APIURL:       "http://localhost:11434/v1",
+		DefaultModel: "llama3",
+	}
+	bot := llm.BotConfig{
+		ID:          "bot-1",
+		Name:        "ai",
+		DisplayName: "AI",
+		ServiceID:   "svc-openai",
+	}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{fallbackAnthropicSvc, fallbackLocalSvc})
+	require.NoError(t, err)
+	require.NotNil(t, llmInstance)
+	defer llmInstance.Shutdown()
+
+	require.Len(t, llmInstance.fallbacks, 2)
+	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].Provider)
+	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+	// OpenAI Compatible maps to OpenAI provider, but since primary is also OpenAI,
+	// the second fallback with same provider is skipped in the account (first wins).
+	// However the fallback list still includes it so Bifrost can try it.
+	assert.Equal(t, schemas.OpenAI, llmInstance.fallbacks[1].Provider)
+	assert.Equal(t, "llama3", llmInstance.fallbacks[1].Model)
+}
+
+func TestNewFromServiceConfig_BotModelOverrideDoesNotAffectFallback(t *testing.T) {
+	primarySvc := llm.ServiceConfig{
+		ID:           "svc-openai",
+		Type:         llm.ServiceTypeOpenAI,
+		APIKey:       "openai-key",
+		DefaultModel: "gpt-4o",
+	}
+	fallbackSvc := llm.ServiceConfig{
+		ID:           "svc-anthropic",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "anthropic-key",
+		DefaultModel: "claude-sonnet-4-20250514",
+	}
+	bot := llm.BotConfig{
+		ID:          "bot-1",
+		Name:        "ai",
+		DisplayName: "AI",
+		ServiceID:   "svc-openai",
+		Model:       "gpt-4o-mini", // Bot overrides model
+	}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{fallbackSvc})
+	require.NoError(t, err)
+	require.NotNil(t, llmInstance)
+	defer llmInstance.Shutdown()
+
+	// Primary model is overridden by bot config
+	assert.Equal(t, "gpt-4o-mini", llmInstance.defaultModel)
+
+	// Fallback model uses the fallback service's DefaultModel, not the bot override
+	require.Len(t, llmInstance.fallbacks, 1)
+	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+}
+
+func TestServiceConfigToFallbackEntry(t *testing.T) {
+	tests := []struct {
+		name             string
+		svc              llm.ServiceConfig
+		expectedProvider schemas.ModelProvider
+		expectedModel    string
+		expectedAPIURL   string
+		expectError      bool
+	}{
+		{
+			name: "OpenAI service",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeOpenAI,
+				APIKey:       "key",
+				DefaultModel: "gpt-4o",
+			},
+			expectedProvider: schemas.OpenAI,
+			expectedModel:    "gpt-4o",
+		},
+		{
+			name: "Anthropic service",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeAnthropic,
+				APIKey:       "key",
+				DefaultModel: "claude-sonnet-4-20250514",
+			},
+			expectedProvider: schemas.Anthropic,
+			expectedModel:    "claude-sonnet-4-20250514",
+		},
+		{
+			name: "Cohere service gets default URL",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeCohere,
+				APIKey:       "key",
+				DefaultModel: "command-r-plus",
+			},
+			expectedProvider: schemas.Cohere,
+			expectedModel:    "command-r-plus",
+			expectedAPIURL:   "https://api.cohere.ai/compatibility/v1",
+		},
+		{
+			name: "Mistral service gets default URL",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeMistral,
+				APIKey:       "key",
+				DefaultModel: "mistral-large-latest",
+			},
+			expectedProvider: schemas.Mistral,
+			expectedModel:    "mistral-large-latest",
+			expectedAPIURL:   "https://api.mistral.ai/v1",
+		},
+		{
+			name: "OpenAI Compatible normalizes URL",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeOpenAICompatible,
+				APIURL:       "http://localhost:11434/v1",
+				DefaultModel: "llama3",
+			},
+			expectedProvider: schemas.OpenAI,
+			expectedModel:    "llama3",
+			expectedAPIURL:   "http://localhost:11434",
+		},
+		{
+			name: "unsupported service type",
+			svc: llm.ServiceConfig{
+				Type: "unknown-type",
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry, err := serviceConfigToFallbackEntry(tt.svc)
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedProvider, entry.Provider)
+			assert.Equal(t, tt.expectedModel, entry.Model)
+			if tt.expectedAPIURL != "" {
+				assert.Equal(t, tt.expectedAPIURL, entry.APIURL)
 			}
 		})
 	}

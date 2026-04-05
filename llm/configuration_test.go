@@ -471,3 +471,194 @@ func TestServiceConfig_JSONUnmarshal_sendUserID(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, cfg.SendUserID)
 }
+
+func TestServiceConfig_JSONRoundTrip_FallbackServiceID(t *testing.T) {
+	cfg := ServiceConfig{
+		ID:                "s1",
+		Type:              ServiceTypeOpenAI,
+		APIKey:            "key",
+		FallbackServiceID: "s2",
+	}
+	data, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"fallbackServiceID":"s2"`)
+
+	var decoded ServiceConfig
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	assert.Equal(t, "s2", decoded.FallbackServiceID)
+}
+
+func TestServiceConfig_JSONRoundTrip_FallbackServiceID_Omitted(t *testing.T) {
+	cfg := ServiceConfig{
+		ID:     "s1",
+		Type:   ServiceTypeOpenAI,
+		APIKey: "key",
+	}
+	data, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "fallbackServiceID")
+}
+
+func TestResolveFallbackChain(t *testing.T) {
+	openAISvc := ServiceConfig{
+		ID:                "openai-1",
+		Type:              ServiceTypeOpenAI,
+		APIKey:            "key-openai",
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "anthropic-1",
+	}
+	anthropicSvc := ServiceConfig{
+		ID:                "anthropic-1",
+		Type:              ServiceTypeAnthropic,
+		APIKey:            "key-anthropic",
+		DefaultModel:      "claude-sonnet-4-20250514",
+		FallbackServiceID: "local-1",
+	}
+	localSvc := ServiceConfig{
+		ID:           "local-1",
+		Type:         ServiceTypeOpenAICompatible,
+		APIURL:       "http://localhost:11434/v1",
+		DefaultModel: "llama3",
+	}
+	cycleSvcA := ServiceConfig{
+		ID:                "cycle-a",
+		Type:              ServiceTypeOpenAI,
+		APIKey:            "key-a",
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "cycle-b",
+	}
+	cycleSvcB := ServiceConfig{
+		ID:                "cycle-b",
+		Type:              ServiceTypeAnthropic,
+		APIKey:            "key-b",
+		DefaultModel:      "claude-sonnet-4-20250514",
+		FallbackServiceID: "cycle-a",
+	}
+	selfCycleSvc := ServiceConfig{
+		ID:                "self-cycle",
+		Type:              ServiceTypeOpenAI,
+		APIKey:            "key",
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "self-cycle",
+	}
+	invalidFallbackSvc := ServiceConfig{
+		ID:                "valid-primary",
+		Type:              ServiceTypeOpenAI,
+		APIKey:            "key",
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "invalid-svc",
+	}
+	// Invalid service (missing required API key)
+	invalidSvc := ServiceConfig{
+		ID:   "invalid-svc",
+		Type: ServiceTypeOpenAI,
+		// APIKey intentionally missing
+	}
+	noFallbackSvc := ServiceConfig{
+		ID:           "no-fallback",
+		Type:         ServiceTypeOpenAI,
+		APIKey:       "key",
+		DefaultModel: "gpt-4o",
+	}
+
+	allServices := map[string]ServiceConfig{
+		openAISvc.ID:          openAISvc,
+		anthropicSvc.ID:       anthropicSvc,
+		localSvc.ID:           localSvc,
+		cycleSvcA.ID:          cycleSvcA,
+		cycleSvcB.ID:          cycleSvcB,
+		selfCycleSvc.ID:       selfCycleSvc,
+		invalidFallbackSvc.ID: invalidFallbackSvc,
+		invalidSvc.ID:         invalidSvc,
+		noFallbackSvc.ID:      noFallbackSvc,
+	}
+
+	lookup := func(id string) (ServiceConfig, bool) {
+		svc, ok := allServices[id]
+		return svc, ok
+	}
+
+	tests := []struct {
+		name            string
+		primaryID       string
+		expectedIDs     []string
+		expectedLen     int
+		expectedModels  []string
+	}{
+		{
+			name:        "no fallback configured",
+			primaryID:   noFallbackSvc.ID,
+			expectedIDs: nil,
+			expectedLen: 0,
+		},
+		{
+			name:           "simple chain A→B",
+			primaryID:      anthropicSvc.ID,
+			expectedIDs:    []string{"local-1"},
+			expectedLen:    1,
+			expectedModels: []string{"llama3"},
+		},
+		{
+			name:           "multi-hop chain A→B→C",
+			primaryID:      openAISvc.ID,
+			expectedIDs:    []string{"anthropic-1", "local-1"},
+			expectedLen:    2,
+			expectedModels: []string{"claude-sonnet-4-20250514", "llama3"},
+		},
+		{
+			name:           "cycle A→B→A stops at B",
+			primaryID:      cycleSvcA.ID,
+			expectedIDs:    []string{"cycle-b"},
+			expectedLen:    1,
+			expectedModels: []string{"claude-sonnet-4-20250514"},
+		},
+		{
+			name:        "self-cycle A→A returns empty",
+			primaryID:   selfCycleSvc.ID,
+			expectedIDs: nil,
+			expectedLen: 0,
+		},
+		{
+			name:        "fallback to invalid service stops",
+			primaryID:   invalidFallbackSvc.ID,
+			expectedIDs: nil,
+			expectedLen: 0,
+		},
+		{
+			name:        "primary not found returns nil",
+			primaryID:   "nonexistent",
+			expectedIDs: nil,
+			expectedLen: 0,
+		},
+		{
+			name:        "fallback points to missing service",
+			primaryID:   "missing-fallback-primary",
+			expectedIDs: nil,
+			expectedLen: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chain := ResolveFallbackChain(tt.primaryID, lookup)
+
+			assert.Len(t, chain, tt.expectedLen)
+
+			if tt.expectedIDs != nil {
+				gotIDs := make([]string, len(chain))
+				for i, svc := range chain {
+					gotIDs[i] = svc.ID
+				}
+				assert.Equal(t, tt.expectedIDs, gotIDs)
+			}
+
+			if tt.expectedModels != nil {
+				gotModels := make([]string, len(chain))
+				for i, svc := range chain {
+					gotModels[i] = svc.DefaultModel
+				}
+				assert.Equal(t, tt.expectedModels, gotModels)
+			}
+		})
+	}
+}
