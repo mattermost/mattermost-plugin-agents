@@ -47,6 +47,11 @@ type LLM struct {
 
 	// UseResponsesAPI enables OpenAI Responses API for native tools support
 	useResponsesAPI bool
+
+	// fallbacks is the pre-built list of fallback providers/models attached
+	// to every outgoing Bifrost request so that Bifrost can automatically
+	// retry with alternative providers when the primary fails.
+	fallbacks []schemas.Fallback
 }
 
 // Config holds the configuration for creating a LLM instance.
@@ -72,6 +77,25 @@ type Config struct {
 
 	// UseResponsesAPI enables OpenAI Responses API for native tools support
 	UseResponsesAPI bool
+
+	// Fallbacks defines an ordered list of fallback providers/models that
+	// Bifrost will try sequentially when the primary provider fails.
+	Fallbacks []FallbackEntry
+}
+
+// FallbackEntry holds the provider and credential info for a single fallback
+// in the chain. Each entry is registered with the Bifrost client (so it knows
+// about the provider) and converted into a schemas.Fallback on every request.
+type FallbackEntry struct {
+	Provider                schemas.ModelProvider
+	Model                   string
+	APIKey                  string
+	APIURL                  string
+	OrgID                   string
+	Region                  string
+	AWSAccessKeyID          string
+	AWSSecretAccessKey      string
+	StreamingTimeoutSeconds int
 }
 
 // providerAccount implements the Bifrost Account interface for a single provider.
@@ -161,9 +185,55 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 	return config, nil
 }
 
+// multiProviderAccount implements the Bifrost Account interface for multiple
+// providers. This is needed for fallback support: the Bifrost client must know
+// about every provider in the fallback chain so it can obtain keys and configs
+// when retrying failed requests on alternative providers.
+type multiProviderAccount struct {
+	entries map[schemas.ModelProvider]*providerAccount
+	order   []schemas.ModelProvider
+}
+
+func newMultiProviderAccount() *multiProviderAccount {
+	return &multiProviderAccount{
+		entries: make(map[schemas.ModelProvider]*providerAccount),
+	}
+}
+
+// addProvider registers a provider. If the provider is already registered it is
+// silently skipped (first-registered wins), because Bifrost indexes by provider
+// and two entries with the same provider type would conflict.
+func (m *multiProviderAccount) addProvider(entry *providerAccount) {
+	if _, exists := m.entries[entry.provider]; exists {
+		return
+	}
+	m.entries[entry.provider] = entry
+	m.order = append(m.order, entry.provider)
+}
+
+func (m *multiProviderAccount) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
+	return m.order, nil
+}
+
+func (m *multiProviderAccount) GetKeysForProvider(ctx context.Context, provider schemas.ModelProvider) ([]schemas.Key, error) {
+	entry, ok := m.entries[provider]
+	if !ok {
+		return nil, fmt.Errorf("provider %s not configured", provider)
+	}
+	return entry.GetKeysForProvider(ctx, provider)
+}
+
+func (m *multiProviderAccount) GetConfigForProvider(provider schemas.ModelProvider) (*schemas.ProviderConfig, error) {
+	entry, ok := m.entries[provider]
+	if !ok {
+		return nil, fmt.Errorf("provider %s not configured", provider)
+	}
+	return entry.GetConfigForProvider(provider)
+}
+
 // New creates a new LLM instance with the given configuration.
 func New(cfg Config) (*LLM, error) {
-	account := &providerAccount{
+	primaryEntry := &providerAccount{
 		provider:                cfg.Provider,
 		apiKey:                  cfg.APIKey,
 		apiURL:                  cfg.APIURL,
@@ -172,6 +242,28 @@ func New(cfg Config) (*LLM, error) {
 		awsKeyID:                cfg.AWSAccessKeyID,
 		awsSecret:               cfg.AWSSecretAccessKey,
 		streamingTimeoutSeconds: int(cfg.StreamingTimeout.Seconds()),
+	}
+
+	// Build a multi-provider account with the primary and all fallbacks.
+	account := newMultiProviderAccount()
+	account.addProvider(primaryEntry)
+
+	var fallbacks []schemas.Fallback
+	for _, fb := range cfg.Fallbacks {
+		account.addProvider(&providerAccount{
+			provider:                fb.Provider,
+			apiKey:                  fb.APIKey,
+			apiURL:                  fb.APIURL,
+			orgID:                   fb.OrgID,
+			region:                  fb.Region,
+			awsKeyID:                fb.AWSAccessKeyID,
+			awsSecret:               fb.AWSSecretAccessKey,
+			streamingTimeoutSeconds: fb.StreamingTimeoutSeconds,
+		})
+		fallbacks = append(fallbacks, schemas.Fallback{
+			Provider: fb.Provider,
+			Model:    fb.Model,
+		})
 	}
 
 	bifrostConfig := schemas.BifrostConfig{
@@ -206,6 +298,7 @@ func New(cfg Config) (*LLM, error) {
 		reasoningEffort:    cfg.ReasoningEffort,
 		thinkingBudget:     cfg.ThinkingBudget,
 		useResponsesAPI:    cfg.UseResponsesAPI,
+		fallbacks:          fallbacks,
 	}, nil
 }
 
@@ -582,6 +675,9 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 		params.ResponseFormat = buildChatResponseFormat(cfg.JSONOutputFormat)
 	}
 	req.Params = params
+
+	// Attach fallback chain so Bifrost retries with alternative providers on failure.
+	req.Fallbacks = b.fallbacks
 
 	return req
 }
@@ -1212,6 +1308,9 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 		params.Text = buildResponsesTextConfig(cfg.JSONOutputFormat)
 	}
 	req.Params = params
+
+	// Attach fallback chain so Bifrost retries with alternative providers on failure.
+	req.Fallbacks = b.fallbacks
 
 	return req
 }

@@ -78,15 +78,23 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 	}
 }
 
-// resolveServiceCfgs builds a map of service configs referenced by the given bot configs.
+// resolveServiceCfgs builds a map of service configs referenced by the given
+// bot configs, including any services in each service's fallback chain. This
+// ensures that changes to fallback services are detected for optimistic
+// change-detection in EnsureBots.
 func (b *MMBots) resolveServiceCfgs(botCfgs []llm.BotConfig) map[string]llm.ServiceConfig {
 	result := make(map[string]llm.ServiceConfig, len(botCfgs))
 	for _, botCfg := range botCfgs {
-		if _, exists := result[botCfg.ServiceID]; exists {
-			continue
+		if _, exists := result[botCfg.ServiceID]; !exists {
+			if svc, ok := b.config.GetServiceByID(botCfg.ServiceID); ok {
+				result[botCfg.ServiceID] = svc
+			}
 		}
-		if svc, ok := b.config.GetServiceByID(botCfg.ServiceID); ok {
-			result[botCfg.ServiceID] = svc
+		// Include fallback chain services so changes to them trigger re-init.
+		for _, fbSvc := range llm.ResolveFallbackChain(botCfg.ServiceID, b.config.GetServiceByID) {
+			if _, exists := result[fbSvc.ID]; !exists {
+				result[fbSvc.ID] = fbSvc
+			}
 		}
 	}
 	return result
@@ -313,8 +321,11 @@ func (b *MMBots) EnsureBots() error {
 
 		b.ensureDefaultProfileImage(bot)
 
+		// Resolve fallback chain for this bot's service.
+		fallbackServices := llm.ResolveFallbackChain(bot.service.ID, b.config.GetServiceByID)
+
 		var err error
-		bot.llm, err = b.getLLM(bot.service, bot.cfg)
+		bot.llm, err = b.getLLM(bot.service, bot.cfg, fallbackServices)
 		if err != nil {
 			return err
 		}
@@ -355,10 +366,10 @@ func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
 	}
 }
 
-func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (llm.LanguageModel, error) {
+func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, error) {
 	// Create the correct model using Bifrost for all providers
 	var result llm.LanguageModel
-	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig)
+	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig, fallbackServices)
 	if err != nil {
 		b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
 		return nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)

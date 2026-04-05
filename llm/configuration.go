@@ -28,6 +28,12 @@ type ServiceConfig struct {
 	// UseResponsesAPI determines whether to use the new OpenAI Responses API
 	// Only applicable to OpenAI and OpenAI-compatible services
 	UseResponsesAPI bool `json:"useResponsesAPI"`
+
+	// FallbackServiceID is the ID of another service to fall back to when this
+	// service's provider/model fails (e.g. network error, rate limit, model
+	// unavailable). The fallback service's DefaultModel is used. Chains are
+	// followed (A→B→C) with cycle detection.
+	FallbackServiceID string `json:"fallbackServiceID,omitempty"`
 }
 
 type ChannelAccessLevel int
@@ -114,6 +120,38 @@ func (c *BotConfig) IsValid() bool {
 	}
 
 	return true
+}
+
+// ResolveFallbackChain walks the fallback chain starting from the service
+// identified by primaryServiceID, returning an ordered slice of fallback
+// ServiceConfigs. It detects cycles by tracking visited service IDs and stops
+// if a fallback service is not found or is invalid.
+func ResolveFallbackChain(primaryServiceID string, getServiceByID func(id string) (ServiceConfig, bool)) []ServiceConfig {
+	primarySvc, ok := getServiceByID(primaryServiceID)
+	if !ok {
+		return nil
+	}
+
+	var chain []ServiceConfig
+	visited := map[string]bool{primaryServiceID: true}
+	currentID := primarySvc.FallbackServiceID
+
+	for currentID != "" {
+		if visited[currentID] {
+			break // cycle detected
+		}
+		visited[currentID] = true
+
+		svc, ok := getServiceByID(currentID)
+		if !ok || !IsValidService(svc) {
+			break // missing or invalid service
+		}
+
+		chain = append(chain, svc)
+		currentID = svc.FallbackServiceID
+	}
+
+	return chain
 }
 
 // IsValidService validates a service configuration

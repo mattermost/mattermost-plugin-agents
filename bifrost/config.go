@@ -36,7 +36,10 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 }
 
 // NewFromServiceConfig creates a LLM instance from ServiceConfig and BotConfig.
-func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (*LLM, error) {
+// fallbackServices is an ordered slice of fallback services resolved from the
+// primary service's fallback chain (see llm.ResolveFallbackChain). Each fallback
+// service's DefaultModel is used as the fallback model.
+func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (*LLM, error) {
 	provider, err := MapServiceTypeToProvider(serviceConfig.Type)
 	if err != nil {
 		return nil, err
@@ -92,7 +95,51 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		cfg.DefaultModel = botConfig.Model
 	}
 
+	// Build fallback entries from the resolved fallback service chain.
+	for _, fbSvc := range fallbackServices {
+		fbEntry, fbErr := serviceConfigToFallbackEntry(fbSvc)
+		if fbErr != nil {
+			// Skip unsupported fallback services rather than failing the whole bot.
+			continue
+		}
+		cfg.Fallbacks = append(cfg.Fallbacks, fbEntry)
+	}
+
 	return New(cfg)
+}
+
+// serviceConfigToFallbackEntry converts a ServiceConfig into a FallbackEntry
+// for registration with the Bifrost client.
+func serviceConfigToFallbackEntry(svc llm.ServiceConfig) (FallbackEntry, error) {
+	provider, err := MapServiceTypeToProvider(svc.Type)
+	if err != nil {
+		return FallbackEntry{}, err
+	}
+
+	apiURL := svc.APIURL
+	switch svc.Type {
+	case llm.ServiceTypeCohere:
+		if apiURL == "" {
+			apiURL = "https://api.cohere.ai/compatibility/v1"
+		}
+	case llm.ServiceTypeMistral:
+		if apiURL == "" {
+			apiURL = "https://api.mistral.ai/v1"
+		}
+	}
+	apiURL = normalizeOpenAIBaseURL(provider, apiURL)
+
+	return FallbackEntry{
+		Provider:                provider,
+		Model:                   svc.DefaultModel,
+		APIKey:                  svc.APIKey,
+		APIURL:                  apiURL,
+		OrgID:                   svc.OrgID,
+		Region:                  svc.Region,
+		AWSAccessKeyID:          svc.AWSAccessKeyID,
+		AWSSecretAccessKey:      svc.AWSSecretAccessKey,
+		StreamingTimeoutSeconds: svc.StreamingTimeoutSeconds,
+	}, nil
 }
 
 // normalizeOpenAIBaseURL strips a trailing /v1 suffix from API URLs for OpenAI-type providers.
