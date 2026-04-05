@@ -50,6 +50,13 @@ type RAGResult struct {
 	Username    string  `json:"username"`
 	Content     string  `json:"content"`
 	Score       float32 `json:"score"`
+
+	// File-specific fields (populated when SourceType == "file")
+	SourceType string `json:"sourceType"`            // "post" or "file"
+	FileID     string `json:"fileId,omitempty"`       // Mattermost file attachment ID
+	FileName   string `json:"fileName,omitempty"`     // Original filename
+	FileType   string `json:"fileType,omitempty"`     // "pdf", "docx", "xlsx"
+	PageNum    int    `json:"pageNum,omitempty"`      // Page/sheet number
 }
 
 // Options configures a search operation
@@ -99,11 +106,34 @@ func (s *Search) Search(ctx context.Context, query string, opts Options) ([]RAGR
 func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGResult {
 	var ragResults []RAGResult
 	for i, result := range searchResults {
+		// Determine source type, channel ID, user ID, and content based on result type
+		var channelID, userID, postID, content, sourceType string
+		var fileID, fileName, fileType string
+		var pageNum int
+
+		if result.SourceType == embeddings.SourceTypeFile && result.FileDocument != nil {
+			sourceType = embeddings.SourceTypeFile
+			channelID = result.FileDocument.ChannelID
+			userID = result.FileDocument.UserID
+			postID = result.FileDocument.PostID
+			content = result.FileDocument.Content
+			fileID = result.FileDocument.FileID
+			fileName = result.FileDocument.FileName
+			fileType = result.FileDocument.FileType
+			pageNum = result.FileDocument.PageNum
+		} else {
+			sourceType = embeddings.SourceTypePost
+			channelID = result.Document.ChannelID
+			userID = result.Document.UserID
+			postID = result.Document.PostID
+			content = result.Document.Content
+		}
+
 		// Get channel name and team name
 		var channelName, teamName string
-		channel, chErr := s.mmclient.GetChannel(result.Document.ChannelID)
+		channel, chErr := s.mmclient.GetChannel(channelID)
 		if chErr != nil {
-			s.mmclient.LogWarn("Failed to get channel", "error", chErr, "channelID", result.Document.ChannelID)
+			s.mmclient.LogWarn("Failed to get channel", "error", chErr, "channelID", channelID)
 			channelName = "Unknown Channel"
 		} else {
 			switch channel.Type {
@@ -123,35 +153,41 @@ func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGRes
 
 		// Get username
 		var username string
-		user, userErr := s.mmclient.GetUser(result.Document.UserID)
+		user, userErr := s.mmclient.GetUser(userID)
 		if userErr != nil {
-			s.mmclient.LogWarn("Failed to get user", "error", userErr, "userID", result.Document.UserID)
+			s.mmclient.LogWarn("Failed to get user", "error", userErr, "userID", userID)
 			username = "Unknown User"
 		} else {
 			username = user.Username
 		}
 
-		// Determine the correct content to show
-		content := result.Document.Content
-
 		// Handle additional metadata for chunks
 		var chunkInfo string
-		if result.Document.IsChunk {
+		if sourceType == embeddings.SourceTypePost && result.Document.IsChunk {
 			chunkInfo = fmt.Sprintf(" (Chunk %d of %d)",
 				result.Document.ChunkIndex+1,
 				result.Document.TotalChunks)
+		} else if sourceType == embeddings.SourceTypeFile && result.FileDocument != nil && result.FileDocument.IsChunk {
+			chunkInfo = fmt.Sprintf(" (Chunk %d of %d)",
+				result.FileDocument.ChunkIndex+1,
+				result.FileDocument.TotalChunks)
 		}
 
 		ragResults = append(ragResults, RAGResult{
 			Index:       i + 1, // 1-based index for citation mapping
-			PostID:      result.Document.PostID,
-			ChannelID:   result.Document.ChannelID,
+			PostID:      postID,
+			ChannelID:   channelID,
 			ChannelName: channelName + chunkInfo,
 			TeamName:    teamName,
-			UserID:      result.Document.UserID,
+			UserID:      userID,
 			Username:    username,
 			Content:     content,
 			Score:       result.Score,
+			SourceType:  sourceType,
+			FileID:      fileID,
+			FileName:    fileName,
+			FileType:    fileType,
+			PageNum:     pageNum,
 		})
 	}
 
@@ -160,6 +196,7 @@ func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGRes
 
 // executeSearch performs the embedding search and enriches results with metadata.
 // This is the core search operation without any LLM concerns.
+// It searches across both posts and documents using SearchAll for unified results.
 func (s *Search) executeSearch(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -176,13 +213,16 @@ func (s *Search) executeSearch(ctx context.Context, query string, opts Options) 
 		limit = 5
 	}
 
-	searchResults, err := search.Search(ctx, query, embeddings.SearchOptions{
+	searchOpts := embeddings.SearchOptions{
 		Limit:     limit,
 		Offset:    opts.Offset,
 		TeamID:    opts.TeamID,
 		ChannelID: opts.ChannelID,
 		UserID:    opts.UserID,
-	})
+	}
+
+	// Use SearchAll to search across both posts and documents
+	searchResults, err := search.SearchAll(ctx, query, searchOpts)
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
 	}

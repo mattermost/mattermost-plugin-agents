@@ -1,5 +1,7 @@
-{{range .Parameters.Results}}<message index="{{.Index}}" postId="{{.PostID}}" teamName="{{if .TeamName}}{{escapeContent .TeamName}}{{else}}_redirect{{end}}" from="{{escapeContent .Username}}" in="{{escapeContent .ChannelName}}" relevance="{{printf "%.2f" .Score}}">
+{{range .Parameters.Results}}{{if eq .SourceType "file"}}<document index="{{.Index}}" postId="{{.PostID}}" fileName="{{escapeContent .FileName}}" fileType="{{.FileType}}" page="{{.PageNum}}" uploadedBy="{{escapeContent .Username}}" in="{{escapeContent .ChannelName}}" relevance="{{printf "%.2f" .Score}}">
+{{escapeContent .Content}}
+</document>
+{{else}}<message index="{{.Index}}" postId="{{.PostID}}" teamName="{{if .TeamName}}{{escapeContent .TeamName}}{{else}}_redirect{{end}}" from="{{escapeContent .Username}}" in="{{escapeContent .ChannelName}}" relevance="{{printf "%.2f" .Score}}">
 {{escapeContent .Content}}
 </message>
-
-{{end}}
+{{end}}{{end}}

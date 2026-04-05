@@ -61,14 +61,13 @@ func (p *MMToolProvider) toolSearchServer(llmContext *llm.Context, argsGetter ll
 // formatSearchResults formats search results into a readable string
 func (p *MMToolProvider) formatSearchResults(results []search.RAGResult) string {
 	if len(results) == 0 {
-		return "No relevant messages found."
+		return "No relevant results found."
 	}
 
 	var builder strings.Builder
-	builder.WriteString("Found the following relevant messages:\n\n")
+	builder.WriteString("Found the following relevant results:\n\n")
 
 	for i, result := range results {
-		// Format the result (channel name and username are already enriched)
 		channelName := result.ChannelName
 		if channelName == "" {
 			channelName = "Unknown Channel"
@@ -79,10 +78,21 @@ func (p *MMToolProvider) formatSearchResults(results []search.RAGResult) string 
 			username = "Unknown User"
 		}
 
-		builder.WriteString(fmt.Sprintf("%d. **%s** in ~%s (Score: %.2f)\n",
-			i+1, username, channelName, result.Score))
+		if result.SourceType == "file" {
+			// Format document result with filename and page info
+			pageInfo := ""
+			if result.PageNum > 0 {
+				pageInfo = fmt.Sprintf(" (page %d)", result.PageNum)
+			}
+			builder.WriteString(fmt.Sprintf("%d. 📄 From document **%s**%s uploaded by **%s** in ~%s (Score: %.2f)\n",
+				i+1, result.FileName, pageInfo, username, channelName, result.Score))
+		} else {
+			// Format post result (existing behavior)
+			builder.WriteString(fmt.Sprintf("%d. **%s** in ~%s (Score: %.2f)\n",
+				i+1, username, channelName, result.Score))
+		}
 
-		// Add message content (truncate if too long)
+		// Add content (truncate if too long)
 		message := result.Content
 		if len(message) > 500 {
 			message = message[:497] + "..."
