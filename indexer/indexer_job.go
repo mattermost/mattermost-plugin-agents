@@ -281,6 +281,20 @@ func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool) { //nolin
 		s.pluginAPI.LogWarn("Catch-up pass completed", "catch_up_posts", catchUpCount)
 	}
 
+	// Run file reindexing pass if document indexing is enabled
+	if s.configGetter != nil {
+		cfg := s.configGetter()
+		if cfg.EnableDocumentIndexing {
+			s.pluginAPI.LogWarn("Starting file document reindexing pass")
+			if fileErr := s.reindexFiles(ctx, search, jobStatus, jobStatus.CutoffAt); fileErr != nil {
+				s.pluginAPI.LogWarn("File reindexing pass failed (non-fatal)", "error", fileErr)
+				// File reindexing errors are non-fatal - posts are already indexed
+			} else {
+				s.pluginAPI.LogWarn("File document reindexing pass completed")
+			}
+		}
+	}
+
 	// Completed successfully
 	jobStatus.Status = JobStatusCompleted
 	jobStatus.CompletedAt = time.Now()

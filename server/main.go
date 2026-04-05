@@ -510,6 +510,24 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 			if err := p.indexerService.IndexPost(context.Background(), post, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index post in vector database", "error", err)
 			}
+
+			// Index file attachments for document knowledge base
+			if len(post.FileIds) > 0 {
+				go func() {
+					for _, fileID := range post.FileIds {
+						fileInfo, fileErr := p.pluginAPI.File.GetInfo(fileID)
+						if fileErr != nil {
+							p.pluginAPI.Log.Warn("Failed to get file info for indexing",
+								"error", fileErr, "fileID", fileID)
+							continue
+						}
+						if indexErr := p.indexerService.IndexFile(context.Background(), fileInfo, post, channel); indexErr != nil {
+							p.pluginAPI.Log.Warn("Failed to index file",
+								"error", indexErr, "fileID", fileID, "fileName", fileInfo.Name)
+						}
+					}
+				}()
+			}
 		}
 	}
 
@@ -544,6 +562,12 @@ func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
 	if p.indexerService != nil {
 		if err := p.indexerService.DeletePost(context.Background(), post.Id); err != nil {
 			p.pluginAPI.Log.Error("Failed to delete post from vector database", "error", err)
+		}
+		// Delete file embeddings for deleted post
+		if len(post.FileIds) > 0 {
+			if err := p.indexerService.DeleteFilesByPost(context.Background(), post.Id, post.FileIds); err != nil {
+				p.pluginAPI.Log.Error("Failed to delete file embeddings for deleted post", "error", err)
+			}
 		}
 	}
 	if p.conversationsService != nil {
