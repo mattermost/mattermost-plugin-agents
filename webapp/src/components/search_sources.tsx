@@ -96,19 +96,74 @@ const SourceItem = styled.div`
     }
 `;
 
+const FileSourceInfo = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    background: rgba(var(--center-channel-color-rgb), 0.06);
+    border-radius: 4px;
+    font-size: 13px;
+`;
+
+const FileIcon = styled.span`
+    font-size: 16px;
+`;
+
+const FileName = styled.span`
+    font-weight: 600;
+    color: var(--center-channel-color);
+`;
+
+const PageInfo = styled.span`
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+    font-size: 12px;
+`;
+
+const FileTypeBadge = styled.span`
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 1px 4px;
+    border-radius: 2px;
+    background: rgba(var(--center-channel-color-rgb), 0.12);
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+`;
+
 interface Source {
     postId: string;
     channelId: string;
     userId: string;
     content: string;
     score: number;
+    sourceType?: string;
+    fileId?: string;
+    fileName?: string;
+    fileType?: string;
+    pageNum?: number;
 }
 
 interface SourceItemProps {
     source: Source;
 }
 
+const getFileIcon = (fileType?: string): string => {
+    switch (fileType) {
+    case 'pdf':
+        return '📄';
+    case 'docx':
+        return '📝';
+    case 'xlsx':
+        return '📊';
+    default:
+        return '📎';
+    }
+};
+
 const SearchSource = ({source, index}: SourceItemProps & {index: number}) => {
+    const isFileSource = source.sourceType === 'file';
+
     return (
         <SourceItem>
             <SourceHeader>
@@ -118,6 +173,23 @@ const SearchSource = ({source, index}: SourceItemProps & {index: number}) => {
                     {formatScore(source.score)}
                 </RelevanceScore>
             </SourceHeader>
+            {isFileSource && source.fileName && (
+                <FileSourceInfo>
+                    <FileIcon>{getFileIcon(source.fileType)}</FileIcon>
+                    <FileName>{source.fileName}</FileName>
+                    {source.fileType && (
+                        <FileTypeBadge>{source.fileType}</FileTypeBadge>
+                    )}
+                    {source.pageNum !== undefined && source.pageNum > 0 && (
+                        <PageInfo>
+                            <FormattedMessage
+                                defaultMessage='Page {pageNum}'
+                                values={{pageNum: source.pageNum}}
+                            />
+                        </PageInfo>
+                    )}
+                </FileSourceInfo>
+            )}
             <PostPreview
                 postId={source.postId}
                 userId={source.userId}
@@ -154,7 +226,7 @@ export const SearchSources = ({sources}: Props) => {
             <SourcesList isOpen={isOpen}>
                 {sources.map((source, index) => (
                     <SearchSource
-                        key={source.postId}
+                        key={`${source.postId}-${source.fileId || index}`}
                         index={index}
                         source={source}
                     />
