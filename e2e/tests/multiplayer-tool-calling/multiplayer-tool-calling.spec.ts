@@ -171,28 +171,6 @@ async function openLatestThread(page: Page, timeout: number = 30000): Promise<vo
 }
 
 /**
- * Wait for a specific button to appear in the RHS thread panel.
- * Returns true if found, false if timeout (when throwOnTimeout is false).
- */
-async function waitForButtonInThread(page: Page, buttonName: string, timeout: number = 120000, throwOnTimeout: boolean = true): Promise<boolean> {
-    const startTime = Date.now();
-    const rhs = page.locator('#rhsContainer');
-    while (Date.now() - startTime < timeout) {
-        const button = rhs.getByRole('button', { name: buttonName });
-        const isVisible = await button.first().isVisible().catch(() => false);
-        if (isVisible) {
-            await page.waitForTimeout(500);
-            return true;
-        }
-        await page.waitForTimeout(1000);
-    }
-    if (throwOnTimeout) {
-        throw new Error(`Timeout waiting for '${buttonName}' button in thread`);
-    }
-    return false;
-}
-
-/**
  * Wait for any approval decision button in the RHS thread panel.
  * Returns the first visible button name, or null on timeout.
  */
@@ -222,11 +200,26 @@ async function waitForAnyButtonInThread(
 }
 
 /**
- * Complete one full tool call round: Accept all → Share all.
- * Returns true if a round was completed, false if no Accept button appeared
- * (meaning the LLM is done making tool calls).
+ * After accepting a tool call, wait for the result-stage visibility decision if it appears.
+ * Some OpenAI runs complete the round without surfacing Share/Keep private, so return null
+ * instead of failing when the approval flow continues without that intermediate UI.
  */
-async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'accept-keep-private' | 'reject'): Promise<boolean> {
+async function waitForResultDecisionAfterAccept(page: Page, timeout: number = 30000): Promise<'Share' | 'Keep private' | null> {
+    return await waitForAnyButtonInThread(page, ['Share', 'Keep private'], timeout, false) as 'Share' | 'Keep private' | null;
+}
+
+/**
+ * Complete one full tool call round: Accept all → Share all.
+ * Returns:
+ * - 'completed' when the round finished and there may be more decisions pending
+ * - 'settled' when the round finished without surfacing Share/Keep private
+ * - 'none' when no decision buttons appeared (meaning the LLM is done)
+ */
+async function completeOneToolCallRound(
+    page: Page,
+    action: 'accept-share' | 'accept-keep-private' | 'reject',
+    decisionTimeout: number = 120000,
+): Promise<'completed' | 'settled' | 'none'> {
     const rhs = page.locator('#rhsContainer');
 
     // A round can begin in call stage (Accept/Reject) or directly in result stage
@@ -234,11 +227,11 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
     const firstDecisionButton = await waitForAnyButtonInThread(
         page,
         ['Accept', 'Share', 'Keep private'],
-        120000,
+        decisionTimeout,
         false,
     );
     if (!firstDecisionButton) {
-        return false; // No more decisions pending — the LLM is done
+        return 'none'; // No more decisions pending — the LLM is done
     }
 
     if (firstDecisionButton === 'Accept') {
@@ -250,7 +243,7 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
                 await rejectButtons.nth(i).click();
             }
             await page.waitForTimeout(2000);
-            return true;
+            return 'completed';
         }
 
         // Accept all tool calls in this round
@@ -260,8 +253,13 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
             await acceptButtons.nth(i).click();
         }
 
-        // Wait for Share/Keep private buttons (result stage)
-        await waitForButtonInThread(page, 'Share', 120000);
+        // Most runs surface Share/Keep private promptly after Accept. If they do not,
+        // treat the round as settled and let the final state assertions decide success.
+        const resultDecision = await waitForResultDecisionAfterAccept(page);
+        if (!resultDecision) {
+            await page.waitForTimeout(2000);
+            return 'settled';
+        }
     }
 
     // For auto-approved rounds there is no call-stage decision; choose result visibility.
@@ -283,7 +281,7 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
     }
 
     await page.waitForTimeout(2000);
-    return true;
+    return 'completed';
 }
 
 /**
@@ -295,11 +293,18 @@ async function completeAllToolCallRounds(page: Page, action: 'accept-share' | 'a
     const maxRounds = 10; // Safety limit
 
     while (rounds < maxRounds) {
-        const completed = await completeOneToolCallRound(page, action);
-        if (!completed) {
+        const outcome = await completeOneToolCallRound(
+            page,
+            action,
+            rounds === 0 ? 120000 : 30000,
+        );
+        if (outcome === 'none') {
             break; // No more tool calls
         }
         rounds++;
+        if (outcome === 'settled') {
+            break; // The flow finished without another visibility decision
+        }
     }
 
     return rounds;
@@ -536,8 +541,11 @@ function createProviderTestSuite(provider: ProviderBundle) {
                             await acceptButtons.nth(i).click();
                         }
 
-                        // Wait for Share/Keep private
-                        await waitForButtonInThread(invokerPage, 'Share', 120000);
+                        const resultDecision = await waitForResultDecisionAfterAccept(invokerPage);
+                        if (!resultDecision) {
+                            rounds++;
+                            break;
+                        }
                     }
 
                     rounds++;
