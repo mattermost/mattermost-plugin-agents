@@ -579,11 +579,11 @@ func TestResolveFallbackChain(t *testing.T) {
 	}
 
 	tests := []struct {
-		name            string
-		primaryID       string
-		expectedIDs     []string
-		expectedLen     int
-		expectedModels  []string
+		name           string
+		primaryID      string
+		expectedIDs    []string
+		expectedLen    int
+		expectedModels []string
 	}{
 		{
 			name:        "no fallback configured",

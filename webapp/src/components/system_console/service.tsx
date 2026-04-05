@@ -292,9 +292,9 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                 <SelectionItemOption value=''>
                     {intl.formatMessage({defaultMessage: 'No fallback'})}
                 </SelectionItemOption>
-                {props.services
-                    .filter((s) => s.id !== props.service.id)
-                    .map((s) => (
+                {props.services.
+                    filter((s) => s.id !== props.service.id).
+                    map((s) => (
                         <SelectionItemOption
                             key={s.id}
                             value={s.id}

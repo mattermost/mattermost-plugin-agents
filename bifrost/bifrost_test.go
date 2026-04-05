@@ -784,10 +784,10 @@ func TestMultiProviderAccount_AzureKeyConfig(t *testing.T) {
 func TestMultiProviderAccount_BedrockKeyConfig(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		provider: schemas.Bedrock,
-		apiKey:   "bedrock-key",
-		region:   "us-east-1",
-		awsKeyID: "AKIA123",
+		provider:  schemas.Bedrock,
+		apiKey:    "bedrock-key",
+		region:    "us-east-1",
+		awsKeyID:  "AKIA123",
 		awsSecret: "secret123",
 	})
 
