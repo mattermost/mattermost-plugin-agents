@@ -268,6 +268,108 @@ func TestEnrichResults(t *testing.T) {
 				require.Equal(t, "user_two", results[1].Username)
 			},
 		},
+		{
+			name: "file document result includes file metadata",
+			searchResults: []embeddings.SearchResult{
+				{
+					SourceType: embeddings.SourceTypeFile,
+					FileDocument: &embeddings.FileDocument{
+						FileID:    "file1",
+						PostID:    "post1",
+						FileName:  "policy.pdf",
+						FileType:  "pdf",
+						ChannelID: "channel1",
+						UserID:    "user1",
+						Content:   "Section 3: Data sharing must comply with regulations.",
+						PageNum:   3,
+					},
+					Score: 0.92,
+				},
+			},
+			setupMock: func(m *mmapimocks.MockClient) {
+				m.On("GetChannel", "channel1").Return(&model.Channel{
+					Id:          "channel1",
+					DisplayName: "Policies",
+					Type:        model.ChannelTypeOpen,
+				}, nil)
+				m.On("GetUser", "user1").Return(&model.User{
+					Id:       "user1",
+					Username: "admin",
+				}, nil)
+			},
+			expectedLen: 1,
+			validate: func(t *testing.T, results []RAGResult) {
+				require.Equal(t, embeddings.SourceTypeFile, results[0].SourceType)
+				require.Equal(t, "file1", results[0].FileID)
+				require.Equal(t, "policy.pdf", results[0].FileName)
+				require.Equal(t, "pdf", results[0].FileType)
+				require.Equal(t, 3, results[0].PageNum)
+				require.Equal(t, "post1", results[0].PostID)
+				require.Equal(t, "Policies", results[0].ChannelName)
+				require.Equal(t, "admin", results[0].Username)
+				require.Equal(t, "Section 3: Data sharing must comply with regulations.", results[0].Content)
+				require.Equal(t, float32(0.92), results[0].Score)
+			},
+		},
+		{
+			name: "mixed post and file results in order",
+			searchResults: []embeddings.SearchResult{
+				{
+					SourceType: embeddings.SourceTypePost,
+					Document: embeddings.PostDocument{
+						PostID:    "post1",
+						ChannelID: "channel1",
+						UserID:    "user1",
+						Content:   "post content",
+					},
+					Score: 0.95,
+				},
+				{
+					SourceType: embeddings.SourceTypeFile,
+					FileDocument: &embeddings.FileDocument{
+						FileID:    "file1",
+						PostID:    "post2",
+						FileName:  "manual.docx",
+						FileType:  "docx",
+						ChannelID: "channel1",
+						UserID:    "user2",
+						Content:   "document content",
+						PageNum:   1,
+					},
+					Score: 0.88,
+				},
+			},
+			setupMock: func(m *mmapimocks.MockClient) {
+				m.On("GetChannel", "channel1").Return(&model.Channel{
+					Id:          "channel1",
+					DisplayName: "General",
+					Type:        model.ChannelTypeOpen,
+				}, nil)
+				m.On("GetUser", "user1").Return(&model.User{
+					Id:       "user1",
+					Username: "alice",
+				}, nil)
+				m.On("GetUser", "user2").Return(&model.User{
+					Id:       "user2",
+					Username: "bob",
+				}, nil)
+			},
+			expectedLen: 2,
+			validate: func(t *testing.T, results []RAGResult) {
+				// First result: post
+				require.Equal(t, embeddings.SourceTypePost, results[0].SourceType)
+				require.Equal(t, "post1", results[0].PostID)
+				require.Equal(t, "alice", results[0].Username)
+				require.Equal(t, "", results[0].FileID)
+
+				// Second result: file
+				require.Equal(t, embeddings.SourceTypeFile, results[1].SourceType)
+				require.Equal(t, "file1", results[1].FileID)
+				require.Equal(t, "manual.docx", results[1].FileName)
+				require.Equal(t, "bob", results[1].Username)
+				require.Equal(t, 1, results[1].PageNum)
+			},
+		},
 	}
 
 	for _, tc := range tests {

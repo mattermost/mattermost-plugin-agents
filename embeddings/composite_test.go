@@ -669,3 +669,139 @@ func TestCompositeSearch_ContextCancellation(t *testing.T) {
 		assert.Contains(t, err.Error(), "context canceled")
 	})
 }
+
+func TestCompositeSearch_StoreFiles(t *testing.T) {
+	defaultOptions := chunking.Options{
+		ChunkSize:        1000,
+		ChunkOverlap:     200,
+		ChunkingStrategy: "sentences",
+	}
+
+	tests := []struct {
+		name        string
+		docs        []FileDocument
+		expectError bool
+		verify      func(t *testing.T, store *stubVectorStore, provider *stubEmbeddingProvider)
+	}{
+		{
+			name: "stores file documents with embeddings",
+			docs: []FileDocument{
+				{
+					FileID:    "file1",
+					PostID:    "post1",
+					FileName:  "policy.pdf",
+					FileType:  "pdf",
+					ChannelID: "ch1",
+					UserID:    "user1",
+					Content:   "Policy content here.",
+					PageNum:   1,
+				},
+			},
+			verify: func(t *testing.T, store *stubVectorStore, provider *stubEmbeddingProvider) {
+				assert.Equal(t, 1, len(provider.batchCreateEmbeddingsCalls), "should generate embeddings for file docs")
+			},
+		},
+		{
+			name:        "empty docs returns nil",
+			docs:        []FileDocument{},
+			expectError: false,
+			verify: func(t *testing.T, store *stubVectorStore, provider *stubEmbeddingProvider) {
+				assert.Equal(t, 0, len(provider.batchCreateEmbeddingsCalls), "should not call embedding provider for empty docs")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &stubVectorStore{}
+			provider := &stubEmbeddingProvider{
+				batchCreateEmbeddingsFunc: func(ctx context.Context, texts []string) ([][]float32, error) {
+					result := make([][]float32, len(texts))
+					for i := range texts {
+						result[i] = []float32{0.1, 0.2, 0.3}
+					}
+					return result, nil
+				},
+			}
+
+			cs := NewCompositeSearch(store, provider, defaultOptions)
+			err := cs.StoreFiles(context.Background(), tt.docs)
+
+			if tt.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			if tt.verify != nil {
+				tt.verify(t, store, provider)
+			}
+		})
+	}
+}
+
+func TestCompositeSearch_SearchAll(t *testing.T) {
+	defaultOptions := chunking.Options{
+		ChunkSize:        1000,
+		ChunkOverlap:     200,
+		ChunkingStrategy: "sentences",
+	}
+
+	tests := []struct {
+		name        string
+		query       string
+		expectError bool
+	}{
+		{
+			name:  "SearchAll delegates to store SearchAll",
+			query: "test query",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expectedResults := []SearchResult{
+				{
+					SourceType: SourceTypePost,
+					Document: PostDocument{
+						PostID:  "post1",
+						Content: "post content",
+					},
+					Score: 0.95,
+				},
+				{
+					SourceType: SourceTypeFile,
+					FileDocument: &FileDocument{
+						FileID:   "file1",
+						FileName: "doc.pdf",
+						Content:  "file content",
+					},
+					Score: 0.88,
+				},
+			}
+
+			store := &stubVectorStore{
+				searchFunc: func(ctx context.Context, embedding []float32, opts SearchOptions) ([]SearchResult, error) {
+					return expectedResults, nil
+				},
+			}
+			provider := &stubEmbeddingProvider{
+				createEmbeddingFunc: func(ctx context.Context, text string) ([]float32, error) {
+					return []float32{0.1, 0.2, 0.3}, nil
+				},
+			}
+
+			cs := NewCompositeSearch(store, provider, defaultOptions)
+			results, err := cs.SearchAll(context.Background(), tt.query, SearchOptions{})
+
+			if tt.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, results, 2)
+				require.Equal(t, SourceTypePost, results[0].SourceType)
+				require.Equal(t, SourceTypeFile, results[1].SourceType)
+				require.Equal(t, "doc.pdf", results[1].FileDocument.FileName)
+			}
+		})
+	}
+}
