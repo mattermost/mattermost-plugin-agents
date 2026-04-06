@@ -79,7 +79,7 @@ func TestDiscoveryEndpointsSuccess(t *testing.T) {
 			expectedQuery: "user_id=abcdefghijklmnopqrstuvwxyz",
 			responseBody: `{
 				"tools": [
-					{"name":"weather_lookup","description":"Looks up weather"}
+					{"name":"weather_lookup","description":"Looks up weather","server_origin":"https://mcp.example"}
 				]
 			}`,
 			call: func(client *Client) (any, error) {
@@ -91,6 +91,7 @@ func TestDiscoveryEndpointsSuccess(t *testing.T) {
 				require.Len(t, tools, 1)
 				require.Equal(t, "weather_lookup", tools[0].Name)
 				require.Equal(t, "Looks up weather", tools[0].Description)
+				require.Equal(t, "https://mcp.example", tools[0].ServerOrigin)
 			},
 		},
 	}

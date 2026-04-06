@@ -47,7 +47,7 @@ func (w *AutoRunToolsWrapper) ChatCompletion(request CompletionRequest, opts ...
 // runToolLoop runs the tool resolution loop, forwarding events and re-invoking
 // the LLM when auto-runnable tool calls are received.
 func (w *AutoRunToolsWrapper) runToolLoop(request CompletionRequest, opts []LanguageModelOption, autoRunTools []string, output chan<- TextStreamEvent) {
-	for i := 0; i < MaxToolResolutionDepth; i++ {
+	for range MaxToolResolutionDepth {
 		result, err := w.inner.ChatCompletion(request, opts...)
 		if err != nil {
 			output <- TextStreamEvent{Type: EventTypeError, Value: err}

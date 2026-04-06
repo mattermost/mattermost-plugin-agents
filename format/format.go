@@ -13,6 +13,33 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// AgentInfo holds display fields for formatting an AI agent list (e.g. MCP tool output).
+type AgentInfo struct {
+	ID          string
+	DisplayName string
+	Username    string
+}
+
+// AgentList formats discovered agents as a numbered list for LLM-facing text.
+// When currentBotUserID matches an agent's ID, a marker line is added for that row.
+func AgentList(agents []AgentInfo, currentBotUserID string) string {
+	if len(agents) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Found %d agent(s):\n\n", len(agents)))
+	for i, a := range agents {
+		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, a.DisplayName))
+		b.WriteString(fmt.Sprintf("   ID: %s\n", a.ID))
+		b.WriteString(fmt.Sprintf("   Username: @%s\n", a.Username))
+		if currentBotUserID != "" && a.ID == currentBotUserID {
+			b.WriteString("   ** This is YOU (the current agent) **\n")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func ThreadData(data *mmapi.ThreadData) string {
 	result := ""
 	for _, post := range data.Posts {

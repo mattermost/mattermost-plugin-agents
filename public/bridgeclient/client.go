@@ -41,9 +41,10 @@ type CompletionRequest struct {
 	Posts              []Post                 `json:"posts"`
 	MaxGeneratedTokens int                    `json:"max_generated_tokens,omitempty"`
 	JSONOutputFormat   map[string]interface{} `json:"json_output_format,omitempty"`
-	// AllowedTools is an optional allowlist of tool names for agent completions.
+	// AllowedTools is an optional allowlist for agent completions. Each entry matches
+	// a tool's (server_origin, name) as returned by GET .../agents/{id}/tools.
 	// When provided on agent endpoints, only these eligible tools may run without approval.
-	AllowedTools []string `json:"allowed_tools,omitempty"`
+	AllowedTools []AllowedToolRef `json:"allowed_tools,omitempty"`
 	// Operation optionally overrides the default operation used for token usage logging.
 	// If empty, the bridge chooses an operation based on endpoint type (agent/service).
 	Operation string `json:"operation,omitempty"`
@@ -85,10 +86,17 @@ type BridgeServiceInfo struct {
 	Type string `json:"type"`
 }
 
+// AllowedToolRef identifies one tool in an allowlist (matches llm.Tool identity).
+type AllowedToolRef struct {
+	ServerOrigin string `json:"server_origin"`
+	Name         string `json:"name"`
+}
+
 // BridgeToolInfo represents a bridge-eligible tool.
 type BridgeToolInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	ServerOrigin string `json:"server_origin,omitempty"`
 }
 
 // AgentsResponse represents the response for the agents endpoint

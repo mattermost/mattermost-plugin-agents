@@ -173,28 +173,29 @@ func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclien
 	}, nil
 }
 
-func normalizeAllowedTools(rawTools []string) ([]string, error) {
-	if rawTools == nil {
+func normalizeAllowedToolRefs(rawRefs []bridgeclient.AllowedToolRef) ([]bridgeclient.AllowedToolRef, error) {
+	if rawRefs == nil {
 		return nil, nil
 	}
-	if len(rawTools) == 0 {
+	if len(rawRefs) == 0 {
 		return nil, errors.New("allowed_tools cannot be empty when provided")
 	}
 
-	seen := make(map[string]struct{}, len(rawTools))
-	normalized := make([]string, 0, len(rawTools))
-	for _, name := range rawTools {
-		if name == "" {
-			return nil, errors.New("allowed_tools cannot contain empty tool names")
+	seen := make(map[string]struct{}, len(rawRefs))
+	out := make([]bridgeclient.AllowedToolRef, 0, len(rawRefs))
+	for _, ref := range rawRefs {
+		if ref.Name == "" {
+			return nil, errors.New("allowed_tools entries must have a non-empty name")
 		}
-		if _, exists := seen[name]; exists {
+		key := llm.ToolAutoRunKey(ref.ServerOrigin, ref.Name)
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[name] = struct{}{}
-		normalized = append(normalized, name)
+		seen[key] = struct{}{}
+		out = append(out, ref)
 	}
 
-	return normalized, nil
+	return out, nil
 }
 
 // validateAgentParam is gin middleware that validates the :agent path parameter.
@@ -252,7 +253,7 @@ func (a *API) prepareAgentBridgeCompletion(
 		return nil, llm.CompletionRequest{}, nil, statusCode, err
 	}
 
-	allowedTools, err := normalizeAllowedTools(req.AllowedTools)
+	allowedRefs, err := normalizeAllowedToolRefs(req.AllowedTools)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid allowed_tools: %w", err)
 	}
@@ -267,12 +268,13 @@ func (a *API) prepareAgentBridgeCompletion(
 		return nil, llm.CompletionRequest{}, nil, http.StatusForbidden, fmt.Errorf("permission denied: %v", err)
 	}
 
-	toolsRequested := allowedTools != nil
+	toolsRequested := allowedRefs != nil
 	llmRequest, err := a.convertAgentBridgeRequestToInternal(bot, req, toolsRequested, operation, operationSubType)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid request: %v", err)
 	}
 
+	var autoRunKeys []string
 	if toolsRequested {
 		if bot.GetConfig().DisableTools {
 			return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, errors.New("agent has tools disabled")
@@ -283,12 +285,19 @@ func (a *API) prepareAgentBridgeCompletion(
 		}
 
 		scopedTools := llm.NewToolStore(nil, false)
-		for _, toolName := range allowedTools {
-			tool := llmRequest.Context.Tools.GetTool(toolName)
+		for _, ref := range allowedRefs {
+			tool := llmRequest.Context.Tools.GetTool(ref.Name)
 			if tool == nil {
-				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("tool %q is not eligible or not available for this agent", toolName)
+				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("tool %q is not eligible or not available for this agent", ref.Name)
+			}
+			if tool.ServerOrigin != ref.ServerOrigin {
+				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf(
+					"allowed_tools server_origin for tool %q does not match (got %q, expected %q)",
+					ref.Name, ref.ServerOrigin, tool.ServerOrigin,
+				)
 			}
 			scopedTools.AddTools([]llm.Tool{*tool})
+			autoRunKeys = append(autoRunKeys, llm.ToolAutoRunKey(tool.ServerOrigin, tool.Name))
 		}
 		llmRequest.Context.Tools = scopedTools
 	}
@@ -301,8 +310,8 @@ func (a *API) prepareAgentBridgeCompletion(
 	// Handle tool options
 	if !toolsRequested {
 		opts = append(opts, llm.WithToolsDisabled())
-	} else if len(allowedTools) > 0 {
-		opts = append(opts, llm.WithAutoRunTools(allowedTools))
+	} else if len(autoRunKeys) > 0 {
+		opts = append(opts, llm.WithAutoRunTools(autoRunKeys))
 	}
 
 	// Enable native web search if the bot supports it.
@@ -531,13 +540,17 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 	if toolContext.Tools != nil {
 		for _, info := range toolContext.Tools.GetToolsInfo() {
 			tools = append(tools, bridgeclient.BridgeToolInfo{
-				Name:        info.Name,
-				Description: info.Description,
+				Name:         info.Name,
+				Description:  info.Description,
+				ServerOrigin: info.ServerOrigin,
 			})
 		}
 	}
 	sort.Slice(tools, func(i, j int) bool {
-		return tools[i].Name < tools[j].Name
+		if tools[i].Name != tools[j].Name {
+			return tools[i].Name < tools[j].Name
+		}
+		return tools[i].ServerOrigin < tools[j].ServerOrigin
 	})
 
 	c.JSON(http.StatusOK, bridgeclient.AgentToolsResponse{

@@ -197,6 +197,59 @@ func TestGetServerOrigin(t *testing.T) {
 	}
 }
 
+func TestShouldAutoRunTools(t *testing.T) {
+	origin := "embedded://mattermost"
+	composite := ToolAutoRunKey(origin, "search_posts")
+
+	tests := []struct {
+		name     string
+		pending  []ToolCall
+		allow    []string
+		wantTrue bool
+	}{
+		{
+			name: "composite allowlist matches",
+			pending: []ToolCall{
+				{Name: "search_posts", ServerOrigin: origin, Arguments: json.RawMessage(`{}`)},
+			},
+			allow:    []string{composite},
+			wantTrue: true,
+		},
+		{
+			name: "bare name does not match MCP tool with origin",
+			pending: []ToolCall{
+				{Name: "search_posts", ServerOrigin: origin, Arguments: json.RawMessage(`{}`)},
+			},
+			allow:    []string{"search_posts"},
+			wantTrue: false,
+		},
+		{
+			name: "wrong origin does not match when only one composite allowed",
+			pending: []ToolCall{
+				{Name: "search_posts", ServerOrigin: "https://other.example", Arguments: json.RawMessage(`{}`)},
+			},
+			allow:    []string{composite},
+			wantTrue: false,
+		},
+		{
+			name: "multiple calls same composite-allowed tool",
+			pending: []ToolCall{
+				{Name: "search_posts", ServerOrigin: origin, Arguments: json.RawMessage(`{}`)},
+				{Name: "search_posts", ServerOrigin: origin, Arguments: json.RawMessage(`{}`)},
+			},
+			allow:    []string{composite},
+			wantTrue: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ShouldAutoRunTools(tt.pending, tt.allow)
+			assert.Equal(t, tt.wantTrue, got)
+		})
+	}
+}
+
 func TestEnrichToolCallsWithServerOrigin(t *testing.T) {
 	tests := []struct {
 		name            string
