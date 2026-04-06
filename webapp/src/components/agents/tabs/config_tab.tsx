@@ -66,9 +66,9 @@ const ConfigTab = (props: Props) => {
             const sameServiceType = Boolean(prevSvc && nextSvc && prevSvc.type === nextSvc.type);
             onChange({
                 model: '',
-                ...(sameServiceType
-                    ? {}
-                    : {
+                ...(sameServiceType ?
+                    {} :
+                    {
                         enabledNativeTools: [],
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
