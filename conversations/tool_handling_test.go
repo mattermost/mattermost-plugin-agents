@@ -186,15 +186,23 @@ func (c *fakeMMClient) GetFile(string) (io.ReadCloser, error) {
 func (c *fakeMMClient) SendEphemeralPost(string, *model.Post) {}
 
 type capturingLanguageModel struct {
-	autoRunTools []string
+	autoRunTools      []string
+	requests          []llm.CompletionRequest
+	chatCompletionErr error
 }
 
-func (m *capturingLanguageModel) ChatCompletion(_ llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (m *capturingLanguageModel) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	var cfg llm.LanguageModelConfig
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 	m.autoRunTools = append([]string{}, cfg.AutoRunTools...)
+	requestCopy := request
+	requestCopy.Posts = append([]llm.Post(nil), request.Posts...)
+	m.requests = append(m.requests, requestCopy)
+	if m.chatCompletionErr != nil {
+		return nil, m.chatCompletionErr
+	}
 	return llm.NewStreamFromString("follow-up response"), nil
 }
 
@@ -1131,10 +1139,109 @@ func TestHandleToolResultContinuesWhenToolCallErrors(t *testing.T) {
 	updatedPost := fakeClient.updatedPosts[0]
 	require.Nil(t, updatedPost.GetProp(streaming.PendingToolResultProp))
 
+	// The continuation request includes the actionable tool error.
+	require.NotEmpty(t, capturingLLM.requests)
+	lastRequest := capturingLLM.requests[len(capturingLLM.requests)-1]
+	require.NotEmpty(t, lastRequest.Posts)
+	lastPost := lastRequest.Posts[len(lastRequest.Posts)-1]
+	require.Len(t, lastPost.ToolUse, 1)
+	require.Equal(t, llm.ToolCallStatusError, lastPost.ToolUse[0].Status)
+	require.Equal(t, "tool execution failed", lastPost.ToolUse[0].Result)
+
 	// A follow-up turn is streamed so the agent can inspect the error and recover.
 	require.Len(t, streamingService.streamedPosts, 1)
 
 	// KV entries are still cleaned up after the continuation runs.
 	require.Contains(t, fakeClient.kvDeletes, resultKVKey)
 	require.Contains(t, fakeClient.kvDeletes, toolCallKVKey)
+}
+
+func TestHandleToolResultCleansUpKVWhenContinuationFails(t *testing.T) {
+	const (
+		postID      = "post-id"
+		channelID   = "channel-id"
+		teamID      = "team-id"
+		botID       = "bot-id"
+		requesterID = "requester-id"
+	)
+
+	mockAPI := &plugintest.API{}
+	client := pluginapi.NewClient(mockAPI, nil)
+	licenseChecker := enterprise.NewLicenseChecker(client)
+
+	siteName := "Mattermost"
+	mockAPI.On("GetConfig").Return(&model.Config{TeamSettings: model.TeamSettings{SiteName: &siteName}}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+	mockAPI.On("GetTeam", teamID).Return(&model.Team{Id: teamID}, nil).Maybe()
+
+	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{}}, nil, &testConfigProvider{})
+
+	streamingService := &fakeStreamingService{}
+	capturingLLM := &capturingLanguageModel{chatCompletionErr: errors.New("follow-up failed")}
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+	bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, capturingLLM)
+	botService.SetBotsForTesting([]*bots.Bot{bot})
+
+	post := &model.Post{
+		Id:        postID,
+		UserId:    botID,
+		ChannelId: channelID,
+		CreateAt:  1,
+	}
+	post.AddProp(streaming.LLMRequesterUserID, requesterID)
+	post.AddProp(streaming.AllowToolsInChannelProp, "true")
+	post.AddProp(streaming.PendingToolResultProp, "true")
+
+	toolsWithErrors := []llm.ToolCall{
+		{
+			ID:        "tool-1",
+			Name:      "failing_tool",
+			Arguments: json.RawMessage(`{"value":"test"}`),
+			Result:    "tool execution failed",
+			Status:    llm.ToolCallStatusError,
+		},
+	}
+	toolsJSON, err := json.Marshal(toolsWithErrors)
+	require.NoError(t, err)
+	post.AddProp(streaming.ToolCallProp, string(toolsJSON))
+
+	postList := &model.PostList{
+		Order: []string{postID},
+		Posts: map[string]*model.Post{postID: post},
+	}
+
+	channel := &model.Channel{
+		Id:     channelID,
+		Type:   model.ChannelTypeOpen,
+		TeamId: teamID,
+	}
+
+	resultKVKey := streaming.ToolResultPrivateKVKey(postID, requesterID)
+	toolCallKVKey := streaming.ToolCallPrivateKVKey(postID, requesterID)
+
+	fakeClient := &fakeMMClient{
+		users: map[string]*model.User{
+			requesterID: {Id: requesterID, Locale: "en"},
+			botID:       {Id: botID, Locale: "en"},
+		},
+		posts:       map[string]*model.Post{postID: post},
+		channels:    map[string]*model.Channel{channelID: channel},
+		postThreads: map[string]*model.PostList{postID: postList},
+		kv: map[string]interface{}{
+			resultKVKey:   toolsWithErrors,
+			toolCallKVKey: toolsWithErrors,
+		},
+	}
+
+	toolCallingConfig := &testToolCallingConfig{enableChannelMentionToolCalling: true}
+	promptSet, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+	conversationService := conversations.New(promptSet, fakeClient, streamingService, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
+
+	err = conversationService.HandleToolResult(requesterID, post, channel, []string{"tool-1"})
+	require.ErrorContains(t, err, "failed to get chat completion")
+
+	require.Contains(t, fakeClient.kvDeletes, resultKVKey)
+	require.Contains(t, fakeClient.kvDeletes, toolCallKVKey)
+	require.Empty(t, streamingService.streamedPosts)
 }

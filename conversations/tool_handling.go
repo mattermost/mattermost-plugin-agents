@@ -444,11 +444,12 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return nil
 	}
 
+	defer c.deleteToolCallKVEntries(post.Id, resultKVKey, toolCallKVKey)
+
 	if err := c.completeAndStreamToolResponse(bot, user, channel, toolCallPostCopy, llmContext, toolsDisabled, allowToolsInChannel); err != nil {
 		return err
 	}
 
-	c.deleteToolCallKVEntries(post.Id, resultKVKey, toolCallKVKey)
 	return nil
 }
 
