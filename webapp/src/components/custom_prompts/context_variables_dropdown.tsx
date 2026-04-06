@@ -8,6 +8,7 @@ import {useSelector} from 'react-redux';
 
 const DropdownContainer = styled.div`
     position: absolute;
+    right: 0;
     z-index: 100;
     background: var(--center-channel-bg);
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
