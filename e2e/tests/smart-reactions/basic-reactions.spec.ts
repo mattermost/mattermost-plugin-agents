@@ -4,7 +4,7 @@ import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
-import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
+import { OpenAIMockContainer, RunOpenAIMocks, buildTextResponse } from 'helpers/openai-mock';
 
 // spec: /Users/nickmisasi/workspace/worktrees/mattermost-plugin-ai-agents-in-e2e/e2e/specs/smart-reactions.md
 // seed: /Users/nickmisasi/workspace/worktrees/mattermost-plugin-ai-agents-in-e2e/seed.spec.ts
@@ -14,12 +14,6 @@ const password = 'regularuser';
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
-
-const reactionSuggestionResponse = `
-data: {"id":"chatcmpl-react-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-react-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"thumbsup"},"logprobs":null,"finish_reason":"stop"}]}
-data: [DONE]
-`.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
 test.beforeAll(async () => {
     mattermost = await RunContainer();
@@ -110,7 +104,7 @@ test.describe('Smart Reactions - Basic Functionality', () => {
         await page.getByTestId('ai-actions-menu').click();
 
         // Set up mock for reaction suggestion
-        await openAIMock.addCompletionMock(reactionSuggestionResponse);
+        await openAIMock.addCompletionMock(buildTextResponse('thumbsup'));
 
         // Pair listener with click. Do not require response.ok(): the handler may return an error
         // body while still completing the HTTP exchange (Chromium CI was timing out on ok-only waits).
