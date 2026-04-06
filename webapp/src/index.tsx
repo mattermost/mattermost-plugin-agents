@@ -240,7 +240,7 @@ export default class Plugin {
         if (registry.registerAIActionMenuItemComponent) {
             registry.registerAIActionMenuItemComponent({
                 icon: <CodeTagsIcon/>,
-                text: 'Custom prompts',
+                text: <FormattedMessage defaultMessage='Custom prompts'/>,
                 sortOrder: 10,
                 component: CustomPromptsDropdown,
                 subMenuHeader: CustomPromptsSubMenuHeader,
