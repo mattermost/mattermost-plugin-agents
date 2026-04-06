@@ -9,7 +9,7 @@ import manifest from '@/manifest';
 import AgentsLicenseGate from './agents_license_gate';
 import AgentsList from './agents_list';
 
-export const AGENTS_ROUTE = `plug/${manifest.id}/agents`;
+export const AGENTS_ROUTE = `/plug/${manifest.id}/agents`;
 
 // Product mainComponent — rendered by registerProduct when the route matches.
 // No URL-matching or overlay needed; Mattermost's product routing handles it.

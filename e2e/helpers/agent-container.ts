@@ -97,6 +97,9 @@ export async function RunAgentContainer(): Promise<MattermostContainer> {
     await mattermost.container.exec([
         'mmctl', '--local', 'permissions', 'add', 'system_admin', 'manage_own_agent',
     ]);
+    await mattermost.container.exec([
+        'mmctl', '--local', 'permissions', 'add', 'system_admin', 'manage_others_agent',
+    ]);
 
     return mattermost;
 }

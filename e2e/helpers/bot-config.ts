@@ -1,9 +1,12 @@
 import { Client4 } from '@mattermost/client';
 import MattermostContainer from './mmcontainer';
+import type { AgentResponse } from './agent-api';
 import {
     mattermostAIAdminConfigApiFromClient,
+    mattermostAIPluginRoutes,
     normalizeMattermostAiConfigFromApi,
     type PluginAdminConfigApi,
+    type PluginRoutesApi,
 } from './plugin-http';
 
 export interface BotConfig {
@@ -60,9 +63,33 @@ export interface PluginConfig {
 
 export class BotConfigHelper {
     private adminApi: PluginAdminConfigApi;
+    private routes: PluginRoutesApi;
+    private client: Client4;
 
     constructor(client: Client4, baseUrl: string) {
+        this.client = client;
         this.adminApi = mattermostAIAdminConfigApiFromClient(client, baseUrl);
+        this.routes = mattermostAIPluginRoutes(baseUrl);
+    }
+
+    private async listAgents(): Promise<AgentResponse[]> {
+        return this.routes.getJson('agents', this.client.getToken()) as Promise<AgentResponse[]>;
+    }
+
+    /** Map a DB-backed user agent to the legacy BotConfig shape used by older tests. */
+    private agentToBotConfig(a: AgentResponse): BotConfig {
+        return {
+            id: a.id,
+            name: a.username,
+            displayName: a.display_name,
+            customInstructions: a.custom_instructions,
+            serviceID: a.service_id,
+            enableVision: a.enable_vision,
+            disableTools: a.disable_tools,
+            reasoningEnabled: a.reasoning_enabled,
+            reasoningEffort: a.reasoning_effort,
+            thinkingBudget: a.thinking_budget,
+        };
     }
 
     /**
@@ -88,7 +115,17 @@ export class BotConfigHelper {
      */
     async getBot(botId: string): Promise<BotConfig | undefined> {
         const config = await this.getPluginConfig();
-        return config.config.bots.find(bot => bot.id === botId);
+        const fromConfig = config.config.bots.find(bot => bot.id === botId);
+        if (fromConfig) {
+            return fromConfig;
+        }
+        try {
+            const agents = await this.listAgents();
+            const match = agents.find(a => a.id === botId);
+            return match ? this.agentToBotConfig(match) : undefined;
+        } catch {
+            return undefined;
+        }
     }
 
     /**
@@ -96,7 +133,17 @@ export class BotConfigHelper {
      */
     async getBotByName(botName: string): Promise<BotConfig | undefined> {
         const config = await this.getPluginConfig();
-        return config.config.bots.find(bot => bot.name === botName);
+        const fromConfig = config.config.bots.find(bot => bot.name === botName);
+        if (fromConfig) {
+            return fromConfig;
+        }
+        try {
+            const agents = await this.listAgents();
+            const match = agents.find(a => a.username === botName);
+            return match ? this.agentToBotConfig(match) : undefined;
+        } catch {
+            return undefined;
+        }
     }
 
     /**
@@ -106,16 +153,45 @@ export class BotConfigHelper {
         const config = await this.getPluginConfig();
         const botIndex = config.config.bots.findIndex(bot => bot.id === botId);
 
-        if (botIndex === -1) {
-            throw new Error(`Bot with ID ${botId} not found`);
+        if (botIndex !== -1) {
+            config.config.bots[botIndex] = {
+                ...config.config.bots[botIndex],
+                ...updates,
+            };
+            await this.updatePluginConfig(config);
+            return;
         }
 
-        config.config.bots[botIndex] = {
-            ...config.config.bots[botIndex],
-            ...updates,
-        };
-
-        await this.updatePluginConfig(config);
+        // Legacy config bots were migrated to Agents_UserAgents; update via user-agent API.
+        const body: Record<string, unknown> = {};
+        if (updates.displayName !== undefined) {
+            body.display_name = updates.displayName;
+        }
+        if (updates.customInstructions !== undefined) {
+            body.custom_instructions = updates.customInstructions;
+        }
+        if (updates.serviceID !== undefined) {
+            body.service_id = updates.serviceID;
+        }
+        if (updates.enableVision !== undefined) {
+            body.enable_vision = updates.enableVision;
+        }
+        if (updates.disableTools !== undefined) {
+            body.disable_tools = updates.disableTools;
+        }
+        if (updates.reasoningEnabled !== undefined) {
+            body.reasoning_enabled = updates.reasoningEnabled;
+        }
+        if (updates.reasoningEffort !== undefined) {
+            body.reasoning_effort = updates.reasoningEffort;
+        }
+        if (updates.thinkingBudget !== undefined) {
+            body.thinking_budget = updates.thinkingBudget;
+        }
+        if (Object.keys(body).length === 0) {
+            throw new Error(`Bot with ID ${botId} not found and no migratable fields to update`);
+        }
+        await this.routes.putJson(`agents/${botId}`, this.client.getToken(), body);
     }
 
     /**

@@ -129,6 +129,17 @@ const RunContainer = async (): Promise<MattermostContainer> => {
       install_plugins: [],
   });
 
+  // Align with agent E2E: self-service agents require enterprise permissions on tokens.
+  await mattermost.container.exec([
+      'mmctl', '--local', 'permissions', 'add', 'system_user', 'manage_own_agent',
+  ]);
+  await mattermost.container.exec([
+      'mmctl', '--local', 'permissions', 'add', 'system_admin', 'manage_own_agent',
+  ]);
+  await mattermost.container.exec([
+      'mmctl', '--local', 'permissions', 'add', 'system_admin', 'manage_others_agent',
+  ]);
+
   return mattermost;
 }
 
