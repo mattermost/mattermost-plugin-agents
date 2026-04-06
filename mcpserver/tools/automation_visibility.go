@@ -41,7 +41,7 @@ func automationToolsVisibleInList(ctx context.Context, client *model.Client4, us
 	if user == nil {
 		return automationListVisibility(isSysadmin, channel, false, true)
 	}
-	member, _, err := client.GetChannelMember(ctx, channel.Id, user.Id)
+	member, _, err := client.GetChannelMember(ctx, channel.Id, user.Id, "")
 	if err != nil {
 		return automationListVisibility(isSysadmin, channel, false, true)
 	}
