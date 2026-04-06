@@ -144,7 +144,7 @@ func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
 	return m.httpClient
 }
 
-func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetToolsForUser(userID string, _ *model.Channel) ([]llm.Tool, *mcp.Errors) {
 	return m.tools, m.mcpErrors
 }
 

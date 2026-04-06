@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-ai/config"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -28,7 +29,7 @@ const (
 
 // EmbeddedMCPServer interface for dependency injection
 type EmbeddedMCPServer interface {
-	CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error)
+	CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client, channel *model.Channel) (*mcp.InMemoryTransport, error)
 }
 
 // EmbeddedServerClient handles connections to the embedded MCP server
@@ -70,9 +71,10 @@ func NewEmbeddedServerClient(server EmbeddedMCPServer, log pluginapi.LogService,
 	}
 }
 
-// CreateClient creates an embedded MCP client using session ID for authentication
-// If sessionID is empty, creates an unauthenticated client (used for tool discovery)
-func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, sessionID string) (*Client, error) {
+// CreateClient creates an embedded MCP client using session ID for authentication.
+// channel is passed through to the server so middleware can scope tool visibility.
+// If sessionID is empty, creates an unauthenticated client (used for tool discovery).
+func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, sessionID string, channel *model.Channel) (*Client, error) {
 	// Validate session exists before creating transport (unless empty for tool discovery)
 	if sessionID != "" {
 		mmSession, err := c.pluginAPI.Session.Get(sessionID)
@@ -85,7 +87,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 	}
 
 	// Get the in-memory transport from the embedded server
-	transport, err := c.server.CreateClientTransport(userID, sessionID, c.pluginAPI)
+	transport, err := c.server.CreateClientTransport(userID, sessionID, c.pluginAPI, channel)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create in-memory transport: %w", err)
 	}
@@ -385,7 +387,7 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 					return "", fmt.Errorf("embedded server connection lost and cannot be reconnected: missing session ID")
 				}
 
-				newClient, reconnectErr := c.embeddedClient.CreateClient(ctx, c.userID, c.sessionID)
+				newClient, reconnectErr := c.embeddedClient.CreateClient(ctx, c.userID, c.sessionID, nil)
 				if reconnectErr != nil {
 					return "", fmt.Errorf("failed to reconnect to embedded MCP server: %w", reconnectErr)
 				}

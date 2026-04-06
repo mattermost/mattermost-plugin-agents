@@ -26,6 +26,6 @@ func TestInMemoryServerCreation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test creating a client transport (without validation by passing nil resolver)
-	_, err = server.CreateConnectionForUser("test_user_123", "", nil)
+	_, err = server.CreateConnectionForUser("test_user_123", "", nil, nil)
 	require.NoError(t, err)
 }

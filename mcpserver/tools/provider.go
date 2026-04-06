@@ -114,11 +114,31 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	mcpServer.AddReceivingMiddleware(p.automationToolFilterMiddleware())
 }
 
+func (p *MattermostToolProvider) stripAutomationFromToolsListResult(result mcp.Result) mcp.Result {
+	listResult, ok := result.(*mcp.ListToolsResult)
+	if !ok {
+		return result
+	}
+	filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
+	for _, tool := range listResult.Tools {
+		if !IsAutomationTool(tool.Name) {
+			filtered = append(filtered, tool)
+		}
+	}
+	listResult.Tools = filtered
+	return listResult
+}
+
+// resolveChannelForToolsList reads the channel from the request context (set on the
+// server Run context for embedded connections via ChannelContextKey).
+func (p *MattermostToolProvider) resolveChannelForToolsList(ctx context.Context) *model.Channel {
+	ch, _ := ctx.Value(auth.ChannelContextKey).(*model.Channel)
+	return ch
+}
+
 // automationToolFilterMiddleware returns MCP receiving middleware that filters
-// automation tools from tools/list responses when the channel automation plugin
-// is not installed. Permission to surface automation tools in a given conversation
-// (sysadmin, channel admin, DM/group, etc.) is applied in llmcontext when merging
-// MCP tools into the LLM tool store, where channel context is available.
+// automation tools from tools/list when the automation plugin is missing, when a requested
+// channel cannot be resolved, or when the authenticated user may not see automation tools in that channel.
 func (p *MattermostToolProvider) automationToolFilterMiddleware() mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
@@ -127,24 +147,32 @@ func (p *MattermostToolProvider) automationToolFilterMiddleware() mcp.Middleware
 				return result, err
 			}
 
-			if p.isAutomationPluginInstalled() {
+			if !p.isAutomationPluginInstalled() {
+				return p.stripAutomationFromToolsListResult(result), nil
+			}
+
+			ch := p.resolveChannelForToolsList(ctx)
+			if ch == nil {
+				// No channel context, return all tools (including automation) since we can't determine visibility without a channel.
 				return result, nil
 			}
 
-			// Filter out automation tools when plugin is not available
-			listResult, ok := result.(*mcp.ListToolsResult)
+			identityProvider, ok := p.authProvider.(auth.UserIdentityProvider)
 			if !ok {
-				return result, nil
+				return p.stripAutomationFromToolsListResult(result), nil
 			}
-
-			filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
-			for _, tool := range listResult.Tools {
-				if !IsAutomationTool(tool.Name) {
-					filtered = append(filtered, tool)
-				}
+			client, err := identityProvider.GetAuthenticatedMattermostClient(ctx)
+			if err != nil {
+				return p.stripAutomationFromToolsListResult(result), nil
 			}
-			listResult.Tools = filtered
-			return listResult, nil
+			user, err := identityProvider.GetAuthenticatedUser(ctx)
+			if err != nil {
+				return p.stripAutomationFromToolsListResult(result), nil
+			}
+			if !automationToolsVisibleInList(ctx, client, user, ch) {
+				return p.stripAutomationFromToolsListResult(result), nil
+			}
+			return result, nil
 		}
 	}
 }
