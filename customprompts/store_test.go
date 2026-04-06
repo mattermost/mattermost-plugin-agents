@@ -550,7 +550,7 @@ func TestListForUserEmpty(t *testing.T) {
 	require.Empty(t, prompts)
 }
 
-func TestGetPinnedIDsIncludesStalePin(t *testing.T) {
+func TestGetPinnedIDsExcludesDeletedPrompts(t *testing.T) {
 	dbClient := testDB(t)
 	store := NewStore(dbClient)
 
@@ -568,12 +568,12 @@ func TestGetPinnedIDsIncludesStalePin(t *testing.T) {
 	err = store.Delete(created.ID, userID)
 	require.NoError(t, err)
 
-	// GetPinnedIDs does not filter by DeletedAt — documents this behavior
+	// GetPinnedIDs filters out soft-deleted prompts
 	pinnedIDs, err := store.GetPinnedIDs(userID)
 	require.NoError(t, err)
-	require.Len(t, pinnedIDs, 1, "GetPinnedIDs returns stale pins; GetPinnedForUser filters them")
+	require.Empty(t, pinnedIDs, "GetPinnedIDs should exclude deleted prompts")
 
-	// But GetPinnedForUser correctly excludes soft-deleted prompts
+	// GetPinnedForUser also excludes soft-deleted prompts
 	pinned, err := store.GetPinnedForUser(userID)
 	require.NoError(t, err)
 	require.Empty(t, pinned)

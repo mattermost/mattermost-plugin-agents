@@ -116,7 +116,7 @@ const SystemPromptHeader = styled.div`
     justify-content: space-between;
 `;
 
-const SystemPromptLabel = styled.div`
+const SystemPromptLabel = styled.label`
     font-size: 12px;
     font-weight: 600;
     line-height: 16px;
@@ -208,7 +208,7 @@ const ReadOnlyMuted = styled(ReadOnlyText)`
 
 interface CustomPromptFormProps {
     prompt?: CustomPrompt;
-    onSave: (data: {name: string; description: string; template: string; is_shared: boolean}) => void;
+    onSave: (data: {name: string; description: string; template: string; is_shared: boolean}) => void | Promise<void>;
     onDiscard: () => void;
     readOnly?: boolean;
 }
@@ -221,9 +221,13 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, readOnly}: CustomPromptFor
     const [isShared, setIsShared] = useState(prompt?.is_shared ?? false);
     const [showContextVars, setShowContextVars] = useState(false);
     const [errors, setErrors] = useState<{name?: boolean; template?: boolean}>({});
+    const [isSaving, setIsSaving] = useState(false);
     const templateRef = useRef<HTMLTextAreaElement>(null);
 
-    const handleSave = useCallback(() => {
+    const handleSave = useCallback(async () => {
+        if (isSaving) {
+            return;
+        }
         const newErrors: {name?: boolean; template?: boolean} = {};
         if (!name.trim()) {
             newErrors.name = true;
@@ -236,8 +240,13 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, readOnly}: CustomPromptFor
             return;
         }
         setErrors({});
-        onSave({name: name.trim(), description: description.trim(), template: template.trim(), is_shared: isShared});
-    }, [name, description, template, isShared, onSave]);
+        setIsSaving(true);
+        try {
+            await onSave({name: name.trim(), description: description.trim(), template: template.trim(), is_shared: isShared});
+        } finally {
+            setIsSaving(false);
+        }
+    }, [name, description, template, isShared, onSave, isSaving]);
 
     const handleInsertVariable = useCallback((variable: string) => {
         const textarea = templateRef.current;
@@ -329,10 +338,11 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, readOnly}: CustomPromptFor
                 </RadioGroup>
             </FieldGroup>
             <FieldGroup>
-                <FieldLabel>
+                <FieldLabel htmlFor={`prompt-name-${prompt?.id ?? 'new'}`}>
                     <FormattedMessage defaultMessage='Action Title'/>
                 </FieldLabel>
                 <TextInput
+                    id={`prompt-name-${prompt?.id ?? 'new'}`}
                     value={name}
                     onChange={(e) => {
                         setName(e.target.value);
@@ -349,10 +359,11 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, readOnly}: CustomPromptFor
                 )}
             </FieldGroup>
             <FieldGroup>
-                <FieldLabel>
+                <FieldLabel htmlFor={`prompt-description-${prompt?.id ?? 'new'}`}>
                     <FormattedMessage defaultMessage='Brief Description'/>
                 </FieldLabel>
                 <TextArea
+                    id={`prompt-description-${prompt?.id ?? 'new'}`}
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder={intl.formatMessage({defaultMessage: 'Enter a brief description'})}
@@ -360,11 +371,14 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, readOnly}: CustomPromptFor
             </FieldGroup>
             <FieldGroup>
                 <SystemPromptHeader>
-                    <SystemPromptLabel>
+                    <SystemPromptLabel htmlFor={`prompt-template-${prompt?.id ?? 'new'}`}>
                         <FormattedMessage defaultMessage='System Prompt'/>
                     </SystemPromptLabel>
                     <ContextVariablesWrapper>
-                        <ContextVariablesButton onClick={() => setShowContextVars(!showContextVars)}>
+                        <ContextVariablesButton
+                            onClick={() => setShowContextVars(!showContextVars)}
+                            aria-label={intl.formatMessage({defaultMessage: 'Insert context variable'})}
+                        >
                             <FormattedMessage defaultMessage='Context Variables'/>
                         </ContextVariablesButton>
                         {showContextVars && (
@@ -376,6 +390,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, readOnly}: CustomPromptFor
                     </ContextVariablesWrapper>
                 </SystemPromptHeader>
                 <SystemPromptTextArea
+                    id={`prompt-template-${prompt?.id ?? 'new'}`}
                     ref={templateRef}
                     value={template}
                     onChange={(e) => {
@@ -393,7 +408,10 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, readOnly}: CustomPromptFor
                 )}
             </FieldGroup>
             <ButtonRow>
-                <SaveButton onClick={handleSave}>
+                <SaveButton
+                    onClick={handleSave}
+                    disabled={isSaving}
+                >
                     <FormattedMessage defaultMessage='Save'/>
                 </SaveButton>
                 <DiscardButton onClick={onDiscard}>

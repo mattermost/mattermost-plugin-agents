@@ -149,8 +149,8 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
             } else {
                 updateText(result.rendered);
             }
-        } catch {
-            // Handle error silently
+        } catch (e) {
+            console.error('Failed to render custom prompt:', e); // eslint-disable-line no-console
         }
     }, [channelId, updateText, selectedBot, isRHS]);
 

@@ -4,12 +4,14 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-ai/customprompts"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // handleCreateCustomPrompt creates a new custom prompt for the authenticated user.
@@ -65,7 +67,7 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, prompt)
+	c.Status(http.StatusNoContent)
 }
 
 // handleDeleteCustomPrompt soft-deletes a custom prompt. Only the creator can delete.
@@ -146,6 +148,12 @@ func (a *API) handleRenderCustomPrompt(c *gin.Context) {
 		return
 	}
 
+	// Enforce visibility: only the creator or shared prompts are accessible
+	if prompt.CreatorID != userID && !prompt.IsShared {
+		c.AbortWithError(http.StatusForbidden, errors.New("prompt not found or not accessible"))
+		return
+	}
+
 	// Build context options
 	var opts []llm.ContextOption
 
@@ -165,6 +173,10 @@ func (a *API) handleRenderCustomPrompt(c *gin.Context) {
 
 	// Add channel context if provided
 	if req.ChannelID != "" {
+		if !a.pluginAPI.User.HasPermissionToChannel(userID, req.ChannelID, model.PermissionReadChannel) {
+			c.AbortWithError(http.StatusForbidden, errors.New("user doesn't have permission to read channel"))
+			return
+		}
 		channel, channelErr := a.pluginAPI.Channel.Get(req.ChannelID)
 		if channelErr != nil {
 			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("failed to get channel: %w", channelErr))

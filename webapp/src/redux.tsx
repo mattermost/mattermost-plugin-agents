@@ -154,7 +154,7 @@ export function fetchCustomPrompts() {
             const prompts = await fetchCustomPromptsAPI();
             dispatch({type: CustomPromptsHandler, customPrompts: prompts});
         } catch (e) {
-            // Handle error silently
+            console.error('Failed to fetch custom prompts:', e); // eslint-disable-line no-console
         }
     };
 }
@@ -165,7 +165,7 @@ export function fetchPinnedPromptIds() {
             const ids = await getCustomPromptPins();
             dispatch({type: PinnedPromptIdsHandler, pinnedPromptIds: ids});
         } catch (e) {
-            // Handle error silently
+            console.error('Failed to fetch pinned prompt IDs:', e); // eslint-disable-line no-console
         }
     };
 }

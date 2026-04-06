@@ -160,6 +160,10 @@ func (s *Store) GetPinnedForUser(userID string) ([]CustomPrompt, error) {
 		Join("LLM_CustomPromptPins AS pin ON pin.PromptID = p.ID").
 		Where(sq.Eq{"pin.UserID": userID}).
 		Where(sq.Eq{"p.DeletedAt": 0}).
+		Where(sq.Or{
+			sq.Eq{"p.CreatorID": userID},
+			sq.Eq{"p.IsShared": true},
+		}).
 		OrderBy("p.Name"),
 	); err != nil {
 		return nil, fmt.Errorf("failed to get pinned prompts: %w", err)
@@ -204,9 +208,15 @@ func (s *Store) GetPinnedIDs(userID string) ([]string, error) {
 
 	var rows []pinRow
 	if err := s.db.DoQuery(&rows, s.db.Builder().
-		Select("PromptID").
-		From("LLM_CustomPromptPins").
-		Where(sq.Eq{"UserID": userID}),
+		Select("pin.PromptID").
+		From("LLM_CustomPromptPins AS pin").
+		Join("LLM_CustomPrompts AS p ON p.ID = pin.PromptID").
+		Where(sq.Eq{"pin.UserID": userID}).
+		Where(sq.Eq{"p.DeletedAt": 0}).
+		Where(sq.Or{
+			sq.Eq{"p.CreatorID": userID},
+			sq.Eq{"p.IsShared": true},
+		}),
 	); err != nil {
 		return nil, fmt.Errorf("failed to get pinned prompt IDs: %w", err)
 	}

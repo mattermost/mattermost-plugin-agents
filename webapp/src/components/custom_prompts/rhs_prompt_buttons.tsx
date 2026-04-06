@@ -61,8 +61,8 @@ const RHSPromptButtons = ({channelId, selectPost, setCurrentTab}: Props) => {
             const created = await createPost(post);
             selectPost(created.id);
             setCurrentTab('thread');
-        } catch {
-            // Handle error silently
+        } catch (e) {
+            console.error('Failed to execute custom prompt:', e); // eslint-disable-line no-console
         }
     }, [channelId, selectPost, setCurrentTab]);
 

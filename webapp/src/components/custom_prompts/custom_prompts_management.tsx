@@ -253,6 +253,18 @@ const EmptyState = styled.div`
     line-height: 20px;
 `;
 
+const ErrorBanner = styled.div`
+    display: flex;
+    align-items: center;
+    padding: 12px 20px;
+    margin: 8px 16px 0;
+    background: rgba(var(--error-text-color-rgb, 210, 75, 78), 0.08);
+    color: var(--error-text);
+    border-radius: 4px;
+    font-size: 14px;
+    line-height: 20px;
+`;
+
 const NewPromptContainer = styled.div`
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
@@ -280,9 +292,11 @@ const CustomPromptsManagement = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [showCreateForm, setShowCreateForm] = useState(false);
+    const [error, setError] = useState('');
 
     useEffect(() => {
         if (show) {
+            setError('');
             dispatch(fetchCustomPrompts() as any);
             dispatch(fetchPinnedPromptIds() as any);
         }
@@ -300,30 +314,33 @@ const CustomPromptsManagement = () => {
         try {
             await setCustomPromptPin(promptId, !isPinned);
             dispatch(fetchPinnedPromptIds() as any);
-        } catch {
-            // Handle error silently
+        } catch (e) {
+            console.error('Failed to toggle pin:', e); // eslint-disable-line no-console
+            setError(intl.formatMessage({defaultMessage: 'Failed to update pin. Please try again.'}));
         }
-    }, [pinnedIds, dispatch]);
+    }, [pinnedIds, dispatch, intl]);
 
     const handleCreate = useCallback(async (data: {name: string; description: string; template: string; is_shared: boolean}) => {
         try {
             await createCustomPrompt(data);
             dispatch(fetchCustomPrompts() as any);
             setShowCreateForm(false);
-        } catch {
-            // Handle error silently
+        } catch (e) {
+            console.error('Failed to create prompt:', e); // eslint-disable-line no-console
+            setError(intl.formatMessage({defaultMessage: 'Failed to create prompt. Please try again.'}));
         }
-    }, [dispatch]);
+    }, [dispatch, intl]);
 
     const handleUpdate = useCallback(async (id: string, data: {name: string; description: string; template: string; is_shared: boolean}) => {
         try {
             await updateCustomPrompt(id, data);
             dispatch(fetchCustomPrompts() as any);
             setExpandedId(null);
-        } catch {
-            // Handle error silently
+        } catch (e) {
+            console.error('Failed to update prompt:', e); // eslint-disable-line no-console
+            setError(intl.formatMessage({defaultMessage: 'Failed to update prompt. Please try again.'}));
         }
-    }, [dispatch]);
+    }, [dispatch, intl]);
 
     const handleModalClick = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -346,12 +363,20 @@ const CustomPromptsManagement = () => {
 
     return (
         <ModalOverlay onClick={handleClose}>
-            <ModalContainer onClick={handleModalClick}>
+            <ModalContainer
+                onClick={handleModalClick}
+                role='dialog'
+                aria-modal='true'
+                aria-label={intl.formatMessage({defaultMessage: 'Custom Prompts'})}
+            >
                 <ModalHeader>
                     <ModalTitle>
                         <FormattedMessage defaultMessage='Custom Prompts'/>
                     </ModalTitle>
-                    <CloseButton onClick={handleClose}>
+                    <CloseButton
+                        onClick={handleClose}
+                        aria-label={intl.formatMessage({defaultMessage: 'Close'})}
+                    >
                         <CloseIcon size={20}/>
                     </CloseButton>
                 </ModalHeader>
@@ -378,6 +403,7 @@ const CustomPromptsManagement = () => {
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             placeholder={intl.formatMessage({defaultMessage: 'Search prompts'})}
+                            aria-label={intl.formatMessage({defaultMessage: 'Search prompts'})}
                         />
                     </SearchContainer>
                     <CreateNewButton
@@ -391,6 +417,7 @@ const CustomPromptsManagement = () => {
                     </CreateNewButton>
                 </ToolbarRow>
                 <ModalBody>
+                    {error && <ErrorBanner>{error}</ErrorBanner>}
                     {showCreateForm && (
                         <NewPromptContainer>
                             <NewPromptHeader>
@@ -426,10 +453,19 @@ const CustomPromptsManagement = () => {
                                                 e.stopPropagation();
                                                 handleTogglePin(prompt.id);
                                             }}
+                                            aria-label={isPinned ?
+                                                intl.formatMessage({defaultMessage: 'Unpin prompt'}) :
+                                                intl.formatMessage({defaultMessage: 'Pin prompt'})
+                                            }
                                         >
                                             {isPinned ? <PinIcon size={18}/> : <PinOutlineIcon size={18}/>}
                                         </PinButton>
-                                        <ChevronButton>
+                                        <ChevronButton
+                                            aria-label={isExpanded ?
+                                                intl.formatMessage({defaultMessage: 'Collapse prompt'}) :
+                                                intl.formatMessage({defaultMessage: 'Expand prompt'})
+                                            }
+                                        >
                                             {isExpanded ? <ChevronUpIcon size={18}/> : <ChevronDownIcon size={18}/>}
                                         </ChevronButton>
                                     </PromptRowHeader>
