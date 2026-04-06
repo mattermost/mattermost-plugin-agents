@@ -299,6 +299,38 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	}
 }
 
+func TestAIBotRequiredUsesConfiguredDefaultBot(t *testing.T) {
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	defaultBot := bots.NewBot(
+		llm.BotConfig{Name: "ai", DisplayName: "AI"},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: "defaultbotuserid1234567890", Username: "ai", DisplayName: "AI"},
+		nil,
+	)
+	otherBot := bots.NewBot(
+		llm.BotConfig{Name: "second", DisplayName: "Second"},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: "secondbotuserid123456789", Username: "second", DisplayName: "Second"},
+		nil,
+	)
+
+	// Put the non-default bot first to verify we prefer config over slice order.
+	e.bots.SetBotsForTesting([]*bots.Bot{otherBot, defaultBot})
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodPost, "/post/postid/react", nil)
+	ctx.Request = req
+
+	e.api.aiBotRequired(ctx)
+	require.False(t, ctx.IsAborted())
+
+	selectedBot := ctx.MustGet(ContextBotKey).(*bots.Bot)
+	require.Equal(t, "ai", selectedBot.GetMMBot().Username)
+}
+
 func TestPostRouter(t *testing.T) {
 	// This just makes gin not output a whole bunch of debug stuff.
 	// maybe pipe this to the test log?

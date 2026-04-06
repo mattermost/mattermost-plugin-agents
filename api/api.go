@@ -314,8 +314,11 @@ func (a *API) metricsMiddleware(c *gin.Context) {
 }
 
 func (a *API) aiBotRequired(c *gin.Context) {
-	// We should integreate LLM here
 	botUsername := c.Query("botUsername")
+	if botUsername == "" {
+		botUsername = a.config.GetDefaultBotName()
+	}
+
 	bot := a.bots.GetBotByUsernameOrFirst(botUsername)
 	if bot == nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get bot: %s", botUsername))
