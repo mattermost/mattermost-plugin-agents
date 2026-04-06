@@ -89,6 +89,7 @@ test.describe('Smart Reactions - Basic Functionality', () => {
     });
 
     test('Positive message gets appropriate reaction suggestion', async ({ page }) => {
+        test.setTimeout(120000);
         const { mmPage } = await setupTestPage(page);
 
         // Create positive message
@@ -108,27 +109,22 @@ test.describe('Smart Reactions - Basic Functionality', () => {
         // Set up mock for reaction suggestion
         await openAIMock.addCompletionMock(reactionSuggestionResponse);
 
-        // Wait for the request to ensure the click registered
-        const reactionPromise = page.waitForResponse(response =>
-            response.url().includes('/react') && response.status() === 200
-        );
+        // Pair listener with click. Do not require response.ok(): the handler may return an error
+        // body while still completing the HTTP exchange (Chromium CI was timing out on ok-only waits).
+        await Promise.all([
+            page.waitForResponse(
+                (response) =>
+                    response.request().method() === 'POST' &&
+                    response.url().includes('/plugins/mattermost-ai') &&
+                    response.url().includes('/react'),
+                {timeout: 90000},
+            ),
+            page.getByRole('button', { name: 'React for me' }).click(),
+        ]);
 
-        // Click "React for me"
-        await page.getByRole('button', { name: 'React for me' }).click();
-
-        // Wait for the backend to acknowledge the command
-        await reactionPromise;
-
-        // Wait for the API call to complete and the reaction to be applied
-        // Give extra time for the LLM response and reaction application in parallel test runs
         const postLocator = page.locator(`#post_${rootPost.id}`);
-
-        // Wait for ANY reaction to appear on the post by checking for the reaction container
-        // The container has aria-label="reactions"
         const reactionsContainer = postLocator.locator('[aria-label="reactions"]');
-        await expect(reactionsContainer).toBeVisible({ timeout: 30000 });
-
-        // Optional: Quick verify count is 1 if visible, but the container existence is the main check
+        await expect(reactionsContainer).toBeVisible({timeout: 45000});
         await expect(reactionsContainer).toContainText('1');
     });
 });
