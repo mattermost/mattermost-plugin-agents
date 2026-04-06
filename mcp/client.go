@@ -22,9 +22,18 @@ const (
 	EmbeddedServerName = "Mattermost"
 	EmbeddedClientKey  = "embedded://mattermost"
 
-	ToolPolicyAsk     = config.MCPToolPolicyAsk
-	ToolPolicyAutoRun = config.MCPToolPolicyAutoRun
+	ToolPolicyAsk               = config.MCPToolPolicyAsk
+	ToolPolicyAutoRun           = config.MCPToolPolicyAutoRun
+	ToolPolicyAutoRunEverywhere = config.MCPToolPolicyAutoRunEverywhere
 )
+
+func IsToolPolicyAutoRun(policy string) bool {
+	return config.IsToolPolicyAutoRun(policy)
+}
+
+func IsToolPolicyAutoRunEverywhere(policy string) bool {
+	return config.IsToolPolicyAutoRunEverywhere(policy)
+}
 
 // EmbeddedMCPServer interface for dependency injection
 type EmbeddedMCPServer interface {

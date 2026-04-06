@@ -29,8 +29,9 @@ func (w *AutoRunToolsWrapper) ChatCompletion(request CompletionRequest, opts ...
 		opt(&cfg)
 	}
 
-	// If auto-run is not configured or no tools context, delegate directly
-	if len(cfg.AutoRunTools) == 0 || request.Context == nil || request.Context.Tools == nil {
+	// If auto-run is not configured, tools are disabled, or no tools context exists,
+	// delegate directly.
+	if cfg.ToolsDisabled || len(cfg.AutoRunTools) == 0 || request.Context == nil || request.Context.Tools == nil {
 		return w.inner.ChatCompletion(request, opts...)
 	}
 
@@ -47,8 +48,11 @@ func (w *AutoRunToolsWrapper) ChatCompletion(request CompletionRequest, opts ...
 // runToolLoop runs the tool resolution loop, forwarding events and re-invoking
 // the LLM when auto-runnable tool calls are received.
 func (w *AutoRunToolsWrapper) runToolLoop(request CompletionRequest, opts []LanguageModelOption, autoRunTools []string, output chan<- TextStreamEvent) {
+	currentOpts := append([]LanguageModelOption(nil), opts...)
+	currentAutoRunTools := append([]string(nil), autoRunTools...)
+
 	for i := 0; i < MaxToolResolutionDepth; i++ {
-		result, err := w.inner.ChatCompletion(request, opts...)
+		result, err := w.inner.ChatCompletion(request, currentOpts...)
 		if err != nil {
 			output <- TextStreamEvent{Type: EventTypeError, Value: err}
 			return
@@ -85,7 +89,7 @@ func (w *AutoRunToolsWrapper) runToolLoop(request CompletionRequest, opts []Lang
 			return
 		}
 
-		if !ShouldAutoRunTools(toolCalls, autoRunTools) {
+		if !ShouldAutoRunTools(toolCalls, currentAutoRunTools) {
 			// Tool calls are not all auto-runnable: forward them and return
 			output <- TextStreamEvent{Type: EventTypeToolCalls, Value: toolCalls}
 			return
@@ -123,6 +127,12 @@ func (w *AutoRunToolsWrapper) runToolLoop(request CompletionRequest, opts []Lang
 			Message: accumulatedText,
 			ToolUse: resolvedToolCalls,
 		})
+
+		if CountTrailingFailedToolCalls(request.Posts) >= MaxConsecutiveToolCallFailures {
+			request.Posts = EnsureToolRetryLimitSystemMessage(request.Posts)
+			currentOpts = append(currentOpts, WithToolsDisabled())
+			currentAutoRunTools = nil
+		}
 	}
 
 	// If we've exhausted MaxToolResolutionDepth, send end event

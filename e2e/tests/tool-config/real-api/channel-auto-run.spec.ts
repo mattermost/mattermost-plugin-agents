@@ -10,7 +10,7 @@ import {
 /**
  * Test Suite: Channel Auto Run Two-Stage (Real API) (4.11)
  *
- * Verifies auto_run tool in a channel: call is auto-approved but
+ * Verifies Auto Run (DM) behavior in a channel: call is auto-approved but
  * result sharing still requires user approval (channel safety).
  *
  * Skip-gated: requires ANTHROPIC_API_KEY or OPENAI_API_KEY.
@@ -39,7 +39,7 @@ for (const provider of providers) {
             }
         });
 
-        test('auto_run skips call approval but requires result-sharing approval', async ({ browser }) => {
+        test('auto_run dm policy skips call approval but requires result-sharing approval', async ({ browser }) => {
             test.skip(!config.shouldRunTests, skipMessage);
             test.setTimeout(480000);
 
