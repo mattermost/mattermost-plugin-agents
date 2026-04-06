@@ -67,6 +67,7 @@ interface SubMenuHeaderProps {
     channelId: string;
 }
 
+// eslint-disable-next-line no-empty-pattern
 export const CustomPromptsSubMenuHeader = ({}: SubMenuHeaderProps) => {
     const dispatch = useDispatch();
     const bots = useSelector((state: any) =>
