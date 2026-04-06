@@ -353,6 +353,14 @@ Enhanced logging can help diagnose issues:
 3. Enable debug logging in the plugin configuration for additional diagnostic information.
 4. For production environments, disable debug logging and LLM Trace after troubleshooting to reduce log volume.
 
+### Tool execution failures
+
+When a tool call fails, the agent does not always stop immediately. It may continue with a follow-up model turn so it can recover, explain the failure, or answer without that tool.
+
+To avoid endless retries, the plugin enforces a limit of **three consecutive failed tool attempts**. After that, no further tool calls are made for that sequence; the model is instructed to describe the latest error and ask the user for guidance or any missing information such as permissions, identifiers, or configuration details.
+
+When users report repeated tool failures, use **LLM Trace** and debug logging to inspect tool errors and upstream responses. Also verify integration configuration such as API keys, endpoints, MCP connectivity, and third-party authorization, and confirm the user can access the underlying Mattermost resources the tool targets.
+
 ## Integrations
 
 Currently integrations are limited to direct messages between users and the agents. The integrations won't operate from within public, private, or group message channels.

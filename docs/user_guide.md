@@ -43,7 +43,9 @@ If multiple Agent bots are configured for your Mattermost workspace, select your
 
 When Agents use external tools or integrations, you may be prompted to approve tool usage for security. When a tool is called, you'll see a card showing the tool name and description, arguments being passed to the tool, and **Approve/Reject** options.
 
-For security, tool calls are only available in direct messages and each tool call requires explicit approval before execution. You can review tool arguments before approving, and tool results are shown after successful execution.
+For security, tool calls are only available in direct messages and each tool call requires explicit approval before execution. You can review tool arguments before approving, and tool results are shown after execution.
+
+If you approve a tool and its execution fails, the Agent can continue with a follow-up response instead of stopping immediately. After three consecutive failed tool executions, the Agent stops calling further tools and is instructed to explain the latest error and ask you for guidance or any missing information. A successful tool execution resets that count.
 
 Available tools in direct messages include:
 
