@@ -363,17 +363,12 @@ func TestExtractDOCXWithMultipleParagraphs(t *testing.T) {
 // zipWriter is a simple helper for creating ZIP files in tests
 type zipWriter struct {
 	buf     *bytes.Buffer
-	zipW    *zipArchiveWriter
 	entries []zipEntry
 }
 
 type zipEntry struct {
 	name    string
 	content string
-}
-
-type zipArchiveWriter struct {
-	w *bytes.Buffer
 }
 
 func newZipWriter(buf *bytes.Buffer) *zipWriter {

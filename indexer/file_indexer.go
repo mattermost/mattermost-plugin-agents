@@ -116,27 +116,6 @@ func (s *Indexer) shouldIndexFile(fileInfo *model.FileInfo) bool {
 	return docextract.SupportedType(fileInfo.Name)
 }
 
-// indexFilesFromPost indexes all supported file attachments from a post
-func (s *Indexer) indexFilesFromPost(ctx context.Context, post *model.Post, channel *model.Channel) {
-	if post == nil || len(post.FileIds) == 0 {
-		return
-	}
-
-	for _, fileID := range post.FileIds {
-		fileInfo, err := s.pluginAPI.GetFileInfo(fileID)
-		if err != nil {
-			s.pluginAPI.LogWarn("Failed to get file info for indexing",
-				"error", err, "fileID", fileID)
-			continue
-		}
-
-		if err := s.IndexFile(ctx, fileInfo, post, channel); err != nil {
-			s.pluginAPI.LogWarn("Failed to index file",
-				"error", err, "fileID", fileID, "fileName", fileInfo.Name)
-		}
-	}
-}
-
 // reindexFiles processes file attachments in batches for reindexing
 func (s *Indexer) reindexFiles(ctx context.Context, search embeddings.EmbeddingSearch, jobStatus *JobStatus, cutoffTimestamp int64) error {
 	// Clear existing file embeddings
@@ -271,5 +250,5 @@ func (s *Indexer) reindexFiles(ctx context.Context, search embeddings.EmbeddingS
 	return nil
 }
 
-// Ensure we use a var for time.Now so tests could override if needed
-var timeNow = func() time.Time { return time.Now() }
+// timeNow is a variable for time.Now so tests could override if needed
+var timeNow = time.Now

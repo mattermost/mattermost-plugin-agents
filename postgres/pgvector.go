@@ -599,6 +599,12 @@ func (pv *PGVector) SearchAll(ctx context.Context, embedding []float32, opts emb
 	postArgs = append([]interface{}{vecParam}, postArgs...)
 	fileArgs = append([]interface{}{vecParam}, fileArgs...)
 
+	// Renumber placeholders in the file sub-query so they continue after the post sub-query's.
+	// squirrel generates $1..$N independently for each builder; we must shift the file query's
+	// placeholders by the count of post args so the combined query has sequential $1..$M.
+	offset := len(postArgs)
+	fileSQL = renumberDollarPlaceholders(fileSQL, offset)
+
 	// Build the UNION ALL with ORDER BY and LIMIT
 	unionSQL := fmt.Sprintf(
 		"SELECT * FROM ((%s) UNION ALL (%s)) combined ORDER BY similarity ASC LIMIT %d",
@@ -609,7 +615,9 @@ func (pv *PGVector) SearchAll(ctx context.Context, embedding []float32, opts emb
 	}
 
 	// Combine args: post args first, then file args
-	allArgs := append(postArgs, fileArgs...)
+	allArgs := make([]interface{}, 0, len(postArgs)+len(fileArgs))
+	allArgs = append(allArgs, postArgs...)
+	allArgs = append(allArgs, fileArgs...)
 
 	rows, err := pv.db.QueryxContext(ctx, unionSQL, allArgs...)
 	if err != nil {
@@ -618,6 +626,42 @@ func (pv *PGVector) SearchAll(ctx context.Context, embedding []float32, opts emb
 	defer rows.Close()
 
 	return scanCombinedSearchResults(rows, opts.MinScore)
+}
+
+// renumberDollarPlaceholders shifts all $N placeholders in sql by offset.
+// e.g. with offset=3: "$1" → "$4", "$2" → "$5", etc.
+func renumberDollarPlaceholders(sql string, offset int) string {
+	if offset == 0 {
+		return sql
+	}
+	// Process right-to-left so replacing $10 before $1 avoids corruption.
+	// Find all $N tokens first, then replace from highest to lowest.
+	type placeholder struct {
+		start, end int
+		num        int
+	}
+	var phs []placeholder
+	for i := 0; i < len(sql); i++ {
+		if sql[i] == '$' && i+1 < len(sql) && sql[i+1] >= '1' && sql[i+1] <= '9' {
+			j := i + 1
+			for j < len(sql) && sql[j] >= '0' && sql[j] <= '9' {
+				j++
+			}
+			n, err := strconv.Atoi(sql[i+1 : j])
+			if err == nil {
+				phs = append(phs, placeholder{start: i, end: j, num: n})
+			}
+			i = j - 1
+		}
+	}
+	// Replace from end to start to preserve positions
+	result := sql
+	for i := len(phs) - 1; i >= 0; i-- {
+		ph := phs[i]
+		newPh := "$" + strconv.Itoa(ph.num+offset)
+		result = result[:ph.start] + newPh + result[ph.end:]
+	}
+	return result
 }
 
 // scanCombinedSearchResults extracts search results from the unified query rows
