@@ -371,6 +371,7 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
 
         mattermost = await new MattermostContainer().start();
         await setupTestUsers(mattermost);
+        await mattermost.grantSelfServiceAgentPermissions();
         await installPlugin(mattermost);
     });
 

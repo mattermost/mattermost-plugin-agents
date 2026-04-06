@@ -150,8 +150,9 @@ export class AgentPageHelper {
         return this.getLabeledSection(sectionTitle);
     }
 
-    getNativeToolCheckbox(sectionTitle: 'Native Claude Tools' | 'Native OpenAI Tools'): Locator {
-        return this.getNativeToolsSection(sectionTitle).locator('input[type="checkbox"]').first();
+    /** Web Search is currently the only native tool in the agent builder. */
+    getNativeToolCheckbox(_sectionTitle: 'Native Claude Tools' | 'Native OpenAI Tools'): Locator {
+        return this.page.getByTestId('native-tool-web_search');
     }
 
     getReasoningEnableCheckbox(sectionTitle: 'Reasoning' | 'Extended Thinking'): Locator {

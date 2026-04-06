@@ -128,6 +128,7 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
         .start();
 
     await setupAdminUser(mattermost);
+    await mattermost.grantSelfServiceAgentPermissions();
 
     return mattermost;
 }

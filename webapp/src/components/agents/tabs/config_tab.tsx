@@ -53,20 +53,32 @@ const ConfigTab = (props: Props) => {
     }, [draft.serviceId]);
 
     // Reset provider-specific fields when the AI service changes (avoid stale model / native tools / reasoning).
+    // Skip when `prev` is empty: the edit modal can render once with a stale empty draft before `agentToDraft`
+    // runs, then hydrate the real `serviceId`. Treating that as a "service change" would incorrectly wipe
+    // `enabledNativeTools` and other fields loaded from the agent.
+    // When only switching between services with the same `type` (e.g. two OpenAI-compatible entries), keep
+    // reasoning/thinking/structured-output fields so users can compare services without losing migrated values.
     useEffect(() => {
         const prev = prevServiceIdRef.current;
-        if (prev !== null && prev !== draft.serviceId) {
+        if (prev !== null && prev !== '' && prev !== draft.serviceId) {
+            const prevSvc = services.find((s) => s.id === prev);
+            const nextSvc = services.find((s) => s.id === draft.serviceId);
+            const sameServiceType = Boolean(prevSvc && nextSvc && prevSvc.type === nextSvc.type);
             onChange({
                 model: '',
-                enabledNativeTools: [],
-                reasoningEnabled: true,
-                reasoningEffort: 'medium',
-                thinkingBudget: 0,
-                structuredOutputEnabled: false,
+                ...(sameServiceType
+                    ? {}
+                    : {
+                        enabledNativeTools: [],
+                        reasoningEnabled: true,
+                        reasoningEffort: 'medium',
+                        thinkingBudget: 0,
+                        structuredOutputEnabled: false,
+                    }),
             });
         }
         prevServiceIdRef.current = draft.serviceId;
-    }, [draft.serviceId, onChange]);
+    }, [draft.serviceId, onChange, services]);
 
     const selectedService = services.find((s) => s.id === draft.serviceId);
 

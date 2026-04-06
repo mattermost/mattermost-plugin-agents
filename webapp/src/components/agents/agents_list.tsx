@@ -25,6 +25,8 @@ const AgentsList = () => {
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const hasManageOthersAgent = useSelector((state: GlobalState) =>
         userHasSystemPermission(state, currentUserId, 'manage_others_agent'));
+    const hasManageSystem = useSelector((state: GlobalState) =>
+        userHasSystemPermission(state, currentUserId, 'manage_system'));
 
     const [agents, setAgents] = useState<UserAgent[]>([]);
     const [services, setServices] = useState<ServiceInfo[]>([]);
@@ -113,8 +115,12 @@ const AgentsList = () => {
     // Filter agents based on active tab and search query
     const userCanManageAgent = useCallback((a: UserAgent) => {
         const isOwner = a.creator_id === currentUserId || (a.admin_user_ids?.includes(currentUserId) ?? false);
-        return isOwner || hasManageOthersAgent;
-    }, [currentUserId, hasManageOthersAgent]);
+        if (isOwner || hasManageOthersAgent) {
+            return true;
+        }
+        // Migrated legacy bots have no creator; system admins had full control via System Console.
+        return Boolean(!a.creator_id && hasManageSystem);
+    }, [currentUserId, hasManageOthersAgent, hasManageSystem]);
 
     const filteredAgents = agents.filter((a) => {
         if (activeTab === 'yours' && a.creator_id !== currentUserId) {

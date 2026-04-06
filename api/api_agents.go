@@ -95,6 +95,8 @@ func isAgentAdmin(agent *useragents.UserAgent, userID string) bool {
 // canManageAgent returns true if the user may update or delete the agent.
 // Holders of PermissionManageOthersAgent may manage any agent (including others' agents
 // and migrated legacy bots with no owner).
+// Migrated legacy bots have no CreatorID; system admins (PermissionManageSystem) retain the
+// same operational access they had via System Console before self-service agents.
 func canManageAgent(client *pluginapi.Client, agent *useragents.UserAgent, userID string) bool {
 	if isAgentAdmin(agent, userID) {
 		return true
@@ -102,19 +104,30 @@ func canManageAgent(client *pluginapi.Client, agent *useragents.UserAgent, userI
 	if client.User.HasPermissionTo(userID, model.PermissionManageOthersAgent) {
 		return true
 	}
+	if agent.CreatorID == "" && client.User.HasPermissionTo(userID, model.PermissionManageSystem) {
+		return true
+	}
 	return false
 }
 
 // canCreateAgent returns true if the user may create new agents via POST /agents.
 func canCreateAgent(client *pluginapi.Client, userID string) bool {
-	return client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent)
+	if client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent) {
+		return true
+	}
+	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
 }
 
 // canConfigureAgentServices returns true if the user may list services or fetch models
 // for agent configuration (ManageOwn or ManageOthers, same union as non-owner admin access).
 func canConfigureAgentServices(client *pluginapi.Client, userID string) bool {
-	return client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent) ||
-		client.User.HasPermissionTo(userID, model.PermissionManageOthersAgent)
+	if client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent) {
+		return true
+	}
+	if client.User.HasPermissionTo(userID, model.PermissionManageOthersAgent) {
+		return true
+	}
+	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
 }
 
 // refreshBotsAndNotify forces the bot registry to re-read DB-backed agents,

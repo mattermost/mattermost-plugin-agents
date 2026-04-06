@@ -100,6 +100,7 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
                     <NativeToolContainer key={tool.id}>
                         <StyledCheckbox
                             type='checkbox'
+                            data-testid={`native-tool-${tool.id}`}
                             checked={(props.enabledTools || []).includes(tool.id)}
                             onChange={() => toggleTool(tool.id)}
                         />
