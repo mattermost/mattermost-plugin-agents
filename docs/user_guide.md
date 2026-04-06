@@ -49,8 +49,6 @@ Available tools in direct messages include:
 
 - Server search (semantic search across your Mattermost instance)
 - User lookup (find information about Mattermost users)
-- GitHub integration (the ability to fetch GitHub issues and pull requests requires the [GitHub plugin](https://docs.mattermost.com/integrate/github.html))
-- [Jira integration](https://docs.mattermost.com/integrate/jira.html) (retrieve Jira issues from public instances)
 - MCP tools (external tools provided by configured MCP servers if enabled). Tool availability depends on your user permissions and system configuration.
 
 ## Analyze threads and channels

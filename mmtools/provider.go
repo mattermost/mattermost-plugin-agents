@@ -4,14 +4,12 @@
 package mmtools
 
 import (
-	"net/http"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/bots"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
 	"github.com/mattermost/mattermost-plugin-ai/search"
-	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // ToolProvider provides built-in tools for the AI assistant
@@ -21,19 +19,17 @@ type ToolProvider interface {
 
 // MMToolProvider implements ToolProvider with all built-in Mattermost tools
 type MMToolProvider struct {
-	pluginAPI  mmapi.Client
-	search     *search.Search
-	httpClient *http.Client
-	webSearch  WebSearchService
+	pluginAPI mmapi.Client
+	search    *search.Search
+	webSearch WebSearchService
 }
 
 // NewMMToolProvider creates a new tool provider
-func NewMMToolProvider(pluginAPI mmapi.Client, search *search.Search, httpClient *http.Client, webSearch WebSearchService) *MMToolProvider {
+func NewMMToolProvider(pluginAPI mmapi.Client, search *search.Search, webSearch WebSearchService) *MMToolProvider {
 	return &MMToolProvider{
-		pluginAPI:  pluginAPI,
-		search:     search,
-		httpClient: httpClient,
-		webSearch:  webSearch,
+		pluginAPI: pluginAPI,
+		search:    search,
+		webSearch: webSearch,
 	}
 }
 
@@ -62,17 +58,6 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
 			Resolver:    p.toolResolveLookupMattermostUser,
 		})
 
-		// Add GitHub tool if plugin is available
-		status, err := p.pluginAPI.GetPluginStatus("github")
-		if err == nil && status != nil && status.State == model.PluginStateRunning {
-			builtInTools = append(builtInTools, llm.Tool{
-				Name:        "GetGithubIssue",
-				Description: "Retrieve a single GitHub issue by owner, repo, and issue number.",
-				Schema:      llm.NewJSONSchemaFromStruct[GetGithubIssueArgs](),
-				Resolver:    p.toolGetGithubIssue,
-			})
-		}
-
 		if p.webSearch != nil && !hasNativeWebSearch(bot) {
 			tool := p.webSearch.Tool()
 			if tool != nil {
@@ -83,16 +68,6 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
 				builtInTools = append(builtInTools, *sourceTool)
 			}
 		}
-	}
-
-	// Add Jira tool if httpClient is available
-	if p.httpClient != nil {
-		builtInTools = append(builtInTools, llm.Tool{
-			Name:        "GetJiraIssue",
-			Description: "Retrieve a single Jira issue by issue key.",
-			Schema:      llm.NewJSONSchemaFromStruct[GetJiraIssueArgs](),
-			Resolver:    p.toolGetJiraIssue,
-		})
 	}
 
 	return builtInTools

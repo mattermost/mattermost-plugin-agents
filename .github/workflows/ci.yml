@@ -10,10 +10,13 @@ on:
 permissions:
   contents: write
 
+# Set the CI_RUNNER repository or organization variable to a larger runner label
+# for the heavier e2e path jobs. Other CI jobs intentionally stay on the
+# standard GitHub-hosted Ubuntu runner.
 jobs:
   e2e-build-artifact:
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
     - uses: actions/checkout@v5
     - uses: actions/setup-node@v6
@@ -30,7 +33,7 @@ jobs:
   e2e:
     needs: e2e-build-artifact
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -88,7 +91,7 @@ jobs:
   e2e-llmbot-real-apis:
     needs: e2e-build-artifact
     timeout-minutes: 180
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -146,7 +149,7 @@ jobs:
   e2e-channel-analysis-real-apis:
     needs: e2e-build-artifact
     timeout-minutes: 180
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
     defaults:
@@ -193,7 +196,7 @@ jobs:
   e2e-system-console-real-apis:
     needs: e2e-build-artifact
     timeout-minutes: 180
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
     defaults:
@@ -240,7 +243,7 @@ jobs:
   e2e-tool-config-real-apis:
     needs: e2e-build-artifact
     timeout-minutes: 180
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermost/mattermost-enterprise-edition:11.5.1' }}
     defaults:
@@ -287,7 +290,7 @@ jobs:
   e2e-tool-calling:
     needs: e2e-build-artifact
     timeout-minutes: 180
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:

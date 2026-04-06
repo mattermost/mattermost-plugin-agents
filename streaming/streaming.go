@@ -41,6 +41,7 @@ const ToolCallPrivateKeyPrefix = "tool_call_private"
 const ToolResultPrivateKeyPrefix = "tool_result_private"
 const PendingToolResultProp = "pending_tool_result"
 const AutoApprovedToolCallProp = "auto_approved_tool_call"
+const AutoShareToolResultProp = "auto_share_tool_result"
 const ReasoningSummaryProp = "reasoning_summary"
 const AnnotationsProp = "annotations"
 const WebSearchContextProp = "web_search_context"
@@ -127,6 +128,33 @@ func (p *MMPostStreamService) SetAutoExecuteCallback(callback AutoExecuteCallbac
 // areAllToolCallsAutoApprovable checks if all tool calls in the batch
 // can be auto-approved. Returns false if any tool is not auto_run + enabled,
 // or if the policy checker is not configured.
+func toolPolicyAllowsAutoRun(policy string, enabled bool) bool {
+	return mcp.IsToolPolicyAutoRun(policy) && enabled
+}
+
+func toolPolicyRequiresResultReview(policy string) bool {
+	return !mcp.IsToolPolicyAutoRunEverywhere(policy)
+}
+
+func (p *MMPostStreamService) shouldAutoApproveToolCall(toolCall llm.ToolCall) bool {
+	if p.toolPolicyChecker == nil {
+		return false
+	}
+
+	policy, enabled := p.toolPolicyChecker.GetToolPolicy(toolCall.ServerOrigin, toolCall.Name)
+	autoRun := toolPolicyAllowsAutoRun(policy, enabled)
+	if p.mmClient != nil {
+		p.mmClient.LogDebug("Auto-approval check",
+			"tool_name", toolCall.Name,
+			"server_origin", toolCall.ServerOrigin,
+			"approved", fmt.Sprintf("%t", autoRun),
+			"requires_result_review", fmt.Sprintf("%t", toolPolicyRequiresResultReview(policy)),
+		)
+	}
+
+	return autoRun
+}
+
 func (p *MMPostStreamService) areAllToolCallsAutoApprovable(toolCalls []llm.ToolCall) bool {
 	if p.toolPolicyChecker == nil {
 		return false
@@ -135,16 +163,7 @@ func (p *MMPostStreamService) areAllToolCallsAutoApprovable(toolCalls []llm.Tool
 		return false
 	}
 	for _, tc := range toolCalls {
-		policy, enabled := p.toolPolicyChecker.GetToolPolicy(tc.ServerOrigin, tc.Name)
-		autoRun := policy == mcp.ToolPolicyAutoRun && enabled
-		if p.mmClient != nil {
-			p.mmClient.LogDebug("Auto-approval check",
-				"tool_name", tc.Name,
-				"server_origin", tc.ServerOrigin,
-				"approved", fmt.Sprintf("%t", autoRun),
-			)
-		}
-		if !autoRun {
+		if !p.shouldAutoApproveToolCall(tc) {
 			return false
 		}
 	}
@@ -162,8 +181,7 @@ func (p *MMPostStreamService) markAutoApprovedStatusesAndCheck(toolCalls []llm.T
 
 	allAutoApprovable := true
 	for i := range toolCalls {
-		policy, enabled := p.toolPolicyChecker.GetToolPolicy(toolCalls[i].ServerOrigin, toolCalls[i].Name)
-		isAutoRun := policy == mcp.ToolPolicyAutoRun && enabled
+		isAutoRun := p.shouldAutoApproveToolCall(toolCalls[i])
 
 		if toolCalls[i].Status == llm.ToolCallStatusSuccess && isAutoRun {
 			toolCalls[i].Status = llm.ToolCallStatusAutoApproved
@@ -175,6 +193,21 @@ func (p *MMPostStreamService) markAutoApprovedStatusesAndCheck(toolCalls []llm.T
 	}
 
 	return allAutoApprovable
+}
+
+func (p *MMPostStreamService) anyToolResultRequiresReview(toolCalls []llm.ToolCall) bool {
+	if p.toolPolicyChecker == nil || len(toolCalls) == 0 {
+		return true
+	}
+
+	for _, tc := range toolCalls {
+		policy, enabled := p.toolPolicyChecker.GetToolPolicy(tc.ServerOrigin, tc.Name)
+		if !toolPolicyAllowsAutoRun(policy, enabled) || toolPolicyRequiresResultReview(policy) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (p *MMPostStreamService) StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error {
@@ -331,8 +364,8 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 }
 
 // handleAutoApprovedToolCalls handles tool calls that were pre-executed by the
-// MCP auto-approval wrapper. It skips the call-approval UI and sets up the
-// result-sharing stage directly, since the tools have already been executed.
+// MCP auto-approval wrapper. It skips the call-approval UI and either enters the
+// result-sharing stage or auto-shares immediately depending on the tool policies.
 func (p *MMPostStreamService) handleAutoApprovedToolCalls(post *model.Post, toolCalls []llm.ToolCall, broadcast *model.WebsocketBroadcast) {
 	requesterID, ok := post.GetProp(LLMRequesterUserID).(string)
 	if !ok || requesterID == "" {
@@ -369,16 +402,25 @@ func (p *MMPostStreamService) handleAutoApprovedToolCalls(post *model.Post, tool
 		return
 	}
 
-	// Set up result-sharing stage: the post shows redacted tools with
-	// PendingToolResultProp so the frontend presents the result-approval UI
-	// instead of the call-approval UI.
 	post.AddProp(ToolCallProp, string(toolCallJSON))
 	post.AddProp(ToolCallRedactedProp, "true")
-	post.AddProp(PendingToolResultProp, "true")
 	post.AddProp(AutoApprovedToolCallProp, "true")
+	requiresResultReview := p.anyToolResultRequiresReview(toolCalls)
+	if requiresResultReview {
+		// Set up result-sharing stage: the post shows redacted tools with
+		// PendingToolResultProp so the frontend presents the result-approval UI
+		// instead of the call-approval UI.
+		post.AddProp(PendingToolResultProp, "true")
+		post.DelProp(AutoShareToolResultProp)
+	} else {
+		// The new everywhere policy runs to completion in channels too.
+		post.DelProp(PendingToolResultProp)
+		post.AddProp(AutoShareToolResultProp, "true")
+	}
 
 	if err := p.mmClient.UpdatePost(post); err != nil {
 		p.mmClient.LogError("Failed to update post with auto-approved tool call", "error", err)
+		return
 	}
 
 	// Send websocket event for the result-sharing UI
@@ -389,6 +431,14 @@ func (p *MMPostStreamService) handleAutoApprovedToolCalls(post *model.Post, tool
 	}, broadcast)
 
 	p.mmClient.LogDebug("Auto-approved MCP tool calls executed", "post_id", post.Id, "tool_count", len(toolCalls))
+
+	if !requiresResultReview && p.autoExecuteCallback != nil {
+		approvedIDs := make([]string, len(toolCalls))
+		for idx := range toolCalls {
+			approvedIDs[idx] = toolCalls[idx].ID
+		}
+		go p.autoExecuteCallback(post.Id, requesterID, approvedIDs)
+	}
 }
 
 // StreamToPost streams the result of a TextStreamResult to a post.
@@ -587,13 +637,20 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 							return
 						}
 						autoApproved := p.markAutoApprovedStatusesAndCheck(toolCalls)
+						requiresResultReview := p.anyToolResultRequiresReview(toolCalls)
 
 						toolCallsForPost := RedactToolCalls(toolCalls)
 						post.AddProp(ToolCallRedactedProp, "true")
 						if autoApproved {
 							post.AddProp(AutoApprovedToolCallProp, "true")
+							if !requiresResultReview {
+								post.AddProp(AutoShareToolResultProp, "true")
+							} else {
+								post.DelProp(AutoShareToolResultProp)
+							}
 						} else {
 							post.DelProp(AutoApprovedToolCallProp)
+							post.DelProp(AutoShareToolResultProp)
 						}
 
 						toolCallJSON, jsonErr := json.Marshal(toolCallsForPost)
@@ -605,6 +662,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 
 						if updErr := p.mmClient.UpdatePost(post); updErr != nil {
 							p.mmClient.LogError("Failed to update post with tool call", "error", updErr)
+							return
 						}
 
 						p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{

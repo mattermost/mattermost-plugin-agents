@@ -46,6 +46,7 @@ export async function RunToolConfigContainer(): Promise<MattermostContainer> {
  */
 export async function RunToolConfigContainerWithPolicies(): Promise<MattermostContainer> {
     return RunSystemConsoleContainer({
+        enableChannelMentionToolCalling: true,
         services: [
             {
                 id: 'mock-service',

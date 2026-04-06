@@ -4,15 +4,29 @@
 package config
 
 const (
-	MCPToolPolicyAsk     = "ask"
-	MCPToolPolicyAutoRun = "auto_run"
+	MCPToolPolicyAsk               = "ask"
+	MCPToolPolicyAutoRun           = "auto_run"
+	MCPToolPolicyAutoRunEverywhere = "auto_run_everywhere"
 )
 
 // MCPToolConfig represents per-tool configuration for an MCP server.
 type MCPToolConfig struct {
 	Name    string `json:"name"`
-	Policy  string `json:"policy"` // "auto_run" | "ask"
+	Policy  string `json:"policy"` // "auto_run" | "auto_run_everywhere" | "ask"
 	Enabled bool   `json:"enabled"`
+}
+
+// IsToolPolicyAutoRun returns true when the policy allows automatic execution in at least
+// one context. The legacy "auto_run" policy remains DM-only for full completion, while
+// "auto_run_everywhere" also bypasses channel result sharing.
+func IsToolPolicyAutoRun(policy string) bool {
+	return policy == MCPToolPolicyAutoRun || policy == MCPToolPolicyAutoRunEverywhere
+}
+
+// IsToolPolicyAutoRunEverywhere returns true only for policies that should run to
+// completion without any additional approval regardless of conversation context.
+func IsToolPolicyAutoRunEverywhere(policy string) bool {
+	return policy == MCPToolPolicyAutoRunEverywhere
 }
 
 // MCPEmbeddedServerConfig contains configuration for the embedded MCP server
@@ -71,15 +85,15 @@ func (s *MCPServerConfig) GetToolPolicy(toolName string) (string, bool) {
 		return MCPToolPolicyAsk, true
 	}
 
-	if policy != MCPToolPolicyAutoRun && policy != MCPToolPolicyAsk {
+	if !IsToolPolicyAutoRun(policy) && policy != MCPToolPolicyAsk {
 		policy = MCPToolPolicyAsk
 	}
 
 	return policy, enabled
 }
 
-// IsToolAutoRun returns true only when the tool has policy "auto_run" and is enabled.
+// IsToolAutoRun returns true when the tool is enabled and configured for any auto-run mode.
 func (s *MCPServerConfig) IsToolAutoRun(toolName string) bool {
 	policy, enabled := s.GetToolPolicy(toolName)
-	return policy == MCPToolPolicyAutoRun && enabled
+	return IsToolPolicyAutoRun(policy) && enabled
 }

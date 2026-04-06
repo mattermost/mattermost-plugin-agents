@@ -25,7 +25,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled}
     const handlePolicyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         onToolConfigChange({
             ...toolConfig,
-            policy: e.target.value as 'auto_run' | 'ask',
+            policy: e.target.value as 'auto_run' | 'auto_run_everywhere' | 'ask',
         });
     };
 
@@ -53,7 +53,10 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled}
                             disabled={serverDisabled}
                         >
                             <option value='auto_run'>
-                                {intl.formatMessage({defaultMessage: 'Auto Run'})}
+                                {intl.formatMessage({defaultMessage: 'Auto Run (DM)'})}
+                            </option>
+                            <option value='auto_run_everywhere'>
+                                {intl.formatMessage({defaultMessage: 'Auto Run (Everywhere)'})}
                             </option>
                             <option value='ask'>
                                 {intl.formatMessage({defaultMessage: 'Ask Every Time'})}
@@ -133,12 +136,12 @@ const PolicySelectWrapper = styled.div`
     flex-direction: column;
     align-items: flex-end;
     justify-content: center;
-    width: 116px;
+    width: 192px;
 `;
 
 const PolicySelect = styled.select`
     appearance: none;
-    padding: 4px 14px 4px 4px;
+    padding: 4px 20px 4px 4px;
     border: none;
     border-radius: 4px;
     background: transparent;
@@ -151,7 +154,7 @@ const PolicySelect = styled.select`
     line-height: 16px;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(63,67,80,0.64)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: right 2px center;
+    background-position: right 6px center;
 
     &:focus {
         outline: none;
