@@ -173,7 +173,7 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	// so that GetToolsInfo() can inform the LLM about their availability.
 	// Actual execution is controlled via WithToolsDisabled() based on channel type.
 	if b.mcpToolProvider != nil {
-		// Get tools from all connected servers (embedded server applies automation list visibility in mcpserver).
+		// Get tools from all connected servers
 		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(userID, c.Channel)
 
 		// Add tools from successfully connected servers even if some had errors
