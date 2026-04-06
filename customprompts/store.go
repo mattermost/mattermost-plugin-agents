@@ -179,6 +179,24 @@ func (s *Store) GetPinnedForUser(userID string) ([]CustomPrompt, error) {
 // SetPinned pins or unpins a prompt for a user.
 func (s *Store) SetPinned(userID, promptID string, pinned bool) error {
 	if pinned {
+		// Verify the prompt exists, is not deleted, and is visible to the user
+		var visible []CustomPrompt
+		if err := s.db.DoQuery(&visible, s.db.Builder().
+			Select("ID").
+			From("LLM_CustomPrompts").
+			Where(sq.Eq{"ID": promptID}).
+			Where(sq.Eq{"DeletedAt": 0}).
+			Where(sq.Or{
+				sq.Eq{"CreatorID": userID},
+				sq.Eq{"IsShared": true},
+			}),
+		); err != nil {
+			return fmt.Errorf("failed to verify prompt visibility: %w", err)
+		}
+		if len(visible) == 0 {
+			return fmt.Errorf("prompt not found or not accessible")
+		}
+
 		_, err := s.db.ExecBuilder(s.db.Builder().
 			Insert("LLM_CustomPromptPins").
 			Columns("UserID", "PromptID").
