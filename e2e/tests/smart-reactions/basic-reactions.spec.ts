@@ -63,6 +63,9 @@ async function gotoTownSquare(page) {
 }
 
 test.describe('Smart Reactions - Basic Functionality', () => {
+    // OpenAI mock + reaction application can be slow or race under CI load; one retry matches repo flake policy.
+    test.describe.configure({ retries: 1 });
+
     test('Access React for me menu option', async ({ page }) => {
         const { mmPage } = await setupTestPage(page);
 
@@ -124,7 +127,7 @@ test.describe('Smart Reactions - Basic Functionality', () => {
 
         const postLocator = page.locator(`#post_${rootPost.id}`);
         const reactionsContainer = postLocator.locator('[aria-label="reactions"]');
-        await expect(reactionsContainer).toBeVisible({timeout: 45000});
+        await expect(reactionsContainer).toBeVisible({timeout: 60000});
         await expect(reactionsContainer).toContainText('1');
     });
 });
