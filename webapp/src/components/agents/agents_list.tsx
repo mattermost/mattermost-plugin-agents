@@ -25,8 +25,11 @@ const AgentsList = () => {
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const hasManageOthersAgent = useSelector((state: GlobalState) =>
         userHasSystemPermission(state, currentUserId, 'manage_others_agent'));
+    const hasManageOwnAgent = useSelector((state: GlobalState) =>
+        userHasSystemPermission(state, currentUserId, 'manage_own_agent'));
     const hasManageSystem = useSelector((state: GlobalState) =>
         userHasSystemPermission(state, currentUserId, 'manage_system'));
+    const userCanCreateAgent = hasManageOwnAgent || hasManageSystem;
 
     const [agents, setAgents] = useState<UserAgent[]>([]);
     const [services, setServices] = useState<ServiceInfo[]>([]);
@@ -144,10 +147,12 @@ const AgentsList = () => {
                         <FormattedMessage defaultMessage='Here are the agents you have access to'/>
                     </Subtitle>
                 </TitleRow>
-                <CreateButton onClick={handleCreateAgent}>
-                    <PlusIcon size={16}/>
-                    <FormattedMessage defaultMessage='Create agent'/>
-                </CreateButton>
+                {userCanCreateAgent && (
+                    <CreateButton onClick={handleCreateAgent}>
+                        <PlusIcon size={16}/>
+                        <FormattedMessage defaultMessage='Create agent'/>
+                    </CreateButton>
+                )}
             </Header>
 
             <TabBar>

@@ -204,28 +204,18 @@ test.describe('Agent CRUD', () => {
 
     test('denies create in UI when user lacks manage_own_agent permission', async ({ page }) => {
         test.setTimeout(60000);
-        const mmPage = new MattermostPage(page);
-        const agentPage = new AgentPageHelper(page);
-        const suffix = Date.now().toString(36);
+        await mattermost.revokeManageOwnAgentFromSystemUser();
+        try {
+            const mmPage = new MattermostPage(page);
+            const agentPage = new AgentPageHelper(page);
 
-        await mmPage.login(mattermost.url(), agentUnprivilegedUsername, agentUnprivilegedPassword);
-        await agentPage.navigateToAgents(mattermost.url());
+            await mmPage.login(mattermost.url(), agentUnprivilegedUsername, agentUnprivilegedPassword);
+            await agentPage.navigateToAgents(mattermost.url());
 
-        await agentPage.getCreateButton().click();
-        await agentPage.waitForModal();
-
-        await agentPage.fillConfigTab({
-            displayName: 'Should Fail',
-            username: `shouldfail${suffix}`,
-            serviceLabel: 'Mock Service',
-        });
-
-        await agentPage.getModalSaveButton().click();
-
-        await expect(page.getByText('You do not have permission to perform this action.')).toBeVisible({
-            timeout: 15000,
-        });
-        await expect(agentPage.getDisplayNameInput()).toBeVisible();
+            await expect(agentPage.getCreateButton()).not.toBeVisible({ timeout: 15000 });
+        } finally {
+            await mattermost.grantSelfServiceAgentPermissions();
+        }
     });
 
     test('search shows no-results message when nothing matches', async ({ page }) => {

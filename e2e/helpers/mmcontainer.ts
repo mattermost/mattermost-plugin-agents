@@ -115,6 +115,13 @@ export default class MattermostContainer {
         ]);
     }
 
+    /** Undo {@link grantSelfServiceAgentPermissions} for the system_user role only (system_admin unchanged). */
+    revokeManageOwnAgentFromSystemUser = async (): Promise<void> => {
+        await this.container.exec([
+            'mmctl', '--local', 'permissions', 'remove', 'system_user', 'manage_own_agent',
+        ]);
+    }
+
     getLogs = async (lines: number): Promise<string> => {
         const {output} = await this.container.exec(["mmctl", "--local", "logs", "--number", lines.toString()])
         return output
