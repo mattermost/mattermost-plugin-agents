@@ -77,21 +77,17 @@ function useTemplateVariables(): TemplateVariable[] {
     const currentTeam = useSelector((state: any) =>
         (currentTeamId ? state.entities?.teams?.teams?.[currentTeamId] : null),
     );
-    const siteName = useSelector((state: any) => state.entities?.general?.config?.SiteName);
 
     return [
-        {name: '{{.RequestingUser.Username}}', preview: currentUser?.username ? `@${currentUser.username}` : ''},
-        {name: '{{.RequestingUser.FirstName}}', preview: currentUser?.first_name || ''},
-        {name: '{{.RequestingUser.LastName}}', preview: currentUser?.last_name || ''},
-        {name: '{{.Channel.Name}}', preview: currentChannel?.name || ''},
-        {name: '{{.Channel.DisplayName}}', preview: currentChannel?.display_name || ''},
-        {name: '{{.Team.Name}}', preview: currentTeam?.name || ''},
-        {name: '{{.Team.DisplayName}}', preview: currentTeam?.display_name || ''},
+        {name: '{{.Username}}', preview: currentUser?.username ? `@${currentUser.username}` : ''},
+        {name: '{{.FirstName}}', preview: currentUser?.first_name || ''},
+        {name: '{{.LastName}}', preview: currentUser?.last_name || ''},
+        {name: '{{.Channel}}', preview: currentChannel?.display_name || ''},
+        {name: '{{.ChannelName}}', preview: currentChannel?.name || ''},
+        {name: '{{.Team}}', preview: currentTeam?.display_name || ''},
+        {name: '{{.TeamName}}', preview: currentTeam?.name || ''},
         {name: '{{.Time}}', preview: new Date().toUTCString()},
         {name: '{{.BotName}}', preview: ''},
-        {name: '{{.BotUsername}}', preview: ''},
-        {name: '{{.ServerName}}', preview: siteName || ''},
-        {name: '{{.CompanyName}}', preview: ''},
     ];
 }
 

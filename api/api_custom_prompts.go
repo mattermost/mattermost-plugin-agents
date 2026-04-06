@@ -197,8 +197,8 @@ func (a *API) handleRenderCustomPrompt(c *gin.Context) {
 
 	ctx := llm.NewContext(opts...)
 
-	// Render the template
-	rendered, renderErr := a.prompts.FormatString(prompt.Template, ctx)
+	// Render the template with only whitelisted variables
+	rendered, renderErr := a.prompts.FormatString(prompt.Template, ctx.CustomPromptVars())
 	if renderErr != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to render prompt: %w", renderErr))
 		return

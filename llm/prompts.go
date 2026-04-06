@@ -43,19 +43,21 @@ func withPromptExtension(filename string) string {
 	return filename + "." + PromptExtension
 }
 
-func (p *Prompts) FormatString(templateCode string, context *Context) (string, error) {
-	template, err := p.templates.Clone()
+func (p *Prompts) FormatString(templateCode string, data any) (string, error) {
+	tmpl, err := p.templates.Clone()
 	if err != nil {
 		return "", err
 	}
 
-	template, err = template.Parse(templateCode)
+	tmpl.Option("missingkey=zero")
+
+	tmpl, err = tmpl.Parse(templateCode)
 	if err != nil {
 		return "", err
 	}
 
 	out := &strings.Builder{}
-	if err := template.Execute(out, context); err != nil {
+	if err := tmpl.Execute(out, data); err != nil {
 		return "", fmt.Errorf("unable to execute template: %w", err)
 	}
 	return strings.TrimSpace(out.String()), nil
