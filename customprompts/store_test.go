@@ -11,6 +11,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/mattermost/mattermost-plugin-ai/mmapi"
+	"github.com/mattermost/mattermost-plugin-ai/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )
@@ -57,26 +58,10 @@ func testDB(t *testing.T) *mmapi.DBClient {
 		_, _ = rootConn.Exec("DROP DATABASE " + dbName)
 	})
 
-	// Set up tables directly (migrations are handled by morph in production)
-	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS LLM_CustomPrompts (
-			ID TEXT NOT NULL PRIMARY KEY,
-			CreatorID TEXT NOT NULL,
-			Name TEXT NOT NULL,
-			Description TEXT NOT NULL DEFAULT '',
-			Template TEXT NOT NULL DEFAULT '',
-			IsShared BOOLEAN NOT NULL DEFAULT FALSE,
-			CreatedAt BIGINT NOT NULL DEFAULT 0,
-			UpdatedAt BIGINT NOT NULL DEFAULT 0,
-			DeletedAt BIGINT NOT NULL DEFAULT 0
-		);
-		CREATE TABLE IF NOT EXISTS LLM_CustomPromptPins (
-			UserID TEXT NOT NULL,
-			PromptID TEXT NOT NULL,
-			PRIMARY KEY (UserID, PromptID)
-		);
-	`)
-	require.NoError(t, err, "Failed to set up tables")
+	// Run the real morph migrations, same as production
+	s := store.New(db)
+	err = s.RunMigrations()
+	require.NoError(t, err, "Failed to run migrations")
 
 	return mmapi.NewTestDBClient(db)
 }

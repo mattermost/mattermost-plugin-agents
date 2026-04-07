@@ -53,6 +53,10 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	promptID := c.Param("id")
 
+	if _, ok := a.requirePromptOwnership(c, promptID, userID); !ok {
+		return
+	}
+
 	var prompt customprompts.CustomPrompt
 	if err := c.ShouldBindJSON(&prompt); err != nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
@@ -74,6 +78,10 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 func (a *API) handleDeleteCustomPrompt(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	promptID := c.Param("id")
+
+	if _, ok := a.requirePromptOwnership(c, promptID, userID); !ok {
+		return
+	}
 
 	if err := a.customPromptsStore.Delete(promptID, userID); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to delete custom prompt: %w", err))
@@ -150,7 +158,7 @@ func (a *API) handleRenderCustomPrompt(c *gin.Context) {
 
 	// Enforce visibility: only the creator or shared prompts are accessible
 	if prompt.CreatorID != userID && !prompt.IsShared {
-		c.AbortWithError(http.StatusForbidden, errors.New("prompt not found or not accessible"))
+		c.AbortWithError(http.StatusNotFound, errors.New("prompt not found or not accessible"))
 		return
 	}
 
