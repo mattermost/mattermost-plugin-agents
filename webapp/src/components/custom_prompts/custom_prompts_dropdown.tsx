@@ -60,61 +60,15 @@ const StyledMenuSeparator = styled.li`
     list-style: none;
 `;
 
-interface SubMenuHeaderProps {
-    draft: any;
-    getSelectedText: () => {start: number; end: number};
-    updateText: (message: string) => void;
-    channelId: string;
-}
-
-// eslint-disable-next-line no-empty-pattern
-export const CustomPromptsSubMenuHeader = ({}: SubMenuHeaderProps) => {
-    const dispatch = useDispatch();
-    const bots = useSelector((state: any) =>
-        state[`plugins-${manifest.id}`]?.bots ?? EMPTY_BOTS,
-    );
-
-    const selectedBotId = useSelector(getSelectedBotId);
-    const selectedBot = bots.find((b: LLMBot) => b.id === selectedBotId) ?? bots[0] ?? null;
-
-    const isRHS = useSelector((state: any) => {
-        const rhsState = state.views?.rhs;
-        return rhsState?.isSidebarOpen === true;
-    });
-
-    useEffect(() => {
-        if (bots.length > 0 && !selectedBotId) {
-            dispatch({type: SelectedBotIdHandler, botId: bots[0].id});
-        }
-    }, [bots, selectedBotId, dispatch]);
-
-    const setSelectedBot = useCallback((bot: LLMBot) => {
-        dispatch({type: SelectedBotIdHandler, botId: bot.id});
-    }, [dispatch]);
-
-    if (isRHS || bots.length === 0) {
-        return null;
-    }
-
-    return (
-        <AgentSelectorWrapper>
-            <DropdownBotSelector
-                bots={bots}
-                activeBot={selectedBot}
-                setActiveBot={setSelectedBot}
-            />
-        </AgentSelectorWrapper>
-    );
-};
-
 interface Props {
     draft: any;
     getSelectedText: () => {start: number; end: number};
     updateText: (message: string) => void;
     channelId: string;
+    isRHS: boolean;
 }
 
-const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
+const CustomPromptsDropdown = ({updateText, channelId, isRHS}: Props) => {
     const dispatch = useDispatch();
     const prompts = useSelector(getCustomPrompts);
     const bots = useSelector((state: any) =>
@@ -123,11 +77,6 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
 
     const selectedBotId = useSelector(getSelectedBotId);
     const selectedBot = bots.find((b: LLMBot) => b.id === selectedBotId) ?? bots[0] ?? null;
-
-    const isRHS = useSelector((state: any) => {
-        const rhsState = state.views?.rhs;
-        return rhsState?.isSidebarOpen === true;
-    });
 
     useEffect(() => {
         dispatch(fetchCustomPrompts() as any);
@@ -138,6 +87,10 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
             dispatch({type: SelectedBotIdHandler, botId: bots[0].id});
         }
     }, [bots, selectedBotId, dispatch]);
+
+    const setSelectedBot = useCallback((bot: LLMBot) => {
+        dispatch({type: SelectedBotIdHandler, botId: bot.id});
+    }, [dispatch]);
 
     const handlePromptClick = useCallback(async (prompt: CustomPrompt) => {
         dismissMenu();
@@ -159,8 +112,19 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
         dispatch({type: ShowCustomPromptsModalHandler, show: true});
     }, [dispatch]);
 
+    const showBotSelector = !isRHS && bots.length > 0;
+
     return (
         <>
+            {showBotSelector && (
+                <AgentSelectorWrapper>
+                    <DropdownBotSelector
+                        bots={bots}
+                        activeBot={selectedBot}
+                        setActiveBot={setSelectedBot}
+                    />
+                </AgentSelectorWrapper>
+            )}
             {prompts && prompts.length > 0 ? (
                 prompts.map((prompt) => (
                     <StyledMenuItem

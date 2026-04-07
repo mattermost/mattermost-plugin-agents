@@ -19,7 +19,7 @@ import PostMenu from './components/post_menu';
 import IconThreadSummarization from './components/assets/icon_thread_summarization';
 import IconReactForMe from './components/assets/icon_react_for_me';
 import RHS from './components/rhs/rhs';
-import CustomPromptsDropdown, {CustomPromptsSubMenuHeader} from './components/custom_prompts/custom_prompts_dropdown';
+import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
 import CustomPromptsManagement from './components/custom_prompts/custom_prompts_management';
 import Config from './components/system_console/config';
 import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis, getAIDirectChannel} from './client';
@@ -239,11 +239,10 @@ export default class Plugin {
         // Register Custom Prompts AI action menu item
         if (registry.registerAIActionMenuItemComponent) {
             registry.registerAIActionMenuItemComponent({
-                icon: <CodeTagsIcon/>,
+                icon: <CodeTagsIcon size={18}/>,
                 text: <FormattedMessage defaultMessage='Custom prompts'/>,
                 sortOrder: 10,
                 component: CustomPromptsDropdown,
-                subMenuHeader: CustomPromptsSubMenuHeader,
             });
         }
     }
