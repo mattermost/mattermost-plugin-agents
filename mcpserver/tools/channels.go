@@ -358,7 +358,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	}
 
 	// Auto-fill channel_id when scope restricts to exactly one channel and no identifier was provided
-	if args.ChannelID == "" && args.ChannelDisplayName == "" && args.ChannelName == "" &&
+	if args.ChannelID == "" && args.ChannelName == "" &&
 		mcpContext.MattermostAccessScope != nil && len(mcpContext.MattermostAccessScope.AllowedChannelIDs) == 1 {
 		args.ChannelID = mcpContext.MattermostAccessScope.AllowedChannelIDs[0]
 	}
