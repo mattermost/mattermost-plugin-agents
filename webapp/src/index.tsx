@@ -65,6 +65,29 @@ const IconAIContainer = styled.img`
     height: 24px;
 `;
 
+// Product switcher: primary blue like Channels; fixed slot width for label alignment, smaller glyph (~18px) to match core product icons (24px SVG looked oversized).
+const ProductSwitcherIconWrapper = styled.span`
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    color: var(--button-bg);
+
+    svg {
+        width: 18px;
+        height: 18px;
+    }
+`;
+
+const ProductSwitcherIconAI = (props: {className?: string}) => (
+    <ProductSwitcherIconWrapper className={props.className}>
+        <IconAI/>
+    </ProductSwitcherIconWrapper>
+);
+
 const RHSTitleContainer = styled.span`
     display: flex;
 	gap: 8px;
@@ -234,7 +257,7 @@ export default class Plugin {
         if ((registry as any).registerProduct) {
             (registry as any).registerProduct(
                 AGENTS_ROUTE,
-                IconAI,
+                ProductSwitcherIconAI,
                 agentsProductLabel,
                 AGENTS_ROUTE,
                 AgentsPage,
