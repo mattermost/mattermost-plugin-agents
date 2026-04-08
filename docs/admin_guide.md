@@ -227,6 +227,8 @@ To obtain Google Custom Search credentials:
 
 To enable semantic search capabilities, you'll need to enable the `pgvector` extension in your PostgreSQL database, then configure embeddings provider settings including the provider (OpenAI, etc.), model for embeddings, and dimensions that match your chosen embedding model. Embedding search requires a license (see [license requirements](#license-requirements)) and is available as an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature. Performance may vary with large datasets.
 
+If you configure embedding search outside the System Console—such as with exported or imported plugin configuration, `PATCH /api/v4/config/patch`, or any saved `PluginSettings.Plugins["mattermost-ai"]["config"]` JSON—use the embedding provider's `parameters` object. For **OpenAI** and **OpenAI-compatible** embedding providers, set the model with the JSON key **`embeddingModel`**. The System Console already uses this field; do not use **`defaultModel`** in that embedding provider `parameters` object, because that key applies to LLM services rather than embedding search.
+
 Configure chunking options based on your needs:
 
 | Setting | Recommended Value | Description |
