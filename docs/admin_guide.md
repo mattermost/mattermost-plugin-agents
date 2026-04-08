@@ -363,7 +363,7 @@ When users report repeated tool failures, use **LLM Trace** and debug logging to
 
 ## Integrations
 
-Currently integrations are limited to direct messages between users and the agents. The integrations won't operate from within public, private, or group message channels.
+Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**.
 
 ### Built-in tool integrations
 
@@ -379,7 +379,7 @@ Currently integrations are limited to direct messages between users and the agen
 - **Data Available**: Username, full name, email, nickname, position, locale, timezone, last activity, status
 - **Permissions**: Requires `VIEW_MEMBERS` permission
 
-**Security Note**: All tool integrations are restricted to direct messages to maintain security boundaries and require explicit user approval before execution.
+**Security Note**: Tool availability and approval behavior depend on your system configuration. Tools can be configured to require explicit user approval or to run automatically under the selected tool policy.
 
 ## Model Context Protocol (MCP) Integration
 
