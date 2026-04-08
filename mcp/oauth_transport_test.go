@@ -66,6 +66,31 @@ func TestAuthenticationTransport_AutomatedInvokerFallbackAuth(t *testing.T) {
 		require.Equal(t, "Bearer mcp-fallback-token", gotAuth)
 	})
 
+	t.Run("errors when automated and fallback map has only empty header names", func(t *testing.T) {
+		t.Parallel()
+
+		rt := &authenticationTransport{
+			userID:     "user-1",
+			serverName: "remote",
+			serverURL:  "http://unused.example",
+			manager:    stubOAuthAuthManager{},
+			base:       http.DefaultTransport,
+			fallbackAuthHeaders: map[string]string{
+				"":      "Bearer x",
+				"   ":   "foo",
+				"\t \t": "bar",
+			},
+			isAutomatedInvoker: true,
+		}
+
+		req, err := http.NewRequest(http.MethodGet, "http://unused.example/mcp", http.NoBody)
+		require.NoError(t, err)
+
+		_, err = rt.RoundTrip(req)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "no valid header names")
+	})
+
 	t.Run("errors when automated and no token and no fallback headers", func(t *testing.T) {
 		t.Parallel()
 

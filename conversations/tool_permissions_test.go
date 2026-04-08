@@ -60,6 +60,23 @@ func TestFilterAutomatedInvokerTools(t *testing.T) {
 		names := toolNames(store)
 		require.ElementsMatch(t, []string{"auto_run_tool", "everywhere_tool"}, names)
 	})
+
+	t.Run("built-in tools with empty ServerOrigin are never removed", func(t *testing.T) {
+		productionLikeChecker := streaming.ToolPolicyFunc(func(serverBaseURL, toolName string) (string, bool) {
+			if serverBaseURL == mcp.EmbeddedClientKey {
+				return mcp.ToolPolicyAutoRunEverywhere, true
+			}
+			return "ask", false
+		})
+		store := llm.NewToolStore(nil, false)
+		store.AddTools([]llm.Tool{
+			{Name: "native_builtin", ServerOrigin: ""},
+			{Name: "remote_ask", ServerOrigin: origin},
+		})
+		filterAutomatedInvokerTools(store, true, false, productionLikeChecker)
+		names := toolNames(store)
+		require.ElementsMatch(t, []string{"native_builtin"}, names)
+	})
 }
 
 func toolNames(store *llm.ToolStore) []string {

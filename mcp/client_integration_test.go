@@ -279,29 +279,35 @@ func TestClient_Tools(t *testing.T) {
 
 // TestClientManager_GetToolsForUser tests the ClientManager.GetToolsForUser() method
 func TestClientManager_GetToolsForUser(t *testing.T) {
-	suite := GetSharedTestSuite(t)
-	suite.SetupEmbeddedServer()
+	for _, tc := range []struct {
+		name               string
+		isAutomatedInvoker bool
+	}{
+		{name: "human_invoker", isAutomatedInvoker: false},
+		{name: "automated_invoker", isAutomatedInvoker: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			suite := GetSharedTestSuite(t)
+			suite.SetupEmbeddedServer()
 
-	user, session := suite.CreateUserAndSession(t)
+			user, session := suite.CreateUserAndSession(t)
 
-	// Create ClientManager
-	manager := suite.CreateClientManager(t, session)
-	defer manager.Close()
+			manager := suite.CreateClientManager(t, session)
+			defer manager.Close()
 
-	// Call GetToolsForUser
-	tools, errors := manager.GetToolsForUser(user.Id, false)
+			tools, errs := manager.GetToolsForUser(user.Id, tc.isAutomatedInvoker)
 
-	// Should succeed with no errors
-	assert.Nil(t, errors, "Should have no errors")
-	require.NotEmpty(t, tools, "Should have tools")
+			assert.Nil(t, errs, "Should have no errors")
+			require.NotEmpty(t, tools, "Should have tools")
 
-	// Verify tools structure (llm.Tool format)
-	for _, tool := range tools {
-		assert.NotEmpty(t, tool.Name, "Tool should have name")
-		assert.NotEmpty(t, tool.Description, "Tool should have description")
-		assert.NotNil(t, tool.Schema, "Tool should have schema")
-		assert.NotNil(t, tool.Resolver, "Tool should have resolver function")
+			for _, tool := range tools {
+				assert.NotEmpty(t, tool.Name, "Tool should have name")
+				assert.NotEmpty(t, tool.Description, "Tool should have description")
+				assert.NotNil(t, tool.Schema, "Tool should have schema")
+				assert.NotNil(t, tool.Resolver, "Tool should have resolver function")
+			}
+
+			t.Logf("GetToolsForUser(automated=%v) returned %d tools", tc.isAutomatedInvoker, len(tools))
+		})
 	}
-
-	t.Logf("GetToolsForUser returned %d tools", len(tools))
 }

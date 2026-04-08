@@ -60,6 +60,13 @@ func filterAutomatedInvokerTools(store *llm.ToolStore, automated bool, isDM bool
 	}
 	var remove []string
 	for _, t := range store.GetTools() {
+		// Built-in / native tools use an empty ServerOrigin. The production policy checker
+		// only knows MCP servers and returns ("ask", false) for unknown origins, which would
+		// strip every native tool from automated invokers. Only apply MCP policy filtering
+		// when the tool is tied to a server origin.
+		if t.ServerOrigin == "" {
+			continue
+		}
 		policy, enabled := checker.GetToolPolicy(t.ServerOrigin, t.Name)
 		keep := false
 		if isDM {

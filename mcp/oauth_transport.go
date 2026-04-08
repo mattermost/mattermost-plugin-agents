@@ -96,8 +96,17 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 		}
 		useFallbackAuth = true
 		req = req.Clone(req.Context())
+		setCount := 0
 		for k, v := range t.fallbackAuthHeaders {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				continue
+			}
 			req.Header.Set(k, v)
+			setCount++
+		}
+		if setCount == 0 {
+			return nil, fmt.Errorf("MCP server %q: fallback authentication headers have no valid header names (empty keys are ignored)", t.serverName)
 		}
 	}
 

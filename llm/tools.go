@@ -451,9 +451,6 @@ func (s *ToolStore) GetServerOrigin(toolName string) string {
 	return ""
 }
 
-// RemoveToolsByServerOrigin removes all tools whose ServerOrigin matches
-// any of the provided origins. This is used for user-disabled provider
-// filtering in Copilot DM contexts.
 // RemoveTools deletes tools by name from the store.
 func (s *ToolStore) RemoveTools(names []string) {
 	if s == nil || len(names) == 0 {
@@ -464,6 +461,9 @@ func (s *ToolStore) RemoveTools(names []string) {
 	}
 }
 
+// RemoveToolsByServerOrigin removes all tools whose ServerOrigin matches
+// any of the provided origins. This is used for user-disabled provider
+// filtering in Copilot DM contexts.
 func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
 	if s == nil || len(disabledOrigins) == 0 {
 		return
