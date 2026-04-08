@@ -19,6 +19,9 @@ const userMentionMessage = `@${botUsername} incoming webhook activate_ai e2e`;
 async function getTownSquareChannelID(mm: MattermostContainer): Promise<string> {
     const adminClient = await mm.getAdminClient();
     const teams = await adminClient.getMyTeams();
+    if (!teams.length) {
+        throw new Error('expected admin to belong to at least one team (getMyTeams returned empty)');
+    }
     const defaultTeam = teams[0];
     const channels = await adminClient.getMyChannels(defaultTeam.id);
     const townSquare = channels.find((channel) => channel.name === 'town-square');
@@ -103,11 +106,14 @@ test.describe('Incoming webhook + activate_ai', () => {
         test.setTimeout(120000);
 
         const replyText = 'Webhook activate_ai e2e assistant reply';
-        await openAIMock.addCompletionMock(buildTextResponse(replyText));
 
         if (!mattermost) {
             throw new Error('mattermost container not started');
         }
+        if (!openAIMock) {
+            throw new Error('OpenAI mock not started');
+        }
+        await openAIMock.addCompletionMock(buildTextResponse(replyText));
 
         const channelId = await getTownSquareChannelID(mattermost);
         const adminClient = await mattermost.getAdminClient();

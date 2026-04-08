@@ -31,6 +31,9 @@ type ClientManager struct {
 	clientsMu      sync.RWMutex
 	clients        map[string]*UserClients // cache key (see mcpClientCacheKey) to UserClients
 	activity       map[string]time.Time    // cache key to last activity time
+	// clientGen is incremented when OAuth invalidates cached clients so in-flight
+	// ConnectToRemoteServers work can be discarded instead of storing stale UserClients.
+	clientGen map[string]uint64 // cache key -> generation
 	cleanupTicker  *time.Ticker
 	closeChan      chan struct{}
 	clientTimeout  time.Duration
@@ -103,6 +106,7 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 	m.clientTimeout = time.Duration(config.IdleTimeoutMinutes) * time.Minute
 	m.closeChan = make(chan struct{})
 	m.activity = make(map[string]time.Time)
+	m.clientGen = make(map[string]uint64)
 
 	// Start cleanup ticker to remove inactive clients
 	m.cleanupTicker = time.NewTicker(5 * time.Minute)
@@ -137,43 +141,50 @@ func (m *ClientManager) Close() {
 func (m *ClientManager) createAndStoreUserClient(userID string, isAutomatedInvoker bool) (*UserClients, *Errors) {
 	cacheKey := mcpClientCacheKey(userID, isAutomatedInvoker)
 
-	m.clientsMu.Lock()
-	if client, exists := m.clients[cacheKey]; exists {
+	for {
+		m.clientsMu.Lock()
+		if client, exists := m.clients[cacheKey]; exists {
+			m.activity[cacheKey] = time.Now()
+			m.clientsMu.Unlock()
+			return client, nil
+		}
+		genStart := m.clientGen[cacheKey]
+		m.clientsMu.Unlock()
+
+		userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache, isAutomatedInvoker)
+		mcpErrors := userClients.ConnectToRemoteServers(m.config.Servers)
+
+		m.clientsMu.Lock()
+		if m.clientGen[cacheKey] != genStart {
+			userClients.Close()
+			m.clientsMu.Unlock()
+			continue
+		}
+		if client, exists := m.clients[cacheKey]; exists {
+			userClients.Close()
+			m.activity[cacheKey] = time.Now()
+			m.clientsMu.Unlock()
+			return client, nil
+		}
+
+		m.clients[cacheKey] = userClients
 		m.activity[cacheKey] = time.Now()
 		m.clientsMu.Unlock()
-		return client, nil
+		return userClients, mcpErrors
 	}
-	m.clientsMu.Unlock()
-
-	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache, isAutomatedInvoker)
-	mcpErrors := userClients.ConnectToRemoteServers(m.config.Servers)
-
-	m.clientsMu.Lock()
-	defer m.clientsMu.Unlock()
-
-	if client, exists := m.clients[cacheKey]; exists {
-		userClients.Close()
-		m.activity[cacheKey] = time.Now()
-		return client, nil
-	}
-
-	m.clients[cacheKey] = userClients
-	m.activity[cacheKey] = time.Now()
-	return userClients, mcpErrors
 }
 
 // getClientForUser gets or creates an MCP client for a specific user
 func (m *ClientManager) getClientForUser(userID string, isAutomatedInvoker bool) (*UserClients, *Errors) {
 	cacheKey := mcpClientCacheKey(userID, isAutomatedInvoker)
-	m.clientsMu.RLock()
+	m.clientsMu.Lock()
 	client, exists := m.clients[cacheKey]
-	m.clientsMu.RUnlock()
 	if exists {
-		m.clientsMu.Lock()
 		m.activity[cacheKey] = time.Now()
 		m.clientsMu.Unlock()
 		return client, nil
 	}
+	m.clientsMu.Unlock()
 
 	return m.createAndStoreUserClient(userID, isAutomatedInvoker)
 }
@@ -218,6 +229,7 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 			delete(m.clients, key)
 		}
 		delete(m.activity, key)
+		m.clientGen[key]++
 	}
 	m.clientsMu.Unlock()
 

@@ -7,6 +7,7 @@ import {PlusIcon, TrashCanOutlineIcon, ChevronDownIcon, ChevronRightIcon} from '
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton} from '../assets/buttons';
+import {Pill} from '../pill';
 import {getMCPTools, getVettedToolSeed} from '../../client';
 
 import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
@@ -339,9 +340,14 @@ const MCPServer = ({
                 >
                     <OAuthSectionHeaderLeft>
                         {isServiceAccountExpanded ? <ChevronDownIcon size={16}/> : <ChevronRightIcon size={16}/>}
-                        <OAuthSectionTitle>
-                            {intl.formatMessage({defaultMessage: 'Service account authentication (optional)'})}
-                        </OAuthSectionTitle>
+                        <OAuthSectionTitleRow>
+                            <OAuthSectionTitle>
+                                {intl.formatMessage({defaultMessage: 'Service account authentication (optional)'})}
+                            </OAuthSectionTitle>
+                            <Pill>
+                                <FormattedMessage defaultMessage='EXPERIMENTAL'/>
+                            </Pill>
+                        </OAuthSectionTitleRow>
                     </OAuthSectionHeaderLeft>
                     {!isServiceAccountExpanded && config.fallbackAuthHeaders && Object.keys(config.fallbackAuthHeaders).length > 0 && (
                         <OAuthConfiguredBadge>
@@ -825,6 +831,13 @@ const OAuthSectionHeaderLeft = styled.div`
     align-items: center;
     gap: 8px;
     color: rgba(var(--center-channel-color-rgb), 0.56);
+`;
+
+const OAuthSectionTitleRow = styled.div`
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
 `;
 
 const OAuthSectionTitle = styled.div`
