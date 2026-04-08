@@ -10,7 +10,9 @@ import {CloseIcon, PinOutlineIcon, PinIcon, ChevronDownIcon, ChevronUpIcon, Plus
 
 import {getCustomPrompts, getPinnedPromptIds, getShowCustomPromptsModal} from '@/selectors';
 import {fetchCustomPrompts, fetchPinnedPromptIds, ShowCustomPromptsModalHandler} from '@/redux';
-import {createCustomPrompt, updateCustomPrompt, setCustomPromptPin} from '@/client';
+import {createCustomPrompt, updateCustomPrompt, deleteCustomPrompt, setCustomPromptPin} from '@/client';
+
+import ConfirmationDialog from '../confirmation_dialog';
 
 import CustomPromptForm from './custom_prompt_form';
 
@@ -280,6 +282,15 @@ const NewPromptHeader = styled.div`
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
+const ConfirmationOverlay = styled.div`
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 3000;
+`;
+
 const CustomPromptsManagement = () => {
     const intl = useIntl();
     const dispatch = useDispatch();
@@ -292,6 +303,7 @@ const CustomPromptsManagement = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [showCreateForm, setShowCreateForm] = useState(false);
+    const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
     const [error, setError] = useState('');
 
     useEffect(() => {
@@ -307,6 +319,7 @@ const CustomPromptsManagement = () => {
         setShowCreateForm(false);
         setExpandedId(null);
         setSearchQuery('');
+        setDeleteConfirmId(null);
     }, [dispatch]);
 
     const handleTogglePin = useCallback(async (promptId: string) => {
@@ -339,6 +352,20 @@ const CustomPromptsManagement = () => {
         } catch (e) {
             console.error('Failed to update prompt:', e); // eslint-disable-line no-console
             setError(intl.formatMessage({defaultMessage: 'Failed to update prompt. Please try again.'}));
+        }
+    }, [dispatch, intl]);
+
+    const handleDelete = useCallback(async (id: string) => {
+        try {
+            await deleteCustomPrompt(id);
+            dispatch(fetchCustomPrompts() as any);
+            dispatch(fetchPinnedPromptIds() as any);
+            setExpandedId(null);
+            setDeleteConfirmId(null);
+        } catch (e) {
+            console.error('Failed to delete prompt:', e); // eslint-disable-line no-console
+            setError(intl.formatMessage({defaultMessage: 'Failed to delete prompt. Please try again.'}));
+            setDeleteConfirmId(null);
         }
     }, [dispatch, intl]);
 
@@ -476,6 +503,7 @@ const CustomPromptsManagement = () => {
                                                 readOnly={!isOwner}
                                                 onSave={(data) => handleUpdate(prompt.id, data)}
                                                 onDiscard={() => setExpandedId(null)}
+                                                {...(isOwner ? {onDelete: () => setDeleteConfirmId(prompt.id)} : {})}
                                             />
                                         </ExpandedContent>
                                     )}
@@ -490,6 +518,18 @@ const CustomPromptsManagement = () => {
                     </PromptList>
                 </ModalBody>
             </ModalContainer>
+            {deleteConfirmId && (
+                <ConfirmationOverlay>
+                    <ConfirmationDialog
+                        title={<FormattedMessage defaultMessage='Delete prompt'/>}
+                        message={<FormattedMessage defaultMessage='Are you sure you want to delete this prompt? This action cannot be undone.'/>}
+                        confirmButtonText={<FormattedMessage defaultMessage='Delete'/>}
+                        onConfirm={() => handleDelete(deleteConfirmId)}
+                        onCancel={() => setDeleteConfirmId(null)}
+                        isDestructive={true}
+                    />
+                </ConfirmationOverlay>
+            )}
         </ModalOverlay>
     );
 };

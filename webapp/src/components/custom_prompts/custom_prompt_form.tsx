@@ -187,6 +187,28 @@ const DiscardButton = styled.button`
     }
 `;
 
+const DeleteButton = styled.button`
+    background: none;
+    color: var(--error-text);
+    border: none;
+    border-radius: 4px;
+    padding: 10px 20px;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    font-family: 'Open Sans', sans-serif;
+    margin-left: auto;
+
+    &:hover {
+        background: rgba(var(--error-text-color-rgb), 0.08);
+    }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+`;
+
 const ValidationError = styled.div`
     color: var(--error-text);
     font-size: 12px;
@@ -210,10 +232,11 @@ interface CustomPromptFormProps {
     prompt?: CustomPrompt;
     onSave: (data: {name: string; description: string; template: string; is_shared: boolean}) => void | Promise<void>;
     onDiscard: () => void;
+    onDelete?: () => void;
     readOnly?: boolean;
 }
 
-const CustomPromptForm = ({prompt, onSave, onDiscard, readOnly}: CustomPromptFormProps) => {
+const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly}: CustomPromptFormProps) => {
     const intl = useIntl();
     const [name, setName] = useState(prompt?.name ?? '');
     const [description, setDescription] = useState(prompt?.description ?? '');
@@ -417,6 +440,14 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, readOnly}: CustomPromptFor
                 <DiscardButton onClick={onDiscard}>
                     <FormattedMessage defaultMessage='Discard'/>
                 </DiscardButton>
+                {onDelete && (
+                    <DeleteButton
+                        onClick={onDelete}
+                        disabled={isSaving}
+                    >
+                        <FormattedMessage defaultMessage='Delete'/>
+                    </DeleteButton>
+                )}
             </ButtonRow>
         </FormContainer>
     );
