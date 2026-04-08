@@ -774,7 +774,7 @@ const ServerTitle = styled.div`
     }
 `;
 
-const DeleteButton = styled.button`
+const DeleteButton = styled.button.attrs({type: 'button'})`
     display: flex;
     align-items: center;
     gap: 6px;
@@ -895,7 +895,7 @@ const HeaderInput = styled.input`
     }
 `;
 
-const RemoveHeaderButton = styled.button`
+const RemoveHeaderButton = styled.button.attrs({type: 'button'})`
     display: flex;
     align-items: center;
     justify-content: center;
@@ -912,7 +912,7 @@ const RemoveHeaderButton = styled.button`
     }
 `;
 
-const AddHeaderButton = styled.button`
+const AddHeaderButton = styled.button.attrs({type: 'button'})`
     display: flex;
     align-items: center;
     gap: 6px;
@@ -983,7 +983,7 @@ const TabsContainer = styled.div`
     margin-bottom: 24px;
 `;
 
-const TabButton = styled.button<{active: boolean}>`
+const TabButton = styled.button.attrs<{active: boolean}>({type: 'button'})<{active: boolean}>`
     padding: 12px 16px;
     border: none;
     background: none;
