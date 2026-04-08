@@ -25,6 +25,9 @@ const getTestIgnorePatterns = (): string[] => {
   return patterns;
 };
 
+const defaultTestTimeoutMs = 60000;
+const ciTestTimeoutMs = 120000;
+
 export default defineConfig({
   testDir: './tests',
   /* Ignore specific test files based on environment */
@@ -43,8 +46,8 @@ export default defineConfig({
     ['html'],
     ['list']
   ],
-  /* Global timeout for tests */
-  timeout: 60000,
+  /* Global timeout for tests and hooks */
+  timeout: process.env.CI ? ciTestTimeoutMs : defaultTestTimeoutMs,
   /* Global setup and teardown */
   globalSetup: require.resolve('./global-setup'),
   globalTeardown: require.resolve('./global-teardown'),
