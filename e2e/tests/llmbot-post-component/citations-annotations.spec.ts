@@ -195,8 +195,10 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await llmBotHelper.clickCitation(1);
 
             const newPage = await pagePromise;
-            await newPage.waitForLoadState();
-            await expect(newPage.url()).toContain('http');
+            await expect.poll(() => newPage.url(), {
+                message: 'citation click should open an external URL',
+                timeout: 15000,
+            }).toMatch(/^https?:\/\//);
             await newPage.close();
         });
 
