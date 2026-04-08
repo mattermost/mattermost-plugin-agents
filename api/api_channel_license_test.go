@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/stretchr/testify/mock"

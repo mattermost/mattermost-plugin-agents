@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/mattermost/mattermost-plugin-ai/config"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
@@ -86,7 +86,7 @@ func DiscoverEmbeddedServerTools(
 	// Create embedded client helper and connect to the embedded server
 	embeddedClient := NewEmbeddedServerClient(embeddedServer, log, pluginAPI)
 
-	client, err := embeddedClient.CreateClient(ctx, userID, sessionID)
+	client, err := embeddedClient.CreateClient(ctx, userID, sessionID, nil)
 	if err != nil {
 		return nil, err
 	}

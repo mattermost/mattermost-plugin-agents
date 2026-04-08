@@ -8,10 +8,9 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -23,7 +22,7 @@ type ToolProvider interface {
 
 // MCPToolProvider provides MCP tools for a user
 type MCPToolProvider interface {
-	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
+	GetToolsForUser(userID string, channel *model.Channel) ([]llm.Tool, *mcp.Errors)
 }
 
 // ConfigProvider provides configuration access
@@ -175,13 +174,7 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	// Actual execution is controlled via WithToolsDisabled() based on channel type.
 	if b.mcpToolProvider != nil {
 		// Get tools from all connected servers
-		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(userID)
-
-		// Filter out automation tools for users without channel admin (or sysadmin) permission
-		showAutomation := shouldShowAutomationTools(b.pluginAPI, userID, c.Channel)
-		if !showAutomation {
-			mcpTools = filterOutAutomationTools(mcpTools)
-		}
+		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(userID, c.Channel)
 
 		// Add tools from successfully connected servers even if some had errors
 		// These will be disabled in non-DM channels via WithToolsDisabled()
@@ -243,40 +236,4 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 		}
 		c.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 	}
-}
-
-// shouldShowAutomationTools determines if automation tools should be visible.
-// Sysadmins always see tools. In DMs/group channels, tools are shown and the
-// automation backend enforces per-channel. In public/private channels, the user
-// must be a channel admin (SchemeAdmin on the channel membership).
-func shouldShowAutomationTools(pluginAPI *pluginapi.Client, userID string, channel *model.Channel) bool {
-	// Sysadmins always see automation tools.
-	if pluginAPI.User.HasPermissionTo(userID, model.PermissionManageSystem) {
-		return true
-	}
-	if channel == nil {
-		return true
-	}
-	// In DMs/group channels, we can't know the target channel upfront.
-	// Show tools and let the automation plugin backend enforce per-channel.
-	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
-		return true
-	}
-	// In public/private channels, check if user is a channel admin via membership.
-	member, err := pluginAPI.Channel.GetMember(channel.Id, userID)
-	if err != nil {
-		return false
-	}
-	return member.SchemeAdmin
-}
-
-// filterOutAutomationTools removes automation tools from the tool list.
-func filterOutAutomationTools(allTools []llm.Tool) []llm.Tool {
-	filtered := make([]llm.Tool, 0, len(allTools))
-	for _, t := range allTools {
-		if !tools.IsAutomationTool(t.Name) {
-			filtered = append(filtered, t)
-		}
-	}
-	return filtered
 }

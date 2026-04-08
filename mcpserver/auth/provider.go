@@ -21,6 +21,10 @@ const (
 	TokenResolverContextKey ContextKey = "token_resolver"
 	// UserIDContextKey is used to store the user ID in context for HTTP callbacks
 	UserIDContextKey ContextKey = "user_id"
+	// ChannelContextKey carries a *model.Channel for the MCP server session. Set on the
+	// context passed to Server.Run for embedded in-memory connections so that receiving
+	// middleware (e.g. automation tool filter) can read it.
+	ChannelContextKey ContextKey = "mattermost_channel"
 )
 
 // TokenResolver is a function that resolves a sessionID to a token

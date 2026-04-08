@@ -12,9 +12,10 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	mmapimocks "github.com/mattermost/mattermost-plugin-ai/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/mock"
@@ -24,7 +25,7 @@ import (
 
 type stubEmbeddedServer struct{}
 
-func (s *stubEmbeddedServer) CreateClientTransport(string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (s *stubEmbeddedServer) CreateClientTransport(string, string, *pluginapi.Client, *model.Channel) (*gomcp.InMemoryTransport, error) {
 	return nil, nil
 }
 

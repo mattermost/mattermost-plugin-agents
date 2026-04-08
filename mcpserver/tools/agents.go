@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
+	"github.com/mattermost/mattermost-plugin-ai/format"
 	"github.com/mattermost/mattermost-plugin-ai/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -35,9 +35,7 @@ func (p *MattermostToolProvider) getAgentTools() []MCPTool {
 	return []MCPTool{
 		{
 			Name: "list_agents",
-			Description: `List all available AI agents (bots). Returns each agent's ID, display name, and username.
-Use this tool to discover valid provider_id values for the ai_prompt action type when creating automations.
-The agent ID (26-character Mattermost user ID) is what you pass as config.provider_id with provider_type "agent".`,
+			Description: `List all available AI agents (bots). Returns each agent's ID, display name, and username.`,
 			Schema:   llm.NewJSONSchemaFromStruct[ListAgentsArgs](),
 			Resolver: p.toolListAgents,
 		},
@@ -64,22 +62,15 @@ func (p *MattermostToolProvider) toolListAgents(mcpContext *MCPToolContext, args
 		return "No agents are currently configured.", nil
 	}
 
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d agent(s):\n\n", len(bots)))
-
-	for i, a := range bots {
-		result.WriteString(fmt.Sprintf("%d. %s\n", i+1, a.DisplayName))
-		result.WriteString(fmt.Sprintf("   ID: %s\n", a.ID))
-		result.WriteString(fmt.Sprintf("   Username: @%s\n", a.Username))
-		if mcpContext.BotUserID != "" && a.ID == mcpContext.BotUserID {
-			result.WriteString("   ** This is YOU (the current agent) **\n")
+	infos := make([]format.AgentInfo, len(bots))
+	for i := range bots {
+		infos[i] = format.AgentInfo{
+			ID:          bots[i].ID,
+			DisplayName: bots[i].DisplayName,
+			Username:    bots[i].Username,
 		}
-		result.WriteString("\n")
 	}
-
-	result.WriteString("Use the agent ID as config.provider_id with provider_type \"agent\" in automation actions.")
-
-	return result.String(), nil
+	return format.AgentList(infos, mcpContext.BotUserID), nil
 }
 
 // fetchAIBots calls the plugin's /ai_bots endpoint using the authenticated Client4.

@@ -46,7 +46,7 @@ The Mattermost Agents plugin serves as the foundation for Sovereign AI implement
 - Respects existing permission structures
 
 #### Data Integration Framework
-- Integration with external tools through built-in connectors (GitHub, Jira)
+- Integration with external tools through MCP servers and other configured integrations
 - MCP server support for custom integrations
 - Tool approval system for security
 

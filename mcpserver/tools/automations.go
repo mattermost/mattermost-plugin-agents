@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -206,12 +207,12 @@ type MattermostAccessScopeConfig struct {
 
 // AIPromptActionConfig holds config for the ai_prompt action type.
 type AIPromptActionConfig struct {
-	SystemPrompt          string                       `json:"system_prompt,omitempty"`
-	Prompt                string                       `json:"prompt"`
-	ProviderType          string                       `json:"provider_type"`
-	ProviderID            string                       `json:"provider_id"`
-	AllowedTools          []string                     `json:"allowed_tools,omitempty"`
-	MattermostAccessScope *MattermostAccessScopeConfig `json:"mattermost_access_scope,omitempty"`
+	SystemPrompt          string                        `json:"system_prompt,omitempty"`
+	Prompt                string                        `json:"prompt"`
+	ProviderType          string                        `json:"provider_type"`
+	ProviderID            string                        `json:"provider_id"`
+	AllowedTools          []bridgeclient.AllowedToolRef `json:"allowed_tools,omitempty"`
+	MattermostAccessScope *MattermostAccessScopeConfig  `json:"mattermost_access_scope,omitempty"`
 }
 
 // AutomationFlow mirrors the channel-automation plugin's Flow model.

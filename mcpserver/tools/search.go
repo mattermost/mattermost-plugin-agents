@@ -11,9 +11,9 @@ import (
 	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/mattermost/mattermost-plugin-ai/format"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/search"
+	"github.com/mattermost/mattermost-plugin-agents/format"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 

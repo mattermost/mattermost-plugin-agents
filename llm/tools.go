@@ -320,8 +320,7 @@ func ToolAutoRunKey(serverOrigin, toolName string) string {
 
 // ShouldAutoRunTools checks if all pending tool calls are configured for auto-run.
 // Returns true only if AutoRunTools is configured and ALL tool calls are in the auto-run list.
-// Auto-run entries and tool calls are matched by composite key (ServerOrigin + Name)
-// so that identically-named tools from different servers are distinguished.
+// Allowlist entries must be composite keys from ToolAutoRunKey(origin, name).
 func ShouldAutoRunTools(pendingToolCalls []ToolCall, autoRunTools []string) bool {
 	if len(autoRunTools) == 0 || len(pendingToolCalls) == 0 {
 		return false
@@ -333,9 +332,11 @@ func ShouldAutoRunTools(pendingToolCalls []ToolCall, autoRunTools []string) bool
 	}
 
 	for _, tc := range pendingToolCalls {
-		if !autoRunSet[ToolAutoRunKey(tc.ServerOrigin, tc.Name)] {
-			return false
+		composite := ToolAutoRunKey(tc.ServerOrigin, tc.Name)
+		if autoRunSet[composite] {
+			continue
 		}
+		return false
 	}
 	return true
 }
@@ -493,8 +494,9 @@ func (s *ToolStore) GetToolsInfo() []ToolInfo {
 	result := make([]ToolInfo, 0, len(s.tools))
 	for _, tool := range s.tools {
 		result = append(result, ToolInfo{
-			Name:        tool.Name,
-			Description: tool.Description,
+			Name:         tool.Name,
+			Description:  tool.Description,
+			ServerOrigin: tool.ServerOrigin,
 		})
 	}
 	return result

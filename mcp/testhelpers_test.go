@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
 	"github.com/mattermost/mattermost/server/public/model"
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -448,8 +448,8 @@ func (s *EmbeddedTestSuite) CreateClient(t *testing.T, user *model.User, session
 	// Create embedded server client
 	embeddedClient := NewEmbeddedServerClient(wrapper, pluginAPIClient.Log, pluginAPIClient)
 
-	// Create client
-	client, err := embeddedClient.CreateClient(ctx, user.Id, session.Id)
+	// Create client (nil channel — no automation visibility scoping in tests)
+	client, err := embeddedClient.CreateClient(ctx, user.Id, session.Id, nil)
 	require.NoError(t, err, "Should create client successfully")
 	require.NotNil(t, client, "Client should not be nil")
 
@@ -465,7 +465,7 @@ type embeddedServerWrapper struct {
 // CreateClientTransport implements EmbeddedMCPServer interface
 // Note: The signature must match the interface (takes *pluginapi.Client), but in tests
 // we ignore the passed pluginAPI parameter and use our mock instead
-func (w *embeddedServerWrapper) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
+func (w *embeddedServerWrapper) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client, channel *model.Channel) (*mcp.InMemoryTransport, error) {
 	// Create token resolver using our mock (ignore the passed pluginAPI in tests)
 	tokenResolver := func(sid string) (string, error) {
 		session, err := w.api.GetSession(sid)
@@ -479,7 +479,7 @@ func (w *embeddedServerWrapper) CreateClientTransport(userID, sessionID string, 
 	}
 
 	// Call the underlying server's CreateConnectionForUser
-	return w.server.CreateConnectionForUser(userID, sessionID, tokenResolver)
+	return w.server.CreateConnectionForUser(userID, sessionID, tokenResolver, channel)
 }
 
 // CreateClientManager creates a ClientManager for testing

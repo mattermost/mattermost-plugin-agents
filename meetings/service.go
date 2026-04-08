@@ -4,14 +4,14 @@
 package meetings
 
 import (
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/conversations"
-	"github.com/mattermost/mattermost-plugin-ai/i18n"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
-	"github.com/mattermost/mattermost-plugin-ai/metrics"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/metrics"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 

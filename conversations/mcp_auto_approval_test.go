@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

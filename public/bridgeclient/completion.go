@@ -13,7 +13,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 func requestFailedError(statusCode int, responseBody []byte) error {

@@ -10,8 +10,8 @@ import (
 	"sort"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 )
 
 // UserMCPToolsResponse is the top-level response for GET /mcp/tools.
@@ -46,7 +46,7 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 		return
 	}
 
-	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(userID)
+	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(userID, nil)
 
 	// Group tools by ServerOrigin
 	toolsByOrigin := make(map[string][]llm.Tool, len(tools))
