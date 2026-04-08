@@ -179,7 +179,7 @@ Create a post as a specific user using username/password login. Simply provide t
 #### Claude Code Integration
 
 ```bash
-claude mcp add mattermost -e MM_SERVER_URL=https://mattermost-url MM_ACCESS_TOKEN=<token> -- /path/to/mattermost-plugin-ai/mcpserver/bin/mattermost-mcp-server --dev --debug
+claude mcp add mattermost -e MM_SERVER_URL=https://mattermost-url MM_ACCESS_TOKEN=<token> -- /path/to/mattermost-plugin-agents/mcpserver/bin/mattermost-mcp-server --dev --debug
 ```
 
 #### Claude Desktop Integration
@@ -194,7 +194,7 @@ To use with Claude Desktop, add the server to your MCP configuration:
 {
   "mcpServers": {
     "mattermost": {
-      "command": "/path/to/mattermost-plugin-ai/mcpserver/bin/mattermost-mcp-server",
+      "command": "/path/to/mattermost-plugin-agents/mcpserver/bin/mattermost-mcp-server",
       "args": ["--debug"],
       "env": {
         "MM_SERVER_URL": "https://your-mattermost.com",
@@ -262,7 +262,7 @@ The STDIO MCP server supports file attachments and uploads for various tools. Fi
 All local file operations use the `mcpserver/data/` directory within your project:
 
 ```
-mattermost-plugin-ai/
+mattermost-plugin-agents/
 ├── mcpserver/
 │   ├── bin/
 │   │   └── mattermost-mcp-server  # MCP server binary

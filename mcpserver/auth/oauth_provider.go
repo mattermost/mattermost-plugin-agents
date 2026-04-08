@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 

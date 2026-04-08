@@ -6,8 +6,8 @@ package conversations
 import (
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
 )
 
 // BuildNewConversationPosts creates the post list for a new (non-threaded) conversation.
