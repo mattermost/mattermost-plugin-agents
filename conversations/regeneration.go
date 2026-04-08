@@ -178,6 +178,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		webSearchParams := c.extractWebSearchContext(respondingToPost)
 
 		var contextOpts []llm.ContextOption
+		contextOpts = append(contextOpts, llm.WithAutomatedMCPInvoker(isAutomatedInvoker(respondingToPost, user)))
 		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextDefaultTools(bot))
 		if len(webSearchParams) > 0 {
 			contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
@@ -190,6 +191,9 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			channel,
 			contextOpts...,
 		)
+
+		isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+		filterAutomatedInvokerTools(contextWithCallback.Tools, contextWithCallback.AutomatedMCPInvoker, isDM, c.toolPolicyChecker)
 
 		// Apply user-disabled-provider filtering for DM/group channels only (Copilot RHS).
 		if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
@@ -204,7 +208,6 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		// Process the user request with the context that has the callback
 		allowToolsInChannel := allowToolsInChannelFromPost(post)
 		// Defense-in-depth: if config flag is off and not a DM, disable tools regardless of post prop
-		isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 		if !isDM && (c.configProvider == nil || !c.configProvider.EnableChannelMentionToolCalling()) {
 			allowToolsInChannel = false
 		}

@@ -49,10 +49,10 @@ func isAutomatedInvoker(post *model.Post, postingUser *model.User) bool {
 	return false
 }
 
-// computeAllowToolsInChannel returns whether tools should be allowed for a channel mention,
-// given the config flag and whether the invoker is automated.
-func computeAllowToolsInChannel(configEnabled bool, post *model.Post, postingUser *model.User) bool {
-	return configEnabled && !isAutomatedInvoker(post, postingUser)
+// computeAllowToolsInChannel returns whether tools should be allowed for a channel mention.
+// Automated invokers still get tools when enabled; filterAutomatedInvokerTools restricts which tools run.
+func computeAllowToolsInChannel(configEnabled bool) bool {
+	return configEnabled
 }
 
 func (c *Conversations) MessageHasBeenPosted(ctx *plugin.Context, post *model.Post) {
@@ -86,8 +86,8 @@ func (c *Conversations) handleMessages(post *model.Post) error {
 		return fmt.Errorf("not responding to plugin posts: %w", ErrNoResponse)
 	}
 
-	// Don't respond to webhooks
-	if post.GetProp(FromWebhookProp) != nil {
+	// Don't respond to webhooks unless they opt in (same pattern as plugin posts)
+	if post.GetProp(FromWebhookProp) != nil && post.GetProp(ActivateAIProp) == nil {
 		return fmt.Errorf("not responding to webhook posts: %w", ErrNoResponse)
 	}
 
@@ -126,7 +126,7 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 
 	// Check config to determine if tools should be allowed in channel mentions
 	configEnabled := c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
-	allowToolsInChannel := computeAllowToolsInChannel(configEnabled, post, postingUser)
+	allowToolsInChannel := computeAllowToolsInChannel(configEnabled)
 
 	responseRootID := post.Id
 	if post.RootId != "" {

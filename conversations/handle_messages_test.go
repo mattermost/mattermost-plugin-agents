@@ -72,7 +72,7 @@ func TestHandleMessages(t *testing.T) {
 		require.ErrorIs(t, err, ErrNoResponse)
 	})
 
-	t.Run("don't respond to webhooks", func(t *testing.T) {
+	t.Run("don't respond to webhooks without activate_ai", func(t *testing.T) {
 		post := &model.Post{
 			UserId:    "userid",
 			ChannelId: "channelid",
@@ -115,33 +115,17 @@ func postWithProp(prop string) *model.Post {
 }
 
 func TestComputeAllowToolsInChannel(t *testing.T) {
-	humanUser := &model.User{Id: "u1", IsBot: false}
-	botUser := &model.User{Id: "b1", IsBot: true}
-	humanPost := &model.Post{UserId: "u1"}
-	webhookPost := postWithProp(FromWebhookProp)
-	pluginPost := postWithProp(FromPluginProp)
-	botPropPost := postWithProp(FromBotProp)
-	oauthAppPost := postWithProp(FromOAuthAppProp)
-
 	tests := []struct {
 		name          string
 		configEnabled bool
-		post          *model.Post
-		postingUser   *model.User
 		want          bool
 	}{
-		{"config disabled, human", false, humanPost, humanUser, false},
-		{"config enabled, human", true, humanPost, humanUser, true},
-		{"config enabled, bot user", true, humanPost, botUser, false},
-		{"config enabled, from_webhook post", true, webhookPost, humanUser, false},
-		{"config enabled, from_plugin post", true, pluginPost, humanUser, false},
-		{"config enabled, from_bot post", true, botPropPost, humanUser, false},
-		{"config enabled, from_oauth_app post", true, oauthAppPost, humanUser, false},
-		{"config disabled, bot user", false, humanPost, botUser, false},
+		{"config disabled", false, false},
+		{"config enabled", true, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := computeAllowToolsInChannel(tt.configEnabled, tt.post, tt.postingUser)
+			got := computeAllowToolsInChannel(tt.configEnabled)
 			require.Equal(t, tt.want, got)
 		})
 	}

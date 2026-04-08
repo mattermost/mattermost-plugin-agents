@@ -26,7 +26,7 @@ type countingMCPToolProvider struct {
 	calls int
 }
 
-func (p *countingMCPToolProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetToolsForUser(string, bool) ([]llm.Tool, *mcp.Errors) {
 	p.calls++
 	return []llm.Tool{
 		{

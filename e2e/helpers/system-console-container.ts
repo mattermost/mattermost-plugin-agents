@@ -36,6 +36,8 @@ export interface MCPServerConfig {
     enabled?: boolean;
     baseURL?: string;
     headers?: Record<string, string>;
+    /** Per-server headers used only for automated invokers (bots, webhooks); see plugin docs. */
+    fallbackAuthHeaders?: Record<string, string>;
     clientID?: string;
     clientSecret?: string;
     tool_configs?: Array<{ name?: string; policy?: string; enabled?: boolean }>;

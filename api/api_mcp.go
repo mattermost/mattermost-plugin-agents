@@ -46,7 +46,7 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 		return
 	}
 
-	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(userID)
+	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(userID, false)
 
 	// Group tools by ServerOrigin
 	toolsByOrigin := make(map[string][]llm.Tool, len(tools))

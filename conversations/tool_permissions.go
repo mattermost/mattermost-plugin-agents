@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-ai/mcp"
 	"github.com/mattermost/mattermost-plugin-ai/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -49,4 +50,26 @@ func applyToolAvailability(context *llm.Context, isDM bool, allowToolsInChannel 
 		}
 	}
 	return toolsDisabled
+}
+
+// filterAutomatedInvokerTools removes tools that require human approval or channel result-sharing
+// when the request is from an automated Mattermost invoker.
+func filterAutomatedInvokerTools(store *llm.ToolStore, automated bool, isDM bool, checker streaming.ToolPolicyChecker) {
+	if store == nil || !automated || checker == nil {
+		return
+	}
+	var remove []string
+	for _, t := range store.GetTools() {
+		policy, enabled := checker.GetToolPolicy(t.ServerOrigin, t.Name)
+		keep := false
+		if isDM {
+			keep = mcp.IsToolPolicyAutoRun(policy) && enabled
+		} else {
+			keep = mcp.IsToolPolicyAutoRunEverywhere(policy) && enabled
+		}
+		if !keep {
+			remove = append(remove, t.Name)
+		}
+	}
+	store.RemoveTools(remove)
 }

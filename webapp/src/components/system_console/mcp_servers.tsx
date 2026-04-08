@@ -24,6 +24,7 @@ export type MCPServerConfig = {
     enabled: boolean;
     baseURL: string;
     headers: {[key: string]: string};
+    fallbackAuthHeaders?: {[key: string]: string};
     tool_configs?: MCPToolConfig[];
     clientID?: string;
     clientSecret?: string;
@@ -61,6 +62,7 @@ const defaultServerConfig: MCPServerConfig = {
     enabled: true,
     baseURL: '',
     headers: {},
+    fallbackAuthHeaders: {},
     clientID: '',
     clientSecret: '',
 };
@@ -81,6 +83,9 @@ const MCPServer = ({
     const [isEditingName, setIsEditingName] = useState(false);
     const [serverName, setServerName] = useState(serverConfig.name);
     const [isOAuthExpanded, setIsOAuthExpanded] = useState(Boolean(serverConfig.clientID));
+    const [isServiceAccountExpanded, setIsServiceAccountExpanded] = useState(
+        Boolean(serverConfig.fallbackAuthHeaders && Object.keys(serverConfig.fallbackAuthHeaders).length > 0),
+    );
 
     // Ensure server config has all required properties
     const config = {
@@ -88,6 +93,7 @@ const MCPServer = ({
         enabled: serverConfig.enabled ?? false,
         baseURL: serverConfig.baseURL || '',
         headers: serverConfig.headers || {},
+        fallbackAuthHeaders: serverConfig.fallbackAuthHeaders || {},
         tool_configs: serverConfig.tool_configs,
         clientID: serverConfig.clientID || '',
         clientSecret: serverConfig.clientSecret || '',
@@ -188,6 +194,38 @@ const MCPServer = ({
         });
     };
 
+    const addFallbackHeader = () => {
+        const fallbackAuthHeaders = {...(config.fallbackAuthHeaders || {})};
+        onChange(serverIndex, {
+            ...config,
+            fallbackAuthHeaders: {
+                ...fallbackAuthHeaders,
+                '': '',
+            },
+        });
+    };
+
+    const updateFallbackHeader = (oldKey: string, newKey: string, value: string) => {
+        const fallbackAuthHeaders = {...(config.fallbackAuthHeaders || {})};
+        if (oldKey !== newKey) {
+            delete fallbackAuthHeaders[oldKey];
+        }
+        fallbackAuthHeaders[newKey] = value;
+        onChange(serverIndex, {
+            ...config,
+            fallbackAuthHeaders,
+        });
+    };
+
+    const removeFallbackHeader = (key: string) => {
+        const fallbackAuthHeaders = {...(config.fallbackAuthHeaders || {})};
+        delete fallbackAuthHeaders[key];
+        onChange(serverIndex, {
+            ...config,
+            fallbackAuthHeaders,
+        });
+    };
+
     // Handle renaming the server
     const handleRename = () => {
         const newName = serverName.trim();
@@ -284,6 +322,71 @@ const MCPServer = ({
                     <FormattedMessage defaultMessage='Add Header'/>
                 </AddHeaderButton>
             </HeadersSection>
+
+            <OAuthSection>
+                <OAuthSectionHeader
+                    role='button'
+                    tabIndex={0}
+                    aria-expanded={isServiceAccountExpanded}
+                    aria-controls={`service-account-section-content-${serverIndex}`}
+                    onClick={() => setIsServiceAccountExpanded(!isServiceAccountExpanded)}
+                    onKeyDown={(e: React.KeyboardEvent) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setIsServiceAccountExpanded(!isServiceAccountExpanded);
+                        }
+                    }}
+                >
+                    <OAuthSectionHeaderLeft>
+                        {isServiceAccountExpanded ? <ChevronDownIcon size={16}/> : <ChevronRightIcon size={16}/>}
+                        <OAuthSectionTitle>
+                            {intl.formatMessage({defaultMessage: 'Service account authentication (optional)'})}
+                        </OAuthSectionTitle>
+                    </OAuthSectionHeaderLeft>
+                    {!isServiceAccountExpanded && config.fallbackAuthHeaders && Object.keys(config.fallbackAuthHeaders).length > 0 && (
+                        <OAuthConfiguredBadge>
+                            <FormattedMessage defaultMessage='Configured'/>
+                        </OAuthConfiguredBadge>
+                    )}
+                </OAuthSectionHeader>
+                {isServiceAccountExpanded && (
+                    <OAuthSectionContent id={`service-account-section-content-${serverIndex}`}>
+                        <OAuthHelpText>
+                            {intl.formatMessage({
+                                defaultMessage:
+                                    'HTTP headers used only when an automated invoker (bot, webhook, plugin, or OAuth app) calls MCP tools. Human users always use their own OAuth tokens. Typical use: Authorization with a service token so bots can call this server without interactive login.',
+                            })}
+                        </OAuthHelpText>
+                        <HeadersList>
+                            {Object.entries(config.fallbackAuthHeaders || {}).map(([key, value], index) => (
+                                <HeaderRow key={`fb-${index}`}>
+                                    <HeaderInput
+                                        placeholder={intl.formatMessage({defaultMessage: 'Header name'})}
+                                        value={key}
+                                        onChange={(e) => updateFallbackHeader(key, e.target.value, value)}
+                                    />
+                                    <HeaderInput
+                                        placeholder={intl.formatMessage({defaultMessage: 'Value'})}
+                                        value={value}
+                                        onChange={(e) => updateFallbackHeader(key, key, e.target.value)}
+                                    />
+                                    <RemoveHeaderButton
+                                        onClick={() => removeFallbackHeader(key)}
+                                    >
+                                        <TrashCanOutlineIcon size={14}/>
+                                    </RemoveHeaderButton>
+                                </HeaderRow>
+                            ))}
+                        </HeadersList>
+                        <AddHeaderButton
+                            onClick={addFallbackHeader}
+                        >
+                            <PlusIcon size={14}/>
+                            <FormattedMessage defaultMessage='Add fallback header'/>
+                        </AddHeaderButton>
+                    </OAuthSectionContent>
+                )}
+            </OAuthSection>
 
             <OAuthSection>
                 <OAuthSectionHeader

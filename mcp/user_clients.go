@@ -23,22 +23,24 @@ type ToolInfo struct {
 
 // UserClients represents a per-user MCP client with multiple server connections
 type UserClients struct {
-	clients      map[string]*Client // serverID -> client (both remote and embedded)
-	userID       string
-	log          pluginapi.LogService
-	oauthManager *OAuthManager
-	httpClient   *http.Client
-	toolsCache   *ToolsCache
+	clients            map[string]*Client // serverID -> client (both remote and embedded)
+	userID             string
+	log                pluginapi.LogService
+	oauthManager       *OAuthManager
+	httpClient         *http.Client
+	toolsCache         *ToolsCache
+	isAutomatedInvoker bool
 }
 
-func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
+func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache, isAutomatedInvoker bool) *UserClients {
 	return &UserClients{
-		log:          log,
-		clients:      make(map[string]*Client),
-		userID:       userID,
-		oauthManager: oauthManager,
-		httpClient:   httpClient,
-		toolsCache:   toolsCache,
+		log:                log,
+		clients:            make(map[string]*Client),
+		userID:             userID,
+		oauthManager:       oauthManager,
+		httpClient:         httpClient,
+		toolsCache:         toolsCache,
+		isAutomatedInvoker: isAutomatedInvoker,
 	}
 }
 
@@ -111,7 +113,7 @@ func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embed
 
 // connectToServer establishes a connection to a single server
 func (c *UserClients) connectToServer(ctx context.Context, serverID string, serverConfig ServerConfig) error {
-	serverClient, err := NewClient(ctx, c.userID, serverConfig, c.log, c.oauthManager, c.httpClient, c.toolsCache)
+	serverClient, err := NewClient(ctx, c.userID, serverConfig, c.log, c.oauthManager, c.httpClient, c.toolsCache, c.isAutomatedInvoker)
 	if err != nil {
 		return err
 	}

@@ -289,7 +289,7 @@ func TestClientManager_GetToolsForUser(t *testing.T) {
 	defer manager.Close()
 
 	// Call GetToolsForUser
-	tools, errors := manager.GetToolsForUser(user.Id)
+	tools, errors := manager.GetToolsForUser(user.Id, false)
 
 	// Should succeed with no errors
 	assert.Nil(t, errors, "Should have no errors")

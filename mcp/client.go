@@ -49,15 +49,16 @@ type EmbeddedServerClient struct {
 
 // Client represents the connection to a single MCP server
 type Client struct {
-	session        *mcp.ClientSession
-	config         ServerConfig
-	tools          map[string]*mcp.Tool
-	userID         string
-	log            pluginapi.LogService
-	oauthManager   *OAuthManager
-	httpClient     *http.Client
-	embeddedClient *EmbeddedServerClient // for reconnection (nil for remote servers)
-	sessionID      string                // session ID for embedded server reconnection
+	session            *mcp.ClientSession
+	config             ServerConfig
+	tools              map[string]*mcp.Tool
+	userID             string
+	log                pluginapi.LogService
+	oauthManager       *OAuthManager
+	httpClient         *http.Client
+	embeddedClient     *EmbeddedServerClient // for reconnection (nil for remote servers)
+	sessionID          string                // session ID for embedded server reconnection
+	isAutomatedInvoker bool                  // when true, use FallbackAuthHeaders if no OAuth token
 }
 
 // staticOAuthCreds returns static OAuth credentials from a server config, or nil if not configured.
@@ -155,16 +156,19 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 	return client, nil
 }
 
-// NewClient creates a new MCP client for the given server and user and connects to the specified MCP server
-func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) (*Client, error) {
+// NewClient creates a new MCP client for the given server and user and connects to the specified MCP server.
+// When isAutomatedInvoker is true and there is no OAuth token, FallbackAuthHeaders from serverConfig are used;
+// humans never use fallback headers (they get the normal OAuth flow on 401).
+func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache, isAutomatedInvoker bool) (*Client, error) {
 	c := &Client{
-		session:      nil,
-		config:       serverConfig,
-		tools:        make(map[string]*mcp.Tool),
-		userID:       userID,
-		log:          log,
-		oauthManager: oauthManager,
-		httpClient:   httpClient,
+		session:            nil,
+		config:             serverConfig,
+		tools:              make(map[string]*mcp.Tool),
+		userID:             userID,
+		log:                log,
+		oauthManager:       oauthManager,
+		httpClient:         httpClient,
+		isAutomatedInvoker: isAutomatedInvoker,
 	}
 
 	session, err := c.createSession(ctx, serverConfig)

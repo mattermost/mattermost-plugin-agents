@@ -233,7 +233,9 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 	// This ensures citations from previous searches work in follow-up messages
 	webSearchParams := c.extractWebSearchContext(post)
 
+	automated := isAutomatedInvoker(post, postingUser)
 	var contextOpts []llm.ContextOption
+	contextOpts = append(contextOpts, llm.WithAutomatedMCPInvoker(automated))
 	contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextTools(bot))
 	if len(webSearchParams) > 0 {
 		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
@@ -246,6 +248,9 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 		channel,
 		contextOpts...,
 	)
+
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	filterAutomatedInvokerTools(llmContext.Tools, automated, isDM, c.toolPolicyChecker)
 
 	// If web search context wasn't found, initialize fresh tracking
 	if llmContext.Parameters == nil {
@@ -290,7 +295,7 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 			}
 			authErrors = filtered
 		}
-		if len(authErrors) > 0 {
+		if len(authErrors) > 0 && !llmContext.AutomatedMCPInvoker {
 			rootID := post.RootId
 			if rootID == "" {
 				rootID = post.Id

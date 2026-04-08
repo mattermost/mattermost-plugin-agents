@@ -46,13 +46,14 @@ type MCPConfig struct {
 
 // MCPServerConfig contains the configuration for a single MCP server
 type MCPServerConfig struct {
-	Name         string            `json:"name"`
-	Enabled      bool              `json:"enabled"`
-	BaseURL      string            `json:"baseURL"`
-	Headers      map[string]string `json:"headers,omitempty"`
-	ClientID     string            `json:"clientID,omitempty"`
-	ClientSecret string            `json:"clientSecret,omitempty"`
-	ToolConfigs  []MCPToolConfig   `json:"tool_configs,omitempty"`
+	Name                string            `json:"name"`
+	Enabled             bool              `json:"enabled"`
+	BaseURL             string            `json:"baseURL"`
+	Headers             map[string]string `json:"headers,omitempty"`
+	FallbackAuthHeaders map[string]string `json:"fallbackAuthHeaders,omitempty"`
+	ClientID            string            `json:"clientID,omitempty"`
+	ClientSecret        string            `json:"clientSecret,omitempty"`
+	ToolConfigs         []MCPToolConfig   `json:"tool_configs,omitempty"`
 }
 
 // GetToolPolicy returns the policy and enabled state for a tool.

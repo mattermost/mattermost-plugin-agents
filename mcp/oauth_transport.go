@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,14 +13,24 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// oauthAuthManager is the OAuthManager surface used by authenticationTransport.
+// It exists so RoundTrip behavior can be unit-tested without a full plugin stack.
+type oauthAuthManager interface {
+	loadToken(userID, serverID string) (*oauth2.Token, error)
+	deleteToken(userID, serverID string) error
+	createOAuthConfig(ctx context.Context, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (*oauth2.Config, error)
+}
+
 // authenticationTransport handles 401 responses for MCP
 type authenticationTransport struct {
-	userID      string
-	serverName  string
-	serverURL   string
-	manager     *OAuthManager
-	staticCreds *StaticOAuthCredentials
-	base        http.RoundTripper
+	userID              string
+	serverName          string
+	serverURL           string
+	manager             oauthAuthManager
+	staticCreds         *StaticOAuthCredentials
+	base                http.RoundTripper
+	fallbackAuthHeaders map[string]string
+	isAutomatedInvoker  bool
 }
 
 type mcpUnauthorized struct {
@@ -66,8 +77,9 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 	}
 
 	transport := t.base
+	useFallbackAuth := false
 
-	// Include the token if found
+	// Include the token if found (always preferred over fallback headers).
 	if token != nil {
 		oauthConfig, configErr := t.manager.createOAuthConfig(req.Context(), t.serverURL, "", t.staticCreds)
 		if configErr != nil {
@@ -77,6 +89,15 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 		transport = &oauth2.Transport{
 			Source: oauthConfig.TokenSource(req.Context(), token),
 			Base:   transport,
+		}
+	} else if t.isAutomatedInvoker {
+		if len(t.fallbackAuthHeaders) == 0 {
+			return nil, fmt.Errorf("MCP server %q: no OAuth token and no fallback authentication headers configured for automated invokers", t.serverName)
+		}
+		useFallbackAuth = true
+		req = req.Clone(req.Context())
+		for k, v := range t.fallbackAuthHeaders {
+			req.Header.Set(k, v)
 		}
 	}
 
@@ -89,7 +110,9 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 		if strings.Contains(err.Error(), "invalid_grant") {
 			// Clear the stale token - it's no longer valid with current credentials
 			if delErr := t.manager.deleteToken(t.userID, t.serverName); delErr != nil {
-				t.manager.pluginAPI.LogWarn("Failed to delete stale token", "error", delErr)
+				if om, ok := t.manager.(*OAuthManager); ok {
+					om.pluginAPI.LogWarn("Failed to delete stale token", "error", delErr)
+				}
 			}
 			// Return error that will trigger re-authentication
 			return nil, &mcpUnauthorized{
@@ -102,6 +125,10 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 
 	// If we get a 401, force an actual error so we can handle it. Include the header info in the error
 	if resp.StatusCode == http.StatusUnauthorized {
+		if useFallbackAuth {
+			drainAndCloseResponseBody(resp)
+			return nil, fmt.Errorf("MCP server %q: fallback authentication rejected (401 Unauthorized)", t.serverName)
+		}
 		// Parse WWW-Authenticate header for resource metadata URL
 		wwwAuthHeader := resp.Header.Get("WWW-Authenticate")
 		if wwwAuthHeader != "" {

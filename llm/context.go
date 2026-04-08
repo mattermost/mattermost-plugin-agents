@@ -46,6 +46,10 @@ type Context struct {
 	Tools             *ToolStore
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
 	Parameters        map[string]interface{}
+
+	// AutomatedMCPInvoker is true when the Mattermost request was triggered by automation
+	// (bot, webhook, plugin, OAuth app). Used for MCP fallback auth and tool policy filtering.
+	AutomatedMCPInvoker bool
 }
 
 // ContextOption defines a function that configures a Context
@@ -73,6 +77,13 @@ func (c *Context) SetBotFields(displayName, username, userID, defaultModel, serv
 	c.BotModel = defaultModel
 	c.BotServiceType = serviceType
 	c.CustomInstructions = customInstructions
+}
+
+// WithAutomatedMCPInvoker records whether the request was initiated by an automated Mattermost invoker.
+func WithAutomatedMCPInvoker(automated bool) ContextOption {
+	return func(c *Context) {
+		c.AutomatedMCPInvoker = automated
+	}
 }
 
 func (c Context) String() string {

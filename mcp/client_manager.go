@@ -14,14 +14,23 @@ import (
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
+// mcpClientCacheKey disambiguates cached MCP clients for the same Mattermost user ID
+// when invocations use different auth paths (human OAuth vs automated fallback headers).
+func mcpClientCacheKey(userID string, isAutomatedInvoker bool) string {
+	if isAutomatedInvoker {
+		return userID + "\x00mcp:auto"
+	}
+	return userID + "\x00mcp:human"
+}
+
 // ClientManager manages MCP clients for multiple users
 type ClientManager struct {
 	config         Config
 	log            pluginapi.LogService
 	pluginAPI      *pluginapi.Client
 	clientsMu      sync.RWMutex
-	clients        map[string]*UserClients // userID to UserClients
-	activity       map[string]time.Time    // userID to last activity time
+	clients        map[string]*UserClients // cache key (see mcpClientCacheKey) to UserClients
+	activity       map[string]time.Time    // cache key to last activity time
 	cleanupTicker  *time.Ticker
 	closeChan      chan struct{}
 	clientTimeout  time.Duration
@@ -58,11 +67,12 @@ func (m *ClientManager) cleanupInactiveClients() {
 		case <-m.cleanupTicker.C:
 			m.clientsMu.Lock()
 			now := time.Now()
-			for userID, client := range m.clients {
-				if now.Sub(m.activity[userID]) > m.clientTimeout {
-					m.log.Debug("Closing inactive MCP client", "userID", userID)
+			for cacheKey, client := range m.clients {
+				if now.Sub(m.activity[cacheKey]) > m.clientTimeout {
+					m.log.Debug("Closing inactive MCP client", "userID", client.userID, "cache_key", cacheKey)
 					client.Close()
-					delete(m.clients, userID)
+					delete(m.clients, cacheKey)
+					delete(m.activity, cacheKey)
 				}
 			}
 			m.clientsMu.Unlock()
@@ -124,46 +134,53 @@ func (m *ClientManager) Close() {
 }
 
 // createAndStoreUserClient creates a new UserClients instance and stores it in the manager
-func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClients, *Errors) {
+func (m *ClientManager) createAndStoreUserClient(userID string, isAutomatedInvoker bool) (*UserClients, *Errors) {
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
 
+	cacheKey := mcpClientCacheKey(userID, isAutomatedInvoker)
+
 	// Check again in case another goroutine created the client while we were waiting for the lock
-	client, exists := m.clients[userID]
+	client, exists := m.clients[cacheKey]
 	if exists {
-		m.activity[userID] = time.Now()
+		m.activity[cacheKey] = time.Now()
 		return client, nil
 	}
 
-	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
+	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache, isAutomatedInvoker)
 
 	// Let user client connect to remote servers only
 	mcpErrors := userClients.ConnectToRemoteServers(m.config.Servers)
 
 	// Store the client even if some servers failed to connect
 	// This allows partial success - user gets tools from working servers
-	m.clients[userID] = userClients
+	m.clients[cacheKey] = userClients
+	m.activity[cacheKey] = time.Now()
 
 	return userClients, mcpErrors
 }
 
 // getClientForUser gets or creates an MCP client for a specific user
-func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) {
+func (m *ClientManager) getClientForUser(userID string, isAutomatedInvoker bool) (*UserClients, *Errors) {
+	cacheKey := mcpClientCacheKey(userID, isAutomatedInvoker)
 	m.clientsMu.RLock()
-	client, exists := m.clients[userID]
+	client, exists := m.clients[cacheKey]
 	m.clientsMu.RUnlock()
 	if exists {
-		m.activity[userID] = time.Now()
+		m.clientsMu.Lock()
+		m.activity[cacheKey] = time.Now()
+		m.clientsMu.Unlock()
 		return client, nil
 	}
 
-	return m.createAndStoreUserClient(userID)
+	return m.createAndStoreUserClient(userID, isAutomatedInvoker)
 }
 
-// GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided
-func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
+// GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
+// When isAutomatedInvoker is true, remote MCP servers may use FallbackAuthHeaders instead of per-user OAuth.
+func (m *ClientManager) GetToolsForUser(userID string, isAutomatedInvoker bool) ([]llm.Tool, *Errors) {
 	// Get or create client for this user (connects to remote servers only)
-	userClient, mcpErrors := m.getClientForUser(userID)
+	userClient, mcpErrors := m.getClientForUser(userID, isAutomatedInvoker)
 
 	// Connect to embedded server using a dedicated per-user session (stored/created in KV)
 	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
@@ -190,9 +207,16 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 		return nil, err
 	}
 
-	// Delete the client to force a re-creation
+	// Delete cached clients for this user so the next request reconnects with the new token.
 	m.clientsMu.Lock()
-	delete(m.clients, userID)
+	for _, automated := range []bool{false, true} {
+		key := mcpClientCacheKey(userID, automated)
+		if client, ok := m.clients[key]; ok {
+			client.Close()
+			delete(m.clients, key)
+		}
+		delete(m.activity, key)
+	}
 	m.clientsMu.Unlock()
 
 	return session, nil

@@ -66,6 +66,7 @@ const groups = {
         'tests/tool-config/vetted-seed.spec.ts',
     ],
     'e2e-shard-4': [
+        'tests/webhook/webhook-activate-ai.spec.ts',
         'tests/channel-analysis/response-citations/response-citations.spec.ts',
         'tests/system-console/debug-panel.spec.ts',
         'tests/system-console/functions-panel.spec.ts',
