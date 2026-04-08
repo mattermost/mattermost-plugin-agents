@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
@@ -31,15 +32,20 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		return fmt.Errorf("unable to get bot")
 	}
 
-	// Check ownership via conversation entity if available, otherwise
-	// the post's conversation_id lookup will fail gracefully.
-	if c.convService != nil {
-		if convIDProp, ok := post.GetProp(streaming.ConversationIDProp).(string); ok && convIDProp != "" {
-			conv, err := c.convService.GetConversation(convIDProp)
-			if err == nil && conv.UserID != userID {
-				return errors.New("only the original poster can regenerate")
-			}
-		}
+	// Fail closed: all regeneration ownership checks must pass.
+	if c.convService == nil {
+		return errors.New("conversation service not available for regeneration ownership check")
+	}
+	convIDProp, ok := post.GetProp(streaming.ConversationIDProp).(string)
+	if !ok || convIDProp == "" {
+		return errors.New("post missing conversation_id for ownership check")
+	}
+	conv, err := c.convService.GetConversation(convIDProp)
+	if err != nil {
+		return fmt.Errorf("failed to get conversation for ownership check: %w", err)
+	}
+	if conv.UserID != userID {
+		return errors.New("only the original poster can regenerate")
 	}
 
 	if post.GetProp(streaming.NoRegen) != nil {
@@ -251,7 +257,7 @@ func (c *Conversations) regenerateViaConversation(
 		}
 	}
 
-	completionReq, buildErr := c.convService.BuildCompletionRequest(conv, llmContext)
+	completionReq, buildErr := c.convService.BuildCompletionRequest(conv, llmContext, conversation.BuildOptions{ExcludeAfterPostID: post.Id})
 	if buildErr != nil {
 		return nil, fmt.Errorf("failed to build completion request for regen: %w", buildErr)
 	}

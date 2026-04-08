@@ -15,6 +15,7 @@ import {useConversation, useTurnForPost, invalidateConversation} from '@/hooks/u
 import {PostMessagePreview} from '@/mm_webapp';
 
 import PostText from '../post_text';
+import {SearchSources} from '../search_sources';
 import ToolApprovalSet from '../tool_approval_set';
 import {ToolApprovalStage, ToolCall} from '../tool_types';
 import {Annotation} from '../citations/types';
@@ -29,6 +30,8 @@ import {
 import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
 import {ControlsBarComponent} from './controls_bar';
 import {extractPermalinkData} from './permalink_data';
+
+const SearchResultsPropKey = 'search_results';
 
 // Types
 export interface PostUpdateWebsocketMessage {
@@ -342,6 +345,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 showCursor={generating && !precontent}
                 annotations={annotations.length > 0 ? annotations : undefined} // eslint-disable-line no-undefined
             />
+            {props.post.props?.[SearchResultsPropKey] && (
+                <SearchSources
+                    sources={JSON.parse(props.post.props[SearchResultsPropKey])}
+                />
+            )}
             { showPostbackButton &&
             <PostSummaryHelpMessage>
                 <FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>

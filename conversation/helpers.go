@@ -28,6 +28,9 @@ func marshalBlocks(blocks []ContentBlock) (json.RawMessage, error) {
 
 // unmarshalBlocks deserializes JSON content from store.Turn.Content.
 func unmarshalBlocks(raw json.RawMessage) ([]ContentBlock, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
 	var blocks []ContentBlock
 	if err := json.Unmarshal(raw, &blocks); err != nil {
 		return nil, err

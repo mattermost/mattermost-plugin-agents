@@ -31,7 +31,8 @@ func (c *Conversations) SaveTitle(threadID, title string) error {
 		Update("LLM_Conversations").
 		Set("Title", title).
 		Set("UpdatedAt", model.GetMillis()).
-		Where(sq.Eq{"RootPostID": threadID}))
+		Where(sq.Eq{"RootPostID": threadID}).
+		Where(sq.Eq{"DeleteAt": 0}))
 	return err
 }
 

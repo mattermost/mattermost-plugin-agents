@@ -539,6 +539,77 @@ func TestBuildCompletionRequest_SystemPromptIsFirst(t *testing.T) {
 	assert.Equal(t, "I am system", req.Posts[0].Message)
 }
 
+func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "user1",
+		UserPostID:   stringPtr("user_post1"),
+	})
+	require.NoError(t, err)
+	convID := result.ConversationID
+
+	// Assistant turn (seq=2) with postID "resp1".
+	assistantContent1, _ := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: "assistant1"}})
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		PostID:         stringPtr("resp1"),
+		Role:           "assistant",
+		Content:        assistantContent1,
+		Sequence:       2,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	// Second user turn (seq=3).
+	userContent2, _ := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: "user2"}})
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		PostID:         stringPtr("user_post2"),
+		Role:           "user",
+		Content:        userContent2,
+		Sequence:       3,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	// Second assistant turn (seq=4) with postID "resp2".
+	assistantContent2, _ := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: "assistant2"}})
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		PostID:         stringPtr("resp2"),
+		Role:           "assistant",
+		Content:        assistantContent2,
+		Sequence:       4,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	conv, err := s.GetConversation(convID)
+	require.NoError(t, err)
+
+	// Exclude from "resp2" onward: should return system + user1 + assistant1 + user2.
+	req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{ExcludeAfterPostID: "resp2"})
+	require.NoError(t, err)
+
+	require.Len(t, req.Posts, 4)
+	assert.Equal(t, llm.PostRoleSystem, req.Posts[0].Role)
+	assert.Equal(t, "system", req.Posts[0].Message)
+	assert.Equal(t, llm.PostRoleUser, req.Posts[1].Role)
+	assert.Equal(t, "user1", req.Posts[1].Message)
+	assert.Equal(t, llm.PostRoleBot, req.Posts[2].Role)
+	assert.Equal(t, "assistant1", req.Posts[2].Message)
+	assert.Equal(t, llm.PostRoleUser, req.Posts[3].Role)
+	assert.Equal(t, "user2", req.Posts[3].Message)
+}
+
 func TestCreatePlaceholderAssistantTurn(t *testing.T) {
 	svc, s := setupTestService(t)
 
@@ -1095,4 +1166,69 @@ func TestSequenceNumbering_Concurrent(t *testing.T) {
 	for i, turn := range turns {
 		assert.Equal(t, i+1, turn.Sequence, "turn %d should have sequence %d", i, i+1)
 	}
+}
+
+func TestGetOrCreateConversation_RaceConflict(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	botID := model.NewId()
+	rootPostID := "race_root"
+
+	// Pre-create a conversation directly via the store to simulate a race.
+	now := model.GetMillis()
+	convID := model.NewId()
+	err := s.CreateConversation(&store.Conversation{
+		ID:           convID,
+		UserID:       model.NewId(),
+		BotID:        botID,
+		RootPostID:   &rootPostID,
+		Title:        "",
+		SystemPrompt: "system",
+		Operation:    "conversation",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		DeleteAt:     0,
+	})
+	require.NoError(t, err)
+
+	// Create an initial turn so the conversation is not empty.
+	content, err := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: "first"}})
+	require.NoError(t, err)
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		Role:           "user",
+		Content:        content,
+		Sequence:       1,
+		CreatedAt:      now,
+	})
+	require.NoError(t, err)
+
+	// GetOrCreateConversation with the same (RootPostID, BotID) should
+	// hit the conflict path, retry the lookup, and append the user turn.
+	result, err := svc.GetOrCreateConversation(GetOrCreateParams{
+		UserID:       model.NewId(),
+		BotID:        botID,
+		ChannelID:    "chan1",
+		RootPostID:   rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "prompt (ignored)",
+		UserMessage:  "second message",
+		UserPostID:   stringPtr("post2"),
+	})
+	require.NoError(t, err)
+	assert.False(t, result.IsNew)
+	assert.Equal(t, convID, result.Conversation.ID)
+
+	// Verify the user turn was appended.
+	turns, err := s.GetTurnsForConversation(convID)
+	require.NoError(t, err)
+	require.Len(t, turns, 2)
+	assert.Equal(t, 2, turns[1].Sequence)
+
+	var blocks []ContentBlock
+	err = json.Unmarshal(turns[1].Content, &blocks)
+	require.NoError(t, err)
+	require.Len(t, blocks, 1)
+	assert.Equal(t, "second message", blocks[0].Text)
 }

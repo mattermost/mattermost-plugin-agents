@@ -228,15 +228,29 @@ func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int
 }
 
 // CleanupDeletedConversations permanently deletes all soft-deleted conversations
-// and their associated turns.
+// and their associated turns within a single transaction.
 func (s *Store) CleanupDeletedConversations() error {
-	_, err := s.db.Exec("DELETE FROM LLM_Turns WHERE ConversationID IN (SELECT ID FROM LLM_Conversations WHERE DeleteAt > 0)")
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	_, err = tx.Exec("DELETE FROM LLM_Turns WHERE ConversationID IN (SELECT ID FROM LLM_Conversations WHERE DeleteAt > 0)")
 	if err != nil {
 		return fmt.Errorf("failed to delete turns for deleted conversations: %w", err)
 	}
-	_, err = s.db.Exec("DELETE FROM LLM_Conversations WHERE DeleteAt > 0")
+	_, err = tx.Exec("DELETE FROM LLM_Conversations WHERE DeleteAt > 0")
 	if err != nil {
 		return fmt.Errorf("failed to delete soft-deleted conversations: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit cleanup transaction: %w", err)
 	}
 	return nil
 }

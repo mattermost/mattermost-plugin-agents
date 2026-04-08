@@ -5,6 +5,7 @@ package conversation
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -215,6 +216,25 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 		UserMessage:  params.UserMessage,
 		UserPostID:   params.UserPostID,
 	})
+	if errors.Is(err, store.ErrConversationConflict) {
+		// Another request created the conversation concurrently. Look it up and append the user turn.
+		raceConv, lookupErr := s.store.GetConversationByThreadAndBot(params.RootPostID, params.BotID)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("failed to look up conversation after conflict: %w", lookupErr)
+		}
+		if raceConv == nil {
+			return nil, fmt.Errorf("conversation vanished after conflict")
+		}
+		turnID, appendErr := s.appendUserTurn(raceConv.ID, params.UserMessage, params.UserPostID)
+		if appendErr != nil {
+			return nil, appendErr
+		}
+		return &GetOrCreateResult{
+			Conversation: raceConv,
+			IsNew:        false,
+			UserTurnID:   turnID,
+		}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -261,15 +281,33 @@ func (s *Service) appendUserTurn(conversationID, message string, postID *string)
 	return turnID, nil
 }
 
+// BuildOptions controls optional behavior of BuildCompletionRequest.
+type BuildOptions struct {
+	ExcludeAfterPostID string
+}
+
 // BuildCompletionRequest builds an llm.CompletionRequest from the conversation's
 // system prompt and all its turns.
 func (s *Service) BuildCompletionRequest(
 	conv *store.Conversation,
 	context *llm.Context,
+	opts ...BuildOptions,
 ) (*llm.CompletionRequest, error) {
 	turns, err := s.store.GetTurnsForConversation(conv.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get turns: %w", err)
+	}
+
+	// If ExcludeAfterPostID is set, truncate the turn slice at (and including)
+	// the turn whose PostID matches, so that turn and all subsequent turns are dropped.
+	if len(opts) > 0 && opts[0].ExcludeAfterPostID != "" {
+		excludeID := opts[0].ExcludeAfterPostID
+		for i, turn := range turns {
+			if turn.PostID != nil && *turn.PostID == excludeID {
+				turns = turns[:i]
+				break
+			}
+		}
 	}
 
 	posts := make([]llm.Post, 0, len(turns)+1)

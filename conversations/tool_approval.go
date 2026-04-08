@@ -216,6 +216,51 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 
+	// Build a set of accepted tool IDs for quick lookup.
+	acceptedSet := make(map[string]bool, len(acceptedToolIDs))
+	for _, id := range acceptedToolIDs {
+		acceptedSet[id] = true
+	}
+
+	// Update shared flags on tool_use and tool_result blocks for accepted tools.
+	turns, err := c.convService.GetTurns(conv.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get turns: %w", err)
+	}
+
+	for _, turn := range turns {
+		var blocks []conversation.ContentBlock
+		if unmarshalErr := json.Unmarshal(turn.Content, &blocks); unmarshalErr != nil {
+			continue
+		}
+
+		modified := false
+		for i := range blocks {
+			switch blocks[i].Type {
+			case conversation.BlockTypeToolUse:
+				if acceptedSet[blocks[i].ID] {
+					blocks[i].Shared = conversation.BoolPtr(true)
+					modified = true
+				}
+			case conversation.BlockTypeToolResult:
+				if acceptedSet[blocks[i].ToolUseID] {
+					blocks[i].Shared = conversation.BoolPtr(true)
+					modified = true
+				}
+			}
+		}
+
+		if modified {
+			updatedContent, marshalErr := json.Marshal(blocks)
+			if marshalErr != nil {
+				return fmt.Errorf("failed to marshal updated blocks: %w", marshalErr)
+			}
+			if updateErr := c.convService.UpdateTurnContent(turn.ID, updatedContent); updateErr != nil {
+				return fmt.Errorf("failed to update turn shared flags: %w", updateErr)
+			}
+		}
+	}
+
 	// Continue the LLM loop with the conversation context.
 	return c.streamToolFollowUp(bot, user, channel, post, conv, isDM)
 }

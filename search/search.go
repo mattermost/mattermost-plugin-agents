@@ -5,6 +5,7 @@ package search
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -55,6 +56,9 @@ type Options struct {
 	ChannelID string
 	UserID    string
 }
+
+// SearchResultsProp is the post prop key used to attach search results JSON to the response post.
+const SearchResultsProp = "search_results"
 
 type Search struct {
 	getSearch           func() embeddings.EmbeddingSearch
@@ -331,6 +335,18 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 			s.mmclient.LogError("Error updating post on error", "error", updateErr)
 		}
 		return
+	}
+
+	// Attach search results to response post for frontend rendering.
+	resultsJSON, err := json.Marshal(results)
+	if err != nil {
+		s.mmclient.LogError("Error marshaling search results", "error", err)
+		processingError = err
+		return
+	}
+	responsePost.AddProp(SearchResultsProp, string(resultsJSON))
+	if updateErr := s.mmclient.UpdatePost(responsePost); updateErr != nil {
+		s.mmclient.LogError("Error updating post with search results", "error", updateErr)
 	}
 
 	// Build system prompt from template (contains RAG results)
