@@ -25,15 +25,15 @@ func mcpClientCacheKey(userID string, isAutomatedInvoker bool) string {
 
 // ClientManager manages MCP clients for multiple users
 type ClientManager struct {
-	config         Config
-	log            pluginapi.LogService
-	pluginAPI      *pluginapi.Client
-	clientsMu      sync.RWMutex
-	clients        map[string]*UserClients // cache key (see mcpClientCacheKey) to UserClients
-	activity       map[string]time.Time    // cache key to last activity time
+	config    Config
+	log       pluginapi.LogService
+	pluginAPI *pluginapi.Client
+	clientsMu sync.RWMutex
+	clients   map[string]*UserClients // cache key (see mcpClientCacheKey) to UserClients
+	activity  map[string]time.Time    // cache key to last activity time
 	// clientGen is incremented when OAuth invalidates cached clients so in-flight
 	// ConnectToRemoteServers work can be discarded instead of storing stale UserClients.
-	clientGen map[string]uint64 // cache key -> generation
+	clientGen      map[string]uint64 // cache key -> generation
 	cleanupTicker  *time.Ticker
 	closeChan      chan struct{}
 	clientTimeout  time.Duration
