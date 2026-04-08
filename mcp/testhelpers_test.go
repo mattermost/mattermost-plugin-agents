@@ -1,3 +1,5 @@
+//go:build integration
+
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
@@ -76,7 +78,7 @@ func GetSharedTestSuite(t *testing.T) *EmbeddedTestSuite {
 
 // setupSharedSuite initializes the shared Mattermost container
 func setupSharedSuite(t *testing.T) *EmbeddedTestSuite {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
 	// Create config with required settings

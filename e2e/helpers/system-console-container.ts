@@ -14,6 +14,7 @@ export interface SystemConsolePluginConfig {
     enableUserRestrictions?: boolean;
     enableVectorIndex?: boolean;
     enableTokenUsageLogging?: boolean;
+    enableChannelMentionToolCalling?: boolean;
     defaultBotName?: string;
     allowedUpstreamHostnames?: string;
     allowUnsafeLinks?: boolean;
@@ -35,6 +36,9 @@ export interface MCPServerConfig {
     enabled?: boolean;
     baseURL?: string;
     headers?: Record<string, string>;
+    clientID?: string;
+    clientSecret?: string;
+    tool_configs?: Array<{ name?: string; policy?: string; enabled?: boolean }>;
 }
 
 const adminUsername = 'sysadmin';
@@ -91,7 +95,7 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
     const filename = findPluginFile();
     const mcpServers = config.mcp?.servers === undefined ? [] : config.mcp.servers;
 
-    const pluginConfig = {
+    const pluginConfig: Record<string, any> = {
         config: {
             allowPrivateChannels: config.allowPrivateChannels ?? true,
             disableFunctionCalls: config.disableFunctionCalls ?? false,
@@ -99,6 +103,7 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
             enableUserRestrictions: config.enableUserRestrictions ?? false,
             enableVectorIndex: config.enableVectorIndex ?? false,
             enableTokenUsageLogging: config.enableTokenUsageLogging,
+            enableChannelMentionToolCalling: config.enableChannelMentionToolCalling ?? false,
             defaultBotName: config.defaultBotName,
             allowedUpstreamHostnames: config.allowedUpstreamHostnames,
             allowUnsafeLinks: config.allowUnsafeLinks,
@@ -116,6 +121,10 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
         }
     };
 
+    if (config.mcp) {
+        pluginConfig.config.mcp = config.mcp;
+    }
+
     const mattermost = await new MattermostContainer()
         .withPlugin(filename, 'mattermost-ai', pluginConfig)
         .start();
@@ -127,4 +136,3 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
 
 export { adminUsername, adminPassword };
 export default RunSystemConsoleContainer;
-

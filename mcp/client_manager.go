@@ -6,6 +6,7 @@ package mcp
 import (
 	"context"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -176,8 +177,10 @@ func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 		}
 	}
 
-	// Return tools from all connected servers (remote + embedded if connected)
-	return userClient.GetTools(), mcpErrors
+	// Return admin-filtered tools from all connected servers (remote + embedded if connected)
+	rawTools := userClient.GetTools()
+	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient)
+	return filtered, mcpErrors
 }
 
 // ProcessOAuthCallback processes the OAuth callback for a user
@@ -217,4 +220,85 @@ func (m *ClientManager) GetEmbeddedServer() EmbeddedMCPServer {
 // GetHTTPClient returns the HTTP client for upstream requests
 func (m *ClientManager) GetHTTPClient() *http.Client {
 	return m.httpClient
+}
+
+// GetConfig returns a snapshot of the current MCP configuration.
+func (m *ClientManager) GetConfig() Config {
+	return m.config
+}
+
+// filterToolsByConfig filters raw discovered tools against the admin-configured
+// tool policies. Only tools that have a matching ServerConfig entry with a
+// ToolConfigs entry where enabled=true are returned. The result is ordered by
+// configured server order, then alphabetically by tool name within each server.
+//
+// For the embedded server, if no explicit ToolConfigs are present, the vetted
+// tool seed is used as the effective config.
+func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *EmbeddedServerClient) []llm.Tool {
+	// Build a lookup: ServerOrigin (BaseURL) -> *ServerConfig
+	serverByOrigin := make(map[string]*ServerConfig, len(cfg.Servers))
+	serverOrder := make([]string, 0, len(cfg.Servers)+1)
+
+	for i := range cfg.Servers {
+		s := &cfg.Servers[i]
+		if !s.Enabled {
+			continue
+		}
+		serverByOrigin[s.BaseURL] = s
+		serverOrder = append(serverOrder, s.BaseURL)
+	}
+
+	// Handle embedded server
+	if embeddedClient != nil && cfg.EmbeddedServer.Enabled {
+		embeddedCfg := &ServerConfig{
+			Name:    EmbeddedServerName,
+			Enabled: true,
+			BaseURL: EmbeddedClientKey,
+		}
+		// Use persisted tool configs if present, otherwise fall back to vetted seed
+		if len(cfg.EmbeddedServer.ToolConfigs) > 0 {
+			embeddedCfg.ToolConfigs = cfg.EmbeddedServer.ToolConfigs
+		} else {
+			embeddedCfg.ToolConfigs = SeedVettedToolConfigs(EmbeddedClientKey)
+		}
+		serverByOrigin[EmbeddedClientKey] = embeddedCfg
+		serverOrder = append(serverOrder, EmbeddedClientKey)
+	}
+
+	// Group raw tools by ServerOrigin
+	toolsByOrigin := make(map[string][]llm.Tool, len(rawTools))
+	for _, t := range rawTools {
+		toolsByOrigin[t.ServerOrigin] = append(toolsByOrigin[t.ServerOrigin], t)
+	}
+
+	var result []llm.Tool
+	for _, origin := range serverOrder {
+		sc, ok := serverByOrigin[origin]
+		if !ok {
+			continue
+		}
+
+		tools, hasTool := toolsByOrigin[origin]
+		if !hasTool {
+			continue
+		}
+
+		// Filter: only tools with enabled config entries
+		var filtered []llm.Tool
+		for _, t := range tools {
+			_, enabled := sc.GetToolPolicy(t.Name)
+			if enabled {
+				filtered = append(filtered, t)
+			}
+		}
+
+		// Sort by tool name for deterministic output
+		sort.Slice(filtered, func(i, j int) bool {
+			return filtered[i].Name < filtered[j].Name
+		})
+
+		result = append(result, filtered...)
+	}
+
+	return result
 }

@@ -371,21 +371,6 @@ Currently integrations are limited to direct messages between users and the agen
 - **Data Available**: Username, full name, email, nickname, position, locale, timezone, last activity, status
 - **Permissions**: Requires `VIEW_MEMBERS` permission
 
-#### Jira Integration
-
-- **Function**: Fetch issues from public Jira instances
-- **Requirements**: No additional configuration needed
-- **Usage**: Provide Jira instance URL and issue keys
-- **Data Retrieved**: Issue summary, description, status, assignee, comments, metadata
-
-#### GitHub Integration
-
-- **Function**: Fetch GitHub issues and pull requests
-- **Requirements**: Mattermost GitHub plugin must be installed and running
-- **Authentication**: Users must be logged into GitHub through the Mattermost GitHub plugin
-- **Access**: Works with both public and private repositories (based on user permissions)
-- **Data Retrieved**: Issue/PR title, number, state, submitter, body content
-
 **Security Note**: All tool integrations are restricted to direct messages to maintain security boundaries and require explicit user approval before execution.
 
 ## Model Context Protocol (MCP) Integration

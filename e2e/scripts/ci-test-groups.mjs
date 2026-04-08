@@ -18,6 +18,10 @@ const realAPISpecs = new Set([
     'tests/llmbot-post-component/reasoning-display.spec.ts',
     'tests/llmbot-post-component/streaming-persistence.spec.ts',
     'tests/system-console/live-service-full-flow.spec.ts',
+    'tests/tool-config/real-api/ask-policy.spec.ts',
+    'tests/tool-config/real-api/auto-run-policy.spec.ts',
+    'tests/tool-config/real-api/channel-auto-run.spec.ts',
+    'tests/tool-config/real-api/disabled-tool.spec.ts',
 ]);
 
 const groups = {
@@ -30,6 +34,8 @@ const groups = {
         'tests/action-item-extraction/follow-ups.spec.ts',
         'tests/semantic-search/search-bot-selector.spec.ts',
         'tests/rhs-core/new-messages-rhs.spec.ts',
+        'tests/tool-config/policy-change.spec.ts',
+        'tests/tool-config/tab-layout.spec.ts',
     ],
     'e2e-shard-2': [
         'tests/system-console/bot-validation.spec.ts',
@@ -42,6 +48,8 @@ const groups = {
         'tests/action-item-extraction/error-handling.spec.ts',
         'tests/multiple-bot-conversations/bot-switching.spec.ts',
         'tests/agents-tour/display-conditions.spec.ts',
+        'tests/tool-config/tools-tab-display.spec.ts',
+        'tests/tool-config/user-toggle.spec.ts',
     ],
     'e2e-shard-3': [
         'tests/system-console/bot-native-tools.spec.ts',
@@ -54,6 +62,8 @@ const groups = {
         'tests/action-item-extraction/basic-action-items.spec.ts',
         'tests/action-item-extraction/edge-cases.spec.ts',
         'tests/agents-tour/edge-cases.spec.ts',
+        'tests/tool-config/tool-toggle.spec.ts',
+        'tests/tool-config/vetted-seed.spec.ts',
     ],
     'e2e-shard-4': [
         'tests/channel-analysis/response-citations/response-citations.spec.ts',
@@ -68,6 +78,7 @@ const groups = {
         'tests/agents-tour/no-bots.spec.ts',
         'tests/channel-summarization/basic-summarization.spec.ts',
         'tests/seed.spec.ts',
+        'tests/tool-config/mock-api/tool-call-policies.spec.ts',
     ],
     'llmbot-real-citations': [
         'tests/llmbot-post-component/citations-annotations.spec.ts',
@@ -89,6 +100,12 @@ const groups = {
     ],
     'system-console-real': [
         'tests/system-console/live-service-full-flow.spec.ts',
+    ],
+    'tool-config-real': [
+        'tests/tool-config/real-api/ask-policy.spec.ts',
+        'tests/tool-config/real-api/auto-run-policy.spec.ts',
+        'tests/tool-config/real-api/channel-auto-run.spec.ts',
+        'tests/tool-config/real-api/disabled-tool.spec.ts',
     ],
 };
 
@@ -177,6 +194,7 @@ function validateCoverage() {
         'tool-calling-real',
         'channel-analysis-real',
         'system-console-real',
+        'tool-config-real',
     ]).sort();
 
     validateExistingFiles(selectedRealSpecs);

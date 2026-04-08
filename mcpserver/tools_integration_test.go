@@ -128,10 +128,10 @@ func TestMCPToolsIntegration(t *testing.T) {
 			}
 		})
 
-		t.Run("SmartLookupByDisplayName", func(t *testing.T) {
+		t.Run("LookupByDisplayName", func(t *testing.T) {
 			args := map[string]interface{}{
-				"channel_display_name": testData.Channel.DisplayName,
-				"team_id":              testData.Team.Id,
+				"channel_name": testData.Channel.DisplayName,
+				"team_id":      testData.Team.Id,
 			}
 
 			result, err := executeToolWithMCP(t, suite, "get_channel_info", args)
@@ -139,14 +139,14 @@ func TestMCPToolsIntegration(t *testing.T) {
 			assert.NotEmpty(t, result.Content, "get_channel_info should return content")
 		})
 
-		t.Run("SmartLookupByChannelName", func(t *testing.T) {
+		t.Run("LookupByURLName", func(t *testing.T) {
 			args := map[string]interface{}{
 				"channel_name": testData.Channel.Name,
 				"team_id":      testData.Team.Id,
 			}
 
 			_, err := executeToolWithMCP(t, suite, "get_channel_info", args)
-			require.NoError(t, err, "get_channel_info by channel name should succeed")
+			require.NoError(t, err, "get_channel_info by URL name should succeed")
 		})
 
 		t.Run("InvalidChannelID", func(t *testing.T) {
@@ -158,7 +158,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 			require.Error(t, err, "get_channel_info with invalid ID should fail")
 		})
 
-		t.Run("CrossTeamLookupByChannelName", func(t *testing.T) {
+		t.Run("CrossTeamLookup", func(t *testing.T) {
 			args := map[string]interface{}{
 				"channel_name": testData.Channel.Name,
 				// missing team_id - should fall back to cross-team search
@@ -188,9 +188,9 @@ func TestMCPToolsIntegration(t *testing.T) {
 			}
 		})
 
-		t.Run("SmartLookupByDisplayName", func(t *testing.T) {
+		t.Run("LookupByDisplayName", func(t *testing.T) {
 			args := map[string]interface{}{
-				"team_display_name": testData.Team.DisplayName,
+				"team_name": testData.Team.DisplayName,
 			}
 
 			_, err := executeToolWithMCP(t, suite, "get_team_info", args)

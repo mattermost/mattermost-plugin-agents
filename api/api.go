@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/config"
 	"github.com/mattermost/mattermost-plugin-agents/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
@@ -54,6 +55,24 @@ type MCPClientManager interface {
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (string, error)
+	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
+	GetConfig() mcp.Config
+}
+
+// ConfigStore provides read/write access to the plugin configuration in the database.
+type ConfigStore interface {
+	GetConfig() (*config.Config, error)
+	SaveConfig(cfg config.Config) error
+}
+
+// ConfigUpdater updates the in-memory plugin configuration.
+type ConfigUpdater interface {
+	Update(cfg *config.Config)
+}
+
+// ClusterNotifier broadcasts config update events to other cluster nodes.
+type ClusterNotifier interface {
+	PublishConfigUpdate() error
 }
 
 // API represents the HTTP API functionality for the plugin
@@ -77,6 +96,9 @@ type API struct {
 	mcpClientManager      MCPClientManager
 	mcpHandlers           *mcpserver.PluginMCPHandlers
 	llmUpstreamHTTPClient *http.Client
+	configStore           ConfigStore
+	configUpdater         ConfigUpdater
+	clusterNotifier       ClusterNotifier
 	getSearchInitError    func() string
 }
 
@@ -100,6 +122,9 @@ func New(
 	mcpClientManager MCPClientManager,
 	mcpHandlers *mcpserver.PluginMCPHandlers,
 	llmUpstreamHTTPClient *http.Client,
+	configStore ConfigStore,
+	configUpdater ConfigUpdater,
+	clusterNotifier ClusterNotifier,
 	getSearchInitError func() string,
 ) *API {
 	return &API{
@@ -122,6 +147,9 @@ func New(
 		mcpClientManager:      mcpClientManager,
 		mcpHandlers:           mcpHandlers,
 		llmUpstreamHTTPClient: llmUpstreamHTTPClient,
+		configStore:           configStore,
+		configUpdater:         configUpdater,
+		clusterNotifier:       clusterNotifier,
 		getSearchInitError:    getSearchInitError,
 	}
 }
@@ -173,6 +201,9 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
+	router.GET("/mcp/tools", a.handleGetUserMCPTools)
+	router.GET("/mcp/user-preferences", a.handleGetUserPreferences)
+	router.PUT("/mcp/user-preferences", a.handlePutUserPreferences)
 
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
 	// Used by the MCP server for external search callbacks.
@@ -208,8 +239,11 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/reindex/catchup", a.handleCatchUpIndex)
 	adminRouter.GET("/reindex/health-check", a.handleIndexHealthCheck)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
+	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
+	adminRouter.GET("/config", a.handleGetConfig)
+	adminRouter.PUT("/config", a.handleSaveConfig)
 
 	searchRouter := botRequiredRouter.Group("/search")
 	// Only returns search results

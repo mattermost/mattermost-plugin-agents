@@ -37,6 +37,7 @@ type Errors struct {
 type Config = config.MCPConfig
 type ServerConfig = config.MCPServerConfig
 type EmbeddedServerConfig = config.MCPEmbeddedServerConfig
+type ToolConfig = config.MCPToolConfig
 
 // DiscoverRemoteServerTools creates a temporary connection to a remote MCP server and discovers its tools
 func DiscoverRemoteServerTools(

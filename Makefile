@@ -348,6 +348,14 @@ evals-comment: evalviewer
 	@echo Running evaluations and generating GitHub comment...
 	./bin/evalviewer comment -v ./conversations ./threads ./channels ./react
 
+## Runs MCP server evaluations testing tool output quality and agentic flows.
+## Requires: OPENAI_API_KEY (or other provider keys), Docker for testcontainers.
+## Uses the same LLM_PROVIDER environment variable as the evals target.
+.PHONY: mcp-evals
+mcp-evals:
+	@echo Running MCP server evaluations...
+	GOEVALS=1 $(GO) test -v ./mcpserver/ -run "Eval" -timeout 10m
+
 ## Builds and installs the plugin to a server, updating the webapp automatically when changed.
 .PHONY: watch
 watch: apply server bundle
