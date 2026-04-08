@@ -140,7 +140,7 @@ The embedded MCP server provides tool-calling capabilities, allowing the AI agen
 - `enableChannelMentionToolCalling` — allows tool use when the bot is @mentioned in channels (not just DMs)
 
 **Available embedded MCP tools** (13 tools, defined in `mcpserver/tools/`):
-`create_post`, `read_channel`, `create_channel`, `get_channel_info`, `get_channel_members`, `add_user_to_channel`, `get_user_channels`, `read_post`, `search_posts`, `search_users`, `get_team_info`, `get_team_members`, `list_teams`, `dm_self`
+`create_post`, `read_channel`, `create_channel`, `get_channel_info`, `get_channel_members`, `add_user_to_channel`, `get_user_channels`, `read_post`, `search_posts`, `search_users`, `get_team_info`, `get_team_members`,  `dm_self`
 
 **How tool calls work:**
 1. The user sends a message requesting an action (e.g., "create a post in Town Square")
