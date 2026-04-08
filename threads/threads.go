@@ -6,11 +6,11 @@ package threads
 import (
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/conversation"
-	"github.com/mattermost/mattermost-plugin-ai/format"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/format"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
 )
 
 // AnalyzeResult contains the result of a thread analysis call.

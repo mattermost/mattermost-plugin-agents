@@ -15,9 +15,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
-	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
+	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
 )
 
 func init() {

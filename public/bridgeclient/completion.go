@@ -13,7 +13,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 // AgentCompletion makes a non-streaming completion request to a specific agent by Bot ID.

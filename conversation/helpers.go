@@ -6,8 +6,8 @@ package conversation
 import (
 	"encoding/json"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/toolrunner"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 )
 
 // textBlocks creates content blocks from a plain text message.

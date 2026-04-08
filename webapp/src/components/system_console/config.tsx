@@ -149,7 +149,7 @@ const BetaMessage = () => (
                         <a
                             target={'_blank'}
                             rel={'noopener noreferrer'}
-                            href='http://github.com/mattermost/mattermost-plugin-ai/issues'
+                            href='http://github.com/mattermost/mattermost-plugin-agents/issues'
                         >
                             {chunks}
                         </a>

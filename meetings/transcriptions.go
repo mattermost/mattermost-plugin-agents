@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/mattermost/mattermost-plugin-ai/bots"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 

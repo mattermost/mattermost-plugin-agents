@@ -19,14 +19,14 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/mattermost/mattermost-plugin-ai/chunking"
-	"github.com/mattermost/mattermost-plugin-ai/embeddings"
-	"github.com/mattermost/mattermost-plugin-ai/evals"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/testhelpers"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
-	"github.com/mattermost/mattermost-plugin-ai/postgres"
-	"github.com/mattermost/mattermost-plugin-ai/search"
+	"github.com/mattermost/mattermost-plugin-agents/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/evals"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/testhelpers"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-agents/postgres"
+	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 

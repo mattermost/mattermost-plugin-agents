@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 // MaxToolRounds is the maximum number of tool-call-execute-recall iterations
@@ -162,10 +162,11 @@ func (r *ToolRunner) Run(
 	opts ...llm.LanguageModelOption,
 ) (*ToolRunResult, error) {
 	var toolTurns []ToolTurn
+	currentOpts := append([]llm.LanguageModelOption(nil), opts...)
 
 	for round := 0; round < MaxToolRounds; round++ {
 		// Step 1: Call LLM.
-		stream, err := r.llm.ChatCompletion(request, opts...)
+		stream, err := r.llm.ChatCompletion(request, currentOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("llm completion failed: %w", err)
 		}
@@ -273,7 +274,13 @@ func (r *ToolRunner) Run(
 			ReasoningSignature: acc.reasoningData.Signature,
 		})
 
-		// Step 9: Loop back to step 1 with the updated request.
+		// Step 9: Check for consecutive tool call failures and disable tools if needed.
+		if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
+			request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
+			currentOpts = append(currentOpts, llm.WithToolsDisabled())
+		}
+
+		// Step 10: Loop back to step 1 with the updated request.
 	}
 
 	// Exhausted MaxToolRounds: return an end-of-stream and all accumulated tool turns.

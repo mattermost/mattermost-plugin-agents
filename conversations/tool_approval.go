@@ -10,14 +10,14 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/conversation"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/store"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
-	"github.com/mattermost/mattermost-plugin-ai/toolrunner"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/store"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -168,11 +168,14 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return fmt.Errorf("failed to create tool result turn: %w", err)
 	}
 
-	// If no tool call succeeded, don't continue the LLM loop.
-	hasSuccess := slices.ContainsFunc(toolResults, func(tr toolrunner.ToolResult) bool {
-		return !tr.IsError
+	// Continue when there is any executed tool result (success or error).
+	// Error results are included because the agent may recover on the next turn.
+	// Only skip continuation when all tools were rejected.
+	hasExecuted := slices.ContainsFunc(pendingBlocks, func(b conversation.ContentBlock) bool {
+		return b.Type == conversation.BlockTypeToolUse &&
+			(b.Status == conversation.StatusSuccess || b.Status == conversation.StatusError)
 	})
-	if !hasSuccess {
+	if !hasExecuted {
 		return nil
 	}
 
@@ -276,7 +279,7 @@ func (c *Conversations) streamToolFollowUp(
 			origin = llmContext.Tools.GetServerOrigin(tc.Name)
 		}
 		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
-		return policy == mcp.ToolPolicyAutoRun && enabled
+		return mcp.IsToolPolicyAutoRun(policy) && enabled
 	}, opts...)
 	if err != nil {
 		return fmt.Errorf("tool runner failed on tool follow-up: %w", err)

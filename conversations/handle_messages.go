@@ -8,16 +8,16 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/conversation"
-	"github.com/mattermost/mattermost-plugin-ai/i18n"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/mmtools"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
-	"github.com/mattermost/mattermost-plugin-ai/toolrunner"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
@@ -231,7 +231,7 @@ func (c *Conversations) handleMentionViaConversation(
 			origin = llmContext.Tools.GetServerOrigin(tc.Name)
 		}
 		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
-		return policy == mcp.ToolPolicyAutoRun && enabled
+		return mcp.IsToolPolicyAutoRun(policy) && enabled
 	}, opts...)
 	if runErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)

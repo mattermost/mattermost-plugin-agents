@@ -13,6 +13,9 @@ import manifest from './manifest';
 
 const Client4 = new Client4Class();
 
+type MCPToolPolicy = 'auto_run' | 'auto_run_everywhere' | 'ask';
+type VettedToolConfig = {name: string; policy: MCPToolPolicy; enabled: boolean};
+
 export function setSiteURL(siteURL: string) {
     Client4.setUrl(siteURL);
 }
@@ -508,7 +511,7 @@ export async function clearMCPToolsCache() {
 }
 
 /** Authoritative vetted default tool_configs for a base URL (matches mcp.SeedVettedToolConfigs). */
-export async function getVettedToolSeed(baseURL: string): Promise<Array<{name: string; policy: 'auto_run' | 'ask'; enabled: boolean}>> {
+export async function getVettedToolSeed(baseURL: string): Promise<VettedToolConfig[]> {
     const trimmed = baseURL.trim();
     if (!trimmed) {
         return [];
@@ -520,7 +523,7 @@ export async function getVettedToolSeed(baseURL: string): Promise<Array<{name: s
     }));
 
     if (response.ok) {
-        const data = await response.json() as {tool_configs?: Array<{name: string; policy: 'auto_run' | 'ask'; enabled: boolean}>};
+        const data = await response.json() as {tool_configs?: VettedToolConfig[]};
         return data.tool_configs ?? [];
     }
 

@@ -6,7 +6,7 @@ package conversation
 import (
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 // BlocksToPost converts a slice of content blocks and a role string into an llm.Post.

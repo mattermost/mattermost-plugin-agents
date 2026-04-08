@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-ai/chunking"
-	"github.com/mattermost/mattermost-plugin-ai/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 )
 
 // These tests require PostgreSQL with pgvector extension installed.

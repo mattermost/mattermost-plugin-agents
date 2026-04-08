@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-ai/format"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/store"
-	"github.com/mattermost/mattermost-plugin-ai/toolrunner"
+	"github.com/mattermost/mattermost-plugin-agents/format"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/store"
+	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
