@@ -1,4 +1,4 @@
-module github.com/mattermost/mattermost-plugin-ai/cmd/evalviewer
+module github.com/mattermost/mattermost-plugin-agents/cmd/evalviewer
 
 go 1.25.0
 

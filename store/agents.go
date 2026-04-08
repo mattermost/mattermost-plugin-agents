@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/useragents"
+	"github.com/mattermost/mattermost-plugin-agents/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 

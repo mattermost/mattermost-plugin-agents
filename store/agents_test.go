@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/useragents"
+	"github.com/mattermost/mattermost-plugin-agents/useragents"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

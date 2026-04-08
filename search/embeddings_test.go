@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/embeddings"
-	"github.com/mattermost/mattermost-plugin-ai/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -417,6 +417,27 @@ func TestVectorStoreConfigUnmarshalEdgeCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEmbeddingConfigJSONKeys(t *testing.T) {
+	t.Run("OpenAIEmbeddingConfig deserializes embeddingModel field", func(t *testing.T) {
+		raw := json.RawMessage(`{"apiKey": "sk-test", "apiURL": "https://custom.api", "embeddingModel": "text-embedding-3-small"}`)
+		var cfg OpenAIEmbeddingConfig
+		require.NoError(t, json.Unmarshal(raw, &cfg))
+		require.Equal(t, "sk-test", cfg.APIKey)
+		require.Equal(t, "https://custom.api", cfg.APIURL)
+		require.Equal(t, "text-embedding-3-small", cfg.Model)
+	})
+
+	t.Run("BifrostEmbeddingConfig deserializes model field", func(t *testing.T) {
+		raw := json.RawMessage(`{"provider": "openai", "apiKey": "sk-test", "apiURL": "https://custom.api", "model": "text-embedding-3-small"}`)
+		var cfg BifrostEmbeddingConfig
+		require.NoError(t, json.Unmarshal(raw, &cfg))
+		require.Equal(t, "openai", cfg.Provider)
+		require.Equal(t, "sk-test", cfg.APIKey)
+		require.Equal(t, "https://custom.api", cfg.APIURL)
+		require.Equal(t, "text-embedding-3-small", cfg.Model)
+	})
 }
 
 func TestMockProviderDimensions(t *testing.T) {
