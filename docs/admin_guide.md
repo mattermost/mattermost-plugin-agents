@@ -12,6 +12,7 @@ Before installing the Agents plugin, ensure your environment meets these require
 - PostgreSQL database
 - For semantic search: PostgreSQL with pgvector extension
 - Network access to your chosen LLM provider
+- If outbound LLM traffic must use an HTTP proxy, set `HTTP_PROXY` and `HTTPS_PROXY` on the Mattermost server process or container environment.
 - API keys if using a cloud LLM service
 
 ### Installation Steps
@@ -40,7 +41,7 @@ Agents is enabled automatically when using the pre-installed version. If you've 
 
 If you have an Enterprise, or Enterprise Advanced license, upload it to unlock additional features. If you don't have a license but are running Mattermost Enterprise Edition, an Entry license will be automatically applied for you.
 
-For general settings, you can toggle to enable or disable the plugin system-wide, enable debug logging for troubleshooting (use only when needed), enable token usage logging for tracking LLM interactions, and configure the hostname allowlist for API calls.
+For general settings, you can toggle to enable or disable the plugin system-wide, enable debug logging for troubleshooting (use only when needed), enable token usage logging for tracking LLM interactions, and configure the hostname allowlist for API calls. Outbound LLM provider traffic respects `HTTP_PROXY` and `HTTPS_PROXY` when they are set on the Mattermost server process.
 
 ### AI response link rendering
 
