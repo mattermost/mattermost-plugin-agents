@@ -13,7 +13,6 @@ const realAPISpecs = new Set([
     'tests/multiplayer-tool-calling/multiplayer-tool-calling.spec.ts',
     'tests/llmbot-post-component/citations-annotations.spec.ts',
     'tests/llmbot-post-component/combined-features.spec.ts',
-    'tests/llmbot-post-component/debug-test.spec.ts',
     'tests/llmbot-post-component/edge-cases.spec.ts',
     'tests/llmbot-post-component/reasoning-display.spec.ts',
     'tests/llmbot-post-component/streaming-persistence.spec.ts',
@@ -26,6 +25,7 @@ const realAPISpecs = new Set([
 
 const groups = {
     'e2e-shard-1': [
+        'tests/llmbot-post-component/debug-test.spec.ts',
         'tests/system-console/bot-reasoning-config.spec.ts',
         'tests/channel-analysis/integration/integration.spec.ts',
         'tests/bot-configuration/service-changes.spec.ts',
@@ -88,7 +88,6 @@ const groups = {
     'llmbot-real-reasoning': [
         'tests/llmbot-post-component/reasoning-display.spec.ts',
         'tests/llmbot-post-component/streaming-persistence.spec.ts',
-        'tests/llmbot-post-component/debug-test.spec.ts',
     ],
     'llmbot-real-edge-cases': [
         'tests/llmbot-post-component/edge-cases.spec.ts',

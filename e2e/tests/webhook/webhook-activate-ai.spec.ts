@@ -120,13 +120,13 @@ test.describe('Incoming webhook + activate_ai', () => {
         await page.goto(`${mattermost.url()}/${teamName}/channels/town-square`);
         await page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 60000});
 
-        await postIncomingWebhook(webhookURL, userMentionMessage, {activate_ai: true});
+        await postIncomingWebhook(webhookURL, userMentionMessage, {activate_ai: 'true'});
 
         const userPost = await waitForSentPostContaining(page, /incoming webhook activate_ai e2e/);
         await openThreadForPost(userPost);
 
-        await expect(page.locator('#rhsContainer').locator('.post-message__text').getByText(replyText)).toBeVisible({
-            timeout: 60000,
-        });
+        const rhs = page.locator('#rhsContainer');
+        await expect(rhs.locator('[data-testid="llm-bot-post"]').first()).toBeVisible({timeout: 60000});
+        await expect(rhs).toContainText(replyText, {timeout: 60000});
     });
 });

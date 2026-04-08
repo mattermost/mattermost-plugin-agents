@@ -61,6 +61,38 @@ func TestFilterAutomatedInvokerTools(t *testing.T) {
 		require.ElementsMatch(t, []string{"auto_run_tool", "everywhere_tool"}, names)
 	})
 
+	t.Run("policy disabled in tool config removes tool for automated invokers", func(t *testing.T) {
+		disabledChecker := streaming.ToolPolicyFunc(func(serverBaseURL, toolName string) (string, bool) {
+			switch toolName {
+			case "everywhere_on":
+				return mcp.ToolPolicyAutoRunEverywhere, true
+			case "everywhere_off":
+				return mcp.ToolPolicyAutoRunEverywhere, false
+			case "auto_on":
+				return mcp.ToolPolicyAutoRun, true
+			default:
+				return mcp.ToolPolicyAsk, true
+			}
+		})
+		store := llm.NewToolStore(nil, false)
+		store.AddTools([]llm.Tool{
+			{Name: "everywhere_on", ServerOrigin: origin},
+			{Name: "everywhere_off", ServerOrigin: origin},
+			{Name: "auto_on", ServerOrigin: origin},
+		})
+		filterAutomatedInvokerTools(store, true, false, disabledChecker)
+		require.ElementsMatch(t, []string{"everywhere_on"}, toolNames(store))
+
+		store2 := llm.NewToolStore(nil, false)
+		store2.AddTools([]llm.Tool{
+			{Name: "everywhere_on", ServerOrigin: origin},
+			{Name: "everywhere_off", ServerOrigin: origin},
+			{Name: "auto_on", ServerOrigin: origin},
+		})
+		filterAutomatedInvokerTools(store2, true, true, disabledChecker)
+		require.ElementsMatch(t, []string{"everywhere_on", "auto_on"}, toolNames(store2))
+	})
+
 	t.Run("built-in tools with empty ServerOrigin are never removed", func(t *testing.T) {
 		productionLikeChecker := streaming.ToolPolicyFunc(func(serverBaseURL, toolName string) (string, bool) {
 			if serverBaseURL == mcp.EmbeddedClientKey {

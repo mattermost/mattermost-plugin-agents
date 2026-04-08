@@ -155,11 +155,18 @@ test.describe.serial('MCP Panel', () => {
             await headerValueInput.fill('Bearer e2e-fallback-token');
 
             await systemConsole.clickSave();
-            await page.reload();
+            await systemConsole.navigateToPluginConfig(mattermost.url());
             await page.waitForSelector('text=To report a bug or to provide feedback', {timeout: 15000});
 
-            // When fallback headers are saved, the section auto-expands on load (do not toggle the header
-            // here — that would collapse it and unmount the content region).
+            await expect(page.getByText('E2E MCP Server')).toBeVisible({timeout: 15000});
+
+            const serviceAccountHeaderReloaded = page.getByRole('button', {name: /Service account authentication/i});
+            await serviceAccountHeaderReloaded.scrollIntoViewIfNeeded();
+            const expanded = await serviceAccountHeaderReloaded.getAttribute('aria-expanded');
+            if (expanded !== 'true') {
+                await serviceAccountHeaderReloaded.click();
+            }
+
             const reloadedSection = page.locator('#service-account-section-content-0');
             await expect(reloadedSection).toBeVisible({timeout: 15000});
             await expect(reloadedSection.getByPlaceholder('Header name').first()).toHaveValue('Authorization');

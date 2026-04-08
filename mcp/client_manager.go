@@ -135,28 +135,30 @@ func (m *ClientManager) Close() {
 
 // createAndStoreUserClient creates a new UserClients instance and stores it in the manager
 func (m *ClientManager) createAndStoreUserClient(userID string, isAutomatedInvoker bool) (*UserClients, *Errors) {
+	cacheKey := mcpClientCacheKey(userID, isAutomatedInvoker)
+
+	m.clientsMu.Lock()
+	if client, exists := m.clients[cacheKey]; exists {
+		m.activity[cacheKey] = time.Now()
+		m.clientsMu.Unlock()
+		return client, nil
+	}
+	m.clientsMu.Unlock()
+
+	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache, isAutomatedInvoker)
+	mcpErrors := userClients.ConnectToRemoteServers(m.config.Servers)
+
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
 
-	cacheKey := mcpClientCacheKey(userID, isAutomatedInvoker)
-
-	// Check again in case another goroutine created the client while we were waiting for the lock
-	client, exists := m.clients[cacheKey]
-	if exists {
+	if client, exists := m.clients[cacheKey]; exists {
+		userClients.Close()
 		m.activity[cacheKey] = time.Now()
 		return client, nil
 	}
 
-	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache, isAutomatedInvoker)
-
-	// Let user client connect to remote servers only
-	mcpErrors := userClients.ConnectToRemoteServers(m.config.Servers)
-
-	// Store the client even if some servers failed to connect
-	// This allows partial success - user gets tools from working servers
 	m.clients[cacheKey] = userClients
 	m.activity[cacheKey] = time.Now()
-
 	return userClients, mcpErrors
 }
 
