@@ -24,10 +24,10 @@ import (
 
 // MCPToolContext provides MCP-specific functionality with the authenticated client.
 type MCPToolContext struct {
-	Ctx            context.Context
-	Client         *model.Client4
-	AccessMode     AccessMode
-	BotUserID      string              // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
+	Ctx                   context.Context
+	Client                *model.Client4
+	AccessMode            AccessMode
+	BotUserID             string                     // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
 	MattermostAccessScope *llm.MattermostAccessScope // Runtime guardrails for bridge runs; nil means no restrictions
 }
 

@@ -247,32 +247,20 @@ func TestAutomationCreateFlow(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, "name is required", result)
 	})
+}
 
-	t.Run("create missing trigger", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{
-				"name": "Test",
-				"trigger": {}
-			}`), target)
-		}
+func TestGetAutomationInstructions(t *testing.T) {
+	provider := newTestProvider(t, "http://localhost")
+	mcpCtx := &MCPToolContext{}
+	argsGetter := func(target any) error {
+		return json.Unmarshal([]byte(`{}`), target)
+	}
 
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
-		require.Error(t, err)
-		assert.Contains(t, result, "trigger is required")
-	})
-
-	t.Run("create multiple triggers", func(t *testing.T) {
-		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(`{
-				"name": "Test",
-				"trigger": {"message_posted": {"channel_id": "ch1"}, "schedule": {"channel_id": "ch1", "interval": "daily"}}
-			}`), target)
-		}
-
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
-		require.Error(t, err)
-		assert.Contains(t, result, "exactly one type set")
-	})
+	result, err := provider.toolGetAutomationInstructions(mcpCtx, argsGetter)
+	require.NoError(t, err)
+	assert.Contains(t, result, "create_automation")
+	assert.Contains(t, result, "TRIGGERS:")
+	assert.Contains(t, result, "UPDATING AUTOMATIONS")
 }
 
 func TestAutomationUpdateFlow(t *testing.T) {

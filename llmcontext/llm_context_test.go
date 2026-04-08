@@ -65,6 +65,7 @@ func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
 	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("HasPermissionTo", "user-id", model.PermissionManageSystem).Return(false).Maybe()
 
 	client := pluginapi.NewClient(mockAPI, nil)
 	mcpProvider := &countingMCPToolProvider{}
