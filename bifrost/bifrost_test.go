@@ -727,10 +727,10 @@ func TestEnvProxyRouting(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			io.Copy(targetConn, clientConn)
+			_, _ = io.Copy(targetConn, clientConn)
 			close(done)
 		}()
-		io.Copy(clientConn, targetConn)
+		_, _ = io.Copy(clientConn, targetConn)
 		<-done
 	}))
 	defer proxy.Close()
