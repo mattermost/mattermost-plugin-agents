@@ -59,7 +59,7 @@ export const TextItem = (props: TextItemProps) => {
 };
 
 export type SelectionItemProps = {
-    label: string
+    label: React.ReactNode
     value: string
     onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void
     children: React.ReactNode

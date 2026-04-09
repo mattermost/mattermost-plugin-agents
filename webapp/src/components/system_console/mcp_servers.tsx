@@ -673,7 +673,12 @@ const MCPServers = ({mcpConfig, bots, onChange}: Props) => {
                                     />
                                     {config.embeddedServer.enabled && (
                                         <SelectionItem
-                                            label={intl.formatMessage({defaultMessage: 'Automated Trigger Bot Account'})}
+                                            label={
+                                                <LabelWithPill>
+                                                    {intl.formatMessage({defaultMessage: 'Automated Trigger Bot Account'})}
+                                                    <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
+                                                </LabelWithPill>
+                                            }
                                             value={config.embeddedServer.automatedTriggerBotUsername || ''}
                                             onChange={(e) => onChange({
                                                 ...config,
@@ -1039,6 +1044,13 @@ const TabButton = styled.button.attrs<{active: boolean}>({type: 'button'})<{acti
 
 const TabContent = styled.div`
     /* Tab content styling */
+`;
+
+const LabelWithPill = styled.div`
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
 `;
 
 export default MCPServers;
