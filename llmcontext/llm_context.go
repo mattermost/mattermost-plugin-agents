@@ -203,8 +203,14 @@ func (b *Builder) WithLLMContextTools(bot *bots.Bot) llm.ContextOption {
 			return
 		}
 
-		// Get tools using session info from llm.Context
-		c.Tools = b.getToolsStoreForUser(c, bot, c.RequestingUser.Id)
+		toolUserID := c.EffectiveToolUserID()
+		if toolUserID == "" {
+			b.pluginAPI.Log.Error("Cannot add tools to context: EffectiveToolUserID is empty")
+			return
+		}
+
+		// Get tools using session info from llm.Context (MCP and embedded sessions use toolUserID).
+		c.Tools = b.getToolsStoreForUser(c, bot, toolUserID)
 	}
 }
 

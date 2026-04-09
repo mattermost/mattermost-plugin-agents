@@ -190,7 +190,8 @@ func (m *ClientManager) getClientForUser(userID string, isAutomatedInvoker bool)
 }
 
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
-// When isAutomatedInvoker is true, remote MCP servers may use FallbackAuthHeaders instead of per-user OAuth.
+// When isAutomatedInvoker is true, remote MCP does not use per-user OAuth; it uses FallbackAuthHeaders
+// and/or static server Headers (see oauth transport + httpClientForMCP).
 func (m *ClientManager) GetToolsForUser(userID string, isAutomatedInvoker bool) ([]llm.Tool, *Errors) {
 	// Get or create client for this user (connects to remote servers only)
 	userClient, mcpErrors := m.getClientForUser(userID, isAutomatedInvoker)

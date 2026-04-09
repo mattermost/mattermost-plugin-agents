@@ -157,8 +157,9 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 }
 
 // NewClient creates a new MCP client for the given server and user and connects to the specified MCP server.
-// When isAutomatedInvoker is true and there is no OAuth token, FallbackAuthHeaders from serverConfig are used;
-// humans never use fallback headers (they get the normal OAuth flow on 401).
+// When isAutomatedInvoker is true, per-user OAuth tokens are not used. Remote MCP then prefers
+// FallbackAuthHeaders; if those are empty, static server Headers (see httpClientForMCP) still apply.
+// Human invokers use OAuth tokens when present; they never use fallback headers (normal OAuth flow on 401).
 func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache, isAutomatedInvoker bool) (*Client, error) {
 	c := &Client{
 		session:            nil,

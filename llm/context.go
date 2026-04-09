@@ -52,6 +52,19 @@ type Context struct {
 	AutomatedMCPInvoker bool
 }
 
+// EffectiveToolUserID returns the Mattermost user ID used for tool execution, MCP sessions,
+// and permission checks. Automated invokers use the agent bot user ID so integration users
+// (e.g. webhook owners) do not grant their own OAuth or elevated API access to tools.
+func (c *Context) EffectiveToolUserID() string {
+	if c.AutomatedMCPInvoker && c.BotUserID != "" {
+		return c.BotUserID
+	}
+	if c.RequestingUser != nil {
+		return c.RequestingUser.Id
+	}
+	return ""
+}
+
 // ContextOption defines a function that configures a Context
 type ContextOption func(*Context)
 

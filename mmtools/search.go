@@ -46,7 +46,7 @@ func (p *MMToolProvider) toolSearchServer(llmContext *llm.Context, argsGetter ll
 	ctx := context.Background()
 	searchResults, err := p.search.Search(ctx, args.Term, search.Options{
 		Limit:  10,
-		UserID: llmContext.RequestingUser.Id,
+		UserID: llmContext.EffectiveToolUserID(),
 	})
 	if err != nil {
 		return "there was an error performing the search", fmt.Errorf("search failed: %w", err)

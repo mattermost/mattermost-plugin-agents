@@ -71,42 +71,47 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 		}()
 	}
 
-	token, err := t.manager.loadToken(t.userID, t.serverName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load token: %w", err)
-	}
-
 	transport := t.base
 	useFallbackAuth := false
 
-	// Include the token if found (always preferred over fallback headers).
-	if token != nil {
-		oauthConfig, configErr := t.manager.createOAuthConfig(req.Context(), t.serverURL, "", t.staticCreds)
-		if configErr != nil {
-			return nil, fmt.Errorf("failed to create OAuth config: %w", configErr)
+	if t.isAutomatedInvoker {
+		// Automated invokers must not use per-user OAuth tokens from the Mattermost user.
+		// Prefer FallbackAuthHeaders when set; otherwise pass through so outer transports
+		// (e.g. headerTransport with static server Headers / API keys) still apply.
+		if len(t.fallbackAuthHeaders) > 0 {
+			useFallbackAuth = true
+			req = req.Clone(req.Context())
+			setCount := 0
+			for k, v := range t.fallbackAuthHeaders {
+				k = strings.TrimSpace(k)
+				if k == "" {
+					continue
+				}
+				req.Header.Set(k, v)
+				setCount++
+			}
+			if setCount == 0 {
+				return nil, fmt.Errorf("MCP server %q: fallback authentication headers have no valid header names (empty keys are ignored)", t.serverName)
+			}
+		}
+		// When len(fallbackAuthHeaders)==0, transport stays t.base (static Headers are
+		// applied by wrapping headerTransport in httpClientForMCP).
+	} else {
+		token, err := t.manager.loadToken(t.userID, t.serverName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load token: %w", err)
 		}
 
-		transport = &oauth2.Transport{
-			Source: oauthConfig.TokenSource(req.Context(), token),
-			Base:   transport,
-		}
-	} else if t.isAutomatedInvoker {
-		if len(t.fallbackAuthHeaders) == 0 {
-			return nil, fmt.Errorf("MCP server %q: no OAuth token and no fallback authentication headers configured for automated invokers", t.serverName)
-		}
-		useFallbackAuth = true
-		req = req.Clone(req.Context())
-		setCount := 0
-		for k, v := range t.fallbackAuthHeaders {
-			k = strings.TrimSpace(k)
-			if k == "" {
-				continue
+		if token != nil {
+			oauthConfig, configErr := t.manager.createOAuthConfig(req.Context(), t.serverURL, "", t.staticCreds)
+			if configErr != nil {
+				return nil, fmt.Errorf("failed to create OAuth config: %w", configErr)
 			}
-			req.Header.Set(k, v)
-			setCount++
-		}
-		if setCount == 0 {
-			return nil, fmt.Errorf("MCP server %q: fallback authentication headers have no valid header names (empty keys are ignored)", t.serverName)
+
+			transport = &oauth2.Transport{
+				Source: oauthConfig.TokenSource(req.Context(), token),
+				Base:   transport,
+			}
 		}
 	}
 

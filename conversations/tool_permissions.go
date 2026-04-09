@@ -74,6 +74,7 @@ func filterAutomatedInvokerTools(store *llm.ToolStore, automated bool, isDM bool
 		} else {
 			keep = mcp.IsToolPolicyAutoRunEverywhere(policy) && enabled
 		}
+
 		if !keep {
 			remove = append(remove, t.Name)
 		}

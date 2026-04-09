@@ -406,6 +406,7 @@ func (p *MMPostStreamService) handleAutoApprovedToolCalls(post *model.Post, tool
 	post.AddProp(ToolCallRedactedProp, "true")
 	post.AddProp(AutoApprovedToolCallProp, "true")
 	requiresResultReview := p.anyToolResultRequiresReview(toolCalls)
+
 	if requiresResultReview {
 		// Set up result-sharing stage: the post shows redacted tools with
 		// PendingToolResultProp so the frontend presents the result-approval UI
@@ -580,9 +581,11 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					}
 
 					if preExecuted && !isDMWithBot {
-						// Auto-approved in channel (pre-executed by wrapper): skip call-approval, set up result-sharing
+						// Auto-approved in channel (pre-executed by wrapper): skip call-approval, set up result-sharing.
+						// Do not return: keep consuming the stream so EventTypeEnd runs final post handling
+						// (otherwise the assistant never "finishes" and the stream never closes cleanly).
 						p.handleAutoApprovedToolCalls(post, toolCalls, broadcast)
-						return
+						continue
 					}
 
 					if isDMWithBot {

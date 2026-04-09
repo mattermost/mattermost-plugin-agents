@@ -66,6 +66,40 @@ func TestAuthenticationTransport_AutomatedInvokerFallbackAuth(t *testing.T) {
 		require.Equal(t, "Bearer mcp-fallback-token", gotAuth)
 	})
 
+	t.Run("uses fallback headers when automated even if OAuth token exists for user", func(t *testing.T) {
+		t.Parallel()
+
+		var gotAuth string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotAuth = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		}))
+		t.Cleanup(srv.Close)
+
+		rt := &authenticationTransport{
+			userID:     "user-1",
+			serverName: "remote",
+			serverURL:  srv.URL,
+			manager: stubOAuthAuthManager{
+				token: &oauth2.Token{AccessToken: "user-oauth-token-should-not-be-used"},
+			},
+			base:                http.DefaultTransport,
+			fallbackAuthHeaders: map[string]string{"Authorization": "Bearer mcp-fallback-token"},
+			isAutomatedInvoker:  true,
+		}
+
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp", http.NoBody)
+		require.NoError(t, err)
+
+		resp, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		_ = resp.Body.Close()
+
+		require.Equal(t, "Bearer mcp-fallback-token", gotAuth)
+	})
+
 	t.Run("errors when automated and fallback map has only empty header names", func(t *testing.T) {
 		t.Parallel()
 
@@ -91,24 +125,33 @@ func TestAuthenticationTransport_AutomatedInvokerFallbackAuth(t *testing.T) {
 		require.Contains(t, err.Error(), "no valid header names")
 	})
 
-	t.Run("errors when automated and no token and no fallback headers", func(t *testing.T) {
+	t.Run("automated with no fallback passes through for outer static Headers", func(t *testing.T) {
 		t.Parallel()
+
+		var sawRequest bool
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sawRequest = true
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(srv.Close)
 
 		rt := &authenticationTransport{
 			userID:              "user-1",
 			serverName:          "remote",
-			serverURL:           "http://unused.example",
+			serverURL:           srv.URL,
 			manager:             stubOAuthAuthManager{},
 			base:                http.DefaultTransport,
 			fallbackAuthHeaders: nil,
 			isAutomatedInvoker:  true,
 		}
 
-		req, err := http.NewRequest(http.MethodGet, "http://unused.example/mcp", http.NoBody)
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp", http.NoBody)
 		require.NoError(t, err)
 
-		_, err = rt.RoundTrip(req)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "no fallback authentication headers")
+		resp, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		_ = resp.Body.Close()
+		require.True(t, sawRequest)
 	})
 }

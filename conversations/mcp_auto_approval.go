@@ -8,11 +8,31 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// toolAutoRunnableForStream matches filterAutomatedInvokerTools: in DM-with-bot contexts,
+// auto_run (or everywhere) allows pre-execution; in other channels, only auto_run_everywhere does.
+// When channel is nil, use the strict non-DM rule (everywhere only) so auto_run-only tools are
+// never pre-executed in ambiguous contexts.
+func toolAutoRunnableForStream(policy string, enabled bool, channel *model.Channel, botUserID string) bool {
+	if !enabled {
+		return false
+	}
+	if channel == nil {
+		return mcp.IsToolPolicyAutoRunEverywhere(policy)
+	}
+	if mmapi.IsDMWith(botUserID, channel) {
+		return mcp.IsToolPolicyAutoRun(policy)
+	}
+	return mcp.IsToolPolicyAutoRunEverywhere(policy)
+}
+
 // wrapStreamWithMCPAutoApproval wraps a text stream to automatically execute
-// MCP tool calls whose per-tool policy satisfies mcp.IsToolPolicyAutoRun + enabled.
+// MCP tool calls whose per-tool policy satisfies the same rules as filterAutomatedInvokerTools
+// (channel vs DM-with-bot; see toolAutoRunnableForStream).
 //
 // When ALL tool calls in a batch are auto-runnable, the wrapper:
 //  1. Executes each tool via the ToolStore
@@ -57,7 +77,7 @@ func wrapStreamWithMCPAutoApproval(
 					toolCalls[i].ServerOrigin = tool.ServerOrigin
 				}
 				policy, enabled := policyChecker.GetToolPolicy(toolCalls[i].ServerOrigin, toolCalls[i].Name)
-				if !mcp.IsToolPolicyAutoRun(policy) || !enabled {
+				if !toolAutoRunnableForStream(policy, enabled, llmContext.Channel, llmContext.BotUserID) {
 					allAutoRun = false
 				}
 			}

@@ -23,11 +23,13 @@ func (p *emptyToolProvider) GetTools(*bots.Bot) []llm.Tool {
 }
 
 type countingMCPToolProvider struct {
-	calls int
+	calls      int
+	lastUserID string
 }
 
-func (p *countingMCPToolProvider) GetToolsForUser(string, bool) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetToolsForUser(userID string, _ bool) ([]llm.Tool, *mcp.Errors) {
 	p.calls++
+	p.lastUserID = userID
 	return []llm.Tool{
 		{
 			Name:        "test_tool",
@@ -81,7 +83,39 @@ func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 	)
 
 	require.Equal(t, 1, mcpProvider.calls)
+	require.Equal(t, "user-id", mcpProvider.lastUserID)
 	require.Len(t, context.Tools.GetTools(), 1)
+}
+
+func TestWithLLMContextDefaultTools_usesBotUserIDForMCPWhenAutomated(t *testing.T) {
+	mockAPI := &plugintest.API{}
+	siteName := "Mattermost"
+	siteURL := "https://example.com"
+	mockAPI.On("GetConfig").Return(&model.Config{
+		TeamSettings:    model.TeamSettings{SiteName: &siteName},
+		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
+	}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+
+	client := pluginapi.NewClient(mockAPI, nil)
+	mcpProvider := &countingMCPToolProvider{}
+	builder := NewLLMContextBuilder(client, &emptyToolProvider{}, mcpProvider, &contextTestConfigProvider{})
+
+	user := &model.User{Id: "user-id", Username: "test-user", Locale: "en"}
+	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect}
+
+	context := builder.BuildLLMContextUserRequest(
+		newTestBot(),
+		user,
+		channel,
+		llm.WithAutomatedMCPInvoker(true),
+		builder.WithLLMContextDefaultTools(newTestBot()),
+	)
+
+	require.Equal(t, 1, mcpProvider.calls)
+	require.Equal(t, "bot-id", mcpProvider.lastUserID)
+	require.Len(t, context.Tools.GetTools(), 1)
+	require.Equal(t, "bot-id", context.EffectiveToolUserID())
 }
 
 func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {

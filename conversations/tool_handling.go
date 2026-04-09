@@ -119,6 +119,25 @@ func responseRootIDFromPost(post *model.Post) string {
 	return post.Id
 }
 
+func (c *Conversations) automatedInvokerFromResponsePost(post *model.Post, user *model.User) bool {
+	if post == nil || user == nil {
+		return false
+	}
+
+	respondingToPostID, ok := post.GetProp(streaming.RespondingToProp).(string)
+	if !ok || respondingToPostID == "" {
+		return false
+	}
+
+	respondingToPost, err := c.mmClient.GetPost(respondingToPostID)
+	if err != nil {
+		c.mmClient.LogWarn("Failed to load responding post for automated tool handling", "error", err, "post_id", post.Id, "responding_to_post_id", respondingToPostID)
+		return false
+	}
+
+	return isAutomatedInvoker(respondingToPost, user)
+}
+
 // HandleToolCall handles tool call approval/rejection
 func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
 	bot := c.bots.GetBotByID(post.UserId)
@@ -177,7 +196,9 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	// Extract web search context from conversation history to preserve citations
 	webSearchParams := c.extractWebSearchContext(post)
 
+	automated := c.automatedInvokerFromResponsePost(post, user)
 	contextOpts := []llm.ContextOption{
+		llm.WithAutomatedMCPInvoker(automated),
 		c.contextBuilder.WithLLMContextDefaultTools(bot),
 	}
 	if len(webSearchParams) > 0 {
@@ -190,6 +211,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		channel,
 		contextOpts...,
 	)
+	filterAutomatedInvokerTools(llmContext.Tools, llmContext.AutomatedMCPInvoker, isDM, c.toolPolicyChecker)
 	toolsDisabled := applyToolAvailability(llmContext, isDM, allowToolsInChannel)
 
 	for i := range tools {
@@ -389,7 +411,9 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	// Extract web search context from conversation history to preserve citations
 	webSearchParams := c.extractWebSearchContext(post)
 
+	automated := c.automatedInvokerFromResponsePost(post, user)
 	contextOpts := []llm.ContextOption{
+		llm.WithAutomatedMCPInvoker(automated),
 		c.contextBuilder.WithLLMContextDefaultTools(bot),
 	}
 	if len(webSearchParams) > 0 {
@@ -402,6 +426,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		channel,
 		contextOpts...,
 	)
+	filterAutomatedInvokerTools(llmContext.Tools, llmContext.AutomatedMCPInvoker, isDM, c.toolPolicyChecker)
 	toolsDisabled := applyToolAvailability(llmContext, isDM, allowToolsInChannel)
 
 	resolvedToolsJSON, err := json.Marshal(tools)

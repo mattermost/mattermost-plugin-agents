@@ -146,3 +146,28 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 		})
 	}
 }
+
+func TestMMToolProvider_toolSearchServer_usesEffectiveToolUserIDWhenAutomated(t *testing.T) {
+	me := mocks.NewMockEmbeddingSearch(t)
+	me.On("Search", mock.Anything, "test search term", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
+		return opts.UserID == "bot-user-42"
+	})).Return([]embeddings.SearchResult{}, nil)
+
+	searchService := search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
+	provider := NewMMToolProvider(nil, searchService, nil)
+
+	llmContext := llm.NewContext(llm.WithAutomatedMCPInvoker(true))
+	llmContext.RequestingUser = &model.User{Id: "human-user-1"}
+	llmContext.SetBotFields("", "", "bot-user-42", "", "", "")
+
+	argsGetter := func(args interface{}) error {
+		if searchArgs, ok := args.(*SearchServerArgs); ok {
+			searchArgs.Term = "test search term"
+			return nil
+		}
+		return errors.New("invalid args")
+	}
+
+	_, err := provider.toolSearchServer(llmContext, argsGetter)
+	require.NoError(t, err)
+}

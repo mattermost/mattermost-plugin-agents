@@ -269,9 +269,13 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 	// prompts for providers they have explicitly disabled.
 	var disabledOrigins map[string]bool
 	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
-		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
+		prefsUserID := llmContext.EffectiveToolUserID()
+		if prefsUserID == "" {
+			prefsUserID = postingUser.Id
+		}
+		prefs, err := mcp.LoadUserPreferences(c.mmClient, prefsUserID)
 		if err != nil {
-			c.mmClient.LogWarn("Failed to load user tool preferences, proceeding without filtering", "error", err.Error(), "userID", postingUser.Id)
+			c.mmClient.LogWarn("Failed to load user tool preferences, proceeding without filtering", "error", err.Error(), "userID", prefsUserID)
 		} else if len(prefs.DisabledServers) > 0 {
 			disabledOrigins = make(map[string]bool, len(prefs.DisabledServers))
 			for _, origin := range prefs.DisabledServers {
@@ -348,7 +352,11 @@ func (c *Conversations) existingConversationToLLMPosts(bot *bots.Bot, conversati
 			return nil, err
 		}
 
-		if !c.mmClient.HasPermissionToChannel(context.RequestingUser.Id, threadChannel.Id, model.PermissionReadChannel) ||
+		toolUserID := context.EffectiveToolUserID()
+		if toolUserID == "" && context.RequestingUser != nil {
+			toolUserID = context.RequestingUser.Id
+		}
+		if !c.mmClient.HasPermissionToChannel(toolUserID, threadChannel.Id, model.PermissionReadChannel) ||
 			c.bots.CheckUsageRestrictions(context.RequestingUser.Id, bot, threadChannel) != nil {
 			T := i18n.LocalizerFunc(c.i18n, context.RequestingUser.Locale)
 			responsePost := &model.Post{

@@ -10,6 +10,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -157,7 +158,14 @@ func TestWrapStreamWithMCPAutoApproval(t *testing.T) {
 			},
 		})
 
-		ctx := &llm.Context{Tools: toolStore}
+		ctx := &llm.Context{
+			Tools:     toolStore,
+			BotUserID: "bot-user-id",
+			Channel: &model.Channel{
+				Type: model.ChannelTypeDirect,
+				Name: model.GetDMNameFromIds("human-user-id", "bot-user-id"),
+			},
+		}
 		checker := &testPolicyChecker{
 			servers: []testPolicyServer{
 				{urlPatterns: []string{"mcp.atlassian.com"}, enabled: true, autoRun: map[string]bool{"search": true, "getJiraIssue": true}},
@@ -232,7 +240,14 @@ func TestWrapStreamWithMCPAutoApproval(t *testing.T) {
 			},
 		})
 
-		ctx := &llm.Context{Tools: toolStore}
+		ctx := &llm.Context{
+			Tools:     toolStore,
+			BotUserID: "bot-user-id",
+			Channel: &model.Channel{
+				Type: model.ChannelTypeDirect,
+				Name: model.GetDMNameFromIds("human-user-id", "bot-user-id"),
+			},
+		}
 		checker := &testPolicyChecker{
 			servers: []testPolicyServer{
 				{urlPatterns: []string{"mcp.atlassian.com"}, enabled: true, autoRun: map[string]bool{"search": true}},
@@ -246,6 +261,38 @@ func TestWrapStreamWithMCPAutoApproval(t *testing.T) {
 		resultToolCalls := events[0].Value.([]llm.ToolCall)
 		assert.Equal(t, llm.ToolCallStatusError, resultToolCalls[0].Status)
 		assert.Equal(t, assert.AnError.Error(), resultToolCalls[0].Result)
+	})
+
+	t.Run("auto_run_only_with_nil_channel_is_not_auto_executed", func(t *testing.T) {
+		toolCalls := []llm.ToolCall{
+			{ID: "tc1", Name: "get_user_channels", Arguments: json.RawMessage(`{}`)},
+		}
+
+		input := make(chan llm.TextStreamEvent, 2)
+		input <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
+		close(input)
+
+		toolStore := llm.NewToolStore(nil, false)
+		toolStore.AddTools([]llm.Tool{
+			{Name: "get_user_channels", ServerOrigin: mcp.EmbeddedClientKey},
+		})
+
+		ctx := &llm.Context{
+			Tools:     toolStore,
+			BotUserID: "bot-user-id",
+		}
+		checker := streaming.ToolPolicyFunc(func(serverBaseURL, toolName string) (string, bool) {
+			if serverBaseURL == mcp.EmbeddedClientKey && toolName == "get_user_channels" {
+				return mcp.ToolPolicyAutoRun, true
+			}
+			return "ask", false
+		})
+
+		result := wrapStreamWithMCPAutoApproval(streamHelper(input), ctx, checker)
+		events := collectStreamEvents(result)
+		require.Len(t, events, 1)
+		resultToolCalls := events[0].Value.([]llm.ToolCall)
+		assert.Equal(t, llm.ToolCallStatusPending, resultToolCalls[0].Status)
 	})
 
 	t.Run("disabled server does not auto-approve", func(t *testing.T) {

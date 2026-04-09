@@ -31,8 +31,8 @@ var (
 )
 
 // isAutomatedInvoker returns true when the post originates from automation (bot, webhook,
-// plugin, or OAuth app). Used to disable channel tool calling for automated invokers
-// since they cannot interactively approve tool calls.
+// plugin, or OAuth app). Tool execution and MCP use the agent bot identity (see llm.Context.EffectiveToolUserID),
+// not the integration user, so privileged webhook owners do not grant their OAuth or API access to tools.
 func isAutomatedInvoker(post *model.Post, postingUser *model.User) bool {
 	if postingUser != nil && postingUser.IsBot {
 		return true
