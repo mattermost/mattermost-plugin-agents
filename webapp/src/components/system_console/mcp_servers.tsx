@@ -12,7 +12,7 @@ import {getMCPTools, getVettedToolSeed} from '../../client';
 
 import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
 
-import {BooleanItem, ItemList, TextItem} from './item';
+import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from './item';
 
 export type MCPToolConfig = {
     name: string;
@@ -34,6 +34,7 @@ export type MCPServerConfig = {
 export type MCPEmbeddedServerConfig = {
     enabled: boolean;
     tool_configs?: MCPToolConfig[];
+    automatedTriggerBotUsername?: string;
 };
 
 export type MCPConfig = {
@@ -44,8 +45,14 @@ export type MCPConfig = {
     idleTimeoutMinutes?: number;
 };
 
+type BotOption = {
+    name: string;
+    displayName: string;
+};
+
 type Props = {
     mcpConfig: MCPConfig;
+    bots: BotOption[];
     onChange: (config: MCPConfig) => void;
 };
 
@@ -453,7 +460,7 @@ const MCPServer = ({
 };
 
 // Main component for MCP servers configuration
-const MCPServers = ({mcpConfig, onChange}: Props) => {
+const MCPServers = ({mcpConfig, bots, onChange}: Props) => {
     const intl = useIntl();
     const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
     const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
@@ -664,6 +671,32 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                         })}
                                         helpText={intl.formatMessage({defaultMessage: 'Enable the built-in Mattermost MCP server that provides AI tools for reading/creating channels, posts, searching content, and managing users and teams. Tools operate with the permissions of the user who invokes them.'})}
                                     />
+                                    {config.embeddedServer.enabled && (
+                                        <SelectionItem
+                                            label={intl.formatMessage({defaultMessage: 'Automated Trigger Bot Account'})}
+                                            value={config.embeddedServer.automatedTriggerBotUsername || ''}
+                                            onChange={(e) => onChange({
+                                                ...config,
+                                                embeddedServer: {
+                                                    ...config.embeddedServer,
+                                                    automatedTriggerBotUsername: e.target.value || undefined,
+                                                },
+                                            })}
+                                            helptext={intl.formatMessage({defaultMessage: 'The bot account used to authenticate with the Mattermost MCP server when an agent is triggered by a bot or webhook. Anything the selected bot can access (channels or teams it is a member of, private or otherwise) can then be accessed by the automated trigger. We recommend using your default bot or creating a dedicated one with minimal channel memberships. If not set, embedded Mattermost tools will be unavailable for automated triggers.'})}
+                                        >
+                                            <SelectionItemOption value=''>
+                                                {intl.formatMessage({defaultMessage: '-- None (disable for automated triggers) --'})}
+                                            </SelectionItemOption>
+                                            {bots.map((bot) => (
+                                                <SelectionItemOption
+                                                    key={bot.name}
+                                                    value={bot.name}
+                                                >
+                                                    {bot.displayName} {'(@' + bot.name + ')'}
+                                                </SelectionItemOption>
+                                            ))}
+                                        </SelectionItem>
+                                    )}
                                 </ItemList>
                                 <ServersList>
                                     {!Array.isArray(config.servers) || config.servers.length < 1 ? (

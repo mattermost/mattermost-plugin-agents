@@ -196,14 +196,20 @@ func (m *ClientManager) GetToolsForUser(userID string, isAutomatedInvoker bool) 
 	// Get or create client for this user (connects to remote servers only)
 	userClient, mcpErrors := m.getClientForUser(userID, isAutomatedInvoker)
 
-	// Connect to embedded server using a dedicated per-user session (stored/created in KV)
+	// Connect to embedded server using a dedicated per-user session (stored/created in KV).
+	// For automated invokers, use the admin-configured bot account so that only what
+	// that specific bot can access (channels, teams) is available to the trigger.
+	// If no bot is configured, embedded MCP tools are unavailable for automated triggers.
 	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
-		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
-		if ensureErr != nil {
-			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
-		} else if ensuredSessionID != "" {
-			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
-				m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
+		embeddedUserID, connectEmbedded := m.resolveEmbeddedUserID(userID, isAutomatedInvoker)
+		if connectEmbedded {
+			ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(embeddedUserID)
+			if ensureErr != nil {
+				m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", embeddedUserID, "error", ensureErr)
+			} else if ensuredSessionID != "" {
+				if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
+					m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", embeddedUserID, "sessionID", ensuredSessionID, "error", embeddedErr)
+				}
 			}
 		}
 	}
@@ -212,6 +218,29 @@ func (m *ClientManager) GetToolsForUser(userID string, isAutomatedInvoker bool) 
 	rawTools := userClient.GetTools()
 	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient)
 	return filtered, mcpErrors
+}
+
+// resolveEmbeddedUserID determines which Mattermost user ID should be used for
+// the embedded MCP server session. For human invokers, the original userID is used.
+// For automated invokers, the admin-configured bot account is resolved; if not
+// configured, embedded MCP tools are skipped for that invocation.
+func (m *ClientManager) resolveEmbeddedUserID(userID string, isAutomatedInvoker bool) (string, bool) {
+	if !isAutomatedInvoker {
+		return userID, true
+	}
+
+	username := m.config.EmbeddedServer.AutomatedTriggerBotUsername
+	if username == "" {
+		m.log.Debug("Embedded MCP tools unavailable for automated trigger: no automatedTriggerBotUsername configured", "originalUserID", userID)
+		return "", false
+	}
+
+	user, err := m.pluginAPI.User.GetByUsername(username)
+	if err != nil {
+		m.log.Error("Failed to resolve automatedTriggerBotUsername - embedded MCP tools unavailable for automated trigger", "username", username, "error", err)
+		return "", false
+	}
+	return user.Id, true
 }
 
 // ProcessOAuthCallback processes the OAuth callback for a user

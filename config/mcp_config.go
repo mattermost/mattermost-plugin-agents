@@ -33,6 +33,14 @@ func IsToolPolicyAutoRunEverywhere(policy string) bool {
 type MCPEmbeddedServerConfig struct {
 	Enabled     bool            `json:"enabled"`
 	ToolConfigs []MCPToolConfig `json:"tool_configs,omitempty"`
+
+	// AutomatedTriggerBotUsername is the username of the bot account whose identity is used
+	// when an automated invoker (webhook, bot, plugin, OAuth app) triggers an agent and
+	// the embedded Mattermost MCP server needs to authenticate API calls.
+	// Anything the selected bot can access (channels, teams, private or otherwise) will be
+	// accessible to the automated trigger. If empty, embedded MCP tools are unavailable
+	// for automated triggers.
+	AutomatedTriggerBotUsername string `json:"automatedTriggerBotUsername,omitempty"`
 }
 
 // MCPConfig contains the configuration for the MCP servers

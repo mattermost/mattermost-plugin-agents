@@ -426,6 +426,7 @@ const Config = (props: Props) => {
             >
                 <MCPServers
                     mcpConfig={mcpConfig}
+                    bots={(value.bots ?? []).map((b) => ({name: b.name, displayName: b.displayName}))}
                     onChange={(config) => {
                         // Ensure we're creating a valid structure for the server configuration
                         const updatedConfig = {
