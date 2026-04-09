@@ -372,6 +372,7 @@ const MCPServer = ({
                                         onChange={(e) => updateFallbackHeader(key, e.target.value, value)}
                                     />
                                     <HeaderInput
+                                        type='password'
                                         placeholder={intl.formatMessage({defaultMessage: 'Value'})}
                                         value={value}
                                         onChange={(e) => updateFallbackHeader(key, key, e.target.value)}
