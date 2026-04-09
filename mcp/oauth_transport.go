@@ -20,6 +20,8 @@ type authenticationTransport struct {
 	manager     *OAuthManager
 	staticCreds *StaticOAuthCredentials
 	base        http.RoundTripper
+	// If true, skip oauth2.Transport; see authorizationHeaderInCustomHeaders.
+	preferStaticAuthorizationHeader bool
 }
 
 type mcpUnauthorized struct {
@@ -60,15 +62,18 @@ func (t *authenticationTransport) RoundTrip(req *http.Request) (*http.Response, 
 		}()
 	}
 
-	token, err := t.manager.loadToken(t.userID, t.serverName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load token: %w", err)
+	var token *oauth2.Token
+	var err error
+	if !t.preferStaticAuthorizationHeader {
+		token, err = t.manager.loadToken(t.userID, t.serverName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load token: %w", err)
+		}
 	}
 
 	transport := t.base
 
-	// Include the token if found
-	if token != nil {
+	if !t.preferStaticAuthorizationHeader && token != nil {
 		oauthConfig, configErr := t.manager.createOAuthConfig(req.Context(), t.serverURL, "", t.staticCreds)
 		if configErr != nil {
 			return nil, fmt.Errorf("failed to create OAuth config: %w", configErr)

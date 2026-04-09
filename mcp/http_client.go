@@ -3,7 +3,10 @@
 
 package mcp
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
 
 // headerTransport is a custom RoundTripper that adds headers to requests
 type headerTransport struct {
@@ -23,15 +26,28 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(req)
 }
 
+// authorizationHeaderInCustomHeaders is true when MCP server custom headers
+// include Authorization. Then oauth2.Transport must not use KV OAuth tokens
+// (e.g. after switching from OAuth to API-key-only auth).
+func authorizationHeaderInCustomHeaders(headers map[string]string) bool {
+	for k := range headers {
+		if strings.EqualFold(k, "Authorization") {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Client) httpClientForMCP(headers map[string]string) *http.Client {
 	// Wrap with discovery-aware transport for 401 handling
 	authenticationTransport := &authenticationTransport{
-		userID:      c.userID,
-		serverName:  c.config.Name,
-		manager:     c.oauthManager,
-		serverURL:   c.config.BaseURL,
-		staticCreds: staticOAuthCreds(c.config),
-		base:        c.httpClient.Transport,
+		userID:                          c.userID,
+		serverName:                      c.config.Name,
+		manager:                         c.oauthManager,
+		serverURL:                       c.config.BaseURL,
+		staticCreds:                     staticOAuthCreds(c.config),
+		base:                            c.httpClient.Transport,
+		preferStaticAuthorizationHeader: authorizationHeaderInCustomHeaders(headers),
 	}
 
 	// Create HTTP client with discovery-aware transport
