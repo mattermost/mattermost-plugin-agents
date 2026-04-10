@@ -54,17 +54,6 @@ type Context struct {
 	AutomatedMCPInvoker bool
 }
 
-// EffectiveToolUserID returns the Mattermost user ID used for built-in tool execution
-// and permission checks. This always returns the requesting user's ID.
-// For remote MCP client sessions under automation, callers should use BotUserID directly
-// (see WithLLMContextTools).
-func (c *Context) EffectiveToolUserID() string {
-	if c.RequestingUser != nil {
-		return c.RequestingUser.Id
-	}
-	return ""
-}
-
 // ContextOption defines a function that configures a Context
 type ContextOption func(*Context)
 

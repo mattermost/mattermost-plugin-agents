@@ -6,7 +6,6 @@ package llm
 import (
 	"testing"
 
-	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -20,26 +19,4 @@ func TestContext_SetBotFields(t *testing.T) {
 	assert.Equal(t, "gpt-4", c.BotModel)
 	assert.Equal(t, "openai", c.BotServiceType)
 	assert.Equal(t, "Be helpful and concise", c.CustomInstructions)
-}
-
-func TestContext_EffectiveToolUserID(t *testing.T) {
-	t.Run("human_invoker_uses_requesting_user", func(t *testing.T) {
-		c := NewContext(WithAutomatedMCPInvoker(false))
-		c.RequestingUser = &model.User{Id: "user-1"}
-		c.BotUserID = "bot-1"
-		assert.Equal(t, "user-1", c.EffectiveToolUserID())
-	})
-
-	t.Run("automated_invoker_uses_requesting_user", func(t *testing.T) {
-		c := NewContext(WithAutomatedMCPInvoker(true))
-		c.RequestingUser = &model.User{Id: "user-1"}
-		c.BotUserID = "bot-1"
-		assert.Equal(t, "user-1", c.EffectiveToolUserID())
-	})
-
-	t.Run("empty_when_no_requesting_user", func(t *testing.T) {
-		c := NewContext()
-		c.BotUserID = "bot-1"
-		assert.Equal(t, "", c.EffectiveToolUserID())
-	})
 }

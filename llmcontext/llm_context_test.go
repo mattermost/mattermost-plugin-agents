@@ -123,9 +123,7 @@ func TestWithLLMContextDefaultTools_usesBotUserIDForMCPWhenAutomated(t *testing.
 	require.Equal(t, 1, mcpProvider.calls)
 	require.Equal(t, "bot-id", mcpProvider.lastUserID)
 	require.Len(t, context.Tools.GetTools(), 1)
-	// EffectiveToolUserID always returns the requesting user; bot ID is only
-	// used internally for remote MCP session keying.
-	require.Equal(t, "user-id", context.EffectiveToolUserID())
+	require.Equal(t, "user-id", context.RequestingUser.Id)
 }
 
 func TestWithLLMContextDefaultTools_skipsBuiltInToolsWhenAutomated(t *testing.T) {

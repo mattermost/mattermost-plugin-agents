@@ -207,17 +207,12 @@ func (b *Builder) WithLLMContextTools(bot *bots.Bot) llm.ContextOption {
 			return
 		}
 
-		toolUserID := c.EffectiveToolUserID()
+		toolUserID := c.RequestingUser.Id
 
 		// Automated invokers use the bot's identity for remote MCP sessions so the
 		// integration user's OAuth tokens and API access are never granted to tools.
 		if c.AutomatedMCPInvoker && c.BotUserID != "" {
 			toolUserID = c.BotUserID
-		}
-
-		if toolUserID == "" {
-			b.pluginAPI.Log.Error("Cannot add tools to context: tool user ID is empty")
-			return
 		}
 
 		c.Tools = b.getToolsStoreForUser(c, bot, toolUserID)

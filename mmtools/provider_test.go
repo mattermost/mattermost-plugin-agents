@@ -149,8 +149,7 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 
 func TestMMToolProvider_toolSearchServer_usesRequestingUserIDEvenWhenAutomated(t *testing.T) {
 	// Built-in tools are not available to automated invokers in production, but if
-	// toolSearchServer is called directly, EffectiveToolUserID returns the requesting
-	// user (not the bot).
+	// toolSearchServer is called directly, RequestingUser.Id is used (not the bot).
 	me := mocks.NewMockEmbeddingSearch(t)
 	me.On("Search", mock.Anything, "test search term", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 		return opts.UserID == "human-user-1"

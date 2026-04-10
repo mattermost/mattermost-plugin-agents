@@ -27,7 +27,7 @@ func (p *MMToolProvider) toolResolveLookupMattermostUser(context *llm.Context, a
 	}
 
 	// Check permissions
-	if !p.pluginAPI.HasPermissionTo(context.EffectiveToolUserID(), model.PermissionViewMembers) {
+	if !p.pluginAPI.HasPermissionTo(context.RequestingUser.Id, model.PermissionViewMembers) {
 		return "user doesn't have permissions", errors.New("user doesn't have permission to lookup users")
 	}
 
