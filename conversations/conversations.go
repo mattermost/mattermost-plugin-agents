@@ -133,7 +133,7 @@ func (c *Conversations) appendDMAutoRunOptions(isDM bool, llmContext *llm.Contex
 }
 
 // ProcessUserRequestWithContext is an internal helper that uses an existing context to process a message
-func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
+func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, context *llm.Context, allowToolsInChannel bool, channelToolsAutoRunEverywhereOnly bool) (*llm.TextStreamResult, error) {
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 	toolsDisabled := !isDM && !allowToolsInChannel
 	if context != nil {
@@ -142,6 +142,9 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 		} else {
 			context.DisabledToolsInfo = nil
 		}
+	}
+	if channelToolsAutoRunEverywhereOnly && !isDM {
+		c.applyBotChannelAutoEverywhereToolFilter(context)
 	}
 
 	var posts []llm.Post
@@ -191,6 +194,10 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 
 	opts = c.appendDMAutoRunOptions(isDM, context, opts)
 
+	if channelToolsAutoRunEverywhereOnly && !isDM {
+		opts = append(opts, llm.WithSuppressNativeProviderTools())
+	}
+
 	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
 		return nil, err
@@ -213,7 +220,8 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 	// Wrap stream with MCP auto-approval only for channels. DMs use the model-level
 	// auto-run wrapper via WithAutoRunTools and should not be pre-executed twice.
 	if !isDM && !toolsDisabled && context != nil && context.Tools != nil && c.toolPolicyChecker != nil {
-		result = wrapStreamWithMCPAutoApproval(result, context, c.toolPolicyChecker)
+		strictEverywhere := channelToolsAutoRunEverywhereOnly
+		result = wrapStreamWithMCPAutoApproval(result, context, c.toolPolicyChecker, strictEverywhere)
 	}
 
 	go func() {
@@ -227,8 +235,9 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 	return result, nil
 }
 
-// ProcessUserRequest processes a user request to a bot
-func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, allowToolsInChannel bool) (*llm.TextStreamResult, error) {
+// ProcessUserRequest processes a user request to a bot. When channelToolsAutoRunEverywhereOnly
+// is true (bot channel mention with activate_ai), only MCP tools with auto_run_everywhere policy are used.
+func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.User, channel *model.Channel, post *model.Post, allowToolsInChannel bool, channelToolsAutoRunEverywhereOnly bool) (*llm.TextStreamResult, error) {
 	// Extract web search context from conversation history to preserve citations
 	// This ensures citations from previous searches work in follow-up messages
 	webSearchParams := c.extractWebSearchContext(post)
@@ -299,7 +308,7 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 		}
 	}
 
-	return c.ProcessUserRequestWithContext(bot, postingUser, channel, post, llmContext, allowToolsInChannel)
+	return c.ProcessUserRequestWithContext(bot, postingUser, channel, post, llmContext, allowToolsInChannel, channelToolsAutoRunEverywhereOnly)
 }
 
 func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID string, context *llm.Context) error {

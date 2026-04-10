@@ -1096,30 +1096,32 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ResponsesTool {
 	var result []schemas.ResponsesTool
 
-	// Add native tools (always add when configured, regardless of ToolsDisabled)
-	for _, nativeTool := range b.enabledNativeTools {
-		switch nativeTool {
-		case "web_search":
+	if !cfg.SuppressNativeProviderTools {
+		// Add native tools (always add when configured, regardless of ToolsDisabled)
+		for _, nativeTool := range b.enabledNativeTools {
+			switch nativeTool {
+			case "web_search":
+				result = append(result, schemas.ResponsesTool{
+					Type: schemas.ResponsesToolTypeWebSearch,
+				})
+			case "file_search":
+				result = append(result, schemas.ResponsesTool{
+					Type: schemas.ResponsesToolTypeFileSearch,
+				})
+			case "code_interpreter":
+				result = append(result, schemas.ResponsesTool{
+					Type: schemas.ResponsesToolTypeCodeInterpreter,
+				})
+			}
+		}
+
+		// When NativeWebSearchAllowed is true but web_search is not in enabledNativeTools,
+		// add it dynamically
+		if cfg.NativeWebSearchAllowed && !b.isNativeToolEnabled("web_search") {
 			result = append(result, schemas.ResponsesTool{
 				Type: schemas.ResponsesToolTypeWebSearch,
 			})
-		case "file_search":
-			result = append(result, schemas.ResponsesTool{
-				Type: schemas.ResponsesToolTypeFileSearch,
-			})
-		case "code_interpreter":
-			result = append(result, schemas.ResponsesTool{
-				Type: schemas.ResponsesToolTypeCodeInterpreter,
-			})
 		}
-	}
-
-	// When NativeWebSearchAllowed is true but web_search is not in enabledNativeTools,
-	// add it dynamically
-	if cfg.NativeWebSearchAllowed && !b.isNativeToolEnabled("web_search") {
-		result = append(result, schemas.ResponsesTool{
-			Type: schemas.ResponsesToolTypeWebSearch,
-		})
 	}
 
 	// Add custom function tools if available

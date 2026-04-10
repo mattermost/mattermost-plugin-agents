@@ -33,14 +33,15 @@ type LanguageModel interface {
 }
 
 type LanguageModelConfig struct {
-	Model                  string
-	MaxGeneratedTokens     int
-	EnableVision           bool
-	JSONOutputFormat       *jsonschema.Schema
-	ToolsDisabled          bool
-	NativeWebSearchAllowed bool // Allows native web search even when ToolsDisabled is true
-	AutoRunTools           []string
-	ReasoningDisabled      bool
+	Model                       string
+	MaxGeneratedTokens          int
+	EnableVision                bool
+	JSONOutputFormat            *jsonschema.Schema
+	ToolsDisabled               bool
+	NativeWebSearchAllowed      bool // Allows native web search even when ToolsDisabled is true
+	SuppressNativeProviderTools bool // Skips provider-native tools (e.g. Responses API web_search) in convertToResponsesTools
+	AutoRunTools                []string
+	ReasoningDisabled           bool
 }
 
 type LanguageModelOption func(*LanguageModelConfig)
@@ -71,6 +72,15 @@ func WithToolsDisabled() LanguageModelOption {
 func WithNativeWebSearchAllowed() LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.NativeWebSearchAllowed = true
+	}
+}
+
+// WithSuppressNativeProviderTools omits provider-native tool entries (e.g. OpenAI Responses
+// web_search) so only function tools from the request context are sent. Used for channel
+// bot flows restricted to MCP tools with auto_run_everywhere policy.
+func WithSuppressNativeProviderTools() LanguageModelOption {
+	return func(cfg *LanguageModelConfig) {
+		cfg.SuppressNativeProviderTools = true
 	}
 }
 

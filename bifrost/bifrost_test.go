@@ -198,6 +198,36 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 	}
 }
 
+func TestConvertToResponsesToolsSuppressNativeProviderTools(t *testing.T) {
+	b := &LLM{
+		enabledNativeTools: []string{"web_search", "file_search"},
+	}
+
+	toolStore := llm.NewToolStore(nil, false)
+	toolStore.AddTools([]llm.Tool{
+		{
+			Name:        "lookup_docs",
+			Description: "Look up internal docs",
+		},
+	})
+
+	request := llm.CompletionRequest{
+		Context: &llm.Context{
+			Tools: toolStore,
+		},
+	}
+
+	tools := b.convertToResponsesTools(request, llm.LanguageModelConfig{
+		NativeWebSearchAllowed:      true,
+		SuppressNativeProviderTools: true,
+	})
+
+	require.Len(t, tools, 1)
+	assert.Equal(t, schemas.ResponsesToolTypeFunction, tools[0].Type)
+	require.NotNil(t, tools[0].Name)
+	assert.Equal(t, "lookup_docs", *tools[0].Name)
+}
+
 func TestConvertMessagesReasoning(t *testing.T) {
 	tests := []struct {
 		name                string

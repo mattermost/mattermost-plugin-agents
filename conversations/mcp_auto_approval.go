@@ -12,7 +12,8 @@ import (
 )
 
 // wrapStreamWithMCPAutoApproval wraps a text stream to automatically execute
-// MCP tool calls whose per-tool policy satisfies mcp.IsToolPolicyAutoRun + enabled.
+// MCP tool calls whose per-tool policy satisfies mcp.IsToolPolicyAutoRun + enabled
+// (or strictAutoRunEverywhereOnly: mcp.IsToolPolicyAutoRunEverywhere + enabled).
 //
 // When ALL tool calls in a batch are auto-runnable, the wrapper:
 //  1. Executes each tool via the ToolStore
@@ -28,6 +29,7 @@ func wrapStreamWithMCPAutoApproval(
 	stream *llm.TextStreamResult,
 	llmContext *llm.Context,
 	policyChecker streaming.ToolPolicyChecker,
+	strictAutoRunEverywhereOnly bool,
 ) *llm.TextStreamResult {
 	if stream == nil || llmContext == nil || llmContext.Tools == nil || policyChecker == nil {
 		return stream
@@ -57,7 +59,13 @@ func wrapStreamWithMCPAutoApproval(
 					toolCalls[i].ServerOrigin = tool.ServerOrigin
 				}
 				policy, enabled := policyChecker.GetToolPolicy(toolCalls[i].ServerOrigin, toolCalls[i].Name)
-				if !mcp.IsToolPolicyAutoRun(policy) || !enabled {
+				var policyOK bool
+				if strictAutoRunEverywhereOnly {
+					policyOK = mcp.IsToolPolicyAutoRunEverywhere(policy) && enabled
+				} else {
+					policyOK = mcp.IsToolPolicyAutoRun(policy) && enabled
+				}
+				if !policyOK {
 					allAutoRun = false
 				}
 			}
