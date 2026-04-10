@@ -119,22 +119,17 @@ func responseRootIDFromPost(post *model.Post) string {
 	return post.Id
 }
 
-func (c *Conversations) automatedInvokerFromResponsePost(post *model.Post, user *model.User) (bool, error) {
+func automatedInvokerFromResponsePost(post *model.Post, user *model.User) bool {
 	if post == nil || user == nil {
-		return false, nil
+		return false
 	}
 
 	respondingToPostID, ok := post.GetProp(streaming.RespondingToProp).(string)
 	if !ok || respondingToPostID == "" {
-		return false, nil
+		return false
 	}
 
-	respondingToPost, err := c.mmClient.GetPost(respondingToPostID)
-	if err != nil {
-		return false, fmt.Errorf("failed to load responding post %s for automated tool handling: %w", respondingToPostID, err)
-	}
-
-	return isAutomatedInvoker(respondingToPost, user), nil
+	return isAutomatedInvoker(user)
 }
 
 // HandleToolCall handles tool call approval/rejection
@@ -195,10 +190,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	// Extract web search context from conversation history to preserve citations
 	webSearchParams := c.extractWebSearchContext(post)
 
-	automated, automatedErr := c.automatedInvokerFromResponsePost(post, user)
-	if automatedErr != nil {
-		return fmt.Errorf("unable to determine invoker type: %w", automatedErr)
-	}
+	automated := automatedInvokerFromResponsePost(post, user)
 	contextOpts := []llm.ContextOption{
 		llm.WithAutomatedMCPInvoker(automated),
 		c.contextBuilder.WithLLMContextDefaultTools(bot),
@@ -413,10 +405,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	// Extract web search context from conversation history to preserve citations
 	webSearchParams := c.extractWebSearchContext(post)
 
-	automated, automatedErr := c.automatedInvokerFromResponsePost(post, user)
-	if automatedErr != nil {
-		return fmt.Errorf("unable to determine invoker type: %w", automatedErr)
-	}
+	automated := automatedInvokerFromResponsePost(post, user)
 	contextOpts := []llm.ContextOption{
 		llm.WithAutomatedMCPInvoker(automated),
 		c.contextBuilder.WithLLMContextDefaultTools(bot),
