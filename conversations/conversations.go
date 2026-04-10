@@ -283,6 +283,15 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 		}
 	}
 
+	// Strict bot-channel mode must run before OAuth prompts so tools removed by the
+	// activate_ai / auto_run_everywhere filter are not considered for GetAuthErrors.
+	// ProcessUserRequestWithContext applies the same filter; doing it here keeps
+	// notifications aligned with the tools that will actually be offered.
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	if channelToolsAutoRunEverywhereOnly && !isDM {
+		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+	}
+
 	// Check for auth errors in the tool store, excluding disabled providers.
 	if llmContext.Tools != nil {
 		authErrors := llmContext.Tools.GetAuthErrors()

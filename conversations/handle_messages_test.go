@@ -126,12 +126,12 @@ func TestComputeAllowToolsInChannel(t *testing.T) {
 	botActivateAIPost.AddProp(ActivateAIProp, true)
 
 	tests := []struct {
-		name                   string
-		configEnabled          bool
-		post                   *model.Post
-		postingUser            *model.User
-		hasToolPolicyChecker   bool
-		want                   bool
+		name                 string
+		configEnabled        bool
+		post                 *model.Post
+		postingUser          *model.User
+		hasToolPolicyChecker bool
+		want                 bool
 	}{
 		{"config disabled, human", false, humanPost, humanUser, false, false},
 		{"config enabled, human", true, humanPost, humanUser, false, true},

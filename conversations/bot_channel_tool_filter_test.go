@@ -93,3 +93,21 @@ func TestApplyToolAvailabilityBeforeBotChannelFilterPreservesDisabledToolsInfo(t
 	}
 	require.ElementsMatch(t, []string{"builtin", "ask_tool"}, disabledNames)
 }
+
+func TestApplyBotChannelAutoEverywhereToolFilter_nilCheckerFailClosed(t *testing.T) {
+	origin := "https://mcp.example.com/mcp"
+	c := &Conversations{toolPolicyChecker: nil}
+
+	llmContext := &llm.Context{
+		Tools: llm.NewToolStore(nil, false),
+	}
+	llmContext.Tools.AddTools([]llm.Tool{
+		{Name: "builtin", ServerOrigin: "", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "mcp_tool", ServerOrigin: origin, Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+	})
+
+	c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+
+	require.Empty(t, llmContext.Tools.GetTools())
+	require.Len(t, llmContext.DisabledToolsInfo, 2)
+}

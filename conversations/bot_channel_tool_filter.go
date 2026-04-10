@@ -12,8 +12,19 @@ import (
 // applyBotChannelAutoEverywhereToolFilter keeps only MCP tools whose policy is
 // auto_run_everywhere and enabled. Built-in tools (empty ServerOrigin) are removed.
 // Removed tools are recorded in DisabledToolsInfo for the model.
+// When no policy checker is configured, fail closed: remove all tools so replayed
+// posts cannot expose MCP tools without policy validation.
 func (c *Conversations) applyBotChannelAutoEverywhereToolFilter(llmContext *llm.Context) {
-	if c.toolPolicyChecker == nil || llmContext == nil || llmContext.Tools == nil {
+	if llmContext == nil || llmContext.Tools == nil {
+		return
+	}
+	if c.toolPolicyChecker == nil {
+		removed := llmContext.Tools.GetToolsInfo()
+		llmContext.Tools.KeepToolsIf(func(tool llm.Tool) bool { return false })
+		if len(removed) > 0 {
+			// Replace any prior DisabledToolsInfo from applyToolAvailability: all tools are removed.
+			llmContext.DisabledToolsInfo = removed
+		}
 		return
 	}
 
