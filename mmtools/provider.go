@@ -49,15 +49,7 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
 		})
 	}
 
-	// Add user lookup tool if pluginAPI is available
 	if p.pluginAPI != nil {
-		builtInTools = append(builtInTools, llm.Tool{
-			Name:        "LookupMattermostUser",
-			Description: "Lookup a Mattermost user by their username. Available information includes: username, full name, email, nickname, position, locale, timezone, last activity, and status.",
-			Schema:      llm.NewJSONSchemaFromStruct[LookupMattermostUserArgs](),
-			Resolver:    p.toolResolveLookupMattermostUser,
-		})
-
 		if p.webSearch != nil && !hasNativeWebSearch(bot) {
 			tool := p.webSearch.Tool()
 			if tool != nil {

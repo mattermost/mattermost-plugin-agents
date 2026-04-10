@@ -11,6 +11,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/mock"
@@ -22,6 +24,7 @@ func TestMMToolProvider_GetTools(t *testing.T) {
 	tests := []struct {
 		name                      string
 		searchService             *search.Search
+		includePluginAPI          bool
 		expectedSearchToolPresent bool
 	}{
 		{
@@ -30,8 +33,9 @@ func TestMMToolProvider_GetTools(t *testing.T) {
 			expectedSearchToolPresent: true,
 		},
 		{
-			name:                      "search tool not available - search disabled",
+			name:                      "search tool not available with plugin API - search disabled",
 			searchService:             search.New(nil, nil, nil, nil, nil),
+			includePluginAPI:          true,
 			expectedSearchToolPresent: false,
 		},
 		{
@@ -43,8 +47,12 @@ func TestMMToolProvider_GetTools(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			// Create tool provider
-			provider := NewMMToolProvider(nil, test.searchService, nil)
+			var pluginAPI mmapi.Client
+			if test.includePluginAPI {
+				pluginAPI = mmapimocks.NewMockClient(t)
+			}
+
+			provider := NewMMToolProvider(pluginAPI, test.searchService, nil)
 
 			// Create a mock bot
 			bot := &bots.Bot{}
@@ -64,8 +72,18 @@ func TestMMToolProvider_GetTools(t *testing.T) {
 
 			require.Equal(t, test.expectedSearchToolPresent, searchToolFound,
 				"SearchServer tool presence should match expected value")
+			require.NotContains(t, toolNames(tools), "LookupMattermostUser")
 		})
 	}
+}
+
+func toolNames(tools []llm.Tool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+
+	return names
 }
 
 func TestMMToolProvider_toolSearchServer(t *testing.T) {

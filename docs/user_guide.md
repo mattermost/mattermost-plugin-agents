@@ -50,7 +50,6 @@ If a tool execution fails, the Agent can continue with a follow-up response inst
 Available tools in direct messages, and in channels when enabled by your system admin, include:
 
 - Server search (semantic search across your Mattermost instance)
-- User lookup (find information about Mattermost users)
 - MCP tools (external tools provided by configured MCP servers if enabled). Tool availability depends on your user permissions and system configuration.
 
 ## Analyze threads and channels

@@ -374,12 +374,6 @@ Integrations are available in direct messages by default. If you enable the expe
 - **Requirements**: Embedding search must be configured and enabled.
 - **Security**: Respects user permissions - users only see content they have access to.
 
-#### User Lookup
-
-- **Function**: Look up Mattermost user information by username
-- **Data Available**: Username, full name, email, nickname, position, locale, timezone, last activity, status
-- **Permissions**: Requires `VIEW_MEMBERS` permission
-
 **Security Note**: Tool availability and approval behavior depend on your system configuration. Tools can be configured to require explicit user approval or to run automatically under the selected tool policy.
 
 ## Model Context Protocol (MCP) Integration
