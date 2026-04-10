@@ -45,7 +45,7 @@ type BifrostEmbeddingConfig struct {
 type OpenAIEmbeddingConfig struct {
 	APIKey string `json:"apiKey"`
 	APIURL string `json:"apiURL,omitempty"`
-	Model  string `json:"defaultModel"` // e.g., "text-embedding-3-small"
+	Model  string `json:"embeddingModel"` // e.g., "text-embedding-3-small"
 }
 
 // newEmbeddingProvider creates a new embedding provider based on the provided configuration

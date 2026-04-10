@@ -39,13 +39,15 @@ You can have conversations with Agents in several ways:
 
 If multiple Agent bots are configured for your Mattermost workspace, select your preferred bot in the Agents pane or @mention specific bots by name in channels.
 
-### Approve tools
+### Use tools
 
-When Agents use external tools or integrations, you may be prompted to approve tool usage for security. When a tool is called, you'll see a card showing the tool name and description, arguments being passed to the tool, and **Approve/Reject** options.
+When Agents use external tools or integrations, Mattermost may prompt you to review tool usage based on the tool approval policy configured by your system admin. When review is required, you'll see a card showing the tool name and description, arguments being passed to the tool, and **Approve/Reject** options.
 
-For security, tool calls are only available in direct messages and each tool call requires explicit approval before execution. You can review tool arguments before approving, and tool results are shown after successful execution.
+By default, tool calls are available in direct messages. If your system admin enables the experimental **Enable Channel Mention Tool Calling** setting, some tools can also run in channels. Depending on the configured tool policy, a tool call may require approval before execution or run automatically. Tool results are shown after execution.
 
-Available tools in direct messages include:
+If a tool execution fails, the Agent can continue with a follow-up response instead of stopping immediately. After three consecutive failed tool executions, the Agent stops calling further tools and is instructed to explain the latest error and ask you for guidance or any missing information. A successful tool execution resets that count.
+
+Available tools in direct messages, and in channels when enabled by your system admin, include:
 
 - Server search (semantic search across your Mattermost instance)
 - User lookup (find information about Mattermost users)

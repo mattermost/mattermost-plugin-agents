@@ -122,26 +122,31 @@ func TestComputeAllowToolsInChannel(t *testing.T) {
 	pluginPost := postWithProp(FromPluginProp)
 	botPropPost := postWithProp(FromBotProp)
 	oauthAppPost := postWithProp(FromOAuthAppProp)
+	botActivateAIPost := &model.Post{UserId: "b1"}
+	botActivateAIPost.AddProp(ActivateAIProp, true)
 
 	tests := []struct {
-		name          string
-		configEnabled bool
-		post          *model.Post
-		postingUser   *model.User
-		want          bool
+		name                 string
+		configEnabled        bool
+		post                 *model.Post
+		postingUser          *model.User
+		hasToolPolicyChecker bool
+		want                 bool
 	}{
-		{"config disabled, human", false, humanPost, humanUser, false},
-		{"config enabled, human", true, humanPost, humanUser, true},
-		{"config enabled, bot user", true, humanPost, botUser, false},
-		{"config enabled, from_webhook post", true, webhookPost, humanUser, false},
-		{"config enabled, from_plugin post", true, pluginPost, humanUser, false},
-		{"config enabled, from_bot post", true, botPropPost, humanUser, false},
-		{"config enabled, from_oauth_app post", true, oauthAppPost, humanUser, false},
-		{"config disabled, bot user", false, humanPost, botUser, false},
+		{"config disabled, human", false, humanPost, humanUser, false, false},
+		{"config enabled, human", true, humanPost, humanUser, false, true},
+		{"config enabled, bot user", true, humanPost, botUser, false, false},
+		{"config enabled, bot user with activate_ai and policy checker", true, botActivateAIPost, botUser, true, true},
+		{"config enabled, bot user with activate_ai without policy checker", true, botActivateAIPost, botUser, false, false},
+		{"config enabled, from_webhook post", true, webhookPost, humanUser, false, false},
+		{"config enabled, from_plugin post", true, pluginPost, humanUser, false, false},
+		{"config enabled, from_bot post", true, botPropPost, humanUser, false, false},
+		{"config enabled, from_oauth_app post", true, oauthAppPost, humanUser, false, false},
+		{"config disabled, bot user", false, humanPost, botUser, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := computeAllowToolsInChannel(tt.configEnabled, tt.post, tt.postingUser)
+			got := computeAllowToolsInChannel(tt.configEnabled, tt.post, tt.postingUser, tt.hasToolPolicyChecker)
 			require.Equal(t, tt.want, got)
 		})
 	}
