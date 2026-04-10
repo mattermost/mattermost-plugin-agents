@@ -165,8 +165,12 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	// Create a tool store that requires user approval for tool calls
 	store := llm.NewToolStore(&b.pluginAPI.Log, b.configProvider.GetEnableLLMTrace())
 
-	// Add built-in tools (always add for LLM awareness; execution controlled via WithToolsDisabled)
-	store.AddTools(b.toolProvider.GetTools(bot))
+	// Built-in tools are only available to human invokers. Automated invokers (webhooks,
+	// plugins, bots) are restricted to remote MCP servers with explicit service-account auth
+	// to prevent the agent bot's channel/GM memberships from being exploitable.
+	if !c.AutomatedMCPInvoker {
+		store.AddTools(b.toolProvider.GetTools(bot))
+	}
 
 	// Add MCP tools if available and enabled
 	// Note: MCP tools are only executable in DMs, but we always add them to the store
@@ -204,12 +208,18 @@ func (b *Builder) WithLLMContextTools(bot *bots.Bot) llm.ContextOption {
 		}
 
 		toolUserID := c.EffectiveToolUserID()
+
+		// Automated invokers use the bot's identity for remote MCP sessions so the
+		// integration user's OAuth tokens and API access are never granted to tools.
+		if c.AutomatedMCPInvoker && c.BotUserID != "" {
+			toolUserID = c.BotUserID
+		}
+
 		if toolUserID == "" {
-			b.pluginAPI.Log.Error("Cannot add tools to context: EffectiveToolUserID is empty")
+			b.pluginAPI.Log.Error("Cannot add tools to context: tool user ID is empty")
 			return
 		}
 
-		// Get tools using session info from llm.Context (MCP and embedded sessions use toolUserID).
 		c.Tools = b.getToolsStoreForUser(c, bot, toolUserID)
 	}
 }

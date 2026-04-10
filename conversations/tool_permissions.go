@@ -52,21 +52,23 @@ func applyToolAvailability(context *llm.Context, isDM bool, allowToolsInChannel 
 	return toolsDisabled
 }
 
-// filterAutomatedInvokerTools removes tools that require human approval or channel result-sharing
-// when the request is from an automated Mattermost invoker.
+// filterAutomatedInvokerTools removes tools unavailable to automated invokers.
+// Built-in tools (empty ServerOrigin) and embedded MCP tools are always removed
+// because the agent bot's Mattermost permissions must not be exploitable through
+// automation. Remote MCP tools are kept only when their admin policy allows
+// unattended execution.
 func filterAutomatedInvokerTools(store *llm.ToolStore, automated bool, isDM bool, checker streaming.ToolPolicyChecker) {
 	if store == nil || !automated || checker == nil {
 		return
 	}
 	var remove []string
 	for _, t := range store.GetTools() {
-		// Built-in / native tools use an empty ServerOrigin. The production policy checker
-		// only knows MCP servers and returns ("ask", false) for unknown origins, which would
-		// strip every native tool from automated invokers. Only apply MCP policy filtering
-		// when the tool is tied to a server origin.
-		if t.ServerOrigin == "" {
+		// Remove built-in and embedded MCP tools unconditionally.
+		if t.ServerOrigin == "" || t.ServerOrigin == mcp.EmbeddedClientKey {
+			remove = append(remove, t.Name)
 			continue
 		}
+
 		policy, enabled := checker.GetToolPolicy(t.ServerOrigin, t.Name)
 		keep := false
 		if isDM {

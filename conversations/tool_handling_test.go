@@ -395,7 +395,7 @@ func TestHandleToolCallChannelStoresInKVAndRedactsProps(t *testing.T) {
 	require.Len(t, fakeClient.updatedPosts, 1)
 }
 
-func TestHandleToolCallUsesBotIdentityForAutomatedFollowUp(t *testing.T) {
+func TestHandleToolCallRejectsEmbeddedToolsForAutomatedFollowUp(t *testing.T) {
 	const (
 		postID         = "post-id"
 		originalPostID = "original-post-id"
@@ -414,21 +414,15 @@ func TestHandleToolCallUsesBotIdentityForAutomatedFollowUp(t *testing.T) {
 	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
 	mockAPI.On("GetTeam", teamID).Return(&model.Team{Id: teamID}, nil).Maybe()
 
-	var effectiveToolUserID string
-	var automatedInvoker bool
+	resolverCalled := false
 	tool := llm.Tool{
 		Name:         "get_channel_info",
 		Description:  "test tool",
 		Schema:       llm.NewJSONSchemaFromStruct[toolArgs](),
 		ServerOrigin: mcp.EmbeddedClientKey,
 		Resolver: func(ctx *llm.Context, args llm.ToolArgumentGetter) (string, error) {
-			var parsed toolArgs
-			if err := args(&parsed); err != nil {
-				return "", err
-			}
-			effectiveToolUserID = ctx.EffectiveToolUserID()
-			automatedInvoker = ctx.AutomatedMCPInvoker
-			return "ok:" + parsed.Value, nil
+			resolverCalled = true
+			return "should not reach", nil
 		},
 	}
 	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: []llm.Tool{tool}}, nil, &testConfigProvider{})
@@ -506,8 +500,7 @@ func TestHandleToolCallUsesBotIdentityForAutomatedFollowUp(t *testing.T) {
 
 	err = conversationService.HandleToolCall(requesterID, post, channel, []string{"tool-1"})
 	require.NoError(t, err)
-	require.Equal(t, botID, effectiveToolUserID)
-	require.True(t, automatedInvoker)
+	require.False(t, resolverCalled, "embedded tool resolver must not be called for automated invokers")
 }
 
 func TestHandleToolCallPreservesResolvedToolCallsWhenApprovingPendingSubset(t *testing.T) {
@@ -1383,7 +1376,7 @@ func TestHandleToolResultContinuesWhenToolCallErrors(t *testing.T) {
 	require.Contains(t, fakeClient.kvDeletes, toolCallKVKey)
 }
 
-func TestHandleToolResultPreservesAutomatedInvokerFilteringInFollowUp(t *testing.T) {
+func TestHandleToolResultFiltersAllEmbeddedToolsForAutomatedFollowUp(t *testing.T) {
 	const (
 		postID         = "post-id"
 		originalPostID = "original-post-id"
@@ -1519,8 +1512,9 @@ func TestHandleToolResultPreservesAutomatedInvokerFilteringInFollowUp(t *testing
 	lastRequest := capturingLLM.requests[len(capturingLLM.requests)-1]
 	require.NotNil(t, lastRequest.Context)
 	require.True(t, lastRequest.Context.AutomatedMCPInvoker)
+	// All embedded tools must be absent for automated invokers.
 	require.Nil(t, lastRequest.Context.Tools.GetTool("get_user_channels"))
-	require.NotNil(t, lastRequest.Context.Tools.GetTool("get_channel_info"))
+	require.Nil(t, lastRequest.Context.Tools.GetTool("get_channel_info"))
 }
 
 func TestHandleToolResultCleansUpKVWhenContinuationFails(t *testing.T) {

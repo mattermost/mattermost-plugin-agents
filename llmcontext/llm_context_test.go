@@ -22,6 +22,14 @@ func (p *emptyToolProvider) GetTools(*bots.Bot) []llm.Tool {
 	return nil
 }
 
+type staticToolProvider struct {
+	tools []llm.Tool
+}
+
+func (p *staticToolProvider) GetTools(*bots.Bot) []llm.Tool {
+	return p.tools
+}
+
 type countingMCPToolProvider struct {
 	calls      int
 	lastUserID string
@@ -115,7 +123,45 @@ func TestWithLLMContextDefaultTools_usesBotUserIDForMCPWhenAutomated(t *testing.
 	require.Equal(t, 1, mcpProvider.calls)
 	require.Equal(t, "bot-id", mcpProvider.lastUserID)
 	require.Len(t, context.Tools.GetTools(), 1)
-	require.Equal(t, "bot-id", context.EffectiveToolUserID())
+	// EffectiveToolUserID always returns the requesting user; bot ID is only
+	// used internally for remote MCP session keying.
+	require.Equal(t, "user-id", context.EffectiveToolUserID())
+}
+
+func TestWithLLMContextDefaultTools_skipsBuiltInToolsWhenAutomated(t *testing.T) {
+	mockAPI := &plugintest.API{}
+	siteName := "Mattermost"
+	siteURL := "https://example.com"
+	mockAPI.On("GetConfig").Return(&model.Config{
+		TeamSettings:    model.TeamSettings{SiteName: &siteName},
+		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
+	}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+
+	builtInTools := []llm.Tool{
+		{Name: "SearchServer", Description: "built-in search"},
+		{Name: "LookupMattermostUser", Description: "built-in user lookup"},
+	}
+	toolProvider := &staticToolProvider{tools: builtInTools}
+
+	client := pluginapi.NewClient(mockAPI, nil)
+	mcpProvider := &countingMCPToolProvider{}
+	builder := NewLLMContextBuilder(client, toolProvider, mcpProvider, &contextTestConfigProvider{})
+
+	user := &model.User{Id: "user-id", Username: "test-user", Locale: "en"}
+	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect}
+
+	ctx := builder.BuildLLMContextUserRequest(
+		newTestBot(),
+		user,
+		channel,
+		llm.WithAutomatedMCPInvoker(true),
+		builder.WithLLMContextDefaultTools(newTestBot()),
+	)
+
+	// Only the MCP tool should be present; built-in tools are excluded for automated invokers.
+	require.Len(t, ctx.Tools.GetTools(), 1)
+	require.Equal(t, "test_tool", ctx.Tools.GetTools()[0].Name)
 }
 
 func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {

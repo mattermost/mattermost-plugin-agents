@@ -48,17 +48,17 @@ type Context struct {
 	Parameters        map[string]interface{}
 
 	// AutomatedMCPInvoker is true when the Mattermost request was triggered by automation
-	// (bot, webhook, plugin, OAuth app). Used for MCP fallback auth and tool policy filtering.
+	// (bot, webhook, plugin, OAuth app). Used to restrict tool availability: automated
+	// invokers only get remote MCP tools (with fallback auth headers), not built-in or
+	// embedded MCP tools, to prevent the bot's Mattermost permissions from being exploitable.
 	AutomatedMCPInvoker bool
 }
 
-// EffectiveToolUserID returns the Mattermost user ID used for tool execution, MCP sessions,
-// and permission checks. Automated invokers use the agent bot user ID so integration users
-// (e.g. webhook owners) do not grant their own OAuth or elevated API access to tools.
+// EffectiveToolUserID returns the Mattermost user ID used for built-in tool execution
+// and permission checks. This always returns the requesting user's ID.
+// For remote MCP client sessions under automation, callers should use BotUserID directly
+// (see WithLLMContextTools).
 func (c *Context) EffectiveToolUserID() string {
-	if c.AutomatedMCPInvoker && c.BotUserID != "" {
-		return c.BotUserID
-	}
 	if c.RequestingUser != nil {
 		return c.RequestingUser.Id
 	}

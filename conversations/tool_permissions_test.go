@@ -93,9 +93,12 @@ func TestFilterAutomatedInvokerTools(t *testing.T) {
 		require.ElementsMatch(t, []string{"everywhere_on", "auto_on"}, toolNames(store2))
 	})
 
-	t.Run("built-in tools with empty ServerOrigin are never removed", func(t *testing.T) {
+	t.Run("built-in and embedded tools are always removed for automated invokers", func(t *testing.T) {
 		productionLikeChecker := streaming.ToolPolicyFunc(func(serverBaseURL, toolName string) (string, bool) {
 			if serverBaseURL == mcp.EmbeddedClientKey {
+				return mcp.ToolPolicyAutoRunEverywhere, true
+			}
+			if serverBaseURL == origin {
 				return mcp.ToolPolicyAutoRunEverywhere, true
 			}
 			return "ask", false
@@ -103,11 +106,12 @@ func TestFilterAutomatedInvokerTools(t *testing.T) {
 		store := llm.NewToolStore(nil, false)
 		store.AddTools([]llm.Tool{
 			{Name: "native_builtin", ServerOrigin: ""},
-			{Name: "remote_ask", ServerOrigin: origin},
+			{Name: "embedded_tool", ServerOrigin: mcp.EmbeddedClientKey},
+			{Name: "remote_everywhere", ServerOrigin: origin},
 		})
 		filterAutomatedInvokerTools(store, true, false, productionLikeChecker)
 		names := toolNames(store)
-		require.ElementsMatch(t, []string{"native_builtin"}, names)
+		require.ElementsMatch(t, []string{"remote_everywhere"}, names)
 	})
 }
 

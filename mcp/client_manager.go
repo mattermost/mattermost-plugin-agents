@@ -189,15 +189,19 @@ func (m *ClientManager) getClientForUser(userID string, isAutomatedInvoker bool)
 	return m.createAndStoreUserClient(userID, isAutomatedInvoker)
 }
 
-// GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
-// When isAutomatedInvoker is true, remote MCP does not use per-user OAuth; it uses FallbackAuthHeaders
-// and/or static server Headers (see oauth transport + httpClientForMCP).
+// GetToolsForUser returns the tools available for a specific user.
+// When isAutomatedInvoker is true, only remote MCP servers are connected (the embedded
+// server is skipped to prevent the bot's Mattermost permissions from being exploitable),
+// and remote MCP uses FallbackAuthHeaders instead of per-user OAuth.
 func (m *ClientManager) GetToolsForUser(userID string, isAutomatedInvoker bool) ([]llm.Tool, *Errors) {
 	// Get or create client for this user (connects to remote servers only)
 	userClient, mcpErrors := m.getClientForUser(userID, isAutomatedInvoker)
 
-	// Connect to embedded server using a dedicated per-user session (stored/created in KV)
-	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
+	// Connect to embedded server using a dedicated per-user session (stored/created in KV).
+	// Automated invokers are restricted to remote MCP servers with explicit service-account
+	// auth; the embedded server is skipped to prevent the bot's channel/GM access from being
+	// exploitable through automation.
+	if !isAutomatedInvoker && m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
 		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
 		if ensureErr != nil {
 			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
