@@ -43,11 +43,13 @@ If multiple Agent bots are configured for your Mattermost workspace, select your
 
 When Agents use external tools or integrations, Mattermost may prompt you to review tool usage based on the tool approval policy configured by your system admin. When review is required, you'll see a card showing the tool name and description, arguments being passed to the tool, and **Approve/Reject** options.
 
-By default, tool calls are available in direct messages. If your system admin enables the experimental **Enable Channel Mention Tool Calling** setting, some tools can also run in channels. Depending on the configured tool policy, a tool call may require approval before execution or run automatically. Tool results are shown after execution.
+By default, tool calls are available in direct messages. If your system admin enables the experimental **Enable Channel Mention Tool Calling** setting, some tools can also run in channels when you @mention an Agent. Depending on the configured tool policy, a tool call may require approval before execution or run automatically. Tool results are shown after execution.
+
+When a channel @mention comes from a bot or integration that opts in with the `activate_ai` post property, tool calling follows a narrower automation path: only MCP tools that your system admin has enabled and set to **Auto Run (Everywhere)** are available. Those tools run without an approval card. Built-in Mattermost tools are not offered in that automation path. Native provider web search in channels is still controlled separately by **Allow native web search in channels**.
 
 If a tool execution fails, the Agent can continue with a follow-up response instead of stopping immediately. After three consecutive failed tool executions, the Agent stops calling further tools and is instructed to explain the latest error and ask you for guidance or any missing information. A successful tool execution resets that count.
 
-Available tools in direct messages, and in channels when enabled by your system admin, include:
+In direct messages, and in channels for ordinary @mentions when channel tool calling is enabled by your system admin, available tools include:
 
 - Server search (semantic search across your Mattermost instance)
 - User lookup (find information about Mattermost users)

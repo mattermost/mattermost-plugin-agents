@@ -366,6 +366,16 @@ When users report repeated tool failures, use **LLM Trace** and debug logging to
 
 Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**.
 
+### Channel @mentions from bots and integrations
+
+When **Enable Channel Mention Tool Calling** is enabled, a channel @mention that comes from a bot or integration post and opts in with the `activate_ai` post property follows a narrower tool path than a normal user message. In that case, only enabled MCP tools whose policy is **Auto Run (Everywhere)** are offered for tool calling. Built-in Mattermost tools are not offered in that flow. This avoids automated channel workflows stalling on approvals when no person is available to approve each tool call.
+
+Native provider web search in channels is still controlled separately by **Allow native web search in channels**.
+
+**Trust implication:** **Auto Run (Everywhere)** is a stronger trust choice than other tool policies because MCP tools with that policy can run automatically in these bot- or integration-driven channel @mention flows without an approval card for a user to confirm each invocation. Use **Auto Run (Everywhere)** only for MCP tools you are willing to execute unattended in those automations.
+
+**Verifying behavior:** Enable **Enable Channel Mention Tool Calling**, configure at least one MCP tool as **Auto Run (Everywhere)**, then have a bot post in a channel with an @mention of the agent and the `activate_ai` post property. In that scenario, only MCP tools set to **Auto Run (Everywhere)** should be available for tool use, and built-in Mattermost tools should not appear.
+
 ### Built-in tool integrations
 
 #### Server Search
@@ -380,7 +390,7 @@ Integrations are available in direct messages by default. If you enable the expe
 - **Data Available**: Username, full name, email, nickname, position, locale, timezone, last activity, status
 - **Permissions**: Requires `VIEW_MEMBERS` permission
 
-**Security Note**: Tool availability and approval behavior depend on your system configuration. Tools can be configured to require explicit user approval or to run automatically under the selected tool policy.
+**Security Note**: Tool availability and approval behavior depend on your system configuration. Tools can be configured to require explicit user approval or to run automatically under the selected tool policy. **Auto Run (Everywhere)** is particularly sensitive because, in channel @mentions from bots or integrations that opt in with `activate_ai`, those MCP tools can run without a per-call approval step.
 
 ## Model Context Protocol (MCP) Integration
 
