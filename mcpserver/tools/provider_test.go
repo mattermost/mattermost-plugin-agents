@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -50,6 +51,11 @@ type TestAccessArgs struct {
 	Message         string   `json:"message" jsonschema:"The message content"`
 	Attachments     []string `json:"attachments,omitempty" access:"local" jsonschema:"Optional list of file attachments"`
 	RemoteOnlyField string   `json:"remote_only_field,omitempty" access:"remote" jsonschema:"Field only available in remote mode"`
+}
+
+type TestScopeArgs struct {
+	ChannelID string `json:"channel_id" scope:"channel_id" jsonschema:"Scoped channel ID"`
+	Message   string `json:"message" jsonschema:"The message content"`
 }
 
 // TestRegisterDynamicTool_WithSchema tests that tools are properly registered with schemas
@@ -241,4 +247,70 @@ func TestValidateAccessRestrictions_AttackScenario(t *testing.T) {
 
 	err = validateAccessRestrictions([]byte(cleanRemoteRequest), &target, "remote")
 	require.NoError(t, err, "Remote access mode should allow requests without restricted fields")
+}
+
+func TestValidateMCPToolArguments_RejectsOutOfScopeValues(t *testing.T) {
+	allowedChannelID := model.NewId()
+	scope := &llm.MattermostAccessScope{
+		TeamID:            model.NewId(),
+		AllowedChannelIDs: []string{allowedChannelID},
+	}
+
+	var target TestScopeArgs
+	err := validateMCPToolArguments(
+		[]byte(`{"channel_id":"`+model.NewId()+`","message":"hello"}`),
+		&target,
+		"remote",
+		NewJSONSchemaForAccessMode[TestScopeArgs]("remote"),
+		scope,
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "scope validation failed")
+	require.Contains(t, err.Error(), `field "channel_id" value`)
+}
+
+func TestValidateMCPToolArguments_AllowsScopedValues(t *testing.T) {
+	allowedChannelID := model.NewId()
+	scope := &llm.MattermostAccessScope{
+		TeamID:            model.NewId(),
+		AllowedChannelIDs: []string{allowedChannelID},
+	}
+
+	var target TestScopeArgs
+	err := validateMCPToolArguments(
+		[]byte(`{"channel_id":"`+allowedChannelID+`","message":"hello"}`),
+		&target,
+		"remote",
+		NewJSONSchemaForAccessMode[TestScopeArgs]("remote"),
+		scope,
+	)
+	require.NoError(t, err)
+	require.Equal(t, allowedChannelID, target.ChannelID)
+	require.Equal(t, "hello", target.Message)
+}
+
+func TestValidateMCPToolArguments_RejectsMissingRequiredScopedChannelID(t *testing.T) {
+	scope := &llm.MattermostAccessScope{
+		TeamID:            model.NewId(),
+		AllowedChannelIDs: []string{model.NewId(), model.NewId()},
+	}
+
+	scopedSchema := llm.Tool{
+		Name:   "search_posts",
+		Schema: NewJSONSchemaForAccessMode[TestScopeArgs]("remote"),
+	}.WithConstrainedParams(map[string][]string{
+		"channel_id": scope.AllowedChannelIDs,
+	}).Schema
+
+	var target TestScopeArgs
+	err := validateMCPToolArguments(
+		[]byte(`{"message":"hello"}`),
+		&target,
+		"remote",
+		scopedSchema,
+		scope,
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "scope validation failed")
+	require.Contains(t, err.Error(), `field "channel_id" is required by the execution scope`)
 }

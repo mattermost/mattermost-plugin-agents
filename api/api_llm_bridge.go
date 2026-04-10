@@ -154,6 +154,9 @@ func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclien
 	bridgeContext.RequestingUser = &model.User{Id: req.UserID}
 	if includeTools && a.contextBuilder != nil {
 		a.contextBuilder.WithLLMContextTools(bot)(bridgeContext)
+		if bridgeContext.Tools != nil {
+			bridgeContext.Tools.KeepToolsIf(bridgeToolKeepMCPOnly)
+		}
 	}
 
 	resolvedOperation := operation
@@ -187,6 +190,12 @@ func normalizeAllowedToolRefs(rawRefs []bridgeclient.AllowedToolRef) ([]bridgecl
 		if ref.Name == "" {
 			return nil, errors.New("allowed_tools entries must have a non-empty name")
 		}
+		if strings.TrimSpace(ref.ServerOrigin) == "" {
+			return nil, fmt.Errorf(
+				"allowed_tools entry for tool %q: server_origin is required (use the exact server_origin from GET /bridge/v1/agents/{agent}/tools for that tool, typically your MCP server base URL); built-in Mattermost tools are not supported on the bridge",
+				ref.Name,
+			)
+		}
 		key := llm.ToolAutoRunKey(ref.ServerOrigin, ref.Name)
 		if _, exists := seen[key]; exists {
 			continue
@@ -196,6 +205,27 @@ func normalizeAllowedToolRefs(rawRefs []bridgeclient.AllowedToolRef) ([]bridgecl
 	}
 
 	return out, nil
+}
+
+// formatAllowedToolRefsForError renders allowlist entries for bridge error messages.
+func formatAllowedToolRefsForError(refs []bridgeclient.AllowedToolRef) string {
+	if len(refs) == 0 {
+		return "(none)"
+	}
+	var b strings.Builder
+	for i, r := range refs {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+		fmt.Fprintf(&b, "%q (server_origin=%q)", r.Name, r.ServerOrigin)
+	}
+	return b.String()
+}
+
+// bridgeToolKeepMCPOnly returns true for tools that have a non-empty ServerOrigin (MCP / embedded).
+// Built-in tools use an empty ServerOrigin and are omitted from the bridge catalog.
+func bridgeToolKeepMCPOnly(t llm.Tool) bool {
+	return t.ServerOrigin != ""
 }
 
 // validateAgentParam is gin middleware that validates the :agent path parameter.
@@ -251,10 +281,15 @@ func convertBridgeMattermostAccessScope(scope *bridgeclient.MattermostAccessScop
 		return nil, nil
 	}
 
+	accessibleChannelTypes, err := scope.EffectiveAccessibleChannelTypes()
+	if err != nil {
+		return nil, fmt.Errorf("invalid execution_scope: %w", err)
+	}
+
 	internal := &llm.MattermostAccessScope{
-		TeamID:              scope.TeamID,
-		AllowedChannelTypes: scope.AllowedChannelTypes,
-		AllowedChannelIDs:   scope.AllowedChannelIDs,
+		TeamID:                 scope.TeamID,
+		AccessibleChannelTypes: accessibleChannelTypes,
+		AllowedChannelIDs:      scope.AllowedChannelIDs,
 	}
 
 	if err := internal.Validate(); err != nil {
@@ -306,19 +341,31 @@ func (a *API) prepareAgentBridgeCompletion(
 		}
 
 		if llmRequest.Context.Tools == nil || len(llmRequest.Context.Tools.GetTools()) == 0 {
-			return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, errors.New("no eligible tools available for this agent")
+			return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf(
+				"no bridge-eligible MCP tools for this agent: the tool catalog is empty after excluding built-in tools. Configure MCP servers with tools for this user, verify MCP connectivity, and list tools via GET /bridge/v1/agents/{agent}/tools. requested allowed_tools: %s",
+				formatAllowedToolRefsForError(allowedRefs),
+			)
 		}
 
 		scopedTools := llm.NewToolStore(nil, false)
 		for _, ref := range allowedRefs {
 			tool := llmRequest.Context.Tools.GetTool(ref.Name)
 			if tool == nil {
-				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("tool %q is not eligible or not available for this agent", ref.Name)
+				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf(
+					"allowed_tools references unknown tool %q with server_origin %q: it is not in this agent's MCP tool catalog for this user (tool name and server_origin must match GET /bridge/v1/agents/{agent}/tools exactly). requested allowed_tools: %s",
+					ref.Name, ref.ServerOrigin, formatAllowedToolRefsForError(allowedRefs),
+				)
+			}
+			if tool.ServerOrigin == "" {
+				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf(
+					"allowed_tools: tool %q is not available on the bridge because it has no server_origin in the catalog (built-in tools cannot be used with bridge allowed_tools). requested allowed_tools: %s",
+					ref.Name, formatAllowedToolRefsForError(allowedRefs),
+				)
 			}
 			if tool.ServerOrigin != ref.ServerOrigin {
 				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf(
-					"allowed_tools server_origin for tool %q does not match (got %q, expected %q)",
-					ref.Name, ref.ServerOrigin, tool.ServerOrigin,
+					"allowed_tools mismatch for tool %q: request has server_origin %q but this agent exposes that tool only with server_origin %q (copy both fields from GET /bridge/v1/agents/{agent}/tools). full requested allowlist: %s",
+					ref.Name, ref.ServerOrigin, tool.ServerOrigin, formatAllowedToolRefsForError(allowedRefs),
 				)
 			}
 			scopedTools.AddTools([]llm.Tool{*tool})
@@ -334,6 +381,24 @@ func (a *API) prepareAgentBridgeCompletion(
 			llmRequest.Context.Tools = llm.NewNoTools()
 		}
 		llmRequest.Context.Tools.SetMattermostAccessScope(executionScope)
+		llmRequest.Context.Tools.ApplyMattermostAccessScope(executionScope)
+		a.pluginAPI.Log.Info("Bridge agent completion: mattermost access scope applied",
+			"agent", agent,
+			"user_id", req.UserID,
+			"team_id", executionScope.TeamID,
+			"accessible_channel_types", fmt.Sprintf("%v", executionScope.AccessibleChannelTypes),
+			"allowed_channel_ids_count", fmt.Sprintf("%d", len(executionScope.AllowedChannelIDs)),
+		)
+		if llmRequest.Context.Tools != nil {
+			toolNames := make([]string, 0, len(llmRequest.Context.Tools.GetTools()))
+			for _, t := range llmRequest.Context.Tools.GetTools() {
+				toolNames = append(toolNames, t.Name)
+			}
+			a.pluginAPI.Log.Info("Bridge agent completion: tools after scope application",
+				"agent", agent,
+				"tools", fmt.Sprintf("%v", toolNames),
+			)
+		}
 	}
 
 	opts, err := a.convertRequestToLLMOptions(req)
@@ -568,6 +633,9 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 	toolContext.RequestingUser = &model.User{Id: userID}
 	if a.contextBuilder != nil {
 		a.contextBuilder.WithLLMContextTools(bot)(toolContext)
+		if toolContext.Tools != nil {
+			toolContext.Tools.KeepToolsIf(bridgeToolKeepMCPOnly)
+		}
 	}
 
 	var tools []bridgeclient.BridgeToolInfo

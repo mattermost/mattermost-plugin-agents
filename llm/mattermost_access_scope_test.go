@@ -30,11 +30,11 @@ func TestMattermostAccessScope_Validate(t *testing.T) {
 		},
 		{
 			name:  "all fields set is valid",
-			scope: &MattermostAccessScope{TeamID: validTeamID, AllowedChannelTypes: []string{"O"}, AllowedChannelIDs: []string{validChannelID}},
+			scope: &MattermostAccessScope{TeamID: validTeamID, AccessibleChannelTypes: []string{"O"}, AllowedChannelIDs: []string{validChannelID}},
 		},
 		{
 			name:    "channel types without team_id",
-			scope:   &MattermostAccessScope{AllowedChannelTypes: []string{"O"}},
+			scope:   &MattermostAccessScope{AccessibleChannelTypes: []string{"O"}},
 			wantErr: "team_id is required",
 		},
 		{
@@ -49,7 +49,7 @@ func TestMattermostAccessScope_Validate(t *testing.T) {
 		},
 		{
 			name:    "invalid channel type",
-			scope:   &MattermostAccessScope{TeamID: validTeamID, AllowedChannelTypes: []string{"X"}},
+			scope:   &MattermostAccessScope{TeamID: validTeamID, AccessibleChannelTypes: []string{"X"}},
 			wantErr: "invalid channel type",
 		},
 		{
@@ -59,7 +59,7 @@ func TestMattermostAccessScope_Validate(t *testing.T) {
 		},
 		{
 			name:  "multiple valid channel types",
-			scope: &MattermostAccessScope{TeamID: validTeamID, AllowedChannelTypes: []string{"O", "P", "D", "G"}},
+			scope: &MattermostAccessScope{TeamID: validTeamID, AccessibleChannelTypes: []string{"O", "P", "D", "G"}},
 		},
 	}
 
@@ -147,31 +147,31 @@ func TestMattermostAccessScope_AllowsChannel(t *testing.T) {
 		},
 		{
 			name:    "public channel in correct team allowed",
-			scope:   &MattermostAccessScope{TeamID: teamA, AllowedChannelTypes: []string{"O"}},
+			scope:   &MattermostAccessScope{TeamID: teamA, AccessibleChannelTypes: []string{"O"}},
 			channel: &model.Channel{Id: chanPublicA, TeamId: teamA, Type: model.ChannelTypeOpen},
 			want:    true,
 		},
 		{
 			name:    "public channel in wrong team denied",
-			scope:   &MattermostAccessScope{TeamID: teamA, AllowedChannelTypes: []string{"O"}},
+			scope:   &MattermostAccessScope{TeamID: teamA, AccessibleChannelTypes: []string{"O"}},
 			channel: &model.Channel{Id: chanPublicB, TeamId: teamB, Type: model.ChannelTypeOpen},
 			want:    false,
 		},
 		{
 			name:    "private channel denied when only public allowed",
-			scope:   &MattermostAccessScope{TeamID: teamA, AllowedChannelTypes: []string{"O"}},
+			scope:   &MattermostAccessScope{TeamID: teamA, AccessibleChannelTypes: []string{"O"}},
 			channel: &model.Channel{Id: chanPrivate, TeamId: teamA, Type: model.ChannelTypePrivate},
 			want:    false,
 		},
 		{
 			name:    "DM allowed when D is in allowed types",
-			scope:   &MattermostAccessScope{TeamID: teamA, AllowedChannelTypes: []string{"O", "D"}},
+			scope:   &MattermostAccessScope{TeamID: teamA, AccessibleChannelTypes: []string{"O", "D"}},
 			channel: &model.Channel{Id: chanDM, Type: model.ChannelTypeDirect},
 			want:    true,
 		},
 		{
 			name:    "DM denied when only public allowed (DMs have empty TeamId)",
-			scope:   &MattermostAccessScope{TeamID: teamA, AllowedChannelTypes: []string{"O"}},
+			scope:   &MattermostAccessScope{TeamID: teamA, AccessibleChannelTypes: []string{"O"}},
 			channel: &model.Channel{Id: chanDM, Type: model.ChannelTypeDirect},
 			want:    false,
 		},
@@ -189,7 +189,7 @@ func TestMattermostAccessScope_AllowsChannel(t *testing.T) {
 		},
 		{
 			name:    "channel passes type but fails allowlist",
-			scope:   &MattermostAccessScope{TeamID: teamA, AllowedChannelTypes: []string{"O"}, AllowedChannelIDs: []string{chanPublicA}},
+			scope:   &MattermostAccessScope{TeamID: teamA, AccessibleChannelTypes: []string{"O"}, AllowedChannelIDs: []string{chanPublicA}},
 			channel: &model.Channel{Id: chanPublicB, TeamId: teamA, Type: model.ChannelTypeOpen},
 			want:    false,
 		},
@@ -204,56 +204,6 @@ func TestMattermostAccessScope_AllowsChannel(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, tc.scope.AllowsChannel(tc.channel))
-		})
-	}
-}
-
-func TestMattermostAccessScope_BlocksDMGM(t *testing.T) {
-	tests := []struct {
-		name  string
-		scope *MattermostAccessScope
-		want  bool
-	}{
-		{
-			name:  "nil scope does not block",
-			scope: nil,
-			want:  false,
-		},
-		{
-			name:  "empty channel types does not block",
-			scope: &MattermostAccessScope{AllowedChannelTypes: []string{}},
-			want:  false,
-		},
-		{
-			name:  "public only blocks DM/GM",
-			scope: &MattermostAccessScope{AllowedChannelTypes: []string{"O"}},
-			want:  true,
-		},
-		{
-			name:  "public and private blocks DM/GM",
-			scope: &MattermostAccessScope{AllowedChannelTypes: []string{"O", "P"}},
-			want:  true,
-		},
-		{
-			name:  "DM allowed does not block",
-			scope: &MattermostAccessScope{AllowedChannelTypes: []string{"O", "D"}},
-			want:  false,
-		},
-		{
-			name:  "GM allowed does not block",
-			scope: &MattermostAccessScope{AllowedChannelTypes: []string{"O", "G"}},
-			want:  false,
-		},
-		{
-			name:  "both DM and GM allowed does not block",
-			scope: &MattermostAccessScope{AllowedChannelTypes: []string{"D", "G"}},
-			want:  false,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, tc.scope.BlocksDMGM())
 		})
 	}
 }

@@ -225,12 +225,7 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 				return fmt.Errorf("failed to marshal arguments: %w", marshalErr)
 			}
 
-			// Validate access restrictions before unmarshaling
-			if validationErr := validateAccessRestrictions(argumentsBytes, target, string(mcpContext.AccessMode)); validationErr != nil {
-				return fmt.Errorf("access validation failed: %w", validationErr)
-			}
-
-			return json.Unmarshal(argumentsBytes, target)
+			return validateMCPToolArguments(argumentsBytes, target, string(mcpContext.AccessMode), mcpTool.Schema, mcpContext.MattermostAccessScope)
 		}
 
 		// Call the tool resolver
@@ -290,10 +285,16 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 			if teamID, ok := scopeMap["team_id"].(string); ok {
 				scope.TeamID = teamID
 			}
-			if types, ok := scopeMap["allowed_channel_types"].([]any); ok {
+			if types, ok := scopeMap["accessible_channel_types"].([]any); ok {
 				for _, t := range types {
 					if s, ok := t.(string); ok {
-						scope.AllowedChannelTypes = append(scope.AllowedChannelTypes, s)
+						scope.AccessibleChannelTypes = append(scope.AccessibleChannelTypes, s)
+					}
+				}
+			} else if types, ok := scopeMap["allowed_channel_types"].([]any); ok {
+				for _, t := range types {
+					if s, ok := t.(string); ok {
+						scope.AccessibleChannelTypes = append(scope.AccessibleChannelTypes, s)
 					}
 				}
 			}
@@ -385,9 +386,17 @@ func NewJSONSchemaForAccessMode[T any](accessMode string) *jsonschema.Schema {
 		includeField := restrictionTag == "" || isAccessAllowed(restrictionTag, accessMode)
 
 		if includeField {
-			// Copy the property from base schema if it exists
+			// Copy the property from base schema if it exists (clone so scope tags don't leak across tools)
 			if baseProperty, exists := baseSchema.Properties[jsonFieldName]; exists {
-				filteredSchema.Properties[jsonFieldName] = baseProperty
+				prop := baseProperty.CloneSchemas()
+				scopeTag := strings.TrimSpace(field.Tag.Get("scope"))
+				if scopeTag != "" {
+					if prop.Extra == nil {
+						prop.Extra = make(map[string]any)
+					}
+					prop.Extra[llm.MattermostScopeSchemaExtraKey] = scopeTag
+				}
+				filteredSchema.Properties[jsonFieldName] = prop
 			}
 
 			// Check if field was required in original schema
@@ -478,6 +487,27 @@ func validateAccessRestrictions(jsonData []byte, target interface{}, currentAcce
 		if restrictionTag != "" && !isAccessAllowed(restrictionTag, currentAccessMode) {
 			return fmt.Errorf("field '%s' is not available in %s access mode (requires: %s)", jsonFieldName, currentAccessMode, restrictionTag)
 		}
+	}
+
+	return nil
+}
+
+func validateMCPToolArguments(argumentsBytes []byte, target interface{}, accessMode string, schema any, scope *llm.MattermostAccessScope) error {
+	if validationErr := validateAccessRestrictions(argumentsBytes, target, accessMode); validationErr != nil {
+		return fmt.Errorf("access validation failed: %w", validationErr)
+	}
+
+	if scope != nil {
+		rawArgs := map[string]any{}
+		if err := json.Unmarshal(argumentsBytes, &rawArgs); err == nil {
+			if validationErr := llm.ValidateMattermostAccessScopeArgs(schema, scope, rawArgs); validationErr != nil {
+				return fmt.Errorf("scope validation failed: %w", validationErr)
+			}
+		}
+	}
+
+	if err := json.Unmarshal(argumentsBytes, target); err != nil {
+		return err
 	}
 
 	return nil

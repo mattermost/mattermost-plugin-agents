@@ -20,8 +20,8 @@ import (
 // CombinedSearchArgs represents arguments for search_posts when both semantic and keyword search are available.
 type CombinedSearchArgs struct {
 	Query          string `json:"query" jsonschema:"The search query,minLength=1,maxLength=4000"`
-	TeamID         string `json:"team_id,omitempty" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
-	ChannelID      string `json:"channel_id,omitempty" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
+	TeamID         string `json:"team_id,omitempty" scope:"team_id" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
+	ChannelID      string `json:"channel_id,omitempty" scope:"channel_id" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
 	SemanticLimit  int    `json:"semantic_limit,omitempty" jsonschema:"Max results from semantic search (default 10; max 50),minimum=1,maximum=50"`
 	SemanticOffset int    `json:"semantic_offset,omitempty" jsonschema:"Offset for semantic search pagination,minimum=0"`
 	KeywordLimit   int    `json:"keyword_limit,omitempty" jsonschema:"Max results from keyword search (default 10; max 100),minimum=1,maximum=100"`
@@ -31,8 +31,8 @@ type CombinedSearchArgs struct {
 // KeywordOnlySearchArgs represents arguments for search_posts when only keyword search is available.
 type KeywordOnlySearchArgs struct {
 	Query         string `json:"query" jsonschema:"The search query,minLength=1,maxLength=4000"`
-	TeamID        string `json:"team_id,omitempty" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
-	ChannelID     string `json:"channel_id,omitempty" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
+	TeamID        string `json:"team_id,omitempty" scope:"team_id" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
+	ChannelID     string `json:"channel_id,omitempty" scope:"channel_id" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
 	KeywordLimit  int    `json:"keyword_limit,omitempty" jsonschema:"Max results from keyword search (default 10; max 100),minimum=1,maximum=100"`
 	KeywordOffset int    `json:"keyword_offset,omitempty" jsonschema:"Offset for keyword search pagination,minimum=0"`
 }
@@ -53,7 +53,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	contextHint := "Results show individual matching posts — to see the full conversation around a result, use read_channel with the channel_id."
 
 	if semanticEnabled {
-		schema = llm.NewJSONSchemaFromStruct[CombinedSearchArgs]()
+		schema = annotateSchemaScopeTags[CombinedSearchArgs](llm.NewJSONSchemaFromStruct[CombinedSearchArgs]())
 		description = "Search for posts in Mattermost using both semantic (AI-powered) and keyword search. " +
 			"Semantic search finds posts by meaning and does not require exact term matches. " +
 			"Keyword search uses AND logic — all terms must appear in a single post, so prefer short, focused queries (1-2 key terms) over long multi-word phrases. " +
@@ -64,7 +64,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 			"Returns matching posts with content, author, channel, and relevance score for semantic results. " +
 			contextHint
 	} else {
-		schema = llm.NewJSONSchemaFromStruct[KeywordOnlySearchArgs]()
+		schema = annotateSchemaScopeTags[KeywordOnlySearchArgs](llm.NewJSONSchemaFromStruct[KeywordOnlySearchArgs]())
 		description = "Search for posts in Mattermost using keyword search. " +
 			"Uses AND logic — all terms must appear in a single post, so prefer short, focused queries (1-2 key terms) over long multi-word phrases. " +
 			"Parameters: query (required), team_id (optional), channel_id (optional). " +
@@ -120,28 +120,6 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 	}
 	if args.ChannelID != "" && !model.IsValidId(args.ChannelID) {
 		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
-	}
-
-	// Enforce execution scope: force team_id, auto-fill or validate channel_id
-	if mcpContext.MattermostAccessScope != nil {
-		if mcpContext.MattermostAccessScope.TeamID != "" {
-			if args.TeamID == "" {
-				args.TeamID = mcpContext.MattermostAccessScope.TeamID
-			} else if !mcpContext.MattermostAccessScope.AllowsTeam(args.TeamID) {
-				return "team is outside execution scope", mcpContext.MattermostAccessScope.TeamDeniedError(args.TeamID)
-			}
-		}
-		if args.ChannelID != "" {
-			channel, _, chErr := mcpContext.Client.GetChannel(mcpContext.Ctx, args.ChannelID)
-			if chErr != nil {
-				return "failed to fetch channel for scope check", fmt.Errorf("error fetching channel %s: %w", args.ChannelID, chErr)
-			}
-			if !mcpContext.MattermostAccessScope.AllowsChannel(channel) {
-				return "channel is outside execution scope", mcpContext.MattermostAccessScope.ChannelDeniedError(args.ChannelID)
-			}
-		} else if len(mcpContext.MattermostAccessScope.AllowedChannelIDs) == 1 {
-			args.ChannelID = mcpContext.MattermostAccessScope.AllowedChannelIDs[0]
-		}
 	}
 
 	if args.SemanticLimit <= 0 {

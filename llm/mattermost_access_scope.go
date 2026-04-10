@@ -24,10 +24,11 @@ var ValidChannelTypes = []string{
 type MattermostAccessScope struct {
 	// TeamID anchors the run to a single team. Required when any other scope field is set.
 	TeamID string `json:"team_id"`
-	// AllowedChannelTypes restricts which channel types the run may access.
+	// AccessibleChannelTypes restricts which channel types background tools may access
+	// for post-reading/search and channel-revealing metadata.
 	// Valid values: "O" (public), "P" (private), "D" (DM), "G" (group message).
 	// If omitted or empty, all channel types are allowed.
-	AllowedChannelTypes []string `json:"allowed_channel_types,omitempty"`
+	AccessibleChannelTypes []string `json:"accessible_channel_types,omitempty"`
 	// AllowedChannelIDs is an optional allowlist of specific channel IDs.
 	// Treated as an intersection with team + channel type constraints, not an override.
 	AllowedChannelIDs []string `json:"allowed_channel_ids,omitempty"`
@@ -40,18 +41,18 @@ func (s *MattermostAccessScope) Validate() error {
 		return nil
 	}
 
-	hasChannelTypes := len(s.AllowedChannelTypes) > 0
+	hasChannelTypes := len(s.AccessibleChannelTypes) > 0
 	hasChannelIDs := len(s.AllowedChannelIDs) > 0
 
 	if s.TeamID == "" && (hasChannelTypes || hasChannelIDs) {
-		return fmt.Errorf("team_id is required when allowed_channel_types or allowed_channel_ids is set")
+		return fmt.Errorf("team_id is required when accessible_channel_types or allowed_channel_ids is set")
 	}
 
 	if s.TeamID != "" && !model.IsValidId(s.TeamID) {
 		return fmt.Errorf("team_id must be a valid ID")
 	}
 
-	for _, ct := range s.AllowedChannelTypes {
+	for _, ct := range s.AccessibleChannelTypes {
 		if !slices.Contains(ValidChannelTypes, ct) {
 			return fmt.Errorf("invalid channel type %q: must be one of %s", ct, strings.Join(ValidChannelTypes, ", "))
 		}
@@ -89,8 +90,8 @@ func (s *MattermostAccessScope) AllowsChannel(channel *model.Channel) bool {
 	}
 
 	// Channel type check
-	if len(s.AllowedChannelTypes) > 0 {
-		if !slices.Contains(s.AllowedChannelTypes, string(channel.Type)) {
+	if len(s.AccessibleChannelTypes) > 0 {
+		if !slices.Contains(s.AccessibleChannelTypes, string(channel.Type)) {
 			return false
 		}
 	}
@@ -103,17 +104,6 @@ func (s *MattermostAccessScope) AllowsChannel(channel *model.Channel) bool {
 	}
 
 	return true
-}
-
-// BlocksDMGM returns true if the scope prevents DM and GM channels.
-// A nil scope does not block anything.
-func (s *MattermostAccessScope) BlocksDMGM() bool {
-	if s == nil || len(s.AllowedChannelTypes) == 0 {
-		return false
-	}
-
-	return !slices.Contains(s.AllowedChannelTypes, string(model.ChannelTypeDirect)) &&
-		!slices.Contains(s.AllowedChannelTypes, string(model.ChannelTypeGroup))
 }
 
 // ChannelDeniedError returns a formatted error for scope violations.

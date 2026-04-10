@@ -14,13 +14,13 @@ import (
 
 // GetTeamInfoArgs represents arguments for the get_team_info tool
 type GetTeamInfoArgs struct {
-	TeamID   string `json:"team_id,omitempty" jsonschema:"The exact team ID (fastest, most reliable method)"`
+	TeamID   string `json:"team_id,omitempty" scope:"team_id" jsonschema:"The exact team ID (fastest, most reliable method)"`
 	TeamName string `json:"team_name,omitempty" jsonschema:"Team name to search for — matches against both display name and URL name (case-insensitive, supports partial matches)"`
 }
 
 // GetTeamMembersArgs represents arguments for the get_team_members tool
 type GetTeamMembersArgs struct {
-	TeamID      string `json:"team_id" jsonschema:"ID of the team to get members for,minLength=26,maxLength=26"`
+	TeamID      string `json:"team_id" scope:"team_id" jsonschema:"ID of the team to get members for,minLength=26,maxLength=26"`
 	Limit       int    `json:"limit,omitempty" jsonschema:"Number of members to return (default: 50, max: 200),minimum=1,maximum=200"`
 	Page        int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
 	ExcludeBots *bool  `json:"exclude_bots,omitempty" jsonschema:"Exclude bot accounts from results (default: true)"`
@@ -38,7 +38,7 @@ type CreateTeamArgs struct {
 // AddUserToTeamArgs represents arguments for the add_user_to_team tool (dev mode only)
 type AddUserToTeamArgs struct {
 	UserID string `json:"user_id" jsonschema:"ID of the user to add"`
-	TeamID string `json:"team_id" jsonschema:"ID of the team to add user to"`
+	TeamID string `json:"team_id" scope:"team_id" jsonschema:"ID of the team to add user to"`
 }
 
 // getTeamTools returns all team-related tools
@@ -92,11 +92,6 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
-	// Enforce execution scope on the team being looked up
-	if args.TeamID != "" && !mcpContext.MattermostAccessScope.AllowsTeam(args.TeamID) {
-		return "team is outside execution scope", mcpContext.MattermostAccessScope.TeamDeniedError(args.TeamID)
-	}
-
 	var team *model.Team
 
 	switch {
@@ -127,11 +122,6 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 	teamStats, _, err := client.GetTeamStats(ctx, team.Id, "")
 	if err == nil {
 		memberCount = teamStats.TotalMemberCount
-	}
-
-	// Post-lookup scope check (for cases where team was looked up by name/display name)
-	if !mcpContext.MattermostAccessScope.AllowsTeam(team.Id) {
-		return "team is outside execution scope", mcpContext.MattermostAccessScope.TeamDeniedError(team.Id)
 	}
 
 	// Format the response
@@ -245,11 +235,6 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 	}
 	if args.Page < 0 {
 		args.Page = 0
-	}
-
-	// Enforce execution scope
-	if !mcpContext.MattermostAccessScope.AllowsTeam(args.TeamID) {
-		return "team is outside execution scope", mcpContext.MattermostAccessScope.TeamDeniedError(args.TeamID)
 	}
 
 	// Get client from context

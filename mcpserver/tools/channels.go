@@ -18,7 +18,7 @@ import (
 
 // ReadChannelArgs represents arguments for the read_channel tool
 type ReadChannelArgs struct {
-	ChannelID string `json:"channel_id" jsonschema:"The ID of the channel to read from,minLength=26,maxLength=26"`
+	ChannelID string `json:"channel_id" scope:"channel_id" jsonschema:"The ID of the channel to read from,minLength=26,maxLength=26"`
 	Limit     int    `json:"limit,omitempty" jsonschema:"Number of posts to retrieve (default: 20, max: 100),minimum=1,maximum=100"`
 	Since     string `json:"since,omitempty" jsonschema:"Only get posts since this timestamp (ISO 8601 format),format=date-time"`
 }
@@ -28,21 +28,21 @@ type CreateChannelArgs struct {
 	Name        string `json:"name" jsonschema:"The channel name (URL-friendly),minLength=1,maxLength=64"`
 	DisplayName string `json:"display_name" jsonschema:"The channel display name,minLength=1,maxLength=64"`
 	Type        string `json:"type" jsonschema:"Channel type,enum=O,enum=P"`
-	TeamID      string `json:"team_id" jsonschema:"The team ID where the channel will be created,minLength=26,maxLength=26"`
+	TeamID      string `json:"team_id" scope:"team_id" jsonschema:"The team ID where the channel will be created,minLength=26,maxLength=26"`
 	Purpose     string `json:"purpose" jsonschema:"Optional channel purpose,maxLength=250"`
 	Header      string `json:"header" jsonschema:"Optional channel header,maxLength=1024"`
 }
 
 // GetChannelInfoArgs represents arguments for the get_channel_info tool
 type GetChannelInfoArgs struct {
-	ChannelID   string `json:"channel_id,omitempty" jsonschema:"The exact channel ID (fastest, most reliable method),maxLength=26"`
+	ChannelID   string `json:"channel_id,omitempty" scope:"channel_id" jsonschema:"The exact channel ID (fastest, most reliable method),maxLength=26"`
 	ChannelName string `json:"channel_name,omitempty" jsonschema:"Channel name to search for — matches against both display name and URL name (case-insensitive, supports partial matches),maxLength=64"`
-	TeamID      string `json:"team_id,omitempty" jsonschema:"Team ID (optional - if provided, searches within specific team; if omitted, searches across all teams),maxLength=26"`
+	TeamID      string `json:"team_id,omitempty" scope:"team_id" jsonschema:"Team ID (optional - if provided, searches within specific team; if omitted, searches across all teams),maxLength=26"`
 }
 
 // GetChannelMembersArgs represents arguments for the get_channel_members tool
 type GetChannelMembersArgs struct {
-	ChannelID   string `json:"channel_id" jsonschema:"ID of the channel to get members for,minLength=26,maxLength=26"`
+	ChannelID   string `json:"channel_id" scope:"channel_id" jsonschema:"ID of the channel to get members for,minLength=26,maxLength=26"`
 	Limit       int    `json:"limit,omitempty" jsonschema:"Number of members to return (default: 50, max: 200),minimum=1,maximum=200"`
 	Page        int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
 	ExcludeBots *bool  `json:"exclude_bots,omitempty" jsonschema:"Exclude bot accounts from results (default: true)"`
@@ -51,12 +51,12 @@ type GetChannelMembersArgs struct {
 // AddUserToChannelArgs represents arguments for the add_user_to_channel tool
 type AddUserToChannelArgs struct {
 	UserID    string `json:"user_id" jsonschema:"ID of the user to add"`
-	ChannelID string `json:"channel_id" jsonschema:"ID of the channel to add user to"`
+	ChannelID string `json:"channel_id" scope:"channel_id" jsonschema:"ID of the channel to add user to"`
 }
 
 // GetUserChannelsArgs represents arguments for the get_user_channels tool
 type GetUserChannelsArgs struct {
-	TeamID  string `json:"team_id,omitempty" jsonschema:"Optional team ID to filter channels by team,maxLength=26"`
+	TeamID  string `json:"team_id,omitempty" scope:"team_id" jsonschema:"Optional team ID to filter channels by team,maxLength=26"`
 	Page    int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
 	PerPage int    `json:"per_page,omitempty" jsonschema:"Number of channels per page (default: 60, max: 200),minimum=1,maximum=200"`
 }
@@ -67,37 +67,37 @@ func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 		{
 			Name:        "read_channel",
 			Description: "Read recent posts from a Mattermost channel. Parameters: channel_id (required), limit (1-100, default 20), since (ISO 8601 timestamp, optional). Returns post details including author, content, and timestamps. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 10, \"since\": \"2024-01-01T00:00:00Z\"}",
-			Schema:      llm.NewJSONSchemaFromStruct[ReadChannelArgs](),
+			Schema:      newChannelToolSchema[ReadChannelArgs](),
 			Resolver:    p.toolReadChannel,
 		},
 		{
 			Name:        "create_channel",
 			Description: "Create a new channel in Mattermost. Parameters: name (URL-friendly), display_name (user-visible), type ('O' for public, 'P' for private), team_id (required), purpose (optional), header (optional). Returns created channel details. Example: {\"name\": \"dev-chat\", \"display_name\": \"Development Chat\", \"type\": \"O\", \"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
-			Schema:      llm.NewJSONSchemaFromStruct[CreateChannelArgs](),
+			Schema:      newChannelToolSchema[CreateChannelArgs](),
 			Resolver:    p.toolCreateChannel,
 		},
 		{
 			Name:        "get_channel_info",
 			Description: "Get information about channel(s). Provide channel_id (fastest) or channel_name (matches against both display name and URL name, case-insensitive, supports partial matches). Optional: team_id to limit search scope. If multiple channels match (e.g., 'General' exists in multiple teams), returns ALL matches with team context for disambiguation. Returns channel metadata including ID, names, type, team, purpose, and member count. Example: {\"channel_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}",
-			Schema:      llm.NewJSONSchemaFromStruct[GetChannelInfoArgs](),
+			Schema:      newChannelToolSchema[GetChannelInfoArgs](),
 			Resolver:    p.toolGetChannelInfo,
 		},
 		{
 			Name:        "get_channel_members",
 			Description: "Get members of a channel with pagination support. Parameters: channel_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and join date. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 25, \"page\": 0}",
-			Schema:      llm.NewJSONSchemaFromStruct[GetChannelMembersArgs](),
+			Schema:      newChannelToolSchema[GetChannelMembersArgs](),
 			Resolver:    p.toolGetChannelMembers,
 		},
 		{
 			Name:        "add_user_to_channel",
 			Description: "Add a user to a channel. Parameters: user_id (required), channel_id (required). Returns confirmation message.",
-			Schema:      llm.NewJSONSchemaFromStruct[AddUserToChannelArgs](),
+			Schema:      newChannelToolSchema[AddUserToChannelArgs](),
 			Resolver:    p.toolAddUserToChannel,
 		},
 		{
 			Name:        "get_user_channels",
 			Description: "Get channels the current user is a member of, including DMs and GMs. Parameters: team_id (optional, filter by team), page (default 0), per_page (1-200, default 60). Returns channel details with team info and pagination. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"per_page\": 60}",
-			Schema:      llm.NewJSONSchemaFromStruct[GetUserChannelsArgs](),
+			Schema:      newChannelToolSchema[GetUserChannelsArgs](),
 			Resolver:    p.toolGetUserChannels,
 		},
 	}
@@ -149,10 +149,8 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	if err != nil {
 		return "failed to fetch channel info", fmt.Errorf("error fetching channel: %w", err)
 	}
-
-	// Enforce execution scope
-	if !mcpContext.MattermostAccessScope.AllowsChannel(channel) {
-		return "channel is outside execution scope", mcpContext.MattermostAccessScope.ChannelDeniedError(args.ChannelID)
+	if err := p.ensureChannelAccessible("read_channel", mcpContext.MattermostAccessScope, channel); err != nil {
+		return "channel is outside execution scope", err
 	}
 
 	// Determine team display name; DMs/Groups have no team
@@ -290,23 +288,6 @@ func (p *MattermostToolProvider) toolCreateChannel(mcpContext *MCPToolContext, a
 		return "type must be 'O' for public or 'P' for private", fmt.Errorf("invalid channel type: %s", args.Type)
 	}
 
-	// Enforce execution scope on team and channel type
-	if !mcpContext.MattermostAccessScope.AllowsTeam(args.TeamID) {
-		return "team is outside execution scope", mcpContext.MattermostAccessScope.TeamDeniedError(args.TeamID)
-	}
-	if scope := mcpContext.MattermostAccessScope; scope != nil && len(scope.AllowedChannelTypes) > 0 {
-		allowed := false
-		for _, ct := range scope.AllowedChannelTypes {
-			if ct == args.Type {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return "channel type is not allowed by execution scope", fmt.Errorf("channel type %q is not allowed by the execution scope for this run", args.Type)
-		}
-	}
-
 	// Get client and context
 	if mcpContext.Client == nil {
 		return "client not available", fmt.Errorf("client not available in context")
@@ -350,17 +331,6 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 	// Validate team ID if provided
 	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
 		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
-	}
-
-	// If execution scope constrains the team and no explicit team_id was provided, use the scoped team
-	if args.TeamID == "" && mcpContext.MattermostAccessScope != nil && mcpContext.MattermostAccessScope.TeamID != "" {
-		args.TeamID = mcpContext.MattermostAccessScope.TeamID
-	}
-
-	// Auto-fill channel_id when scope restricts to exactly one channel and no identifier was provided
-	if args.ChannelID == "" && args.ChannelName == "" &&
-		mcpContext.MattermostAccessScope != nil && len(mcpContext.MattermostAccessScope.AllowedChannelIDs) == 1 {
-		args.ChannelID = mcpContext.MattermostAccessScope.AllowedChannelIDs[0]
 	}
 
 	var channels []*model.Channel
@@ -568,15 +538,12 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
-	// Enforce execution scope
-	if mcpContext.MattermostAccessScope != nil {
-		channel, _, chErr := client.GetChannel(ctx, args.ChannelID)
-		if chErr != nil {
-			return "failed to fetch channel for scope check", fmt.Errorf("error fetching channel: %w", chErr)
-		}
-		if !mcpContext.MattermostAccessScope.AllowsChannel(channel) {
-			return "channel is outside execution scope", mcpContext.MattermostAccessScope.ChannelDeniedError(args.ChannelID)
-		}
+	channel, _, err := client.GetChannel(ctx, args.ChannelID)
+	if err != nil {
+		return "failed to fetch channel info", fmt.Errorf("error fetching channel: %w", err)
+	}
+	if err := p.ensureChannelAccessible("get_channel_members", mcpContext.MattermostAccessScope, channel); err != nil {
+		return "channel is outside execution scope", err
 	}
 
 	// Default exclude_bots to true
@@ -652,17 +619,6 @@ func (p *MattermostToolProvider) toolAddUserToChannel(mcpContext *MCPToolContext
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
-
-	// Enforce execution scope
-	if mcpContext.MattermostAccessScope != nil {
-		channel, _, chErr := client.GetChannel(ctx, args.ChannelID)
-		if chErr != nil {
-			return "failed to fetch channel for scope check", fmt.Errorf("error fetching channel: %w", chErr)
-		}
-		if !mcpContext.MattermostAccessScope.AllowsChannel(channel) {
-			return "channel is outside execution scope", mcpContext.MattermostAccessScope.ChannelDeniedError(args.ChannelID)
-		}
-	}
 
 	// Add user to channel
 	_, _, err = client.AddChannelMember(ctx, args.ChannelID, args.UserID)
@@ -835,11 +791,6 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	// Validate team ID if provided
 	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
 		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
-	}
-
-	// If execution scope constrains the team and no explicit team_id was provided, use the scoped team
-	if args.TeamID == "" && mcpContext.MattermostAccessScope != nil && mcpContext.MattermostAccessScope.TeamID != "" {
-		args.TeamID = mcpContext.MattermostAccessScope.TeamID
 	}
 
 	// Set defaults and cap to match schema (consistent with get_channel_members and get_team_members).

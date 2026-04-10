@@ -1375,7 +1375,20 @@ func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 			},
 		},
 	}
-	e.api.mcpClientManager = newTestMCPClientManager(t)
+	mcpMgr := newTestMCPClientManager(t)
+	mcpMgr.config = e.config.mcpConfig
+	mcpMgr.tools = []llm.Tool{
+		{
+			Name:         "eligible_tool",
+			Description:  "discovered eligible_tool",
+			ServerOrigin: server.URL,
+			Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+			Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				return "ok", nil
+			},
+		},
+	}
+	e.api.mcpClientManager = mcpMgr
 
 	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
 		e.client,
@@ -1391,7 +1404,7 @@ func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 				},
 				{
 					Name:        "ineligible_tool",
-					Description: "should be filtered out",
+					Description: "built-in only; excluded from bridge",
 					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
 					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 						return "ok", nil
@@ -1399,7 +1412,7 @@ func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 				},
 			},
 		},
-		nil,
+		mcpMgr,
 		&testLLMContextConfigProvider{},
 	)
 
@@ -1413,10 +1426,10 @@ func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 	client := e.CreateBridgeClient()
 	tools, err := client.GetAgentTools(testBotUserID, testUserID)
 	require.NoError(t, err)
-	require.Len(t, tools, 2)
+	// Built-in tools have no ServerOrigin and are excluded from the bridge; only the MCP copy remains.
+	require.Len(t, tools, 1)
 	require.Equal(t, "eligible_tool", tools[0].Name)
-	require.Equal(t, "eligible from context", tools[0].Description)
-	require.Equal(t, "ineligible_tool", tools[1].Name)
+	require.Equal(t, server.URL, tools[0].ServerOrigin)
 }
 
 func TestBridgeGetAgentToolsReturnsEmbeddedServerTools(t *testing.T) {
@@ -1500,7 +1513,20 @@ func TestBridgeGetAgentToolsSkipsUnreachableEligibleServer(t *testing.T) {
 			},
 		},
 	}
-	e.api.mcpClientManager = newTestMCPClientManager(t)
+	mcpMgr := newTestMCPClientManager(t)
+	mcpMgr.config = e.config.mcpConfig
+	mcpMgr.tools = []llm.Tool{
+		{
+			Name:         "eligible_tool",
+			Description:  "from reachable MCP server",
+			ServerOrigin: server.URL,
+			Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+			Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				return "ok", nil
+			},
+		},
+	}
+	e.api.mcpClientManager = mcpMgr
 
 	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
 		e.client,
@@ -1508,7 +1534,7 @@ func TestBridgeGetAgentToolsSkipsUnreachableEligibleServer(t *testing.T) {
 			tools: []llm.Tool{
 				{
 					Name:        "eligible_tool",
-					Description: "eligible from context",
+					Description: "built-in shadow; bridge uses MCP copy",
 					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
 					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 						return "ok", nil
@@ -1516,7 +1542,7 @@ func TestBridgeGetAgentToolsSkipsUnreachableEligibleServer(t *testing.T) {
 				},
 			},
 		},
-		nil,
+		mcpMgr,
 		&testLLMContextConfigProvider{},
 	)
 
@@ -1532,6 +1558,7 @@ func TestBridgeGetAgentToolsSkipsUnreachableEligibleServer(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tools, 1)
 	require.Equal(t, "eligible_tool", tools[0].Name)
+	require.Equal(t, server.URL, tools[0].ServerOrigin)
 }
 
 func TestBridgeGetAgentToolsReturnsSortedToolsForAllowedUser(t *testing.T) {
@@ -1669,7 +1696,8 @@ func TestBridgeClientAgentCompletionRejectsIneligibleAllowedTool(t *testing.T) {
 		UserID:       testUserID,
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "is not eligible or not available for this agent")
+	require.Contains(t, err.Error(), "not_eligible_tool")
+	require.Contains(t, err.Error(), "unknown tool")
 }
 
 func TestBridgeClientAgentCompletionRejectsWrongServerOriginForTool(t *testing.T) {
@@ -1702,7 +1730,40 @@ func TestBridgeClientAgentCompletionRejectsWrongServerOriginForTool(t *testing.T
 		UserID:       testUserID,
 	})
 	require.Error(t, err)
+	require.Contains(t, err.Error(), "eligible_tool")
 	require.Contains(t, err.Error(), "server_origin")
+	require.Contains(t, err.Error(), "https://wrong.example")
+}
+
+func TestBridgeClientAgentCompletionRejectsAllowedToolsMissingServerOrigin(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(NewFakeLLM("ignored"))
+	}
+
+	client := e.CreateBridgeClient()
+	_, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "Hello"},
+		},
+		AllowedTools: []bridgeclient.AllowedToolRef{{Name: "eligible_tool"}},
+		UserID:       testUserID,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "eligible_tool")
+	require.Contains(t, err.Error(), "server_origin is required")
 }
 
 func TestBridgeGetAgentToolsRespectsUserPermissions(t *testing.T) {
@@ -1793,7 +1854,7 @@ func TestBridgeClientAgentCompletionRejectsAllowedToolsWhenAgentToolsDisabled(t 
 		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "Hello"},
 		},
-		AllowedTools: []bridgeclient.AllowedToolRef{{Name: "eligible_tool"}},
+		AllowedTools: []bridgeclient.AllowedToolRef{{ServerOrigin: "https://example.invalid", Name: "eligible_tool"}},
 		UserID:       testUserID,
 	})
 	require.Error(t, err)
@@ -1893,11 +1954,12 @@ func TestBridgeClientAgentCompletionAllowedToolsFailsWhenNoEligibleToolsAvailabl
 		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "Try tool call"},
 		},
-		AllowedTools: []bridgeclient.AllowedToolRef{{Name: "nonexistent_tool"}},
+		AllowedTools: []bridgeclient.AllowedToolRef{{ServerOrigin: "https://example.invalid", Name: "nonexistent_tool"}},
 		UserID:       testUserID,
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "no eligible tools available for this agent")
+	require.Contains(t, err.Error(), "no bridge-eligible MCP tools")
+	require.Contains(t, err.Error(), "nonexistent_tool")
 }
 
 func TestBridgeClientAgentCompletionMattermostAccessScope(t *testing.T) {
@@ -1924,20 +1986,35 @@ func TestBridgeClientAgentCompletionMattermostAccessScope(t *testing.T) {
 		},
 		{
 			name:        "valid scope with team and channel types",
+			scope:       &bridgeclient.MattermostAccessScope{TeamID: validTeamID, AccessibleChannelTypes: []string{"O"}},
+			expectError: false,
+		},
+		{
+			name:        "valid scope with deprecated channel type alias",
 			scope:       &bridgeclient.MattermostAccessScope{TeamID: validTeamID, AllowedChannelTypes: []string{"O"}},
 			expectError: false,
 		},
 		{
 			name:        "invalid scope: channel types without team_id",
-			scope:       &bridgeclient.MattermostAccessScope{AllowedChannelTypes: []string{"O"}},
+			scope:       &bridgeclient.MattermostAccessScope{AccessibleChannelTypes: []string{"O"}},
 			expectError: true,
 			errorMsg:    "team_id is required",
 		},
 		{
 			name:        "invalid scope: bad channel type",
-			scope:       &bridgeclient.MattermostAccessScope{TeamID: validTeamID, AllowedChannelTypes: []string{"X"}},
+			scope:       &bridgeclient.MattermostAccessScope{TeamID: validTeamID, AccessibleChannelTypes: []string{"X"}},
 			expectError: true,
 			errorMsg:    "invalid channel type",
+		},
+		{
+			name: "invalid scope: conflicting canonical and deprecated channel types",
+			scope: &bridgeclient.MattermostAccessScope{
+				TeamID:                 validTeamID,
+				AccessibleChannelTypes: []string{"O"},
+				AllowedChannelTypes:    []string{"P"},
+			},
+			expectError: true,
+			errorMsg:    "must match",
 		},
 		{
 			name:        "invalid scope: bad team_id format",
@@ -2014,9 +2091,9 @@ func TestBridgeClientAgentCompletionMattermostAccessScopePropagation(t *testing.
 			{Role: "user", Message: "test"},
 		},
 		MattermostAccessScope: &bridgeclient.MattermostAccessScope{
-			TeamID:              validTeamID,
-			AllowedChannelTypes: []string{"O", "P"},
-			AllowedChannelIDs:   []string{validChannelID},
+			TeamID:                 validTeamID,
+			AccessibleChannelTypes: []string{"O", "P"},
+			AllowedChannelIDs:      []string{validChannelID},
 		},
 	})
 	require.NoError(t, err)
@@ -2028,6 +2105,6 @@ func TestBridgeClientAgentCompletionMattermostAccessScopePropagation(t *testing.
 	scope := lastReq.Context.Tools.GetMattermostAccessScope()
 	require.NotNil(t, scope)
 	require.Equal(t, validTeamID, scope.TeamID)
-	require.Equal(t, []string{"O", "P"}, scope.AllowedChannelTypes)
+	require.Equal(t, []string{"O", "P"}, scope.AccessibleChannelTypes)
 	require.Equal(t, []string{validChannelID}, scope.AllowedChannelIDs)
 }
