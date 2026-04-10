@@ -588,7 +588,7 @@ func (c *Conversations) sendOAuthNotifications(bot *bots.Bot, userID, channelID,
 	message.WriteString("The following MCP servers require authentication:\n\n")
 
 	for _, authErr := range authErrors {
-		message.WriteString(fmt.Sprintf("• **%s**: [Click here to authenticate](%s)\n", authErr.ServerName, authErr.AuthURL))
+		_, _ = fmt.Fprintf(&message, "• **%s**: [Click here to authenticate](%s)\n", authErr.ServerName, authErr.AuthURL)
 	}
 
 	message.WriteString("\nPlease authenticate with the required servers and try again.")

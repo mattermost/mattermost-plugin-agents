@@ -189,6 +189,7 @@ type capturingLanguageModel struct {
 	autoRunTools      []string
 	requests          []llm.CompletionRequest
 	chatCompletionErr error
+	streamResult      *llm.TextStreamResult
 }
 
 func (m *capturingLanguageModel) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
@@ -202,6 +203,9 @@ func (m *capturingLanguageModel) ChatCompletion(request llm.CompletionRequest, o
 	m.requests = append(m.requests, requestCopy)
 	if m.chatCompletionErr != nil {
 		return nil, m.chatCompletionErr
+	}
+	if m.streamResult != nil {
+		return m.streamResult, nil
 	}
 	return llm.NewStreamFromString("follow-up response"), nil
 }
@@ -220,10 +224,17 @@ func (m *capturingLanguageModel) InputTokenLimit() int {
 
 type fakeStreamingService struct {
 	streamedPosts []*model.Post
+	consumeStream bool
+	streamEvents  []llm.TextStreamEvent
 }
 
-func (s *fakeStreamingService) StreamToNewPost(_ context.Context, _ string, _ string, _ *llm.TextStreamResult, post *model.Post, _ string) error {
+func (s *fakeStreamingService) StreamToNewPost(_ context.Context, _ string, _ string, stream *llm.TextStreamResult, post *model.Post, _ string) error {
 	s.streamedPosts = append(s.streamedPosts, post.Clone())
+	if s.consumeStream && stream != nil {
+		for event := range stream.Stream {
+			s.streamEvents = append(s.streamEvents, event)
+		}
+	}
 	return nil
 }
 
@@ -241,6 +252,14 @@ func (s *fakeStreamingService) GetStreamingContext(inCtx context.Context, _ stri
 }
 
 func (s *fakeStreamingService) FinishStreaming(string) {}
+
+func newToolCallStream(toolCalls []llm.ToolCall) *llm.TextStreamResult {
+	stream := make(chan llm.TextStreamEvent, 1)
+	stream <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
+	close(stream)
+
+	return &llm.TextStreamResult{Stream: stream}
+}
 
 type testToolProvider struct {
 	tools []llm.Tool
@@ -619,6 +638,146 @@ func TestHandleToolCallDMFollowupIncludesAutoRunTools(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{llm.ToolAutoRunKey(mcp.EmbeddedClientKey, "read_channel")}, capturingLLM.autoRunTools)
 	require.Len(t, streamingService.streamedPosts, 1)
+}
+
+func TestHandleToolCallChannelAutoRunEverywhereOnlyPropRestrictsApprovedTools(t *testing.T) {
+	const (
+		postID      = "post-id"
+		channelID   = "channel-id"
+		teamID      = "team-id"
+		botID       = "bot-id"
+		requesterID = "requester-id"
+	)
+
+	mockAPI := &plugintest.API{}
+	client := pluginapi.NewClient(mockAPI, nil)
+	licenseChecker := enterprise.NewLicenseChecker(client)
+
+	siteName := "Mattermost"
+	mockAPI.On("GetConfig").Return(&model.Config{TeamSettings: model.TeamSettings{SiteName: &siteName}}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+	mockAPI.On("GetTeam", teamID).Return(&model.Team{Id: teamID}, nil).Maybe()
+
+	tools := []llm.Tool{
+		{
+			Name:         "manual_tool",
+			Description:  "manual tool",
+			Schema:       llm.NewJSONSchemaFromStruct[toolArgs](),
+			ServerOrigin: mcp.EmbeddedClientKey,
+			Resolver: func(_ *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+				var parsed toolArgs
+				if err := args(&parsed); err != nil {
+					return "", err
+				}
+				return "manual:" + parsed.Value, nil
+			},
+		},
+		{
+			Name:         "everywhere_tool",
+			Description:  "everywhere tool",
+			Schema:       llm.NewJSONSchemaFromStruct[toolArgs](),
+			ServerOrigin: mcp.EmbeddedClientKey,
+			Resolver: func(_ *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+				var parsed toolArgs
+				if err := args(&parsed); err != nil {
+					return "", err
+				}
+				return "everywhere:" + parsed.Value, nil
+			},
+		},
+	}
+	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: tools}, nil, &testConfigProvider{})
+
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+	bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, nil)
+	botService.SetBotsForTesting([]*bots.Bot{bot})
+
+	post := &model.Post{
+		Id:        postID,
+		UserId:    botID,
+		ChannelId: channelID,
+		CreateAt:  1,
+	}
+	post.AddProp(streaming.LLMRequesterUserID, requesterID)
+	post.AddProp(streaming.AllowToolsInChannelProp, "true")
+	post.AddProp(streaming.ChannelToolsAutoRunEverywhereOnlyProp, "true")
+
+	toolCalls := []llm.ToolCall{
+		{
+			ID:           "tool-1",
+			Name:         "manual_tool",
+			ServerOrigin: mcp.EmbeddedClientKey,
+			Arguments:    json.RawMessage(`{"value":"needs-review"}`),
+		},
+		{
+			ID:           "tool-2",
+			Name:         "everywhere_tool",
+			ServerOrigin: mcp.EmbeddedClientKey,
+			Arguments:    json.RawMessage(`{"value":"safe-read"}`),
+		},
+	}
+	redactedToolCalls := streaming.RedactToolCalls(toolCalls)
+	redactedJSON, err := json.Marshal(redactedToolCalls)
+	require.NoError(t, err)
+	post.AddProp(streaming.ToolCallProp, string(redactedJSON))
+
+	postList := &model.PostList{
+		Order: []string{postID},
+		Posts: map[string]*model.Post{postID: post},
+	}
+
+	fakeClient := &fakeMMClient{
+		users: map[string]*model.User{
+			requesterID: {Id: requesterID, Locale: "en"},
+			botID:       {Id: botID, Locale: "en"},
+		},
+		postThreads: map[string]*model.PostList{
+			postID: postList,
+		},
+		kv: map[string]interface{}{},
+	}
+	toolCallKVKey := streaming.ToolCallPrivateKVKey(postID, requesterID)
+	fakeClient.kv[toolCallKVKey] = toolCalls
+
+	toolCallingConfig := &testToolCallingConfig{enableChannelMentionToolCalling: true}
+	conversationService := conversations.New(nil, fakeClient, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
+	conversationService.SetToolPolicyChecker(streaming.ToolPolicyFunc(func(serverBaseURL, toolName string) (string, bool) {
+		if serverBaseURL != mcp.EmbeddedClientKey {
+			return mcp.ToolPolicyAsk, false
+		}
+		switch toolName {
+		case "everywhere_tool":
+			return mcp.ToolPolicyAutoRunEverywhere, true
+		case "manual_tool":
+			return mcp.ToolPolicyAutoRun, true
+		default:
+			return mcp.ToolPolicyAsk, true
+		}
+	}))
+
+	channel := &model.Channel{
+		Id:     channelID,
+		Type:   model.ChannelTypeOpen,
+		TeamId: teamID,
+	}
+
+	err = conversationService.HandleToolCall(requesterID, post, channel, []string{"tool-1", "tool-2"})
+	require.NoError(t, err)
+
+	resultKVKey := streaming.ToolResultPrivateKVKey(postID, requesterID)
+	storedResults, ok := fakeClient.kv[resultKVKey]
+	require.True(t, ok)
+	resultCalls, ok := storedResults.([]llm.ToolCall)
+	require.True(t, ok)
+	require.Len(t, resultCalls, 2)
+
+	require.Equal(t, "tool-1", resultCalls[0].ID)
+	require.Equal(t, llm.ToolCallStatusError, resultCalls[0].Status)
+	require.Equal(t, "unknown tool manual_tool", resultCalls[0].Result)
+
+	require.Equal(t, "tool-2", resultCalls[1].ID)
+	require.Equal(t, llm.ToolCallStatusSuccess, resultCalls[1].Status)
+	require.Equal(t, "everywhere:safe-read", resultCalls[1].Result)
 }
 
 func TestHandleToolCallChannelBlockedWhenConfigDisabled(t *testing.T) {
@@ -1264,6 +1423,163 @@ func TestHandleToolResultContinuesWhenToolCallErrors(t *testing.T) {
 	require.Len(t, streamingService.streamedPosts, 1)
 
 	// KV entries are still cleaned up after the continuation runs.
+	require.Contains(t, fakeClient.kvDeletes, resultKVKey)
+	require.Contains(t, fakeClient.kvDeletes, toolCallKVKey)
+}
+
+func TestHandleToolResultChannelAutoRunEverywhereOnlyPropFiltersFollowupAndPropagatesToResponsePost(t *testing.T) {
+	const (
+		postID      = "post-id"
+		channelID   = "channel-id"
+		teamID      = "team-id"
+		botID       = "bot-id"
+		requesterID = "requester-id"
+	)
+
+	mockAPI := &plugintest.API{}
+	client := pluginapi.NewClient(mockAPI, nil)
+	licenseChecker := enterprise.NewLicenseChecker(client)
+
+	siteName := "Mattermost"
+	mockAPI.On("GetConfig").Return(&model.Config{TeamSettings: model.TeamSettings{SiteName: &siteName}}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
+	mockAPI.On("GetTeam", teamID).Return(&model.Team{Id: teamID}, nil).Maybe()
+
+	tools := []llm.Tool{
+		{
+			Name:         "manual_followup_tool",
+			Description:  "channel auto-run only",
+			Schema:       llm.NewJSONSchemaFromStruct[toolArgs](),
+			ServerOrigin: mcp.EmbeddedClientKey,
+			Resolver: func(_ *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+				var parsed toolArgs
+				if err := args(&parsed); err != nil {
+					return "", err
+				}
+				return "manual-followup:" + parsed.Value, nil
+			},
+		},
+		{
+			Name:         "everywhere_tool",
+			Description:  "allowed in strict channels",
+			Schema:       llm.NewJSONSchemaFromStruct[toolArgs](),
+			ServerOrigin: mcp.EmbeddedClientKey,
+			Resolver: func(_ *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+				var parsed toolArgs
+				if err := args(&parsed); err != nil {
+					return "", err
+				}
+				return "everywhere:" + parsed.Value, nil
+			},
+		},
+	}
+	contextBuilder := llmcontext.NewLLMContextBuilder(client, &testToolProvider{tools: tools}, nil, &testConfigProvider{})
+
+	streamingService := &fakeStreamingService{consumeStream: true}
+	capturingLLM := &capturingLanguageModel{
+		streamResult: newToolCallStream([]llm.ToolCall{
+			{
+				ID:        "tool-2",
+				Name:      "manual_followup_tool",
+				Arguments: json.RawMessage(`{"value":"should-stay-pending"}`),
+			},
+		}),
+	}
+	botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+	bot := bots.NewBot(llm.BotConfig{ID: botID, Name: "test-bot"}, llm.ServiceConfig{}, &model.Bot{UserId: botID, Username: "test-bot"}, capturingLLM)
+	botService.SetBotsForTesting([]*bots.Bot{bot})
+
+	post := &model.Post{
+		Id:        postID,
+		UserId:    botID,
+		ChannelId: channelID,
+		CreateAt:  1,
+	}
+	post.AddProp(streaming.LLMRequesterUserID, requesterID)
+	post.AddProp(streaming.AllowToolsInChannelProp, "true")
+	post.AddProp(streaming.ChannelToolsAutoRunEverywhereOnlyProp, "true")
+	post.AddProp(streaming.PendingToolResultProp, "true")
+
+	toolResults := []llm.ToolCall{
+		{
+			ID:           "tool-1",
+			Name:         "everywhere_tool",
+			ServerOrigin: mcp.EmbeddedClientKey,
+			Arguments:    json.RawMessage(`{"value":"readable"}`),
+			Result:       "everywhere:readable",
+			Status:       llm.ToolCallStatusSuccess,
+		},
+	}
+	toolResultsJSON, err := json.Marshal(toolResults)
+	require.NoError(t, err)
+	post.AddProp(streaming.ToolCallProp, string(toolResultsJSON))
+
+	postList := &model.PostList{
+		Order: []string{postID},
+		Posts: map[string]*model.Post{postID: post},
+	}
+
+	channel := &model.Channel{
+		Id:     channelID,
+		Type:   model.ChannelTypeOpen,
+		TeamId: teamID,
+	}
+
+	resultKVKey := streaming.ToolResultPrivateKVKey(postID, requesterID)
+	toolCallKVKey := streaming.ToolCallPrivateKVKey(postID, requesterID)
+	fakeClient := &fakeMMClient{
+		users: map[string]*model.User{
+			requesterID: {Id: requesterID, Username: "user", Locale: "en"},
+			botID:       {Id: botID, Username: "bot", Locale: "en"},
+		},
+		posts:       map[string]*model.Post{postID: post},
+		channels:    map[string]*model.Channel{channelID: channel},
+		postThreads: map[string]*model.PostList{postID: postList},
+		kv: map[string]interface{}{
+			resultKVKey:   toolResults,
+			toolCallKVKey: toolResults,
+		},
+	}
+
+	toolCallingConfig := &testToolCallingConfig{enableChannelMentionToolCalling: true}
+	promptSet, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+	conversationService := conversations.New(promptSet, fakeClient, streamingService, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, toolCallingConfig)
+	conversationService.SetToolPolicyChecker(streaming.ToolPolicyFunc(func(serverBaseURL, toolName string) (string, bool) {
+		if serverBaseURL != mcp.EmbeddedClientKey {
+			return mcp.ToolPolicyAsk, false
+		}
+		switch toolName {
+		case "everywhere_tool":
+			return mcp.ToolPolicyAutoRunEverywhere, true
+		case "manual_followup_tool":
+			return mcp.ToolPolicyAutoRun, true
+		default:
+			return mcp.ToolPolicyAsk, true
+		}
+	}))
+
+	err = conversationService.HandleToolResult(requesterID, post, channel, []string{"tool-1"})
+	require.NoError(t, err)
+
+	require.NotEmpty(t, capturingLLM.requests)
+	requestTools := capturingLLM.requests[len(capturingLLM.requests)-1].Context.Tools.GetTools()
+	require.Len(t, requestTools, 1)
+	require.Equal(t, "everywhere_tool", requestTools[0].Name)
+
+	require.Len(t, streamingService.streamedPosts, 1)
+	streamedPost := streamingService.streamedPosts[0]
+	require.Equal(t, "true", streamedPost.GetProp(streaming.AllowToolsInChannelProp))
+	require.Equal(t, "true", streamedPost.GetProp(streaming.ChannelToolsAutoRunEverywhereOnlyProp))
+
+	require.Len(t, streamingService.streamEvents, 1)
+	require.Equal(t, llm.EventTypeToolCalls, streamingService.streamEvents[0].Type)
+	followupCalls, ok := streamingService.streamEvents[0].Value.([]llm.ToolCall)
+	require.True(t, ok)
+	require.Len(t, followupCalls, 1)
+	require.Equal(t, llm.ToolCallStatusPending, followupCalls[0].Status)
+	require.Empty(t, followupCalls[0].Result)
+
 	require.Contains(t, fakeClient.kvDeletes, resultKVKey)
 	require.Contains(t, fakeClient.kvDeletes, toolCallKVKey)
 }
