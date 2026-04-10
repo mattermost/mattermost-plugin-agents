@@ -92,6 +92,17 @@ func TestHandleMessages(t *testing.T) {
 		err := e.conversations.handleMessages(post)
 		require.ErrorIs(t, err, ErrNoResponse)
 	})
+
+	t.Run("don't respond to webhooks with activate_ai set to string false", func(t *testing.T) {
+		post := &model.Post{
+			UserId:    "userid",
+			ChannelId: "channelid",
+		}
+		post.AddProp("from_webhook", true)
+		post.AddProp("activate_ai", "false")
+		err := e.conversations.handleMessages(post)
+		require.ErrorIs(t, err, ErrNoResponse)
+	})
 }
 
 func TestIsActivateAISet(t *testing.T) {

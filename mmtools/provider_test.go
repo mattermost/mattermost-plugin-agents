@@ -73,6 +73,7 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 		name          string
 		searchService *search.Search
 		searchTerm    string
+		buildContext  func() *llm.Context
 		expectError   bool
 		expectedMsg   string
 	}{
@@ -85,7 +86,7 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 			}(),
 			searchTerm:  "test search term",
 			expectError: false,
-			expectedMsg: "No relevant messages found.", // mock returns empty results
+			expectedMsg: "No relevant messages found.",
 		},
 		{
 			name:          "search fails - service disabled",
@@ -111,19 +112,40 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 			expectError: true,
 			expectedMsg: "search term too short",
 		},
+		{
+			name: "automated invoker still uses requesting user ID",
+			searchService: func() *search.Search {
+				me := mocks.NewMockEmbeddingSearch(t)
+				me.On("Search", mock.Anything, "test search term", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
+					return opts.UserID == "human-user-1"
+				})).Return([]embeddings.SearchResult{}, nil)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
+			}(),
+			searchTerm: "test search term",
+			buildContext: func() *llm.Context {
+				ctx := llm.NewContext(llm.WithAutomatedMCPInvoker(true))
+				ctx.RequestingUser = &model.User{Id: "human-user-1"}
+				ctx.SetBotFields("", "", "bot-user-42", "", "", "")
+				return ctx
+			},
+			expectError: false,
+			expectedMsg: "No relevant messages found.",
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			// Create tool provider
 			provider := NewMMToolProvider(nil, test.searchService, nil)
 
-			// Create mock LLM context
-			llmContext := &llm.Context{
-				RequestingUser: &model.User{Id: "user123"},
+			var llmContext *llm.Context
+			if test.buildContext != nil {
+				llmContext = test.buildContext()
+			} else {
+				llmContext = &llm.Context{
+					RequestingUser: &model.User{Id: "user123"},
+				}
 			}
 
-			// Create argument getter
 			argsGetter := func(args interface{}) error {
 				if searchArgs, ok := args.(*SearchServerArgs); ok {
 					searchArgs.Term = test.searchTerm
@@ -132,10 +154,8 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 				return errors.New("invalid args")
 			}
 
-			// Execute the tool
 			result, err := provider.toolSearchServer(llmContext, argsGetter)
 
-			// Verify results
 			if test.expectError {
 				require.Error(t, err)
 				require.Equal(t, test.expectedMsg, result)
@@ -145,31 +165,4 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestMMToolProvider_toolSearchServer_usesRequestingUserIDEvenWhenAutomated(t *testing.T) {
-	// Built-in tools are not available to automated invokers in production, but if
-	// toolSearchServer is called directly, RequestingUser.Id is used (not the bot).
-	me := mocks.NewMockEmbeddingSearch(t)
-	me.On("Search", mock.Anything, "test search term", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
-		return opts.UserID == "human-user-1"
-	})).Return([]embeddings.SearchResult{}, nil)
-
-	searchService := search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
-	provider := NewMMToolProvider(nil, searchService, nil)
-
-	llmContext := llm.NewContext(llm.WithAutomatedMCPInvoker(true))
-	llmContext.RequestingUser = &model.User{Id: "human-user-1"}
-	llmContext.SetBotFields("", "", "bot-user-42", "", "", "")
-
-	argsGetter := func(args interface{}) error {
-		if searchArgs, ok := args.(*SearchServerArgs); ok {
-			searchArgs.Term = "test search term"
-			return nil
-		}
-		return errors.New("invalid args")
-	}
-
-	_, err := provider.toolSearchServer(llmContext, argsGetter)
-	require.NoError(t, err)
 }

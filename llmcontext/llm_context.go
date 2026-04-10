@@ -211,7 +211,12 @@ func (b *Builder) WithLLMContextTools(bot *bots.Bot) llm.ContextOption {
 
 		// Automated invokers use the bot's identity for remote MCP sessions so the
 		// integration user's OAuth tokens and API access are never granted to tools.
-		if c.AutomatedMCPInvoker && c.BotUserID != "" {
+		if c.AutomatedMCPInvoker {
+			if c.BotUserID == "" {
+				b.pluginAPI.Log.Error("Automated invoker with empty BotUserID; refusing to grant tools")
+				c.Tools = llm.NewNoTools()
+				return
+			}
 			toolUserID = c.BotUserID
 		}
 

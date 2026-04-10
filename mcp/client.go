@@ -177,8 +177,13 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 		return nil, fmt.Errorf("failed to create MCP session for server %s: %w", serverConfig.Name, err)
 	}
 
-	// Try to get tools from global cache first
+	// Include auth context in the cache key so human (OAuth) and automated
+	// (fallback-header) tool lists don't collide when a server returns
+	// different tools based on the caller's credentials.
 	serverID := serverConfig.Name
+	if isAutomatedInvoker {
+		serverID += ":automated"
+	}
 	if toolsCache != nil {
 		cachedTools := toolsCache.GetTools(serverID)
 		if len(cachedTools) > 0 {

@@ -119,23 +119,22 @@ func responseRootIDFromPost(post *model.Post) string {
 	return post.Id
 }
 
-func (c *Conversations) automatedInvokerFromResponsePost(post *model.Post, user *model.User) bool {
+func (c *Conversations) automatedInvokerFromResponsePost(post *model.Post, user *model.User) (bool, error) {
 	if post == nil || user == nil {
-		return false
+		return false, nil
 	}
 
 	respondingToPostID, ok := post.GetProp(streaming.RespondingToProp).(string)
 	if !ok || respondingToPostID == "" {
-		return false
+		return false, nil
 	}
 
 	respondingToPost, err := c.mmClient.GetPost(respondingToPostID)
 	if err != nil {
-		c.mmClient.LogWarn("Failed to load responding post for automated tool handling", "error", err, "post_id", post.Id, "responding_to_post_id", respondingToPostID)
-		return false
+		return false, fmt.Errorf("failed to load responding post %s for automated tool handling: %w", respondingToPostID, err)
 	}
 
-	return isAutomatedInvoker(respondingToPost, user)
+	return isAutomatedInvoker(respondingToPost, user), nil
 }
 
 // HandleToolCall handles tool call approval/rejection
@@ -196,7 +195,10 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	// Extract web search context from conversation history to preserve citations
 	webSearchParams := c.extractWebSearchContext(post)
 
-	automated := c.automatedInvokerFromResponsePost(post, user)
+	automated, automatedErr := c.automatedInvokerFromResponsePost(post, user)
+	if automatedErr != nil {
+		return fmt.Errorf("unable to determine invoker type: %w", automatedErr)
+	}
 	contextOpts := []llm.ContextOption{
 		llm.WithAutomatedMCPInvoker(automated),
 		c.contextBuilder.WithLLMContextDefaultTools(bot),
@@ -411,7 +413,10 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	// Extract web search context from conversation history to preserve citations
 	webSearchParams := c.extractWebSearchContext(post)
 
-	automated := c.automatedInvokerFromResponsePost(post, user)
+	automated, automatedErr := c.automatedInvokerFromResponsePost(post, user)
+	if automatedErr != nil {
+		return fmt.Errorf("unable to determine invoker type: %w", automatedErr)
+	}
 	contextOpts := []llm.ContextOption{
 		llm.WithAutomatedMCPInvoker(automated),
 		c.contextBuilder.WithLLMContextDefaultTools(bot),

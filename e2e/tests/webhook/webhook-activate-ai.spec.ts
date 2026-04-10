@@ -135,4 +135,60 @@ test.describe('Incoming webhook + activate_ai', () => {
         await expect(rhs.locator('[data-testid="llm-bot-post"]').first()).toBeVisible({timeout: 60000});
         await expect(rhs).toContainText(replyText, {timeout: 60000});
     });
+
+    test('webhook post with activate_ai: false does NOT receive LLM reply', async ({page}) => {
+        test.setTimeout(120000);
+
+        if (!mattermost) {
+            throw new Error('mattermost container not started');
+        }
+
+        const channelId = await getTownSquareChannelID(mattermost);
+        const adminClient = await mattermost.getAdminClient();
+        const webhookURL = await createIncomingWebhookURL(adminClient, channelId);
+
+        const mmPage = new MattermostPage(page);
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+
+        const teamName = mattermost.teamName || 'test';
+        await page.goto(`${mattermost.url()}/${teamName}/channels/town-square`);
+        await page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 60000});
+
+        const falseMsg = `@${botUsername} activate_ai false regression e2e`;
+        await postIncomingWebhook(webhookURL, falseMsg, {activate_ai: 'false'});
+
+        const userPost = await waitForSentPostContaining(page, /activate_ai false regression e2e/);
+
+        // Wait a reasonable window to confirm no reply appears
+        const replyIndicator = userPost.getByText(/\d+ repl/i);
+        await expect(replyIndicator).not.toBeVisible({timeout: 15000});
+    });
+
+    test('webhook post without activate_ai does NOT receive LLM reply', async ({page}) => {
+        test.setTimeout(120000);
+
+        if (!mattermost) {
+            throw new Error('mattermost container not started');
+        }
+
+        const channelId = await getTownSquareChannelID(mattermost);
+        const adminClient = await mattermost.getAdminClient();
+        const webhookURL = await createIncomingWebhookURL(adminClient, channelId);
+
+        const mmPage = new MattermostPage(page);
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+
+        const teamName = mattermost.teamName || 'test';
+        await page.goto(`${mattermost.url()}/${teamName}/channels/town-square`);
+        await page.getByTestId('channel_view').waitFor({state: 'visible', timeout: 60000});
+
+        const omittedMsg = `@${botUsername} activate_ai omitted regression e2e`;
+        await postIncomingWebhook(webhookURL, omittedMsg, {});
+
+        const userPost = await waitForSentPostContaining(page, /activate_ai omitted regression e2e/);
+
+        // Wait a reasonable window to confirm no reply appears
+        const replyIndicator = userPost.getByText(/\d+ repl/i);
+        await expect(replyIndicator).not.toBeVisible({timeout: 15000});
+    });
 });
