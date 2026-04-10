@@ -154,6 +154,8 @@ const MCPServer = ({
         });
     };
 
+    const hasEmptyHeaderKey = Object.keys(config.headers || {}).some((k) => k === '');
+
     // Add a new header
     const addHeader = () => {
         const headers = config.headers || {};
@@ -194,6 +196,8 @@ const MCPServer = ({
             headers,
         });
     };
+
+    const hasEmptyFallbackKey = Object.keys(config.fallbackAuthHeaders || {}).some((k) => k === '');
 
     const addFallbackHeader = () => {
         const fallbackAuthHeaders = {...(config.fallbackAuthHeaders || {})};
@@ -317,6 +321,7 @@ const MCPServer = ({
                 </HeadersList>
 
                 <AddHeaderButton
+                    disabled={hasEmptyHeaderKey}
                     onClick={addHeader}
                 >
                     <PlusIcon size={14}/>
@@ -386,6 +391,7 @@ const MCPServer = ({
                             ))}
                         </HeadersList>
                         <AddHeaderButton
+                            disabled={hasEmptyFallbackKey}
                             onClick={addFallbackHeader}
                         >
                             <PlusIcon size={14}/>
@@ -927,8 +933,13 @@ const AddHeaderButton = styled.button.attrs({type: 'button'})`
     font-weight: 600;
     align-self: flex-start;
 
-    &:hover {
+    &:hover:not(:disabled) {
         background: rgba(var(--button-bg-rgb), 0.08);
+    }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: default;
     }
 `;
 

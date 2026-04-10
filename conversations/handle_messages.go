@@ -30,6 +30,24 @@ var (
 	ErrNoResponse = errors.New("no response")
 )
 
+// isActivateAISet performs a truthy check on the activate_ai post prop.
+// GetProp returns a non-nil interface{} for any set value, including false/"false",
+// so a nil check alone would treat {"activate_ai": false} as opt-in.
+func isActivateAISet(post *model.Post) bool {
+	v := post.GetProp(ActivateAIProp)
+	if v == nil {
+		return false
+	}
+	switch val := v.(type) {
+	case bool:
+		return val
+	case string:
+		return val == "true"
+	default:
+		return false
+	}
+}
+
 // isAutomatedInvoker returns true when the post originates from automation (bot, webhook,
 // plugin, or OAuth app). Automated invokers are restricted to remote MCP tools with
 // explicit service-account auth; built-in and embedded MCP tools are excluded to prevent
@@ -83,12 +101,12 @@ func (c *Conversations) handleMessages(post *model.Post) error {
 	}
 
 	// Don't respond to plugins unless they ask for it
-	if post.GetProp(FromPluginProp) != nil && post.GetProp(ActivateAIProp) == nil {
+	if post.GetProp(FromPluginProp) != nil && !isActivateAISet(post) {
 		return fmt.Errorf("not responding to plugin posts: %w", ErrNoResponse)
 	}
 
 	// Don't respond to webhooks unless they opt in (same pattern as plugin posts)
-	if post.GetProp(FromWebhookProp) != nil && post.GetProp(ActivateAIProp) == nil {
+	if post.GetProp(FromWebhookProp) != nil && !isActivateAISet(post) {
 		return fmt.Errorf("not responding to webhook posts: %w", ErrNoResponse)
 	}
 
@@ -103,7 +121,7 @@ func (c *Conversations) handleMessages(post *model.Post) error {
 	}
 
 	// Don't respond to other bots unless they ask for it
-	if (postingUser.IsBot || post.GetProp(FromBotProp) != nil) && post.GetProp(ActivateAIProp) == nil {
+	if (postingUser.IsBot || post.GetProp(FromBotProp) != nil) && !isActivateAISet(post) {
 		return fmt.Errorf("not responding to other bots: %w", ErrNoResponse)
 	}
 

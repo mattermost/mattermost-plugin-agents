@@ -81,6 +81,42 @@ func TestHandleMessages(t *testing.T) {
 		err := e.conversations.handleMessages(post)
 		require.ErrorIs(t, err, ErrNoResponse)
 	})
+
+	t.Run("don't respond to webhooks with activate_ai set to false", func(t *testing.T) {
+		post := &model.Post{
+			UserId:    "userid",
+			ChannelId: "channelid",
+		}
+		post.AddProp("from_webhook", true)
+		post.AddProp("activate_ai", false)
+		err := e.conversations.handleMessages(post)
+		require.ErrorIs(t, err, ErrNoResponse)
+	})
+}
+
+func TestIsActivateAISet(t *testing.T) {
+	tests := []struct {
+		name  string
+		value interface{}
+		want  bool
+	}{
+		{"nil prop", nil, false},
+		{"bool true", true, true},
+		{"bool false", false, false},
+		{"string true", "true", true},
+		{"string false", "false", false},
+		{"empty string", "", false},
+		{"integer", 1, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			post := &model.Post{}
+			if tc.value != nil {
+				post.AddProp(ActivateAIProp, tc.value)
+			}
+			require.Equal(t, tc.want, isActivateAISet(post))
+		})
+	}
 }
 
 func TestIsAutomatedInvoker(t *testing.T) {
