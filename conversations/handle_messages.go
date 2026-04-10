@@ -48,15 +48,26 @@ func isActivateAISet(post *model.Post) bool {
 	}
 }
 
-// isAutomatedInvoker returns true when the posting user is a bot account.
-// Only postingUser.IsBot is used because it is verified from the database;
-// post props like from_webhook / from_plugin can be spoofed by any user via
-// the REST API (unless ExperimentalEnableHardenedMode is on, which is off by
-// default). Automated invokers are restricted to remote MCP tools with
-// explicit service-account auth; built-in and embedded MCP tools are excluded
-// to prevent the bot's Mattermost permissions from being exploitable.
-func isAutomatedInvoker(postingUser *model.User) bool {
-	return postingUser != nil && postingUser.IsBot
+// isAutomatedInvoker returns true when the post originates from automation
+// (bot account, webhook, plugin, or OAuth app). The Mattermost server
+// unconditionally blocks regular users from setting the from_webhook,
+// from_plugin, from_bot, and from_oauth_app reserved props on posts.
+// Automated invokers are restricted to remote MCP tools with explicit
+// service-account auth; built-in and embedded MCP tools are excluded to
+// prevent the bot's Mattermost permissions from being exploitable.
+func isAutomatedInvoker(post *model.Post, postingUser *model.User) bool {
+	if postingUser != nil && postingUser.IsBot {
+		return true
+	}
+	if post == nil {
+		return false
+	}
+	for _, prop := range []string{FromWebhookProp, FromPluginProp, FromBotProp, FromOAuthAppProp} {
+		if post.GetProp(prop) != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // computeAllowToolsInChannel returns whether tools should be allowed for a channel mention.

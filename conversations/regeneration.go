@@ -178,7 +178,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		webSearchParams := c.extractWebSearchContext(respondingToPost)
 
 		var contextOpts []llm.ContextOption
-		contextOpts = append(contextOpts, llm.WithAutomatedMCPInvoker(isAutomatedInvoker(user)))
+		contextOpts = append(contextOpts, llm.WithAutomatedMCPInvoker(isAutomatedInvoker(respondingToPost, user)))
 		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextDefaultTools(bot))
 		if len(webSearchParams) > 0 {
 			contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))

@@ -119,7 +119,7 @@ func responseRootIDFromPost(post *model.Post) string {
 	return post.Id
 }
 
-func automatedInvokerFromResponsePost(post *model.Post, user *model.User) bool {
+func (c *Conversations) automatedInvokerFromResponsePost(post *model.Post, user *model.User) bool {
 	if post == nil || user == nil {
 		return false
 	}
@@ -129,7 +129,12 @@ func automatedInvokerFromResponsePost(post *model.Post, user *model.User) bool {
 		return false
 	}
 
-	return isAutomatedInvoker(user)
+	respondingToPost, err := c.mmClient.GetPost(respondingToPostID)
+	if err != nil {
+		return false
+	}
+
+	return isAutomatedInvoker(respondingToPost, user)
 }
 
 // HandleToolCall handles tool call approval/rejection
@@ -190,7 +195,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	// Extract web search context from conversation history to preserve citations
 	webSearchParams := c.extractWebSearchContext(post)
 
-	automated := automatedInvokerFromResponsePost(post, user)
+	automated := c.automatedInvokerFromResponsePost(post, user)
 	contextOpts := []llm.ContextOption{
 		llm.WithAutomatedMCPInvoker(automated),
 		c.contextBuilder.WithLLMContextDefaultTools(bot),
@@ -405,7 +410,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	// Extract web search context from conversation history to preserve citations
 	webSearchParams := c.extractWebSearchContext(post)
 
-	automated := automatedInvokerFromResponsePost(post, user)
+	automated := c.automatedInvokerFromResponsePost(post, user)
 	contextOpts := []llm.ContextOption{
 		llm.WithAutomatedMCPInvoker(automated),
 		c.contextBuilder.WithLLMContextDefaultTools(bot),

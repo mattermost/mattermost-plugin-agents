@@ -402,7 +402,7 @@ func TestHandleToolCallRejectsEmbeddedToolsForAutomatedFollowUp(t *testing.T) {
 		channelID      = "channel-id"
 		teamID         = "team-id"
 		botID          = "bot-id"
-		requesterID    = "requester-bot-id"
+		requesterID    = "requester-id"
 	)
 
 	mockAPI := &plugintest.API{}
@@ -447,6 +447,7 @@ func TestHandleToolCallRejectsEmbeddedToolsForAutomatedFollowUp(t *testing.T) {
 		ChannelId: channelID,
 		CreateAt:  1,
 	}
+	originalPost.AddProp("from_webhook", "true")
 
 	toolCalls := []llm.ToolCall{
 		{
@@ -467,7 +468,7 @@ func TestHandleToolCallRejectsEmbeddedToolsForAutomatedFollowUp(t *testing.T) {
 
 	fakeClient := &fakeMMClient{
 		users: map[string]*model.User{
-			requesterID: {Id: requesterID, IsBot: true, Locale: "en"},
+			requesterID: {Id: requesterID, Locale: "en"},
 			botID:       {Id: botID, Locale: "en"},
 		},
 		postThreads: map[string]*model.PostList{
@@ -1382,7 +1383,7 @@ func TestHandleToolResultFiltersAllEmbeddedToolsForAutomatedFollowUp(t *testing.
 		channelID      = "channel-id"
 		teamID         = "team-id"
 		botID          = "bot-id"
-		requesterID    = "requester-bot-id"
+		requesterID    = "requester-id"
 	)
 
 	mockAPI := &plugintest.API{}
@@ -1439,6 +1440,7 @@ func TestHandleToolResultFiltersAllEmbeddedToolsForAutomatedFollowUp(t *testing.
 		ChannelId: channelID,
 		CreateAt:  1,
 	}
+	originalPost.AddProp("from_webhook", "true")
 
 	toolsWithResults := []llm.ToolCall{
 		{
@@ -1470,7 +1472,7 @@ func TestHandleToolResultFiltersAllEmbeddedToolsForAutomatedFollowUp(t *testing.
 
 	fakeClient := &fakeMMClient{
 		users: map[string]*model.User{
-			requesterID: {Id: requesterID, IsBot: true, Locale: "en"},
+			requesterID: {Id: requesterID, Locale: "en"},
 			botID:       {Id: botID, Locale: "en"},
 		},
 		posts: map[string]*model.Post{

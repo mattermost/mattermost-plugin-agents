@@ -233,7 +233,7 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 	// This ensures citations from previous searches work in follow-up messages
 	webSearchParams := c.extractWebSearchContext(post)
 
-	automated := isAutomatedInvoker(postingUser)
+	automated := isAutomatedInvoker(post, postingUser)
 	var contextOpts []llm.ContextOption
 	contextOpts = append(contextOpts, llm.WithAutomatedMCPInvoker(automated))
 	contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextTools(bot))

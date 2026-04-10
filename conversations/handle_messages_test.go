@@ -133,19 +133,32 @@ func TestIsActivateAISet(t *testing.T) {
 func TestIsAutomatedInvoker(t *testing.T) {
 	tests := []struct {
 		name        string
+		post        *model.Post
 		postingUser *model.User
 		want        bool
 	}{
-		{"nil user", nil, false},
-		{"human user", &model.User{Id: "u1", IsBot: false}, false},
-		{"bot user", &model.User{Id: "b1", IsBot: true}, true},
+		{"nil post and user", nil, nil, false},
+		{"nil post, human user", nil, &model.User{Id: "u1", IsBot: false}, false},
+		{"nil user", &model.Post{UserId: "u1"}, nil, false},
+		{"human user, no props", &model.Post{UserId: "u1"}, &model.User{Id: "u1", IsBot: false}, false},
+		{"bot user", &model.Post{UserId: "b1"}, &model.User{Id: "b1", IsBot: true}, true},
+		{"from_webhook prop", postWithProp(FromWebhookProp), &model.User{Id: "u1", IsBot: false}, true},
+		{"from_plugin prop", postWithProp(FromPluginProp), &model.User{Id: "u1", IsBot: false}, true},
+		{"from_bot prop", postWithProp(FromBotProp), &model.User{Id: "u1", IsBot: false}, true},
+		{"from_oauth_app prop", postWithProp(FromOAuthAppProp), &model.User{Id: "u1", IsBot: false}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isAutomatedInvoker(tt.postingUser)
+			got := isAutomatedInvoker(tt.post, tt.postingUser)
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func postWithProp(prop string) *model.Post {
+	p := &model.Post{UserId: "u1"}
+	p.AddProp(prop, "true")
+	return p
 }
 
 func TestComputeAllowToolsInChannel(t *testing.T) {
