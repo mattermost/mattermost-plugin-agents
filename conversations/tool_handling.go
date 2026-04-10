@@ -506,9 +506,6 @@ func (c *Conversations) completeAndStreamToolResponse(
 	}
 	opts = c.appendDMAutoRunOptions(mmapi.IsDMWith(bot.GetMMBot().UserId, channel), llmContext, opts)
 	channelStrictEverywhere := channelToolsAutoRunEverywhereOnlyFromPost(toolCallPost)
-	if channelStrictEverywhere && !mmapi.IsDMWith(bot.GetMMBot().UserId, channel) {
-		opts = append(opts, llm.WithSuppressNativeProviderTools())
-	}
 	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to get chat completion: %w", err)

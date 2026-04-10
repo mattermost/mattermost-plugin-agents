@@ -194,10 +194,6 @@ func (c *Conversations) ProcessUserRequestWithContext(bot *bots.Bot, postingUser
 
 	opts = c.appendDMAutoRunOptions(isDM, context, opts)
 
-	if channelToolsAutoRunEverywhereOnly && !isDM {
-		opts = append(opts, llm.WithSuppressNativeProviderTools())
-	}
-
 	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
 		return nil, err
