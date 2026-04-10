@@ -61,13 +61,15 @@ func isBotActivateAI(post *model.Post, postingUser *model.User) bool {
 }
 
 // computeAllowToolsInChannel returns whether tools should be allowed for a channel mention,
-// given the config flag and whether the invoker is automated.
-func computeAllowToolsInChannel(configEnabled bool, post *model.Post, postingUser *model.User) bool {
+// given the config flag and whether the invoker is automated. Bot activate_ai requires a
+// tool policy checker: without it, strict filtering and MCP auto-approval are no-ops and tools
+// must stay disabled so automated invokers cannot strand pending approvals.
+func computeAllowToolsInChannel(configEnabled bool, post *model.Post, postingUser *model.User, hasToolPolicyChecker bool) bool {
 	if !configEnabled {
 		return false
 	}
 	if isBotActivateAI(post, postingUser) {
-		return true
+		return hasToolPolicyChecker
 	}
 	return !isAutomatedInvoker(post, postingUser)
 }
@@ -143,8 +145,9 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 
 	// Check config to determine if tools should be allowed in channel mentions
 	configEnabled := c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
-	allowToolsInChannel := computeAllowToolsInChannel(configEnabled, post, postingUser)
-	channelToolsAutoRunEverywhereOnly := configEnabled && isBotActivateAI(post, postingUser)
+	hasToolPolicyChecker := c.toolPolicyChecker != nil
+	allowToolsInChannel := computeAllowToolsInChannel(configEnabled, post, postingUser, hasToolPolicyChecker)
+	channelToolsAutoRunEverywhereOnly := configEnabled && isBotActivateAI(post, postingUser) && hasToolPolicyChecker
 
 	responseRootID := post.Id
 	if post.RootId != "" {
