@@ -9,6 +9,10 @@ import (
 
 const LLMRequesterUserID = "llm_requester_user_id"
 const AllowToolsInChannelProp = "allow_tools_in_channel"
+
+// ChannelToolsAutoRunEverywhereOnlyProp marks AI posts where channel tool use is limited to
+// MCP tools with auto_run_everywhere policy (bot activate_ai channel invocations).
+const ChannelToolsAutoRunEverywhereOnlyProp = "channel_tools_auto_run_everywhere_only"
 const RespondingToProp = "responding_to"
 const NoRegen = "no_regen"
 const UnsafeLinksPostProp = "unsafe_links"
