@@ -86,6 +86,8 @@ const defaultConfig: Config = {
     bots: [],
     defaultBotName: '',
     transcriptBackend: '',
+    enableOpenTelemetry: false,
+    openTelemetryEndpoint: '',
     enableTokenUsageLogging: false,
     enableCallSummary: false,
     allowedUpstreamHostnames: '',
@@ -390,10 +392,18 @@ const Config = (props: Props) => {
             >
                 <ItemList>
                     <BooleanItem
-                        label={intl.formatMessage({defaultMessage: 'Enable LLM Trace'})}
-                        value={value.enableLLMTrace}
-                        onChange={(to) => updateConfig({enableLLMTrace: to})}
-                        helpText={intl.formatMessage({defaultMessage: 'Enable tracing of LLM requests. Outputs full conversation data to the logs.'})}
+                        label={intl.formatMessage({defaultMessage: 'Enable OpenTelemetry'})}
+                        value={value.enableOpenTelemetry}
+                        onChange={(to) => updateConfig({enableOpenTelemetry: to})}
+                        helpText={intl.formatMessage({defaultMessage: 'Enable distributed tracing of LLM requests, tool execution, and search operations via OpenTelemetry. Traces are exported to the configured OTLP endpoint.'})}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'OpenTelemetry Endpoint'})}
+                        value={value.openTelemetryEndpoint}
+                        onChange={(e) => updateConfig({openTelemetryEndpoint: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'OTLP gRPC endpoint for trace export (e.g. localhost:4317). Required when OpenTelemetry is enabled.'})}
+                        placeholder={'localhost:4317'}
+                        disabled={!value.enableOpenTelemetry}
                     />
                     <BooleanItem
                         label={intl.formatMessage({defaultMessage: 'Enable Token Usage Logging'})}

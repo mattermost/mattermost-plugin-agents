@@ -39,10 +39,6 @@ func (p *countingMCPToolProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Erro
 
 type contextTestConfigProvider struct{}
 
-func (p *contextTestConfigProvider) GetEnableLLMTrace() bool {
-	return false
-}
-
 func (p *contextTestConfigProvider) GetServiceByID(string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }
