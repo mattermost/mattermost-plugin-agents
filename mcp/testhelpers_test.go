@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
 	"github.com/mattermost/mattermost/server/public/model"
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -78,7 +78,7 @@ func GetSharedTestSuite(t *testing.T) *EmbeddedTestSuite {
 
 // setupSharedSuite initializes the shared Mattermost container
 func setupSharedSuite(t *testing.T) *EmbeddedTestSuite {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
 	// Create config with required settings

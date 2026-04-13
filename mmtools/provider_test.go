@@ -5,14 +5,13 @@ package mmtools
 
 import (
 	"errors"
-	"net/http"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/embeddings"
-	"github.com/mattermost/mattermost-plugin-ai/embeddings/mocks"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/search"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -45,7 +44,7 @@ func TestMMToolProvider_GetTools(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			// Create tool provider
-			provider := NewMMToolProvider(nil, test.searchService, &http.Client{}, nil)
+			provider := NewMMToolProvider(nil, test.searchService, nil)
 
 			// Create a mock bot
 			bot := &bots.Bot{}
@@ -117,7 +116,7 @@ func TestMMToolProvider_toolSearchServer(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			// Create tool provider
-			provider := NewMMToolProvider(nil, test.searchService, &http.Client{}, nil)
+			provider := NewMMToolProvider(nil, test.searchService, nil)
 
 			// Create mock LLM context
 			llmContext := &llm.Context{

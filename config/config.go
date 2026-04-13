@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/mattermost/mattermost-plugin-ai/embeddings"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 const (
@@ -25,6 +25,7 @@ type Config struct {
 	DefaultBotName                  string                           `json:"defaultBotName"`
 	TranscriptGenerator             string                           `json:"transcriptBackend"`
 	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
+	EnableCallSummary               bool                             `json:"enableCallSummary"`
 	EnableTokenUsageLogToPlugin     *bool                            `json:"enableTokenUsageLogToPlugin,omitempty"`
 	EnableTokenUsageLogToFile       *bool                            `json:"enableTokenUsageLogToFile,omitempty"`
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`

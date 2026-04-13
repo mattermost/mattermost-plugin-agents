@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-ai/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"go.opentelemetry.io/otel/codes"
 )
 

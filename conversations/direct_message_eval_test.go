@@ -11,15 +11,15 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/conversations"
-	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/evals"
-	"github.com/mattermost/mattermost-plugin-ai/i18n"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi/mocks"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/evals"
+	"github.com/mattermost/mattermost-plugin-agents/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -156,7 +156,7 @@ func TestDirectMessageConversations(t *testing.T) {
 			bot := bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
 
 			// Process the DM request
-			textStream, err := conv.ProcessUserRequest(context.Background(), bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), false)
+			textStream, err := conv.ProcessUserRequest(context.Background(), bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), false, false)
 			require.NoError(t, err, "Failed to process DM request")
 			require.NotNil(t, textStream, "Expected a non-nil text stream")
 

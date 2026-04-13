@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-ai/config"
-	"github.com/mattermost/mattermost-plugin-ai/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/codes"
@@ -25,9 +25,18 @@ const (
 	EmbeddedServerName = "Mattermost"
 	EmbeddedClientKey  = "embedded://mattermost"
 
-	ToolPolicyAsk     = config.MCPToolPolicyAsk
-	ToolPolicyAutoRun = config.MCPToolPolicyAutoRun
+	ToolPolicyAsk               = config.MCPToolPolicyAsk
+	ToolPolicyAutoRun           = config.MCPToolPolicyAutoRun
+	ToolPolicyAutoRunEverywhere = config.MCPToolPolicyAutoRunEverywhere
 )
+
+func IsToolPolicyAutoRun(policy string) bool {
+	return config.IsToolPolicyAutoRun(policy)
+}
+
+func IsToolPolicyAutoRunEverywhere(policy string) bool {
+	return config.IsToolPolicyAutoRunEverywhere(policy)
+}
 
 // EmbeddedMCPServer interface for dependency injection
 type EmbeddedMCPServer interface {

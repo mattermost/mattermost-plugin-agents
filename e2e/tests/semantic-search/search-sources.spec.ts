@@ -6,6 +6,7 @@ import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
 import { LLMBotPostHelper } from 'helpers/llmbot-post';
+import { mattermostAIPluginRoutes } from 'helpers/plugin-http';
 
 const username = 'regularuser';
 const password = 'regularuser';
@@ -138,21 +139,14 @@ test.describe('Search Sources Display', () => {
         const secondUser = await userClient.getUserByUsername('seconduser');
         const emptyDMChannel = await userClient.createDirectChannel([currentUser.id, secondUser.id]);
 
-        const response = await fetch(`${mattermost.url()}/plugins/mattermost-ai/search`, {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${userClient.getToken()}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                query: 'xyznonexistent12345',
-                channelId: emptyDMChannel.id,
-            }),
-        });
-
-        expect(response.ok).toBe(true);
-
-        const payload = await response.json();
+        const routes = mattermostAIPluginRoutes(mattermost.url());
+        const payload = await routes.postJson('search', userClient.getToken(), {
+            query: 'xyznonexistent12345',
+            channelId: emptyDMChannel.id,
+        }) as {
+            answer: string;
+            results: unknown[];
+        };
         expect(payload.answer).toBe(searchResponseNoResultsText);
         expect(payload.results).toEqual([]);
     });

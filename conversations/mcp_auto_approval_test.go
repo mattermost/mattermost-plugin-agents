@@ -8,9 +8,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,9 +21,10 @@ type testPolicyChecker struct {
 }
 
 type testPolicyServer struct {
-	urlPatterns []string
-	enabled     bool
-	autoRun     map[string]bool
+	urlPatterns       []string
+	enabled           bool
+	autoRun           map[string]bool
+	autoRunEverywhere map[string]bool
 }
 
 func (c *testPolicyChecker) GetToolPolicy(serverBaseURL string, toolName string) (string, bool) {
@@ -36,6 +37,9 @@ func (c *testPolicyChecker) GetToolPolicy(serverBaseURL string, toolName string)
 		}
 		for _, p := range s.urlPatterns {
 			if matchesTestURL(serverBaseURL, p) {
+				if s.autoRunEverywhere != nil && s.autoRunEverywhere[toolName] {
+					return mcp.ToolPolicyAutoRunEverywhere, true
+				}
 				if s.autoRun[toolName] {
 					return mcp.ToolPolicyAutoRun, true
 				}
@@ -67,20 +71,20 @@ func searchString(s, sub string) bool {
 
 func TestWrapStreamWithMCPAutoApproval(t *testing.T) {
 	t.Run("nil stream returns nil", func(t *testing.T) {
-		result := wrapStreamWithMCPAutoApproval(context.Background(), nil, &llm.Context{}, &testPolicyChecker{})
+		result := wrapStreamWithMCPAutoApproval(context.Background(), nil, &llm.Context{}, &testPolicyChecker{}, false)
 		assert.Nil(t, result)
 	})
 
 	t.Run("nil context returns original stream", func(t *testing.T) {
 		stream := llm.NewStreamFromString("test")
-		result := wrapStreamWithMCPAutoApproval(context.Background(), stream, nil, &testPolicyChecker{})
+		result := wrapStreamWithMCPAutoApproval(context.Background(), stream, nil, &testPolicyChecker{}, false)
 		assert.Equal(t, stream, result)
 	})
 
 	t.Run("nil policy checker returns original stream", func(t *testing.T) {
 		stream := llm.NewStreamFromString("test")
 		llmCtx := &llm.Context{Tools: llm.NewToolStore()}
-		result := wrapStreamWithMCPAutoApproval(context.Background(), stream, llmCtx, nil)
+		result := wrapStreamWithMCPAutoApproval(context.Background(), stream, llmCtx, nil, false)
 		assert.Equal(t, stream, result)
 	})
 
@@ -94,7 +98,7 @@ func TestWrapStreamWithMCPAutoApproval(t *testing.T) {
 		llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 		checker := &testPolicyChecker{}
 
-		result := wrapStreamWithMCPAutoApproval(context.Background(), stream, llmCtx, checker)
+		result := wrapStreamWithMCPAutoApproval(context.Background(), stream, llmCtx, checker, false)
 		require.NotNil(t, result)
 
 		events := collectStreamEvents(result)
@@ -121,7 +125,7 @@ func TestWrapStreamWithMCPAutoApproval(t *testing.T) {
 			},
 		}
 
-		result := wrapStreamWithMCPAutoApproval(context.Background(), streamHelper(input), ctx, checker)
+		result := wrapStreamWithMCPAutoApproval(context.Background(), streamHelper(input), ctx, checker, false)
 		events := collectStreamEvents(result)
 		require.Len(t, events, 1)
 		assert.Equal(t, llm.EventTypeToolCalls, events[0].Type)
@@ -165,7 +169,7 @@ func TestWrapStreamWithMCPAutoApproval(t *testing.T) {
 			},
 		}
 
-		result := wrapStreamWithMCPAutoApproval(context.Background(), streamHelper(input), ctx, checker)
+		result := wrapStreamWithMCPAutoApproval(context.Background(), streamHelper(input), ctx, checker, false)
 		events := collectStreamEvents(result)
 		require.Len(t, events, 1)
 		assert.Equal(t, llm.EventTypeToolCalls, events[0].Type)
@@ -204,7 +208,7 @@ func TestWrapStreamWithMCPAutoApproval(t *testing.T) {
 			},
 		}
 
-		result := wrapStreamWithMCPAutoApproval(context.Background(), streamHelper(input), ctx, checker)
+		result := wrapStreamWithMCPAutoApproval(context.Background(), streamHelper(input), ctx, checker, false)
 		events := collectStreamEvents(result)
 		require.Len(t, events, 1)
 
@@ -240,7 +244,7 @@ func TestWrapStreamWithMCPAutoApproval(t *testing.T) {
 			},
 		}
 
-		result := wrapStreamWithMCPAutoApproval(context.Background(), streamHelper(input), ctx, checker)
+		result := wrapStreamWithMCPAutoApproval(context.Background(), streamHelper(input), ctx, checker, false)
 		events := collectStreamEvents(result)
 		require.Len(t, events, 1)
 
@@ -270,12 +274,82 @@ func TestWrapStreamWithMCPAutoApproval(t *testing.T) {
 			},
 		}
 
-		result := wrapStreamWithMCPAutoApproval(context.Background(), streamHelper(input), ctx, checker)
+		result := wrapStreamWithMCPAutoApproval(context.Background(), streamHelper(input), ctx, checker, false)
 		events := collectStreamEvents(result)
 		require.Len(t, events, 1)
 
 		resultToolCalls := events[0].Value.([]llm.ToolCall)
 		assert.Equal(t, llm.ToolCallStatusPending, resultToolCalls[0].Status)
+	})
+
+	t.Run("strict auto_run_everywhere_only leaves auto_run policy as pending", func(t *testing.T) {
+		toolCalls := []llm.ToolCall{
+			{ID: "tc1", Name: "search", Arguments: json.RawMessage(`{}`)},
+		}
+
+		input := make(chan llm.TextStreamEvent, 2)
+		input <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
+		close(input)
+
+		toolStore := llm.NewToolStore()
+		toolStore.AddTools([]llm.Tool{
+			{
+				Name:         "search",
+				ServerOrigin: "https://mcp.atlassian.com/v1/mcp",
+				Resolver: func(ctx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+					return "should not run", nil
+				},
+			},
+		})
+
+		ctx := &llm.Context{Tools: toolStore}
+		checker := &testPolicyChecker{
+			servers: []testPolicyServer{
+				{urlPatterns: []string{"mcp.atlassian.com"}, enabled: true, autoRun: map[string]bool{"search": true}},
+			},
+		}
+
+		result := wrapStreamWithMCPAutoApproval(context.Background(), streamHelper(input), ctx, checker, true)
+		events := collectStreamEvents(result)
+		require.Len(t, events, 1)
+		resultToolCalls := events[0].Value.([]llm.ToolCall)
+		assert.Equal(t, llm.ToolCallStatusPending, resultToolCalls[0].Status)
+		assert.Empty(t, resultToolCalls[0].Result)
+	})
+
+	t.Run("strict auto_run_everywhere_only executes auto_run_everywhere policy", func(t *testing.T) {
+		toolCalls := []llm.ToolCall{
+			{ID: "tc1", Name: "read", Arguments: json.RawMessage(`{}`)},
+		}
+
+		input := make(chan llm.TextStreamEvent, 2)
+		input <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
+		close(input)
+
+		toolStore := llm.NewToolStore()
+		toolStore.AddTools([]llm.Tool{
+			{
+				Name:         "read",
+				ServerOrigin: "https://mcp.atlassian.com/v1/mcp",
+				Resolver: func(ctx *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+					return "ok", nil
+				},
+			},
+		})
+
+		ctx := &llm.Context{Tools: toolStore}
+		checker := &testPolicyChecker{
+			servers: []testPolicyServer{
+				{urlPatterns: []string{"mcp.atlassian.com"}, enabled: true, autoRunEverywhere: map[string]bool{"read": true}},
+			},
+		}
+
+		result := wrapStreamWithMCPAutoApproval(context.Background(), streamHelper(input), ctx, checker, true)
+		events := collectStreamEvents(result)
+		require.Len(t, events, 1)
+		resultToolCalls := events[0].Value.([]llm.ToolCall)
+		assert.Equal(t, llm.ToolCallStatusAutoApproved, resultToolCalls[0].Status)
+		assert.Equal(t, "ok", resultToolCalls[0].Result)
 	})
 }
 

@@ -22,8 +22,8 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"go.opentelemetry.io/otel/codes"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 )
 
 const (
@@ -159,6 +159,9 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 	config := &schemas.ProviderConfig{
 		NetworkConfig:            networkConfig,
 		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
+		ProxyConfig: &schemas.ProxyConfig{
+			Type: schemas.EnvProxy,
+		},
 	}
 
 	return config, nil

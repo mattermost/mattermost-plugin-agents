@@ -9,7 +9,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
 )
 
 // delegateToMCPHandler delegates the request to the MCP handler

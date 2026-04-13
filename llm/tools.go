@@ -16,7 +16,7 @@ import (
 	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/mattermost/mattermost-plugin-ai/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 )
 
 // Tool represents a function that can be called by the language model during a conversation.
@@ -455,6 +455,18 @@ func (s *ToolStore) GetServerOrigin(toolName string) string {
 		return tool.ServerOrigin
 	}
 	return ""
+}
+
+// KeepToolsIf removes tools for which keep returns false.
+func (s *ToolStore) KeepToolsIf(keep func(Tool) bool) {
+	if s == nil || keep == nil {
+		return
+	}
+	for name, tool := range s.tools {
+		if !keep(tool) {
+			delete(s.tools, name)
+		}
+	}
 }
 
 // RemoveToolsByServerOrigin removes all tools whose ServerOrigin matches

@@ -14,22 +14,23 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
-	"github.com/mattermost/mattermost-plugin-ai/bifrost"
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/conversations"
-	"github.com/mattermost/mattermost-plugin-ai/embeddings"
-	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/i18n"
-	"github.com/mattermost/mattermost-plugin-ai/indexer"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
-	"github.com/mattermost/mattermost-plugin-ai/meetings"
-	"github.com/mattermost/mattermost-plugin-ai/metrics"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/search"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/indexer"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/meetings"
+	"github.com/mattermost/mattermost-plugin-agents/metrics"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/search"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -60,6 +61,22 @@ type MCPClientManager interface {
 	GetConfig() mcp.Config
 }
 
+// ConfigStore provides read/write access to the plugin configuration in the database.
+type ConfigStore interface {
+	GetConfig() (*config.Config, error)
+	SaveConfig(cfg config.Config) error
+}
+
+// ConfigUpdater updates the in-memory plugin configuration.
+type ConfigUpdater interface {
+	Update(cfg *config.Config)
+}
+
+// ClusterNotifier broadcasts config update events to other cluster nodes.
+type ClusterNotifier interface {
+	PublishConfigUpdate() error
+}
+
 // API represents the HTTP API functionality for the plugin
 type API struct {
 	bots                  *bots.MMBots
@@ -81,6 +98,9 @@ type API struct {
 	mcpClientManager      MCPClientManager
 	mcpHandlers           *mcpserver.PluginMCPHandlers
 	llmUpstreamHTTPClient *http.Client
+	configStore           ConfigStore
+	configUpdater         ConfigUpdater
+	clusterNotifier       ClusterNotifier
 	getSearchInitError    func() string
 }
 
@@ -104,6 +124,9 @@ func New(
 	mcpClientManager MCPClientManager,
 	mcpHandlers *mcpserver.PluginMCPHandlers,
 	llmUpstreamHTTPClient *http.Client,
+	configStore ConfigStore,
+	configUpdater ConfigUpdater,
+	clusterNotifier ClusterNotifier,
 	getSearchInitError func() string,
 ) *API {
 	return &API{
@@ -126,6 +149,9 @@ func New(
 		mcpClientManager:      mcpClientManager,
 		mcpHandlers:           mcpHandlers,
 		llmUpstreamHTTPClient: llmUpstreamHTTPClient,
+		configStore:           configStore,
+		configUpdater:         configUpdater,
+		clusterNotifier:       clusterNotifier,
 		getSearchInitError:    getSearchInitError,
 	}
 }
@@ -219,6 +245,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
+	adminRouter.GET("/config", a.handleGetConfig)
+	adminRouter.PUT("/config", a.handleSaveConfig)
 
 	searchRouter := botRequiredRouter.Group("/search")
 	// Only returns search results

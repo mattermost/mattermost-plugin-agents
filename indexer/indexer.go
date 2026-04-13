@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/embeddings"
-	"github.com/mattermost/mattermost-plugin-ai/format"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/format"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 )
@@ -181,10 +181,12 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		}
 	}
 
+	// Snapshot status for return value before the background job mutates newJobStatus.
+	returnStatus := newJobStatus
 	// Start the reindexing job in background
 	go s.runReindexJob(&newJobStatus, clearIndex)
 
-	return newJobStatus, nil
+	return returnStatus, nil
 }
 
 // getNodeID returns a unique identifier for this node
@@ -327,10 +329,12 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	// Set cursor to start from last indexed timestamp
 	s.saveCursor(Cursor{LastCreateAt: lastIndexed, LastID: ""})
 
+	// Snapshot status for return value before the background job mutates newJobStatus.
+	returnStatus := newJobStatus
 	// Start catch-up job (reuses runReindexJob with clearIndex=false)
 	go s.runReindexJob(&newJobStatus, false)
 
-	return newJobStatus, nil
+	return returnStatus, nil
 }
 
 // CheckIndexHealth compares database posts with indexed posts

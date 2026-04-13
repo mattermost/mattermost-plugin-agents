@@ -11,13 +11,13 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/mattermost/mattermost-plugin-ai/assets"
-	"github.com/mattermost/mattermost-plugin-ai/bifrost"
-	"github.com/mattermost/mattermost-plugin-ai/config"
-	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/assets"
+	"github.com/mattermost/mattermost-plugin-agents/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
@@ -323,7 +323,9 @@ func (b *MMBots) EnsureBots() error {
 	b.bots = bots
 	// Store deep copies of the successfully ensured configs for optimistic checking.
 	// Deep copy is needed because BotConfig contains slice fields (EnabledNativeTools, etc.)
-	// that would otherwise share backing arrays with the live config.
+	// that would otherwise share backing arrays with the live config. The JSON-based
+	// copy has non-trivial cost for large bot sets, but this path runs only when
+	// optimistic checks above detect bot/service config changes.
 	copiedBotCfgs, copyErr := config.DeepCopyJSON(currentBotCfgs)
 	if copyErr != nil {
 		b.botsLock.Unlock()

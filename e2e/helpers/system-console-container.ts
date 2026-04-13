@@ -13,6 +13,7 @@ export interface SystemConsolePluginConfig {
     enableUserRestrictions?: boolean;
     enableVectorIndex?: boolean;
     enableTokenUsageLogging?: boolean;
+    enableChannelMentionToolCalling?: boolean;
     defaultBotName?: string;
     allowedUpstreamHostnames?: string;
     allowUnsafeLinks?: boolean;
@@ -100,6 +101,7 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
             enableUserRestrictions: config.enableUserRestrictions ?? false,
             enableVectorIndex: config.enableVectorIndex ?? false,
             enableTokenUsageLogging: config.enableTokenUsageLogging,
+            enableChannelMentionToolCalling: config.enableChannelMentionToolCalling ?? false,
             defaultBotName: config.defaultBotName,
             allowedUpstreamHostnames: config.allowedUpstreamHostnames,
             allowUnsafeLinks: config.allowUnsafeLinks,

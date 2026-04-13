@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page, type Locator } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -11,6 +11,7 @@ import {
 } from 'helpers/openai-mock';
 import { RunToolConfigContainerWithPolicies } from 'helpers/tool-config-container';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
+import { createBotConfigHelper } from 'helpers/bot-config';
 
 /**
  * Test Suite: Tool Call Policies with Mocked LLM (4.13)
@@ -24,16 +25,15 @@ let openAIMock: OpenAIMockContainer;
 
 type EmbeddedToolConfig = {
     name: string;
-    policy: 'ask' | 'auto_run';
+    policy: 'ask' | 'auto_run' | 'auto_run_everywhere';
     enabled: boolean;
 };
 
 async function setEmbeddedToolPolicies(toolConfigs: EmbeddedToolConfig[]) {
-    const adminClient = await mattermost.getAdminClient();
-    const systemConfig = await adminClient.getConfig();
-    const pluginConfig = systemConfig.PluginSettings?.Plugins?.['mattermost-ai'];
+    const helper = await createBotConfigHelper(mattermost);
+    const pluginConfig = await helper.getPluginConfig();
 
-    if (!pluginConfig?.config?.mcp) {
+    if (!pluginConfig.config.mcp) {
         throw new Error('mattermost-ai MCP config is not available');
     }
 
@@ -43,15 +43,7 @@ async function setEmbeddedToolPolicies(toolConfigs: EmbeddedToolConfig[]) {
         tool_configs: toolConfigs,
     };
 
-    await adminClient.patchConfig({
-        PluginSettings: {
-            Plugins: {
-                'mattermost-ai': pluginConfig,
-            },
-        },
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await helper.updatePluginConfig(pluginConfig);
 }
 
 async function getTownSquareChannelID(): Promise<string> {
@@ -66,6 +58,45 @@ async function getTownSquareChannelID(): Promise<string> {
     }
 
     return townSquare.id;
+}
+
+async function waitForSentPost(page: Page, message: string, timeout: number = 30000): Promise<Locator> {
+    const post = page.locator('.post').filter({
+        has: page.locator('.post-message__text').getByText(message, {exact: true}),
+    }).last();
+    await expect(post).toBeVisible({timeout});
+    return post;
+}
+
+async function openThreadForPost(post: Locator, timeout: number = 30000): Promise<void> {
+    const replyIndicator = post.getByText(/\d+ repl/i);
+    await expect(replyIndicator).toBeVisible({timeout});
+    await replyIndicator.click();
+    const rhs = post.page().locator('#rhsContainer');
+    await rhs.waitFor({state: 'visible', timeout: 10000});
+    await rhs.locator('[data-testid="llm-bot-post"]').first().waitFor({state: 'visible', timeout: 10000});
+}
+
+async function mentionBotAndOpenThread(page: Page, mmPage: MattermostPage, botName: string, message: string, timeout: number = 30000): Promise<void> {
+    await mmPage.mentionBot(botName, message);
+    const post = await waitForSentPost(page, `@${botName} ${message}`, timeout);
+    await openThreadForPost(post, timeout);
+}
+
+async function closeRHSIfOpen(page: Page): Promise<void> {
+    const closeButton = page.locator('#rhsContainer').getByRole('button', {name: /close rhs|close/i}).first();
+    const rhs = page.locator('#rhsContainer');
+    if (await rhs.isVisible().catch(() => false) && await closeButton.isVisible().catch(() => false)) {
+        await closeButton.click();
+        await expect(rhs).not.toBeVisible({timeout: 10000});
+    }
+}
+
+async function waitForChannelReady(page: Page, channelDisplayName: string): Promise<void> {
+    await page.locator('#channelHeaderTitle').getByText(channelDisplayName, {exact: true}).waitFor({
+        state: 'visible',
+        timeout: 10000,
+    });
 }
 
 test.describe('Tool Call Policies (Mocked LLM)', () => {
@@ -265,7 +296,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     body: buildToolCallResponse(
                         'call_manual_channel_lookup',
                         'get_channel_info',
-                        '{"channel_display_name":"Town Square"}',
+                        '{"channel_name":"Town Square"}',
                     ),
                 },
             },
@@ -325,11 +356,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
             'toolbot',
         );
 
-        await mmPage.sendChannelMessage(mainTurnUserMessage);
-
-        const replyIndicator = page.getByText(/\d+ repl/i);
-        await expect(replyIndicator.last()).toBeVisible({timeout: 30000});
-        await replyIndicator.last().click();
+        await mentionBotAndOpenThread(page, mmPage, 'toolbot', mainTurnUserMessage);
 
         const rhs = page.locator('#rhsContainer');
         await rhs.waitFor({state: 'visible', timeout: 10000});
@@ -344,14 +371,170 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
         const latestBotPost = botPosts.last();
         await expect(latestBotPost.getByText('Read Channel', {exact: true})).toBeVisible({timeout: 30000});
-        await expect(latestBotPost.getByText('Auto-approved')).toBeVisible({timeout: 30000});
 
-        await expect(rhs.getByText('The follow-up read_channel tool completed successfully.')).toBeVisible({timeout: 30000});
+        // Completion text proves the final mock ran; wait for it before badge (post props may update after stream).
+        await expect(rhs.getByText('The follow-up read_channel tool completed successfully.')).toBeVisible({timeout: 45000});
+        await expect(rhs.getByText('Auto-approved')).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
         await latestBotPost.getByText('Read Channel', {exact: true}).click();
         // read_channel result is rendered as markdown; the seed string is not a single text node (bold, etc.).
         await expect(latestBotPost.getByText(seededMessage, {exact: false})).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
+    });
+
+    test('channel auto_run still requires Share, while auto_run_everywhere skips it', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const townSquareChannelID = await getTownSquareChannelID();
+        const mmPage = new MattermostPage(page);
+
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await page.goto(`${mattermost.url()}/test/channels/off-topic`);
+        await waitForChannelReady(page, 'Off-Topic');
+
+        await setEmbeddedToolPolicies([
+            {name: 'read_post', policy: 'auto_run', enabled: true},
+            {name: 'get_channel_info', policy: 'ask', enabled: true},
+            {name: 'read_channel', policy: 'auto_run', enabled: true},
+        ]);
+
+        await openAIMock.addMocks([
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value:
+                            'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
+                    },
+                },
+                context: {
+                    times: 1,
+                },
+                response: {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                    },
+                    body: buildTextResponse('tool policy channel dm-only'),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: 'read_channel',
+                    },
+                },
+                context: {
+                    times: 1,
+                },
+                response: {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                    },
+                    body: buildToolCallResponse(
+                        'call_channel_dm_only',
+                        'read_channel',
+                        `{"channel_id":"${townSquareChannelID}","limit":5}`,
+                    ),
+                },
+            },
+        ]);
+
+        await mentionBotAndOpenThread(page, mmPage, 'toolbot', 'tool policy channel dm-only');
+
+        const rhs = page.locator('#rhsContainer');
+        await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible({timeout: 30000});
+        await expect(rhs.getByRole('button', {name: /^share$/i})).toBeVisible({timeout: 30000});
+        await expect(rhs.getByRole('button', {name: /keep private/i})).toBeVisible();
+
+        await setEmbeddedToolPolicies([
+            {name: 'read_post', policy: 'auto_run', enabled: true},
+            {name: 'get_channel_info', policy: 'ask', enabled: true},
+            {name: 'read_channel', policy: 'auto_run_everywhere', enabled: true},
+        ]);
+
+        await openAIMock.addMocks([
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value:
+                            'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
+                    },
+                },
+                context: {
+                    times: 1,
+                },
+                response: {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                    },
+                    body: buildTextResponse('tool policy channel everywhere'),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: 'read_channel',
+                    },
+                },
+                context: {
+                    times: 1,
+                },
+                response: {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                    },
+                    body: buildToolCallResponse(
+                        'call_channel_everywhere',
+                        'read_channel',
+                        `{"channel_id":"${townSquareChannelID}","limit":5}`,
+                    ),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: 'call_channel_everywhere',
+                    },
+                },
+                context: {
+                    times: 1,
+                },
+                response: {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                    },
+                    body: buildTextResponse('Channel everywhere auto-run completed without share approval.'),
+                },
+            },
+        ]);
+
+        await closeRHSIfOpen(page);
+        await mentionBotAndOpenThread(page, mmPage, 'toolbot', 'tool policy channel everywhere');
+
+        await expect(rhs.getByText('Channel everywhere auto-run completed without share approval.')).toBeVisible({timeout: 45000});
+        await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
+        await expect(rhs.getByRole('button', {name: /^share$/i})).not.toBeVisible();
+        await expect(rhs.getByRole('button', {name: /keep private/i})).not.toBeVisible();
+        await expect(rhs.getByText('Auto-approved')).toBeVisible();
     });
 });

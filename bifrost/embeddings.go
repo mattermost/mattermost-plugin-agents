@@ -10,7 +10,7 @@ import (
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 
-	"github.com/mattermost/mattermost-plugin-ai/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 )
 
 // EmbeddingProvider implements the embeddings.EmbeddingProvider interface using Bifrost.

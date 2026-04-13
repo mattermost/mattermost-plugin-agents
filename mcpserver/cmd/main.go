@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
-	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
+	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -134,7 +134,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 			PersonalAccessToken: token,
 		}
 
-		mcpServer, err = mcpserver.NewStdioServer(stdioConfig, logger)
+		mcpServer, err = mcpserver.NewStdioServer(stdioConfig, logger, nil)
 	case "http":
 		// Create HTTP transport configuration
 		stateless, _ := cmd.Flags().GetBool("stateless")
