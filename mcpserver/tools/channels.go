@@ -149,8 +149,8 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	if err != nil {
 		return "failed to fetch channel info", fmt.Errorf("error fetching channel: %w", err)
 	}
-	if err := p.ensureChannelAccessible("read_channel", mcpContext.MattermostAccessScope, channel); err != nil {
-		return "channel is outside execution scope", err
+	if scopeErr := p.ensureChannelAccessible("read_channel", mcpContext.MattermostAccessScope, channel); scopeErr != nil {
+		return "channel is outside execution scope", scopeErr
 	}
 
 	// Determine team display name; DMs/Groups have no team
@@ -542,8 +542,8 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	if err != nil {
 		return "failed to fetch channel info", fmt.Errorf("error fetching channel: %w", err)
 	}
-	if err := p.ensureChannelAccessible("get_channel_members", mcpContext.MattermostAccessScope, channel); err != nil {
-		return "channel is outside execution scope", err
+	if scopeErr := p.ensureChannelAccessible("get_channel_members", mcpContext.MattermostAccessScope, channel); scopeErr != nil {
+		return "channel is outside execution scope", scopeErr
 	}
 
 	// Default exclude_bots to true

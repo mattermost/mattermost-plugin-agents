@@ -173,6 +173,19 @@ func (e *TestEnvironment) OverrideLicense(license *model.License) {
 	e.mockAPI.On("GetLicense").Return(license).Maybe()
 }
 
+// OverrideConfig replaces the default GetConfig mock registered by
+// SetupTestEnvironment so that tests can control config values.
+func (e *TestEnvironment) OverrideConfig(config *model.Config) {
+	filtered := make([]*mock.Call, 0, len(e.mockAPI.ExpectedCalls))
+	for _, call := range e.mockAPI.ExpectedCalls {
+		if call.Method != "GetConfig" {
+			filtered = append(filtered, call)
+		}
+	}
+	e.mockAPI.ExpectedCalls = filtered
+	e.mockAPI.On("GetConfig").Return(config).Maybe()
+}
+
 // CreateBridgeClient creates a bridge client that uses the test API
 func (e *TestEnvironment) CreateBridgeClient() *bridgeclient.Client {
 	// Create a plugin API wrapper that routes to our test API

@@ -13,7 +13,7 @@ import (
 
 type inferredScopedArgs struct {
 	TeamID    string `json:"team_id" scope:"true" jsonschema:"Scoped team ID"`
-	ChannelID string `json:"channel_id" scope:"scoped" jsonschema:"Scoped channel ID"`
+	ChannelID string `json:"channel_id" scope:"true" jsonschema:"Scoped channel ID"`
 	Query     string `json:"query" jsonschema:"Search query"`
 }
 
