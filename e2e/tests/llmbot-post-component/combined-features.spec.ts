@@ -10,7 +10,7 @@ import {
     getAvailableProviders,
     ProviderBundle,
 } from 'helpers/api-config';
-import { attachAPIErrorContext } from 'helpers/log-scanner';
+import { attachAPIErrorContext, getSkippableUpstreamIssue } from 'helpers/log-scanner';
 
 /**
  * Test Suite: Combined Features
@@ -108,7 +108,15 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
             await aiPlugin.sendMessage(prompt);
 
-            await llmBotHelper.waitForReasoning(undefined, 35000);
+            try {
+                await llmBotHelper.waitForReasoning(undefined, 35000);
+            } catch (error) {
+                const skipReason = getSkippableUpstreamIssue();
+                if (skipReason) {
+                    test.skip(true, `${skipReason} while waiting for reasoning.`);
+                }
+                throw error;
+            }
             // Wait for streaming to complete (smart wait, 5min safety timeout)
             await llmBotHelper.waitForStreamingComplete();
 

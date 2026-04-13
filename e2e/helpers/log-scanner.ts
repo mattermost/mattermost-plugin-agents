@@ -94,6 +94,34 @@ export function getAPIErrorContext(): string {
 }
 
 /**
+ * Return a skip reason when the recent server logs show a transient upstream
+ * provider problem that should not fail a real-API E2E test.
+ */
+export function getSkippableUpstreamIssue(): string | null {
+    const scan = scanServerLogs();
+    if (!scan.hasErrors) {
+        return null;
+    }
+
+    const skippableError = scan.errors.find((error) => {
+        if (error.category === 'API Overloaded' ||
+            error.category === 'API Rate Limit' ||
+            error.category === 'Streaming Timeout' ||
+            error.category === 'Network Error') {
+            return true;
+        }
+
+        return /overloaded|rate.?limit|quota|status.?code.*5\d\d|http 5\d\d|connection.*refused|econnrefused|etimedout|timeout streaming/i.test(error.line);
+    });
+
+    if (!skippableError) {
+        return null;
+    }
+
+    return `Skipping due to upstream API issue: [${skippableError.category}] ${skippableError.line}`;
+}
+
+/**
  * Scan server logs for API errors on test failure and attach context to the
  * Playwright HTML report. Call from test.afterEach in real API test suites.
  *
