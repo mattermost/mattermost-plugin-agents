@@ -212,23 +212,12 @@ func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Co
 		return nil
 	}
 
+	metadata = llmContext.GetMCPServerMetadata(EmbeddedClientKey)
 	if llmContext.BotUserID != "" {
-		metadata = make(map[string]any)
-		metadata["bot_user_id"] = llmContext.BotUserID
-	}
-
-	scope := llmContext.Tools.GetMattermostAccessScope()
-	if scope != nil {
 		if metadata == nil {
 			metadata = make(map[string]any)
 		}
-		scopeMap := map[string]any{
-			"team_id": scope.TeamID,
-		}
-		if len(scope.AllowedChannelIDs) > 0 {
-			scopeMap["allowed_channel_ids"] = scope.AllowedChannelIDs
-		}
-		metadata["mattermost_access_scope"] = scopeMap
+		metadata["bot_user_id"] = llmContext.BotUserID
 	}
 
 	return metadata

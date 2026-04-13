@@ -158,22 +158,22 @@ func (t Tool) WithConstrainedParams(constraints map[string][]string) Tool {
 // ApplyMattermostAccessScope rewrites tools in the store: binds team_id and optionally
 // channel_id per scope tags on each tool schema (Extra[MattermostScopeSchemaExtraKey]).
 // It is a no-op if scope is nil or the store is nil.
-func (s *ToolStore) ApplyMattermostAccessScope(scope *MattermostAccessScope) {
-	if s == nil || scope == nil {
+func ApplyMattermostAccessScope(store *ToolStore, scope *MattermostAccessScope) {
+	if store == nil || scope == nil {
 		return
 	}
-	newTools := make(map[string]Tool, len(s.tools))
-	for name, tool := range s.tools {
-		newTools[name] = applyScopeToTool(tool, scope, s.log)
+	newTools := make(map[string]Tool, len(store.tools))
+	for name, tool := range store.tools {
+		newTools[name] = applyScopeToTool(tool, scope, store.log)
 	}
-	s.tools = newTools
-	if s.log != nil {
-		names := make([]string, 0, len(s.tools))
-		for n := range s.tools {
+	store.tools = newTools
+	if store.log != nil {
+		names := make([]string, 0, len(store.tools))
+		for n := range store.tools {
 			names = append(names, n)
 		}
 		sort.Strings(names)
-		s.log.Info("scope: mattermost access scope applied to tool store", "tool_count", len(names), "tools", names)
+		store.log.Info("scope: mattermost access scope applied to tool store", "tool_count", len(names), "tools", names)
 	}
 }
 

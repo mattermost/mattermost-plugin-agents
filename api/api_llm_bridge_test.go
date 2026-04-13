@@ -2085,8 +2085,9 @@ func TestBridgeClientAgentCompletionMattermostAccessScopePropagation(t *testing.
 
 	lastReq := fakeLLM.LastRequest()
 	require.NotNil(t, lastReq.Context)
-	require.NotNil(t, lastReq.Context.Tools)
-	scope := lastReq.Context.Tools.GetMattermostAccessScope()
+	metadata := lastReq.Context.GetMCPServerMetadata(mcp.EmbeddedClientKey)
+	require.NotNil(t, metadata)
+	scope := llm.MattermostAccessScopeFromMetadata(metadata)
 	require.NotNil(t, scope)
 	require.Equal(t, validTeamID, scope.TeamID)
 	require.Equal(t, []string{validChannelID}, scope.AllowedChannelIDs)

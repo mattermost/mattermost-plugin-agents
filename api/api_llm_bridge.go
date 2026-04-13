@@ -15,6 +15,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -368,20 +369,15 @@ func (a *API) prepareAgentBridgeCompletion(
 		llmRequest.Context.Tools = scopedTools
 	}
 
-	// Set execution scope on the ToolStore (after any allowed_tools scoping).
-	// Create an empty ToolStore if needed so scope is always available for propagation.
 	if executionScope != nil {
-		if llmRequest.Context.Tools == nil {
-			llmRequest.Context.Tools = llm.NewNoTools()
+		if llmRequest.Context == nil {
+			llmRequest.Context = llm.NewContext()
 		}
-		llmRequest.Context.Tools.SetMattermostAccessScope(executionScope)
-		llmRequest.Context.Tools.ApplyMattermostAccessScope(executionScope)
-
+		llmRequest.Context.SetMCPServerMetadata(mcp.EmbeddedClientKey, map[string]any{
+			llm.MattermostAccessScopeMetadataKey: executionScope.ToMetadataValue(),
+		})
 		if llmRequest.Context.Tools != nil {
-			toolNames := make([]string, 0, len(llmRequest.Context.Tools.GetTools()))
-			for _, t := range llmRequest.Context.Tools.GetTools() {
-				toolNames = append(toolNames, t.Name)
-			}
+			llm.ApplyMattermostAccessScope(llmRequest.Context.Tools, executionScope)
 		}
 	}
 

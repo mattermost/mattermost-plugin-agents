@@ -10,6 +10,9 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// MattermostAccessScopeMetadataKey is the embedded MCP metadata key for the scope payload.
+const MattermostAccessScopeMetadataKey = "mattermost_access_scope"
+
 // MattermostAccessScope defines runtime guardrails for a bridge completion run.
 // When nil, no restrictions are applied (fully backward compatible).
 type MattermostAccessScope struct {
@@ -86,4 +89,56 @@ func (s *MattermostAccessScope) ChannelDeniedError(channelID string) error {
 // TeamDeniedError returns a formatted error for scope violations.
 func (s *MattermostAccessScope) TeamDeniedError(teamID string) error {
 	return fmt.Errorf("team %s is outside the execution scope for this run", teamID)
+}
+
+// ToMetadataValue converts the scope to the metadata payload used for embedded MCP calls.
+func (s *MattermostAccessScope) ToMetadataValue() map[string]any {
+	if s == nil {
+		return nil
+	}
+
+	metadata := map[string]any{
+		"team_id": s.TeamID,
+	}
+	if len(s.AllowedChannelIDs) > 0 {
+		metadata["allowed_channel_ids"] = slices.Clone(s.AllowedChannelIDs)
+	}
+
+	return metadata
+}
+
+// MattermostAccessScopeFromMetadata extracts MattermostAccessScope from MCP metadata.
+func MattermostAccessScopeFromMetadata(metadata map[string]any) *MattermostAccessScope {
+	if metadata == nil {
+		return nil
+	}
+
+	rawScope, ok := metadata[MattermostAccessScopeMetadataKey]
+	if !ok {
+		return nil
+	}
+
+	scopeMap, ok := rawScope.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	scope := &MattermostAccessScope{}
+	if teamID, ok := scopeMap["team_id"].(string); ok {
+		scope.TeamID = teamID
+	}
+
+	switch ids := scopeMap["allowed_channel_ids"].(type) {
+	case []string:
+		scope.AllowedChannelIDs = slices.Clone(ids)
+	case []any:
+		scope.AllowedChannelIDs = make([]string, 0, len(ids))
+		for _, id := range ids {
+			if s, ok := id.(string); ok {
+				scope.AllowedChannelIDs = append(scope.AllowedChannelIDs, s)
+			}
+		}
+	}
+
+	return scope
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestContext_SetBotFields(t *testing.T) {
@@ -19,4 +20,25 @@ func TestContext_SetBotFields(t *testing.T) {
 	assert.Equal(t, "gpt-4", c.BotModel)
 	assert.Equal(t, "openai", c.BotServiceType)
 	assert.Equal(t, "Be helpful and concise", c.CustomInstructions)
+}
+
+func TestContext_MCPServerMetadata(t *testing.T) {
+	c := NewContext()
+	metadata := map[string]any{
+		"mattermost_access_scope": map[string]any{
+			"team_id": "team-id",
+		},
+	}
+
+	c.SetMCPServerMetadata("embedded://mattermost", metadata)
+
+	got := c.GetMCPServerMetadata("embedded://mattermost")
+	require.NotNil(t, got)
+	require.Equal(t, metadata, got)
+
+	got["new_key"] = "new-value"
+	require.Nil(t, c.GetMCPServerMetadata("embedded://mattermost")["new_key"])
+
+	c.SetMCPServerMetadata("embedded://mattermost", nil)
+	assert.Nil(t, c.GetMCPServerMetadata("embedded://mattermost"))
 }

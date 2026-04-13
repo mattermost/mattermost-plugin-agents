@@ -19,6 +19,11 @@ type ToolInfo struct {
 	ServerOrigin string
 }
 
+// MCPInvocationContext carries per-run MCP server metadata keyed by server origin.
+type MCPInvocationContext struct {
+	ServerMetadata map[string]map[string]any
+}
+
 // Context represents the data necessary to build the context of the LLM.
 // For consumers none of the fields can be assumed to be present.
 type Context struct {
@@ -47,6 +52,7 @@ type Context struct {
 	Tools             *ToolStore
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
 	Parameters        map[string]interface{}
+	MCPInvocation     *MCPInvocationContext
 }
 
 // ContextOption defines a function that configures a Context
@@ -74,6 +80,55 @@ func (c *Context) SetBotFields(displayName, username, userID, defaultModel, serv
 	c.BotModel = defaultModel
 	c.BotServiceType = serviceType
 	c.CustomInstructions = customInstructions
+}
+
+// SetMCPServerMetadata stores run-scoped MCP metadata for a single server origin.
+// Passing nil metadata removes any existing entry for that server.
+func (c *Context) SetMCPServerMetadata(server string, metadata map[string]any) {
+	if c == nil || server == "" {
+		return
+	}
+
+	if metadata == nil {
+		if c.MCPInvocation == nil || c.MCPInvocation.ServerMetadata == nil {
+			return
+		}
+		delete(c.MCPInvocation.ServerMetadata, server)
+		return
+	}
+
+	if c.MCPInvocation == nil {
+		c.MCPInvocation = &MCPInvocationContext{}
+	}
+	if c.MCPInvocation.ServerMetadata == nil {
+		c.MCPInvocation.ServerMetadata = make(map[string]map[string]any)
+	}
+	c.MCPInvocation.ServerMetadata[server] = cloneMetadataMap(metadata)
+}
+
+// GetMCPServerMetadata returns a copy of the run-scoped MCP metadata for a server origin.
+func (c *Context) GetMCPServerMetadata(server string) map[string]any {
+	if c == nil || server == "" || c.MCPInvocation == nil || c.MCPInvocation.ServerMetadata == nil {
+		return nil
+	}
+
+	metadata, ok := c.MCPInvocation.ServerMetadata[server]
+	if !ok {
+		return nil
+	}
+	return cloneMetadataMap(metadata)
+}
+
+func cloneMetadataMap(metadata map[string]any) map[string]any {
+	if metadata == nil {
+		return nil
+	}
+
+	cloned := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func (c Context) String() string {

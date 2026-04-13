@@ -280,20 +280,7 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 
 	// Extract execution_scope from metadata if present (for embedded servers)
 	if metadata != nil {
-		if scopeMap, ok := metadata["mattermost_access_scope"].(map[string]any); ok {
-			scope := &llm.MattermostAccessScope{}
-			if teamID, ok := scopeMap["team_id"].(string); ok {
-				scope.TeamID = teamID
-			}
-			if ids, ok := scopeMap["allowed_channel_ids"].([]any); ok {
-				for _, id := range ids {
-					if s, ok := id.(string); ok {
-						scope.AllowedChannelIDs = append(scope.AllowedChannelIDs, s)
-					}
-				}
-			}
-			mcpContext.MattermostAccessScope = scope
-		}
+		mcpContext.MattermostAccessScope = llm.MattermostAccessScopeFromMetadata(metadata)
 	}
 
 	return mcpContext, nil

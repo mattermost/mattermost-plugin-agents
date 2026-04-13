@@ -78,8 +78,7 @@ func TestApplyMattermostAccessScope_BindsTeamID(t *testing.T) {
 	}})
 	teamID := model.NewId()
 	scope := &MattermostAccessScope{TeamID: teamID}
-	store.SetMattermostAccessScope(scope)
-	store.ApplyMattermostAccessScope(scope)
+	ApplyMattermostAccessScope(store, scope)
 
 	tool := store.GetTool("x")
 	require.NotNil(t, tool)
@@ -107,8 +106,7 @@ func TestApplyMattermostAccessScope_MultiChannelEnum(t *testing.T) {
 	}})
 	id1, id2 := model.NewId(), model.NewId()
 	scope := &MattermostAccessScope{TeamID: model.NewId(), AllowedChannelIDs: []string{id1, id2}}
-	store.SetMattermostAccessScope(scope)
-	store.ApplyMattermostAccessScope(scope)
+	ApplyMattermostAccessScope(store, scope)
 
 	tool := store.GetTool("search_posts")
 	schema := tool.Schema.(*jsonschema.Schema)
@@ -224,8 +222,7 @@ func TestResolveTool_BoundParamsOverrideUserInput(t *testing.T) {
 
 	scopeTeamID := model.NewId()
 	scope := &MattermostAccessScope{TeamID: scopeTeamID}
-	store.SetMattermostAccessScope(scope)
-	store.ApplyMattermostAccessScope(scope)
+	ApplyMattermostAccessScope(store, scope)
 
 	result, err := store.ResolveTool("search_posts", func(args any) error {
 		return json.Unmarshal([]byte(`{"team_id":"`+model.NewId()+`","q":"hello"}`), args)

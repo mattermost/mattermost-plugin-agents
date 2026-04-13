@@ -371,24 +371,10 @@ func ExecuteAutoRunTools(
 }
 
 type ToolStore struct {
-	tools          map[string]Tool
-	log            TraceLog
-	doTrace        bool
-	authErrors     []ToolAuthError
-	executionScope *MattermostAccessScope
-}
-
-// SetMattermostAccessScope sets runtime guardrails for tool execution.
-func (s *ToolStore) SetMattermostAccessScope(scope *MattermostAccessScope) {
-	s.executionScope = scope
-}
-
-// GetMattermostAccessScope returns the runtime guardrails for tool execution, or nil if none are set.
-func (s *ToolStore) GetMattermostAccessScope() *MattermostAccessScope {
-	if s == nil {
-		return nil
-	}
-	return s.executionScope
+	tools      map[string]Tool
+	log        TraceLog
+	doTrace    bool
+	authErrors []ToolAuthError
 }
 
 type TraceLog interface {

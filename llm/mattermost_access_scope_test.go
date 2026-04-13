@@ -203,3 +203,19 @@ func TestMattermostAccessScope_ErrorMessages(t *testing.T) {
 		assert.Contains(t, err.Error(), "outside the execution scope")
 	})
 }
+
+func TestMattermostAccessScope_MetadataRoundTrip(t *testing.T) {
+	scope := &MattermostAccessScope{
+		TeamID:            model.NewId(),
+		AllowedChannelIDs: []string{model.NewId(), model.NewId()},
+	}
+
+	metadata := map[string]any{
+		MattermostAccessScopeMetadataKey: scope.ToMetadataValue(),
+	}
+
+	parsed := MattermostAccessScopeFromMetadata(metadata)
+	require.NotNil(t, parsed)
+	assert.Equal(t, scope.TeamID, parsed.TeamID)
+	assert.Equal(t, scope.AllowedChannelIDs, parsed.AllowedChannelIDs)
+}

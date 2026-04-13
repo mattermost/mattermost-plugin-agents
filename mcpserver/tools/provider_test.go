@@ -4,6 +4,7 @@
 package tools
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,16 @@ import (
 // testLogger is a simple no-op logger for testing
 type testLogger struct {
 	t *testing.T
+}
+
+type testAuthProvider struct{}
+
+func (p *testAuthProvider) ValidateAuth(context.Context) error {
+	return nil
+}
+
+func (p *testAuthProvider) GetAuthenticatedMattermostClient(context.Context) (*model.Client4, error) {
+	return &model.Client4{}, nil
 }
 
 func (l *testLogger) Debug(msg string, keyValuePairs ...any) {
@@ -267,6 +278,27 @@ func TestValidateMCPToolArguments_RejectsOutOfScopeValues(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "scope validation failed")
 	require.Contains(t, err.Error(), `field "channel_id" value`)
+}
+
+func TestCreateMCPToolContext_LoadsMattermostAccessScopeFromMetadata(t *testing.T) {
+	scope := &llm.MattermostAccessScope{
+		TeamID:            model.NewId(),
+		AllowedChannelIDs: []string{model.NewId()},
+	}
+
+	provider := &MattermostToolProvider{
+		authProvider: &testAuthProvider{},
+		logger:       &testLogger{t: t},
+		accessMode:   AccessModeLocal,
+	}
+
+	mcpContext, err := provider.createMCPToolContext(context.Background(), mcp.Meta{
+		llm.MattermostAccessScopeMetadataKey: scope.ToMetadataValue(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, mcpContext.MattermostAccessScope)
+	assert.Equal(t, scope.TeamID, mcpContext.MattermostAccessScope.TeamID)
+	assert.Equal(t, scope.AllowedChannelIDs, mcpContext.MattermostAccessScope.AllowedChannelIDs)
 }
 
 func TestValidateMCPToolArguments_AllowsScopedValues(t *testing.T) {
