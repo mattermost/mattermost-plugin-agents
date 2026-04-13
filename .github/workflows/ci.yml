@@ -30,6 +30,27 @@ jobs:
         path: ./dist/*.tar.gz
         retention-days: 1
 
+  e2e-provider-health:
+    timeout-minutes: 10
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    outputs:
+      anthropic_available: ${{ steps.provider-health.outputs.anthropic_available }}
+      anthropic_reason: ${{ steps.provider-health.outputs.anthropic_reason }}
+      openai_available: ${{ steps.provider-health.outputs.openai_available }}
+      openai_reason: ${{ steps.provider-health.outputs.openai_reason }}
+      any_available: ${{ steps.provider-health.outputs.any_available }}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 24.11.0
+    - name: Check real API provider health
+      id: provider-health
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: node ./e2e/scripts/provider-health-check.mjs
+
   e2e:
     needs: e2e-build-artifact
     timeout-minutes: 60
@@ -89,7 +110,7 @@ jobs:
         retention-days: 30
 
   e2e-llmbot-real-apis:
-    needs: e2e-build-artifact
+    needs: [e2e-build-artifact, e2e-provider-health]
     timeout-minutes: 180
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     strategy:
@@ -124,15 +145,24 @@ jobs:
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
     - name: Run LLMBot tests with real APIs for ${{ matrix.shard.name }}
+      if: needs.e2e-provider-health.outputs.any_available == 'true'
       env:
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ needs.e2e-provider-health.outputs.anthropic_available == 'true' && secrets.ANTHROPIC_API_KEY || '' }}
+        OPENAI_API_KEY: ${{ needs.e2e-provider-health.outputs.openai_available == 'true' && secrets.OPENAI_API_KEY || '' }}
       shell: bash
       run: |
+        echo "Anthropic provider health: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
+        echo "OpenAI provider health: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
         SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list "${{ matrix.shard.group }}")"
         [[ -n "${SPEC_OUTPUT}" ]]
         mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
         npx playwright test --project=chromium "${SPEC_FILES[@]}"
+    - name: Skip LLMBot real API tests when no healthy providers are available
+      if: needs.e2e-provider-health.outputs.any_available != 'true'
+      run: |
+        echo "Skipping LLMBot real API tests because no providers are healthy."
+        echo "Anthropic: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
+        echo "OpenAI: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -147,7 +177,7 @@ jobs:
         retention-days: 30
 
   e2e-channel-analysis-real-apis:
-    needs: e2e-build-artifact
+    needs: [e2e-build-artifact, e2e-provider-health]
     timeout-minutes: 180
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
@@ -171,15 +201,24 @@ jobs:
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
     - name: Run Channel Analysis tests with real APIs
+      if: needs.e2e-provider-health.outputs.any_available == 'true'
       env:
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ needs.e2e-provider-health.outputs.anthropic_available == 'true' && secrets.ANTHROPIC_API_KEY || '' }}
+        OPENAI_API_KEY: ${{ needs.e2e-provider-health.outputs.openai_available == 'true' && secrets.OPENAI_API_KEY || '' }}
       shell: bash
       run: |
+        echo "Anthropic provider health: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
+        echo "OpenAI provider health: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
         SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list channel-analysis-real)"
         [[ -n "${SPEC_OUTPUT}" ]]
         mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
         npx playwright test --project=chromium "${SPEC_FILES[@]}"
+    - name: Skip channel analysis real API tests when no healthy providers are available
+      if: needs.e2e-provider-health.outputs.any_available != 'true'
+      run: |
+        echo "Skipping channel analysis real API tests because no providers are healthy."
+        echo "Anthropic: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
+        echo "OpenAI: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -194,7 +233,7 @@ jobs:
         retention-days: 30
 
   e2e-system-console-real-apis:
-    needs: e2e-build-artifact
+    needs: [e2e-build-artifact, e2e-provider-health]
     timeout-minutes: 180
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
@@ -218,15 +257,25 @@ jobs:
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
     - name: Run System Console tests with real APIs
+      if: needs.e2e-provider-health.outputs.any_available == 'true'
       env:
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ needs.e2e-provider-health.outputs.anthropic_available == 'true' && secrets.ANTHROPIC_API_KEY || '' }}
+        OPENAI_API_KEY: ${{ needs.e2e-provider-health.outputs.openai_available == 'true' && secrets.OPENAI_API_KEY || '' }}
+        E2E_LIVE_PROVIDER: ${{ needs.e2e-provider-health.outputs.anthropic_available == 'true' && 'anthropic' || 'openai' }}
       shell: bash
       run: |
+        echo "Anthropic provider health: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
+        echo "OpenAI provider health: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
         SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list system-console-real)"
         [[ -n "${SPEC_OUTPUT}" ]]
         mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
         npx playwright test --project=chromium "${SPEC_FILES[@]}"
+    - name: Skip system console real API tests when no healthy providers are available
+      if: needs.e2e-provider-health.outputs.any_available != 'true'
+      run: |
+        echo "Skipping system console real API tests because no providers are healthy."
+        echo "Anthropic: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
+        echo "OpenAI: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -241,7 +290,7 @@ jobs:
         retention-days: 30
 
   e2e-tool-config-real-apis:
-    needs: e2e-build-artifact
+    needs: [e2e-build-artifact, e2e-provider-health]
     timeout-minutes: 180
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
@@ -265,15 +314,24 @@ jobs:
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
     - name: Run Tool Config tests with real APIs
+      if: needs.e2e-provider-health.outputs.any_available == 'true'
       env:
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ needs.e2e-provider-health.outputs.anthropic_available == 'true' && secrets.ANTHROPIC_API_KEY || '' }}
+        OPENAI_API_KEY: ${{ needs.e2e-provider-health.outputs.openai_available == 'true' && secrets.OPENAI_API_KEY || '' }}
       shell: bash
       run: |
+        echo "Anthropic provider health: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
+        echo "OpenAI provider health: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
         SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list tool-config-real)"
         [[ -n "${SPEC_OUTPUT}" ]]
         mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
         npx playwright test --project=chromium "${SPEC_FILES[@]}"
+    - name: Skip tool config real API tests when no healthy providers are available
+      if: needs.e2e-provider-health.outputs.any_available != 'true'
+      run: |
+        echo "Skipping tool config real API tests because no providers are healthy."
+        echo "Anthropic: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
+        echo "OpenAI: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -288,7 +346,7 @@ jobs:
         retention-days: 30
 
   e2e-tool-calling:
-    needs: e2e-build-artifact
+    needs: [e2e-build-artifact, e2e-provider-health]
     timeout-minutes: 180
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     strategy:
@@ -321,16 +379,32 @@ jobs:
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
     - name: Run Tool Calling tests with real APIs for ${{ matrix.provider.display_name }}
+      if: |
+        (matrix.provider.name == 'anthropic' && needs.e2e-provider-health.outputs.anthropic_available == 'true') ||
+        (matrix.provider.name == 'openai' && needs.e2e-provider-health.outputs.openai_available == 'true')
       env:
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ needs.e2e-provider-health.outputs.anthropic_available == 'true' && secrets.ANTHROPIC_API_KEY || '' }}
+        OPENAI_API_KEY: ${{ needs.e2e-provider-health.outputs.openai_available == 'true' && secrets.OPENAI_API_KEY || '' }}
         E2E_PROVIDER: ${{ matrix.provider.name }}
       shell: bash
       run: |
+        echo "Anthropic provider health: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
+        echo "OpenAI provider health: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
         SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list tool-calling-real)"
         [[ -n "${SPEC_OUTPUT}" ]]
         mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
         npx playwright test --project=chromium "${SPEC_FILES[@]}"
+    - name: Skip tool-calling run when provider is unhealthy
+      if: |
+        (matrix.provider.name == 'anthropic' && needs.e2e-provider-health.outputs.anthropic_available != 'true') ||
+        (matrix.provider.name == 'openai' && needs.e2e-provider-health.outputs.openai_available != 'true')
+      run: |
+        echo "Skipping ${{ matrix.provider.display_name }} tool-calling real API job."
+        if [[ "${{ matrix.provider.name }}" == "anthropic" ]]; then
+          echo "Reason: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
+        else
+          echo "Reason: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
+        fi
     - uses: actions/upload-artifact@v4
       if: always()
       with:
