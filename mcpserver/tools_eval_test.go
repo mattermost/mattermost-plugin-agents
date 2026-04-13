@@ -34,7 +34,7 @@ func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.
 	})
 	require.NoError(e.T, err, "Failed to build conversation posts")
 
-	result, err := setup.wrappedLLM.ChatCompletion(llm.CompletionRequest{
+	result, err := setup.wrappedLLM.ChatCompletion(context.Background(), llm.CompletionRequest{
 		Posts:     posts,
 		Context:   setup.llmContext,
 		Operation: llm.OperationConversation,
