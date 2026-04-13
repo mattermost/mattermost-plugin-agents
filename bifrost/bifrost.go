@@ -156,6 +156,9 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 	config := &schemas.ProviderConfig{
 		NetworkConfig:            networkConfig,
 		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
+		ProxyConfig: &schemas.ProxyConfig{
+			Type: schemas.EnvProxy,
+		},
 	}
 
 	return config, nil

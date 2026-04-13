@@ -5,7 +5,14 @@ package bifrost
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
@@ -675,4 +682,80 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnvProxyRouting(t *testing.T) {
+	// Backend: fake OpenAI API that returns a valid SSE streaming response.
+	var backendHit atomic.Bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHit.Store(true)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello\"},\"finish_reason\":null}]}\n\n")
+		fmt.Fprint(w, "data: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer backend.Close()
+
+	// Proxy: minimal HTTP CONNECT proxy that tunnels TCP to the backend.
+	var proxyHit atomic.Bool
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "expected CONNECT", http.StatusMethodNotAllowed)
+			return
+		}
+		proxyHit.Store(true)
+
+		targetConn, err := net.DialTimeout("tcp", r.Host, 5*time.Second)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer targetConn.Close()
+
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "hijacking not supported", http.StatusInternalServerError)
+			return
+		}
+		clientConn, _, err := hijacker.Hijack()
+		if err != nil {
+			return
+		}
+		defer clientConn.Close()
+
+		_, _ = clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+
+		done := make(chan struct{})
+		go func() {
+			_, _ = io.Copy(targetConn, clientConn)
+			close(done)
+		}()
+		_, _ = io.Copy(clientConn, targetConn)
+		<-done
+	}))
+	defer proxy.Close()
+
+	// Point HTTP_PROXY and HTTPS_PROXY at our test proxy before Bifrost
+	// initializes its dialer. Both are needed so fasthttpproxy's fast path
+	// activates (it only proxies unconditionally when the two values match).
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("HTTPS_PROXY", proxy.URL)
+
+	llmClient, err := New(Config{
+		Provider:         schemas.OpenAI,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "gpt-4",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	result, err := llmClient.ChatCompletionNoStream(llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "hello", result)
+	assert.True(t, proxyHit.Load(), "request should have been tunneled through the proxy")
+	assert.True(t, backendHit.Load(), "request should have reached the backend")
 }
