@@ -12,7 +12,7 @@ import ContextVariablesDropdown from './context_variables_dropdown';
 const FormContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 24px;
     padding: 20px;
     background-color: var(--center-channel-bg);
 `;
@@ -104,7 +104,7 @@ const PrivateNote = styled.span`
 
 const VisibilityLabel = styled.div`
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 400;
     line-height: 16px;
     color: rgba(var(--center-channel-color-rgb), 0.64);
     margin-bottom: 4px;
@@ -118,7 +118,7 @@ const SystemPromptHeader = styled.div`
 
 const SystemPromptLabel = styled.label`
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 400;
     line-height: 16px;
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;

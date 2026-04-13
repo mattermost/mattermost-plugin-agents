@@ -48,7 +48,6 @@ const VariableItem = styled.button`
 const VariableName = styled.span`
     font-family: 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'Liberation Mono', monospace;
     font-size: 13px;
-    font-weight: 600;
     line-height: 20px;
     color: var(--center-channel-color);
 `;

@@ -8,29 +8,28 @@ import {useSelector, useDispatch} from 'react-redux';
 import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
 import {fetchCustomPrompts, fetchPinnedPromptIds} from '@/redux';
 import {renderCustomPrompt, createPost} from '@/client';
+import {Button} from '../rhs/common';
 
-const PillContainer = styled.div`
+const ButtonContainer = styled.div`
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    padding: 0;
-    margin-bottom: 16px;
+    margin-top: 24px;
+    margin-bottom: 24px;
 `;
 
-const PillButton = styled.button`
-    background: rgba(var(--button-bg-rgb), 0.08);
-    color: var(--button-bg);
-    border: none;
-    border-radius: 16px;
-    padding: 6px 16px;
-    font-size: 13px;
-    font-weight: 600;
+const PromptButton = styled(Button)`
+    color: rgb(var(--link-color-rgb));
+    background-color: rgba(var(--button-bg-rgb), 0.08);
     cursor: pointer;
-    white-space: nowrap;
 
     &:hover {
-        background: rgba(var(--button-bg-rgb), 0.16);
+        background-color: rgba(var(--button-bg-rgb), 0.12);
     }
+
+    font-weight: 600;
+    line-height: 16px;
+    font-size: 12px;
 `;
 
 interface Props {
@@ -73,16 +72,16 @@ const RHSPromptButtons = ({channelId, selectPost, setCurrentTab}: Props) => {
     }
 
     return (
-        <PillContainer>
+        <ButtonContainer>
             {pinnedPrompts.map((prompt) => (
-                <PillButton
+                <PromptButton
                     key={prompt.id}
                     onClick={() => handleClick(prompt.id)}
                 >
                     {prompt.name}
-                </PillButton>
+                </PromptButton>
             ))}
-        </PillContainer>
+        </ButtonContainer>
     );
 };
 
