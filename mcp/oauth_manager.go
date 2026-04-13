@@ -74,6 +74,7 @@ type StaticOAuthCredentials struct {
 // loadOrCreateClientCredentials gets existing client credentials or creates new ones using dynamic client registration.
 // If staticCreds is non-nil and has a ClientID, those credentials are used directly (skipping DCR).
 func (m *OAuthManager) loadOrCreateClientCredentials(ctx context.Context, serverURL string, staticCreds *StaticOAuthCredentials) (*ClientCredentials, error) {
+	serverURL = oauthMetadataIssuerURL(serverURL)
 	if staticCreds != nil && staticCreds.ClientID != "" {
 		return &ClientCredentials{
 			ClientID:     staticCreds.ClientID,

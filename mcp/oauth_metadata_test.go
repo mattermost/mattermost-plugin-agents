@@ -8,6 +8,54 @@ import (
 	"testing"
 )
 
+func TestOauthMetadataIssuerURL(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "atlassian_mcp_sse_transport_strips_path",
+			in:   "https://mcp.atlassian.com/v1/sse",
+			want: "https://mcp.atlassian.com",
+		},
+		{
+			name: "atlassian_mcp_mcp_transport_strips_path",
+			in:   "https://mcp.atlassian.com/v1/mcp",
+			want: "https://mcp.atlassian.com",
+		},
+		{
+			name: "atlassian_subdomain",
+			in:   "https://tenant.mcp.atlassian.com/v1/sse",
+			want: "https://tenant.mcp.atlassian.com",
+		},
+		{
+			name: "non_atlassian_path_preserved",
+			in:   "https://example.com/issuer1",
+			want: "https://example.com/issuer1",
+		},
+		{
+			name: "atlassian_root_unchanged",
+			in:   "https://mcp.atlassian.com",
+			want: "https://mcp.atlassian.com",
+		},
+		{
+			name: "atlassian_with_nondefault_port_preserves_port",
+			in:   "https://mcp.atlassian.com:8443/v1/sse",
+			want: "https://mcp.atlassian.com:8443",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := oauthMetadataIssuerURL(tt.in)
+			if got != tt.want {
+				t.Fatalf("oauthMetadataIssuerURL(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestConstructWellKnownURL(t *testing.T) {
 	tests := []struct {
 		name           string

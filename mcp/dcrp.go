@@ -200,7 +200,7 @@ func DiscoverAndRegisterClient(ctx context.Context, httpClient *http.Client, ser
 func GetRegistrationEndpoint(ctx context.Context, httpClient *http.Client, serverURL string) (string, error) {
 	// Construct the metadata URL according to RFC 8414 Section 3.1
 	// The well-known URI must be inserted between the host and path components
-	metadataURL, err := constructWellKnownURL(serverURL, "oauth-authorization-server")
+	metadataURL, err := constructWellKnownURL(oauthMetadataIssuerURL(serverURL), "oauth-authorization-server")
 	if err != nil {
 		return "", fmt.Errorf("failed to construct metadata URL from server URL %s: %w", serverURL, err)
 	}

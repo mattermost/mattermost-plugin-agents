@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // ProtectedResourceMetadata represents the OAuth 2.0 Protected Resource Metadata (RFC 9728)
@@ -30,13 +31,29 @@ type AuthorizationServerMetadata struct {
 	RegistrationEndpoint   string   `json:"registration_endpoint,omitempty"`
 }
 
+// oauthMetadataIssuerURL returns the issuer or resource base URL used for RFC 8414/9728
+// well-known discovery. Atlassian MCP serves transports under paths such as /v1/sse or
+// /v1/mcp while publishing oauth-protected-resource and oauth-authorization-server
+// metadata at the host root only; including the transport path yields 404.
+func oauthMetadataIssuerURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "mcp.atlassian.com" || strings.HasSuffix(host, ".mcp.atlassian.com") {
+		return fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+	}
+	return raw
+}
+
 // discoverProtectedResourceMetadata fetches the OAuth 2.0 Protected Resource Metadata (RFC 9728)
 func discoverProtectedResourceMetadata(ctx context.Context, httpClient *http.Client, baseURL, metadataURL string) (*ProtectedResourceMetadata, error) {
 	if metadataURL == "" {
 		// The metadata URL is not provided, use the default well-known endpoint
 		// Construct according to RFC 9728 Section 3.1
 		var err error
-		metadataURL, err = constructWellKnownURL(baseURL, "oauth-protected-resource")
+		metadataURL, err = constructWellKnownURL(oauthMetadataIssuerURL(baseURL), "oauth-protected-resource")
 		if err != nil {
 			return nil, fmt.Errorf("failed to construct metadata URL: %w", err)
 		}
@@ -77,6 +94,7 @@ func discoverProtectedResourceMetadata(ctx context.Context, httpClient *http.Cli
 
 // discoverAuthorizationServerMetadata fetches the OAuth 2.0 Authorization Server Metadata (RFC 8414)
 func discoverAuthorizationServerMetadata(ctx context.Context, httpClient *http.Client, authServerIssuer string) (*AuthorizationServerMetadata, error) {
+	authServerIssuer = oauthMetadataIssuerURL(authServerIssuer)
 	// Construct the well-known metadata URL according to RFC 8414 Section 3.1
 	// The well-known URI must be inserted between the host and path components
 	metadataURL, err := constructWellKnownURL(authServerIssuer, "oauth-authorization-server")
