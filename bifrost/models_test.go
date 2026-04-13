@@ -9,7 +9,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 func TestNormalizeFetchModelsAPIURL(t *testing.T) {

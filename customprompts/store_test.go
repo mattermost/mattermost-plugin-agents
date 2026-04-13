@@ -10,8 +10,8 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/store"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )

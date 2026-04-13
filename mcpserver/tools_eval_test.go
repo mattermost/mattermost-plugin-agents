@@ -11,10 +11,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-ai/conversations"
-	"github.com/mattermost/mattermost-plugin-ai/evals"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/evals"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 

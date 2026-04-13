@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 // LegacyServiceConfig represents the old config.json format with the legacy service fields.

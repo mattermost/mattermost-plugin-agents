@@ -1,6 +1,6 @@
 <div align="center">
 
-# Mattermost Agents Plugin [![Download Latest Master Build](https://img.shields.io/badge/Download-Latest%20Master%20Build-blue)](https://github.com/mattermost/mattermost-plugin-ai/releases/tag/latest-master)
+# Mattermost Agents Plugin [![Download Latest Master Build](https://img.shields.io/badge/Download-Latest%20Master%20Build-blue)](https://github.com/mattermost/mattermost-plugin-agents/releases/tag/latest-master)
 
 The Mattermost Agents Plugin integrates AI capabilities directly into your [Mattermost](https://github.com/mattermost/mattermost) workspace. **Run any local LLM** on your infrastructure or connect to cloud providers - you control your data and deployment.
 
@@ -30,7 +30,7 @@ Comprehensive documentation is available in the `/docs` directory:
 
 ## Installation
 
-1. Download the latest release from the [releases page](https://github.com/mattermost/mattermost-plugin-ai/releases). You can also download the **experimental** [latest master](https://github.com/mattermost/mattermost-plugin-ai/releases/tag/latest-master)
+1. Download the latest release from the [releases page](https://github.com/mattermost/mattermost-plugin-agents/releases). You can also download the **experimental** [latest master](https://github.com/mattermost/mattermost-plugin-agents/releases/tag/latest-master)
 2. Upload and enable the plugin through the Mattermost System Console
 3. Configure your desired LLM provider settings
 
@@ -78,8 +78,8 @@ See the [Bridge Client README](public/bridgeclient/README.md) for installation a
 
 3. Clone the repository:
 ```bash
-git clone https://github.com/mattermost/mattermost-plugin-ai.git
-cd mattermost-plugin-ai
+git clone https://github.com/mattermost/mattermost-plugin-agents.git
+cd mattermost-plugin-agents
 ```
 
 4. **Optional**. If you are developing to a remote server, setup environment variables to deploy:

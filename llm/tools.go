@@ -451,6 +451,18 @@ func (s *ToolStore) GetServerOrigin(toolName string) string {
 	return ""
 }
 
+// KeepToolsIf removes tools for which keep returns false.
+func (s *ToolStore) KeepToolsIf(keep func(Tool) bool) {
+	if s == nil || keep == nil {
+		return
+	}
+	for name, tool := range s.tools {
+		if !keep(tool) {
+			delete(s.tools, name)
+		}
+	}
+}
+
 // RemoveToolsByServerOrigin removes all tools whose ServerOrigin matches
 // any of the provided origins. This is used for user-disabled provider
 // filtering in Copilot DM contexts.

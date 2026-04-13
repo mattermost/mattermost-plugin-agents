@@ -432,3 +432,65 @@ func TestAutoRunToolsPreservesServerOrigin(t *testing.T) {
 	assert.Equal(t, "mcp_result", lastPost.ToolUse[0].Result)
 	assert.Equal(t, ToolCallStatusSuccess, lastPost.ToolUse[0].Status)
 }
+
+func TestAutoRunToolsWrapper_DisablesToolsAfterThreeConsecutiveFailures(t *testing.T) {
+	failingStore := NewNoTools()
+	failingStore.AddTools([]Tool{
+		{
+			Name:        "test_tool",
+			Description: "A failing test tool",
+			Resolver: func(_ *Context, _ ToolArgumentGetter) (string, error) {
+				return "", fmt.Errorf("bad request: missing required field")
+			},
+		},
+	})
+
+	var capturedPosts []Post
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []TextStreamEvent{
+				{Type: EventTypeToolCalls, Value: []ToolCall{{ID: "tc1", Name: "test_tool", Arguments: json.RawMessage(`{}`)}}},
+				{Type: EventTypeEnd},
+			}},
+			{events: []TextStreamEvent{
+				{Type: EventTypeToolCalls, Value: []ToolCall{{ID: "tc2", Name: "test_tool", Arguments: json.RawMessage(`{}`)}}},
+				{Type: EventTypeEnd},
+			}},
+			{events: []TextStreamEvent{
+				{Type: EventTypeToolCalls, Value: []ToolCall{{ID: "tc3", Name: "test_tool", Arguments: json.RawMessage(`{}`)}}},
+				{Type: EventTypeEnd},
+			}},
+			{events: []TextStreamEvent{
+				{Type: EventTypeText, Value: "please provide the missing field"},
+				{Type: EventTypeEnd},
+			}},
+		},
+	}
+
+	capturingInner := &capturingLLM{inner: inner, capturedPosts: &capturedPosts}
+	wrapper := NewAutoRunToolsWrapper(capturingInner)
+
+	request := CompletionRequest{
+		Posts:   []Post{{Role: PostRoleUser, Message: "run the tool"}},
+		Context: &Context{Tools: failingStore},
+	}
+
+	result, err := wrapper.ChatCompletion(request, WithAutoRunTools([]string{ToolAutoRunKey("", "test_tool")}))
+	require.NoError(t, err)
+
+	var texts []string
+	for event := range result.Stream {
+		if event.Type == EventTypeText {
+			texts = append(texts, event.Value.(string))
+		}
+	}
+
+	require.Len(t, capturedPosts, 5)
+	assert.Equal(t, PostRoleSystem, capturedPosts[0].Role)
+	assert.Contains(t, capturedPosts[0].Message, ToolRetryLimitSystemMessage)
+	finalRequestPost := capturedPosts[len(capturedPosts)-1]
+	assert.Equal(t, PostRoleBot, finalRequestPost.Role)
+	assert.Equal(t, ToolCallStatusError, finalRequestPost.ToolUse[0].Status)
+	assert.Equal(t, "please provide the missing field", texts[len(texts)-1])
+	assert.Equal(t, 4, inner.callCount)
+}

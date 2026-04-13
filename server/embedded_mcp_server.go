@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )

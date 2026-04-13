@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 

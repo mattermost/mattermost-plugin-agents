@@ -39,13 +39,15 @@ You can have conversations with Agents in several ways:
 
 If multiple Agent bots are configured for your Mattermost workspace, select your preferred bot in the Agents pane or @mention specific bots by name in channels.
 
-### Approve tools
+### Use tools
 
-When Agents use external tools or integrations, you may be prompted to approve tool usage for security. When a tool is called, you'll see a card showing the tool name and description, arguments being passed to the tool, and **Approve/Reject** options.
+When Agents use external tools or integrations, Mattermost may prompt you to review tool usage based on the tool approval policy configured by your system admin. When review is required, you'll see a card showing the tool name and description, arguments being passed to the tool, and **Approve/Reject** options.
 
-For security, tool calls are only available in direct messages and each tool call requires explicit approval before execution. You can review tool arguments before approving, and tool results are shown after successful execution.
+By default, tool calls are available in direct messages. If your system admin enables the experimental **Enable Channel Mention Tool Calling** setting, some tools can also run in channels. Depending on the configured tool policy, a tool call may require approval before execution or run automatically. Tool results are shown after execution.
 
-Available tools in direct messages include:
+If a tool execution fails, the Agent can continue with a follow-up response instead of stopping immediately. After three consecutive failed tool executions, the Agent stops calling further tools and is instructed to explain the latest error and ask you for guidance or any missing information. A successful tool execution resets that count.
+
+Available tools in direct messages, and in channels when enabled by your system admin, include:
 
 - Server search (semantic search across your Mattermost instance)
 - User lookup (find information about Mattermost users)
@@ -107,3 +109,24 @@ To summarize a Mattermost call recording:
 The meeting summary is generated and shared as a direct message with the person who requested the meeting summary.
 
 Both call recordings and recorded meeting summarization require a license. See [license requirements](admin_guide.md#license-requirements) for details. Contact your system admin if these features aren't available for your Mattermost instance.
+
+
+## Summarize Zoom meetings in Mattermost
+
+The Zoom plugin must be [enabled and configured](https://docs.mattermost.com/integrate/zoom.html) by a Mattermost system admin and Zoom cloud recordings and transcripts must be enabled before you can summarize Zoom meetings.
+
+If the Zoom plugin is enabled and configured, subscribe a Mattermost channel to a Zoom meeting (`/zoom subscription add [meeting ID]`) and record the meeting. Once the recording and transcription are available, they are automatically shared back to the channel.
+
+Use Mattermost to turn Zoom meeting recordings into actionable AI-generated summaries with any model of your choosing, including your own. By summarizing your Zoom meeting recordings in Mattermost, you can easily share the insights with your team and the broader organization, enhancing communication and productivity without sacrificing data privacy and control.
+
+To summarize a Zoom meeting in Mattermost:
+
+1. Subscribe a Mattermost channel to a recurring Zoom meeting with `/zoom subscription add [meeting ID]` or start a meeting using the Zoom button in the Mattermost right-hand sidebar (RHS).
+2. Record the Zoom meeting.
+3. Once the meeting ends and the transcript file is posted to Mattermost, select the **Create meeting summary** option located directly above the file.
+
+![Select the Create meeting summary option to summarize your Zoom meeting in Mattermost.](img/create-meeting-summary-zoom.png)
+
+4. The meeting summary is generated and shared as a direct message with the person who requested the meeting summary.
+
+![Easily share the updates from your Zoom meetings with your team and broader organization by turning recordings into detailed summaries at the click of a button.](img/copilot-Zoom-Meeting-Summary.png)

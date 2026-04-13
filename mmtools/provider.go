@@ -6,10 +6,10 @@ package mmtools
 import (
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/search"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/search"
 )
 
 // ToolProvider provides built-in tools for the AI assistant

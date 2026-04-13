@@ -9,11 +9,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/channels"
-	"github.com/mattermost/mattermost-plugin-ai/evals"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi/mocks"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/channels"
+	"github.com/mattermost/mattermost-plugin-agents/evals"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

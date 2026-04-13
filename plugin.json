@@ -2,9 +2,9 @@
   "id": "mattermost-ai",
   "name": "Agents",
   "description": "",
-  "homepage_url": "https://github.com/mattermost/mattermost-plugin-ai",
-  "support_url": "https://github.com/mattermost/mattermost-plugin-ai/issues",
-  "release_notes_url": "https://github.com/mattermost/mattermost-plugin-ai",
+  "homepage_url": "https://github.com/mattermost/mattermost-plugin-agents",
+  "support_url": "https://github.com/mattermost/mattermost-plugin-agents/issues",
+  "release_notes_url": "https://github.com/mattermost/mattermost-plugin-agents",
   "icon_path": "assets/bot_icon.png",
   "min_server_version": "6.2.1",
   "server": {

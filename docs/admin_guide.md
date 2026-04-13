@@ -12,6 +12,7 @@ Before installing the Agents plugin, ensure your environment meets these require
 - PostgreSQL database
 - For semantic search: PostgreSQL with pgvector extension
 - Network access to your chosen LLM provider
+- If outbound LLM traffic must use an HTTP proxy, set `HTTP_PROXY` and `HTTPS_PROXY` on the Mattermost server process or container environment.
 - API keys if using a cloud LLM service
 
 ### Installation Steps
@@ -22,7 +23,7 @@ From Mattermost v10.3, Agents comes installed automatically and ready for you to
 
 #### Install latest version
 
-For the most recent features and improvements, you can download and install the latest plugin version from the [GitHub releases page](https://github.com/mattermost/mattermost-plugin-ai/releases). 
+For the most recent features and improvements, you can download and install the latest plugin version from the [GitHub releases page](https://github.com/mattermost/mattermost-plugin-agents/releases). 
 
 Install the plugin through the System Console by navigating to **System Console > Plugin Management**, clicking **Upload Plugin**, selecting the downloaded plugin file (.tar.gz), and clicking **Upload**. Enable the plugin after upload completes, then configure plugin settings as detailed in the Configuration section below.
 
@@ -40,7 +41,7 @@ Agents is enabled automatically when using the pre-installed version. If you've 
 
 If you have an Enterprise, or Enterprise Advanced license, upload it to unlock additional features. If you don't have a license but are running Mattermost Enterprise Edition, an Entry license will be automatically applied for you.
 
-For general settings, you can toggle to enable or disable the plugin system-wide, enable debug logging for troubleshooting (use only when needed), enable token usage logging for tracking LLM interactions, and configure the hostname allowlist for API calls.
+For general settings, you can toggle to enable or disable the plugin system-wide, enable debug logging for troubleshooting (use only when needed), enable token usage logging for tracking LLM interactions, and configure the hostname allowlist for API calls. Outbound LLM provider traffic respects `HTTP_PROXY` and `HTTPS_PROXY` when they are set on the Mattermost server process.
 
 ### AI response link rendering
 
@@ -353,9 +354,17 @@ Enhanced logging can help diagnose issues:
 3. Enable debug logging in the plugin configuration for additional diagnostic information.
 4. For production environments, disable debug logging and LLM Trace after troubleshooting to reduce log volume.
 
+### Tool execution failures
+
+When a tool call fails, the agent does not always stop immediately. It may continue with a follow-up model turn so it can recover, explain the failure, or answer without that tool.
+
+To avoid endless retries, the plugin enforces a limit of **three consecutive failed tool attempts**. After that, no further tool calls are made for that sequence; the model is instructed to describe the latest error and ask the user for guidance or any missing information such as permissions, identifiers, or configuration details.
+
+When users report repeated tool failures, use **LLM Trace** and debug logging to inspect tool errors and upstream responses. Also verify integration configuration such as API keys, endpoints, MCP connectivity, and third-party authorization, and confirm the user can access the underlying Mattermost resources the tool targets.
+
 ## Integrations
 
-Currently integrations are limited to direct messages between users and the agents. The integrations won't operate from within public, private, or group message channels.
+Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**.
 
 ### Built-in tool integrations
 
@@ -371,7 +380,7 @@ Currently integrations are limited to direct messages between users and the agen
 - **Data Available**: Username, full name, email, nickname, position, locale, timezone, last activity, status
 - **Permissions**: Requires `VIEW_MEMBERS` permission
 
-**Security Note**: All tool integrations are restricted to direct messages to maintain security boundaries and require explicit user approval before execution.
+**Security Note**: Tool availability and approval behavior depend on your system configuration. Tools can be configured to require explicit user approval or to run automatically under the selected tool policy.
 
 ## Model Context Protocol (MCP) Integration
 
