@@ -12,12 +12,17 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
-	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// fakeToolProviderClient is sufficient for GetTools tests because the provider
+// only checks that pluginAPI is non-nil before considering optional tools.
+type fakeToolProviderClient struct {
+	mmapi.Client
+}
 
 func TestMMToolProvider_GetTools(t *testing.T) {
 	mockEmbedding := mocks.NewMockEmbeddingSearch(t)
@@ -49,7 +54,7 @@ func TestMMToolProvider_GetTools(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var pluginAPI mmapi.Client
 			if test.includePluginAPI {
-				pluginAPI = mmapimocks.NewMockClient(t)
+				pluginAPI = &fakeToolProviderClient{}
 			}
 
 			provider := NewMMToolProvider(pluginAPI, test.searchService, nil)
