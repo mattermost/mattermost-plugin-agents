@@ -1,15 +1,12 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useRef} from 'react';
+import React from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 import {useSelector} from 'react-redux';
 
-const DropdownContainer = styled.div`
-    position: absolute;
-    right: 0;
-    z-index: 100;
+const DropdownMenu = styled.div`
     background: var(--center-channel-bg);
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
     border-radius: 4px;
@@ -92,25 +89,13 @@ function useTemplateVariables(): TemplateVariable[] {
 
 interface Props {
     onSelect: (variable: string) => void;
-    onClose: () => void;
 }
 
-const ContextVariablesDropdown = ({onSelect, onClose}: Props) => {
-    const containerRef = useRef<HTMLDivElement>(null);
+const ContextVariablesDropdown = ({onSelect}: Props) => {
     const variables = useTemplateVariables();
 
-    useEffect(() => {
-        const handleClickOutside = (e: MouseEvent) => {
-            if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-                onClose();
-            }
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [onClose]);
-
     return (
-        <DropdownContainer ref={containerRef}>
+        <DropdownMenu>
             <DropdownHeader>
                 <FormattedMessage defaultMessage='Context Variables'/>
             </DropdownHeader>
@@ -125,7 +110,7 @@ const ContextVariablesDropdown = ({onSelect, onClose}: Props) => {
                     )}
                 </VariableItem>
             ))}
-        </DropdownContainer>
+        </DropdownMenu>
     );
 };
 

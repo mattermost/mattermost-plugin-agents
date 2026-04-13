@@ -6,6 +6,7 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {CustomPrompt} from '@/types';
+import Dropdown from '../dropdown';
 
 import ContextVariablesDropdown from './context_variables_dropdown';
 
@@ -136,11 +137,6 @@ const ContextVariablesButton = styled.button`
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.16);
     }
-`;
-
-const ContextVariablesWrapper = styled.div`
-    position: relative;
-    display: inline-block;
 `;
 
 const ButtonRow = styled.div`
@@ -397,20 +393,23 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly}: Custo
                     <SystemPromptLabel htmlFor={`prompt-template-${prompt?.id ?? 'new'}`}>
                         <FormattedMessage defaultMessage='System Prompt'/>
                     </SystemPromptLabel>
-                    <ContextVariablesWrapper>
-                        <ContextVariablesButton
-                            onClick={() => setShowContextVars(!showContextVars)}
-                            aria-label={intl.formatMessage({defaultMessage: 'Insert context variable'})}
-                        >
-                            <FormattedMessage defaultMessage='Context Variables'/>
-                        </ContextVariablesButton>
-                        {showContextVars && (
-                            <ContextVariablesDropdown
-                                onSelect={handleInsertVariable}
-                                onClose={() => setShowContextVars(false)}
-                            />
-                        )}
-                    </ContextVariablesWrapper>
+                    <Dropdown
+                        target={
+                            <ContextVariablesButton
+                                onClick={() => setShowContextVars(!showContextVars)}
+                                aria-label={intl.formatMessage({defaultMessage: 'Insert context variable'})}
+                            >
+                                <FormattedMessage defaultMessage='Context Variables'/>
+                            </ContextVariablesButton>
+                        }
+                        isOpen={showContextVars}
+                        onOpenChange={setShowContextVars}
+                        placement='bottom-end'
+                    >
+                        <ContextVariablesDropdown
+                            onSelect={handleInsertVariable}
+                        />
+                    </Dropdown>
                 </SystemPromptHeader>
                 <SystemPromptTextArea
                     id={`prompt-template-${prompt?.id ?? 'new'}`}
