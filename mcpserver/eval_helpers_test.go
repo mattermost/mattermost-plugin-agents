@@ -5,7 +5,6 @@ package mcpserver_test
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -467,22 +466,6 @@ func seedTeamBroadcastScenario(t *testing.T, serverURL, adminToken string) *eval
 		frank:   frank,
 		botUser: botUser,
 	}
-}
-
-// testTraceLog implements llm.TraceLog and routes tool resolution traces to t.Log.
-// This enables ToolStore.TraceResolved to log tool name, args, result, and error.
-type testTraceLog struct {
-	t *testing.T
-}
-
-func (l *testTraceLog) Info(message string, keyValuePairs ...any) {
-	l.t.Helper()
-	var sb strings.Builder
-	sb.WriteString(message)
-	for i := 0; i+1 < len(keyValuePairs); i += 2 {
-		sb.WriteString(fmt.Sprintf(" %v=%v", keyValuePairs[i], keyValuePairs[i+1]))
-	}
-	l.t.Log(sb.String())
 }
 
 // evalStreamLogger wraps a LanguageModel to log intermediate LLM text and tool call
