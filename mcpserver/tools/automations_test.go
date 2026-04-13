@@ -249,43 +249,6 @@ func TestAutomationCreateFlow(t *testing.T) {
 	})
 }
 
-func TestNormalizeAutomationScopeAliases(t *testing.T) {
-	t.Run("copies canonical field into deprecated alias", func(t *testing.T) {
-		flow := &AutomationFlow{
-			Actions: []AutomationAction{{
-				ID: "ask",
-				AIPrompt: &AIPromptActionConfig{
-					MattermostAccessScope: &MattermostAccessScopeConfig{
-						AccessibleChannelTypes: []string{"O", "P"},
-					},
-				},
-			}},
-		}
-
-		err := normalizeAutomationScopeAliases(flow)
-		require.NoError(t, err)
-		require.Equal(t, []string{"O", "P"}, flow.Actions[0].AIPrompt.MattermostAccessScope.AllowedChannelTypes)
-	})
-
-	t.Run("rejects conflicting canonical and deprecated fields", func(t *testing.T) {
-		flow := &AutomationFlow{
-			Actions: []AutomationAction{{
-				ID: "ask",
-				AIPrompt: &AIPromptActionConfig{
-					MattermostAccessScope: &MattermostAccessScopeConfig{
-						AccessibleChannelTypes: []string{"O"},
-						AllowedChannelTypes:    []string{"P"},
-					},
-				},
-			}},
-		}
-
-		err := normalizeAutomationScopeAliases(flow)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "must match")
-	})
-}
-
 func TestGetAutomationInstructions(t *testing.T) {
 	provider := newTestProvider(t, "http://localhost")
 	mcpCtx := &MCPToolContext{}

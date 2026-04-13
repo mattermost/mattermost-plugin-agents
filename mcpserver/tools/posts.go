@@ -77,7 +77,7 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 		{
 			Name:        "create_post",
 			Description: createPostDesc,
-			Schema:      NewJSONSchemaForAccessMode[CreatePostArgs](string(p.accessMode)),
+			Schema:      AnnotateMattermostScopeTags[CreatePostArgs](NewJSONSchemaForAccessMode[CreatePostArgs](string(p.accessMode))),
 			Resolver:    p.toolCreatePost,
 		},
 		{
@@ -101,7 +101,7 @@ func (p *MattermostToolProvider) getDevPostTools() []MCPTool {
 		{
 			Name:        "create_post_as_user",
 			Description: "Create a post as a specific user using username/password login. Use this tool in dev mode for creating realistic multi-user scenarios. Simply provide the username and password of created users.",
-			Schema:      NewJSONSchemaForAccessMode[CreatePostAsUserArgs](string(p.accessMode)),
+			Schema:      AnnotateMattermostScopeTags[CreatePostAsUserArgs](NewJSONSchemaForAccessMode[CreatePostAsUserArgs](string(p.accessMode))),
 			Resolver:    p.toolCreatePostAsUser,
 		},
 	}

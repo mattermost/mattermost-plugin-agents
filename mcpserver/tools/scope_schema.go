@@ -4,7 +4,6 @@
 package tools
 
 import (
-	"fmt"
 	"reflect"
 	"strings"
 
@@ -12,9 +11,9 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
-// annotateSchemaScopeTags copies the schema tree and sets llm.MattermostScopeSchemaExtraKey on
-// each property that corresponds to a struct field with a `scope` tag.
-func annotateSchemaScopeTags[T any](root *jsonschema.Schema) *jsonschema.Schema {
+// AnnotateMattermostScopeTags copies a schema tree and mirrors `scope:"..."`
+// struct tags into property metadata for runtime Mattermost access-scope binding.
+func AnnotateMattermostScopeTags[T any](root *jsonschema.Schema) *jsonschema.Schema {
 	if root == nil {
 		return nil
 	}
@@ -58,13 +57,4 @@ func annotateSchemaScopeTags[T any](root *jsonschema.Schema) *jsonschema.Schema 
 		out.Properties[jsonFieldName] = &p
 	}
 	return out
-}
-
-// newChannelToolSchema builds a JSON schema from T and annotates scope tags for bridge binding.
-func newChannelToolSchema[T any]() *jsonschema.Schema {
-	base, err := jsonschema.For[T](nil)
-	if err != nil {
-		panic(fmt.Sprintf("failed to create JSON schema from struct: %v", err))
-	}
-	return annotateSchemaScopeTags[T](base)
 }

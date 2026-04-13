@@ -123,16 +123,22 @@ func newChannelScopeTestClient(serverURL string) *model.Client4 {
 	return client
 }
 
-func TestToolReadChannel_RejectsInaccessibleChannelType(t *testing.T) {
+func TestToolReadChannel_RejectsChannelOutsideAllowlist(t *testing.T) {
 	teamID := model.NewId()
-	channel := &model.Channel{
+	allowedChannel := &model.Channel{
+		Id:          model.NewId(),
+		TeamId:      teamID,
+		Type:        model.ChannelTypeOpen,
+		DisplayName: "Town Square",
+	}
+	blockedChannel := &model.Channel{
 		Id:          model.NewId(),
 		TeamId:      teamID,
 		Type:        model.ChannelTypePrivate,
 		DisplayName: "Private Ops",
 	}
 
-	ts := newChannelScopeTestServer(t, []*model.Channel{channel}, nil)
+	ts := newChannelScopeTestServer(t, []*model.Channel{allowedChannel, blockedChannel}, nil)
 	defer ts.Close()
 
 	provider := &MattermostToolProvider{logger: &testLogger{t: t}}
@@ -140,29 +146,35 @@ func TestToolReadChannel_RejectsInaccessibleChannelType(t *testing.T) {
 		Ctx:    context.Background(),
 		Client: newChannelScopeTestClient(ts.URL),
 		MattermostAccessScope: &llm.MattermostAccessScope{
-			TeamID:                 teamID,
-			AccessibleChannelTypes: []string{"O"},
+			TeamID:            teamID,
+			AllowedChannelIDs: []string{allowedChannel.Id},
 		},
 	}
 
 	result, err := provider.toolReadChannel(mcpCtx, func(target any) error {
-		return json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q}`, channel.Id)), target)
+		return json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q}`, blockedChannel.Id)), target)
 	})
 	require.Error(t, err)
 	assert.Equal(t, "channel is outside execution scope", result)
-	assert.Contains(t, err.Error(), channel.Id)
+	assert.Contains(t, err.Error(), blockedChannel.Id)
 }
 
-func TestToolGetChannelInfo_FiltersInaccessibleChannelType(t *testing.T) {
+func TestToolGetChannelInfo_FiltersChannelsOutsideAllowlist(t *testing.T) {
 	teamID := model.NewId()
-	channel := &model.Channel{
+	allowedChannel := &model.Channel{
+		Id:          model.NewId(),
+		TeamId:      teamID,
+		Type:        model.ChannelTypeOpen,
+		DisplayName: "Town Square",
+	}
+	blockedChannel := &model.Channel{
 		Id:          model.NewId(),
 		TeamId:      teamID,
 		Type:        model.ChannelTypePrivate,
 		DisplayName: "Private Ops",
 	}
 
-	ts := newChannelScopeTestServer(t, []*model.Channel{channel}, nil)
+	ts := newChannelScopeTestServer(t, []*model.Channel{allowedChannel, blockedChannel}, nil)
 	defer ts.Close()
 
 	provider := &MattermostToolProvider{logger: &testLogger{t: t}}
@@ -170,28 +182,34 @@ func TestToolGetChannelInfo_FiltersInaccessibleChannelType(t *testing.T) {
 		Ctx:    context.Background(),
 		Client: newChannelScopeTestClient(ts.URL),
 		MattermostAccessScope: &llm.MattermostAccessScope{
-			TeamID:                 teamID,
-			AccessibleChannelTypes: []string{"O"},
+			TeamID:            teamID,
+			AllowedChannelIDs: []string{allowedChannel.Id},
 		},
 	}
 
 	result, err := provider.toolGetChannelInfo(mcpCtx, func(target any) error {
-		return json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q}`, channel.Id)), target)
+		return json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q}`, blockedChannel.Id)), target)
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "no channels found matching criteria within the execution scope", result)
 }
 
-func TestToolGetChannelMembers_RejectsInaccessibleChannelType(t *testing.T) {
+func TestToolGetChannelMembers_RejectsChannelOutsideAllowlist(t *testing.T) {
 	teamID := model.NewId()
-	channel := &model.Channel{
+	allowedChannel := &model.Channel{
+		Id:          model.NewId(),
+		TeamId:      teamID,
+		Type:        model.ChannelTypeOpen,
+		DisplayName: "Town Square",
+	}
+	blockedChannel := &model.Channel{
 		Id:          model.NewId(),
 		TeamId:      teamID,
 		Type:        model.ChannelTypePrivate,
 		DisplayName: "Private Ops",
 	}
 
-	ts := newChannelScopeTestServer(t, []*model.Channel{channel}, nil)
+	ts := newChannelScopeTestServer(t, []*model.Channel{allowedChannel, blockedChannel}, nil)
 	defer ts.Close()
 
 	provider := &MattermostToolProvider{logger: &testLogger{t: t}}
@@ -199,59 +217,20 @@ func TestToolGetChannelMembers_RejectsInaccessibleChannelType(t *testing.T) {
 		Ctx:    context.Background(),
 		Client: newChannelScopeTestClient(ts.URL),
 		MattermostAccessScope: &llm.MattermostAccessScope{
-			TeamID:                 teamID,
-			AccessibleChannelTypes: []string{"O"},
+			TeamID:            teamID,
+			AllowedChannelIDs: []string{allowedChannel.Id},
 		},
 	}
 
 	result, err := provider.toolGetChannelMembers(mcpCtx, func(target any) error {
-		return json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q}`, channel.Id)), target)
+		return json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q}`, blockedChannel.Id)), target)
 	})
 	require.Error(t, err)
 	assert.Equal(t, "channel is outside execution scope", result)
-	assert.Contains(t, err.Error(), channel.Id)
+	assert.Contains(t, err.Error(), blockedChannel.Id)
 }
 
-func TestToolCreatePost_IgnoresAccessibleChannelTypes(t *testing.T) {
-	teamID := model.NewId()
-	channel := &model.Channel{
-		Id:          model.NewId(),
-		TeamId:      teamID,
-		Type:        model.ChannelTypePrivate,
-		DisplayName: "Private Ops",
-	}
-	team := &model.Team{
-		Id:          teamID,
-		DisplayName: "Operations",
-	}
-
-	ts := newChannelScopeTestServer(t, []*model.Channel{channel}, []*model.Team{team})
-	defer ts.Close()
-
-	provider := &MattermostToolProvider{logger: &testLogger{t: t}}
-	mcpCtx := &MCPToolContext{
-		Ctx:    context.Background(),
-		Client: newChannelScopeTestClient(ts.URL),
-		MattermostAccessScope: &llm.MattermostAccessScope{
-			TeamID:                 teamID,
-			AccessibleChannelTypes: []string{"O"},
-		},
-	}
-
-	result, err := provider.toolCreatePost(mcpCtx, func(target any) error {
-		return json.Unmarshal([]byte(fmt.Sprintf(`{
-			"channel_id": %q,
-			"channel_display_name": %q,
-			"team_display_name": %q,
-			"message": "ship it"
-		}`, channel.Id, channel.DisplayName, team.DisplayName)), target)
-	})
-	require.NoError(t, err)
-	assert.Contains(t, result, "Successfully created post")
-	assert.Contains(t, result, channel.DisplayName)
-}
-
-func TestFilterSearchResultsByScope_RemovesInaccessibleChannelTypes(t *testing.T) {
+func TestFilterSearchResultsByScope_RemovesChannelsOutsideAllowlist(t *testing.T) {
 	teamID := model.NewId()
 	publicChannel := &model.Channel{
 		Id:          model.NewId(),
@@ -274,8 +253,8 @@ func TestFilterSearchResultsByScope_RemovesInaccessibleChannelTypes(t *testing.T
 		Ctx:    context.Background(),
 		Client: newChannelScopeTestClient(ts.URL),
 		MattermostAccessScope: &llm.MattermostAccessScope{
-			TeamID:                 teamID,
-			AccessibleChannelTypes: []string{"O"},
+			TeamID:            teamID,
+			AllowedChannelIDs: []string{publicChannel.Id},
 		},
 	}
 

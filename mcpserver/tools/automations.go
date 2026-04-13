@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
@@ -35,7 +34,7 @@ The summary must include:
    - With tools, the agent inherits YOUR permissions — it can access anything you can access.
    Explain what each granted tool does so the user understands the access they are giving.
 3. ACCESS SCOPE: For every ai_prompt step that has allowed_tools, state the mattermost_access_scope
-   (team_id and any accessible_channel_types / allowed_channel_ids), or explicitly warn that without
+   (team_id and any allowed_channel_ids), or explicitly warn that without
    mattermost_access_scope the agent may use those tools across ALL teams and channels the automation
    creator can access (read/search/post broadly). This is a security decision — the user must
    understand the blast radius. Prefer recommending scope whenever tools are enabled, especially
@@ -85,8 +84,8 @@ Action types:
 2. "ai_prompt": Runs an AI agent with a prompt and optional tools. With tools, the agent can perform actions (e.g. modify channels, manage members, search) — not just generate text. Does NOT post a message — chain a send_message or send_dm action after to post the response.
    {"id": "ask", "ai_prompt": {"prompt": "...", "provider_type": "agent", "provider_id": "<agent-user-id>", "system_prompt": "...", "allowed_tools": [{"server_origin": "embedded://mattermost", "name": "search_messages"}]}}
    Optional mattermost_access_scope (recommended whenever allowed_tools is non-empty) restricts which teams and channels MCP tools may touch during that run; it is passed to the AI bridge as execution guardrails.
-   {"id": "ask", "ai_prompt": {"prompt": "...", "provider_type": "agent", "provider_id": "<agent-user-id>", "allowed_tools": [{"server_origin": "embedded://mattermost", "name": "search_messages"}], "mattermost_access_scope": {"team_id": "<team-id>", "accessible_channel_types": ["O","P"], "allowed_channel_ids": ["<optional-channel-id>"]}}}
-   - mattermost_access_scope (optional): team_id anchors the run to one team (required if accessible_channel_types or allowed_channel_ids is set). accessible_channel_types: O (public), P (private), D (DM), G (group); omit or empty means all types allowed within the team constraint. allowed_channel_types is a deprecated alias accepted for compatibility. allowed_channel_ids: optional allowlist of channel IDs; intersected with team and type rules, not an override.
+   {"id": "ask", "ai_prompt": {"prompt": "...", "provider_type": "agent", "provider_id": "<agent-user-id>", "allowed_tools": [{"server_origin": "embedded://mattermost", "name": "search_messages"}], "mattermost_access_scope": {"team_id": "<team-id>", "allowed_channel_ids": ["<optional-channel-id>"]}}}
+   - mattermost_access_scope (optional): team_id anchors the run to one team (required if allowed_channel_ids is set). allowed_channel_ids: optional allowlist of channel IDs; intersected with the team constraint, not an override.
    SECURITY: If allowed_tools is set but mattermost_access_scope is omitted, the agent can use those tools against any team and channel the automation creator can access — same blast radius as the user's account for those tool operations. Explain this in your summary; steer users toward the smallest scope that still meets the automation's goal.
    - provider_type: "agent" (a bot) or "service" (a raw LLM service)
    - provider_id: the agent's Mattermost user ID (26-char ID). Call list_agents to discover available agents and their IDs.
@@ -203,13 +202,9 @@ type SendMessageActionConfig struct {
 // MattermostAccessScopeConfig holds optional guardrails for ai_prompt tool execution,
 // matching the channel-automation plugin JSON field mattermost_access_scope.
 type MattermostAccessScopeConfig struct {
-	TeamID string `json:"team_id" jsonschema:"Team ID to anchor the run to. Required when accessible_channel_types or allowed_channel_ids is set."`
-	// AccessibleChannelTypes restricts which channel types background tools may access (O, P, D, G).
-	AccessibleChannelTypes []string `json:"accessible_channel_types,omitempty" jsonschema:"Optional channel type codes to allow: O (public), P (private), D (DM), G (group message). If omitted all types are allowed."`
-	// AllowedChannelTypes is a deprecated alias retained for compatibility with older automation payloads.
-	AllowedChannelTypes []string `json:"allowed_channel_types,omitempty" jsonschema:"Deprecated alias for accessible_channel_types."`
-	// AllowedChannelIDs is an optional allowlist intersected with team and type constraints.
-	AllowedChannelIDs []string `json:"allowed_channel_ids,omitempty" jsonschema:"Optional allowlist of specific channel IDs. Intersected with team and type constraints."`
+	TeamID string `json:"team_id" jsonschema:"Team ID to anchor the run to. Required when allowed_channel_ids is set."`
+	// AllowedChannelIDs is an optional allowlist intersected with the team constraint.
+	AllowedChannelIDs []string `json:"allowed_channel_ids,omitempty" jsonschema:"Optional allowlist of specific channel IDs. Intersected with the team constraint."`
 }
 
 // AIPromptActionConfig holds config for the ai_prompt action type.
@@ -448,9 +443,6 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 		Trigger: args.Trigger,
 		Actions: args.Actions,
 	}
-	if err := normalizeAutomationScopeAliases(&flow); err != nil {
-		return "invalid mattermost_access_scope", err
-	}
 
 	body, err := json.Marshal(flow)
 	if err != nil {
@@ -500,9 +492,6 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 		Enabled: args.Enabled,
 		Trigger: args.Trigger,
 		Actions: args.Actions,
-	}
-	if err := normalizeAutomationScopeAliases(&flow); err != nil {
-		return "invalid mattermost_access_scope", err
 	}
 
 	body, err := json.Marshal(flow)
@@ -653,34 +642,6 @@ func automationErrorDetail(err error) string {
 		}
 	}
 	return err.Error()
-}
-
-func normalizeAutomationScopeAliases(flow *AutomationFlow) error {
-	if flow == nil {
-		return nil
-	}
-
-	for i := range flow.Actions {
-		if flow.Actions[i].AIPrompt == nil {
-			continue
-		}
-		scope := flow.Actions[i].AIPrompt.MattermostAccessScope
-		if scope == nil {
-			continue
-		}
-		if len(scope.AccessibleChannelTypes) > 0 && len(scope.AllowedChannelTypes) > 0 &&
-			!slices.Equal(scope.AccessibleChannelTypes, scope.AllowedChannelTypes) {
-			return fmt.Errorf("accessible_channel_types and deprecated allowed_channel_types must match when both are set")
-		}
-		if len(scope.AccessibleChannelTypes) == 0 && len(scope.AllowedChannelTypes) > 0 {
-			scope.AccessibleChannelTypes = slices.Clone(scope.AllowedChannelTypes)
-		}
-		if len(scope.AllowedChannelTypes) == 0 && len(scope.AccessibleChannelTypes) > 0 {
-			scope.AllowedChannelTypes = slices.Clone(scope.AccessibleChannelTypes)
-		}
-	}
-
-	return nil
 }
 
 // formatAutomationFlows formats multiple automation flows for display.

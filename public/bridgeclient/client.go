@@ -5,10 +5,7 @@
 // to interact with the AI plugin's LLM Bridge API to make requests to Agents to LLM providers.
 package bridgeclient
 
-import (
-	"net/http"
-	"slices"
-)
+import "net/http"
 
 const (
 	aiPluginID         = "mattermost-ai"
@@ -40,50 +37,11 @@ type Post struct {
 // MattermostAccessScope defines runtime guardrails for a bridge completion run.
 // When nil, no restrictions are applied.
 type MattermostAccessScope struct {
-	// TeamID anchors the run to a single team. Required when any other scope field is set.
+	// TeamID anchors the run to a single team. Required when allowed_channel_ids is set.
 	TeamID string `json:"team_id"`
-	// AccessibleChannelTypes restricts which channel types background tools may access
-	// for post-reading/search and channel-revealing metadata.
-	// Valid values: "O" (public), "P" (private), "D" (DM), "G" (group message).
-	// If omitted or empty, all channel types are allowed.
-	AccessibleChannelTypes []string `json:"accessible_channel_types,omitempty"`
-	// AllowedChannelTypes is a deprecated alias retained for wire compatibility.
-	AllowedChannelTypes []string `json:"allowed_channel_types,omitempty"`
 	// AllowedChannelIDs is an optional allowlist of specific channel IDs.
-	// Treated as an intersection with team + channel type constraints, not an override.
+	// Treated as an intersection with the team constraint, not an override.
 	AllowedChannelIDs []string `json:"allowed_channel_ids,omitempty"`
-}
-
-// EffectiveAccessibleChannelTypes returns the canonical channel type scope value,
-// accepting the deprecated allowed_channel_types wire alias for backward compatibility.
-func (s *MattermostAccessScope) EffectiveAccessibleChannelTypes() ([]string, error) {
-	if s == nil {
-		return nil, nil
-	}
-	if len(s.AccessibleChannelTypes) > 0 && len(s.AllowedChannelTypes) > 0 &&
-		!slices.Equal(s.AccessibleChannelTypes, s.AllowedChannelTypes) {
-		return nil, &ErrInvalidScopeAlias{
-			Field:      "accessible_channel_types",
-			AliasField: "allowed_channel_types",
-		}
-	}
-	if len(s.AccessibleChannelTypes) > 0 {
-		return slices.Clone(s.AccessibleChannelTypes), nil
-	}
-	if len(s.AllowedChannelTypes) > 0 {
-		return slices.Clone(s.AllowedChannelTypes), nil
-	}
-	return nil, nil
-}
-
-// ErrInvalidScopeAlias indicates that both the canonical and deprecated field were set differently.
-type ErrInvalidScopeAlias struct {
-	Field      string
-	AliasField string
-}
-
-func (e *ErrInvalidScopeAlias) Error() string {
-	return e.Field + " and deprecated " + e.AliasField + " must match when both are set"
 }
 
 // CompletionRequest represents a completion request

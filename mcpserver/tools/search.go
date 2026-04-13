@@ -53,7 +53,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 	contextHint := "Results show individual matching posts — to see the full conversation around a result, use read_channel with the channel_id."
 
 	if semanticEnabled {
-		schema = annotateSchemaScopeTags[CombinedSearchArgs](llm.NewJSONSchemaFromStruct[CombinedSearchArgs]())
+		schema = AnnotateMattermostScopeTags[CombinedSearchArgs](llm.NewJSONSchemaFromStruct[CombinedSearchArgs]())
 		description = "Search for posts in Mattermost using both semantic (AI-powered) and keyword search. " +
 			"Semantic search finds posts by meaning and does not require exact term matches. " +
 			"Keyword search uses AND logic — all terms must appear in a single post, so prefer short, focused queries (1-2 key terms) over long multi-word phrases. " +
@@ -64,7 +64,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 			"Returns matching posts with content, author, channel, and relevance score for semantic results. " +
 			contextHint
 	} else {
-		schema = annotateSchemaScopeTags[KeywordOnlySearchArgs](llm.NewJSONSchemaFromStruct[KeywordOnlySearchArgs]())
+		schema = AnnotateMattermostScopeTags[KeywordOnlySearchArgs](llm.NewJSONSchemaFromStruct[KeywordOnlySearchArgs]())
 		description = "Search for posts in Mattermost using keyword search. " +
 			"Uses AND logic — all terms must appear in a single post, so prefer short, focused queries (1-2 key terms) over long multi-word phrases. " +
 			"Parameters: query (required), team_id (optional), channel_id (optional). " +

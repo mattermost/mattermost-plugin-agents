@@ -261,7 +261,7 @@ func TestValidateMCPToolArguments_RejectsOutOfScopeValues(t *testing.T) {
 		[]byte(`{"channel_id":"`+model.NewId()+`","message":"hello"}`),
 		&target,
 		"remote",
-		NewJSONSchemaForAccessMode[TestScopeArgs]("remote"),
+		AnnotateMattermostScopeTags[TestScopeArgs](NewJSONSchemaForAccessMode[TestScopeArgs]("remote")),
 		scope,
 	)
 	require.Error(t, err)
@@ -281,7 +281,7 @@ func TestValidateMCPToolArguments_AllowsScopedValues(t *testing.T) {
 		[]byte(`{"channel_id":"`+allowedChannelID+`","message":"hello"}`),
 		&target,
 		"remote",
-		NewJSONSchemaForAccessMode[TestScopeArgs]("remote"),
+		AnnotateMattermostScopeTags[TestScopeArgs](NewJSONSchemaForAccessMode[TestScopeArgs]("remote")),
 		scope,
 	)
 	require.NoError(t, err)
@@ -297,7 +297,7 @@ func TestValidateMCPToolArguments_RejectsMissingRequiredScopedChannelID(t *testi
 
 	scopedSchema := llm.Tool{
 		Name:   "search_posts",
-		Schema: NewJSONSchemaForAccessMode[TestScopeArgs]("remote"),
+		Schema: AnnotateMattermostScopeTags[TestScopeArgs](NewJSONSchemaForAccessMode[TestScopeArgs]("remote")),
 	}.WithConstrainedParams(map[string][]string{
 		"channel_id": scope.AllowedChannelIDs,
 	}).Schema

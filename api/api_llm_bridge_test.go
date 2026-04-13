@@ -1985,36 +1985,21 @@ func TestBridgeClientAgentCompletionMattermostAccessScope(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:        "valid scope with team and channel types",
-			scope:       &bridgeclient.MattermostAccessScope{TeamID: validTeamID, AccessibleChannelTypes: []string{"O"}},
+			name:        "valid scope with team and channel ids",
+			scope:       &bridgeclient.MattermostAccessScope{TeamID: validTeamID, AllowedChannelIDs: []string{model.NewId()}},
 			expectError: false,
 		},
 		{
-			name:        "valid scope with deprecated channel type alias",
-			scope:       &bridgeclient.MattermostAccessScope{TeamID: validTeamID, AllowedChannelTypes: []string{"O"}},
-			expectError: false,
-		},
-		{
-			name:        "invalid scope: channel types without team_id",
-			scope:       &bridgeclient.MattermostAccessScope{AccessibleChannelTypes: []string{"O"}},
+			name:        "invalid scope: channel ids without team_id",
+			scope:       &bridgeclient.MattermostAccessScope{AllowedChannelIDs: []string{model.NewId()}},
 			expectError: true,
 			errorMsg:    "team_id is required",
 		},
 		{
-			name:        "invalid scope: bad channel type",
-			scope:       &bridgeclient.MattermostAccessScope{TeamID: validTeamID, AccessibleChannelTypes: []string{"X"}},
+			name:        "invalid scope: bad channel id",
+			scope:       &bridgeclient.MattermostAccessScope{TeamID: validTeamID, AllowedChannelIDs: []string{"bad"}},
 			expectError: true,
-			errorMsg:    "invalid channel type",
-		},
-		{
-			name: "invalid scope: conflicting canonical and deprecated channel types",
-			scope: &bridgeclient.MattermostAccessScope{
-				TeamID:                 validTeamID,
-				AccessibleChannelTypes: []string{"O"},
-				AllowedChannelTypes:    []string{"P"},
-			},
-			expectError: true,
-			errorMsg:    "must match",
+			errorMsg:    "allowed_channel_ids contains invalid ID",
 		},
 		{
 			name:        "invalid scope: bad team_id format",
@@ -2091,9 +2076,8 @@ func TestBridgeClientAgentCompletionMattermostAccessScopePropagation(t *testing.
 			{Role: "user", Message: "test"},
 		},
 		MattermostAccessScope: &bridgeclient.MattermostAccessScope{
-			TeamID:                 validTeamID,
-			AccessibleChannelTypes: []string{"O", "P"},
-			AllowedChannelIDs:      []string{validChannelID},
+			TeamID:            validTeamID,
+			AllowedChannelIDs: []string{validChannelID},
 		},
 	})
 	require.NoError(t, err)
@@ -2105,6 +2089,5 @@ func TestBridgeClientAgentCompletionMattermostAccessScopePropagation(t *testing.
 	scope := lastReq.Context.Tools.GetMattermostAccessScope()
 	require.NotNil(t, scope)
 	require.Equal(t, validTeamID, scope.TeamID)
-	require.Equal(t, []string{"O", "P"}, scope.AccessibleChannelTypes)
 	require.Equal(t, []string{validChannelID}, scope.AllowedChannelIDs)
 }

@@ -30,12 +30,7 @@ func TestMattermostAccessScope_Validate(t *testing.T) {
 		},
 		{
 			name:  "all fields set is valid",
-			scope: &MattermostAccessScope{TeamID: validTeamID, AccessibleChannelTypes: []string{"O"}, AllowedChannelIDs: []string{validChannelID}},
-		},
-		{
-			name:    "channel types without team_id",
-			scope:   &MattermostAccessScope{AccessibleChannelTypes: []string{"O"}},
-			wantErr: "team_id is required",
+			scope: &MattermostAccessScope{TeamID: validTeamID, AllowedChannelIDs: []string{validChannelID}},
 		},
 		{
 			name:    "channel ids without team_id",
@@ -48,18 +43,9 @@ func TestMattermostAccessScope_Validate(t *testing.T) {
 			wantErr: "team_id must be a valid ID",
 		},
 		{
-			name:    "invalid channel type",
-			scope:   &MattermostAccessScope{TeamID: validTeamID, AccessibleChannelTypes: []string{"X"}},
-			wantErr: "invalid channel type",
-		},
-		{
 			name:    "invalid channel id in allowlist",
 			scope:   &MattermostAccessScope{TeamID: validTeamID, AllowedChannelIDs: []string{"not-valid"}},
 			wantErr: "allowed_channel_ids contains invalid ID",
-		},
-		{
-			name:  "multiple valid channel types",
-			scope: &MattermostAccessScope{TeamID: validTeamID, AccessibleChannelTypes: []string{"O", "P", "D", "G"}},
 		},
 	}
 
@@ -147,33 +133,27 @@ func TestMattermostAccessScope_AllowsChannel(t *testing.T) {
 		},
 		{
 			name:    "public channel in correct team allowed",
-			scope:   &MattermostAccessScope{TeamID: teamA, AccessibleChannelTypes: []string{"O"}},
+			scope:   &MattermostAccessScope{TeamID: teamA},
 			channel: &model.Channel{Id: chanPublicA, TeamId: teamA, Type: model.ChannelTypeOpen},
 			want:    true,
 		},
 		{
 			name:    "public channel in wrong team denied",
-			scope:   &MattermostAccessScope{TeamID: teamA, AccessibleChannelTypes: []string{"O"}},
+			scope:   &MattermostAccessScope{TeamID: teamA},
 			channel: &model.Channel{Id: chanPublicB, TeamId: teamB, Type: model.ChannelTypeOpen},
 			want:    false,
 		},
 		{
-			name:    "private channel denied when only public allowed",
-			scope:   &MattermostAccessScope{TeamID: teamA, AccessibleChannelTypes: []string{"O"}},
+			name:    "private channel in correct team allowed",
+			scope:   &MattermostAccessScope{TeamID: teamA},
 			channel: &model.Channel{Id: chanPrivate, TeamId: teamA, Type: model.ChannelTypePrivate},
-			want:    false,
-		},
-		{
-			name:    "DM allowed when D is in allowed types",
-			scope:   &MattermostAccessScope{TeamID: teamA, AccessibleChannelTypes: []string{"O", "D"}},
-			channel: &model.Channel{Id: chanDM, Type: model.ChannelTypeDirect},
 			want:    true,
 		},
 		{
-			name:    "DM denied when only public allowed (DMs have empty TeamId)",
-			scope:   &MattermostAccessScope{TeamID: teamA, AccessibleChannelTypes: []string{"O"}},
+			name:    "DM allowed when team scoped",
+			scope:   &MattermostAccessScope{TeamID: teamA},
 			channel: &model.Channel{Id: chanDM, Type: model.ChannelTypeDirect},
-			want:    false,
+			want:    true,
 		},
 		{
 			name:    "channel in allowlist passes",
@@ -188,16 +168,16 @@ func TestMattermostAccessScope_AllowsChannel(t *testing.T) {
 			want:    false,
 		},
 		{
-			name:    "channel passes type but fails allowlist",
-			scope:   &MattermostAccessScope{TeamID: teamA, AccessibleChannelTypes: []string{"O"}, AllowedChannelIDs: []string{chanPublicA}},
+			name:    "channel not in allowlist denied even in allowed team",
+			scope:   &MattermostAccessScope{TeamID: teamA, AllowedChannelIDs: []string{chanPublicA}},
 			channel: &model.Channel{Id: chanPublicB, TeamId: teamA, Type: model.ChannelTypeOpen},
 			want:    false,
 		},
 		{
-			name:    "no channel type restriction allows all types in team",
-			scope:   &MattermostAccessScope{TeamID: teamA},
-			channel: &model.Channel{Id: chanPrivate, TeamId: teamA, Type: model.ChannelTypePrivate},
-			want:    true,
+			name:    "channel in allowlist still denied when team mismatches",
+			scope:   &MattermostAccessScope{TeamID: teamA, AllowedChannelIDs: []string{chanPublicB}},
+			channel: &model.Channel{Id: chanPublicB, TeamId: teamB, Type: model.ChannelTypeOpen},
+			want:    false,
 		},
 	}
 

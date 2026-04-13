@@ -33,6 +33,12 @@ type NoJSONTagsStruct struct {
 	Field2 int
 }
 
+type ScopedArgs struct {
+	TeamID    string `json:"team_id" scope:"team_id" jsonschema:"Scoped team ID"`
+	ChannelID string `json:"channel_id" scope:"channel_id" jsonschema:"Scoped channel ID"`
+	Query     string `json:"query" jsonschema:"Search query"`
+}
+
 func TestNewJSONSchemaForAccessMode(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -121,6 +127,26 @@ func TestNewJSONSchemaForAccessMode(t *testing.T) {
 			// Verify the property exists and has expected structure
 			assert.NotNil(t, commonField)
 		}
+	})
+
+	t.Run("does not annotate scope metadata by default", func(t *testing.T) {
+		schema := NewJSONSchemaForAccessMode[ScopedArgs]("remote")
+
+		require.NotNil(t, schema)
+		require.Contains(t, schema.Properties, "team_id")
+		require.Contains(t, schema.Properties, "channel_id")
+		assert.Nil(t, schema.Properties["team_id"].Extra)
+		assert.Nil(t, schema.Properties["channel_id"].Extra)
+	})
+
+	t.Run("scope metadata is added only by explicit annotation", func(t *testing.T) {
+		schema := AnnotateMattermostScopeTags[ScopedArgs](NewJSONSchemaForAccessMode[ScopedArgs]("remote"))
+
+		require.NotNil(t, schema)
+		require.NotNil(t, schema.Properties["team_id"].Extra)
+		require.NotNil(t, schema.Properties["channel_id"].Extra)
+		assert.Equal(t, "team_id", schema.Properties["team_id"].Extra["x-mattermost-scope"])
+		assert.Equal(t, "channel_id", schema.Properties["channel_id"].Extra["x-mattermost-scope"])
 	})
 
 	t.Run("empty access mode panics", func(t *testing.T) {

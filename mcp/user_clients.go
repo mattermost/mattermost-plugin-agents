@@ -225,19 +225,10 @@ func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Co
 		scopeMap := map[string]any{
 			"team_id": scope.TeamID,
 		}
-		if len(scope.AccessibleChannelTypes) > 0 {
-			scopeMap["accessible_channel_types"] = scope.AccessibleChannelTypes
-		}
 		if len(scope.AllowedChannelIDs) > 0 {
 			scopeMap["allowed_channel_ids"] = scope.AllowedChannelIDs
 		}
 		metadata["mattermost_access_scope"] = scopeMap
-		c.log.Info("MCP embedded tool call: injecting mattermost_access_scope metadata",
-			"tool", toolName,
-			"team_id", scope.TeamID,
-			"accessible_channel_types", fmt.Sprintf("%v", scope.AccessibleChannelTypes),
-			"allowed_channel_ids_count", fmt.Sprintf("%d", len(scope.AllowedChannelIDs)),
-		)
 	}
 
 	return metadata

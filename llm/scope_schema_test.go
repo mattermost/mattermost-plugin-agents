@@ -133,9 +133,8 @@ func TestValidateMattermostAccessScopeArgs(t *testing.T) {
 	teamID := model.NewId()
 	allowedChannelID := model.NewId()
 	scope := &MattermostAccessScope{
-		TeamID:                 teamID,
-		AllowedChannelIDs:      []string{allowedChannelID},
-		AccessibleChannelTypes: []string{"O"},
+		TeamID:            teamID,
+		AllowedChannelIDs: []string{allowedChannelID},
 	}
 
 	testCases := []struct {
@@ -192,94 +191,6 @@ func TestValidateMattermostAccessScopeArgs(t *testing.T) {
 			require.Contains(t, err.Error(), tc.errorContains)
 		})
 	}
-}
-
-func TestResolveTool_RejectsOutOfScopeChannelID(t *testing.T) {
-	channelProp := &jsonschema.Schema{Type: "string"}
-	channelProp.Extra = map[string]any{MattermostScopeSchemaExtraKey: MattermostScopeTagChannelID}
-	root := &jsonschema.Schema{
-		Type: "object",
-		Properties: map[string]*jsonschema.Schema{
-			"channel_id": channelProp,
-		},
-	}
-
-	resolverRan := false
-	store := NewToolStore(nil, false)
-	store.AddTools([]Tool{{
-		Name:   "search_posts",
-		Schema: root,
-		Resolver: func(_ *Context, argsGetter ToolArgumentGetter) (string, error) {
-			var args struct {
-				ChannelID string `json:"channel_id"`
-			}
-			if err := argsGetter(&args); err != nil {
-				return "", err
-			}
-			resolverRan = true
-			return args.ChannelID, nil
-		},
-	}})
-
-	scope := &MattermostAccessScope{
-		TeamID:            model.NewId(),
-		AllowedChannelIDs: []string{model.NewId(), model.NewId()},
-	}
-	store.SetMattermostAccessScope(scope)
-	store.ApplyMattermostAccessScope(scope)
-
-	result, err := store.ResolveTool("search_posts", func(args any) error {
-		return json.Unmarshal([]byte(`{"channel_id":"`+model.NewId()+`"}`), args)
-	}, &Context{})
-	require.Error(t, err)
-	require.Empty(t, result)
-	require.Contains(t, err.Error(), `field "channel_id" value`)
-	require.False(t, resolverRan)
-}
-
-func TestResolveTool_RejectsMissingRequiredScopedChannelID(t *testing.T) {
-	channelProp := &jsonschema.Schema{Type: "string"}
-	channelProp.Extra = map[string]any{MattermostScopeSchemaExtraKey: MattermostScopeTagChannelID}
-	root := &jsonschema.Schema{
-		Type: "object",
-		Properties: map[string]*jsonschema.Schema{
-			"channel_id": channelProp,
-			"query":      {Type: "string"},
-		},
-	}
-
-	resolverRan := false
-	store := NewToolStore(nil, false)
-	store.AddTools([]Tool{{
-		Name:   "search_posts",
-		Schema: root,
-		Resolver: func(_ *Context, argsGetter ToolArgumentGetter) (string, error) {
-			var args struct {
-				Query     string `json:"query"`
-				ChannelID string `json:"channel_id"`
-			}
-			if err := argsGetter(&args); err != nil {
-				return "", err
-			}
-			resolverRan = true
-			return args.Query, nil
-		},
-	}})
-
-	scope := &MattermostAccessScope{
-		TeamID:            model.NewId(),
-		AllowedChannelIDs: []string{model.NewId(), model.NewId()},
-	}
-	store.SetMattermostAccessScope(scope)
-	store.ApplyMattermostAccessScope(scope)
-
-	result, err := store.ResolveTool("search_posts", func(args any) error {
-		return json.Unmarshal([]byte(`{"query":"release status"}`), args)
-	}, &Context{})
-	require.Error(t, err)
-	require.Empty(t, result)
-	require.Contains(t, err.Error(), `field "channel_id" is required by the execution scope`)
-	require.False(t, resolverRan)
 }
 
 func TestResolveTool_BoundParamsOverrideUserInput(t *testing.T) {

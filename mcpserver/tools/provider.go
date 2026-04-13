@@ -285,19 +285,6 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 			if teamID, ok := scopeMap["team_id"].(string); ok {
 				scope.TeamID = teamID
 			}
-			if types, ok := scopeMap["accessible_channel_types"].([]any); ok {
-				for _, t := range types {
-					if s, ok := t.(string); ok {
-						scope.AccessibleChannelTypes = append(scope.AccessibleChannelTypes, s)
-					}
-				}
-			} else if types, ok := scopeMap["allowed_channel_types"].([]any); ok {
-				for _, t := range types {
-					if s, ok := t.(string); ok {
-						scope.AccessibleChannelTypes = append(scope.AccessibleChannelTypes, s)
-					}
-				}
-			}
 			if ids, ok := scopeMap["allowed_channel_ids"].([]any); ok {
 				for _, id := range ids {
 					if s, ok := id.(string); ok {
@@ -312,7 +299,8 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	return mcpContext, nil
 }
 
-// NewJSONSchemaForAccessMode creates a JSONSchema from a Go struct, filtering fields based on access mode
+// NewJSONSchemaForAccessMode creates a JSONSchema from a Go struct, filtering fields based on access mode.
+// Callers that need Mattermost execution-scope metadata must add it explicitly.
 //
 // Access tag examples:
 //   - access:"local" - only available for local access mode
@@ -386,17 +374,10 @@ func NewJSONSchemaForAccessMode[T any](accessMode string) *jsonschema.Schema {
 		includeField := restrictionTag == "" || isAccessAllowed(restrictionTag, accessMode)
 
 		if includeField {
-			// Copy the property from base schema if it exists (clone so scope tags don't leak across tools)
+			// Copy the property from base schema if it exists so callers can safely add
+			// tool-specific metadata without mutating the shared base schema.
 			if baseProperty, exists := baseSchema.Properties[jsonFieldName]; exists {
-				prop := baseProperty.CloneSchemas()
-				scopeTag := strings.TrimSpace(field.Tag.Get("scope"))
-				if scopeTag != "" {
-					if prop.Extra == nil {
-						prop.Extra = make(map[string]any)
-					}
-					prop.Extra[llm.MattermostScopeSchemaExtraKey] = scopeTag
-				}
-				filteredSchema.Properties[jsonFieldName] = prop
+				filteredSchema.Properties[jsonFieldName] = baseProperty.CloneSchemas()
 			}
 
 			// Check if field was required in original schema

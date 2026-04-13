@@ -47,13 +47,13 @@ func (p *MattermostToolProvider) getTeamTools() []MCPTool {
 		{
 			Name:        "get_team_info",
 			Description: "Get information about a team. Provide team_id (fastest) or team_name (matches against both display name and URL name, case-insensitive, supports partial matches). Returns team metadata including ID, names, type, description, and member count. Example: {\"team_name\": \"Engineering\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
-			Schema:      NewJSONSchemaForAccessMode[GetTeamInfoArgs](string(p.accessMode)),
+			Schema:      AnnotateMattermostScopeTags[GetTeamInfoArgs](NewJSONSchemaForAccessMode[GetTeamInfoArgs](string(p.accessMode))),
 			Resolver:    p.toolGetTeamInfo,
 		},
 		{
 			Name:        "get_team_members",
 			Description: "Get members of a team with pagination support. Parameters: team_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and roles. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"limit\": 10, \"page\": 0}",
-			Schema:      NewJSONSchemaForAccessMode[GetTeamMembersArgs](string(p.accessMode)),
+			Schema:      AnnotateMattermostScopeTags[GetTeamMembersArgs](NewJSONSchemaForAccessMode[GetTeamMembersArgs](string(p.accessMode))),
 			Resolver:    p.toolGetTeamMembers,
 		},
 	}
@@ -71,7 +71,7 @@ func (p *MattermostToolProvider) getDevTeamTools() []MCPTool {
 		{
 			Name:        "add_user_to_team",
 			Description: "Add a user to a team (dev mode only)",
-			Schema:      NewJSONSchemaForAccessMode[AddUserToTeamArgs](string(p.accessMode)),
+			Schema:      AnnotateMattermostScopeTags[AddUserToTeamArgs](NewJSONSchemaForAccessMode[AddUserToTeamArgs](string(p.accessMode))),
 			Resolver:    p.toolAddUserToTeam,
 		},
 	}

@@ -281,15 +281,9 @@ func convertBridgeMattermostAccessScope(scope *bridgeclient.MattermostAccessScop
 		return nil, nil
 	}
 
-	accessibleChannelTypes, err := scope.EffectiveAccessibleChannelTypes()
-	if err != nil {
-		return nil, fmt.Errorf("invalid execution_scope: %w", err)
-	}
-
 	internal := &llm.MattermostAccessScope{
-		TeamID:                 scope.TeamID,
-		AccessibleChannelTypes: accessibleChannelTypes,
-		AllowedChannelIDs:      scope.AllowedChannelIDs,
+		TeamID:            scope.TeamID,
+		AllowedChannelIDs: scope.AllowedChannelIDs,
 	}
 
 	if err := internal.Validate(); err != nil {
@@ -342,7 +336,7 @@ func (a *API) prepareAgentBridgeCompletion(
 
 		if llmRequest.Context.Tools == nil || len(llmRequest.Context.Tools.GetTools()) == 0 {
 			return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf(
-				"no bridge-eligible MCP tools for this agent: the tool catalog is empty after excluding built-in tools. Configure MCP servers with tools for this user, verify MCP connectivity, and list tools via GET /bridge/v1/agents/{agent}/tools. requested allowed_tools: %s",
+				"no bridge-eligible MCP tools for this agent. Requested allowed_tools: %s",
 				formatAllowedToolRefsForError(allowedRefs),
 			)
 		}
@@ -358,14 +352,14 @@ func (a *API) prepareAgentBridgeCompletion(
 			}
 			if tool.ServerOrigin == "" {
 				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf(
-					"allowed_tools: tool %q is not available on the bridge because it has no server_origin in the catalog (built-in tools cannot be used with bridge allowed_tools). requested allowed_tools: %s",
+					"allowed_tools: tool %q is not available on the bridge because it has no server_origin in the catalog. requested allowed_tools: %s",
 					ref.Name, formatAllowedToolRefsForError(allowedRefs),
 				)
 			}
 			if tool.ServerOrigin != ref.ServerOrigin {
 				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf(
-					"allowed_tools mismatch for tool %q: request has server_origin %q but this agent exposes that tool only with server_origin %q (copy both fields from GET /bridge/v1/agents/{agent}/tools). full requested allowlist: %s",
-					ref.Name, ref.ServerOrigin, tool.ServerOrigin, formatAllowedToolRefsForError(allowedRefs),
+					"allowed_tools server_origin for tool %q does not match (got %q, expected %q)",
+					ref.Name, ref.ServerOrigin, tool.ServerOrigin,
 				)
 			}
 			scopedTools.AddTools([]llm.Tool{*tool})
@@ -382,22 +376,12 @@ func (a *API) prepareAgentBridgeCompletion(
 		}
 		llmRequest.Context.Tools.SetMattermostAccessScope(executionScope)
 		llmRequest.Context.Tools.ApplyMattermostAccessScope(executionScope)
-		a.pluginAPI.Log.Info("Bridge agent completion: mattermost access scope applied",
-			"agent", agent,
-			"user_id", req.UserID,
-			"team_id", executionScope.TeamID,
-			"accessible_channel_types", fmt.Sprintf("%v", executionScope.AccessibleChannelTypes),
-			"allowed_channel_ids_count", fmt.Sprintf("%d", len(executionScope.AllowedChannelIDs)),
-		)
+
 		if llmRequest.Context.Tools != nil {
 			toolNames := make([]string, 0, len(llmRequest.Context.Tools.GetTools()))
 			for _, t := range llmRequest.Context.Tools.GetTools() {
 				toolNames = append(toolNames, t.Name)
 			}
-			a.pluginAPI.Log.Info("Bridge agent completion: tools after scope application",
-				"agent", agent,
-				"tools", fmt.Sprintf("%v", toolNames),
-			)
 		}
 	}
 

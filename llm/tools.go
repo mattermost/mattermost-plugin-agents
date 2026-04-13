@@ -436,51 +436,9 @@ func (s *ToolStore) ResolveTool(name string, argsGetter ToolArgumentGetter, cont
 		s.TraceUnknown(name, argsGetter)
 		return "", errors.New("unknown tool " + name)
 	}
-	validatedGetter := withMattermostAccessScopeValidation(argsGetter, tool.Schema, s.executionScope)
-	results, err := tool.Resolver(context, validatedGetter)
-	s.TraceResolved(name, validatedGetter, results, err)
+	results, err := tool.Resolver(context, argsGetter)
+	s.TraceResolved(name, argsGetter, results, err)
 	return results, err
-}
-
-func withMattermostAccessScopeValidation(argsGetter ToolArgumentGetter, schema any, scope *MattermostAccessScope) ToolArgumentGetter {
-	if argsGetter == nil || scope == nil {
-		return argsGetter
-	}
-
-	var (
-		rawArgs   json.RawMessage
-		cachedErr error
-		loaded    bool
-	)
-
-	load := func() error {
-		if loaded {
-			return cachedErr
-		}
-		loaded = true
-
-		if err := argsGetter(&rawArgs); err != nil {
-			cachedErr = err
-			return cachedErr
-		}
-		if len(rawArgs) == 0 {
-			rawArgs = json.RawMessage("{}")
-		}
-
-		rawArgsMap := map[string]any{}
-		if err := json.Unmarshal(rawArgs, &rawArgsMap); err == nil {
-			cachedErr = ValidateMattermostAccessScopeArgs(schema, scope, rawArgsMap)
-		}
-
-		return cachedErr
-	}
-
-	return func(args any) error {
-		if err := load(); err != nil {
-			return err
-		}
-		return json.Unmarshal(rawArgs, args)
-	}
 }
 
 func (s *ToolStore) GetTools() []Tool {
