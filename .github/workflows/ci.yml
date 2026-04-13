@@ -35,8 +35,14 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     outputs:
       anthropic_available: ${{ steps.provider-health.outputs.anthropic_available }}
+      anthropic_skippable: ${{ steps.provider-health.outputs.anthropic_skippable }}
+      anthropic_status: ${{ steps.provider-health.outputs.anthropic_status }}
+      anthropic_action: ${{ steps.provider-health.outputs.anthropic_action }}
       anthropic_reason: ${{ steps.provider-health.outputs.anthropic_reason }}
       openai_available: ${{ steps.provider-health.outputs.openai_available }}
+      openai_skippable: ${{ steps.provider-health.outputs.openai_skippable }}
+      openai_status: ${{ steps.provider-health.outputs.openai_status }}
+      openai_action: ${{ steps.provider-health.outputs.openai_action }}
       openai_reason: ${{ steps.provider-health.outputs.openai_reason }}
       any_available: ${{ steps.provider-health.outputs.any_available }}
     steps:
@@ -144,25 +150,59 @@ jobs:
       run: npx playwright install --with-deps
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
+    - name: Fail when provider health issue should not be skipped
+      if: |
+        needs.e2e-provider-health.outputs.anthropic_action == 'fail' ||
+        needs.e2e-provider-health.outputs.openai_action == 'fail'
+      env:
+        ANTHROPIC_STATUS: ${{ needs.e2e-provider-health.outputs.anthropic_status }}
+        ANTHROPIC_REASON: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}
+        OPENAI_STATUS: ${{ needs.e2e-provider-health.outputs.openai_status }}
+        OPENAI_REASON: ${{ needs.e2e-provider-health.outputs.openai_reason }}
+      shell: bash
+      run: |
+        printf '%s\n' "Anthropic provider health: ${ANTHROPIC_STATUS} (${ANTHROPIC_REASON})"
+        printf '%s\n' "OpenAI provider health: ${OPENAI_STATUS} (${OPENAI_REASON})"
+        printf '%s\n' "Failing this job because a provider issue was classified as non-skippable."
+        exit 1
+    - name: Note skipped upstream providers for LLMBot real API tests
+      if: |
+        needs.e2e-provider-health.outputs.anthropic_action == 'skip' ||
+        needs.e2e-provider-health.outputs.openai_action == 'skip'
+      env:
+        ANTHROPIC_ACTION: ${{ needs.e2e-provider-health.outputs.anthropic_action }}
+        ANTHROPIC_REASON: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}
+        OPENAI_ACTION: ${{ needs.e2e-provider-health.outputs.openai_action }}
+        OPENAI_REASON: ${{ needs.e2e-provider-health.outputs.openai_reason }}
+      shell: bash
+      run: |
+        printf '%s\n' "Some LLMBot real API coverage will be skipped because an upstream is unavailable."
+        if [[ "${ANTHROPIC_ACTION}" == "skip" ]]; then
+          printf '%s\n' "Anthropic-backed coverage excluded: ${ANTHROPIC_REASON}"
+        fi
+        if [[ "${OPENAI_ACTION}" == "skip" ]]; then
+          printf '%s\n' "OpenAI-backed coverage excluded: ${OPENAI_REASON}"
+        fi
     - name: Run LLMBot tests with real APIs for ${{ matrix.shard.name }}
-      if: needs.e2e-provider-health.outputs.any_available == 'true'
+      if: |
+        needs.e2e-provider-health.outputs.any_available == 'true' &&
+        needs.e2e-provider-health.outputs.anthropic_action != 'fail' &&
+        needs.e2e-provider-health.outputs.openai_action != 'fail'
       env:
         ANTHROPIC_API_KEY: ${{ needs.e2e-provider-health.outputs.anthropic_available == 'true' && secrets.ANTHROPIC_API_KEY || '' }}
         OPENAI_API_KEY: ${{ needs.e2e-provider-health.outputs.openai_available == 'true' && secrets.OPENAI_API_KEY || '' }}
+        ANTHROPIC_STATUS: ${{ needs.e2e-provider-health.outputs.anthropic_status }}
+        ANTHROPIC_REASON: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}
+        OPENAI_STATUS: ${{ needs.e2e-provider-health.outputs.openai_status }}
+        OPENAI_REASON: ${{ needs.e2e-provider-health.outputs.openai_reason }}
       shell: bash
       run: |
-        echo "Anthropic provider health: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
-        echo "OpenAI provider health: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
+        printf '%s\n' "Anthropic provider health: ${ANTHROPIC_STATUS} (${ANTHROPIC_REASON})"
+        printf '%s\n' "OpenAI provider health: ${OPENAI_STATUS} (${OPENAI_REASON})"
         SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list "${{ matrix.shard.group }}")"
         [[ -n "${SPEC_OUTPUT}" ]]
         mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
         npx playwright test --project=chromium "${SPEC_FILES[@]}"
-    - name: Skip LLMBot real API tests when no healthy providers are available
-      if: needs.e2e-provider-health.outputs.any_available != 'true'
-      run: |
-        echo "Skipping LLMBot real API tests because no providers are healthy."
-        echo "Anthropic: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
-        echo "OpenAI: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -200,25 +240,59 @@ jobs:
       run: npx playwright install --with-deps
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
+    - name: Fail when provider health issue should not be skipped
+      if: |
+        needs.e2e-provider-health.outputs.anthropic_action == 'fail' ||
+        needs.e2e-provider-health.outputs.openai_action == 'fail'
+      env:
+        ANTHROPIC_STATUS: ${{ needs.e2e-provider-health.outputs.anthropic_status }}
+        ANTHROPIC_REASON: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}
+        OPENAI_STATUS: ${{ needs.e2e-provider-health.outputs.openai_status }}
+        OPENAI_REASON: ${{ needs.e2e-provider-health.outputs.openai_reason }}
+      shell: bash
+      run: |
+        printf '%s\n' "Anthropic provider health: ${ANTHROPIC_STATUS} (${ANTHROPIC_REASON})"
+        printf '%s\n' "OpenAI provider health: ${OPENAI_STATUS} (${OPENAI_REASON})"
+        printf '%s\n' "Failing this job because a provider issue was classified as non-skippable."
+        exit 1
+    - name: Note skipped upstream providers for channel analysis real API tests
+      if: |
+        needs.e2e-provider-health.outputs.anthropic_action == 'skip' ||
+        needs.e2e-provider-health.outputs.openai_action == 'skip'
+      env:
+        ANTHROPIC_ACTION: ${{ needs.e2e-provider-health.outputs.anthropic_action }}
+        ANTHROPIC_REASON: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}
+        OPENAI_ACTION: ${{ needs.e2e-provider-health.outputs.openai_action }}
+        OPENAI_REASON: ${{ needs.e2e-provider-health.outputs.openai_reason }}
+      shell: bash
+      run: |
+        printf '%s\n' "Some channel-analysis real API coverage will be skipped because an upstream is unavailable."
+        if [[ "${ANTHROPIC_ACTION}" == "skip" ]]; then
+          printf '%s\n' "Anthropic-backed coverage excluded: ${ANTHROPIC_REASON}"
+        fi
+        if [[ "${OPENAI_ACTION}" == "skip" ]]; then
+          printf '%s\n' "OpenAI-backed coverage excluded: ${OPENAI_REASON}"
+        fi
     - name: Run Channel Analysis tests with real APIs
-      if: needs.e2e-provider-health.outputs.any_available == 'true'
+      if: |
+        needs.e2e-provider-health.outputs.any_available == 'true' &&
+        needs.e2e-provider-health.outputs.anthropic_action != 'fail' &&
+        needs.e2e-provider-health.outputs.openai_action != 'fail'
       env:
         ANTHROPIC_API_KEY: ${{ needs.e2e-provider-health.outputs.anthropic_available == 'true' && secrets.ANTHROPIC_API_KEY || '' }}
         OPENAI_API_KEY: ${{ needs.e2e-provider-health.outputs.openai_available == 'true' && secrets.OPENAI_API_KEY || '' }}
+        ANTHROPIC_STATUS: ${{ needs.e2e-provider-health.outputs.anthropic_status }}
+        ANTHROPIC_REASON: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}
+        OPENAI_STATUS: ${{ needs.e2e-provider-health.outputs.openai_status }}
+        OPENAI_REASON: ${{ needs.e2e-provider-health.outputs.openai_reason }}
       shell: bash
       run: |
-        echo "Anthropic provider health: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
-        echo "OpenAI provider health: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
+        printf '%s\n' "Anthropic provider health: ${ANTHROPIC_STATUS} (${ANTHROPIC_REASON})"
+        printf '%s\n' "OpenAI provider health: ${OPENAI_STATUS} (${OPENAI_REASON})"
         SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list channel-analysis-real)"
         [[ -n "${SPEC_OUTPUT}" ]]
         mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
         npx playwright test --project=chromium "${SPEC_FILES[@]}"
-    - name: Skip channel analysis real API tests when no healthy providers are available
-      if: needs.e2e-provider-health.outputs.any_available != 'true'
-      run: |
-        echo "Skipping channel analysis real API tests because no providers are healthy."
-        echo "Anthropic: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
-        echo "OpenAI: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -256,26 +330,60 @@ jobs:
       run: npx playwright install --with-deps
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
+    - name: Fail when provider health issue should not be skipped
+      if: |
+        needs.e2e-provider-health.outputs.anthropic_action == 'fail' ||
+        needs.e2e-provider-health.outputs.openai_action == 'fail'
+      env:
+        ANTHROPIC_STATUS: ${{ needs.e2e-provider-health.outputs.anthropic_status }}
+        ANTHROPIC_REASON: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}
+        OPENAI_STATUS: ${{ needs.e2e-provider-health.outputs.openai_status }}
+        OPENAI_REASON: ${{ needs.e2e-provider-health.outputs.openai_reason }}
+      shell: bash
+      run: |
+        printf '%s\n' "Anthropic provider health: ${ANTHROPIC_STATUS} (${ANTHROPIC_REASON})"
+        printf '%s\n' "OpenAI provider health: ${OPENAI_STATUS} (${OPENAI_REASON})"
+        printf '%s\n' "Failing this job because a provider issue was classified as non-skippable."
+        exit 1
+    - name: Note skipped upstream providers for system console real API tests
+      if: |
+        needs.e2e-provider-health.outputs.anthropic_action == 'skip' ||
+        needs.e2e-provider-health.outputs.openai_action == 'skip'
+      env:
+        ANTHROPIC_ACTION: ${{ needs.e2e-provider-health.outputs.anthropic_action }}
+        ANTHROPIC_REASON: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}
+        OPENAI_ACTION: ${{ needs.e2e-provider-health.outputs.openai_action }}
+        OPENAI_REASON: ${{ needs.e2e-provider-health.outputs.openai_reason }}
+      shell: bash
+      run: |
+        printf '%s\n' "Some system-console real API coverage will be skipped because an upstream is unavailable."
+        if [[ "${ANTHROPIC_ACTION}" == "skip" ]]; then
+          printf '%s\n' "Anthropic-backed coverage excluded: ${ANTHROPIC_REASON}"
+        fi
+        if [[ "${OPENAI_ACTION}" == "skip" ]]; then
+          printf '%s\n' "OpenAI-backed coverage excluded: ${OPENAI_REASON}"
+        fi
     - name: Run System Console tests with real APIs
-      if: needs.e2e-provider-health.outputs.any_available == 'true'
+      if: |
+        needs.e2e-provider-health.outputs.any_available == 'true' &&
+        needs.e2e-provider-health.outputs.anthropic_action != 'fail' &&
+        needs.e2e-provider-health.outputs.openai_action != 'fail'
       env:
         ANTHROPIC_API_KEY: ${{ needs.e2e-provider-health.outputs.anthropic_available == 'true' && secrets.ANTHROPIC_API_KEY || '' }}
         OPENAI_API_KEY: ${{ needs.e2e-provider-health.outputs.openai_available == 'true' && secrets.OPENAI_API_KEY || '' }}
         E2E_LIVE_PROVIDER: ${{ needs.e2e-provider-health.outputs.anthropic_available == 'true' && 'anthropic' || 'openai' }}
+        ANTHROPIC_STATUS: ${{ needs.e2e-provider-health.outputs.anthropic_status }}
+        ANTHROPIC_REASON: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}
+        OPENAI_STATUS: ${{ needs.e2e-provider-health.outputs.openai_status }}
+        OPENAI_REASON: ${{ needs.e2e-provider-health.outputs.openai_reason }}
       shell: bash
       run: |
-        echo "Anthropic provider health: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
-        echo "OpenAI provider health: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
+        printf '%s\n' "Anthropic provider health: ${ANTHROPIC_STATUS} (${ANTHROPIC_REASON})"
+        printf '%s\n' "OpenAI provider health: ${OPENAI_STATUS} (${OPENAI_REASON})"
         SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list system-console-real)"
         [[ -n "${SPEC_OUTPUT}" ]]
         mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
         npx playwright test --project=chromium "${SPEC_FILES[@]}"
-    - name: Skip system console real API tests when no healthy providers are available
-      if: needs.e2e-provider-health.outputs.any_available != 'true'
-      run: |
-        echo "Skipping system console real API tests because no providers are healthy."
-        echo "Anthropic: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
-        echo "OpenAI: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -313,25 +421,59 @@ jobs:
       run: npx playwright install --with-deps
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
+    - name: Fail when provider health issue should not be skipped
+      if: |
+        needs.e2e-provider-health.outputs.anthropic_action == 'fail' ||
+        needs.e2e-provider-health.outputs.openai_action == 'fail'
+      env:
+        ANTHROPIC_STATUS: ${{ needs.e2e-provider-health.outputs.anthropic_status }}
+        ANTHROPIC_REASON: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}
+        OPENAI_STATUS: ${{ needs.e2e-provider-health.outputs.openai_status }}
+        OPENAI_REASON: ${{ needs.e2e-provider-health.outputs.openai_reason }}
+      shell: bash
+      run: |
+        printf '%s\n' "Anthropic provider health: ${ANTHROPIC_STATUS} (${ANTHROPIC_REASON})"
+        printf '%s\n' "OpenAI provider health: ${OPENAI_STATUS} (${OPENAI_REASON})"
+        printf '%s\n' "Failing this job because a provider issue was classified as non-skippable."
+        exit 1
+    - name: Note skipped upstream providers for tool config real API tests
+      if: |
+        needs.e2e-provider-health.outputs.anthropic_action == 'skip' ||
+        needs.e2e-provider-health.outputs.openai_action == 'skip'
+      env:
+        ANTHROPIC_ACTION: ${{ needs.e2e-provider-health.outputs.anthropic_action }}
+        ANTHROPIC_REASON: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}
+        OPENAI_ACTION: ${{ needs.e2e-provider-health.outputs.openai_action }}
+        OPENAI_REASON: ${{ needs.e2e-provider-health.outputs.openai_reason }}
+      shell: bash
+      run: |
+        printf '%s\n' "Some tool-config real API coverage will be skipped because an upstream is unavailable."
+        if [[ "${ANTHROPIC_ACTION}" == "skip" ]]; then
+          printf '%s\n' "Anthropic-backed coverage excluded: ${ANTHROPIC_REASON}"
+        fi
+        if [[ "${OPENAI_ACTION}" == "skip" ]]; then
+          printf '%s\n' "OpenAI-backed coverage excluded: ${OPENAI_REASON}"
+        fi
     - name: Run Tool Config tests with real APIs
-      if: needs.e2e-provider-health.outputs.any_available == 'true'
+      if: |
+        needs.e2e-provider-health.outputs.any_available == 'true' &&
+        needs.e2e-provider-health.outputs.anthropic_action != 'fail' &&
+        needs.e2e-provider-health.outputs.openai_action != 'fail'
       env:
         ANTHROPIC_API_KEY: ${{ needs.e2e-provider-health.outputs.anthropic_available == 'true' && secrets.ANTHROPIC_API_KEY || '' }}
         OPENAI_API_KEY: ${{ needs.e2e-provider-health.outputs.openai_available == 'true' && secrets.OPENAI_API_KEY || '' }}
+        ANTHROPIC_STATUS: ${{ needs.e2e-provider-health.outputs.anthropic_status }}
+        ANTHROPIC_REASON: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}
+        OPENAI_STATUS: ${{ needs.e2e-provider-health.outputs.openai_status }}
+        OPENAI_REASON: ${{ needs.e2e-provider-health.outputs.openai_reason }}
       shell: bash
       run: |
-        echo "Anthropic provider health: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
-        echo "OpenAI provider health: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
+        printf '%s\n' "Anthropic provider health: ${ANTHROPIC_STATUS} (${ANTHROPIC_REASON})"
+        printf '%s\n' "OpenAI provider health: ${OPENAI_STATUS} (${OPENAI_REASON})"
         SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list tool-config-real)"
         [[ -n "${SPEC_OUTPUT}" ]]
         mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
         npx playwright test --project=chromium "${SPEC_FILES[@]}"
-    - name: Skip tool config real API tests when no healthy providers are available
-      if: needs.e2e-provider-health.outputs.any_available != 'true'
-      run: |
-        echo "Skipping tool config real API tests because no providers are healthy."
-        echo "Anthropic: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
-        echo "OpenAI: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -378,33 +520,47 @@ jobs:
       run: npx playwright install --with-deps
     - name: Validate CI test groups
       run: node ./scripts/ci-test-groups.mjs validate
+    - name: Fail tool-calling run when provider issue should not be skipped
+      if: |
+        (matrix.provider.name == 'anthropic' && needs.e2e-provider-health.outputs.anthropic_action == 'fail') ||
+        (matrix.provider.name == 'openai' && needs.e2e-provider-health.outputs.openai_action == 'fail')
+      env:
+        PROVIDER_STATUS: ${{ matrix.provider.name == 'anthropic' && needs.e2e-provider-health.outputs.anthropic_status || needs.e2e-provider-health.outputs.openai_status }}
+        PROVIDER_REASON: ${{ matrix.provider.name == 'anthropic' && needs.e2e-provider-health.outputs.anthropic_reason || needs.e2e-provider-health.outputs.openai_reason }}
+      shell: bash
+      run: |
+        printf '%s\n' "${{ matrix.provider.display_name }} provider health: ${PROVIDER_STATUS} (${PROVIDER_REASON})"
+        printf '%s\n' "Failing this provider-specific job because the issue was classified as non-skippable."
+        exit 1
     - name: Run Tool Calling tests with real APIs for ${{ matrix.provider.display_name }}
       if: |
-        (matrix.provider.name == 'anthropic' && needs.e2e-provider-health.outputs.anthropic_available == 'true') ||
-        (matrix.provider.name == 'openai' && needs.e2e-provider-health.outputs.openai_available == 'true')
+        (matrix.provider.name == 'anthropic' && needs.e2e-provider-health.outputs.anthropic_action == 'run') ||
+        (matrix.provider.name == 'openai' && needs.e2e-provider-health.outputs.openai_action == 'run')
       env:
         ANTHROPIC_API_KEY: ${{ needs.e2e-provider-health.outputs.anthropic_available == 'true' && secrets.ANTHROPIC_API_KEY || '' }}
         OPENAI_API_KEY: ${{ needs.e2e-provider-health.outputs.openai_available == 'true' && secrets.OPENAI_API_KEY || '' }}
         E2E_PROVIDER: ${{ matrix.provider.name }}
+        ANTHROPIC_STATUS: ${{ needs.e2e-provider-health.outputs.anthropic_status }}
+        ANTHROPIC_REASON: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}
+        OPENAI_STATUS: ${{ needs.e2e-provider-health.outputs.openai_status }}
+        OPENAI_REASON: ${{ needs.e2e-provider-health.outputs.openai_reason }}
       shell: bash
       run: |
-        echo "Anthropic provider health: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
-        echo "OpenAI provider health: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
+        printf '%s\n' "Anthropic provider health: ${ANTHROPIC_STATUS} (${ANTHROPIC_REASON})"
+        printf '%s\n' "OpenAI provider health: ${OPENAI_STATUS} (${OPENAI_REASON})"
         SPEC_OUTPUT="$(node ./scripts/ci-test-groups.mjs list tool-calling-real)"
         [[ -n "${SPEC_OUTPUT}" ]]
         mapfile -t SPEC_FILES <<<"${SPEC_OUTPUT}"
         npx playwright test --project=chromium "${SPEC_FILES[@]}"
     - name: Skip tool-calling run when provider is unhealthy
       if: |
-        (matrix.provider.name == 'anthropic' && needs.e2e-provider-health.outputs.anthropic_available != 'true') ||
-        (matrix.provider.name == 'openai' && needs.e2e-provider-health.outputs.openai_available != 'true')
+        (matrix.provider.name == 'anthropic' && needs.e2e-provider-health.outputs.anthropic_action == 'skip') ||
+        (matrix.provider.name == 'openai' && needs.e2e-provider-health.outputs.openai_action == 'skip')
+      env:
+        PROVIDER_REASON: ${{ matrix.provider.name == 'anthropic' && needs.e2e-provider-health.outputs.anthropic_reason || needs.e2e-provider-health.outputs.openai_reason }}
       run: |
-        echo "Skipping ${{ matrix.provider.display_name }} tool-calling real API job."
-        if [[ "${{ matrix.provider.name }}" == "anthropic" ]]; then
-          echo "Reason: ${{ needs.e2e-provider-health.outputs.anthropic_reason }}"
-        else
-          echo "Reason: ${{ needs.e2e-provider-health.outputs.openai_reason }}"
-        fi
+        printf '%s\n' "Skipping ${{ matrix.provider.display_name }} tool-calling real API job because the upstream is unavailable."
+        printf '%s\n' "Reason: ${PROVIDER_REASON}"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
