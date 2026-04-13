@@ -31,6 +31,22 @@ func TestScopeTaggedParams(t *testing.T) {
 	require.ElementsMatch(t, []string{"channel_id"}, ch)
 }
 
+func TestScopeTaggedParams_AllowsExplicitScopeOverridesOnNonstandardNames(t *testing.T) {
+	root := &jsonschema.Schema{
+		Type: "object",
+		Properties: map[string]*jsonschema.Schema{
+			"channel_ids": {
+				Type:  "string",
+				Extra: map[string]any{MattermostScopeSchemaExtraKey: MattermostScopeTagChannelID},
+			},
+		},
+	}
+
+	team, ch := ScopeTaggedParams(root)
+	require.Empty(t, team)
+	require.ElementsMatch(t, []string{"channel_ids"}, ch)
+}
+
 func TestWithConstrainedParams_AddsEnumAndRequired(t *testing.T) {
 	root := &jsonschema.Schema{
 		Type: "object",

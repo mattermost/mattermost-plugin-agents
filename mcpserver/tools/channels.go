@@ -18,7 +18,7 @@ import (
 
 // ReadChannelArgs represents arguments for the read_channel tool
 type ReadChannelArgs struct {
-	ChannelID string `json:"channel_id" scope:"channel_id" jsonschema:"The ID of the channel to read from,minLength=26,maxLength=26"`
+	ChannelID string `json:"channel_id" scope:"true" jsonschema:"The ID of the channel to read from,minLength=26,maxLength=26"`
 	Limit     int    `json:"limit,omitempty" jsonschema:"Number of posts to retrieve (default: 20, max: 100),minimum=1,maximum=100"`
 	Since     string `json:"since,omitempty" jsonschema:"Only get posts since this timestamp (ISO 8601 format),format=date-time"`
 }
@@ -28,21 +28,21 @@ type CreateChannelArgs struct {
 	Name        string `json:"name" jsonschema:"The channel name (URL-friendly),minLength=1,maxLength=64"`
 	DisplayName string `json:"display_name" jsonschema:"The channel display name,minLength=1,maxLength=64"`
 	Type        string `json:"type" jsonschema:"Channel type,enum=O,enum=P"`
-	TeamID      string `json:"team_id" scope:"team_id" jsonschema:"The team ID where the channel will be created,minLength=26,maxLength=26"`
+	TeamID      string `json:"team_id" scope:"true" jsonschema:"The team ID where the channel will be created,minLength=26,maxLength=26"`
 	Purpose     string `json:"purpose" jsonschema:"Optional channel purpose,maxLength=250"`
 	Header      string `json:"header" jsonschema:"Optional channel header,maxLength=1024"`
 }
 
 // GetChannelInfoArgs represents arguments for the get_channel_info tool
 type GetChannelInfoArgs struct {
-	ChannelID   string `json:"channel_id,omitempty" scope:"channel_id" jsonschema:"The exact channel ID (fastest, most reliable method),maxLength=26"`
+	ChannelID   string `json:"channel_id,omitempty" scope:"true" jsonschema:"The exact channel ID (fastest, most reliable method),maxLength=26"`
 	ChannelName string `json:"channel_name,omitempty" jsonschema:"Channel name to search for — matches against both display name and URL name (case-insensitive, supports partial matches),maxLength=64"`
-	TeamID      string `json:"team_id,omitempty" scope:"team_id" jsonschema:"Team ID (optional - if provided, searches within specific team; if omitted, searches across all teams),maxLength=26"`
+	TeamID      string `json:"team_id,omitempty" scope:"true" jsonschema:"Team ID (optional - if provided, searches within specific team; if omitted, searches across all teams),maxLength=26"`
 }
 
 // GetChannelMembersArgs represents arguments for the get_channel_members tool
 type GetChannelMembersArgs struct {
-	ChannelID   string `json:"channel_id" scope:"channel_id" jsonschema:"ID of the channel to get members for,minLength=26,maxLength=26"`
+	ChannelID   string `json:"channel_id" scope:"true" jsonschema:"ID of the channel to get members for,minLength=26,maxLength=26"`
 	Limit       int    `json:"limit,omitempty" jsonschema:"Number of members to return (default: 50, max: 200),minimum=1,maximum=200"`
 	Page        int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
 	ExcludeBots *bool  `json:"exclude_bots,omitempty" jsonschema:"Exclude bot accounts from results (default: true)"`
@@ -51,12 +51,12 @@ type GetChannelMembersArgs struct {
 // AddUserToChannelArgs represents arguments for the add_user_to_channel tool
 type AddUserToChannelArgs struct {
 	UserID    string `json:"user_id" jsonschema:"ID of the user to add"`
-	ChannelID string `json:"channel_id" scope:"channel_id" jsonschema:"ID of the channel to add user to"`
+	ChannelID string `json:"channel_id" scope:"true" jsonschema:"ID of the channel to add user to"`
 }
 
 // GetUserChannelsArgs represents arguments for the get_user_channels tool
 type GetUserChannelsArgs struct {
-	TeamID  string `json:"team_id,omitempty" scope:"team_id" jsonschema:"Optional team ID to filter channels by team,maxLength=26"`
+	TeamID  string `json:"team_id,omitempty" scope:"true" jsonschema:"Optional team ID to filter channels by team,maxLength=26"`
 	Page    int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
 	PerPage int    `json:"per_page,omitempty" jsonschema:"Number of channels per page (default: 60, max: 200),minimum=1,maximum=200"`
 }

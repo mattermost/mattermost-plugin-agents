@@ -34,8 +34,8 @@ type NoJSONTagsStruct struct {
 }
 
 type ScopedArgs struct {
-	TeamID    string `json:"team_id" scope:"team_id" jsonschema:"Scoped team ID"`
-	ChannelID string `json:"channel_id" scope:"channel_id" jsonschema:"Scoped channel ID"`
+	TeamID    string `json:"team_id" scope:"true" jsonschema:"Scoped team ID"`
+	ChannelID string `json:"channel_id" scope:"true" jsonschema:"Scoped channel ID"`
 	Query     string `json:"query" jsonschema:"Search query"`
 }
 

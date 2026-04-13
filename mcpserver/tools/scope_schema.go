@@ -4,11 +4,16 @@
 package tools
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+)
+
+const (
+	markerScopeTagTrue = "true"
 )
 
 // AnnotateMattermostScopeTags copies a schema tree and mirrors `scope:"..."`
@@ -33,8 +38,8 @@ func AnnotateMattermostScopeTags[T any](root *jsonschema.Schema) *jsonschema.Sch
 
 	for i := 0; i < structType.NumField(); i++ {
 		field := structType.Field(i)
-		scopeTag := strings.TrimSpace(field.Tag.Get("scope"))
-		if scopeTag == "" {
+		scopeKind, ok := parseMattermostScopeTag(field)
+		if !ok {
 			continue
 		}
 		jsonTag := field.Tag.Get("json")
@@ -53,8 +58,42 @@ func AnnotateMattermostScopeTags[T any](root *jsonschema.Schema) *jsonschema.Sch
 		if p.Extra == nil {
 			p.Extra = make(map[string]any)
 		}
-		p.Extra[llm.MattermostScopeSchemaExtraKey] = scopeTag
+		p.Extra[llm.MattermostScopeSchemaExtraKey] = scopeKind
 		out.Properties[jsonFieldName] = &p
 	}
 	return out
+}
+
+func parseMattermostScopeTag(field reflect.StructField) (string, bool) {
+	scopeTag := strings.TrimSpace(field.Tag.Get("scope"))
+	if scopeTag == "" {
+		return "", false
+	}
+
+	jsonTag := field.Tag.Get("json")
+	jsonFieldName := strings.Split(jsonTag, ",")[0]
+
+	switch scopeTag {
+	case llm.MattermostScopeTagTeamID, llm.MattermostScopeTagChannelID:
+		return scopeTag, true
+	case markerScopeTagTrue:
+		scopeKind, ok := inferMattermostScopeKind(jsonFieldName)
+		if !ok {
+			panic(fmt.Sprintf("unsupported inferred mattermost scope for json field %q", jsonFieldName))
+		}
+		return scopeKind, true
+	default:
+		panic(fmt.Sprintf("unsupported mattermost scope tag %q on field %q", scopeTag, field.Name))
+	}
+}
+
+func inferMattermostScopeKind(jsonFieldName string) (string, bool) {
+	switch jsonFieldName {
+	case llm.MattermostScopeTagTeamID:
+		return llm.MattermostScopeTagTeamID, true
+	case llm.MattermostScopeTagChannelID:
+		return llm.MattermostScopeTagChannelID, true
+	default:
+		return "", false
+	}
 }

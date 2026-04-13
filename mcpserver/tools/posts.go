@@ -20,7 +20,7 @@ type ReadPostArgs struct {
 
 // CreatePostArgs represents arguments for the create_post tool
 type CreatePostArgs struct {
-	ChannelID          string   `json:"channel_id" scope:"channel_id" jsonschema:"The ID of the channel to post in,minLength=26,maxLength=26"`
+	ChannelID          string   `json:"channel_id" scope:"true" jsonschema:"The ID of the channel to post in,minLength=26,maxLength=26"`
 	ChannelDisplayName string   `json:"channel_display_name" jsonschema:"The display name of the channel (for context verification),minLength=1"`
 	TeamDisplayName    string   `json:"team_display_name" jsonschema:"The display name of the team (for context verification),minLength=1"`
 	Message            string   `json:"message" jsonschema:"The message content,minLength=1"`
@@ -32,7 +32,7 @@ type CreatePostArgs struct {
 type CreatePostAsUserArgs struct {
 	Username    string   `json:"username" jsonschema:"Username to login as"`
 	Password    string   `json:"password" jsonschema:"Password to login with"`
-	ChannelID   string   `json:"channel_id" scope:"channel_id" jsonschema:"The ID of the channel to post in"`
+	ChannelID   string   `json:"channel_id" scope:"true" jsonschema:"The ID of the channel to post in"`
 	Message     string   `json:"message" jsonschema:"The message content"`
 	RootID      string   `json:"root_id" jsonschema:"Optional root post ID for replies"`
 	Props       string   `json:"props" jsonschema:"Optional post properties (JSON string)"`

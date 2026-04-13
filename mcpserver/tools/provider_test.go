@@ -65,8 +65,13 @@ type TestAccessArgs struct {
 }
 
 type TestScopeArgs struct {
-	ChannelID string `json:"channel_id" scope:"channel_id" jsonschema:"Scoped channel ID"`
+	ChannelID string `json:"channel_id" scope:"true" jsonschema:"Scoped channel ID"`
 	Message   string `json:"message" jsonschema:"The message content"`
+}
+
+type TestExplicitScopeOverrideArgs struct {
+	ChannelIDs string `json:"channel_ids" scope:"channel_id" jsonschema:"Scoped channel IDs"`
+	Message    string `json:"message" jsonschema:"The message content"`
 }
 
 // TestRegisterDynamicTool_WithSchema tests that tools are properly registered with schemas
@@ -345,4 +350,24 @@ func TestValidateMCPToolArguments_RejectsMissingRequiredScopedChannelID(t *testi
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "scope validation failed")
 	require.Contains(t, err.Error(), `field "channel_id" is required by the execution scope`)
+}
+
+func TestValidateMCPToolArguments_AllowsExplicitScopeOverride(t *testing.T) {
+	allowedChannelID := model.NewId()
+	scope := &llm.MattermostAccessScope{
+		TeamID:            model.NewId(),
+		AllowedChannelIDs: []string{allowedChannelID},
+	}
+
+	var target TestExplicitScopeOverrideArgs
+	err := validateMCPToolArguments(
+		[]byte(`{"channel_ids":"`+allowedChannelID+`","message":"hello"}`),
+		&target,
+		"remote",
+		AnnotateMattermostScopeTags[TestExplicitScopeOverrideArgs](NewJSONSchemaForAccessMode[TestExplicitScopeOverrideArgs]("remote")),
+		scope,
+	)
+	require.NoError(t, err)
+	require.Equal(t, allowedChannelID, target.ChannelIDs)
+	require.Equal(t, "hello", target.Message)
 }

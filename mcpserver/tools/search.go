@@ -20,8 +20,8 @@ import (
 // CombinedSearchArgs represents arguments for search_posts when both semantic and keyword search are available.
 type CombinedSearchArgs struct {
 	Query          string `json:"query" jsonschema:"The search query,minLength=1,maxLength=4000"`
-	TeamID         string `json:"team_id,omitempty" scope:"team_id" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
-	ChannelID      string `json:"channel_id,omitempty" scope:"channel_id" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
+	TeamID         string `json:"team_id,omitempty" scope:"true" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
+	ChannelID      string `json:"channel_id,omitempty" scope:"true" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
 	SemanticLimit  int    `json:"semantic_limit,omitempty" jsonschema:"Max results from semantic search (default 10; max 50),minimum=1,maximum=50"`
 	SemanticOffset int    `json:"semantic_offset,omitempty" jsonschema:"Offset for semantic search pagination,minimum=0"`
 	KeywordLimit   int    `json:"keyword_limit,omitempty" jsonschema:"Max results from keyword search (default 10; max 100),minimum=1,maximum=100"`
@@ -31,8 +31,8 @@ type CombinedSearchArgs struct {
 // KeywordOnlySearchArgs represents arguments for search_posts when only keyword search is available.
 type KeywordOnlySearchArgs struct {
 	Query         string `json:"query" jsonschema:"The search query,minLength=1,maxLength=4000"`
-	TeamID        string `json:"team_id,omitempty" scope:"team_id" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
-	ChannelID     string `json:"channel_id,omitempty" scope:"channel_id" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
+	TeamID        string `json:"team_id,omitempty" scope:"true" jsonschema:"Optional team ID to limit search scope,minLength=26,maxLength=26"`
+	ChannelID     string `json:"channel_id,omitempty" scope:"true" jsonschema:"Optional channel ID to limit search to a specific channel,minLength=26,maxLength=26"`
 	KeywordLimit  int    `json:"keyword_limit,omitempty" jsonschema:"Max results from keyword search (default 10; max 100),minimum=1,maximum=100"`
 	KeywordOffset int    `json:"keyword_offset,omitempty" jsonschema:"Offset for keyword search pagination,minimum=0"`
 }

@@ -14,13 +14,13 @@ import (
 
 // GetTeamInfoArgs represents arguments for the get_team_info tool
 type GetTeamInfoArgs struct {
-	TeamID   string `json:"team_id,omitempty" scope:"team_id" jsonschema:"The exact team ID (fastest, most reliable method)"`
+	TeamID   string `json:"team_id,omitempty" scope:"true" jsonschema:"The exact team ID (fastest, most reliable method)"`
 	TeamName string `json:"team_name,omitempty" jsonschema:"Team name to search for — matches against both display name and URL name (case-insensitive, supports partial matches)"`
 }
 
 // GetTeamMembersArgs represents arguments for the get_team_members tool
 type GetTeamMembersArgs struct {
-	TeamID      string `json:"team_id" scope:"team_id" jsonschema:"ID of the team to get members for,minLength=26,maxLength=26"`
+	TeamID      string `json:"team_id" scope:"true" jsonschema:"ID of the team to get members for,minLength=26,maxLength=26"`
 	Limit       int    `json:"limit,omitempty" jsonschema:"Number of members to return (default: 50, max: 200),minimum=1,maximum=200"`
 	Page        int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
 	ExcludeBots *bool  `json:"exclude_bots,omitempty" jsonschema:"Exclude bot accounts from results (default: true)"`
@@ -38,7 +38,7 @@ type CreateTeamArgs struct {
 // AddUserToTeamArgs represents arguments for the add_user_to_team tool (dev mode only)
 type AddUserToTeamArgs struct {
 	UserID string `json:"user_id" jsonschema:"ID of the user to add"`
-	TeamID string `json:"team_id" scope:"team_id" jsonschema:"ID of the team to add user to"`
+	TeamID string `json:"team_id" scope:"true" jsonschema:"ID of the team to add user to"`
 }
 
 // getTeamTools returns all team-related tools
