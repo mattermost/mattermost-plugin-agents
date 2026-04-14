@@ -68,7 +68,7 @@ interface Props {
     isRHS: boolean;
 }
 
-const CustomPromptsDropdown = ({updateText, channelId, isRHS}: Props) => {
+const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
     const dispatch = useDispatch();
     const prompts = useSelector(getCustomPrompts);
     const bots = useSelector((state: any) =>
@@ -76,6 +76,7 @@ const CustomPromptsDropdown = ({updateText, channelId, isRHS}: Props) => {
     );
 
     const selectedBotId = useSelector(getSelectedBotId);
+    const isBotDMChannel = bots.some((b: LLMBot) => b.dmChannelID === channelId);
     const selectedBot = bots.find((b: LLMBot) => b.id === selectedBotId) ?? bots[0] ?? null;
 
     useEffect(() => {
@@ -97,7 +98,7 @@ const CustomPromptsDropdown = ({updateText, channelId, isRHS}: Props) => {
         try {
             const botUsername = selectedBot?.username;
             const result = await renderCustomPrompt(prompt.id, channelId, botUsername);
-            if (!isRHS && botUsername) {
+            if (!isBotDMChannel && botUsername) {
                 updateText(`@${botUsername} ${result.rendered}`);
             } else {
                 updateText(result.rendered);
@@ -105,14 +106,14 @@ const CustomPromptsDropdown = ({updateText, channelId, isRHS}: Props) => {
         } catch (e) {
             console.error('Failed to render custom prompt:', e); // eslint-disable-line no-console
         }
-    }, [channelId, updateText, selectedBot, isRHS]);
+    }, [channelId, updateText, selectedBot, isBotDMChannel]);
 
     const handleCreateClick = useCallback(() => {
         dismissMenu();
         dispatch({type: ShowCustomPromptsModalHandler, show: true});
     }, [dispatch]);
 
-    const showBotSelector = !isRHS && bots.length > 0;
+    const showBotSelector = !isBotDMChannel && bots.length > 0;
 
     return (
         <>
