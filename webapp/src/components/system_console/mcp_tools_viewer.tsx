@@ -130,7 +130,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             }
 
             const embeddedCfg = updatedConfig.embeddedServer;
-            if (embeddedCfg.enabled) {
+            {
                 let seeded: MCPToolConfig[] = [];
                 try {
                     seeded = await getVettedToolSeed(EMBEDDED_MATTERMOST_BASE_URL);
@@ -193,7 +193,6 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                 ...mcpConfig,
                 embeddedServer: {
                     ...mcpConfig.embeddedServer,
-                    enabled: updatedServerConfig.enabled,
                     tool_configs: updatedServerConfig.tool_configs,
                 },
             });

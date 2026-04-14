@@ -255,69 +255,6 @@ func TestTokenUsageSinkConfigMarshal(t *testing.T) {
 	}
 }
 
-func TestApplyDefaults(t *testing.T) {
-	tests := []struct {
-		name                string
-		input               Config
-		wantMCPEnabled      bool
-		wantEmbeddedEnabled bool
-	}{
-		{
-			name:                "zero-value config gets MCP defaults",
-			input:               Config{},
-			wantMCPEnabled:      true,
-			wantEmbeddedEnabled: true,
-		},
-		{
-			name: "already configured MCP is not overridden",
-			input: Config{
-				MCP: MCPConfig{
-					Enabled:            false,
-					EnablePluginServer: true,
-				},
-			},
-			wantMCPEnabled:      false,
-			wantEmbeddedEnabled: false,
-		},
-		{
-			name: "MCP with servers is not overridden",
-			input: Config{
-				MCP: MCPConfig{
-					Servers: []MCPServerConfig{{Name: "test"}},
-				},
-			},
-			wantMCPEnabled:      false,
-			wantEmbeddedEnabled: false,
-		},
-		{
-			name: "MCP already enabled is not changed",
-			input: Config{
-				MCP: MCPConfig{
-					Enabled: true,
-					EmbeddedServer: MCPEmbeddedServerConfig{
-						Enabled: true,
-					},
-				},
-			},
-			wantMCPEnabled:      true,
-			wantEmbeddedEnabled: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := tt.input
-			cfg.ApplyDefaults()
-			if cfg.MCP.Enabled != tt.wantMCPEnabled {
-				t.Fatalf("MCP.Enabled = %t, want %t", cfg.MCP.Enabled, tt.wantMCPEnabled)
-			}
-			if cfg.MCP.EmbeddedServer.Enabled != tt.wantEmbeddedEnabled {
-				t.Fatalf("MCP.EmbeddedServer.Enabled = %t, want %t", cfg.MCP.EmbeddedServer.Enabled, tt.wantEmbeddedEnabled)
-			}
-		})
-	}
-}
-
 func boolPtr(value bool) *bool {
 	return &value
 }

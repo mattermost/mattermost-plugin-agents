@@ -166,7 +166,7 @@ func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 	userClient, mcpErrors := m.getClientForUser(userID)
 
 	// Connect to embedded server using a dedicated per-user session (stored/created in KV)
-	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
+	if m.embeddedClient != nil {
 		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
 		if ensureErr != nil {
 			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
@@ -249,7 +249,7 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 	}
 
 	// Handle embedded server
-	if embeddedClient != nil && cfg.EmbeddedServer.Enabled {
+	if embeddedClient != nil {
 		embeddedCfg := &ServerConfig{
 			Name:    EmbeddedServerName,
 			Enabled: true,

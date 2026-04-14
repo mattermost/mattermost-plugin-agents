@@ -41,10 +41,6 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
 	mcpCfg := a.config.MCP()
-	if !mcpCfg.Enabled {
-		c.JSON(http.StatusOK, UserMCPToolsResponse{Servers: []UserMCPServerInfo{}})
-		return
-	}
 
 	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(userID)
 
@@ -79,7 +75,7 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 		))
 	}
 
-	if mcpCfg.EmbeddedServer.Enabled && a.mcpClientManager.GetEmbeddedServer() != nil {
+	if a.mcpClientManager.GetEmbeddedServer() != nil {
 		toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
 		if len(toolConfigs) == 0 {
 			toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)

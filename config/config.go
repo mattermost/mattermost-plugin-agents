@@ -61,16 +61,6 @@ type WebSearchBraveConfig struct {
 	PollInterval int    `json:"pollInterval"`
 }
 
-// ApplyDefaults sets default values for fields that should be non-zero on fresh
-// installations. This is called during the initial config migration to ensure
-// new installs get reasonable defaults even though Go zero values differ.
-func (c *Config) ApplyDefaults() {
-	if !c.MCP.Enabled && !c.MCP.EnablePluginServer && len(c.MCP.Servers) == 0 && !c.MCP.EmbeddedServer.Enabled {
-		c.MCP.Enabled = true
-		c.MCP.EmbeddedServer.Enabled = true
-	}
-}
-
 func (c *Config) Clone() *Config {
 	clone, err := DeepCopyJSON(*c)
 	if err != nil {
