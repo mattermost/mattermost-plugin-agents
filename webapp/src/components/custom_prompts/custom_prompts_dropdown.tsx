@@ -6,7 +6,7 @@ import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 import {useSelector, useDispatch} from 'react-redux';
 
-import {PlusIcon} from '@mattermost/compass-icons/components';
+import {CogOutlineIcon} from '@mattermost/compass-icons/components';
 
 import {getCustomPrompts, getSelectedBotId} from '@/selectors';
 import {fetchCustomPrompts, ShowCustomPromptsModalHandler, SelectedBotIdHandler} from '@/redux';
@@ -149,8 +149,8 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
                 role='menuitem'
                 onClick={handleCreateClick}
             >
-                <PlusIcon size={16}/>
-                <span><FormattedMessage defaultMessage='Create a prompt'/></span>
+                <CogOutlineIcon size={16}/>
+                <span><FormattedMessage defaultMessage='Manage prompts'/></span>
             </StyledMenuItem>
         </>
     );
