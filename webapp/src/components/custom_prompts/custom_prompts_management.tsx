@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useEffect, useCallback} from 'react';
+import React, {useState, useEffect, useCallback, useRef} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector, useDispatch} from 'react-redux';
@@ -194,6 +194,9 @@ const PromptName = styled.div`
     font-weight: 600;
     line-height: 20px;
     color: var(--center-channel-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 `;
 
 const PromptDescription = styled.div`
@@ -306,6 +309,15 @@ const CustomPromptsManagement = () => {
     const [showCreateForm, setShowCreateForm] = useState(false);
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
     const [error, setError] = useState('');
+    const expandedRowRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (expandedId && expandedRowRef.current) {
+            setTimeout(() => {
+                expandedRowRef.current?.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+            }, 0);
+        }
+    }, [expandedId]);
 
     useEffect(() => {
         if (show) {
@@ -475,7 +487,10 @@ const CustomPromptsManagement = () => {
                                     const isOwner = prompt.creator_id === currentUserId;
 
                                     return (
-                                        <PromptRowContainer key={prompt.id}>
+                                        <PromptRowContainer
+                                            key={prompt.id}
+                                            ref={isExpanded ? expandedRowRef : null}
+                                        >
                                             <PromptRowHeader
                                                 $expanded={isExpanded}
                                                 onClick={() => setExpandedId(isExpanded ? null : prompt.id)}

@@ -363,6 +363,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly}: Custo
                 <TextInput
                     id={`prompt-name-${prompt?.id ?? 'new'}`}
                     value={name}
+                    maxLength={64}
                     onChange={(e) => {
                         setName(e.target.value);
                         if (errors.name) {

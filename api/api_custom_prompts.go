@@ -26,6 +26,11 @@ func (a *API) handleCreateCustomPrompt(c *gin.Context) {
 
 	prompt.CreatorID = userID
 
+	if err := prompt.Validate(); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
 	created, err := a.customPromptsStore.Create(prompt)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to create custom prompt: %w", err))
@@ -65,6 +70,11 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 
 	prompt.ID = promptID
 	prompt.CreatorID = userID
+
+	if err := prompt.Validate(); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
 
 	if err := a.customPromptsStore.Update(prompt); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to update custom prompt: %w", err))

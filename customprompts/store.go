@@ -11,6 +11,8 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+const MaxPromptNameLength = 64
+
 // CustomPrompt represents a user-created prompt template
 type CustomPrompt struct {
 	ID          string `json:"id" db:"id"`
@@ -22,6 +24,20 @@ type CustomPrompt struct {
 	CreatedAt   int64  `json:"created_at" db:"createdat"`
 	UpdatedAt   int64  `json:"updated_at" db:"updatedat"`
 	DeletedAt   int64  `json:"deleted_at" db:"deletedat"`
+}
+
+// Validate checks that required fields are present and within limits.
+func (p *CustomPrompt) Validate() error {
+	if p.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if len([]rune(p.Name)) > MaxPromptNameLength {
+		return fmt.Errorf("name must be at most %d characters", MaxPromptNameLength)
+	}
+	if p.Template == "" {
+		return fmt.Errorf("template is required")
+	}
+	return nil
 }
 
 // Store provides access to the custom prompts database tables
