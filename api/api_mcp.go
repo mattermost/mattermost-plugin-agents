@@ -25,6 +25,8 @@ type UserMCPServerInfo struct {
 	ServerOrigin  string            `json:"serverOrigin"`
 	Authenticated bool              `json:"authenticated"`
 	AuthEmail     string            `json:"authEmail,omitempty"`
+	AuthURL       string            `json:"authURL,omitempty"`
+	CanDisconnect bool              `json:"canDisconnect"`
 	Tools         []UserMCPToolInfo `json:"tools"`
 }
 
@@ -126,41 +128,54 @@ func buildUserMCPServerInfo(
 		return toolInfos[i].Name < toolInfos[j].Name
 	})
 
-	_, hasAuthError := authErrorsByOrigin[serverConfig.BaseURL]
+	authErr, hasAuthError := authErrorsByOrigin[serverConfig.BaseURL]
+	authenticated, canDisconnect := getUserMCPServerAuthState(
+		userID,
+		oauthManager,
+		serverConfig,
+		len(originTools) > 0,
+		hasAuthError,
+	)
 
 	return UserMCPServerInfo{
 		Name:          serverConfig.Name,
 		ServerOrigin:  serverConfig.BaseURL,
-		Authenticated: isUserMCPServerAuthenticated(userID, oauthManager, serverConfig, len(originTools) > 0, hasAuthError),
+		Authenticated: authenticated,
+		AuthURL:       authErr.AuthURL,
+		CanDisconnect: canDisconnect,
 		Tools:         toolInfos,
 	}
 }
 
-func isUserMCPServerAuthenticated(
+func getUserMCPServerAuthState(
 	userID string,
 	oauthManager *mcp.OAuthManager,
 	serverConfig *mcp.ServerConfig,
 	hasDiscoveredTools bool,
 	hasAuthError bool,
-) bool {
+) (bool, bool) {
 	if serverConfig.BaseURL == mcp.EmbeddedClientKey {
-		return true
+		return true, false
+	}
+
+	hasStoredToken := false
+	if oauthManager != nil {
+		var err error
+		hasStoredToken, err = oauthManager.HasStoredToken(userID, serverConfig.Name)
+		if err != nil {
+			hasStoredToken = false
+		}
 	}
 
 	if hasDiscoveredTools {
-		return true
+		return true, hasStoredToken
 	}
 
 	if hasAuthError {
-		return false
+		return false, hasStoredToken
 	}
 
-	if oauthManager == nil {
-		return false
-	}
-
-	hasToken, err := oauthManager.HasStoredToken(userID, serverConfig.Name)
-	return err == nil && hasToken
+	return hasStoredToken, hasStoredToken
 }
 
 // handleGetUserPreferences returns the user's MCP tool provider preferences.
@@ -204,6 +219,47 @@ func (a *API) handlePutUserPreferences(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, saved)
+}
+
+// handleDeleteUserMCPServerAuth disconnects the user from an MCP server by
+// deleting the stored OAuth token for the matching server origin.
+func (a *API) handleDeleteUserMCPServerAuth(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	serverOrigin := c.Query("serverOrigin")
+	if serverOrigin == "" {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("serverOrigin is required"))
+		return
+	}
+
+	serverConfig, ok := findUserMCPServerConfigByOrigin(a.config.MCP(), serverOrigin)
+	if !ok {
+		c.AbortWithError(http.StatusNotFound, fmt.Errorf("server not found for origin %s", serverOrigin))
+		return
+	}
+
+	oauthManager := a.mcpClientManager.GetOAuthManager()
+	if oauthManager == nil {
+		c.AbortWithError(http.StatusServiceUnavailable, errors.New("oauth manager is not available"))
+		return
+	}
+
+	if err := oauthManager.DisconnectUser(userID, serverConfig.Name); err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to disconnect server auth: %w", err))
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+func findUserMCPServerConfigByOrigin(mcpCfg mcp.Config, serverOrigin string) (*mcp.ServerConfig, bool) {
+	for i := range mcpCfg.Servers {
+		serverConfig := &mcpCfg.Servers[i]
+		if serverConfig.BaseURL == serverOrigin {
+			return serverConfig, true
+		}
+	}
+
+	return nil, false
 }
 
 // handleGetVettedToolSeed returns authoritative vetted default tool_configs for a base URL (admin).

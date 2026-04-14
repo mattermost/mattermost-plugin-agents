@@ -1,13 +1,14 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useCallback, useEffect} from 'react';
+import React, {useState, useCallback, useEffect, useRef} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 import {ChevronDownIcon} from '@mattermost/compass-icons/components';
 
-import {getUserMCPTools, updateUserToolPreferences} from '@/client';
+import {disconnectUserMCPServerAuth, getUserMCPTools, updateUserToolPreferences} from '@/client';
 
+import {TertiaryButton} from '../assets/buttons';
 import DotMenu, {DotMenuButton, DropdownMenu} from '../dot_menu';
 import {ToggleSwitch} from '../toggle_switch';
 
@@ -15,6 +16,8 @@ export type UserMCPServerInfo = {
     name: string;
     serverOrigin: string;
     authenticated: boolean;
+    authURL?: string;
+    canDisconnect: boolean;
     tools: Array<{
         name: string;
         description: string;
@@ -32,12 +35,31 @@ type ToolProviderPopoverProps = {
 const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers}: ToolProviderPopoverProps) => {
     const [servers, setServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
     const [loading, setLoading] = useState(false);
+    const [connectingServerOrigin, setConnectingServerOrigin] = useState<string | null>(null);
+    const [disconnectingServerOrigin, setDisconnectingServerOrigin] = useState<string | null>(null);
+    const authRefreshIntervalRef = useRef<number | null>(null);
 
     useEffect(() => {
         if (preloadedServers && preloadedServers.length > 0) {
             setServers(preloadedServers);
         }
     }, [preloadedServers]);
+
+    const stopAuthRefreshPolling = useCallback(() => {
+        if (authRefreshIntervalRef.current !== null) {
+            window.clearInterval(authRefreshIntervalRef.current);
+            authRefreshIntervalRef.current = null;
+        }
+        setConnectingServerOrigin(null);
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            if (authRefreshIntervalRef.current !== null) {
+                window.clearInterval(authRefreshIntervalRef.current);
+            }
+        };
+    }, []);
 
     const fetchServers = useCallback(async () => {
         setLoading(true);
@@ -49,6 +71,14 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
         }
         setLoading(false);
     }, []);
+
+    useEffect(() => {
+        if (connectingServerOrigin && servers.some((server) => (
+            server.serverOrigin === connectingServerOrigin && server.authenticated
+        ))) {
+            stopAuthRefreshPolling();
+        }
+    }, [connectingServerOrigin, servers, stopAuthRefreshPolling]);
 
     const handleToggle = useCallback(async (serverOrigin: string, enabled: boolean) => {
         let updatedDisabled: string[];
@@ -66,6 +96,54 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
             onDisabledServersChange(disabledServers);
         }
     }, [disabledServers, onDisabledServersChange]);
+
+    const startAuthRefreshPolling = useCallback((serverOrigin: string) => {
+        stopAuthRefreshPolling();
+        setConnectingServerOrigin(serverOrigin);
+
+        let attempts = 0;
+        authRefreshIntervalRef.current = window.setInterval(async () => {
+            attempts += 1;
+
+            try {
+                const response = await getUserMCPTools();
+                setServers(response.servers);
+
+                const isAuthenticated = response.servers.some((server) => (
+                    server.serverOrigin === serverOrigin && server.authenticated
+                ));
+                if (isAuthenticated || attempts >= 15) {
+                    stopAuthRefreshPolling();
+                }
+            } catch {
+                if (attempts >= 15) {
+                    stopAuthRefreshPolling();
+                }
+            }
+        }, 2000);
+    }, [stopAuthRefreshPolling]);
+
+    const handleConnect = useCallback((serverOrigin: string, authURL?: string) => {
+        if (!authURL) {
+            return;
+        }
+
+        window.open(authURL, '_blank', 'noopener,noreferrer');
+        startAuthRefreshPolling(serverOrigin);
+    }, [startAuthRefreshPolling]);
+
+    const handleDisconnect = useCallback(async (serverOrigin: string) => {
+        setDisconnectingServerOrigin(serverOrigin);
+
+        try {
+            await disconnectUserMCPServerAuth(serverOrigin);
+            await fetchServers();
+        } catch {
+            // Silently fail - current state remains visible
+        } finally {
+            setDisconnectingServerOrigin(null);
+        }
+    }, [fetchServers]);
 
     return (
         <DotMenu
@@ -101,14 +179,58 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
             )}
             {servers.map((server) => (
                 <ProviderRow key={server.serverOrigin}>
-                    <ProviderAvatar>
-                        {server.name.charAt(0).toUpperCase()}
-                    </ProviderAvatar>
-                    <ProviderName>{server.name}</ProviderName>
-                    <ToggleSwitch
-                        checked={!disabledServers.includes(server.serverOrigin)}
-                        onChange={(checked) => handleToggle(server.serverOrigin, checked)}
-                    />
+                    <ProviderIdentity>
+                        <ProviderAvatar>
+                            {server.name.charAt(0).toUpperCase()}
+                        </ProviderAvatar>
+                        <ProviderText>
+                            <ProviderName>{server.name}</ProviderName>
+                            {(server.canDisconnect || server.authURL) && (
+                                <ProviderStatus $authenticated={server.authenticated}>
+                                    {server.authenticated ? (
+                                        <FormattedMessage defaultMessage='Connected'/>
+                                    ) : (
+                                        <FormattedMessage defaultMessage='Disconnected'/>
+                                    )}
+                                </ProviderStatus>
+                            )}
+                        </ProviderText>
+                    </ProviderIdentity>
+                    <ProviderActions>
+                        {(server.canDisconnect || server.authURL) && (
+                            <ProviderAuthButton
+                                type='button'
+                                onClick={() => {
+                                    if (server.canDisconnect) {
+                                        handleDisconnect(server.serverOrigin);
+                                        return;
+                                    }
+
+                                    handleConnect(server.serverOrigin, server.authURL);
+                                }}
+                                disabled={connectingServerOrigin === server.serverOrigin || disconnectingServerOrigin === server.serverOrigin}
+                            >
+                                {connectingServerOrigin === server.serverOrigin && (
+                                    <FormattedMessage defaultMessage='Connecting...'/>
+                                )}
+                                {disconnectingServerOrigin === server.serverOrigin && (
+                                    <FormattedMessage defaultMessage='Disconnecting...'/>
+                                )}
+                                {connectingServerOrigin !== server.serverOrigin && disconnectingServerOrigin !== server.serverOrigin && (
+                                    server.canDisconnect ? (
+                                        <FormattedMessage defaultMessage='Disconnect'/>
+                                    ) : (
+                                        <FormattedMessage defaultMessage='Connect'/>
+                                    )
+                                )}
+                            </ProviderAuthButton>
+                        )}
+                        <ToggleSwitch
+                            checked={!disabledServers.includes(server.serverOrigin)}
+                            onChange={(checked) => handleToggle(server.serverOrigin, checked)}
+                            ariaLabel={server.name}
+                        />
+                    </ProviderActions>
                 </ProviderRow>
             ))}
         </DotMenu>
@@ -158,12 +280,20 @@ const PopoverHeader = styled.div`
 const ProviderRow = styled.div`
     display: flex;
     align-items: center;
-    padding: 6px 16px;
-    gap: 8px;
+    justify-content: space-between;
+    padding: 8px 16px;
+    gap: 12px;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.08);
     }
+`;
+
+const ProviderIdentity = styled.div`
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 8px;
 `;
 
 const ProviderAvatar = styled.div`
@@ -181,12 +311,39 @@ const ProviderAvatar = styled.div`
 `;
 
 const ProviderName = styled.div`
-    flex: 1;
     font-size: 14px;
     font-weight: 400;
     color: var(--center-channel-color);
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+`;
+
+const ProviderText = styled.div`
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+`;
+
+const ProviderStatus = styled.div<{$authenticated: boolean}>`
+    font-size: 12px;
+    line-height: 16px;
+    color: ${({$authenticated}) => (
+        $authenticated ? 'rgba(var(--center-channel-color-rgb), 0.64)' : 'var(--button-bg)'
+    )};
+`;
+
+const ProviderActions = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+`;
+
+const ProviderAuthButton = styled(TertiaryButton)`
+    height: 28px;
+    padding: 0 10px;
+    font-size: 12px;
     white-space: nowrap;
 `;
 

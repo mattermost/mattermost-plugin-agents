@@ -592,6 +592,23 @@ export async function getUserMCPTools(): Promise<{servers: any[]}> {
     });
 }
 
+export async function disconnectUserMCPServerAuth(serverOrigin: string): Promise<void> {
+    const url = `${baseRoute()}/mcp/server-auth?serverOrigin=${encodeURIComponent(serverOrigin)}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'DELETE',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function getUserToolPreferences(): Promise<{disabled_servers: string[]}> {
     const url = `${baseRoute()}/mcp/user-preferences`;
     const response = await fetch(url, Client4.getOptions({

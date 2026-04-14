@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -80,11 +81,15 @@ func TestHandleGetUserMCPToolsIncludesZeroToolConfiguredServers(t *testing.T) {
 	require.Equal(t, zeroToolServer.Name, response.Servers[0].Name)
 	require.Equal(t, zeroToolServer.BaseURL, response.Servers[0].ServerOrigin)
 	require.False(t, response.Servers[0].Authenticated)
+	require.False(t, response.Servers[0].CanDisconnect)
+	require.Empty(t, response.Servers[0].AuthURL)
 	require.Empty(t, response.Servers[0].Tools)
 
 	require.Equal(t, toolServer.Name, response.Servers[1].Name)
 	require.Equal(t, toolServer.BaseURL, response.Servers[1].ServerOrigin)
 	require.True(t, response.Servers[1].Authenticated)
+	require.False(t, response.Servers[1].CanDisconnect)
+	require.Empty(t, response.Servers[1].AuthURL)
 	require.Len(t, response.Servers[1].Tools, 2)
 	require.Equal(t, "a_tool", response.Servers[1].Tools[0].Name)
 	require.Equal(t, "z_tool", response.Servers[1].Tools[1].Name)
@@ -132,6 +137,8 @@ func TestHandleGetUserMCPToolsStoredTokenMarksZeroToolServerAuthenticated(t *tes
 	require.Len(t, response.Servers, 1)
 	require.Equal(t, server.Name, response.Servers[0].Name)
 	require.True(t, response.Servers[0].Authenticated)
+	require.True(t, response.Servers[0].CanDisconnect)
+	require.Empty(t, response.Servers[0].AuthURL)
 	require.Empty(t, response.Servers[0].Tools)
 }
 
@@ -187,6 +194,8 @@ func TestHandleGetUserMCPToolsAuthErrorsOverrideStoredTokensForZeroToolServers(t
 	require.Len(t, response.Servers, 1)
 	require.Equal(t, server.Name, response.Servers[0].Name)
 	require.False(t, response.Servers[0].Authenticated)
+	require.True(t, response.Servers[0].CanDisconnect)
+	require.Equal(t, "https://oauth.example.com/authorize", response.Servers[0].AuthURL)
 	require.Empty(t, response.Servers[0].Tools)
 }
 
@@ -213,7 +222,51 @@ func TestHandleGetUserMCPToolsIncludesEmbeddedZeroToolServer(t *testing.T) {
 	require.Equal(t, mcp.EmbeddedServerName, response.Servers[0].Name)
 	require.Equal(t, mcp.EmbeddedClientKey, response.Servers[0].ServerOrigin)
 	require.True(t, response.Servers[0].Authenticated)
+	require.False(t, response.Servers[0].CanDisconnect)
+	require.Empty(t, response.Servers[0].AuthURL)
 	require.Empty(t, response.Servers[0].Tools)
+}
+
+func TestHandleDeleteUserMCPServerAuthRemovesStoredToken(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := mcp.ServerConfig{
+		Name:    "OAuth Server",
+		Enabled: true,
+		BaseURL: "https://oauth.example.com",
+	}
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{server},
+	}
+
+	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On("KVDelete", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name).
+		Return(nil).
+		Once()
+
+	oauthManager := mcp.NewOAuthManager(mmClient, "https://mattermost.example.com/plugins/oauth/callback", &http.Client{}, func(serverID string) (mcp.ServerConfig, bool) {
+		if serverID == server.Name {
+			return server, true
+		}
+		return mcp.ServerConfig{}, false
+	})
+
+	e.api.mcpClientManager = &mockMCPClientManager{
+		oauthManager: oauthManager,
+	}
+
+	request := httptest.NewRequest(http.MethodDelete, "/mcp/server-auth?serverOrigin="+url.QueryEscape(server.BaseURL), nil)
+	request.Header.Add("Mattermost-User-Id", testUserID)
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(nil, recorder, request)
+
+	require.Equal(t, http.StatusNoContent, recorder.Result().StatusCode)
 }
 
 func getUserMCPToolsResponse(t *testing.T, api *API) UserMCPToolsResponse {

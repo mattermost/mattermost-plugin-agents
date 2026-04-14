@@ -65,6 +65,11 @@ func (m *OAuthManager) HasStoredToken(userID, serverID string) (bool, error) {
 	return true, nil
 }
 
+// DisconnectUser deletes any stored OAuth token for the user and server.
+func (m *OAuthManager) DisconnectUser(userID, serverID string) error {
+	return m.deleteToken(userID, serverID)
+}
+
 func (m *OAuthManager) storeToken(userID, serverID string, token *oauth2.Token) error {
 	tokenKey := buildTokenKey(userID, serverID)
 
