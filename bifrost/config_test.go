@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
@@ -85,7 +86,7 @@ func TestNewFromServiceConfigOpenAIForcesResponsesAPI(t *testing.T) {
 				EnabledNativeTools: []string{"web_search"},
 			}
 			llmInstance, err := NewFromServiceConfig(service, bot)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Equal(t, tt.wantUseResponsesAPI, llmInstance.useResponsesAPI)
 		})
 	}
@@ -116,7 +117,7 @@ func TestNewFromServiceConfigFiltersNativeTools(t *testing.T) {
 				EnabledNativeTools: []string{"web_search"},
 			}
 			llmInstance, err := NewFromServiceConfig(service, bot)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			if tt.wantTools {
 				assert.Equal(t, []string{"web_search"}, llmInstance.enabledNativeTools)
 			} else {

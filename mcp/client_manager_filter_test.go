@@ -144,7 +144,7 @@ func TestFilterToolsByConfig(t *testing.T) {
 			wantToolNames: []string{"a_tool", "z_tool", "b_tool"},
 		},
 		{
-			name: "embedded server uses vetted tool seed and unconfigured tools default enabled",
+			name:   "embedded server uses vetted tool seed and unconfigured tools default enabled",
 			config: Config{},
 			rawTools: []llm.Tool{
 				{Name: "search_users", Description: "Search users", ServerOrigin: EmbeddedClientKey},
