@@ -677,7 +677,7 @@ test.describe('Context Variables', () => {
         const prompt = await createPromptViaAPI(userClient, {
             name: 'Context Pill',
             description: 'Renders username',
-            template: 'Greetings {{.RequestingUser.Username}}!',
+            template: 'Greetings {{.Username}}!',
             is_shared: false,
         });
         createdPromptIds.push(prompt.id);
