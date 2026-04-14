@@ -676,7 +676,12 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 				assert.Equal(t, "response", *req.Params.Text.Format.Name)
 				assert.Equal(t, true, *req.Params.Text.Format.Strict)
 				require.NotNil(t, req.Params.Text.Format.JSONSchema)
-				require.NotNil(t, req.Params.Text.Format.JSONSchema.Schema)
+				assert.Nil(t, req.Params.Text.Format.JSONSchema.Schema)
+				require.NotNil(t, req.Params.Text.Format.JSONSchema.Type)
+				assert.Equal(t, "object", *req.Params.Text.Format.JSONSchema.Type)
+				require.NotNil(t, req.Params.Text.Format.JSONSchema.Properties)
+				assert.Len(t, *req.Params.Text.Format.JSONSchema.Properties, 2)
+				assert.ElementsMatch(t, []string{"name", "score"}, req.Params.Text.Format.JSONSchema.Required)
 			} else {
 				assert.Nil(t, req.Params.Text)
 			}

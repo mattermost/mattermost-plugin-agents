@@ -235,6 +235,20 @@ func (b *LLM) createConfig(opts []llm.LanguageModelOption) llm.LanguageModelConf
 	return cfg
 }
 
+func buildResponsesJSONSchema(schemaMap map[string]interface{}) (*schemas.ResponsesTextConfigFormatJSONSchema, error) {
+	data, err := json.Marshal(schemaMap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal responses JSON schema: %w", err)
+	}
+
+	var responseSchema schemas.ResponsesTextConfigFormatJSONSchema
+	if err := json.Unmarshal(data, &responseSchema); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal responses JSON schema: %w", err)
+	}
+
+	return &responseSchema, nil
+}
+
 // ChatCompletion performs a streaming chat completion request.
 func (b *LLM) ChatCompletion(request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	cfg := b.createConfig(opts)
@@ -913,15 +927,17 @@ func buildResponsesTextConfig(schema *jsonschema.Schema) *schemas.ResponsesTextC
 	if err != nil {
 		return nil
 	}
-	var schemaAny any = schemaMap
+
+	responseSchema, err := buildResponsesJSONSchema(schemaMap)
+	if err != nil {
+		return nil
+	}
 	return &schemas.ResponsesTextConfig{
 		Format: &schemas.ResponsesTextConfigFormat{
-			Type:   "json_schema",
-			Name:   Ptr("response"),
-			Strict: Ptr(true),
-			JSONSchema: &schemas.ResponsesTextConfigFormatJSONSchema{
-				Schema: &schemaAny,
-			},
+			Type:       "json_schema",
+			Name:       Ptr("response"),
+			Strict:     Ptr(true),
+			JSONSchema: responseSchema,
 		},
 	}
 }
