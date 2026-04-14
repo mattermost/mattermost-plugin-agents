@@ -168,6 +168,9 @@ func (p *Plugin) OnActivate() error {
 			return fmt.Errorf("failed to run legacy config migrations: %w", migrationErr)
 		}
 
+		// Apply defaults for fresh installations
+		finalCfg.ApplyDefaults()
+
 		// Write to DB (first entry in config history)
 		if saveErr := p.store.SaveConfig(finalCfg); saveErr != nil {
 			mtx2.Unlock()

@@ -30,7 +30,7 @@ function createTestSuite() {
             await mattermost.stop();
         });
 
-        test('should require Responses API for OpenAI Compatible reasoning', async () => {
+        test('should allow reasoning config on OpenAI Compatible service without Responses API', async () => {
             const botConfig = await createBotConfigHelper(mattermost);
             const serviceId = 'no-responses-api-service';
             const botId = generateBotId();
