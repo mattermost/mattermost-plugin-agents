@@ -407,11 +407,11 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // Create a properly initialized config object
     const config: MCPConfig = {
-        enabled: mcpConfig?.enabled || false,
+        enabled: mcpConfig?.enabled ?? true,
         enablePluginServer: mcpConfig?.enablePluginServer ?? false,
         servers: normalizedServers,
         embeddedServer: mcpConfig?.embeddedServer || {
-            enabled: !mcpConfig?.enabled,
+            enabled: true,
         },
         idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
     };

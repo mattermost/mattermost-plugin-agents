@@ -27,7 +27,11 @@ func (a *API) handleGetConfig(c *gin.Context) {
 			Services: []llm.ServiceConfig{},
 			Bots:     []llm.BotConfig{},
 			MCP: mcp.Config{
+				Enabled: true,
 				Servers: []mcp.ServerConfig{},
+				EmbeddedServer: mcp.EmbeddedServerConfig{
+					Enabled: true,
+				},
 			},
 			WebSearch: config.WebSearchConfig{
 				DomainDenylist: []string{},

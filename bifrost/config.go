@@ -65,6 +65,12 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 
 	apiURL = normalizeOpenAIBaseURL(provider, apiURL)
 
+	// OpenAI direct always uses the Responses API
+	useResponsesAPI := serviceConfig.UseResponsesAPI
+	if serviceConfig.Type == llm.ServiceTypeOpenAI {
+		useResponsesAPI = true
+	}
+
 	cfg := Config{
 		Provider:           provider,
 		APIKey:             serviceConfig.APIKey,
@@ -78,7 +84,7 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		OutputTokenLimit:   serviceConfig.OutputTokenLimit,
 		StreamingTimeout:   streamingTimeout,
 		SendUserID:         serviceConfig.SendUserID,
-		UseResponsesAPI:    serviceConfig.UseResponsesAPI,
+		UseResponsesAPI:    useResponsesAPI,
 
 		// Bot-specific configuration
 		EnabledNativeTools: botConfig.EnabledNativeTools,
