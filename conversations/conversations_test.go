@@ -31,18 +31,16 @@ import (
 type mockToolProvider struct{}
 
 func (m *mockToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
-	tools := []llm.Tool{}
-
-	tools = append(tools, llm.Tool{
-		Name:        "SearchServer",
-		Description: "Search the Mattermost chat server for relevant messages.",
-		Schema:      llm.NewJSONSchemaFromStruct[struct{ Term string }](),
-		Resolver: func(context *llm.Context, args llm.ToolArgumentGetter) (string, error) {
-			return "No relevant messages found.", nil
+	return []llm.Tool{
+		{
+			Name:        "WebSearch",
+			Description: "Search the web for information.",
+			Schema:      llm.NewJSONSchemaFromStruct[struct{ Term string }](),
+			Resolver: func(context *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+				return "No results found.", nil
+			},
 		},
-	})
-
-	return tools
+	}
 }
 
 type mockMCPClientManager struct{}
