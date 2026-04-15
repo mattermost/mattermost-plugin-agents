@@ -31,18 +31,7 @@ import (
 type mockToolProvider struct{}
 
 func (m *mockToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
-	tools := []llm.Tool{}
-
-	tools = append(tools, llm.Tool{
-		Name:        "SearchServer",
-		Description: "Search the Mattermost chat server for relevant messages.",
-		Schema:      llm.NewJSONSchemaFromStruct[struct{ Term string }](),
-		Resolver: func(context *llm.Context, args llm.ToolArgumentGetter) (string, error) {
-			return "No relevant messages found.", nil
-		},
-	})
-
-	return tools
+	return []llm.Tool{}
 }
 
 type mockMCPClientManager struct{}
