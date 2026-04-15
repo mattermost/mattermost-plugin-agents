@@ -75,6 +75,29 @@ func (c *Context) SetBotFields(displayName, username, userID, defaultModel, serv
 	c.CustomInstructions = customInstructions
 }
 
+// CustomPromptVars returns a flat map of whitelisted variables for use in
+// user-created custom prompt templates. Only safe, useful fields are exposed.
+func (c *Context) CustomPromptVars() map[string]string {
+	vars := map[string]string{
+		"Time":    c.Time,
+		"BotName": c.BotName,
+	}
+	if c.RequestingUser != nil {
+		vars["Username"] = c.RequestingUser.Username
+		vars["FirstName"] = c.RequestingUser.FirstName
+		vars["LastName"] = c.RequestingUser.LastName
+	}
+	if c.Channel != nil {
+		vars["Channel"] = c.Channel.DisplayName
+		vars["ChannelName"] = c.Channel.Name
+	}
+	if c.Team != nil {
+		vars["Team"] = c.Team.DisplayName
+		vars["TeamName"] = c.Team.Name
+	}
+	return vars
+}
+
 func (c Context) String() string {
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("Time: %v\nServerName: %v\nCompanyName: %v", c.Time, c.ServerName, c.CompanyName))

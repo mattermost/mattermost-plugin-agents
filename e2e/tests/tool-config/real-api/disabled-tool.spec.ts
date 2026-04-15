@@ -13,12 +13,14 @@ import { createToolConfigAPIHelper } from 'helpers/tool-config';
  * Test Suite: Disabled Tool Excluded (Real API) (4.10)
  *
  * Verifies that disabling an embedded tool removes it from the filtered tool list and prevents
- * a real-API prompt from surfacing that tool in the Copilot RHS.
+ * that tool from surfacing in the Copilot RHS.
  *
  * The test disables `read_post`, verifies it is filtered out of GET /mcp/tools (the same list
  * used by GetToolsForUser/filterToolsByConfig), then prompts the real model to use `read_post`
  * on a seeded post ID. The assertions stay focused on the behavior we care about: the disabled
- * tool never appears in the turn, and the seeded post contents are not surfaced.
+ * tool never appears in the turn. Real models may still use other enabled tools, such as
+ * `read_channel`, to answer the request, so the test intentionally does not assert on the
+ * response body contents.
  *
  * Skip-gated: requires ANTHROPIC_API_KEY or OPENAI_API_KEY.
  */
@@ -126,7 +128,6 @@ for (const provider of providers) {
             await expect(disabledBotPost).toBeVisible();
             await expect(disabledBotPost.getByTestId('posttext')).toBeVisible({ timeout: 90000 });
             await expect(disabledBotPost.getByText(TARGET_TOOL_LABEL, { exact: true })).toHaveCount(0);
-            await expect(disabledBotPost.getByTestId('posttext')).not.toContainText(SEEDED_POST_MESSAGE);
         });
     });
 }

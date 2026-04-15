@@ -20,7 +20,7 @@ import {
 
 const FloatingContainer = styled.div`
     min-width: 16rem;
-	z-index: 1000;
+	z-index: 2100;
 `;
 
 type DropdownProps = {

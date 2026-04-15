@@ -263,7 +263,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	cfg := &testConfigImpl{}
 	mockConvStore := newMockConversationStore()
 
-	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil, nil, nil, mockConvStore, nil)
+	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil, nil, nil, mockConvStore, nil, nil)
 
 	return &TestEnvironment{
 		api:               api,
