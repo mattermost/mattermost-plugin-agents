@@ -176,15 +176,17 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 	// Try to get tools from global cache first
 	serverID := serverConfig.Name
 	staticCreds := staticOAuthCreds(serverConfig)
+	skipToolsCache := false
 	if toolsCache != nil && staticCreds != nil && oauthManager != nil {
 		hasToken, tokErr := oauthManager.HasStoredToken(userID, serverConfig.Name)
 		if tokErr != nil || !hasToken {
 			// Do not reuse cached tool lists until the user completes OAuth; otherwise
 			// admin discovery and user flows can show a false "connected" state.
 			_ = toolsCache.InvalidateServer(serverID)
+			skipToolsCache = true
 		}
 	}
-	if toolsCache != nil {
+	if toolsCache != nil && !skipToolsCache {
 		cachedTools := toolsCache.GetTools(serverID)
 		if len(cachedTools) > 0 {
 			// Cache hit - use cached tools
