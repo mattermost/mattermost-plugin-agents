@@ -303,6 +303,7 @@ The plugin configuration is stored in the Mattermost database. To backup:
 
 1. Ensure your regular Mattermost backup includes plugin configurations
 2. For larger deployments, consider backing up indexed vector data separately
+3. User-created custom prompt templates and prompt pins are stored in the `LLM_CustomPrompts` and `LLM_CustomPromptPins` tables, so include plugin database tables in your normal backup and restore process.
 
 ### Configuration format
 
