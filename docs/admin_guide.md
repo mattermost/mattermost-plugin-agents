@@ -399,9 +399,11 @@ The Model Context Protocol (MCP) integration allows Agents to connect to externa
 1. Select **Add MCP Server** to configure a new server.
 2. Configure server settings:
 
-   - **Server URL**: The endpoint URL for your MCP server.
+   - **Server URL**: The endpoint URL for your MCP server. Enter the full MCP endpoint exactly as documented by the provider, including any path segment such as `/v1/mcp`.
    - **Custom Headers**: Additional headers required by your MCP server (optional).
    - **Server Name**: Descriptive name for the server (auto-generated if not provided).
+
+   For OAuth-enabled external MCP servers, the plugin uses the full **Server URL** for protected resource metadata discovery. If it needs to derive authorization server metadata or a dynamic client registration endpoint from that MCP URL, it uses only the URL origin (scheme and host) and ignores the path. For example, if **Server URL** is `https://mcp.atlassian.com/v1/mcp`, authorization server metadata is discovered from `https://mcp.atlassian.com/.well-known/oauth-authorization-server`.
 
 4. Select **Save** to add the server.
 
@@ -414,6 +416,8 @@ The Model Context Protocol (MCP) integration allows Agents to connect to externa
 ### Atlassian MCP server authorization
 
 When users connect to the Atlassian MCP server, they may encounter an authorization error requiring an organization admin to authorize your Mattermost domain. This configuration must be completed in Atlassian's admin console.
+
+If you configure the Atlassian MCP endpoint as `https://mcp.atlassian.com/v1/mcp`, keep the `/v1/mcp` path in **Server URL**. Mattermost uses that full URL for the MCP connection and protected resource metadata discovery, and uses the Atlassian host origin for authorization server metadata discovery when required.
 
 **To authorize your Mattermost domain:**
 
@@ -520,12 +524,13 @@ The MCP server supports OAuth 2.0 authentication with both manual and automatic 
   - For automatic client registration, set **Enable OAuth 2.0 Dynamic Client Registration** to **True** (Note: DCR is an unprotected endpoint, meaning it is publicly accessible and does not require authentication—anyone can register OAuth clients if this feature is enabled. See the [OAuth 2.0 documentation](https://developers.mattermost.com/integrate/apps/authentication/oauth2/) for security considerations.)
 
 **Client Registration Methods:**
-- **Dynamic Client Registration (DCR/RFC 7591)**: External clients can automatically register and obtain credentials without manual setup.
+- **Dynamic Client Registration (DCR/RFC 7591)**: External clients can automatically register and obtain credentials without manual setup. If the configured MCP server URL includes a path, Mattermost derives the authorization server metadata endpoint from the URL origin before requesting the registration endpoint.
 - **Manual Registration**: Create OAuth applications through **Product menu > Integrations > OAuth 2.0 Applications**. See the [OAuth 2.0 documentation](https://developers.mattermost.com/integrate/apps/authentication/oauth2/) for details.
 
 **Additional Details:**
 - Supports both public clients (e.g., desktop applications) and confidential clients (e.g., server applications)
 - Authorization through standard Mattermost OAuth flows
+- For external MCP servers whose endpoint URL includes a path, protected resource metadata discovery uses the full MCP URL. If Mattermost needs to derive authorization server metadata from the MCP server URL, it uses only the URL origin rather than inserting `/.well-known` before the MCP path.
 - OAuth metadata endpoints:
   - Protected resource metadata: `https://your-mattermost-server/plugins/mattermost-ai/mcp-server/.well-known/oauth-protected-resource`
   - Authorization server metadata: `https://your-mattermost-server/.well-known/oauth-authorization-server`
