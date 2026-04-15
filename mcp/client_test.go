@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"fmt"
+	"net/url"
 	"testing"
 	"time"
 
@@ -201,7 +202,11 @@ func TestClientOAuthNeededError(t *testing.T) {
 
 			var oauthErr *OAuthNeededError
 			require.ErrorAs(t, err, &oauthErr)
-			require.Equal(t, "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start", oauthErr.AuthURL())
+			authURL, parseErr := url.Parse(oauthErr.AuthURL())
+			require.NoError(t, parseErr)
+			require.Equal(t, "https://mattermost.example.com", authURL.Scheme+"://"+authURL.Host)
+			require.Equal(t, "/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start", authURL.EscapedPath())
+			require.Equal(t, "https://oauth.example.com/.well-known/oauth-protected-resource", authURL.Query().Get("resource_metadata"))
 		})
 	}
 }

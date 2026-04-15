@@ -194,13 +194,13 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 	serverID := serverConfig.Name
 	useSharedToolsCache := shouldUseSharedToolsCache(serverConfig)
 	if !useSharedToolsCache && toolsCache != nil && oauthManager != nil {
-		hasStoredToken, err := oauthManager.HasStoredToken(userID, serverID)
-		if err != nil {
+		hasStoredToken, tokenErr := oauthManager.HasStoredToken(userID, serverID)
+		if tokenErr != nil {
 			log.Warn("Failed to check stored OAuth token before MCP tool discovery",
 				"serverID", serverID,
 				"server", serverConfig.Name,
 				"userID", userID,
-				"error", err)
+				"error", tokenErr)
 		} else {
 			invalidateSharedToolsCacheForOAuthDiscovery(toolsCache, &log, userID, serverID, serverConfig, hasStoredToken)
 		}
