@@ -138,7 +138,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                                     <FormattedMessage defaultMessage='OAuth Required'/>
                                 </OAuthTitle>
                                 <OAuthDescription>
-                                    <FormattedMessage defaultMessage='This server requires OAuth authentication to access its tools.'/>
+                                    <FormattedMessage defaultMessage="You must authenticate to fetch this server's tool list and configure per-tool approval policies. This only connects your account — each user must authenticate separately."/>
                                 </OAuthDescription>
                             </div>
                             <OAuthButton

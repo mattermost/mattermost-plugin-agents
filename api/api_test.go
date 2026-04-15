@@ -78,11 +78,12 @@ func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager   *mcp.OAuthManager
-	tools          []llm.Tool
-	mcpErrors      *mcp.Errors
-	config         mcp.Config
-	embeddedServer mcp.EmbeddedMCPServer
+	oauthManager    *mcp.OAuthManager
+	tools           []llm.Tool
+	mcpErrors       *mcp.Errors
+	config          mcp.Config
+	embeddedServer  mcp.EmbeddedMCPServer
+	disconnectCalls []string
 }
 
 func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
@@ -95,6 +96,11 @@ func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
 
 func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error) {
 	return nil, nil
+}
+
+func (m *mockMCPClientManager) DisconnectUserOAuth(userID, serverName string) error {
+	m.disconnectCalls = append(m.disconnectCalls, serverName)
+	return nil
 }
 
 func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {

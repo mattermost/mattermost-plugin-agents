@@ -265,8 +265,6 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 
 	// TODO: Load and check cached authentication information
 
-	staticCreds := staticOAuthCreds(serverConfig)
-
 	// We have no information about this server, so try to connect various ways.
 	client := mcp.NewClient(
 		&mcp.Implementation{
@@ -292,24 +290,16 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	// Check for OAuth error from Streamable HTTP attempt
 	var mcpAuthErr *mcpUnauthorized
 	if errors.As(errStreamable, &mcpAuthErr) {
-		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, mcpAuthErr.MetadataURL(), staticCreds)
-		if oauthErr != nil {
-			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
-		}
 		return nil, &OAuthNeededError{
-			authURL: authURL,
+			authURL: c.oauthStartURL(),
 		}
 	}
 
 	// Temporary workaround: check for OAuth error by string matching since go-sdk does not preserve error chains with %w
 	// remove when go-sdk is updated to support oauth directly.
-	if metadataURL, ok := extractOAuthMetadataURL(errStreamable); ok {
-		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, metadataURL, staticCreds)
-		if oauthErr != nil {
-			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
-		}
+	if _, ok := extractOAuthMetadataURL(errStreamable); ok {
 		return nil, &OAuthNeededError{
-			authURL: authURL,
+			authURL: c.oauthStartURL(),
 		}
 	}
 
@@ -325,29 +315,29 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 
 	// Check for OAuth error from SSE attempt
 	if errors.As(errSSE, &mcpAuthErr) {
-		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, mcpAuthErr.MetadataURL(), staticCreds)
-		if oauthErr != nil {
-			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
-		}
 		return nil, &OAuthNeededError{
-			authURL: authURL,
+			authURL: c.oauthStartURL(),
 		}
 	}
 
 	// Temporary workaround: check for OAuth error by string matching since go-sdk does not preserve error chains with %w
 	// remove when go-sdk is updated to support oauth directly.
-	if metadataURL, ok := extractOAuthMetadataURL(errSSE); ok {
-		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, metadataURL, staticCreds)
-		if oauthErr != nil {
-			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
-		}
+	if _, ok := extractOAuthMetadataURL(errSSE); ok {
 		return nil, &OAuthNeededError{
-			authURL: authURL,
+			authURL: c.oauthStartURL(),
 		}
 	}
 
 	// If we reach here, all connection attempts failed
 	return nil, fmt.Errorf("failed to connect to MCP server %s, Streamable HTTP: %w, SSE: %w", c.config.Name, errStreamable, errSSE)
+}
+
+func (c *Client) oauthStartURL() string {
+	if c.oauthManager == nil {
+		return ""
+	}
+
+	return c.oauthManager.StartURL(c.config.Name)
 }
 
 // Close closes the connection to the MCP server

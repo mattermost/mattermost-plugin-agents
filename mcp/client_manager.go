@@ -154,7 +154,7 @@ func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) 
 	m.clientsMu.RUnlock()
 	if exists {
 		m.activity[userID] = time.Now()
-		return client, nil
+		return client, client.connectionErrors
 	}
 
 	return m.createAndStoreUserClient(userID)
@@ -196,6 +196,21 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 	m.clientsMu.Unlock()
 
 	return session, nil
+}
+
+// DisconnectUserOAuth removes the stored OAuth token for a user and server,
+// and invalidates the cached MCP client so a fresh connection is established
+// on the next request.
+func (m *ClientManager) DisconnectUserOAuth(userID, serverName string) error {
+	if err := m.oauthManager.DeleteUserToken(userID, serverName); err != nil {
+		return err
+	}
+
+	m.clientsMu.Lock()
+	delete(m.clients, userID)
+	m.clientsMu.Unlock()
+
+	return nil
 }
 
 // GetOAuthManager returns the OAuth manager instance

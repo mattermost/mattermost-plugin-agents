@@ -24,7 +24,9 @@ type UserMCPServerInfo struct {
 	Name          string            `json:"name"`
 	ServerOrigin  string            `json:"serverOrigin"`
 	Authenticated bool              `json:"authenticated"`
+	NeedsOAuth    bool              `json:"needsOAuth"`
 	AuthEmail     string            `json:"authEmail,omitempty"`
+	AuthURL       string            `json:"authURL,omitempty"`
 	Tools         []UserMCPToolInfo `json:"tools"`
 }
 
@@ -126,14 +128,24 @@ func buildUserMCPServerInfo(
 		return toolInfos[i].Name < toolInfos[j].Name
 	})
 
-	_, hasAuthError := authErrorsByOrigin[serverConfig.BaseURL]
+	authError, hasAuthError := authErrorsByOrigin[serverConfig.BaseURL]
 
-	return UserMCPServerInfo{
+	hasStoredToken := false
+	if oauthManager != nil {
+		hasStoredToken, _ = oauthManager.HasStoredToken(userID, serverConfig.Name)
+	}
+
+	info := UserMCPServerInfo{
 		Name:          serverConfig.Name,
 		ServerOrigin:  serverConfig.BaseURL,
 		Authenticated: isUserMCPServerAuthenticated(userID, oauthManager, serverConfig, len(originTools) > 0, hasAuthError),
+		NeedsOAuth:    hasAuthError || hasStoredToken,
 		Tools:         toolInfos,
 	}
+	if hasAuthError && !info.Authenticated {
+		info.AuthURL = authError.AuthURL
+	}
+	return info
 }
 
 func isUserMCPServerAuthenticated(
@@ -204,6 +216,25 @@ func (a *API) handlePutUserPreferences(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, saved)
+}
+
+// handleDeleteUserMCPOAuth disconnects the current user from an MCP server
+// by removing their stored OAuth token.
+func (a *API) handleDeleteUserMCPOAuth(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	serverName := c.Param("serverName")
+
+	if serverName == "" {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("serverName is required"))
+		return
+	}
+
+	if err := a.mcpClientManager.DisconnectUserOAuth(userID, serverName); err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to disconnect: %w", err))
+		return
+	}
+
+	c.Status(http.StatusOK)
 }
 
 // handleGetVettedToolSeed returns authoritative vetted default tool_configs for a base URL (admin).

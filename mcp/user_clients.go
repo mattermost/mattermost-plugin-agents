@@ -23,12 +23,13 @@ type ToolInfo struct {
 
 // UserClients represents a per-user MCP client with multiple server connections
 type UserClients struct {
-	clients      map[string]*Client // serverID -> client (both remote and embedded)
-	userID       string
-	log          pluginapi.LogService
-	oauthManager *OAuthManager
-	httpClient   *http.Client
-	toolsCache   *ToolsCache
+	clients         map[string]*Client // serverID -> client (both remote and embedded)
+	userID          string
+	log             pluginapi.LogService
+	oauthManager    *OAuthManager
+	httpClient      *http.Client
+	toolsCache      *ToolsCache
+	connectionErrors *Errors
 }
 
 func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
@@ -81,6 +82,7 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 		}
 	}
 
+	c.connectionErrors = mcpErrors
 	return mcpErrors
 }
 
