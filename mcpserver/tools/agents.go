@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/mattermost/mattermost-plugin-ai/format"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/format"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -34,10 +34,10 @@ type ListAgentsArgs struct{}
 func (p *MattermostToolProvider) getAgentTools() []MCPTool {
 	return []MCPTool{
 		{
-			Name: "list_agents",
+			Name:        "list_agents",
 			Description: `List all available AI agents (bots). Returns each agent's ID, display name, and username.`,
-			Schema:   llm.NewJSONSchemaFromStruct[ListAgentsArgs](),
-			Resolver: p.toolListAgents,
+			Schema:      llm.NewJSONSchemaFromStruct[ListAgentsArgs](),
+			Resolver:    p.toolListAgents,
 		},
 	}
 }

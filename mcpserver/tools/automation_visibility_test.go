@@ -15,12 +15,12 @@ func Test_automationListVisibility(t *testing.T) {
 	dmCh := &model.Channel{Type: model.ChannelTypeDirect}
 
 	tests := []struct {
-		name                    string
-		isSysadmin              bool
-		channel                 *model.Channel
-		openPrivateAdmin        bool
-		openPrivateFetchFailed  bool
-		wantVisible             bool
+		name                   string
+		isSysadmin             bool
+		channel                *model.Channel
+		openPrivateAdmin       bool
+		openPrivateFetchFailed bool
+		wantVisible            bool
 	}{
 		{name: "sysadmin open", isSysadmin: true, channel: openCh, wantVisible: true},
 		{name: "nil channel non-admin", channel: nil, wantVisible: true},
