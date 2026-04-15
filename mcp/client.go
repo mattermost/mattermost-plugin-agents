@@ -72,6 +72,24 @@ func staticOAuthCreds(s ServerConfig) *StaticOAuthCredentials {
 	}
 }
 
+func shouldUseSharedToolsCache(serverConfig ServerConfig) bool {
+	return staticOAuthCreds(serverConfig) == nil
+}
+
+func invalidateSharedToolsCacheForOAuthDiscovery(toolsCache *ToolsCache, log Logger, userID, serverID string, serverConfig ServerConfig, hasStoredToken bool) {
+	if toolsCache == nil || hasStoredToken {
+		return
+	}
+
+	if err := toolsCache.InvalidateServer(serverID); err != nil {
+		log.Warn("Failed to invalidate shared tools cache for OAuth-backed MCP server",
+			"serverID", serverID,
+			"server", serverConfig.Name,
+			"userID", userID,
+			"error", err)
+	}
+}
+
 func NewEmbeddedServerClient(server EmbeddedMCPServer, log pluginapi.LogService, pluginAPI *pluginapi.Client) *EmbeddedServerClient {
 	return &EmbeddedServerClient{
 		server:    server,
@@ -173,20 +191,23 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 		return nil, fmt.Errorf("failed to create MCP session for server %s: %w", serverConfig.Name, err)
 	}
 
-	// Try to get tools from global cache first
 	serverID := serverConfig.Name
-	staticCreds := staticOAuthCreds(serverConfig)
-	skipToolsCache := false
-	if toolsCache != nil && staticCreds != nil && oauthManager != nil {
-		hasToken, tokErr := oauthManager.HasStoredToken(userID, serverConfig.Name)
-		if tokErr != nil || !hasToken {
-			// Do not reuse cached tool lists until the user completes OAuth; otherwise
-			// admin discovery and user flows can show a false "connected" state.
-			_ = toolsCache.InvalidateServer(serverID)
-			skipToolsCache = true
+	useSharedToolsCache := shouldUseSharedToolsCache(serverConfig)
+	if !useSharedToolsCache && toolsCache != nil && oauthManager != nil {
+		hasStoredToken, err := oauthManager.HasStoredToken(userID, serverID)
+		if err != nil {
+			log.Warn("Failed to check stored OAuth token before MCP tool discovery",
+				"serverID", serverID,
+				"server", serverConfig.Name,
+				"userID", userID,
+				"error", err)
+		} else {
+			invalidateSharedToolsCacheForOAuthDiscovery(toolsCache, &log, userID, serverID, serverConfig, hasStoredToken)
 		}
 	}
-	if toolsCache != nil && !skipToolsCache {
+
+	// Try to get tools from global cache first.
+	if toolsCache != nil && useSharedToolsCache {
 		cachedTools := toolsCache.GetTools(serverID)
 		if len(cachedTools) > 0 {
 			// Cache hit - use cached tools
@@ -204,6 +225,9 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 	initResult, err := session.ListTools(ctx, &mcp.ListToolsParams{})
 	if err != nil {
 		session.Close()
+		if oauthErr := c.oauthNeededError(err); oauthErr != nil {
+			return nil, oauthErr
+		}
 		return nil, fmt.Errorf("failed to list tools: %w", err)
 	}
 
@@ -222,8 +246,8 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 			"server", serverConfig.Name)
 	}
 
-	// Update the global cache with fetched tools
-	if toolsCache != nil {
+	// Update the global cache with fetched tools.
+	if toolsCache != nil && useSharedToolsCache {
 		if err := toolsCache.SetTools(serverID, serverConfig.Name, serverConfig.BaseURL, c.tools, time.Now()); err != nil {
 			log.Warn("Failed to update tools cache", "server", serverConfig.Name, "error", err)
 		}
@@ -269,6 +293,32 @@ func extractOAuthMetadataURL(err error) (string, bool) {
 	return metadataURL, metadataURL != ""
 }
 
+func (c *Client) oauthNeededError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var mcpAuthErr *mcpUnauthorized
+	if errors.As(err, &mcpAuthErr) {
+		md := mcpAuthErr.MetadataURL()
+		return &OAuthNeededError{
+			authURL:     c.oauthNeededRedirectURL(md),
+			metadataURL: md,
+		}
+	}
+
+	// Temporary workaround: check for OAuth error by string matching since go-sdk
+	// does not preserve error chains with %w.
+	if md, ok := extractOAuthMetadataURL(err); ok {
+		return &OAuthNeededError{
+			authURL:     c.oauthNeededRedirectURL(md),
+			metadataURL: md,
+		}
+	}
+
+	return nil
+}
+
 func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (*mcp.ClientSession, error) {
 	// Prepare headers for remote servers
 	headers := make(map[string]string)
@@ -299,23 +349,9 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 		return session, nil
 	}
 
-	// Check for OAuth error from Streamable HTTP attempt
-	var mcpAuthErr *mcpUnauthorized
-	if errors.As(errStreamable, &mcpAuthErr) {
-		md := mcpAuthErr.MetadataURL()
-		return nil, &OAuthNeededError{
-			authURL:     c.oauthNeededRedirectURL(md),
-			metadataURL: md,
-		}
-	}
-
-	// Temporary workaround: check for OAuth error by string matching since go-sdk does not preserve error chains with %w
-	// remove when go-sdk is updated to support oauth directly.
-	if md, ok := extractOAuthMetadataURL(errStreamable); ok {
-		return nil, &OAuthNeededError{
-			authURL:     c.oauthNeededRedirectURL(md),
-			metadataURL: md,
-		}
+	// Check for OAuth error from Streamable HTTP attempt.
+	if oauthErr := c.oauthNeededError(errStreamable); oauthErr != nil {
+		return nil, oauthErr
 	}
 
 	// Fallback to old HTTP+SSE transport for backwards compatibility (2024-11-05 spec)
@@ -328,22 +364,9 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 		return session, nil
 	}
 
-	// Check for OAuth error from SSE attempt
-	if errors.As(errSSE, &mcpAuthErr) {
-		md := mcpAuthErr.MetadataURL()
-		return nil, &OAuthNeededError{
-			authURL:     c.oauthNeededRedirectURL(md),
-			metadataURL: md,
-		}
-	}
-
-	// Temporary workaround: check for OAuth error by string matching since go-sdk does not preserve error chains with %w
-	// remove when go-sdk is updated to support oauth directly.
-	if md, ok := extractOAuthMetadataURL(errSSE); ok {
-		return nil, &OAuthNeededError{
-			authURL:     c.oauthNeededRedirectURL(md),
-			metadataURL: md,
-		}
+	// Check for OAuth error from SSE attempt.
+	if oauthErr := c.oauthNeededError(errSSE); oauthErr != nil {
+		return nil, oauthErr
 	}
 
 	// If we reach here, all connection attempts failed
