@@ -27,6 +27,7 @@ Comprehensive documentation is available in the `/docs` directory:
 - [Admin Guide](docs/admin_guide.md): Detailed installation and configuration instructions
 - [Provider Setup](docs/providers.md): Configuration for supported LLM providers
 - [Feature Documentation](docs/features/): Detailed guides for individual features
+  - [Channel Summaries](docs/features/channel_summaries.md): Use the **Ask Agents about this channel** button to summarize and analyze channel activity
 
 ## Installation
 

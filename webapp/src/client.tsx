@@ -11,6 +11,7 @@ import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import manifest from './manifest';
 
 import {ToolCall} from './components/tool_types';
+import {CustomPrompt} from './types';
 
 const Client4 = new Client4Class();
 
@@ -684,6 +685,123 @@ export async function savePluginConfig(config: PluginConfig): Promise<void> {
 
     if (response.ok) {
         return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getCustomPrompts(): Promise<CustomPrompt[]> {
+    const url = `${baseRoute()}/custom-prompts`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function createCustomPrompt(prompt: {name: string; description: string; template: string; is_shared: boolean}): Promise<CustomPrompt> {
+    const url = `${baseRoute()}/custom-prompts`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify(prompt),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function updateCustomPrompt(id: string, prompt: {name: string; description: string; template: string; is_shared: boolean}): Promise<void> {
+    const url = `${baseRoute()}/custom-prompts/${id}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify(prompt),
+    }));
+
+    if (!response.ok) {
+        throw new ClientError(Client4.url, {
+            message: '',
+            status_code: response.status,
+            url,
+        });
+    }
+}
+
+export async function deleteCustomPrompt(id: string): Promise<void> {
+    const url = `${baseRoute()}/custom-prompts/${id}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'DELETE',
+    }));
+
+    if (!response.ok) {
+        throw new ClientError(Client4.url, {
+            message: '',
+            status_code: response.status,
+            url,
+        });
+    }
+}
+
+export async function getCustomPromptPins(): Promise<string[]> {
+    const url = `${baseRoute()}/custom-prompts/pins`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function setCustomPromptPin(promptId: string, pinned: boolean): Promise<void> {
+    const url = `${baseRoute()}/custom-prompts/pins`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify({prompt_id: promptId, pinned}),
+    }));
+
+    if (!response.ok) {
+        throw new ClientError(Client4.url, {
+            message: '',
+            status_code: response.status,
+            url,
+        });
+    }
+}
+
+export async function renderCustomPrompt(id: string, channelId?: string, botUsername?: string): Promise<{rendered: string}> {
+    const url = `${baseRoute()}/custom-prompts/${id}/render`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({channel_id: channelId, bot_username: botUsername}),
+    }));
+
+    if (response.ok) {
+        return response.json();
     }
 
     throw new ClientError(Client4.url, {

@@ -125,7 +125,7 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	// Try to discover OAuth endpoints using RFC 8414/9728
 	authURL := baseURL + "/authorize" // Fallback
 	tokenURL := baseURL + "/token"    // Fallback
-	authServerURL := serverURL        // Fallback - use protected resource as auth server
+	authServerURL := baseURL          // Fallback - per MCP spec, auth server is at base URL (path stripped)
 	var scopes []string
 
 	// Attempt discovery (best effort, fall back to hardcoded endpoints if it fails).
@@ -146,11 +146,12 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 	} else {
 		// If protected resource metadata fails, assume the resource server is the authorization server
 		// and try the authorization server metadata endpoint directly (existing MCP server behavior).
-		// Use serverURL (not baseURL) so path-scoped issuers are preserved per RFC 8414 Section 3.1.
-		if authMetadata, authErr := discoverAuthorizationServerMetadata(ctx, m.httpClient, serverURL); authErr == nil {
+		// Use baseURL (path stripped) per MCP spec: the authorization base URL is derived by
+		// discarding the path component from the MCP server URL.
+		if authMetadata, authErr := discoverAuthorizationServerMetadata(ctx, m.httpClient, baseURL); authErr == nil {
 			authURL = authMetadata.AuthorizationEndpoint
 			tokenURL = authMetadata.TokenEndpoint
-			// authServerURL already set to serverURL above
+			// authServerURL already set to baseURL above
 		}
 	}
 

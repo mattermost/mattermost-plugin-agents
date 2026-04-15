@@ -16,6 +16,7 @@ Access AI features through the right pane in one of the following ways:
 - @mention an AI bot in any channel where you have access (such as `@copilot`).
 - Use the **AI Actions** menu by hovering over the first message in any conversation thread (see [license requirements](admin_guide.md#license-requirements))
 - Use the **Ask AI** option in channels with unread messages (see [license requirements](admin_guide.md#license-requirements))
+- Use **Ask Agents about this channel** in a channel header to summarize recent activity, focus on a date range, or ask a question about the current channel. See [Channel Summaries](features/channel_summaries.md).
 
 ### Mobile
 
@@ -81,6 +82,8 @@ To summarize unread Mattermost channels:
 
 The channel summary is generated in the Agents pane, and only you can view the summary.
 
+For more flexible channel analysis options, including **Ask Agents about this channel**, custom prompts, and date ranges, see [Channel Summaries](features/channel_summaries.md).
+
 ## Search with AI
 
 You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. Semantic AI search requires a license (see [license requirements](admin_guide.md#license-requirements)), and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
@@ -109,3 +112,24 @@ To summarize a Mattermost call recording:
 The meeting summary is generated and shared as a direct message with the person who requested the meeting summary.
 
 Both call recordings and recorded meeting summarization require a license. See [license requirements](admin_guide.md#license-requirements) for details. Contact your system admin if these features aren't available for your Mattermost instance.
+
+
+## Summarize Zoom meetings in Mattermost
+
+The Zoom plugin must be [enabled and configured](https://docs.mattermost.com/integrate/zoom.html) by a Mattermost system admin and Zoom cloud recordings and transcripts must be enabled before you can summarize Zoom meetings.
+
+If the Zoom plugin is enabled and configured, subscribe a Mattermost channel to a Zoom meeting (`/zoom subscription add [meeting ID]`) and record the meeting. Once the recording and transcription are available, they are automatically shared back to the channel.
+
+Use Mattermost to turn Zoom meeting recordings into actionable AI-generated summaries with any model of your choosing, including your own. By summarizing your Zoom meeting recordings in Mattermost, you can easily share the insights with your team and the broader organization, enhancing communication and productivity without sacrificing data privacy and control.
+
+To summarize a Zoom meeting in Mattermost:
+
+1. Subscribe a Mattermost channel to a recurring Zoom meeting with `/zoom subscription add [meeting ID]` or start a meeting using the Zoom button in the Mattermost right-hand sidebar (RHS).
+2. Record the Zoom meeting.
+3. Once the meeting ends and the transcript file is posted to Mattermost, select the **Create meeting summary** option located directly above the file.
+
+![Select the Create meeting summary option to summarize your Zoom meeting in Mattermost.](img/create-meeting-summary-zoom.png)
+
+4. The meeting summary is generated and shared as a direct message with the person who requested the meeting summary.
+
+![Easily share the updates from your Zoom meetings with your team and broader organization by turning recordings into detailed summaries at the click of a button.](img/copilot-Zoom-Meeting-Summary.png)
