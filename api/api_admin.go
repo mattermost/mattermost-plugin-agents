@@ -214,12 +214,12 @@ type MCPToolInfo struct {
 
 // MCPServerInfo represents a server and its tools for API response
 type MCPServerInfo struct {
-	Name        string        `json:"name"`
-	URL         string        `json:"url"`
-	Tools       []MCPToolInfo `json:"tools"`
-	NeethsOAuth bool          `json:"needsOAuth"`
-	OAuthURL    string        `json:"oauthURL,omitempty"` // URL to redirect for OAuth if needed
-	Error       *string       `json:"error"`
+	Name       string        `json:"name"`
+	URL        string        `json:"url"`
+	Tools      []MCPToolInfo `json:"tools"`
+	NeedsOAuth bool          `json:"needsOAuth"`
+	OAuthURL   string        `json:"oauthURL,omitempty"` // URL to redirect for OAuth if needed
+	Error      *string       `json:"error"`
 }
 
 // MCPToolsResponse represents the response structure for MCP tools endpoint
@@ -291,7 +291,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		if err != nil {
 			var oauthErr *mcp.OAuthNeededError
 			if errors.As(err, &oauthErr) {
-				serverInfo.NeethsOAuth = true
+				serverInfo.NeedsOAuth = true
 				serverInfo.OAuthURL = oauthErr.AuthURL()
 			} else {
 				errMsg := err.Error()

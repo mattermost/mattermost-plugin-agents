@@ -73,6 +73,7 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 		}
 
 		servers = append(servers, buildUserMCPServerInfo(
+			a,
 			userID,
 			oauthManager,
 			serverConfig,
@@ -95,6 +96,7 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 		}
 
 		servers = append(servers, buildUserMCPServerInfo(
+			a,
 			userID,
 			oauthManager,
 			embeddedConfig,
@@ -107,6 +109,7 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 }
 
 func buildUserMCPServerInfo(
+	api *API,
 	userID string,
 	oauthManager *mcp.OAuthManager,
 	serverConfig *mcp.ServerConfig,
@@ -132,18 +135,31 @@ func buildUserMCPServerInfo(
 
 	hasStoredToken := false
 	if oauthManager != nil {
-		hasStoredToken, _ = oauthManager.HasStoredToken(userID, serverConfig.Name)
+		var err error
+		hasStoredToken, err = oauthManager.HasStoredToken(userID, serverConfig.Name)
+		if err != nil {
+			hasStoredToken = false
+			if api != nil {
+				api.pluginAPI.Log.Debug("Failed to check MCP OAuth token presence", "userID", userID, "serverName", serverConfig.Name, "serverOrigin", serverConfig.BaseURL, "error", err)
+			}
+		}
 	}
+
+	authenticated := isUserMCPServerAuthenticated(userID, oauthManager, serverConfig, len(originTools) > 0, hasAuthError)
+	staticOAuthConfigured := serverConfig.ClientID != ""
+	needsOAuth := hasAuthError || hasStoredToken || (!authenticated && staticOAuthConfigured)
 
 	info := UserMCPServerInfo{
 		Name:          serverConfig.Name,
 		ServerOrigin:  serverConfig.BaseURL,
-		Authenticated: isUserMCPServerAuthenticated(userID, oauthManager, serverConfig, len(originTools) > 0, hasAuthError),
-		NeedsOAuth:    hasAuthError || hasStoredToken,
+		Authenticated: authenticated,
+		NeedsOAuth:    needsOAuth,
 		Tools:         toolInfos,
 	}
 	if hasAuthError && !info.Authenticated {
 		info.AuthURL = authError.AuthURL
+	} else if !info.Authenticated && oauthManager != nil && staticOAuthConfigured {
+		info.AuthURL = oauthManager.StartURL(serverConfig.Name)
 	}
 	return info
 }

@@ -94,6 +94,54 @@ func TestHandleGetUserMCPToolsIncludesZeroToolConfiguredServers(t *testing.T) {
 	require.False(t, response.Servers[1].NeedsOAuth)
 }
 
+func TestHandleGetUserMCPToolsStaticOAuthCredentialsNeedOAuthWhenUnauthenticated(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := mcp.ServerConfig{
+		Name:         "static-oauth-server",
+		Enabled:      true,
+		BaseURL:      "https://static-oauth.example.com",
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+	}
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{server},
+	}
+
+	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*oauth2.Token")).
+		Run(func(args mock.Arguments) {
+			token := args.Get(1).(*oauth2.Token)
+			*token = oauth2.Token{}
+		}).
+		Return(nil)
+
+	oauthManager := mcp.NewOAuthManager(mmClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", &http.Client{}, func(serverID string) (mcp.ServerConfig, bool) {
+		if serverID == server.Name {
+			return server, true
+		}
+		return mcp.ServerConfig{}, false
+	})
+
+	e.api.mcpClientManager = &mockMCPClientManager{
+		oauthManager: oauthManager,
+	}
+
+	response := getUserMCPToolsResponse(t, e.api)
+
+	require.Len(t, response.Servers, 1)
+	require.Equal(t, server.Name, response.Servers[0].Name)
+	require.False(t, response.Servers[0].Authenticated)
+	require.True(t, response.Servers[0].NeedsOAuth)
+	require.Equal(t, "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/static-oauth-server/start", response.Servers[0].AuthURL)
+	require.Empty(t, response.Servers[0].Tools)
+}
+
 func TestHandleGetUserMCPToolsStoredTokenMarksZeroToolServerAuthenticated(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -258,7 +306,7 @@ func TestHandleDeleteUserMCPOAuth(t *testing.T) {
 	e.api.ServeHTTP(nil, recorder, request)
 
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
-	require.Equal(t, []string{"TestServer"}, mcpMock.disconnectCalls)
+	require.Equal(t, []mcpDisconnectCall{{userID: testUserID, serverName: "TestServer"}}, mcpMock.disconnectCalls)
 }
 
 func TestHandleDeleteUserMCPOAuthMissingServerName(t *testing.T) {
