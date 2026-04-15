@@ -366,19 +366,12 @@ When users report repeated tool failures, use **LLM Trace** and debug logging to
 
 Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**.
 
-### Built-in tool integrations
+### Mattermost search and user lookup
 
-#### Server Search
+Mattermost post search and user lookup are provided through the Mattermost MCP Server tools `search_posts` and `search_users`, not separate built-in integrations. To make these tools available to agents, enable the embedded Mattermost MCP server under **System Console > Plugins > Agents > MCP Servers** or connect another MCP server that exposes equivalent tools. Without an enabled embedded or remote MCP server, agents do not have Mattermost post search or user lookup tools.
 
-- **Function**: Semantic search across Mattermost content.
-- **Requirements**: Embedding search must be configured and enabled.
-- **Security**: Respects user permissions - users only see content they have access to.
-
-#### User Lookup
-
-- **Function**: Look up Mattermost user information by username
-- **Data Available**: Username, full name, email, nickname, position, locale, timezone, last activity, status
-- **Permissions**: Requires `VIEW_MEMBERS` permission
+- **search_posts**: Searches Mattermost content with optional team and channel filters. When embedding search is active, the tool combines semantic and keyword search; otherwise it uses keyword search only.
+- **search_users**: Searches for users by username, email, first name, or last name and returns matching user details.
 
 **Security Note**: Tool availability and approval behavior depend on your system configuration. Tools can be configured to require explicit user approval or to run automatically under the selected tool policy.
 
