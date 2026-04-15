@@ -145,7 +145,7 @@ func buildUserMCPServerInfo(
 		}
 	}
 
-	authenticated := isUserMCPServerAuthenticated(userID, oauthManager, serverConfig, len(originTools) > 0, hasAuthError)
+	authenticated := isUserMCPServerAuthenticated(serverConfig, len(originTools) > 0, hasAuthError, hasStoredToken)
 	staticOAuthConfigured := serverConfig.ClientID != ""
 	needsOAuth := hasAuthError || hasStoredToken || (!authenticated && staticOAuthConfigured)
 
@@ -165,11 +165,10 @@ func buildUserMCPServerInfo(
 }
 
 func isUserMCPServerAuthenticated(
-	userID string,
-	oauthManager *mcp.OAuthManager,
 	serverConfig *mcp.ServerConfig,
 	hasDiscoveredTools bool,
 	hasAuthError bool,
+	hasStoredToken bool,
 ) bool {
 	if serverConfig.BaseURL == mcp.EmbeddedClientKey {
 		return true
@@ -183,12 +182,7 @@ func isUserMCPServerAuthenticated(
 		return false
 	}
 
-	if oauthManager == nil {
-		return false
-	}
-
-	hasToken, err := oauthManager.HasStoredToken(userID, serverConfig.Name)
-	return err == nil && hasToken
+	return hasStoredToken
 }
 
 // handleGetUserPreferences returns the user's MCP tool provider preferences.

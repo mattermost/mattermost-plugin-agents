@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -290,16 +291,19 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	// Check for OAuth error from Streamable HTTP attempt
 	var mcpAuthErr *mcpUnauthorized
 	if errors.As(errStreamable, &mcpAuthErr) {
+		md := mcpAuthErr.MetadataURL()
 		return nil, &OAuthNeededError{
-			authURL: c.oauthStartURL(),
+			authURL:     c.oauthNeededRedirectURL(md),
+			metadataURL: md,
 		}
 	}
 
 	// Temporary workaround: check for OAuth error by string matching since go-sdk does not preserve error chains with %w
 	// remove when go-sdk is updated to support oauth directly.
-	if _, ok := extractOAuthMetadataURL(errStreamable); ok {
+	if md, ok := extractOAuthMetadataURL(errStreamable); ok {
 		return nil, &OAuthNeededError{
-			authURL: c.oauthStartURL(),
+			authURL:     c.oauthNeededRedirectURL(md),
+			metadataURL: md,
 		}
 	}
 
@@ -315,16 +319,19 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 
 	// Check for OAuth error from SSE attempt
 	if errors.As(errSSE, &mcpAuthErr) {
+		md := mcpAuthErr.MetadataURL()
 		return nil, &OAuthNeededError{
-			authURL: c.oauthStartURL(),
+			authURL:     c.oauthNeededRedirectURL(md),
+			metadataURL: md,
 		}
 	}
 
 	// Temporary workaround: check for OAuth error by string matching since go-sdk does not preserve error chains with %w
 	// remove when go-sdk is updated to support oauth directly.
-	if _, ok := extractOAuthMetadataURL(errSSE); ok {
+	if md, ok := extractOAuthMetadataURL(errSSE); ok {
 		return nil, &OAuthNeededError{
-			authURL: c.oauthStartURL(),
+			authURL:     c.oauthNeededRedirectURL(md),
+			metadataURL: md,
 		}
 	}
 
@@ -338,6 +345,24 @@ func (c *Client) oauthStartURL() string {
 	}
 
 	return c.oauthManager.StartURL(c.config.Name)
+}
+
+// oauthNeededRedirectURL returns the plugin MCP OAuth start URL, optionally
+// appending resource_metadata so InitiateOAuthFlow can use the same discovery
+// path as the failed MCP handshake (RFC 9728).
+func (c *Client) oauthNeededRedirectURL(metadataURL string) string {
+	base := c.oauthStartURL()
+	if metadataURL == "" || base == "" {
+		return base
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	q := u.Query()
+	q.Set("resource_metadata", metadataURL)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // Close closes the connection to the MCP server

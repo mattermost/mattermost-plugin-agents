@@ -36,7 +36,16 @@ func (a *API) handleOAuthStart(c *gin.Context) {
 		return
 	}
 
-	authURL, err := oauthManager.InitiateOAuthFlowForServer(c.Request.Context(), userID, serverConfig)
+	metadataURL := c.Query("resource_metadata")
+	if metadataURL != "" {
+		if err := mcp.ValidateResourceMetadataURL(metadataURL); err != nil {
+			a.pluginAPI.Log.Debug("Rejected MCP OAuth start resource_metadata query", "serverName", serverConfig.Name, "error", err)
+			a.renderOAuthErrorPage(c, http.StatusBadRequest, "Authorization Failed", "Invalid resource metadata URL.")
+			return
+		}
+	}
+
+	authURL, err := oauthManager.InitiateOAuthFlowForServerWithMetadata(c.Request.Context(), userID, serverConfig, metadataURL)
 	if err != nil {
 		a.pluginAPI.Log.Error("Failed to start OAuth flow", "serverName", serverConfig.Name, "error", err)
 		a.renderOAuthErrorPage(c, http.StatusInternalServerError, "Authorization Failed", "Unable to start the MCP authorization flow.")

@@ -23,7 +23,8 @@ const (
 )
 
 type OAuthNeededError struct {
-	authURL string
+	authURL     string
+	metadataURL string
 }
 
 func (e *OAuthNeededError) Error() string {
@@ -35,6 +36,13 @@ func (e *OAuthNeededError) Error() string {
 func (e *OAuthNeededError) AuthURL() string {
 	return e.authURL
 }
+
+// MetadataURL returns the RFC 9728 resource_metadata URL from the upstream
+// 401 challenge when known (may be empty).
+func (e *OAuthNeededError) MetadataURL() string {
+	return e.metadataURL
+}
+
 func (e *OAuthNeededError) Unwrap() error {
 	return nil
 }
@@ -191,7 +199,13 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 }
 
 func (m *OAuthManager) InitiateOAuthFlowForServer(ctx context.Context, userID string, serverConfig ServerConfig) (string, error) {
-	return m.InitiateOAuthFlow(ctx, userID, serverConfig.Name, serverConfig.BaseURL, "", staticOAuthCreds(serverConfig))
+	return m.InitiateOAuthFlowForServerWithMetadata(ctx, userID, serverConfig, "")
+}
+
+// InitiateOAuthFlowForServerWithMetadata starts OAuth like InitiateOAuthFlowForServer but passes
+// resource_metadata from the upstream 401 when present (RFC 9728).
+func (m *OAuthManager) InitiateOAuthFlowForServerWithMetadata(ctx context.Context, userID string, serverConfig ServerConfig, metadataURL string) (string, error) {
+	return m.InitiateOAuthFlow(ctx, userID, serverConfig.Name, serverConfig.BaseURL, metadataURL, staticOAuthCreds(serverConfig))
 }
 
 func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (string, error) {

@@ -154,7 +154,7 @@ func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) 
 	m.clientsMu.RUnlock()
 	if exists {
 		m.activity[userID] = time.Now()
-		return client, client.connectionErrors
+		return client, client.popConnectionErrors()
 	}
 
 	return m.createAndStoreUserClient(userID)
@@ -207,7 +207,10 @@ func (m *ClientManager) DisconnectUserOAuth(userID, serverName string) error {
 	}
 
 	m.clientsMu.Lock()
-	delete(m.clients, userID)
+	if uc, ok := m.clients[userID]; ok {
+		uc.Close()
+		delete(m.clients, userID)
+	}
 	m.clientsMu.Unlock()
 
 	return nil

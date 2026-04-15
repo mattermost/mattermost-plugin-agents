@@ -118,6 +118,12 @@ func extractResourceMetadata(challenge string) string {
 	return challenge[valueStart+1 : valueStart+1+valueEnd]
 }
 
+// ValidateResourceMetadataURL validates a resource_metadata URL from an OAuth
+// challenge or from the MCP OAuth start redirect query string.
+func ValidateResourceMetadataURL(metadataURL string) error {
+	return validateMetadataURL(metadataURL)
+}
+
 // validateMetadataURL validates the extracted URL
 func validateMetadataURL(metadataURL string) error {
 	if metadataURL == "" {

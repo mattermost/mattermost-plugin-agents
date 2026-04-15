@@ -21,8 +21,22 @@ const MOCK_MCP_PATH = '/mock-mcp';
 export const MOCK_OAUTH_SERVER_NAME = 'Mock OAuth Server';
 export const MOCK_OAUTH_SERVER_URL = `${MOCK_MCP_BASE}${MOCK_MCP_PATH}`;
 
-export function buildMCPOAuthMocks(completionResponse?: string): any[] {
-    const mocks: any[] = [];
+/** Smocker mock rule shape used by OpenAIMockContainer.addMocks */
+export type SmockerMock = {
+    request: {
+        method: string;
+        path: string | { matcher: string; value: string };
+    };
+    context?: { times?: number };
+    response: {
+        status: number;
+        headers: Record<string, string>;
+        body: string;
+    };
+};
+
+export function buildMCPOAuthMocks(completionResponse?: string): SmockerMock[] {
+    const mocks: SmockerMock[] = [];
 
     if (completionResponse) {
         mocks.push({
