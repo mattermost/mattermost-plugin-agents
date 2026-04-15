@@ -31,7 +31,16 @@ import (
 type mockToolProvider struct{}
 
 func (m *mockToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
-	return []llm.Tool{}
+	return []llm.Tool{
+		{
+			Name:        "WebSearch",
+			Description: "Search the web for information.",
+			Schema:      llm.NewJSONSchemaFromStruct[struct{ Term string }](),
+			Resolver: func(context *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+				return "No results found.", nil
+			},
+		},
+	}
 }
 
 type mockMCPClientManager struct{}
