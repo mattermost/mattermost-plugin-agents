@@ -107,22 +107,22 @@ func (c *Conversations) SetConversationService(svc *conversation.Service) {
 	c.convService = svc
 }
 
-// DMRequestResult is the return value of ProcessDMRequest.
-type DMRequestResult struct {
+// DMConversationResult is the return value of CreateOrGetDMConversation.
+type DMConversationResult struct {
 	ConversationID string
 	IsNew          bool
-	Stream         *llm.TextStreamResult
 }
 
-// ProcessDMRequest handles a DM message using the conversation entity model.
-func (c *Conversations) ProcessDMRequest(
+// CreateOrGetDMConversation creates or retrieves a conversation for a DM.
+// This is separated from ProcessDMRequest so the conversation_id can be
+// set on the response post before it is created.
+func (c *Conversations) CreateOrGetDMConversation(
 	botID string,
-	lm llm.LanguageModel,
 	postingUser *model.User,
 	channel *model.Channel,
 	post *model.Post,
 	llmCtx *llm.Context,
-) (*DMRequestResult, error) {
+) (*DMConversationResult, error) {
 	if c.convService == nil {
 		return nil, fmt.Errorf("conversation service not configured")
 	}
@@ -145,8 +145,6 @@ func (c *Conversations) ProcessDMRequest(
 		systemPrompt = sp
 	}
 
-	var convID string
-	var isNew bool
 	postID := post.Id
 
 	if post.RootId == "" {
@@ -164,24 +162,43 @@ func (c *Conversations) ProcessDMRequest(
 		if err != nil {
 			return nil, fmt.Errorf("failed to create conversation: %w", err)
 		}
-		convID = result.ConversationID
-		isNew = true
-	} else {
-		result, err := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
-			UserID:       postingUser.Id,
-			BotID:        botID,
-			ChannelID:    channel.Id,
-			RootPostID:   post.RootId,
-			Operation:    "conversation",
-			SystemPrompt: systemPrompt,
-			UserMessage:  post.Message,
-			UserPostID:   &postID,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to get or create conversation: %w", err)
-		}
-		convID = result.Conversation.ID
-		isNew = result.IsNew
+		return &DMConversationResult{ConversationID: result.ConversationID, IsNew: true}, nil
+	}
+
+	result, err := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
+		UserID:       postingUser.Id,
+		BotID:        botID,
+		ChannelID:    channel.Id,
+		RootPostID:   post.RootId,
+		Operation:    "conversation",
+		SystemPrompt: systemPrompt,
+		UserMessage:  post.Message,
+		UserPostID:   &postID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get or create conversation: %w", err)
+	}
+	return &DMConversationResult{ConversationID: result.Conversation.ID, IsNew: result.IsNew}, nil
+}
+
+// DMStreamResult is the return value of ProcessDMRequest.
+type DMStreamResult struct {
+	Stream *llm.TextStreamResult
+}
+
+// ProcessDMRequest builds a completion request from the conversation and
+// runs the tool loop, returning the final stream. The conversation must
+// already exist (created via CreateOrGetDMConversation).
+func (c *Conversations) ProcessDMRequest(
+	convID string,
+	lm llm.LanguageModel,
+	llmCtx *llm.Context,
+) (*DMStreamResult, error) {
+	if c.convService == nil {
+		return nil, fmt.Errorf("conversation service not configured")
+	}
+	if llmCtx == nil {
+		llmCtx = &llm.Context{}
 	}
 
 	conv, err := c.convService.GetConversation(convID)
@@ -193,21 +210,8 @@ func (c *Conversations) ProcessDMRequest(
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
 	}
 
-	shouldExecute := func(tc llm.ToolCall) bool {
-		if c.toolPolicyChecker == nil {
-			return false
-		}
-		// LLM-returned tool calls may lack ServerOrigin; resolve from tool store.
-		origin := tc.ServerOrigin
-		if origin == "" && llmCtx.Tools != nil {
-			origin = llmCtx.Tools.GetServerOrigin(tc.Name)
-		}
-		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
-		return mcp.IsToolPolicyAutoRun(policy) && enabled
-	}
-
 	runner := toolrunner.New(lm)
-	runResult, err := runner.Run(*completionReq, shouldExecute)
+	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmCtx))
 	if err != nil {
 		return nil, fmt.Errorf("tool runner failed: %w", err)
 	}
@@ -216,11 +220,23 @@ func (c *Conversations) ProcessDMRequest(
 			return nil, fmt.Errorf("failed to write tool turns: %w", writeErr)
 		}
 	}
-	return &DMRequestResult{
-		ConversationID: convID,
-		IsNew:          isNew,
-		Stream:         runResult.Stream,
-	}, nil
+	return &DMStreamResult{Stream: runResult.Stream}, nil
+}
+
+// shouldAutoExecuteTool returns a callback that decides whether a tool call
+// should be auto-executed based on the tool policy.
+func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context) func(llm.ToolCall) bool {
+	return func(tc llm.ToolCall) bool {
+		if c.toolPolicyChecker == nil {
+			return false
+		}
+		origin := tc.ServerOrigin
+		if origin == "" && llmCtx.Tools != nil {
+			origin = llmCtx.Tools.GetServerOrigin(tc.Name)
+		}
+		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
+		return mcp.IsToolPolicyAutoRun(policy) && enabled
+	}
 }
 
 func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID string, context *llm.Context) error {

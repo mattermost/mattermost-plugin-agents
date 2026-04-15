@@ -133,11 +133,6 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 
 	// Write tool results as a tool_result turn.
 	shared := isDM
-	maxSeq, err := c.convService.GetMaxSequence(convID)
-	if err != nil {
-		return fmt.Errorf("failed to get max sequence: %w", err)
-	}
-
 	resultBlocks := make([]conversation.ContentBlock, 0, len(toolResults))
 	for _, tr := range toolResults {
 		status := conversation.StatusSuccess
@@ -161,10 +156,9 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		ConversationID: convID,
 		Role:           "tool_result",
 		Content:        resultContent,
-		Sequence:       maxSeq + 1,
 		CreatedAt:      model.GetMillis(),
 	}
-	if err := c.convService.CreateTurn(resultTurn); err != nil {
+	if err := c.convService.CreateTurnAutoSequence(resultTurn); err != nil {
 		return fmt.Errorf("failed to create tool result turn: %w", err)
 	}
 
@@ -208,13 +202,6 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	if conv.UserID != userID {
 		return errors.New("only the original requester can approve/reject tool results")
 	}
-
-	user, err := c.mmClient.GetUser(userID)
-	if err != nil {
-		return fmt.Errorf("unable to get user: %w", err)
-	}
-
-	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 
 	// Build a set of accepted tool IDs for quick lookup.
 	acceptedSet := make(map[string]bool, len(acceptedToolIDs))
@@ -261,8 +248,9 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		}
 	}
 
-	// Continue the LLM loop with the conversation context.
-	return c.streamToolFollowUp(bot, user, channel, post, conv, isDM)
+	// HandleToolResult only updates shared flags for visibility.
+	// The LLM follow-up already happened in HandleToolCall.
+	return nil
 }
 
 // streamToolFollowUp rebuilds the completion request from the conversation entity
@@ -314,18 +302,7 @@ func (c *Conversations) streamToolFollowUp(
 	}
 
 	runner := toolrunner.New(bot.LLM())
-	runResult, err := runner.Run(*completionReq, func(tc llm.ToolCall) bool {
-		if c.toolPolicyChecker == nil {
-			return false
-		}
-		// LLM-returned tool calls may lack ServerOrigin; resolve from tool store.
-		origin := tc.ServerOrigin
-		if origin == "" && llmContext.Tools != nil {
-			origin = llmContext.Tools.GetServerOrigin(tc.Name)
-		}
-		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
-		return mcp.IsToolPolicyAutoRun(policy) && enabled
-	}, opts...)
+	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext), opts...)
 	if err != nil {
 		return fmt.Errorf("tool runner failed on tool follow-up: %w", err)
 	}

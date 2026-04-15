@@ -126,6 +126,46 @@ func (s *Store) GetTurnByPostID(postID string) (*Turn, error) {
 	return &turn, nil
 }
 
+// maxAutoSequenceRetries is the number of times CreateTurnAutoSequence will
+// retry on a unique-constraint violation for (ConversationID, Sequence).
+const maxAutoSequenceRetries = 3
+
+// CreateTurnAutoSequence inserts a new turn, atomically computing the next
+// Sequence value via a subquery. On success the assigned sequence is written
+// back into turn.Sequence.
+//
+// Under PostgreSQL READ COMMITTED, two concurrent inserts for the same
+// conversation can read the same MAX(Sequence) before either commits.
+// The UNIQUE index on (ConversationID, Sequence) catches this, and the
+// method retries (up to 3 times) so the second writer succeeds.
+func (s *Store) CreateTurnAutoSequence(turn *Turn) error {
+	const query = `
+INSERT INTO LLM_Turns (ID, ConversationID, PostID, Role, Content, TokensIn, TokensOut, Sequence, CreatedAt)
+VALUES ($1, $2, $3, $4, $5, $6, $7,
+        COALESCE((SELECT MAX(Sequence) FROM LLM_Turns WHERE ConversationID = $2), 0) + 1,
+        $8)
+RETURNING Sequence`
+
+	var lastErr error
+	for attempt := 0; attempt < maxAutoSequenceRetries; attempt++ {
+		var seq int
+		lastErr = s.db.QueryRow(query,
+			turn.ID, turn.ConversationID, turn.PostID, turn.Role,
+			turn.Content, turn.TokensIn, turn.TokensOut, turn.CreatedAt,
+		).Scan(&seq)
+		if lastErr == nil {
+			turn.Sequence = seq
+			return nil
+		}
+		if !isUniqueViolation(lastErr) {
+			return fmt.Errorf("failed to create turn: %w", lastErr)
+		}
+		// Unique violation on (ConversationID, Sequence): retry so the
+		// subquery picks up the newly committed row.
+	}
+	return fmt.Errorf("failed to create turn after %d retries: %w", maxAutoSequenceRetries, lastErr)
+}
+
 // UpdateTurnTokens updates the TokensIn and TokensOut fields on a turn.
 func (s *Store) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
 	query, args, err := s.builder.

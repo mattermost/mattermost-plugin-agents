@@ -111,7 +111,7 @@ func (s *Store) GetConversationByThreadAndBot(rootPostID, botID string) (*Conver
 	var conv Conversation
 	if err := s.db.Get(&conv, query, args...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
+			return nil, ErrConversationNotFound
 		}
 		return nil, fmt.Errorf("failed to get conversation by thread and bot: %w", err)
 	}
@@ -204,12 +204,14 @@ func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int
 			"c.ChannelID",
 			"c.RootPostID",
 			"c.Title",
-			"(SELECT COUNT(*) FROM LLM_Turns WHERE ConversationID = c.ID) AS TurnCount",
+			"COUNT(t.ID) AS TurnCount",
 			"c.UpdatedAt",
 		).
 		From("LLM_Conversations c").
+		LeftJoin("LLM_Turns t ON t.ConversationID = c.ID").
 		Where(sq.Eq{"c.UserID": userID}).
 		Where(sq.Eq{"c.DeleteAt": 0}).
+		GroupBy("c.ID", "c.UserID", "c.BotID", "c.ChannelID", "c.RootPostID", "c.Title", "c.UpdatedAt").
 		OrderBy("c.UpdatedAt DESC").
 		Limit(uint64(limit)).   // #nosec G115 -- guarded above
 		Offset(uint64(offset)). // #nosec G115 -- guarded above

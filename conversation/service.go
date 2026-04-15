@@ -25,6 +25,7 @@ type Store interface {
 	UpdateConversationTitle(id, title string) error
 	UpdateConversationRootPostID(id string, rootPostID string) error
 	CreateTurn(turn *store.Turn) error
+	CreateTurnAutoSequence(turn *store.Turn) error
 	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
 	UpdateTurnContent(id string, content json.RawMessage) error
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
@@ -142,14 +143,14 @@ func (s *Service) UpdateTurnContent(turnID string, content json.RawMessage) erro
 	return s.store.UpdateTurnContent(turnID, content)
 }
 
-// GetMaxSequence returns the highest sequence number for turns in a conversation.
-func (s *Service) GetMaxSequence(conversationID string) (int, error) {
-	return s.store.GetMaxSequenceForConversation(conversationID)
-}
-
-// CreateTurn persists a new turn in the store.
+// CreateTurn persists a new turn in the store with an explicit sequence.
 func (s *Service) CreateTurn(turn *store.Turn) error {
 	return s.store.CreateTurn(turn)
+}
+
+// CreateTurnAutoSequence persists a new turn, atomically assigning the next sequence number.
+func (s *Service) CreateTurnAutoSequence(turn *store.Turn) error {
+	return s.store.CreateTurnAutoSequence(turn)
 }
 
 // UpdateConversationRootPostID sets the RootPostID on a conversation.
@@ -186,7 +187,7 @@ type GetOrCreateResult struct {
 // or creates a new one if none exists.
 func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreateResult, error) {
 	existing, err := s.store.GetConversationByThreadAndBot(params.RootPostID, params.BotID)
-	if err != nil {
+	if err != nil && !errors.Is(err, store.ErrConversationNotFound) {
 		return nil, fmt.Errorf("failed to look up conversation: %w", err)
 	}
 
@@ -219,7 +220,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	if errors.Is(err, store.ErrConversationConflict) {
 		// Another request created the conversation concurrently. Look it up and append the user turn.
 		raceConv, lookupErr := s.store.GetConversationByThreadAndBot(params.RootPostID, params.BotID)
-		if lookupErr != nil {
+		if lookupErr != nil && !errors.Is(lookupErr, store.ErrConversationNotFound) {
 			return nil, fmt.Errorf("failed to look up conversation after conflict: %w", lookupErr)
 		}
 		if raceConv == nil {
@@ -253,11 +254,6 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 
 // appendUserTurn creates a new user turn at the next available sequence number.
 func (s *Service) appendUserTurn(conversationID, message string, postID *string) (string, error) {
-	maxSeq, err := s.store.GetMaxSequenceForConversation(conversationID)
-	if err != nil {
-		return "", fmt.Errorf("failed to get max sequence: %w", err)
-	}
-
 	content, err := marshalBlocks(textBlocks(message))
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal user message: %w", err)
@@ -270,11 +266,10 @@ func (s *Service) appendUserTurn(conversationID, message string, postID *string)
 		PostID:         postID,
 		Role:           "user",
 		Content:        content,
-		Sequence:       maxSeq + 1,
 		CreatedAt:      model.GetMillis(),
 	}
 
-	if err := s.store.CreateTurn(turn); err != nil {
+	if err := s.store.CreateTurnAutoSequence(turn); err != nil {
 		return "", fmt.Errorf("failed to create user turn: %w", err)
 	}
 
@@ -339,11 +334,6 @@ func (s *Service) CreatePlaceholderAssistantTurn(
 	conversationID string,
 	postID *string,
 ) (string, error) {
-	maxSeq, err := s.store.GetMaxSequenceForConversation(conversationID)
-	if err != nil {
-		return "", fmt.Errorf("failed to get max sequence: %w", err)
-	}
-
 	turnID := model.NewId()
 	turn := &store.Turn{
 		ID:             turnID,
@@ -351,11 +341,10 @@ func (s *Service) CreatePlaceholderAssistantTurn(
 		PostID:         postID,
 		Role:           "assistant",
 		Content:        json.RawMessage("[]"),
-		Sequence:       maxSeq + 1,
 		CreatedAt:      model.GetMillis(),
 	}
 
-	if err := s.store.CreateTurn(turn); err != nil {
+	if err := s.store.CreateTurnAutoSequence(turn); err != nil {
 		return "", fmt.Errorf("failed to create placeholder turn: %w", err)
 	}
 
@@ -394,24 +383,17 @@ func (s *Service) WriteToolTurns(
 	toolTurns []toolrunner.ToolTurn,
 	shared bool,
 ) error {
-	maxSeq, err := s.store.GetMaxSequenceForConversation(conversationID)
-	if err != nil {
-		return fmt.Errorf("failed to get max sequence: %w", err)
-	}
-	nextSeq := maxSeq + 1
-
 	for _, tt := range toolTurns {
-		if writeErr := s.writeToolRound(conversationID, tt, shared, nextSeq); writeErr != nil {
+		if writeErr := s.writeToolRound(conversationID, tt, shared); writeErr != nil {
 			return writeErr
 		}
-		nextSeq += 2 // assistant + tool_result
 	}
 
 	return nil
 }
 
 // writeToolRound writes one assistant + tool_result turn pair for a single tool round.
-func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, shared bool, seq int) error {
+func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, shared bool) error {
 	assistantBlocks := toolUseBlocks(
 		tt.AssistantMessage,
 		tt.AssistantReasoning,
@@ -431,10 +413,9 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		Content:        assistantContent,
 		TokensIn:       tt.TokensIn,
 		TokensOut:      tt.TokensOut,
-		Sequence:       seq,
 		CreatedAt:      model.GetMillis(),
 	}
-	err = s.store.CreateTurn(assistantTurn)
+	err = s.store.CreateTurnAutoSequence(assistantTurn)
 	if err != nil {
 		return fmt.Errorf("failed to create assistant tool turn: %w", err)
 	}
@@ -450,10 +431,9 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		ConversationID: conversationID,
 		Role:           "tool_result",
 		Content:        resultContent,
-		Sequence:       seq + 1,
 		CreatedAt:      model.GetMillis(),
 	}
-	err = s.store.CreateTurn(resultTurn)
+	err = s.store.CreateTurnAutoSequence(resultTurn)
 	if err != nil {
 		return fmt.Errorf("failed to create tool result turn: %w", err)
 	}

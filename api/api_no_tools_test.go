@@ -106,7 +106,7 @@ func (m *mockConvServiceStore) GetConversation(id string) (*store.Conversation, 
 }
 
 func (m *mockConvServiceStore) GetConversationByThreadAndBot(_, _ string) (*store.Conversation, error) {
-	return nil, nil
+	return nil, store.ErrConversationNotFound
 }
 
 func (m *mockConvServiceStore) UpdateConversationTitle(id, title string) error {
@@ -126,6 +126,11 @@ func (m *mockConvServiceStore) UpdateConversationRootPostID(id string, rootPostI
 func (m *mockConvServiceStore) CreateTurn(turn *store.Turn) error {
 	m.turns[turn.ConversationID] = append(m.turns[turn.ConversationID], *turn)
 	return nil
+}
+
+func (m *mockConvServiceStore) CreateTurnAutoSequence(turn *store.Turn) error {
+	turn.Sequence = len(m.turns[turn.ConversationID]) + 1
+	return m.CreateTurn(turn)
 }
 
 func (m *mockConvServiceStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {

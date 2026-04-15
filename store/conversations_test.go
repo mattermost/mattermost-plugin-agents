@@ -247,11 +247,11 @@ func TestGetConversationByThreadAndBot(t *testing.T) {
 			},
 		},
 		{
-			name:  "returns nil for nonexistent pair",
+			name:  "returns ErrConversationNotFound for nonexistent pair",
 			setup: func(t *testing.T, s *Store) {},
 			validate: func(t *testing.T, s *Store) {
 				got, err := s.GetConversationByThreadAndBot("nonexistent", "nonexistent")
-				assert.NoError(t, err)
+				assert.ErrorIs(t, err, ErrConversationNotFound)
 				assert.Nil(t, got)
 			},
 		},
@@ -270,7 +270,7 @@ func TestGetConversationByThreadAndBot(t *testing.T) {
 				require.NoError(t, err)
 
 				got, err := s.GetConversationByThreadAndBot("post1", "bot1")
-				assert.NoError(t, err)
+				assert.ErrorIs(t, err, ErrConversationNotFound)
 				assert.Nil(t, got)
 			},
 		},

@@ -218,13 +218,9 @@ func (c *Conversations) handleMentionViaConversation(
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
+	responsePost.AddProp(streaming.ConversationIDProp, convResult.Conversation.ID)
 	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
-	}
-
-	responsePost.AddProp(streaming.ConversationIDProp, convResult.Conversation.ID)
-	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
-		c.mmClient.LogError("Failed to set conversation_id prop", "error", updateErr)
 	}
 
 	threadData, threadErr := mmapi.GetThreadData(c.mmClient, responseRootID)
@@ -248,17 +244,12 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 
 	runner := toolrunner.New(bot.LLM())
+	autoExec := c.shouldAutoExecuteTool(llmContext)
 	result, runErr := runner.Run(*completionRequest, func(tc llm.ToolCall) bool {
-		if !allowToolsInChannel || c.toolPolicyChecker == nil {
+		if !allowToolsInChannel {
 			return false
 		}
-		// LLM-returned tool calls may lack ServerOrigin; resolve from tool store.
-		origin := tc.ServerOrigin
-		if origin == "" && llmContext.Tools != nil {
-			origin = llmContext.Tools.GetServerOrigin(tc.Name)
-		}
-		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
-		return mcp.IsToolPolicyAutoRun(policy) && enabled
+		return autoExec(tc)
 	}, opts...)
 	if runErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)
@@ -276,16 +267,18 @@ func (c *Conversations) handleMentionViaConversation(
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
 
-	go func() {
-		if genErr := c.convService.GenerateTitle(
-			convResult.Conversation.ID,
-			bot.LLM(),
-			post.Message,
-			llmContext,
-		); genErr != nil {
-			c.mmClient.LogError("Failed to generate title", "error", genErr.Error())
-		}
-	}()
+	if convResult.IsNew {
+		go func() {
+			if genErr := c.convService.GenerateTitle(
+				convResult.Conversation.ID,
+				bot.LLM(),
+				post.Message,
+				llmContext,
+			); genErr != nil {
+				c.mmClient.LogError("Failed to generate title", "error", genErr.Error())
+			}
+		}()
+	}
 
 	return nil
 }
@@ -345,33 +338,35 @@ func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Ch
 		responseRootID = post.RootId
 	}
 
+	// Create/get conversation before the placeholder so conversation_id is set on the initial post.
+	convResult, err := c.CreateOrGetDMConversation(bot.GetMMBot().UserId, postingUser, channel, post, llmContext)
+	if err != nil {
+		return fmt.Errorf("unable to create DM conversation: %w", err)
+	}
+
 	responsePost := &model.Post{
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if err := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); err != nil {
-		return fmt.Errorf("unable to create response placeholder: %w", err)
+	responsePost.AddProp(streaming.ConversationIDProp, convResult.ConversationID)
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
+		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 
-	dmResult, err := c.ProcessDMRequest(bot.GetMMBot().UserId, bot.LLM(), postingUser, channel, post, llmContext)
+	dmStream, err := c.ProcessDMRequest(convResult.ConversationID, bot.LLM(), llmContext)
 	if err != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("unable to process DM request: %w", err)
 	}
 
-	responsePost.AddProp(streaming.ConversationIDProp, dmResult.ConversationID)
-	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
-		c.mmClient.LogError("Failed to set conversation_id prop", "error", updateErr)
-	}
-
-	if streamErr := c.streamResponseToExistingPost(dmResult.Stream, responsePost, postingUser, channel); streamErr != nil {
+	if streamErr := c.streamResponseToExistingPost(dmStream.Stream, responsePost, postingUser, channel); streamErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
 
-	if dmResult.IsNew {
+	if convResult.IsNew {
 		go func() {
-			if titleErr := c.convService.GenerateTitle(dmResult.ConversationID, bot.LLM(), post.Message, llmContext); titleErr != nil {
+			if titleErr := c.convService.GenerateTitle(convResult.ConversationID, bot.LLM(), post.Message, llmContext); titleErr != nil {
 				c.mmClient.LogError("Failed to generate title", "error", titleErr.Error())
 			}
 		}()

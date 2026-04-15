@@ -53,7 +53,7 @@ func (s *fakeConversationStore) GetConversationByThreadAndBot(rootPostID, botID 
 			return c, nil
 		}
 	}
-	return nil, nil
+	return nil, store.ErrConversationNotFound
 }
 
 func (s *fakeConversationStore) UpdateConversationTitle(id, title string) error {
@@ -69,6 +69,12 @@ func (s *fakeConversationStore) UpdateConversationTitle(id, title string) error 
 func (s *fakeConversationStore) CreateTurn(turn *store.Turn) error {
 	s.turns = append(s.turns, turn)
 	return nil
+}
+
+func (s *fakeConversationStore) CreateTurnAutoSequence(turn *store.Turn) error {
+	maxSeq, _ := s.GetMaxSequenceForConversation(turn.ConversationID)
+	turn.Sequence = maxSeq + 1
+	return s.CreateTurn(turn)
 }
 
 func (s *fakeConversationStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {

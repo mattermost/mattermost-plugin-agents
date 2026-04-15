@@ -143,7 +143,7 @@ func (s *evalInMemoryStore) GetConversation(id string) (*store.Conversation, err
 }
 
 func (s *evalInMemoryStore) GetConversationByThreadAndBot(_, _ string) (*store.Conversation, error) {
-	return nil, nil
+	return nil, store.ErrConversationNotFound
 }
 
 func (s *evalInMemoryStore) UpdateConversationTitle(id, title string) error {
@@ -164,6 +164,12 @@ func (s *evalInMemoryStore) CreateTurn(turn *store.Turn) error {
 	s.turns[turn.ID] = &evalTurn{*turn}
 	s.turnsByConv[turn.ConversationID] = append(s.turnsByConv[turn.ConversationID], turn.ID)
 	return nil
+}
+
+func (s *evalInMemoryStore) CreateTurnAutoSequence(turn *store.Turn) error {
+	maxSeq, _ := s.GetMaxSequenceForConversation(turn.ConversationID)
+	turn.Sequence = maxSeq + 1
+	return s.CreateTurn(turn)
 }
 
 func (s *evalInMemoryStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {

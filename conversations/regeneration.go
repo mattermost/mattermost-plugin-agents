@@ -271,18 +271,7 @@ func (c *Conversations) regenerateViaConversation(
 	}
 
 	runner := toolrunner.New(bot.LLM())
-	runResult, runErr := runner.Run(*completionReq, func(tc llm.ToolCall) bool {
-		if c.toolPolicyChecker == nil {
-			return false
-		}
-		// LLM-returned tool calls may lack ServerOrigin; resolve from tool store.
-		origin := tc.ServerOrigin
-		if origin == "" && llmContext.Tools != nil {
-			origin = llmContext.Tools.GetServerOrigin(tc.Name)
-		}
-		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
-		return mcp.IsToolPolicyAutoRun(policy) && enabled
-	}, opts...)
+	runResult, runErr := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext), opts...)
 	if runErr != nil {
 		return nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
 	}

@@ -54,7 +54,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // Conversation entity data
     const conversationId: string | undefined = props.post.props?.conversation_id;
-    const {conversation} = useConversation(conversationId);
+    const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
     const turn = useTurnForPost(conversation, props.post.id);
 
     // Derive requester check from conversation entity
@@ -305,6 +305,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             data-testid='llm-bot-post'
         >
             {error && <div className='error'>{error}</div>}
+            {conversationError && !generating && (
+                <div className='error'>
+                    <FormattedMessage defaultMessage='Failed to load conversation data'/>
+                </div>
+            )}
             {isThreadSummaryPost && permalinkView &&
             <>
                 {permalinkView}
@@ -318,7 +323,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     onToggleCollapse={setIsReasoningCollapsed}
                 />
             )}
-            {precontent && (
+            {(precontent || (conversationLoading && !generating && !message)) && (
                 <MinimalReasoningContainer>
                     <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>
                     <span>

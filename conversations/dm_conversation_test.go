@@ -81,7 +81,7 @@ func (s *fakeConvStore) GetConversationByThreadAndBot(rootPostID, botID string) 
 			return &c, nil
 		}
 	}
-	return nil, nil
+	return nil, store.ErrConversationNotFound
 }
 
 func (s *fakeConvStore) UpdateConversationTitle(id, title string) error {
@@ -113,6 +113,12 @@ func (s *fakeConvStore) CreateTurn(turn *store.Turn) error {
 	s.turns[turn.ConversationID] = append(s.turns[turn.ConversationID], t)
 	s.allTurns[turn.ID] = &t
 	return nil
+}
+
+func (s *fakeConvStore) CreateTurnAutoSequence(turn *store.Turn) error {
+	maxSeq, _ := s.GetMaxSequenceForConversation(turn.ConversationID)
+	turn.Sequence = maxSeq + 1
+	return s.CreateTurn(turn)
 }
 
 func (s *fakeConvStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {
@@ -401,29 +407,36 @@ func TestDMNewConversation_CreatesConversationAndTurns(t *testing.T) {
 		Message:   "Hello bot",
 	}
 
-	result, err := env.conversations.ProcessDMRequest(
+	convResult, err := env.conversations.CreateOrGetDMConversation(
 		env.botID,
-		env.fakeLLM,
 		env.user,
 		env.channel,
 		post,
 		nil, // llmContext
 	)
 	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotEmpty(t, result.ConversationID)
-	require.True(t, result.IsNew)
-	require.NotNil(t, result.Stream)
+	require.NotNil(t, convResult)
+	require.NotEmpty(t, convResult.ConversationID)
+	require.True(t, convResult.IsNew)
+
+	streamResult, err := env.conversations.ProcessDMRequest(
+		convResult.ConversationID,
+		env.fakeLLM,
+		nil, // llmContext
+	)
+	require.NoError(t, err)
+	require.NotNil(t, streamResult)
+	require.NotNil(t, streamResult.Stream)
 
 	// Verify conversation was created
-	conv := env.convStore.getConv(result.ConversationID)
+	conv := env.convStore.getConv(convResult.ConversationID)
 	require.NotNil(t, conv)
 	assert.Equal(t, env.userID, conv.UserID)
 	assert.Equal(t, env.botID, conv.BotID)
 	assert.Equal(t, "conversation", conv.Operation)
 
 	// Verify user turn exists
-	turns := env.convStore.turnsFor(result.ConversationID)
+	turns := env.convStore.turnsFor(convResult.ConversationID)
 	require.GreaterOrEqual(t, len(turns), 1)
 	assert.Equal(t, "user", turns[0].Role)
 	assert.Equal(t, 1, turns[0].Sequence)
@@ -456,23 +469,30 @@ func TestDMContinueConversation_ReadsTurnsNotPosts(t *testing.T) {
 		Message:   "Follow up question",
 	}
 
-	result, err := env.conversations.ProcessDMRequest(
+	convResult, err := env.conversations.CreateOrGetDMConversation(
 		env.botID,
-		env.fakeLLM,
 		env.user,
 		env.channel,
 		post,
 		nil,
 	)
 	require.NoError(t, err)
-	require.NotNil(t, result)
+	require.NotNil(t, convResult)
+
+	streamResult, err := env.conversations.ProcessDMRequest(
+		convResult.ConversationID,
+		env.fakeLLM,
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, streamResult)
 
 	// Should use existing conversation
-	assert.Equal(t, createResult.ConversationID, result.ConversationID)
-	assert.False(t, result.IsNew)
+	assert.Equal(t, createResult.ConversationID, convResult.ConversationID)
+	assert.False(t, convResult.IsNew)
 
 	// Verify the new user turn was appended
-	turns := env.convStore.turnsFor(result.ConversationID)
+	turns := env.convStore.turnsFor(convResult.ConversationID)
 	require.GreaterOrEqual(t, len(turns), 2)
 	lastUserTurn := turns[len(turns)-1]
 	assert.Equal(t, "user", lastUserTurn.Role)
@@ -528,20 +548,27 @@ func TestDMAutoRunTools_ToolRunnerExecutesAndWritesTurns(t *testing.T) {
 		Message:   "What is the weather?",
 	}
 
-	result, err := env.conversations.ProcessDMRequest(
+	convResult, err := env.conversations.CreateOrGetDMConversation(
 		env.botID,
-		env.fakeLLM,
 		env.user,
 		env.channel,
 		post,
 		llmCtx,
 	)
 	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotEmpty(t, result.ConversationID)
+	require.NotNil(t, convResult)
+	require.NotEmpty(t, convResult.ConversationID)
+
+	streamResult, err := env.conversations.ProcessDMRequest(
+		convResult.ConversationID,
+		env.fakeLLM,
+		llmCtx,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, streamResult)
 
 	// Verify tool turns were written
-	turns := env.convStore.turnsFor(result.ConversationID)
+	turns := env.convStore.turnsFor(convResult.ConversationID)
 
 	// Expect: user(1) + assistant-with-tool-use(2) + tool_result(3)
 	require.GreaterOrEqual(t, len(turns), 3)
@@ -594,21 +621,28 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 		Message:   "Do something dangerous",
 	}
 
-	result, err := env.conversations.ProcessDMRequest(
+	convResult, err := env.conversations.CreateOrGetDMConversation(
 		env.botID,
-		env.fakeLLM,
 		env.user,
 		env.channel,
 		post,
 		nil,
 	)
 	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotNil(t, result.Stream)
+	require.NotNil(t, convResult)
+
+	streamResult, err := env.conversations.ProcessDMRequest(
+		convResult.ConversationID,
+		env.fakeLLM,
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, streamResult)
+	require.NotNil(t, streamResult.Stream)
 
 	// Consume stream and check for tool call events
 	var foundToolCalls bool
-	for event := range result.Stream.Stream {
+	for event := range streamResult.Stream.Stream {
 		if event.Type == llm.EventTypeToolCalls {
 			foundToolCalls = true
 		}
@@ -616,7 +650,7 @@ func TestDMManualApprovalTools_ToolRunnerReturnsUnresolved(t *testing.T) {
 	assert.True(t, foundToolCalls, "stream should contain unresolved tool call events")
 
 	// No tool_result turns should exist
-	turns := env.convStore.turnsFor(result.ConversationID)
+	turns := env.convStore.turnsFor(convResult.ConversationID)
 	for _, turn := range turns {
 		assert.NotEqual(t, "tool_result", turn.Role,
 			"no tool_result turns should exist when tools weren't executed")
@@ -679,16 +713,15 @@ func TestDMConversationIDProp_ReturnedForResponsePost(t *testing.T) {
 				}
 			}
 
-			result, err := env.conversations.ProcessDMRequest(
+			convResult, err := env.conversations.CreateOrGetDMConversation(
 				env.botID,
-				env.fakeLLM,
 				env.user,
 				env.channel,
 				post,
 				nil,
 			)
 			require.NoError(t, err)
-			assert.NotEmpty(t, result.ConversationID,
+			assert.NotEmpty(t, convResult.ConversationID,
 				"conversation ID must be returned so caller can set it on the response post")
 		})
 	}
@@ -749,16 +782,15 @@ func TestDMTitleGeneration_IsNewFlagForCaller(t *testing.T) {
 			env := setupDMTestEnv(t, dmMakeTextStream("response"))
 			post := tc.setupFn(t, env)
 
-			result, err := env.conversations.ProcessDMRequest(
+			convResult, err := env.conversations.CreateOrGetDMConversation(
 				env.botID,
-				env.fakeLLM,
 				env.user,
 				env.channel,
 				post,
 				nil,
 			)
 			require.NoError(t, err)
-			assert.Equal(t, tc.expectNew, result.IsNew,
+			assert.Equal(t, tc.expectNew, convResult.IsNew,
 				"IsNew flag should indicate whether title generation is needed")
 		})
 	}
@@ -800,9 +832,8 @@ func TestDMToolSharedFlag_AlwaysTrue(t *testing.T) {
 		Message:   "Run tool_a",
 	}
 
-	result, err := env.conversations.ProcessDMRequest(
+	convResult, err := env.conversations.CreateOrGetDMConversation(
 		env.botID,
-		env.fakeLLM,
 		env.user,
 		env.channel,
 		post,
@@ -810,7 +841,15 @@ func TestDMToolSharedFlag_AlwaysTrue(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	turns := env.convStore.turnsFor(result.ConversationID)
+	streamResult, err := env.conversations.ProcessDMRequest(
+		convResult.ConversationID,
+		env.fakeLLM,
+		&llm.Context{Tools: toolStore},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, streamResult)
+
+	turns := env.convStore.turnsFor(convResult.ConversationID)
 	for _, turn := range turns {
 		var blocks []conversation.ContentBlock
 		if unmarshalErr := json.Unmarshal(turn.Content, &blocks); unmarshalErr != nil {
@@ -853,16 +892,22 @@ func TestDMCompletionRequest_BuiltFromTurns(t *testing.T) {
 		Message:   "And what is 3+3?",
 	}
 
-	result, err := env.conversations.ProcessDMRequest(
+	convResult, err := env.conversations.CreateOrGetDMConversation(
 		env.botID,
-		env.fakeLLM,
 		env.user,
 		env.channel,
 		post,
 		nil,
 	)
 	require.NoError(t, err)
-	assert.Equal(t, createResult.ConversationID, result.ConversationID)
+	assert.Equal(t, createResult.ConversationID, convResult.ConversationID)
+
+	_, err = env.conversations.ProcessDMRequest(
+		convResult.ConversationID,
+		env.fakeLLM,
+		nil,
+	)
+	require.NoError(t, err)
 
 	// Verify the CompletionRequest sent to the LLM
 	env.fakeLLM.mu.Lock()
