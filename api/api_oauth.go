@@ -43,6 +43,11 @@ func (a *API) handleOAuthStart(c *gin.Context) {
 			a.renderOAuthErrorPage(c, http.StatusBadRequest, "Authorization Failed", "Invalid resource metadata URL.")
 			return
 		}
+		if err := mcp.ValidateResourceMetadataMatchesServerBaseURL(serverConfig.BaseURL, metadataURL); err != nil {
+			a.pluginAPI.Log.Debug("Rejected MCP OAuth start resource_metadata origin mismatch", "serverName", serverConfig.Name, "error", err)
+			a.renderOAuthErrorPage(c, http.StatusBadRequest, "Authorization Failed", "Invalid resource metadata URL.")
+			return
+		}
 	}
 
 	authURL, err := oauthManager.InitiateOAuthFlowForServerWithMetadata(c.Request.Context(), userID, serverConfig, metadataURL)

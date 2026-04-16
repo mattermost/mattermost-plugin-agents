@@ -90,6 +90,27 @@ func invalidateSharedToolsCacheForOAuthDiscovery(toolsCache *ToolsCache, log Log
 	}
 }
 
+// maybeInvalidateSharedToolsBeforeOAuthListTools drops any shared-cache tool list for this
+// server when the MCP server uses OAuth and the user has not completed OAuth yet. That avoids
+// ListTools reusing tools discovered before authentication (shared cache is only for non-OAuth servers).
+func maybeInvalidateSharedToolsBeforeOAuthListTools(userID string, serverConfig ServerConfig, log pluginapi.LogService, toolsCache *ToolsCache, oauthManager *OAuthManager) {
+	if shouldUseSharedToolsCache(serverConfig) || toolsCache == nil || oauthManager == nil {
+		return
+	}
+
+	serverID := serverConfig.Name
+	hasStoredToken, tokenErr := oauthManager.HasStoredToken(userID, serverID)
+	if tokenErr != nil {
+		log.Warn("Failed to check stored OAuth token before MCP tool discovery",
+			"serverID", serverID,
+			"server", serverConfig.Name,
+			"userID", userID,
+			"error", tokenErr)
+		return
+	}
+	invalidateSharedToolsCacheForOAuthDiscovery(toolsCache, &log, userID, serverID, serverConfig, hasStoredToken)
+}
+
 func NewEmbeddedServerClient(server EmbeddedMCPServer, log pluginapi.LogService, pluginAPI *pluginapi.Client) *EmbeddedServerClient {
 	return &EmbeddedServerClient{
 		server:    server,
@@ -191,20 +212,9 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 		return nil, fmt.Errorf("failed to create MCP session for server %s: %w", serverConfig.Name, err)
 	}
 
-	serverID := serverConfig.Name
 	useSharedToolsCache := shouldUseSharedToolsCache(serverConfig)
-	if !useSharedToolsCache && toolsCache != nil && oauthManager != nil {
-		hasStoredToken, tokenErr := oauthManager.HasStoredToken(userID, serverID)
-		if tokenErr != nil {
-			log.Warn("Failed to check stored OAuth token before MCP tool discovery",
-				"serverID", serverID,
-				"server", serverConfig.Name,
-				"userID", userID,
-				"error", tokenErr)
-		} else {
-			invalidateSharedToolsCacheForOAuthDiscovery(toolsCache, &log, userID, serverID, serverConfig, hasStoredToken)
-		}
-	}
+	maybeInvalidateSharedToolsBeforeOAuthListTools(userID, serverConfig, log, toolsCache, oauthManager)
+	serverID := serverConfig.Name
 
 	// Try to get tools from global cache first.
 	if toolsCache != nil && useSharedToolsCache {

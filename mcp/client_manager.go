@@ -154,7 +154,9 @@ func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) 
 	m.clientsMu.RUnlock()
 	if exists {
 		m.activity[userID] = time.Now()
-		return client, client.popConnectionErrors()
+		// Connect-time errors are returned only from createAndStoreUserClient; a cached
+		// client does not re-report stale OAuth / connect failures on every lookup.
+		return client, nil
 	}
 
 	return m.createAndStoreUserClient(userID)
@@ -190,9 +192,12 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 		return nil, err
 	}
 
-	// Delete the client to force a re-creation
+	// Delete the client to force a re-creation (close first, like DisconnectUserOAuth).
 	m.clientsMu.Lock()
-	delete(m.clients, userID)
+	if uc, ok := m.clients[userID]; ok {
+		uc.Close()
+		delete(m.clients, userID)
+	}
 	m.clientsMu.Unlock()
 
 	return session, nil

@@ -26,10 +26,9 @@ type UserClients struct {
 	clients          map[string]*Client // serverID -> client (both remote and embedded)
 	userID           string
 	log              pluginapi.LogService
-	oauthManager     *OAuthManager
-	httpClient       *http.Client
-	toolsCache       *ToolsCache
-	connectionErrors *Errors
+	oauthManager *OAuthManager
+	httpClient   *http.Client
+	toolsCache   *ToolsCache
 }
 
 func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
@@ -82,16 +81,7 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 		}
 	}
 
-	c.connectionErrors = mcpErrors
 	return mcpErrors
-}
-
-// popConnectionErrors returns and clears the last connect-time errors so
-// cached UserClients lookups do not keep surfacing stale OAuth state.
-func (c *UserClients) popConnectionErrors() *Errors {
-	errs := c.connectionErrors
-	c.connectionErrors = nil
-	return errs
 }
 
 // ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided

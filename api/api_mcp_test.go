@@ -391,3 +391,129 @@ func TestHandleOAuthStartRedirectsToProviderAuthorizeURL(t *testing.T) {
 	require.NotEmpty(t, redirectURL.Query().Get("code_challenge"))
 	require.Equal(t, "S256", redirectURL.Query().Get("code_challenge_method"))
 }
+
+func TestHandleOAuthStartRejectsResourceMetadataWrongOrigin(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	var authServer *httptest.Server
+	authServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"resource":"` + authServer.URL + `","authorization_servers":["` + authServer.URL + `"]}`))
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"issuer":"` + authServer.URL + `","authorization_endpoint":"` + authServer.URL + `/authorize","token_endpoint":"` + authServer.URL + `/token","response_types_supported":["code"],"grant_types_supported":["authorization_code"],"code_challenge_methods_supported":["S256"]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer authServer.Close()
+
+	evilServer := httptest.NewServer(http.NotFoundHandler())
+	defer evilServer.Close()
+
+	server := mcp.ServerConfig{
+		Name:         "OAuth Server",
+		Enabled:      true,
+		BaseURL:      authServer.URL,
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+	}
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{server},
+	}
+
+	mmClient := mmapimocks.NewMockClient(t)
+	oauthManager := mcp.NewOAuthManager(mmClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", authServer.Client(), func(serverID string) (mcp.ServerConfig, bool) {
+		if serverID == server.Name {
+			return server, true
+		}
+		return mcp.ServerConfig{}, false
+	})
+
+	e.api.mcpClientManager = &mockMCPClientManager{
+		oauthManager: oauthManager,
+	}
+
+	e.mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+	startPath := "/mcp/oauth/" + url.PathEscape(server.Name) + "/start"
+	metadata := evilServer.URL + "/.well-known/oauth-protected-resource"
+	request := httptest.NewRequest(http.MethodGet, startPath+"?resource_metadata="+url.QueryEscape(metadata), nil)
+	request.Header.Add("Mattermost-User-Id", testUserID)
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(nil, recorder, request)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+	require.Empty(t, recorder.Result().Header.Get("Location"))
+}
+
+func TestHandleOAuthStartAcceptsResourceMetadataMatchingOrigin(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	var authServer *httptest.Server
+	authServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"resource":"` + authServer.URL + `","authorization_servers":["` + authServer.URL + `"]}`))
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"issuer":"` + authServer.URL + `","authorization_endpoint":"` + authServer.URL + `/authorize","token_endpoint":"` + authServer.URL + `/token","response_types_supported":["code"],"grant_types_supported":["authorization_code"],"code_challenge_methods_supported":["S256"]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer authServer.Close()
+
+	server := mcp.ServerConfig{
+		Name:         "OAuth Server",
+		Enabled:      true,
+		BaseURL:      authServer.URL,
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+	}
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{server},
+	}
+
+	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On("KVSetWithExpiry", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.OAuthSession"), mock.Anything).Return(nil)
+
+	oauthManager := mcp.NewOAuthManager(mmClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", authServer.Client(), func(serverID string) (mcp.ServerConfig, bool) {
+		if serverID == server.Name {
+			return server, true
+		}
+		return mcp.ServerConfig{}, false
+	})
+
+	e.api.mcpClientManager = &mockMCPClientManager{
+		oauthManager: oauthManager,
+	}
+
+	metadata := authServer.URL + "/.well-known/oauth-protected-resource"
+	startPath := "/mcp/oauth/" + url.PathEscape(server.Name) + "/start"
+	request := httptest.NewRequest(http.MethodGet, startPath+"?resource_metadata="+url.QueryEscape(metadata), nil)
+	request.Header.Add("Mattermost-User-Id", testUserID)
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(nil, recorder, request)
+
+	require.Equal(t, http.StatusFound, recorder.Result().StatusCode)
+
+	redirectURL, err := url.Parse(recorder.Result().Header.Get("Location"))
+	require.NoError(t, err)
+	require.Equal(t, "/authorize", redirectURL.Path)
+}
