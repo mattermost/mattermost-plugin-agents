@@ -59,17 +59,24 @@ export function extractToolCallsFromTurn(
         return [];
     }
 
-    // Collect tool_result blocks from the next turn(s) after this assistant turn.
+    // Collect tool_result blocks from subsequent turns that match this turn's
+    // tool_use IDs.  We search all turns rather than stopping at the first
+    // non-tool_result turn because WriteToolTurns may insert intermediate
+    // assistant turns between the streaming turn and the tool_result turn.
+    const toolUseIDs = new Set(
+        toolUseBlocks.map((b) => b.id).filter(Boolean),
+    );
     const resultMap = new Map<string, ContentBlock>();
     for (const t of conversation.turns) {
         if (t.sequence <= turn.sequence) {
             continue;
         }
-        if (t.role !== 'tool_result') {
-            break;
-        }
         for (const block of t.content) {
-            if (block.type === BlockTypeToolResult && block.tool_use_id) {
+            if (
+                block.type === BlockTypeToolResult &&
+                block.tool_use_id &&
+                toolUseIDs.has(block.tool_use_id)
+            ) {
                 resultMap.set(block.tool_use_id, block);
             }
         }
@@ -163,6 +170,7 @@ export function deriveApprovalStage(
     // and break on the first non-tool_result turn because WriteToolTurns
     // may insert intermediate assistant turns between the streaming turn
     // and the corresponding tool_result turn.
+    const matchedResults: ContentBlock[] = [];
     for (const t of conversation.turns) {
         if (t.sequence <= turn.sequence) {
             continue;
@@ -173,12 +181,22 @@ export function deriveApprovalStage(
                 block.tool_use_id &&
                 toolUseIDs.has(block.tool_use_id)
             ) {
-                return 'result';
+                matchedResults.push(block);
             }
         }
     }
 
-    return 'call';
+    if (matchedResults.length === 0) {
+        return 'call';
+    }
+
+    // If all matching results are already shared (e.g. auto_run_everywhere
+    // or DM context), no result-approval UI is needed.
+    if (matchedResults.every((b) => b.shared === true)) {
+        return 'call';
+    }
+
+    return 'result';
 }
 
 /** Check whether any tool_use block in the turn has auto_approved status. */

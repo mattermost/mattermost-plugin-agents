@@ -245,6 +245,28 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context) func(llm.Tool
 	}
 }
 
+// allToolsAutoRunEverywhere checks whether every tool call across the given
+// tool turns has an auto_run_everywhere policy.  When true, tool results can
+// be written with shared=true so the result-approval UI is skipped.
+func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, llmCtx *llm.Context) bool {
+	if c.toolPolicyChecker == nil {
+		return false
+	}
+	for _, turn := range turns {
+		for _, tc := range turn.AssistantToolCalls {
+			origin := tc.ServerOrigin
+			if origin == "" && llmCtx.Tools != nil {
+				origin = llmCtx.Tools.GetServerOrigin(tc.Name)
+			}
+			policy, _ := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
+			if !mcp.IsToolPolicyAutoRunEverywhere(policy) {
+				return false
+			}
+		}
+	}
+	return len(turns) > 0
+}
+
 // GetAIThreads gets AI conversation threads for a user
 func (c *Conversations) GetAIThreads(userID string) ([]AIThread, error) {
 	allBots := c.bots.GetAllBots()

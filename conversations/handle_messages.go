@@ -251,7 +251,8 @@ func (c *Conversations) handleMentionViaConversation(
 		}
 		return autoExec(tc)
 	}, func(turns []toolrunner.ToolTurn) {
-		if writeErr := c.convService.WriteToolTurns(convResult.Conversation.ID, turns, false); writeErr != nil {
+		shared := c.allToolsAutoRunEverywhere(turns, llmContext)
+		if writeErr := c.convService.WriteToolTurns(convResult.Conversation.ID, turns, shared); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns", "error", writeErr)
 		}
 	}, opts...)

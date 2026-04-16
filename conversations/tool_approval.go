@@ -314,7 +314,7 @@ func (c *Conversations) streamToolFollowUp(
 
 	runner := toolrunner.New(bot.LLM())
 	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext), func(turns []toolrunner.ToolTurn) {
-		shared := isDM
+		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
 		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns on follow-up", "error", writeErr)
 		}
