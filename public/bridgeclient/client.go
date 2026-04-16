@@ -89,8 +89,8 @@ type BridgeServiceInfo struct {
 
 // BridgeToolInfo represents a bridge-eligible tool (MCP or embedded; not built-in).
 type BridgeToolInfo struct {
-	Name         string `json:"name"`
-	Description  string `json:"description"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 	// ServerOrigin is the MCP server base URL or the embedded client key; never empty.
 	ServerOrigin string `json:"server_origin,omitempty"`
 }
