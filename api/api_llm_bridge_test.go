@@ -1630,7 +1630,7 @@ func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {
 			{Role: "user", Message: "Run tool once"},
 		},
 		AllowedTools: []string{"eligible_tool", "eligible_tool"},
-		UserID: testUserID,
+		UserID:       testUserID,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "deduped", result)
