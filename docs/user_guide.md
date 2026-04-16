@@ -116,7 +116,7 @@ To summarize unread Mattermost channels:
 
 The channel summary is generated in the Agents pane, and only you can view the summary.
 
-For more flexible channel analysis options, including **Ask Agents about this channel**, one-off custom questions, and date ranges, see [Channel Summaries](features/channel_summaries.md).
+For more flexible channel analysis options, including **Ask Agents about this channel**, prompts, and date ranges, see [Channel Summaries](features/channel_summaries.md).
 
 ## Search with AI
 
