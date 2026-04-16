@@ -13,16 +13,17 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/conversations"
-	"github.com/mattermost/mattermost-plugin-ai/embeddings/mocks"
-	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/metrics"
-	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
-	"github.com/mattermost/mattermost-plugin-ai/search"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/metrics"
+	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
+	"github.com/mattermost/mattermost-plugin-agents/search"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -52,6 +53,7 @@ type TestEnvironment struct {
 type testConfigImpl struct {
 	allowUnsafeLinks                bool
 	enableChannelMentionToolCalling bool
+	mcpConfig                       mcp.Config
 }
 
 func (tc *testConfigImpl) GetDefaultBotName() string {
@@ -59,11 +61,15 @@ func (tc *testConfigImpl) GetDefaultBotName() string {
 }
 
 func (tc *testConfigImpl) MCP() mcp.Config {
-	return mcp.Config{}
+	return tc.mcpConfig
 }
 
 func (tc *testConfigImpl) AllowUnsafeLinks() bool {
 	return tc.allowUnsafeLinks
+}
+
+func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
+	return embeddings.EmbeddingSearchConfig{}
 }
 
 func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
@@ -71,10 +77,16 @@ func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 }
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
-type mockMCPClientManager struct{}
+type mockMCPClientManager struct {
+	oauthManager   *mcp.OAuthManager
+	tools          []llm.Tool
+	mcpErrors      *mcp.Errors
+	config         mcp.Config
+	embeddedServer mcp.EmbeddedMCPServer
+}
 
 func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
-	return nil
+	return m.oauthManager
 }
 
 func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
@@ -86,7 +98,7 @@ func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedI
 }
 
 func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
-	return nil
+	return m.embeddedServer
 }
 
 func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error) {
@@ -95,6 +107,14 @@ func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error)
 
 func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
 	return nil
+}
+
+func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors) {
+	return m.tools, m.mcpErrors
+}
+
+func (m *mockMCPClientManager) GetConfig() mcp.Config {
+	return m.config
 }
 
 func (e *TestEnvironment) Cleanup(t *testing.T) {
@@ -170,7 +190,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 
 	cfg := &testConfigImpl{}
 
-	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil)
+	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil, nil, nil, nil, nil)
 
 	return &TestEnvironment{
 		api:     api,
@@ -261,7 +281,11 @@ func TestAdminRouter(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
-	for urlName, url := range map[string]string{} {
+	for urlName, url := range map[string]string{
+		"reindex_status":  "/admin/reindex/status",
+		"mcp_tools":       "/admin/mcp/tools",
+		"mcp_vetted_seed": "/admin/mcp/vetted-tool-seed",
+	} {
 		for name, test := range map[string]struct {
 			request        *http.Request
 			expectedStatus int
@@ -372,7 +396,6 @@ func TestEmptyBodyCheckerInApi(t *testing.T) {
 		"summarize transcription": "/post/postid/summarize_transcription?botUsername=thebot",
 		"regen":                   "/post/postid/regenerate",
 		"postback summary":        "/post/postid/postback_summary",
-		"reindex":                 "/admin/reindex",
 		"cancel":                  "/admin/reindex/cancel",
 	} {
 		t.Run(urlName, func(t *testing.T) {
@@ -476,8 +499,11 @@ func TestHandleGetAIBots(t *testing.T) {
 		envSetup                 func(e *TestEnvironment)
 	}{
 		{
-			name:                     "search enabled - non-nil service with non-nil embedding search",
-			searchService:            search.New(mocks.NewMockEmbeddingSearch(t), nil, nil, nil, nil),
+			name: "search enabled - non-nil service with non-nil embedding search",
+			searchService: func() *search.Search {
+				me := mocks.NewMockEmbeddingSearch(t)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
+			}(),
 			expectedSearchEnabled:    true,
 			expectedAllowUnsafeLinks: false,
 			expectedStatus:           http.StatusOK,

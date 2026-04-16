@@ -4,9 +4,11 @@
 package llm
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBotConfig_IsValid(t *testing.T) {
@@ -377,6 +379,47 @@ func TestIsValidService(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "Valid Scale service with API key and API URL",
+			service: ServiceConfig{
+				ID:     "service-9",
+				Type:   ServiceTypeScale,
+				APIKey: "scale-key",
+				APIURL: "https://sgp-api.scalegov.com/v5",
+			},
+			want: true,
+		},
+		{
+			name: "Valid Scale service with API key, API URL, and OrgID",
+			service: ServiceConfig{
+				ID:     "service-9",
+				Type:   ServiceTypeScale,
+				APIKey: "scale-key",
+				APIURL: "https://sgp-api.scalegov.com/v5",
+				OrgID:  "account-123",
+			},
+			want: true,
+		},
+		{
+			name: "Scale service missing API key",
+			service: ServiceConfig{
+				ID:     "service-9",
+				Type:   ServiceTypeScale,
+				APIKey: "", // bad
+				APIURL: "https://sgp-api.scalegov.com/v5",
+			},
+			want: false,
+		},
+		{
+			name: "Scale service missing API URL",
+			service: ServiceConfig{
+				ID:     "service-9",
+				Type:   ServiceTypeScale,
+				APIKey: "scale-key",
+				APIURL: "", // bad
+			},
+			want: false,
+		},
+		{
 			name: "Service with empty ID",
 			service: ServiceConfig{
 				ID:     "", // bad
@@ -419,4 +462,12 @@ func TestIsValidService(t *testing.T) {
 			assert.Equalf(t, tt.want, result, "IsValidService() for test case %q", tt.name)
 		})
 	}
+}
+
+func TestServiceConfig_JSONUnmarshal_sendUserID(t *testing.T) {
+	const payload = `{"id":"s1","name":"x","type":"openai","sendUserID":true}`
+	var cfg ServiceConfig
+	err := json.Unmarshal([]byte(payload), &cfg)
+	require.NoError(t, err)
+	assert.True(t, cfg.SendUserID)
 }

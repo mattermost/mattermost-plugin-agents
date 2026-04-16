@@ -6,19 +6,19 @@ pkgname: mocks
 recursive: false
 template: testify
 packages:
-  github.com/mattermost/mattermost-plugin-ai/llm:
+  github.com/mattermost/mattermost-plugin-agents/llm:
     config:
       dir: llm/mocks
       filename: language_model_mock.go
     interfaces:
       LanguageModel:
-  github.com/mattermost/mattermost-plugin-ai/mmapi:
+  github.com/mattermost/mattermost-plugin-agents/mmapi:
     config:
       dir: mmapi/mocks
       filename: client_mock.go
     interfaces:
       Client:
-  github.com/mattermost/mattermost-plugin-ai/embeddings:
+  github.com/mattermost/mattermost-plugin-agents/embeddings:
     config:
       dir: embeddings/mocks
       filename: embedding_search_mock.go

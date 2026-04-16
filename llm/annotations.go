@@ -18,8 +18,8 @@ type Annotation struct {
 	Type       AnnotationType `json:"type"`                 // Type of annotation
 	StartIndex int            `json:"start_index"`          // Start position in message text (0-based, JS UTF-16 code units)
 	EndIndex   int            `json:"end_index"`            // End position in message text (0-based, JS UTF-16 code units)
-	URL        string         `json:"url"`                  // Source URL
-	Title      string         `json:"title"`                // Source title
+	URL        string         `json:"url,omitempty"`        // Source URL (for url_citation)
+	Title      string         `json:"title,omitempty"`      // Source title (for url_citation)
 	CitedText  string         `json:"cited_text,omitempty"` // Optional: text being cited (for context)
 	Index      int            `json:"index"`                // Display index (1-based for UI)
 }

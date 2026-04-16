@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/mattermost/mattermost-plugin-ai/format"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/format"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -110,7 +110,10 @@ func (c *Channels) AnalyzeChannel(
 
 	// Auto-run the bound tools
 	resultStream, err := c.llm.ChatCompletion(completionRequest,
-		llm.WithAutoRunTools([]string{"read_channel", "get_channel_info"}),
+		llm.WithAutoRunTools([]string{
+			llm.ToolAutoRunKey(boundReadChannel.ServerOrigin, "read_channel"),
+			llm.ToolAutoRunKey(boundGetChannelInfo.ServerOrigin, "get_channel_info"),
+		}),
 		llm.WithReasoningDisabled())
 	if err != nil {
 		return nil, err

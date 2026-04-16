@@ -19,6 +19,9 @@ declare global {
                     [key: string]: any;
                 };
             }) => void;
+            browserHistory?: {
+                push: (path: string) => void;
+            };
         };
     }
 }

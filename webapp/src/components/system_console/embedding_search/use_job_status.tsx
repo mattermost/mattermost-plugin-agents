@@ -4,9 +4,9 @@
 import {useState, useEffect, useCallback} from 'react';
 import {useIntl} from 'react-intl';
 
-import {doReindexPosts, getReindexStatus, cancelReindex} from '../../../client';
+import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkIndexHealth} from '../../../client';
 
-import {JobStatusType, StatusMessageType} from './types';
+import {JobStatusType, StatusMessageType, HealthCheckResultType} from './types';
 
 export const useJobStatus = () => {
     const intl = useIntl();
@@ -14,6 +14,8 @@ export const useJobStatus = () => {
     const [statusMessage, setStatusMessage] = useState<StatusMessageType>({});
     const [polling, setPolling] = useState(false);
     const [showReindexConfirmation, setShowReindexConfirmation] = useState(false);
+    const [healthCheckResult, setHealthCheckResult] = useState<HealthCheckResultType | null>(null);
+    const [healthCheckLoading, setHealthCheckLoading] = useState(false);
 
     // Function to fetch job status
     const fetchJobStatus = useCallback(async () => {
@@ -73,7 +75,17 @@ export const useJobStatus = () => {
     // Check status on component mount
     useEffect(() => {
         fetchJobStatus();
+        handleHealthCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [fetchJobStatus]);
+
+    // Refresh health check when job completes
+    useEffect(() => {
+        if (jobStatus?.status === 'completed') {
+            handleHealthCheck();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [jobStatus?.status]);
 
     const handleReindexClick = () => {
         setShowReindexConfirmation(true);
@@ -84,7 +96,7 @@ export const useJobStatus = () => {
         setStatusMessage({});
 
         try {
-            const response = await doReindexPosts();
+            const response = await doReindexPosts(true);
             setJobStatus(response);
             setPolling(true);
         } catch (error) {
@@ -97,6 +109,21 @@ export const useJobStatus = () => {
 
     const handleCancelReindex = () => {
         setShowReindexConfirmation(false);
+    };
+
+    const handleResumeClick = async () => {
+        setStatusMessage({});
+
+        try {
+            const response = await doReindexPosts(false); // Resume from checkpoint
+            setJobStatus(response);
+            setPolling(true);
+        } catch (error) {
+            setStatusMessage({
+                success: false,
+                message: intl.formatMessage({defaultMessage: 'Failed to resume reindexing. Please try again.'}),
+            });
+        }
     };
 
     const handleCancelJob = async () => {
@@ -116,14 +143,72 @@ export const useJobStatus = () => {
         }
     };
 
+    const handleCatchUpClick = async () => {
+        setStatusMessage({});
+
+        try {
+            const response = await catchUpIndex();
+            setJobStatus(response);
+            setPolling(true);
+        } catch (error) {
+            setStatusMessage({
+                success: false,
+                message: intl.formatMessage({defaultMessage: 'Failed to start catch-up indexing. Make sure a full reindex has been completed first.'}),
+            });
+        }
+    };
+
+    const handleHealthCheck = async () => {
+        setHealthCheckLoading(true);
+        setHealthCheckResult(null);
+
+        try {
+            const result = await checkIndexHealth();
+            if (result.status === 'not_configured') {
+                // Search not configured yet - don't show as error
+                setHealthCheckResult(null);
+            } else if (result.status === 'init_error') {
+                setStatusMessage({
+                    success: false,
+                    message: intl.formatMessage(
+                        {defaultMessage: 'Search initialization failed: {error}'},
+                        {error: result.error || intl.formatMessage({defaultMessage: 'Unknown error'})},
+                    ),
+                });
+            } else {
+                setHealthCheckResult(result);
+            }
+        } catch (error) {
+            setStatusMessage({
+                success: false,
+                message: intl.formatMessage({defaultMessage: 'Failed to check index health.'}),
+            });
+        } finally {
+            setHealthCheckLoading(false);
+        }
+    };
+
     return {
         jobStatus,
         statusMessage,
         polling,
         showReindexConfirmation,
+        healthCheckResult,
+        healthCheckLoading,
+        modelCompatibility: healthCheckResult ? {
+            compatible: healthCheckResult.model_compatible,
+            needs_reindex: healthCheckResult.model_needs_reindex,
+            reason: healthCheckResult.model_compat_reason,
+            stored_dimensions: healthCheckResult.stored_dimensions,
+            stored_model_name: healthCheckResult.stored_model_name,
+        } : null,
+        isJobStale: jobStatus?.is_stale || false,
         handleReindexClick,
         handleConfirmReindex,
         handleCancelReindex,
         handleCancelJob,
+        handleCatchUpClick,
+        handleHealthCheck,
+        handleResumeClick,
     };
 };

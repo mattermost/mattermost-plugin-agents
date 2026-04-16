@@ -17,10 +17,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 const (
@@ -155,6 +156,9 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 	config := &schemas.ProviderConfig{
 		NetworkConfig:            networkConfig,
 		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
+		ProxyConfig: &schemas.ProxyConfig{
+			Type: schemas.EnvProxy,
+		},
 	}
 
 	return config, nil
@@ -229,6 +233,211 @@ func (b *LLM) createConfig(opts []llm.LanguageModelOption) llm.LanguageModelConf
 		opt(&cfg)
 	}
 	return cfg
+}
+
+func buildResponsesJSONSchema(schemaMap map[string]interface{}) (*schemas.ResponsesTextConfigFormatJSONSchema, error) {
+	responseSchema := &schemas.ResponsesTextConfigFormatJSONSchema{}
+
+	if typeVal, ok := schemaMap["type"].(string); ok {
+		responseSchema.Type = Ptr(typeVal)
+	} else if typeList, ok := schemaMap["type"].([]interface{}); ok {
+		anyOf := make([]map[string]any, 0, len(typeList))
+		for i, item := range typeList {
+			typeName, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("responses JSON schema type[%d] must be a string", i)
+			}
+			anyOf = append(anyOf, map[string]any{"type": typeName})
+		}
+		if len(anyOf) > 0 {
+			responseSchema.AnyOf = anyOf
+		}
+	}
+	if properties, ok := schemaMap["properties"].(map[string]interface{}); ok {
+		responseSchema.Properties = &properties
+	}
+	if required := extractStringSlice(schemaMap["required"]); len(required) > 0 {
+		responseSchema.Required = required
+	}
+	if description, ok := schemaMap["description"].(string); ok {
+		responseSchema.Description = Ptr(description)
+	}
+	if additionalProps, ok := schemaMap["additionalProperties"].(bool); ok {
+		responseSchema.AdditionalProperties = &schemas.AdditionalPropertiesStruct{
+			AdditionalPropertiesBool: &additionalProps,
+		}
+	} else if additionalProps, ok := schemas.SafeExtractOrderedMap(schemaMap["additionalProperties"]); ok {
+		responseSchema.AdditionalProperties = &schemas.AdditionalPropertiesStruct{
+			AdditionalPropertiesMap: additionalProps,
+		}
+	}
+	if name, ok := schemaMap["name"].(string); ok {
+		responseSchema.Name = Ptr(name)
+	} else if title, ok := schemaMap["title"].(string); ok {
+		responseSchema.Name = Ptr(title)
+	}
+	if defs, ok := schemaMap["$defs"].(map[string]interface{}); ok {
+		responseSchema.Defs = &defs
+	}
+	if definitions, ok := schemaMap["definitions"].(map[string]interface{}); ok {
+		responseSchema.Definitions = &definitions
+	}
+	if ref, ok := schemaMap["$ref"].(string); ok {
+		responseSchema.Ref = Ptr(ref)
+	}
+	if items, ok := schemaMap["items"].(map[string]interface{}); ok {
+		responseSchema.Items = &items
+	}
+	if minItems, ok := toInt64(schemaMap["minItems"]); ok {
+		responseSchema.MinItems = &minItems
+	}
+	if maxItems, ok := toInt64(schemaMap["maxItems"]); ok {
+		responseSchema.MaxItems = &maxItems
+	}
+	if anyOf := extractSchemaList(schemaMap["anyOf"]); len(anyOf) > 0 {
+		responseSchema.AnyOf = append(responseSchema.AnyOf, anyOf...)
+	}
+	if oneOf := extractSchemaList(schemaMap["oneOf"]); len(oneOf) > 0 {
+		responseSchema.OneOf = oneOf
+	}
+	if allOf := extractSchemaList(schemaMap["allOf"]); len(allOf) > 0 {
+		responseSchema.AllOf = allOf
+	}
+	if format, ok := schemaMap["format"].(string); ok {
+		responseSchema.Format = Ptr(format)
+	}
+	if pattern, ok := schemaMap["pattern"].(string); ok {
+		responseSchema.Pattern = Ptr(pattern)
+	}
+	if minLength, ok := toInt64(schemaMap["minLength"]); ok {
+		responseSchema.MinLength = &minLength
+	}
+	if maxLength, ok := toInt64(schemaMap["maxLength"]); ok {
+		responseSchema.MaxLength = &maxLength
+	}
+	if minimum, ok := toFloat64(schemaMap["minimum"]); ok {
+		responseSchema.Minimum = &minimum
+	}
+	if maximum, ok := toFloat64(schemaMap["maximum"]); ok {
+		responseSchema.Maximum = &maximum
+	}
+	if title, ok := schemaMap["title"].(string); ok {
+		responseSchema.Title = Ptr(title)
+	}
+	if defaultVal, exists := schemaMap["default"]; exists {
+		responseSchema.Default = defaultVal
+	}
+	if nullable, ok := schemaMap["nullable"].(bool); ok {
+		responseSchema.Nullable = &nullable
+	}
+
+	enumValues, err := extractStringEnum(schemaMap["enum"])
+	if err != nil {
+		return nil, err
+	}
+	if len(enumValues) > 0 {
+		responseSchema.Enum = enumValues
+	}
+
+	return responseSchema, nil
+}
+
+func extractStringSlice(value interface{}) []string {
+	switch items := value.(type) {
+	case []string:
+		if len(items) == 0 {
+			return nil
+		}
+		return append([]string(nil), items...)
+	case []interface{}:
+		result := make([]string, 0, len(items))
+		for _, item := range items {
+			str, ok := item.(string)
+			if !ok {
+				continue
+			}
+			result = append(result, str)
+		}
+		if len(result) == 0 {
+			return nil
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func extractStringEnum(value interface{}) ([]string, error) {
+	switch items := value.(type) {
+	case nil:
+		return nil, nil
+	case []string:
+		if len(items) == 0 {
+			return nil, nil
+		}
+		return append([]string(nil), items...), nil
+	case []interface{}:
+		result := make([]string, 0, len(items))
+		for i, item := range items {
+			str, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("responses JSON schema enum[%d] must be a string, got %T", i, item)
+			}
+			result = append(result, str)
+		}
+		if len(result) == 0 {
+			return nil, nil
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("responses JSON schema enum must be an array, got %T", value)
+	}
+}
+
+func extractSchemaList(value interface{}) []map[string]any {
+	items, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		schemaMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		result = append(result, schemaMap)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func toInt64(value interface{}) (int64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return int64(v), true
+	case int:
+		return int64(v), true
+	case int64:
+		return v, true
+	default:
+		return 0, false
+	}
+}
+
+func toFloat64(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	default:
+		return 0, false
+	}
 }
 
 // ChatCompletion performs a streaming chat completion request.
@@ -576,6 +785,10 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildChatReasoning(cfg)
+	// Apply structured output (JSON schema) configuration
+	if cfg.JSONOutputFormat != nil {
+		params.ResponseFormat = buildChatResponseFormat(cfg.JSONOutputFormat)
+	}
 	req.Params = params
 
 	return req
@@ -639,6 +852,9 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 
 			// Handle tool calls in assistant messages
 			if len(post.ToolUse) > 0 {
+				if post.Message == "" {
+					msg.Content = nil
+				}
 				toolCalls := make([]schemas.ChatAssistantMessageToolCall, 0, len(post.ToolUse))
 				for i, tc := range post.ToolUse {
 					toolCalls = append(toolCalls, schemas.ChatAssistantMessageToolCall{
@@ -851,7 +1067,7 @@ func schemaMapToFunctionParams(schemaMap map[string]interface{}) *schemas.ToolFu
 		params.Description = &desc
 	}
 	if props, ok := schemaMap["properties"].(map[string]interface{}); ok {
-		params.Properties = (*schemas.OrderedMap)(&props)
+		params.Properties = schemas.OrderedMapFromMap(props)
 	}
 	if req, ok := schemaMap["required"].([]interface{}); ok {
 		required := make([]string, 0, len(req))
@@ -864,6 +1080,57 @@ func schemaMapToFunctionParams(schemaMap map[string]interface{}) *schemas.ToolFu
 	}
 
 	return params
+}
+
+// jsonSchemaToMap converts a *jsonschema.Schema to a map[string]interface{} via JSON round-trip.
+func jsonSchemaToMap(schema *jsonschema.Schema) (map[string]interface{}, error) {
+	data, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal JSON schema: %w", err)
+	}
+	var schemaMap map[string]interface{}
+	if err := json.Unmarshal(data, &schemaMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON schema: %w", err)
+	}
+	return schemaMap, nil
+}
+
+// buildChatResponseFormat creates the response_format parameter for the Chat Completions API.
+func buildChatResponseFormat(schema *jsonschema.Schema) *interface{} {
+	schemaMap, err := jsonSchemaToMap(schema)
+	if err != nil {
+		return nil
+	}
+	var responseFormat interface{} = map[string]interface{}{
+		"type": "json_schema",
+		"json_schema": map[string]interface{}{
+			"name":   "response",
+			"schema": schemaMap,
+			"strict": true,
+		},
+	}
+	return &responseFormat
+}
+
+// buildResponsesTextConfig creates the text configuration for the Responses API with JSON schema output.
+func buildResponsesTextConfig(schema *jsonschema.Schema) (*schemas.ResponsesTextConfig, error) {
+	schemaMap, err := jsonSchemaToMap(schema)
+	if err != nil {
+		return nil, err
+	}
+
+	responseSchema, err := buildResponsesJSONSchema(schemaMap)
+	if err != nil {
+		return nil, err
+	}
+	return &schemas.ResponsesTextConfig{
+		Format: &schemas.ResponsesTextConfigFormat{
+			Type:       "json_schema",
+			Name:       Ptr("response"),
+			Strict:     Ptr(true),
+			JSONSchema: responseSchema,
+		},
+	}, nil
 }
 
 // isValidImageType checks if the MIME type is supported.
@@ -943,19 +1210,17 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 			}
 
 		case llm.PostRoleBot:
-			msg := schemas.ResponsesMessage{
-				Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
-				Content: &schemas.ResponsesMessageContent{
-					ContentStr: Ptr(post.Message),
-				},
-			}
-
-			messages = append(messages, msg)
-
 			// Handle tool calls in assistant messages
 			if len(post.ToolUse) > 0 {
+				if post.Message != "" {
+					messages = append(messages, schemas.ResponsesMessage{
+						Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
+						Content: &schemas.ResponsesMessageContent{
+							ContentStr: Ptr(post.Message),
+						},
+					})
+				}
 				for _, tc := range post.ToolUse {
-					// Add function call message
 					funcCallMsg := schemas.ResponsesMessage{
 						Type: Ptr(schemas.ResponsesMessageTypeFunctionCall),
 						ResponsesToolMessage: &schemas.ResponsesToolMessage{
@@ -966,7 +1231,6 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 					}
 					messages = append(messages, funcCallMsg)
 
-					// Add function call output message
 					funcOutputMsg := schemas.ResponsesMessage{
 						Type: Ptr(schemas.ResponsesMessageTypeFunctionCallOutput),
 						ResponsesToolMessage: &schemas.ResponsesToolMessage{
@@ -978,7 +1242,13 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 					}
 					messages = append(messages, funcOutputMsg)
 				}
-				continue // Skip adding msg again since we handled tool calls
+			} else if post.Message != "" {
+				messages = append(messages, schemas.ResponsesMessage{
+					Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
+					Content: &schemas.ResponsesMessageContent{
+						ContentStr: Ptr(post.Message),
+					},
+				})
 			}
 		}
 	}
@@ -1127,7 +1397,7 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 }
 
 // convertToBifrostResponsesRequest converts our CompletionRequest to Bifrost's Responses API format.
-func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) *schemas.BifrostResponsesRequest {
+func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) (*schemas.BifrostResponsesRequest, error) {
 	messages := b.convertToResponsesMessages(request.Posts)
 	tools := b.convertToResponsesTools(request, cfg)
 
@@ -1147,9 +1417,17 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 	}
 	// Apply reasoning configuration
 	params.Reasoning = b.buildResponsesReasoning(cfg)
+	// Apply structured output (JSON schema) configuration
+	if cfg.JSONOutputFormat != nil {
+		textConfig, err := buildResponsesTextConfig(cfg.JSONOutputFormat)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build responses text config: %w", err)
+		}
+		params.Text = textConfig
+	}
 	req.Params = params
 
-	return req
+	return req, nil
 }
 
 // streamResponses handles the streaming Responses API completion.
@@ -1158,7 +1436,14 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	defer cancel()
 
 	// Convert to Bifrost Responses API request
-	bifrostReq := b.convertToBifrostResponsesRequest(request, cfg)
+	bifrostReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+	if err != nil {
+		output <- llm.TextStreamEvent{
+			Type:  llm.EventTypeError,
+			Value: err,
+		}
+		return
+	}
 
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ResponsesStreamRequest(bifrostCtx, bifrostReq)
@@ -1173,6 +1458,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	// Process stream
 	var toolCalls []llm.ToolCall
 	toolCallsBuffer := make(map[string]*responsesToolCallBuffer)
+	var currentFuncCallID string // tracks the active function call for argument deltas
 
 	// Reasoning buffers
 	var reasoningBuffer strings.Builder
@@ -1181,8 +1467,8 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 
 	// Annotation buffer and text position tracking
 	var annotations []llm.Annotation
-	var textLen int       // cumulative UTF-16 code unit length of all streamed text
-	var blockStartPos int // UTF-16 code unit position where current text block started
+	var textLen int       // cumulative byte length of all streamed text
+	var blockStartPos int // byte position where current text block started
 
 	// Watchdog timer for streaming timeout
 	watchdog := make(chan struct{})
@@ -1250,7 +1536,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 						Type:  llm.EventTypeText,
 						Value: *resp.Delta,
 					}
-					textLen += llm.UTF16CodeUnitCount(*resp.Delta)
+					textLen += len(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
@@ -1309,7 +1595,9 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				blockStartPos = textLen
 
 			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
-				// Tool call arguments delta
+				// Tool call arguments delta.
+				// Bifrost often does not populate resp.Item on delta events; the call ID
+				// may come from the preceding OutputItemAdded event (currentFuncCallID).
 				if resp.Item != nil && resp.Item.ResponsesToolMessage != nil {
 					tm := resp.Item.ResponsesToolMessage
 					callID := ""
@@ -1327,6 +1615,11 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
 						}
 					}
+				} else if currentFuncCallID != "" && resp.Delta != nil {
+					if toolCallsBuffer[currentFuncCallID] == nil {
+						toolCallsBuffer[currentFuncCallID] = &responsesToolCallBuffer{id: currentFuncCallID}
+					}
+					toolCallsBuffer[currentFuncCallID].arguments.WriteString(*resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
@@ -1339,6 +1632,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							callID = *tm.CallID
 						}
 						if callID != "" {
+							currentFuncCallID = callID
 							if toolCallsBuffer[callID] == nil {
 								toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
 							}

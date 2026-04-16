@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -95,6 +96,76 @@ func TestCacheUpdateOnNewTools(t *testing.T) {
 	require.Equal(t, 2, len(cachedTools))
 	require.Contains(t, cachedTools, "file_read")
 	require.Contains(t, cachedTools, "file_write")
+}
+
+func TestExtractOAuthMetadataURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		errMsg    string
+		wantURL   string
+		wantFound bool
+	}{
+		{
+			name:      "nil error",
+			errMsg:    "",
+			wantURL:   "",
+			wantFound: false,
+		},
+		{
+			name:      "unrelated error",
+			errMsg:    "connection refused",
+			wantURL:   "",
+			wantFound: false,
+		},
+		{
+			name:      "metadata URL without wrapped error",
+			errMsg:    "OAuth authentication needed for resource at https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
+			wantURL:   "https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
+			wantFound: true,
+		},
+		{
+			name:      "metadata URL with wrapped error",
+			errMsg:    "OAuth authentication needed for resource at https://example.com/.well-known/oauth-protected-resource: Got error: token refresh failed",
+			wantURL:   "https://example.com/.well-known/oauth-protected-resource",
+			wantFound: true,
+		},
+		{
+			name:      "metadata URL embedded in longer error chain",
+			errMsg:    "failed to connect: OAuth authentication needed for resource at https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
+			wantURL:   "https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
+			wantFound: true,
+		},
+		{
+			name:      "empty metadata URL",
+			errMsg:    "OAuth authentication needed for resource at ",
+			wantURL:   "",
+			wantFound: false,
+		},
+		{
+			name:      "URL with port",
+			errMsg:    "OAuth authentication needed for resource at https://example.com:8443/.well-known/oauth-protected-resource",
+			wantURL:   "https://example.com:8443/.well-known/oauth-protected-resource",
+			wantFound: true,
+		},
+		{
+			name:      "URL with port and wrapped error",
+			errMsg:    "OAuth authentication needed for resource at https://example.com:8443/.well-known/oauth-protected-resource: Got error: something failed",
+			wantURL:   "https://example.com:8443/.well-known/oauth-protected-resource",
+			wantFound: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var err error
+			if tt.errMsg != "" {
+				err = fmt.Errorf("%s", tt.errMsg)
+			}
+			gotURL, gotFound := extractOAuthMetadataURL(err)
+			require.Equal(t, tt.wantFound, gotFound)
+			require.Equal(t, tt.wantURL, gotURL)
+		})
+	}
 }
 
 // TestNilCacheHandling verifies that nil cache is handled gracefully in the cache code

@@ -11,13 +11,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/render"
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/conversations"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/react"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
-	"github.com/mattermost/mattermost-plugin-ai/threads"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/react"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/threads"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -139,12 +139,12 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 		return
 	}
 
-	// Build LLM context
+	// Thread analysis disables tools, so skip MCP/tool initialization entirely.
 	llmContext := a.contextBuilder.BuildLLMContextUserRequest(
 		bot,
 		user,
 		channel,
-		a.contextBuilder.WithLLMContextDefaultTools(bot),
+		a.contextBuilder.WithLLMContextNoTools(),
 	)
 
 	// Create thread analyzer

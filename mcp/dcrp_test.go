@@ -211,6 +211,31 @@ func TestGetRegistrationEndpoint_NotSupported(t *testing.T) {
 	assert.Contains(t, err.Error(), "does not support dynamic client registration")
 }
 
+func TestGetRegistrationEndpoint_ServerURLWithPath(t *testing.T) {
+	// Verifies that when the server URL has a path (e.g. /v1/mcp), the path is
+	// stripped before constructing the well-known URL. Per MCP spec, the
+	// authorization base URL is derived by discarding the path component.
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			metadata := map[string]string{
+				"registration_endpoint": serverURL + "/register",
+			}
+			_ = json.NewEncoder(w).Encode(metadata)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	endpoint, err := GetRegistrationEndpoint(context.Background(), http.DefaultClient, server.URL+"/v1/mcp")
+	require.NoError(t, err)
+	assert.Equal(t, server.URL+"/register", endpoint)
+}
+
 func TestDiscoverAndRegisterClient_Success(t *testing.T) {
 	// Create mock server to handle both metadata and registration endpoints
 	var serverURL string

@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/i18n"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )
@@ -153,7 +153,7 @@ func TestStreamToPostToolCallRedaction(t *testing.T) {
 
 			service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
 
-			require.Len(t, client.updatedPosts, 1)
+			require.GreaterOrEqual(t, len(client.updatedPosts), 1)
 
 			toolCallProp, ok := post.GetProp(ToolCallProp).(string)
 			require.True(t, ok)

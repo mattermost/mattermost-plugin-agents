@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useRef} from 'react';
+import React, {useEffect, useRef} from 'react';
 import ReactDOM from 'react-dom';
 import Tippy from '@tippyjs/react';
 import styled, {createGlobalStyle} from 'styled-components';
@@ -165,7 +165,7 @@ const TutorialTourTip: React.FC<Props> = ({
     onFinish,
 }) => {
     const triggerRef = useRef<HTMLDivElement>(null);
-    const {show, setShow, handleOpen, handleDismiss} = useTourManager(
+    const {show, handleOpen, handleDismiss} = useTourManager(
         tutorialCategory,
         onFinish,
     );
@@ -186,6 +186,26 @@ const TutorialTourTip: React.FC<Props> = ({
             </TourTipContent>
         </TourTipContainer>
     );
+
+    useEffect(() => {
+        const handleEscape = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            handleDismiss();
+        };
+
+        if (show) {
+            document.addEventListener('keydown', handleEscape, true);
+        }
+
+        return () => {
+            document.removeEventListener('keydown', handleEscape, true);
+        };
+    }, [show, handleDismiss]);
 
     return (
         <>
@@ -220,7 +240,9 @@ const TutorialTourTip: React.FC<Props> = ({
                     reference={triggerRef}
                     interactive={true}
                     appendTo={rootPortal}
-                    onClickOutside={() => setShow(false)}
+                    onClickOutside={() => {
+                        handleDismiss();
+                    }}
                     offset={offset}
                     placement={placement}
                     arrow={true}

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/testhelpers"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/testhelpers"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 

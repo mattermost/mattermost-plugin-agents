@@ -6,11 +6,17 @@ import {ChannelWithTeamData} from '@mattermost/types/channels';
 
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
+import {PluginConfig} from '@/components/system_console/plugin_config_types';
+
 import manifest from './manifest';
 
 import {ToolCall} from './components/tool_types';
+import {CustomPrompt} from './types';
 
 const Client4 = new Client4Class();
+
+type MCPToolPolicy = 'auto_run' | 'auto_run_everywhere' | 'ask';
+type VettedToolConfig = {name: string; policy: MCPToolPolicy; enabled: boolean};
 
 export function setSiteURL(siteURL: string) {
     Client4.setUrl(siteURL);
@@ -403,10 +409,11 @@ export function getPost(postId: string) {
     return Client4.getPost(postId);
 }
 
-export async function doReindexPosts() {
+export async function doReindexPosts(clearIndex = true) {
     const url = `${baseRoute()}/admin/reindex`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
+        body: JSON.stringify({clearIndex}),
     }));
 
     if (response.ok) {
@@ -454,6 +461,40 @@ export async function cancelReindex() {
     });
 }
 
+export async function catchUpIndex() {
+    const url = `${baseRoute()}/admin/reindex/catchup`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function checkIndexHealth() {
+    const url = `${baseRoute()}/admin/reindex/health-check`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function getMCPTools() {
     const url = `${baseRoute()}/admin/mcp/tools`;
     const response = await fetch(url, Client4.getOptions({
@@ -488,6 +529,30 @@ export async function clearMCPToolsCache() {
     });
 }
 
+/** Authoritative vetted default tool_configs for a base URL (matches mcp.SeedVettedToolConfigs). */
+export async function getVettedToolSeed(baseURL: string): Promise<VettedToolConfig[]> {
+    const trimmed = baseURL.trim();
+    if (!trimmed) {
+        return [];
+    }
+
+    const url = `${baseRoute()}/admin/mcp/vetted-tool-seed?base_url=${encodeURIComponent(trimmed)}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        const data = await response.json() as {tool_configs?: VettedToolConfig[]};
+        return data.tool_configs ?? [];
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function fetchModels(serviceType: string, apiKey: string, apiURL: string, orgID: string) {
     const url = `${baseRoute()}/admin/models/fetch`;
     const response = await fetch(url, Client4.getOptions({
@@ -498,6 +563,58 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
             apiURL,
             orgID,
         }),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getUserMCPTools(): Promise<{servers: any[]}> {
+    const url = `${baseRoute()}/mcp/tools`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getUserToolPreferences(): Promise<{disabled_servers: string[]}> {
+    const url = `${baseRoute()}/mcp/user-preferences`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function updateUserToolPreferences(prefs: {disabled_servers: string[]}): Promise<{disabled_servers: string[]}> {
+    const url = `${baseRoute()}/mcp/user-preferences`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify(prefs),
     }));
 
     if (response.ok) {
@@ -528,6 +645,159 @@ export async function getChannelInterval(
             preset_prompt: presetPrompt,
             prompt: prompt || '',
         }),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getPluginConfig(): Promise<PluginConfig> {
+    const url = `${baseRoute()}/admin/config`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function savePluginConfig(config: PluginConfig): Promise<void> {
+    const url = `${baseRoute()}/admin/config`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify(config),
+        headers: {'Content-Type': 'application/json'},
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getCustomPrompts(): Promise<CustomPrompt[]> {
+    const url = `${baseRoute()}/custom-prompts`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function createCustomPrompt(prompt: {name: string; description: string; template: string; is_shared: boolean}): Promise<CustomPrompt> {
+    const url = `${baseRoute()}/custom-prompts`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify(prompt),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function updateCustomPrompt(id: string, prompt: {name: string; description: string; template: string; is_shared: boolean}): Promise<void> {
+    const url = `${baseRoute()}/custom-prompts/${id}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify(prompt),
+    }));
+
+    if (!response.ok) {
+        throw new ClientError(Client4.url, {
+            message: '',
+            status_code: response.status,
+            url,
+        });
+    }
+}
+
+export async function deleteCustomPrompt(id: string): Promise<void> {
+    const url = `${baseRoute()}/custom-prompts/${id}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'DELETE',
+    }));
+
+    if (!response.ok) {
+        throw new ClientError(Client4.url, {
+            message: '',
+            status_code: response.status,
+            url,
+        });
+    }
+}
+
+export async function getCustomPromptPins(): Promise<string[]> {
+    const url = `${baseRoute()}/custom-prompts/pins`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function setCustomPromptPin(promptId: string, pinned: boolean): Promise<void> {
+    const url = `${baseRoute()}/custom-prompts/pins`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify({prompt_id: promptId, pinned}),
+    }));
+
+    if (!response.ok) {
+        throw new ClientError(Client4.url, {
+            message: '',
+            status_code: response.status,
+            url,
+        });
+    }
+}
+
+export async function renderCustomPrompt(id: string, channelId?: string, botUsername?: string): Promise<{rendered: string}> {
+    const url = `${baseRoute()}/custom-prompts/${id}/render`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({channel_id: channelId, bot_username: botUsername}),
     }));
 
     if (response.ok) {

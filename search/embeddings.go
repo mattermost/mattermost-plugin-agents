@@ -9,11 +9,11 @@ import (
 	"net/http"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/mattermost/mattermost-plugin-ai/bifrost"
-	"github.com/mattermost/mattermost-plugin-ai/chunking"
-	"github.com/mattermost/mattermost-plugin-ai/embeddings"
-	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/postgres"
+	"github.com/mattermost/mattermost-plugin-agents/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/postgres"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
@@ -45,7 +45,7 @@ type BifrostEmbeddingConfig struct {
 type OpenAIEmbeddingConfig struct {
 	APIKey string `json:"apiKey"`
 	APIURL string `json:"apiURL,omitempty"`
-	Model  string `json:"defaultModel"` // e.g., "text-embedding-3-small"
+	Model  string `json:"embeddingModel"` // e.g., "text-embedding-3-small"
 }
 
 // newEmbeddingProvider creates a new embedding provider based on the provided configuration
@@ -119,11 +119,16 @@ func mapEmbeddingProvider(provider string) (schemas.ModelProvider, error) {
 // InitEmbeddingsSearch creates and initializes the embedding search system
 func InitEmbeddingsSearch(db *sqlx.DB, httpClient *http.Client, cfg embeddings.EmbeddingSearchConfig, licenseChecker *enterprise.LicenseChecker) (embeddings.EmbeddingSearch, error) {
 	if cfg.Type == "" {
-		return nil, fmt.Errorf("search is disabled")
+		// Search is intentionally disabled, not an error
+		return nil, nil
 	}
 
 	if !licenseChecker.IsBasicsLicensed() {
 		return nil, fmt.Errorf("search is unavailable without a valid license")
+	}
+
+	if cfg.Dimensions <= 0 {
+		return nil, fmt.Errorf("embedding dimensions must be greater than 0, got %d", cfg.Dimensions)
 	}
 
 	switch cfg.Type { //nolint:gocritic

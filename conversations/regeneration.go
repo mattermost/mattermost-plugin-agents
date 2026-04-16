@@ -8,11 +8,12 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
-	"github.com/mattermost/mattermost-plugin-ai/subtitles"
-	"github.com/mattermost/mattermost-plugin-ai/threads"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/threads"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -70,7 +71,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			bot,
 			user,
 			channel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot),
+			c.contextBuilder.WithLLMContextNoTools(),
 		)
 
 		analyzer := threads.New(bot.LLM(), c.prompts, c.mmClient)
@@ -119,7 +120,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			bot,
 			user,
 			originalFileChannel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot),
+			c.contextBuilder.WithLLMContextNoTools(),
 		)
 		var summaryErr error
 		result, summaryErr = c.meetingsService.SummarizeTranscription(bot, transcription, context)
@@ -152,7 +153,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			bot,
 			user,
 			channel,
-			c.contextBuilder.WithLLMContextDefaultTools(bot),
+			c.contextBuilder.WithLLMContextNoTools(),
 		)
 		var summaryErr error
 		result, summaryErr = c.meetingsService.SummarizeTranscription(bot, transcription, context)
@@ -190,15 +191,27 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 			contextOpts...,
 		)
 
+		// Apply user-disabled-provider filtering for DM/group channels only (Copilot RHS).
+		if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+			prefs, prefsErr := mcp.LoadUserPreferences(c.mmClient, user.Id)
+			if prefsErr != nil {
+				c.mmClient.LogWarn("Failed to load user tool preferences on regen, proceeding without filtering", "error", prefsErr.Error(), "userID", user.Id)
+			} else if len(prefs.DisabledServers) > 0 && contextWithCallback.Tools != nil {
+				contextWithCallback.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
+			}
+		}
+
 		// Process the user request with the context that has the callback
 		allowToolsInChannel := allowToolsInChannelFromPost(post)
+		channelToolsAutoRunEverywhereOnly := channelToolsAutoRunEverywhereOnlyFromPost(post)
 		// Defense-in-depth: if config flag is off and not a DM, disable tools regardless of post prop
 		isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 		if !isDM && (c.configProvider == nil || !c.configProvider.EnableChannelMentionToolCalling()) {
 			allowToolsInChannel = false
+			channelToolsAutoRunEverywhereOnly = false
 		}
 		var processErr error
-		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback, allowToolsInChannel)
+		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback, allowToolsInChannel, channelToolsAutoRunEverywhereOnly)
 		if processErr != nil {
 			return fmt.Errorf("could not continue conversation on regen: %w", processErr)
 		}

@@ -18,4 +18,8 @@ export const ThreadViewer = (window as any).Components.ThreadViewer;
 
 export const DatePicker = (window as any).Components?.DatePicker;
 
+export const MenuItem = (window as any).Components?.MenuItem;
+
+export const MenuSeparator = (window as any).Components?.MenuSeparator;
+
 export const useWebSocketClient = (window as any).ProductApi.useWebSocketClient;

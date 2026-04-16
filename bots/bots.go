@@ -11,13 +11,13 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/mattermost/mattermost-plugin-ai/assets"
-	"github.com/mattermost/mattermost-plugin-ai/bifrost"
-	"github.com/mattermost/mattermost-plugin-ai/config"
-	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/assets"
+	"github.com/mattermost/mattermost-plugin-agents/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
@@ -324,7 +324,9 @@ func (b *MMBots) EnsureBots() error {
 	b.bots = bots
 	// Store deep copies of the successfully ensured configs for optimistic checking.
 	// Deep copy is needed because BotConfig contains slice fields (EnabledNativeTools, etc.)
-	// that would otherwise share backing arrays with the live config.
+	// that would otherwise share backing arrays with the live config. The JSON-based
+	// copy has non-trivial cost for large bot sets, but this path runs only when
+	// optimistic checks above detect bot/service config changes.
 	copiedBotCfgs, copyErr := config.DeepCopyJSON(currentBotCfgs)
 	if copyErr != nil {
 		b.botsLock.Unlock()
@@ -369,6 +371,9 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	result = llm.NewLLMTruncationWrapper(result)
 
 	// Token Usage Logging
+	// NOTE: This wrapper converts ChatCompletionNoStream into a streaming call
+	// internally, so any wrapper that needs to intercept ChatCompletionNoStream
+	// must be placed outside (after) this one.
 	if b.tokenUsageSinks != nil || b.metrics != nil {
 		result = llm.NewTokenUsageLoggingWrapper(
 			result,
@@ -377,6 +382,9 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 			b.metrics,
 		)
 	}
+
+	// Structured output fallback
+	result = llm.NewStructuredOutputFallbackWrapper(result, botConfig.StructuredOutputEnabled)
 
 	// Logging
 	if b.config.EnableLLMLogging() {
@@ -548,4 +556,18 @@ func (b *MMBots) SetBotsForTesting(bots []*Bot) {
 	b.botsLock.Lock()
 	defer b.botsLock.Unlock()
 	b.bots = bots
+}
+
+// GetAllBotUserIDs returns a list of all bot user IDs
+func (b *MMBots) GetAllBotUserIDs() []string {
+	b.botsLock.RLock()
+	defer b.botsLock.RUnlock()
+
+	ids := make([]string, 0, len(b.bots))
+	for _, bot := range b.bots {
+		if bot.mmBot != nil {
+			ids = append(ids, bot.mmBot.UserId)
+		}
+	}
+	return ids
 }

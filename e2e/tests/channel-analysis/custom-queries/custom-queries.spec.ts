@@ -39,21 +39,7 @@ class CustomQueriesHelper {
      * Click the agents button in the channel header to open the channel analysis popover
      */
     async openChannelAnalysisPopover() {
-        // The agents button is in the channel header with a styled-components class
-        // It's the button with ButtonContainer class that has an SVG icon
-        // We use a more specific selector to avoid matching other buttons
-        const channelHeader = this.page.locator('.channel-header__top, [class*="channel-header"]');
-
-        // Look for the AI plugin button - it has a specific styled-components class pattern
-        // The button is after the channel files button and before the info button
-        const agentsButton = channelHeader.locator('button[class*="ButtonContainer"]').first();
-
-        // Wait for the button to be visible and click it
-        await agentsButton.waitFor({ state: 'visible', timeout: 10000 });
-        await agentsButton.click();
-
-        // Wait for the popover to appear
-        await this.page.waitForSelector('.channel-summarize-popover', { timeout: 10000 });
+        await new AIPlugin(this.page).openChannelAnalysisPopover();
     }
 
     /**

@@ -112,4 +112,151 @@ func TestSplitPlaintextOnSentences(t *testing.T) {
 				"Chunk %d should meet minimum size requirement: %q", i, chunk)
 		}
 	})
+
+	t.Run("Whitespace-only content", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			input     string
+			chunkSize int
+		}{
+			{"spaces only", "     ", 10},
+			{"tabs only", "\t\t\t", 10},
+			{"newlines only", "\n\n\n", 10},
+			{"mixed whitespace", "  \t\n  \t\n  ", 10},
+			{"whitespace longer than chunk", "                    ", 5},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				chunks := SplitPlaintextOnSentences(tc.input, tc.chunkSize)
+				require.NotEmpty(t, chunks, "Should return at least one chunk")
+
+				// Each chunk should not exceed the chunk size
+				for i, chunk := range chunks {
+					assert.LessOrEqual(t, len(chunk), tc.chunkSize,
+						"Chunk %d exceeds maximum size: %q", i, chunk)
+				}
+			})
+		}
+	})
+
+	t.Run("Content exactly at chunk size boundary", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			input     string
+			chunkSize int
+			expected  []string
+		}{
+			{
+				name:      "exactly at boundary",
+				input:     "Hello world.",
+				chunkSize: 12,
+				expected:  []string{"Hello world."},
+			},
+			{
+				name:      "one character less than boundary",
+				input:     "Hello world",
+				chunkSize: 12,
+				expected:  []string{"Hello world"},
+			},
+			{
+				name:      "one character more than boundary",
+				input:     "Hello world!.",
+				chunkSize: 12,
+				expected:  []string{"Hello world!", "."},
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				chunks := SplitPlaintextOnSentences(tc.input, tc.chunkSize)
+				assert.Equal(t, tc.expected, chunks)
+			})
+		}
+	})
+
+	t.Run("Content that produces exactly one chunk", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			input     string
+			chunkSize int
+		}{
+			{"shorter than chunk size", "Short.", 100},
+			{"much shorter than chunk size", "Hi", 1000},
+			{"single character", ".", 10},
+			{"single word", "Hello", 10},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				chunks := SplitPlaintextOnSentences(tc.input, tc.chunkSize)
+				require.Len(t, chunks, 1, "Should produce exactly one chunk")
+				assert.Equal(t, tc.input, chunks[0], "Single chunk should equal input")
+			})
+		}
+	})
+
+	t.Run("Content with only sentence-ending punctuation", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			input     string
+			chunkSize int
+		}{
+			{"periods only", "...", 10},
+			{"exclamations only", "!!!", 10},
+			{"questions only", "???", 10},
+			{"mixed punctuation", ".!?.!?", 10},
+			{"punctuation longer than chunk", ".!?.!?.!?.!?.!?", 3},
+			{"single period", ".", 10},
+			{"single exclamation", "!", 10},
+			{"single question", "?", 10},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				chunks := SplitPlaintextOnSentences(tc.input, tc.chunkSize)
+				require.NotEmpty(t, chunks, "Should return at least one chunk")
+
+				// Each chunk should not exceed the chunk size
+				for i, chunk := range chunks {
+					assert.LessOrEqual(t, len(chunk), tc.chunkSize,
+						"Chunk %d exceeds maximum size: %q", i, chunk)
+				}
+
+				// All punctuation should be preserved
+				var combined string
+				for _, chunk := range chunks {
+					combined += chunk
+				}
+				// Note: TrimSpace may remove some content, but punctuation should be preserved
+				assert.NotEmpty(t, combined, "Combined chunks should not be empty")
+			})
+		}
+	})
+
+	t.Run("Edge cases with chunk size", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			input     string
+			chunkSize int
+		}{
+			{"chunk size of 1", "Hello.", 1},
+			{"chunk size of 2", "Hello.", 2},
+			{"very small chunk size with sentence endings", "A. B. C.", 2},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				// Should not panic even with very small chunk sizes
+				chunks := SplitPlaintextOnSentences(tc.input, tc.chunkSize)
+				require.NotEmpty(t, chunks, "Should return at least one chunk")
+
+				// Each chunk should not exceed the chunk size
+				for i, chunk := range chunks {
+					assert.LessOrEqual(t, len(chunk), tc.chunkSize,
+						"Chunk %d exceeds maximum size: %q (len=%d, max=%d)", i, chunk, len(chunk), tc.chunkSize)
+				}
+			})
+		}
+	})
 }

@@ -11,9 +11,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -253,9 +253,8 @@ func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.Co
 	}
 }
 
-// handleNonStreamingLLMResponse handles non-streaming LLM responses
+// handleNonStreamingLLMResponse handles non-streaming LLM responses.
 func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest, opts ...llm.LanguageModelOption) {
-	// Make the non-streaming LLM call
 	response, err := bot.LLM().ChatCompletionNoStream(llmRequest, opts...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{

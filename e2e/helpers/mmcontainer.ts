@@ -1,14 +1,26 @@
-import {StartedTestContainer, GenericContainer, StartedNetwork, Network, Wait} from "testcontainers";
-import {StartedPostgreSqlContainer, PostgreSqlContainer} from "@testcontainers/postgresql";
+import {File as NodeFile} from 'buffer';
+import type {StartedTestContainer, StartedNetwork} from 'testcontainers';
+import type {StartedPostgreSqlContainer} from '@testcontainers/postgresql';
 import {Client4} from "@mattermost/client";
 import { Client } from 'pg'
+import { pluginAdminConfigApiFromClient } from './plugin-http';
+
+if (typeof globalThis.File === 'undefined') {
+    Object.assign(globalThis, {File: NodeFile});
+}
+
+const {GenericContainer, Network, Wait} = require('testcontainers') as typeof import('testcontainers');
+const {PostgreSqlContainer} = require('@testcontainers/postgresql') as typeof import('@testcontainers/postgresql');
 
 const defaultEmail           = "admin@example.com";
 const defaultUsername        = "admin";
 const defaultPassword        = "admin";
 const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
-const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:latest";
+const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:11.5.1";
+
+type PluginConfig = Record<string, unknown>;
+type PluginConfigInput = PluginConfig | {config: PluginConfig};
 
 // MattermostContainer represents the mattermost container type used in the module
 export default class MattermostContainer {
@@ -25,6 +37,7 @@ export default class MattermostContainer {
     configFile: any[];
     plugins: any[];
     private logStream: any;
+    private isLogStreamClosed: boolean;
 
     url(): string {
         const containerPort = this.container.getMappedPort(8065)
@@ -54,12 +67,19 @@ export default class MattermostContainer {
     }
 
     stop = async () => {
-        if (this.logStream) {
-            this.logStream.end();
+        if (this.pgContainer) {
+            await this.pgContainer.stop()
         }
-        await this.pgContainer.stop()
-        await this.container.stop()
-        await this.network.stop()
+        if (this.container) {
+            await this.container.stop()
+        }
+        if (this.network) {
+            await this.network.stop()
+        }
+        if (this.logStream && !this.logStream.destroyed && !this.logStream.writableEnded) {
+            this.isLogStreamClosed = true;
+            await new Promise<void>((resolve) => this.logStream.end(resolve));
+        }
     }
 
     createAdmin = async (email: string, username: string, password: string) => {
@@ -90,15 +110,26 @@ export default class MattermostContainer {
         await this.container.exec(["mmctl", "--local", "config", "set", "ServiceSettings.ListenAddress", `${containerPort}`])
     }
 
-    installPlugin = async (pluginPath: string, pluginID: string, pluginConfig: any) => {
-		const patch = JSON.stringify({PluginSettings: {Plugins: {[pluginID]: pluginConfig}}})
-
+    installPlugin = async (pluginPath: string, pluginID: string, pluginConfig?: PluginConfigInput) => {
         await this.container.copyFilesToContainer([{source: pluginPath, target: `/tmp/plugin.tar.gz`}])
-        await this.container.copyContentToContainer([{content: patch, target: `/tmp/plugin.config.json`}])
 
         await this.container.exec(["mmctl", "--local", "plugin", "add", '/tmp/plugin.tar.gz'])
-        await this.container.exec(["mmctl", "--local", "config", "patch", '/tmp/plugin.config.json'])
         await this.container.exec(["mmctl", "--local", "plugin", "enable", pluginID])
+
+        // Set config via plugin admin API (replaces mmctl config patch)
+        if (pluginConfig) {
+            // Callers pass { config: {...} } — extract the inner config object
+            // since the admin API expects config.Config directly
+            const wrappedConfig = pluginConfig as {config?: PluginConfig};
+            const configData: PluginConfig = wrappedConfig.config ?? pluginConfig;
+            await this.setPluginConfig(pluginID, configData);
+        }
+    }
+
+    setPluginConfig = async (pluginID: string, config: PluginConfig) => {
+        const adminClient = await this.getAdminClient();
+        const api = pluginAdminConfigApiFromClient(adminClient, this.url(), pluginID);
+        await api.put(config as Record<string, unknown>, { settleMs: 2000 });
     }
 
     withEnv = (env: string, value: string): MattermostContainer => {
@@ -129,7 +160,7 @@ export default class MattermostContainer {
         return this
     }
 
-    withPlugin = (pluginPath: string, pluginID: string, pluginConfig: any): MattermostContainer => {
+    withPlugin = (pluginPath: string, pluginID: string, pluginConfig: PluginConfigInput): MattermostContainer => {
         this.plugins.push({id: pluginID, path: pluginPath, config: pluginConfig})
 
         return this
@@ -158,6 +189,7 @@ export default class MattermostContainer {
         this.password = defaultPassword;
         this.teamName = defaultTeamName;
         this.teamDisplayName = defaultTeamDisplayName;
+        this.isLogStreamClosed = false;
     }
 
     start = async (): Promise<MattermostContainer> => {
@@ -210,19 +242,22 @@ export default class MattermostContainer {
                     fs.mkdirSync(logDir);
                 }
                 this.logStream = fs.createWriteStream(`${logDir}/server-logs.log`, {flags: 'a'});
+                this.isLogStreamClosed = false;
 
-                stream.on('data', (data: string) => {
+                stream.on('data', (data: string | Buffer) => {
+                    const logLine = String(data);
+
                     // Write all logs to file
-                    if (this.logStream?.writable) {
-                        this.logStream.write(data + '\n');
+                    if (this.logStream && !this.isLogStreamClosed) {
+                        this.logStream.write(logLine + '\n');
                     }
 
                     // Only print plugin logs to console in non-CI environments
                     // In CI, this causes interleaving with Playwright test output
                     // Logs are always available in the server-logs.log artifact
-                    if (!process.env.CI && data.includes('"plugin_id":"mattermost-ai"')) {
+                    if (!process.env.CI && logLine.includes('"plugin_id":"mattermost-ai"')) {
                         // Remove API keys and sensitive tokens from logs
-                        let sanitized = data
+                        let sanitized = logLine
                             .replace(/"apiKey":"[^"]+"/g, '"apiKey":"[REDACTED]"')
                             .replace(/"api_key":"[^"]+"/g, '"api_key":"[REDACTED]"')
                             .replace(/Authorization:\s*Bearer\s+\S+/gi, 'Authorization: Bearer [REDACTED]')
