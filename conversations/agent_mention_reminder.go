@@ -66,9 +66,13 @@ func (c *Conversations) maybeNotifyAgentMentionNeeded(post *model.Post, channel 
 	ephemeral := &model.Post{
 		ChannelId: post.ChannelId,
 		RootId:    post.RootId,
-		Type:      AgentMentionReminderPostType,
 		Message:   fallback,
 	}
+	// Ephemeral posts cannot set the Post.Type directly (the server uses it to
+	// mark the post ephemeral). Custom post types for ephemerals are signalled
+	// via the "type" prop instead, which the webapp maps to the registered
+	// custom post type component.
+	ephemeral.AddProp("type", AgentMentionReminderPostType)
 	ephemeral.AddProp(AgentMentionReminderBotUserIDProp, mmBot.UserId)
 	ephemeral.AddProp(AgentMentionReminderBotUsernameProp, mmBot.Username)
 	ephemeral.AddProp(AgentMentionReminderBotDisplayNameProp, mmBot.DisplayName)

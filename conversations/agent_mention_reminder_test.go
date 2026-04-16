@@ -199,7 +199,7 @@ func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) 
 				require.Len(t, fix.client.ephemeralPosts, 1, "expected one ephemeral reminder")
 				require.Equal(t, reminderUserID, fix.client.ephemeralPostUserIDs[0])
 				ephemeral := fix.client.ephemeralPosts[0]
-				require.Equal(t, conversations.AgentMentionReminderPostType, ephemeral.Type)
+				require.Equal(t, conversations.AgentMentionReminderPostType, ephemeral.GetProp("type"))
 				require.Equal(t, tc.channel.Id, ephemeral.ChannelId)
 				require.Equal(t, reminderRootID, ephemeral.RootId)
 				require.Equal(t, reminderBotID, ephemeral.GetProp(conversations.AgentMentionReminderBotUserIDProp))
