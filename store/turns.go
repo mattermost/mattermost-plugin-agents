@@ -35,7 +35,7 @@ var turnColumns = []string{
 func (s *Store) CreateTurn(turn *Turn) error {
 	query, args, err := s.builder.Insert("LLM_Turns").
 		Columns(turnColumns...).
-		Values(turn.ID, turn.ConversationID, turn.PostID, turn.Role, turn.Content,
+		Values(turn.ID, turn.ConversationID, turn.PostID, turn.Role, string(turn.Content),
 			turn.TokensIn, turn.TokensOut, turn.Sequence, turn.CreatedAt).
 		ToSql()
 	if err != nil {
@@ -74,7 +74,7 @@ func (s *Store) GetTurnsForConversation(conversationID string) ([]Turn, error) {
 func (s *Store) UpdateTurnContent(id string, content json.RawMessage) error {
 	query, args, err := s.builder.
 		Update("LLM_Turns").
-		Set("Content", content).
+		Set("Content", string(content)).
 		Where(sq.Eq{"ID": id}).
 		ToSql()
 	if err != nil {
@@ -151,7 +151,7 @@ RETURNING Sequence`
 		var seq int
 		lastErr = s.db.QueryRow(query,
 			turn.ID, turn.ConversationID, turn.PostID, turn.Role,
-			turn.Content, turn.TokensIn, turn.TokensOut, turn.CreatedAt,
+			string(turn.Content), turn.TokensIn, turn.TokensOut, turn.CreatedAt,
 		).Scan(&seq)
 		if lastErr == nil {
 			turn.Sequence = seq
