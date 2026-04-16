@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/useragents"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,7 +29,7 @@ func testAgent(creatorID, username, displayName string) *useragents.UserAgent {
 		UserIDs:            nil,
 		TeamIDs:            []string{"team-1"},
 		AdminUserIDs:       []string{"admin-1", "admin-2"},
-		EnabledTools: []useragents.EnabledTool{
+		EnabledTools: []llm.EnabledMCPTool{
 			{ServerOrigin: "https://mcp.example.com", ToolName: "web_search"},
 			{ServerOrigin: "https://mcp.example.com", ToolName: "file_search"},
 		},

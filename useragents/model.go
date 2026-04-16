@@ -6,6 +6,8 @@ package useragents
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 // UserAgent represents a user-created AI agent persisted in the Agents_UserAgents table.
@@ -22,9 +24,9 @@ type UserAgent struct {
 	UserAccessLevel         int           `json:"user_access_level" db:"UserAccessLevel"`
 	UserIDs                 []string      `json:"user_ids"`
 	TeamIDs                 []string      `json:"team_ids"`
-	AdminUserIDs            []string      `json:"admin_user_ids"`
-	EnabledTools            []EnabledTool `json:"enabled_tools"`
-	Model                   string        `json:"model"`
+	AdminUserIDs            []string               `json:"admin_user_ids"`
+	EnabledTools            []llm.EnabledMCPTool   `json:"enabled_tools"`
+	Model                   string                 `json:"model"`
 	EnableVision            bool          `json:"enable_vision"`
 	DisableTools            bool          `json:"disable_tools"`
 	EnabledNativeTools      []string      `json:"enabled_native_tools"`
@@ -35,12 +37,6 @@ type UserAgent struct {
 	CreateAt                int64         `json:"create_at" db:"CreateAt"`
 	UpdateAt                int64         `json:"update_at" db:"UpdateAt"`
 	DeleteAt                int64         `json:"delete_at" db:"DeleteAt"`
-}
-
-// EnabledTool identifies a single tool on a specific MCP server that this agent may use.
-type EnabledTool struct {
-	ServerOrigin string `json:"server_origin"`
-	ToolName     string `json:"tool_name"`
 }
 
 // --- JSON helpers for DB TEXT columns ---

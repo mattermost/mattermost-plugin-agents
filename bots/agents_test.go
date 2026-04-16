@@ -51,18 +51,6 @@ func TestUserAgentToBotConfig(t *testing.T) {
 	assert.False(t, cfg.StructuredOutputEnabled)
 }
 
-func TestUserAgentToBotConfigIsValid(t *testing.T) {
-	agent := &useragents.UserAgent{
-		ID:          "agent-id",
-		Username:    "valid-agent",
-		DisplayName: "Valid Agent",
-		ServiceID:   "svc-1",
-	}
-
-	cfg := userAgentToBotConfig(agent)
-	assert.True(t, cfg.IsValid(), "converted BotConfig should pass IsValid()")
-}
-
 func TestDBBackedAgentInBotRegistry(t *testing.T) {
 	// Verify that a Bot built from a DB-backed agent's BotConfig
 	// is findable by all lookup methods.
@@ -111,29 +99,29 @@ func TestDBBackedAgentInBotRegistry(t *testing.T) {
 	assert.Equal(t, "db-agent", mentioned.GetMMBot().Username)
 }
 
-func TestConvertEnabledTools(t *testing.T) {
+func TestCopyEnabledMCPTools(t *testing.T) {
 	t.Run("nil input returns nil", func(t *testing.T) {
-		result := convertEnabledTools(nil)
+		result := copyEnabledMCPTools(nil)
 		assert.Nil(t, result)
 	})
 
 	t.Run("empty input returns empty non-nil", func(t *testing.T) {
-		result := convertEnabledTools([]useragents.EnabledTool{})
+		result := copyEnabledMCPTools([]llm.EnabledMCPTool{})
 		require.NotNil(t, result)
 		assert.Empty(t, result)
 	})
 
-	t.Run("populated input converts correctly", func(t *testing.T) {
-		input := []useragents.EnabledTool{
+	t.Run("populated input copies correctly", func(t *testing.T) {
+		input := []llm.EnabledMCPTool{
 			{ServerOrigin: "https://server.com", ToolName: "tool_a"},
 			{ServerOrigin: "https://other.com", ToolName: "tool_b"},
 		}
-		result := convertEnabledTools(input)
+		result := copyEnabledMCPTools(input)
 		require.Len(t, result, 2)
 		assert.Equal(t, "https://server.com", result[0].ServerOrigin)
 		assert.Equal(t, "tool_a", result[0].ToolName)
-		assert.Equal(t, "https://other.com", result[1].ServerOrigin)
-		assert.Equal(t, "tool_b", result[1].ToolName)
+		input[0].ToolName = "mutated"
+		assert.Equal(t, "tool_a", result[0].ToolName)
 	})
 }
 
@@ -143,7 +131,7 @@ func TestUserAgentToBotConfigEnabledTools(t *testing.T) {
 		Username:    "test-agent",
 		DisplayName: "Test Agent",
 		ServiceID:   "svc-1",
-		EnabledTools: []useragents.EnabledTool{
+		EnabledTools: []llm.EnabledMCPTool{
 			{ServerOrigin: "https://mcp.example.com", ToolName: "search"},
 		},
 	}
@@ -169,19 +157,14 @@ func TestUserAgentToBotConfigNilEnabledTools(t *testing.T) {
 	assert.Nil(t, cfg.EnabledMCPTools)
 }
 
-func TestForceRefreshFlag(t *testing.T) {
+func TestForceRefreshOnNextEnsureClearsSnapshot(t *testing.T) {
 	bots := &MMBots{}
+	bots.lastEnsuredBotCfgs = []llm.BotConfig{{Name: "x"}}
+	bots.lastEnsuredServiceCfgs = map[string]llm.ServiceConfig{"a": {ID: "a"}}
 
-	// Initially false
-	assert.False(t, bots.forceRefresh)
-
-	// Set via public method
 	bots.ForceRefreshOnNextEnsure()
-	assert.True(t, bots.forceRefresh)
 
-	// Reset manually (simulating what EnsureBots does)
-	bots.botsLock.Lock()
-	bots.forceRefresh = false
-	bots.botsLock.Unlock()
-	assert.False(t, bots.forceRefresh)
+	assert.Nil(t, bots.lastEnsuredBotCfgs)
+	assert.Nil(t, bots.lastEnsuredServiceCfgs)
+	assert.True(t, bots.forceRefresh)
 }

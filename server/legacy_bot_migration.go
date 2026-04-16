@@ -17,14 +17,12 @@ import (
 
 const legacyConfigBotsMigratedKey = "legacy_config_bots_migrated"
 
-func mcpToolsToEnabled(tools []llm.EnabledMCPTool) []useragents.EnabledTool {
+func copyEnabledMCPToolsFromBot(tools []llm.EnabledMCPTool) []llm.EnabledMCPTool {
 	if tools == nil {
 		return nil
 	}
-	out := make([]useragents.EnabledTool, len(tools))
-	for i, t := range tools {
-		out[i] = useragents.EnabledTool{ServerOrigin: t.ServerOrigin, ToolName: t.ToolName}
-	}
+	out := make([]llm.EnabledMCPTool, len(tools))
+	copy(out, tools)
 	return out
 }
 
@@ -88,6 +86,8 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 			continue
 		}
 		if _, ok := mmByUsername[bc.Name]; !ok {
+			// Soft defer (not an error): activation can run before EnsureBots creates MM bot rows,
+			// or the bot list may not yet include this owner. We retry on config updates.
 			pluginAPI.Log.Warn("Deferring legacy bot migration: Mattermost bot not found", "username", bc.Name)
 			return false, nil
 		}
@@ -115,7 +115,7 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 			UserIDs:                 bc.UserIDs,
 			TeamIDs:                 bc.TeamIDs,
 			AdminUserIDs:            nil,
-			EnabledTools:            mcpToolsToEnabled(bc.EnabledMCPTools),
+			EnabledTools:            copyEnabledMCPToolsFromBot(bc.EnabledMCPTools),
 			Model:                   bc.Model,
 			EnableVision:            bc.EnableVision,
 			DisableTools:            bc.DisableTools,

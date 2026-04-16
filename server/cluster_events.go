@@ -47,7 +47,7 @@ func (p *Plugin) OnPluginClusterEvent(_ *plugin.Context, ev model.PluginClusterE
 		}
 
 	case clusterEventAgentUpdate:
-		// Force the next EnsureBots to re-read DB agents, then trigger it.
+		// Invalidate optimistic ensure snapshots and run EnsureBots so this node reloads DB-backed agents.
 		p.bots.ForceRefreshOnNextEnsure()
 		if err := p.bots.EnsureBots(); err != nil {
 			p.pluginAPI.Log.Error("Failed to re-ensure bots after agent update cluster event", "error", err.Error())

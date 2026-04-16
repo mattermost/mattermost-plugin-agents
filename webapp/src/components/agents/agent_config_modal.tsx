@@ -64,6 +64,31 @@ const emptyDraft: AgentDraft = {
     structuredOutputEnabled: false,
 };
 
+/** Shared create/update payload from form draft (same field list as both API types). */
+function draftToAgentPayload(draft: AgentDraft): CreateAgentRequest {
+    return {
+        display_name: draft.displayName,
+        username: draft.username,
+        service_id: draft.serviceId,
+        custom_instructions: draft.customInstructions,
+        channel_access_level: draft.channelAccessLevel,
+        channel_ids: draft.channelIds,
+        user_access_level: draft.userAccessLevel,
+        user_ids: draft.userIds,
+        team_ids: draft.teamIds,
+        admin_user_ids: draft.adminUserIds,
+        enabled_tools: draft.enabledTools,
+        model: draft.model,
+        enable_vision: draft.enableVision,
+        disable_tools: draft.disableTools,
+        enabled_native_tools: draft.enabledNativeTools,
+        reasoning_enabled: draft.reasoningEnabled,
+        reasoning_effort: draft.reasoningEffort,
+        thinking_budget: draft.thinkingBudget,
+        structured_output_enabled: draft.structuredOutputEnabled,
+    };
+}
+
 function agentToDraft(agent: UserAgent): AgentDraft {
     return {
         displayName: agent.display_name,
@@ -179,54 +204,12 @@ const AgentConfigModal = (props: Props) => {
         setSaving(true);
 
         try {
+            const payload = draftToAgentPayload(draft);
             let savedAgent: UserAgent;
-
             if (mode === 'create') {
-                const req: CreateAgentRequest = {
-                    display_name: draft.displayName,
-                    username: draft.username,
-                    service_id: draft.serviceId,
-                    custom_instructions: draft.customInstructions,
-                    channel_access_level: draft.channelAccessLevel,
-                    channel_ids: draft.channelIds,
-                    user_access_level: draft.userAccessLevel,
-                    user_ids: draft.userIds,
-                    team_ids: draft.teamIds,
-                    admin_user_ids: draft.adminUserIds,
-                    enabled_tools: draft.enabledTools,
-                    model: draft.model,
-                    enable_vision: draft.enableVision,
-                    disable_tools: draft.disableTools,
-                    enabled_native_tools: draft.enabledNativeTools,
-                    reasoning_enabled: draft.reasoningEnabled,
-                    reasoning_effort: draft.reasoningEffort,
-                    thinking_budget: draft.thinkingBudget,
-                    structured_output_enabled: draft.structuredOutputEnabled,
-                };
-                savedAgent = await createAgent(req);
+                savedAgent = await createAgent(payload);
             } else {
-                const req: UpdateAgentRequest = {
-                    display_name: draft.displayName,
-                    username: draft.username,
-                    service_id: draft.serviceId,
-                    custom_instructions: draft.customInstructions,
-                    channel_access_level: draft.channelAccessLevel,
-                    channel_ids: draft.channelIds,
-                    user_access_level: draft.userAccessLevel,
-                    user_ids: draft.userIds,
-                    team_ids: draft.teamIds,
-                    admin_user_ids: draft.adminUserIds,
-                    enabled_tools: draft.enabledTools,
-                    model: draft.model,
-                    enable_vision: draft.enableVision,
-                    disable_tools: draft.disableTools,
-                    enabled_native_tools: draft.enabledNativeTools,
-                    reasoning_enabled: draft.reasoningEnabled,
-                    reasoning_effort: draft.reasoningEffort,
-                    thinking_budget: draft.thinkingBudget,
-                    structured_output_enabled: draft.structuredOutputEnabled,
-                };
-                savedAgent = await updateAgent(agent!.id, req);
+                savedAgent = await updateAgent(agent!.id, payload as UpdateAgentRequest);
             }
 
             // Upload avatar if one was selected (two-step: create/update first, then avatar)

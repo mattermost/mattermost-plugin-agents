@@ -48,8 +48,7 @@ const (
 	UserAccessLevelNone
 )
 
-// EnabledMCPTool identifies a single MCP tool on a specific server.
-// Mirrors useragents.EnabledTool but lives in the llm package to avoid import cycles.
+// EnabledMCPTool identifies a single MCP tool on a specific server (config bots and persisted agents).
 type EnabledMCPTool struct {
 	ServerOrigin string `json:"server_origin"`
 	ToolName     string `json:"tool_name"`

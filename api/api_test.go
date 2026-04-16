@@ -149,7 +149,7 @@ func cloneUserAgent(src *useragents.UserAgent) *useragents.UserAgent {
 		dst.AdminUserIDs = append([]string(nil), src.AdminUserIDs...)
 	}
 	if len(src.EnabledTools) > 0 {
-		dst.EnabledTools = append([]useragents.EnabledTool(nil), src.EnabledTools...)
+		dst.EnabledTools = append([]llm.EnabledMCPTool(nil), src.EnabledTools...)
 	}
 	if len(src.EnabledNativeTools) > 0 {
 		dst.EnabledNativeTools = append([]string(nil), src.EnabledNativeTools...)

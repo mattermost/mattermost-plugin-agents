@@ -105,14 +105,15 @@ func (b *MMBots) resolveServiceCfgs(botCfgs []llm.BotConfig) map[string]llm.Serv
 	return result
 }
 
-// ForceRefreshOnNextEnsure sets a flag that causes the next EnsureBots() call
-// to skip the optimistic config-equality check. This is used when DB-backed
-// agents change (create/update/delete) since those changes are not reflected
-// in the config.GetBots() comparison.
+// ForceRefreshOnNextEnsure clears the optimistic ensure snapshot and sets forceRefresh so the
+// next EnsureBots() cannot take the fast path. DB-backed agents are not part of the
+// config-file bot slice used for botConfigsEqual, so we must invalidate when agents change.
 func (b *MMBots) ForceRefreshOnNextEnsure() {
 	b.botsLock.Lock()
+	defer b.botsLock.Unlock()
+	b.lastEnsuredBotCfgs = nil
+	b.lastEnsuredServiceCfgs = nil
 	b.forceRefresh = true
-	b.botsLock.Unlock()
 }
 
 // userAgentToBotConfig converts a useragents.UserAgent to an llm.BotConfig
@@ -138,25 +139,19 @@ func userAgentToBotConfig(agent *useragents.UserAgent) llm.BotConfig {
 		UserAccessLevel:         llm.UserAccessLevel(agent.UserAccessLevel),
 		UserIDs:                 agent.UserIDs,
 		TeamIDs:                 agent.TeamIDs,
-		EnabledMCPTools:         convertEnabledTools(agent.EnabledTools),
+		EnabledMCPTools:         copyEnabledMCPTools(agent.EnabledTools),
 	}
 }
 
-// convertEnabledTools converts useragents.EnabledTool to llm.EnabledMCPTool.
-// Preserves nil vs empty semantics: nil input → nil output (all tools allowed),
-// empty input → empty output (no tools allowed).
-func convertEnabledTools(tools []useragents.EnabledTool) []llm.EnabledMCPTool {
+// copyEnabledMCPTool slice preserves nil vs empty semantics: nil → nil (all tools allowed),
+// non-nil → copied slice (possibly empty = no tools).
+func copyEnabledMCPTools(tools []llm.EnabledMCPTool) []llm.EnabledMCPTool {
 	if tools == nil {
 		return nil
 	}
-	result := make([]llm.EnabledMCPTool, len(tools))
-	for i, t := range tools {
-		result[i] = llm.EnabledMCPTool{
-			ServerOrigin: t.ServerOrigin,
-			ToolName:     t.ToolName,
-		}
-	}
-	return result
+	out := make([]llm.EnabledMCPTool, len(tools))
+	copy(out, tools)
+	return out
 }
 
 // botConfigsEqual compares two bot config slices for equality.

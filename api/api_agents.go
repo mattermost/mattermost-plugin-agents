@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/config"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -34,7 +35,7 @@ type CreateAgentRequest struct {
 	UserIDs                 []string                 `json:"user_ids"`
 	TeamIDs                 []string                 `json:"team_ids"`
 	AdminUserIDs            []string                 `json:"admin_user_ids"`
-	EnabledTools            []useragents.EnabledTool `json:"enabled_tools"`
+	EnabledTools            []llm.EnabledMCPTool `json:"enabled_tools"`
 	Model                   string                   `json:"model"`
 	EnableVision            *bool                    `json:"enable_vision"`
 	DisableTools            *bool                    `json:"disable_tools"`
@@ -47,6 +48,7 @@ type CreateAgentRequest struct {
 
 // UpdateAgentRequest is the JSON body for PUT /agents/:agentid.
 // All fields are optional — only provided fields are applied via read-modify-write.
+// Field names match CreateAgentRequest so clients may send a full document on each save.
 type UpdateAgentRequest struct {
 	DisplayName             *string                   `json:"display_name"`
 	Username                *string                   `json:"username"`
@@ -58,7 +60,7 @@ type UpdateAgentRequest struct {
 	UserIDs                 *[]string                 `json:"user_ids"`
 	TeamIDs                 *[]string                 `json:"team_ids"`
 	AdminUserIDs            *[]string                 `json:"admin_user_ids"`
-	EnabledTools            *[]useragents.EnabledTool `json:"enabled_tools"`
+	EnabledTools            *[]llm.EnabledMCPTool `json:"enabled_tools"`
 	Model                   *string                   `json:"model"`
 	EnableVision            *bool                     `json:"enable_vision"`
 	DisableTools            *bool                     `json:"disable_tools"`
@@ -130,6 +132,30 @@ func canConfigureAgentServices(client *pluginapi.Client, userID string) bool {
 	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
 }
 
+// loadPluginConfigForAgents loads the plugin configuration for agent create/update handlers.
+// On failure it aborts the request with the same status codes as the previous inline logic.
+func (a *API) loadPluginConfigForAgents(c *gin.Context) (*config.Config, bool) {
+	cfg, err := a.configStore.GetConfig()
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to read config: %w", err))
+		return nil, false
+	}
+	if cfg == nil {
+		c.AbortWithError(http.StatusInternalServerError, errors.New("no plugin configuration available"))
+		return nil, false
+	}
+	return cfg, true
+}
+
+func serviceIDExistsInConfig(cfg *config.Config, serviceID string) bool {
+	for _, svc := range cfg.Services {
+		if svc.ID == serviceID {
+			return true
+		}
+	}
+	return false
+}
+
 // refreshBotsAndNotify forces the bot registry to re-read DB-backed agents,
 // re-runs EnsureBots on this node, and publishes a cluster event so other
 // nodes do the same.
@@ -170,23 +196,11 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	}
 
 	// Validate that the referenced service exists in the config
-	cfg, err := a.configStore.GetConfig()
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to read config: %w", err))
+	cfg, ok := a.loadPluginConfigForAgents(c)
+	if !ok {
 		return
 	}
-	if cfg == nil {
-		c.AbortWithError(http.StatusInternalServerError, errors.New("no plugin configuration available"))
-		return
-	}
-	found := false
-	for _, svc := range cfg.Services {
-		if svc.ID == req.ServiceID {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !serviceIDExistsInConfig(cfg, req.ServiceID) {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", req.ServiceID))
 		return
 	}
@@ -207,7 +221,30 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
-	// Build the UserAgent record (defaults match legacy System Console new bot defaults).
+	// Build the UserAgent record: defaults from plugin config (SelfServiceAgentDefaults) when set,
+	// otherwise legacy System Console new-bot defaults.
+	def := cfg.SelfServiceAgentDefaults
+	enableVision := true
+	if def.EnableVision != nil {
+		enableVision = *def.EnableVision
+	}
+	disableTools := false
+	if def.DisableTools != nil {
+		disableTools = *def.DisableTools
+	}
+	reasoningEnabled := true
+	if def.ReasoningEnabled != nil {
+		reasoningEnabled = *def.ReasoningEnabled
+	}
+	reasoningEffort := "medium"
+	if def.ReasoningEffort != nil && *def.ReasoningEffort != "" {
+		reasoningEffort = *def.ReasoningEffort
+	}
+	structuredOutput := false
+	if def.StructuredOutputEnabled != nil {
+		structuredOutput = *def.StructuredOutputEnabled
+	}
+
 	agent := &useragents.UserAgent{
 		BotUserID:               mmBot.UserId,
 		CreatorID:               userID,
@@ -223,12 +260,12 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		AdminUserIDs:            req.AdminUserIDs,
 		EnabledTools:            req.EnabledTools,
 		Model:                   req.Model,
-		EnableVision:            true,
-		DisableTools:            false,
-		ReasoningEnabled:        true,
-		ReasoningEffort:         "medium",
+		EnableVision:            enableVision,
+		DisableTools:            disableTools,
+		ReasoningEnabled:        reasoningEnabled,
+		ReasoningEffort:         reasoningEffort,
 		ThinkingBudget:          req.ThinkingBudget,
-		StructuredOutputEnabled: false,
+		StructuredOutputEnabled: structuredOutput,
 	}
 	if req.EnableVision != nil {
 		agent.EnableVision = *req.EnableVision
@@ -347,23 +384,11 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		}
 	}
 	if req.ServiceID != nil {
-		cfg, cfgErr := a.configStore.GetConfig()
-		if cfgErr != nil {
-			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to read config: %w", cfgErr))
+		cfg, ok := a.loadPluginConfigForAgents(c)
+		if !ok {
 			return
 		}
-		if cfg == nil {
-			c.AbortWithError(http.StatusInternalServerError, errors.New("no plugin configuration available"))
-			return
-		}
-		found := false
-		for _, svc := range cfg.Services {
-			if svc.ID == *req.ServiceID {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !serviceIDExistsInConfig(cfg, *req.ServiceID) {
 			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", *req.ServiceID))
 			return
 		}

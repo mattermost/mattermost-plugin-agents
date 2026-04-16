@@ -3,7 +3,7 @@
 
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 
-// EnabledTool matches useragents.EnabledTool in Go
+// EnabledTool matches llm.EnabledMCPTool (persisted agents and config bots).
 export type EnabledTool = {
     server_origin: string; // MCP server origin URL
     tool_name: string; // tool identifier on that server
