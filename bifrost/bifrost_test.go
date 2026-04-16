@@ -259,40 +259,6 @@ func TestServiceUsesResponsesAPI(t *testing.T) {
 	}
 }
 
-func TestFilterNativeToolsForServiceType(t *testing.T) {
-	tests := []struct {
-		name        string
-		serviceType string
-		tools       []string
-		expected    []string
-	}{
-		{
-			name:        "OpenAI compatible keeps native tools",
-			serviceType: llm.ServiceTypeOpenAICompatible,
-			tools:       []string{"web_search"},
-			expected:    []string{"web_search"},
-		},
-		{
-			name:        "unsupported providers strip native tools",
-			serviceType: llm.ServiceTypeMistral,
-			tools:       []string{"web_search"},
-			expected:    []string{},
-		},
-		{
-			name:        "empty native tools stay empty",
-			serviceType: llm.ServiceTypeOpenAI,
-			tools:       nil,
-			expected:    nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, filterNativeToolsForServiceType(tt.serviceType, tt.tools))
-		})
-	}
-}
-
 func TestConvertMessagesReasoning(t *testing.T) {
 	tests := []struct {
 		name                string

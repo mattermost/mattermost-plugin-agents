@@ -55,6 +55,7 @@ type MCPClientManager interface {
 	GetToolsCache() *mcp.ToolsCache
 	GetHTTPClient() *http.Client
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
+	DisconnectUserOAuth(userID, serverName string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (string, error)
 	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
@@ -228,8 +229,10 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
 	router.GET("/mcp/tools", a.handleGetUserMCPTools)
+	router.GET("/mcp/oauth/:serverName/start", a.handleOAuthStart)
 	router.GET("/mcp/user-preferences", a.handleGetUserPreferences)
 	router.PUT("/mcp/user-preferences", a.handlePutUserPreferences)
+	router.DELETE("/mcp/oauth/:serverName", a.handleDeleteUserMCPOAuth)
 
 	// Agent CRUD routes — authenticated, license-gated
 	agentRouter := router.Group("/agents")

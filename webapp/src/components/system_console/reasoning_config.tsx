@@ -27,6 +27,7 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
     }
 
     // Determine if this service supports reasoning
+    // OpenAI direct always uses the Responses API
     const isAnthropic = props.service.type === 'anthropic';
     const isOpenAIWithResponses =
         props.service.type === 'openai' ||

@@ -265,52 +265,20 @@ func (c *Conversations) ProcessUserRequest(bot *bots.Bot, postingUser *model.Use
 
 	// Apply user-disabled-provider filtering for DM/group channels only (Copilot RHS).
 	// In-channel @mentions use the agent's EnabledTools and do not apply user toggles.
-	// This must happen before auth-error notifications so users don't receive OAuth
-	// prompts for providers they have explicitly disabled.
-	var disabledOrigins map[string]bool
 	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
 		if err != nil {
 			c.mmClient.LogWarn("Failed to load user tool preferences, proceeding without filtering", "error", err.Error(), "userID", postingUser.Id)
 		} else if len(prefs.DisabledServers) > 0 {
-			disabledOrigins = make(map[string]bool, len(prefs.DisabledServers))
-			for _, origin := range prefs.DisabledServers {
-				disabledOrigins[origin] = true
-			}
 			if llmContext.Tools != nil {
 				llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
 			}
 		}
 	}
 
-	// Strict bot-channel mode must run before OAuth prompts so tools removed by the
-	// activate_ai / auto_run_everywhere filter are not considered for GetAuthErrors.
-	// ProcessUserRequestWithContext applies the same filter; doing it here keeps
-	// notifications aligned with the tools that will actually be offered.
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 	if channelToolsAutoRunEverywhereOnly && !isDM {
 		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
-	}
-
-	// Check for auth errors in the tool store, excluding disabled providers.
-	if llmContext.Tools != nil {
-		authErrors := llmContext.Tools.GetAuthErrors()
-		if len(disabledOrigins) > 0 {
-			filtered := authErrors[:0]
-			for _, ae := range authErrors {
-				if !disabledOrigins[ae.ServerOrigin] {
-					filtered = append(filtered, ae)
-				}
-			}
-			authErrors = filtered
-		}
-		if len(authErrors) > 0 {
-			rootID := post.RootId
-			if rootID == "" {
-				rootID = post.Id
-			}
-			c.sendOAuthNotifications(bot, postingUser.Id, channel.Id, rootID, authErrors)
-		}
 	}
 
 	return c.ProcessUserRequestWithContext(bot, postingUser, channel, post, llmContext, allowToolsInChannel, channelToolsAutoRunEverywhereOnly)
@@ -574,33 +542,4 @@ func (c *Conversations) ThreadToLLMPosts(bot *bots.Bot, threadData *mmapi.Thread
 	}
 
 	return result
-}
-
-// sendOAuthNotifications sends an ephemeral post to notify the user about MCP servers that require authentication
-func (c *Conversations) sendOAuthNotifications(bot *bots.Bot, userID, channelID, rootID string, authErrors []llm.ToolAuthError) {
-	if len(authErrors) == 0 {
-		return
-	}
-
-	// Build the message
-	var message strings.Builder
-	message.WriteString("**Authentication Required**\n\n")
-	message.WriteString("The following MCP servers require authentication:\n\n")
-
-	for _, authErr := range authErrors {
-		message.WriteString(fmt.Sprintf("• **%s**: [Click here to authenticate](%s)\n", authErr.ServerName, authErr.AuthURL))
-	}
-
-	message.WriteString("\nPlease authenticate with the required servers and try again.")
-
-	// Create the ephemeral post
-	post := &model.Post{
-		RootId:    rootID,
-		UserId:    bot.GetMMBot().UserId,
-		ChannelId: channelID,
-		Message:   message.String(),
-	}
-
-	// Send the ephemeral post
-	c.mmClient.SendEphemeralPost(userID, post)
 }

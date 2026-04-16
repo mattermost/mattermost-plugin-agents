@@ -352,7 +352,13 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // Tool-affecting config fingerprint (must be declared before prefetch effect)
     const configFingerprint = JSON.stringify({
-        servers: normalizedServers.map((s) => ({url: s.baseURL, enabled: s.enabled})),
+        servers: normalizedServers.map((s) => ({
+            url: s.baseURL,
+            enabled: s.enabled,
+            clientID: s.clientID || '',
+            hasClientSecret: Boolean(s.clientSecret),
+        })),
+        embeddedEnabled: mcpConfig?.embeddedServer?.enabled,
         enablePluginServer: mcpConfig?.enablePluginServer,
     });
     const prevFingerprintRef = useRef(configFingerprint);
@@ -365,7 +371,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         }
     }, [configFingerprint]);
 
-    // Pre-fetch tools data when MCP is enabled so they're ready when the Tools tab is clicked.
+    // Pre-fetch tools data so they're ready when the Tools tab is clicked.
     // Ignore responses from outdated requests (cleanup + fingerprint match) so config changes cannot apply stale data.
     useEffect(() => {
         const fingerprintAtFetchStart = configFingerprint;
@@ -398,14 +404,15 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         setIdleTimeoutInputValue(getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
     }, [mcpConfig?.idleTimeoutMinutes]);
 
-    // Create a properly initialized config object
+    // MCP client and embedded server are always enabled; users can still
+    // disable individual tools but cannot turn off MCP entirely.
     const config: MCPConfig = {
         enabled: true,
         enablePluginServer: mcpConfig?.enablePluginServer ?? false,
         servers: normalizedServers,
         embeddedServer: {
+            ...(mcpConfig?.embeddedServer || {}),
             enabled: true,
-            tool_configs: mcpConfig?.embeddedServer?.tool_configs,
         },
         idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
     };

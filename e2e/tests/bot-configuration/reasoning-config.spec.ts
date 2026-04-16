@@ -9,7 +9,7 @@ import { createBotConfigHelper, generateBotId } from 'helpers/bot-config';
  * Reasoning Configuration Integration Tests
  *
  * Tests complex integration scenarios for reasoning configuration.
- * Basic agent-builder reasoning coverage is in tests/agents/provider-config.spec.ts.
+ * Basic reasoning config tests are covered by system-console/bot-reasoning-config.spec.ts
  * These tests focus on cross-service behavior and persistence.
  */
 
@@ -30,19 +30,20 @@ function createTestSuite() {
             await mattermost.stop();
         });
 
-        test('should require Responses API for OpenAI-compatible reasoning', async () => {
+        test('should allow reasoning config on OpenAI Compatible service without Responses API', async () => {
             const botConfig = await createBotConfigHelper(mattermost);
             const serviceId = 'no-responses-api-service';
             const botId = generateBotId();
 
-            // Create a service without Responses API
+            // Create an OpenAI Compatible service without Responses API
+            // (OpenAI direct always uses Responses API)
             await botConfig.addService({
                 id: serviceId,
                 name: 'No Responses API Service',
                 type: 'openaicompatible',
                 apiKey: 'test-key',
                 apiURL: 'http://openai:8080',
-                useResponsesAPI: false, // Responses API disabled
+                useResponsesAPI: false,
             });
 
             await botConfig.addBot({

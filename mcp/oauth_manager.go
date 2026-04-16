@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
@@ -17,19 +18,31 @@ import (
 )
 
 const (
-	clientID = "mattermost-mcp-client"
+	clientID                = "mattermost-mcp-client"
+	oauthCallbackPathSuffix = "/oauth/callback"
 )
 
 type OAuthNeededError struct {
-	authURL string
+	authURL     string
+	metadataURL string
 }
 
 func (e *OAuthNeededError) Error() string {
+	if e.authURL == "" {
+		return "OAuth flow needed"
+	}
 	return fmt.Sprintf("OAuth flow needed, please visit: %s", e.authURL)
 }
 func (e *OAuthNeededError) AuthURL() string {
 	return e.authURL
 }
+
+// MetadataURL returns the RFC 9728 resource_metadata URL from the upstream
+// 401 challenge when known (may be empty).
+func (e *OAuthNeededError) MetadataURL() string {
+	return e.metadataURL
+}
+
 func (e *OAuthNeededError) Unwrap() error {
 	return nil
 }
@@ -61,6 +74,16 @@ func NewOAuthManager(pluginAPI mmapi.Client, callbackURL string, httpClient *htt
 		httpClient:         httpClient,
 		serverConfigLookup: serverConfigLookup,
 	}
+}
+
+func (m *OAuthManager) StartURL(serverID string) string {
+	baseURL := strings.TrimSuffix(m.callbackURL, oauthCallbackPathSuffix)
+	baseURL = strings.TrimRight(baseURL, "/")
+	if baseURL == "" {
+		return ""
+	}
+
+	return fmt.Sprintf("%s/mcp/oauth/%s/start", baseURL, url.PathEscape(serverID))
 }
 
 // StaticOAuthCredentials holds pre-configured OAuth client credentials from server config.
@@ -174,6 +197,16 @@ func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadat
 			TokenURL: tokenURL,
 		},
 	}, nil
+}
+
+func (m *OAuthManager) InitiateOAuthFlowForServer(ctx context.Context, userID string, serverConfig ServerConfig) (string, error) {
+	return m.InitiateOAuthFlowForServerWithMetadata(ctx, userID, serverConfig, "")
+}
+
+// InitiateOAuthFlowForServerWithMetadata starts OAuth like InitiateOAuthFlowForServer but passes
+// resource_metadata from the upstream 401 when present (RFC 9728).
+func (m *OAuthManager) InitiateOAuthFlowForServerWithMetadata(ctx context.Context, userID string, serverConfig ServerConfig, metadataURL string) (string, error) {
+	return m.InitiateOAuthFlow(ctx, userID, serverConfig.Name, serverConfig.BaseURL, metadataURL, staticOAuthCreds(serverConfig))
 }
 
 func (m *OAuthManager) InitiateOAuthFlow(ctx context.Context, userID, serverID, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (string, error) {

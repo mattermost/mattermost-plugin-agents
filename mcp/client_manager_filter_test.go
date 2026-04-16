@@ -144,10 +144,8 @@ func TestFilterToolsByConfig(t *testing.T) {
 			wantToolNames: []string{"a_tool", "z_tool", "b_tool"},
 		},
 		{
-			name: "embedded server uses vetted tool seed and unconfigured tools default enabled",
-			config: Config{
-				EmbeddedServer: EmbeddedServerConfig{Enabled: true},
-			},
+			name:   "embedded server uses vetted tool seed and unconfigured tools default enabled",
+			config: Config{},
 			rawTools: []llm.Tool{
 				{Name: "search_users", Description: "Search users", ServerOrigin: EmbeddedClientKey},
 				{Name: "create_post", Description: "Create post", ServerOrigin: EmbeddedClientKey},
@@ -158,6 +156,9 @@ func TestFilterToolsByConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Always provide the embedded client since the embedded server
+			// is always enabled. Tests that don't involve embedded tools
+			// are unaffected because no tools have the embedded origin.
 			embeddedClient := &EmbeddedServerClient{}
 
 			filtered := filterToolsByConfig(tt.rawTools, tt.config, embeddedClient)

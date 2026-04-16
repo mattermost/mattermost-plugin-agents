@@ -51,6 +51,7 @@ const groups = {
         'tests/agents-tour/display-conditions.spec.ts',
         'tests/tool-config/tools-tab-display.spec.ts',
         'tests/tool-config/user-toggle.spec.ts',
+        'tests/tool-config/mcp-oauth-auth.spec.ts',
     ],
     'e2e-shard-3': [
         'tests/system-console/bot-native-tools.spec.ts',
