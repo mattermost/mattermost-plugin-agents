@@ -313,14 +313,12 @@ func (c *Conversations) streamToolFollowUp(
 	}
 
 	runner := toolrunner.New(bot.LLM())
-	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext), opts...)
-
-	if runResult != nil && len(runResult.ToolTurns) > 0 {
+	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext), func(turns []toolrunner.ToolTurn) {
 		shared := isDM
-		if writeErr := c.convService.WriteToolTurns(conv.ID, runResult.ToolTurns, shared); writeErr != nil {
+		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns on follow-up", "error", writeErr)
 		}
-	}
+	}, opts...)
 
 	if err != nil {
 		return fmt.Errorf("tool runner failed on tool follow-up: %w", err)

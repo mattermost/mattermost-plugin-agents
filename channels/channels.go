@@ -154,17 +154,13 @@ func (c *Channels) AnalyzeChannelWithRequest(
 	runResult, err := runner.Run(
 		*completionRequest,
 		func(_ llm.ToolCall) bool { return true },
+		func(turns []toolrunner.ToolTurn) {
+			if writeErr := c.convSvc.WriteToolTurns(convResult.ConversationID, turns, true); writeErr != nil {
+				c.client.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", convResult.ConversationID)
+			}
+		},
 		llm.WithReasoningDisabled(),
 	)
-
-	if runResult != nil && len(runResult.ToolTurns) > 0 {
-		if writeErr := c.convSvc.WriteToolTurns(convResult.ConversationID, runResult.ToolTurns, true); writeErr != nil {
-			if err != nil {
-				return nil, fmt.Errorf("tool runner failed: %w (also failed to write tool turns: %v)", err, writeErr)
-			}
-			return nil, fmt.Errorf("failed to write tool turns: %w", writeErr)
-		}
-	}
 
 	if err != nil {
 		return nil, fmt.Errorf("tool runner failed: %w", err)

@@ -212,17 +212,11 @@ func (c *Conversations) ProcessDMRequest(
 	}
 
 	runner := toolrunner.New(lm)
-	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmCtx))
-
-	if runResult != nil && len(runResult.ToolTurns) > 0 {
-		if writeErr := c.convService.WriteToolTurns(convID, runResult.ToolTurns, true); writeErr != nil {
-			if err != nil {
-				return nil, fmt.Errorf("tool runner failed: %w (also failed to write tool turns: %v)", err, writeErr)
-			}
-			return nil, fmt.Errorf("failed to write tool turns: %w", writeErr)
+	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmCtx), func(turns []toolrunner.ToolTurn) {
+		if writeErr := c.convService.WriteToolTurns(convID, turns, true); writeErr != nil {
+			c.mmClient.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", convID)
 		}
-	}
-
+	})
 	if err != nil {
 		return nil, fmt.Errorf("tool runner failed: %w", err)
 	}

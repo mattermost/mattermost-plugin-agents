@@ -130,7 +130,7 @@ func TestToolRunner_NoToolCalls(t *testing.T) {
 		Context: &llm.Context{Tools: llm.NewNoTools()},
 	}
 
-	result, err := runner.Run(request, alwaysExecute)
+	result, err := runner.Run(request, alwaysExecute, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -173,12 +173,13 @@ func TestToolRunner_SingleToolRound(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute)
+	result, err := runner.Run(request, alwaysExecute, nil)
 	require.NoError(t, err)
 
 	text, readErr := result.Stream.ReadAll()
 	require.NoError(t, readErr)
-	assert.Equal(t, "It's 72F in NYC", text)
+	// Text from both rounds is forwarded (intermediate + final).
+	assert.Contains(t, text, "It's 72F in NYC")
 
 	// One tool turn.
 	require.Len(t, result.ToolTurns, 1)
@@ -246,7 +247,7 @@ func TestToolRunner_MultipleToolRounds(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute)
+	result, err := runner.Run(request, alwaysExecute, nil)
 	require.NoError(t, err)
 
 	text, _ := result.Stream.ReadAll()
@@ -279,7 +280,7 @@ func TestToolRunner_PartialApproval_NoneExecuted(t *testing.T) {
 		Context: &llm.Context{Tools: llm.NewNoTools()},
 	}
 
-	result, err := runner.Run(request, neverExecute)
+	result, err := runner.Run(request, neverExecute, nil)
 	require.NoError(t, err)
 
 	// Stream should still contain text AND the tool call events.
@@ -328,7 +329,7 @@ func TestToolRunner_MixedBatch_AllOrNothing(t *testing.T) {
 	// Only approve read_tool, not write_tool.
 	result, err := runner.Run(request, func(tc llm.ToolCall) bool {
 		return tc.Name == "read_tool"
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	// All tool calls returned unresolved.
@@ -374,7 +375,7 @@ func TestToolRunner_ToolExecutionError(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute)
+	result, err := runner.Run(request, alwaysExecute, nil)
 	require.NoError(t, err) // runner itself doesn't fail
 
 	text, _ := result.Stream.ReadAll()
@@ -393,7 +394,7 @@ func TestToolRunner_ToolExecutionError(t *testing.T) {
 }
 
 func TestToolRunner_LLMError(t *testing.T) {
-	// ChatCompletion returns an error directly.
+	// ChatCompletion returns an error directly on the first call.
 	inner := &testLLM{
 		responses: []testResponse{{
 			err: fmt.Errorf("rate limit exceeded"),
@@ -406,13 +407,13 @@ func TestToolRunner_LLMError(t *testing.T) {
 		Context: &llm.Context{Tools: llm.NewNoTools()},
 	}
 
-	result, err := runner.Run(request, alwaysExecute)
+	result, err := runner.Run(request, alwaysExecute, nil)
 	assert.Nil(t, result)
 	assert.ErrorContains(t, err, "rate limit exceeded")
 }
 
 func TestToolRunner_LLMStreamError(t *testing.T) {
-	// Stream emits an error event.
+	// Stream emits an error event — delivered through the stream, not as return value.
 	inner := &testLLM{
 		responses: []testResponse{{
 			events: []llm.TextStreamEvent{
@@ -428,10 +429,15 @@ func TestToolRunner_LLMStreamError(t *testing.T) {
 		Context: &llm.Context{Tools: llm.NewNoTools()},
 	}
 
-	result, err := runner.Run(request, alwaysExecute)
-	assert.NotNil(t, result, "partial result should be returned even on stream error")
+	result, err := runner.Run(request, alwaysExecute, nil)
+	require.NoError(t, err, "first ChatCompletion succeeds, stream error comes through stream")
+	require.NotNil(t, result)
+
+	// ReadAll discards accumulated text on error (returns "").
+	// The error is delivered through the stream, not as Run's return value.
+	_, streamErr := result.Stream.ReadAll()
+	assert.ErrorContains(t, streamErr, "stream interrupted")
 	assert.Empty(t, result.ToolTurns)
-	assert.ErrorContains(t, err, "stream interrupted")
 }
 
 func TestToolRunner_StreamEventPassthrough(t *testing.T) {
@@ -455,7 +461,7 @@ func TestToolRunner_StreamEventPassthrough(t *testing.T) {
 		Context: &llm.Context{Tools: llm.NewNoTools()},
 	}
 
-	result, err := runner.Run(request, alwaysExecute)
+	result, err := runner.Run(request, alwaysExecute, nil)
 	require.NoError(t, err)
 
 	var eventTypes []llm.EventType
@@ -493,18 +499,17 @@ func TestToolRunner_MaxRoundsExhausted(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute)
+	result, err := runner.Run(request, alwaysExecute, nil)
 	require.NoError(t, err)
 
 	// Should have exactly MaxToolRounds tool turns.
+	// (read stream first to ensure goroutine completes)
+	_, readErr := result.Stream.ReadAll()
+	assert.NoError(t, readErr)
 	assert.Len(t, result.ToolTurns, MaxToolRounds)
 
 	// LLM called MaxToolRounds times (not MaxToolRounds+1).
 	assert.Equal(t, MaxToolRounds, inner.callCount)
-
-	// Final stream should have an end event.
-	_, readErr := result.Stream.ReadAll()
-	assert.NoError(t, readErr)
 }
 
 func TestToolRunner_ReasoningPreservedInToolTurn(t *testing.T) {
@@ -536,8 +541,9 @@ func TestToolRunner_ReasoningPreservedInToolTurn(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute)
+	result, err := runner.Run(request, alwaysExecute, nil)
 	require.NoError(t, err)
+	_, _ = result.Stream.ReadAll()
 
 	require.Len(t, result.ToolTurns, 1)
 	assert.Equal(t, "I should use the tool", result.ToolTurns[0].AssistantReasoning.Text)
@@ -578,7 +584,7 @@ func TestToolRunner_MultipleToolCallsInOneBatch(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute)
+	result, err := runner.Run(request, alwaysExecute, nil)
 	require.NoError(t, err)
 
 	text, _ := result.Stream.ReadAll()
@@ -608,7 +614,7 @@ func TestToolRunner_NilContext(t *testing.T) {
 		Context: nil,
 	}
 
-	result, err := runner.Run(request, alwaysExecute)
+	result, err := runner.Run(request, alwaysExecute, nil)
 	require.NoError(t, err)
 	text, _ := result.Stream.ReadAll()
 	assert.Equal(t, "Hello", text)
@@ -644,7 +650,7 @@ func TestToolRunner_OptsPassedThrough(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute, llm.WithReasoningDisabled())
+	result, err := runner.Run(request, alwaysExecute, nil, llm.WithReasoningDisabled())
 	require.NoError(t, err)
 	_, _ = result.Stream.ReadAll()
 
@@ -681,7 +687,7 @@ func TestToolRunner_ServerOriginPreserved(t *testing.T) {
 		Context: &llm.Context{Tools: store},
 	}
 
-	result, err := runner.Run(request, alwaysExecute)
+	result, err := runner.Run(request, alwaysExecute, nil)
 	require.NoError(t, err)
 	_, _ = result.Stream.ReadAll()
 
@@ -733,15 +739,10 @@ func TestToolRunner_ApprovalAfterToolRound(t *testing.T) {
 	// Only approve safe_tool.
 	result, err := runner.Run(request, func(tc llm.ToolCall) bool {
 		return tc.Name == "safe_tool"
-	})
+	}, nil)
 	require.NoError(t, err)
 
-	// One tool turn was executed (safe_tool).
-	require.Len(t, result.ToolTurns, 1)
-	assert.Equal(t, "safe_tool", result.ToolTurns[0].AssistantToolCalls[0].Name)
-	assert.Equal(t, int64(40), result.ToolTurns[0].TokensIn)
-
-	// The unresolved stream should contain text and tool calls.
+	// Consume stream first to ensure goroutine completes.
 	var gotText bool
 	var gotToolCalls bool
 	for event := range result.Stream.Stream {
@@ -755,6 +756,77 @@ func TestToolRunner_ApprovalAfterToolRound(t *testing.T) {
 	assert.True(t, gotText)
 	assert.True(t, gotToolCalls)
 
+	// One tool turn was executed (safe_tool).
+	require.Len(t, result.ToolTurns, 1)
+	assert.Equal(t, "safe_tool", result.ToolTurns[0].AssistantToolCalls[0].Name)
+	assert.Equal(t, int64(40), result.ToolTurns[0].TokensIn)
+
 	// LLM called twice.
 	assert.Equal(t, 2, inner.callCount)
+}
+
+func TestToolRunner_OnToolTurnsCallback(t *testing.T) {
+	// Verify that onToolTurns callback is called with accumulated tool turns.
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "tool_a", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "Done"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+
+	store := newTestToolStore(testToolDef{name: "tool_a", result: "result_a"})
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: store},
+	}
+
+	var callbackTurns []ToolTurn
+	var callbackCalled bool
+	result, err := runner.Run(request, alwaysExecute, func(turns []ToolTurn) {
+		callbackCalled = true
+		callbackTurns = turns
+	})
+	require.NoError(t, err)
+
+	_, _ = result.Stream.ReadAll()
+	assert.True(t, callbackCalled)
+	require.Len(t, callbackTurns, 1)
+	assert.Equal(t, "tool_a", callbackTurns[0].AssistantToolCalls[0].Name)
+	assert.Equal(t, "result_a", callbackTurns[0].ToolResults[0].Result)
+}
+
+func TestToolRunner_OnToolTurnsNotCalledWithoutToolUse(t *testing.T) {
+	// Verify that onToolTurns callback is NOT called when there are no tool turns.
+	inner := &testLLM{
+		responses: []testResponse{{
+			events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "Hello"},
+				{Type: llm.EventTypeEnd},
+			},
+		}},
+	}
+
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: llm.NewNoTools()},
+	}
+
+	callbackCalled := false
+	result, err := runner.Run(request, alwaysExecute, func(_ []ToolTurn) {
+		callbackCalled = true
+	})
+	require.NoError(t, err)
+
+	_, _ = result.Stream.ReadAll()
+	assert.False(t, callbackCalled)
 }

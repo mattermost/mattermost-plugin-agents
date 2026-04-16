@@ -271,14 +271,12 @@ func (c *Conversations) regenerateViaConversation(
 	}
 
 	runner := toolrunner.New(bot.LLM())
-	runResult, runErr := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext), opts...)
-
-	if runResult != nil && len(runResult.ToolTurns) > 0 {
+	runResult, runErr := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext), func(turns []toolrunner.ToolTurn) {
 		shared := isDM
-		if writeErr := c.convService.WriteToolTurns(conv.ID, runResult.ToolTurns, shared); writeErr != nil {
+		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns on regen", "error", writeErr)
 		}
-	}
+	}, opts...)
 
 	if runErr != nil {
 		return nil, fmt.Errorf("tool runner failed on regen: %w", runErr)

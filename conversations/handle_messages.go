@@ -250,13 +250,11 @@ func (c *Conversations) handleMentionViaConversation(
 			return false
 		}
 		return autoExec(tc)
-	}, opts...)
-
-	if result != nil && len(result.ToolTurns) > 0 {
-		if writeErr := c.convService.WriteToolTurns(convResult.Conversation.ID, result.ToolTurns, false); writeErr != nil {
+	}, func(turns []toolrunner.ToolTurn) {
+		if writeErr := c.convService.WriteToolTurns(convResult.Conversation.ID, turns, false); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns", "error", writeErr)
 		}
-	}
+	}, opts...)
 
 	if runErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)

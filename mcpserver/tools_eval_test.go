@@ -41,7 +41,7 @@ func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.
 		Posts:     posts,
 		Context:   setup.llmContext,
 		Operation: llm.OperationConversation,
-	}, func(tc llm.ToolCall) bool { return true })
+	}, func(tc llm.ToolCall) bool { return true }, nil)
 	require.NoError(e.T, err, "ToolRunner should succeed")
 
 	response, err := runResult.Stream.ReadAll()

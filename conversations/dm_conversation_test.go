@@ -567,6 +567,10 @@ func TestDMAutoRunTools_ToolRunnerExecutesAndWritesTurns(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
 
+	// Consume the stream so the tool runner goroutine completes
+	// and tool turns are written via the callback.
+	_, _ = streamResult.Stream.ReadAll()
+
 	// Verify tool turns were written
 	turns := env.convStore.turnsFor(convResult.ConversationID)
 
@@ -848,6 +852,10 @@ func TestDMToolSharedFlag_AlwaysTrue(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, streamResult)
+
+	// Consume the stream so the tool runner goroutine completes
+	// and tool turns are written via the callback.
+	_, _ = streamResult.Stream.ReadAll()
 
 	turns := env.convStore.turnsFor(convResult.ConversationID)
 	for _, turn := range turns {
