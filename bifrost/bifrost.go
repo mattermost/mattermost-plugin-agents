@@ -164,6 +164,16 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 	return config, nil
 }
 
+// toolArgsToJSON ensures tool arguments are valid JSON.
+// Tools with no parameters produce an empty string which is not valid JSON,
+// so we default to "{}".
+func toolArgsToJSON(s string) json.RawMessage {
+	if s == "" {
+		return json.RawMessage("{}")
+	}
+	return json.RawMessage(s)
+}
+
 // New creates a new LLM instance with the given configuration.
 func New(cfg Config) (*LLM, error) {
 	account := &providerAccount{
@@ -435,7 +445,7 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 							toolCalls = append(toolCalls, llm.ToolCall{
 								ID:        buf.id,
 								Name:      buf.name,
-								Arguments: []byte(buf.arguments.String()),
+								Arguments: toolArgsToJSON(buf.arguments.String()),
 							})
 						}
 						if len(toolCalls) > 0 {
@@ -501,7 +511,7 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 				toolCalls = append(toolCalls, llm.ToolCall{
 					ID:        buf.id,
 					Name:      buf.name,
-					Arguments: []byte(buf.arguments.String()),
+					Arguments: toolArgsToJSON(buf.arguments.String()),
 				})
 			}
 		}
@@ -1485,7 +1495,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 							toolCalls = append(toolCalls, llm.ToolCall{
 								ID:        buf.id,
 								Name:      buf.name,
-								Arguments: []byte(buf.arguments.String()),
+								Arguments: toolArgsToJSON(buf.arguments.String()),
 							})
 						}
 					}
@@ -1528,7 +1538,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				toolCalls = append(toolCalls, llm.ToolCall{
 					ID:        buf.id,
 					Name:      buf.name,
-					Arguments: []byte(buf.arguments.String()),
+					Arguments: toolArgsToJSON(buf.arguments.String()),
 				})
 			}
 		}
