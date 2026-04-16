@@ -158,12 +158,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	}
 
 	// Create analysis post with conversation ID for streaming turn persistence
-	siteURL := a.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
-	if siteURL == nil || *siteURL == "" {
-		c.AbortWithError(http.StatusInternalServerError, errors.New("site URL not configured"))
-		return
-	}
-	analysisPost := a.makeAnalysisPost(user.Locale, "", data.AnalysisType, *siteURL, result.ConversationID)
+	analysisPost := a.makeAnalysisPost(user.Locale, "", data.AnalysisType, result.ConversationID)
 
 	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), bot.GetMMBot().UserId, result.Stream, user.Id, analysisPost, ""); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)

@@ -168,12 +168,7 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 	}
 
 	// Create analysis post with conversation ID
-	siteURL := a.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
-	if siteURL == nil || *siteURL == "" {
-		c.AbortWithError(http.StatusInternalServerError, errors.New("site URL not configured"))
-		return
-	}
-	analysisPost := a.makeAnalysisPost(user.Locale, post.Id, data.AnalysisType, *siteURL, analyzeResult.ConversationID)
+	analysisPost := a.makeAnalysisPost(user.Locale, post.Id, data.AnalysisType, analyzeResult.ConversationID)
 	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -422,7 +417,7 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 }
 
 // makeAnalysisPost creates a post for thread analysis results
-func (a *API) makeAnalysisPost(locale string, postIDToAnalyze string, analysisType string, siteURL string, conversationID string) *model.Post {
+func (a *API) makeAnalysisPost(locale string, postIDToAnalyze string, analysisType string, conversationID string) *model.Post {
 	post := &model.Post{}
 	post.AddProp(conversations.ThreadIDProp, postIDToAnalyze)
 	post.AddProp(conversations.AnalysisTypeProp, analysisType)

@@ -66,6 +66,7 @@ type turnAccumulator struct {
 	turnID         string
 	conversationID string
 	postID         string
+	isDM           bool // true for DM channels; controls shared flag on tool_use blocks
 
 	// Accumulated content
 	text          strings.Builder
@@ -120,7 +121,7 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 		}
 	}
 
-	// 4. Tool call blocks (DM tool progress)
+	// 4. Tool call blocks
 	for _, tc := range a.toolCalls {
 		blocks = append(blocks, conversation.ContentBlock{
 			Type:         conversation.BlockTypeToolUse,
@@ -129,7 +130,7 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 			ServerOrigin: tc.ServerOrigin,
 			Input:        tc.Arguments,
 			Status:       conversation.StatusToString(tc.Status),
-			Shared:       conversation.BoolPtr(true),
+			Shared:       conversation.BoolPtr(a.isDM),
 		})
 	}
 
@@ -314,8 +315,9 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 }
 
 // createPlaceholderTurn creates a placeholder turn row for the streaming assistant response.
+// isDM controls the shared flag on persisted tool_use blocks.
 // Returns nil if the turn cannot be created (error is logged).
-func (p *MMPostStreamService) createPlaceholderTurn(conversationID, postID string) *turnAccumulator {
+func (p *MMPostStreamService) createPlaceholderTurn(conversationID, postID string, isDM bool) *turnAccumulator {
 	turnID := model.NewId()
 	postIDPtr := &postID
 
@@ -337,6 +339,7 @@ func (p *MMPostStreamService) createPlaceholderTurn(conversationID, postID strin
 		turnID:         turnID,
 		conversationID: conversationID,
 		postID:         postID,
+		isDM:           isDM,
 	}
 }
 
@@ -371,7 +374,11 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 	var acc *turnAccumulator
 	if p.turnStore != nil {
 		if convID, ok := post.GetProp(ConversationIDProp).(string); ok && convID != "" {
-			acc = p.createPlaceholderTurn(convID, post.Id)
+			isDM := false
+			if ch, chErr := p.mmClient.GetChannel(post.ChannelId); chErr == nil {
+				isDM = ch.Type == model.ChannelTypeDirect || ch.Type == model.ChannelTypeGroup
+			}
+			acc = p.createPlaceholderTurn(convID, post.Id, isDM)
 		}
 	}
 
@@ -493,7 +500,10 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					// Web search annotations with cleaned message
 					if annotations, hasAnnotations := annotationMap["annotations"].([]llm.Annotation); hasAnnotations {
 						if cleanedMsg, hasCleaned := annotationMap["cleanedMessage"].(string); hasCleaned {
-							// Replace post message with cleaned version (citation markers removed)
+							// Replace post message with cleaned version (citation markers removed).
+							// Reset messageBuilder so subsequent text events append to the cleaned content.
+							messageBuilder.Reset()
+							messageBuilder.WriteString(cleanedMsg)
 							post.Message = cleanedMsg
 							p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 							if acc != nil {
