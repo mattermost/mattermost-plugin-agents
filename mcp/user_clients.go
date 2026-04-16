@@ -23,9 +23,9 @@ type ToolInfo struct {
 
 // UserClients represents a per-user MCP client with multiple server connections
 type UserClients struct {
-	clients          map[string]*Client // serverID -> client (both remote and embedded)
-	userID           string
-	log              pluginapi.LogService
+	clients      map[string]*Client // serverID -> client (both remote and embedded)
+	userID       string
+	log          pluginapi.LogService
 	oauthManager *OAuthManager
 	httpClient   *http.Client
 	toolsCache   *ToolsCache
