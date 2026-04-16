@@ -65,6 +65,9 @@ func toolUseBlocks(
 
 	for i, tc := range toolCalls {
 		status := StatusSuccess
+		if tc.Status == llm.ToolCallStatusAutoApproved {
+			status = StatusAutoApproved
+		}
 		if i < len(results) && results[i].IsError {
 			status = StatusError
 		}

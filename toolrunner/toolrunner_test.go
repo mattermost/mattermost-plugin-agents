@@ -209,7 +209,7 @@ func TestToolRunner_SingleToolRound(t *testing.T) {
 	assert.Equal(t, "Let me check...", botPost.Message)
 	require.Len(t, botPost.ToolUse, 1)
 	assert.Equal(t, "72F sunny", botPost.ToolUse[0].Result)
-	assert.Equal(t, llm.ToolCallStatusSuccess, botPost.ToolUse[0].Status)
+	assert.Equal(t, llm.ToolCallStatusAutoApproved, botPost.ToolUse[0].Status)
 }
 
 func TestToolRunner_MultipleToolRounds(t *testing.T) {
@@ -701,7 +701,7 @@ func TestToolRunner_ServerOriginPreserved(t *testing.T) {
 	require.Len(t, botPost.ToolUse, 1)
 	assert.Equal(t, serverOrigin, botPost.ToolUse[0].ServerOrigin)
 	assert.Equal(t, "mcp_result", botPost.ToolUse[0].Result)
-	assert.Equal(t, llm.ToolCallStatusSuccess, botPost.ToolUse[0].Status)
+	assert.Equal(t, llm.ToolCallStatusAutoApproved, botPost.ToolUse[0].Status)
 }
 
 func TestToolRunner_ApprovalAfterToolRound(t *testing.T) {

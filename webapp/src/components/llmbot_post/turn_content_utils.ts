@@ -153,17 +153,29 @@ export function deriveApprovalStage(
         return 'call';
     }
 
-    // Look for a tool_result turn that follows this assistant turn.
+    // Collect tool_use IDs from this turn.
+    const toolUseIDs = new Set(
+        toolUseBlocks.map((b) => b.id).filter(Boolean),
+    );
+
+    // Search all subsequent turns for tool_result blocks that reference
+    // one of this turn's tool_use IDs.  We cannot simply walk sequentially
+    // and break on the first non-tool_result turn because WriteToolTurns
+    // may insert intermediate assistant turns between the streaming turn
+    // and the corresponding tool_result turn.
     for (const t of conversation.turns) {
         if (t.sequence <= turn.sequence) {
             continue;
         }
-        if (t.role !== 'tool_result') {
-            break;
+        for (const block of t.content) {
+            if (
+                block.type === BlockTypeToolResult &&
+                block.tool_use_id &&
+                toolUseIDs.has(block.tool_use_id)
+            ) {
+                return 'result';
+            }
         }
-
-        // If there is a tool_result turn, we are in the result-sharing stage.
-        return 'result';
     }
 
     return 'call';

@@ -563,7 +563,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		post.AddProp(ConversationIDProp, conversationID)
 
 		toolCalls := []llm.ToolCall{
-			{ID: "tc-1", Name: "search", ServerOrigin: "https://mcp.example.com", Arguments: json.RawMessage(`{"q":"test"}`), Status: llm.ToolCallStatusSuccess},
+			{ID: "tc-1", Name: "search", ServerOrigin: "https://mcp.example.com", Arguments: json.RawMessage(`{"q":"test"}`), Status: llm.ToolCallStatusAutoApproved},
 		}
 
 		streamChannel := make(chan llm.TextStreamEvent, 4)

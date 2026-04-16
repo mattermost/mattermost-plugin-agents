@@ -333,7 +333,7 @@ func buildResolvedToolCalls(toolCalls []llm.ToolCall, toolResults []ToolResult) 
 			resolved[i].Status = llm.ToolCallStatusError
 			resolved[i].Result = toolResults[i].Result
 		} else {
-			resolved[i].Status = llm.ToolCallStatusSuccess
+			resolved[i].Status = llm.ToolCallStatusAutoApproved
 			resolved[i].Result = toolResults[i].Result
 		}
 	}
