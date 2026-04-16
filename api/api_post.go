@@ -502,6 +502,11 @@ func (a *API) handleLoopInAgent(c *gin.Context) {
 		RootId:    rootID,
 		Message:   "@" + mmBot.Username,
 	}
+	// The plugin's own MessageHasBeenPosted hook normally ignores posts
+	// originating from plugins (they get a from_plugin prop on creation).
+	// Opt back in with ActivateAIProp so the mention flow runs for this post
+	// and the agent responds to the user's @mention.
+	newPost.AddProp(conversations.ActivateAIProp, "true")
 	if err := a.pluginAPI.Post.CreatePost(newPost); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to create loop-in post: %w", err))
 		return

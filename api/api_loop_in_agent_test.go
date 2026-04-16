@@ -86,6 +86,7 @@ func TestHandleLoopInAgentCreatesUserPostMentioningBot(t *testing.T) {
 			require.Equal(t, "channelid", captured.ChannelId)
 			require.Equal(t, tc.expectedRootID, captured.RootId)
 			require.Equal(t, "@test-bot", captured.Message)
+			require.Equal(t, "true", captured.GetProp("activate_ai"))
 		})
 	}
 }
