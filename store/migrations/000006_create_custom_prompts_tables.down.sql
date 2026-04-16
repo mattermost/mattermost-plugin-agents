@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS LLM_CustomPromptPins;
+DROP TABLE IF EXISTS LLM_CustomPrompts;

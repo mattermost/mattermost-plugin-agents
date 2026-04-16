@@ -5,9 +5,80 @@ package llm
 
 import (
 	"testing"
+	"testing/fstest"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestFormatString(t *testing.T) {
+	prompts, err := NewPrompts(fstest.MapFS{
+		"empty.tmpl": &fstest.MapFile{Data: []byte("")},
+	})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		template string
+		vars     map[string]string
+		expected string
+		wantErr  bool
+	}{
+		{
+			name:     "renders whitelisted variables",
+			template: "Hello {{.Username}}, welcome to {{.Channel}}!",
+			vars: map[string]string{
+				"Username": "johndoe",
+				"Channel":  "Town Square",
+			},
+			expected: "Hello johndoe, welcome to Town Square!",
+		},
+		{
+			name:     "missing variable produces empty string",
+			template: "Hello {{.Username}}, team is {{.Team}}",
+			vars: map[string]string{
+				"Username": "johndoe",
+			},
+			expected: "Hello johndoe, team is",
+		},
+		{
+			name:     "non-whitelisted key silently produces empty string",
+			template: "Secret: {{.CustomInstructions}}",
+			vars: map[string]string{
+				"Username": "johndoe",
+			},
+			expected: "Secret:",
+		},
+		{
+			name:     "all variables render",
+			template: "{{.Username}} {{.FirstName}} {{.LastName}} {{.Channel}} {{.ChannelName}} {{.Team}} {{.TeamName}} {{.Time}} {{.BotName}}",
+			vars: map[string]string{
+				"Username":    "jdoe",
+				"FirstName":   "Jane",
+				"LastName":    "Doe",
+				"Channel":     "General",
+				"ChannelName": "general",
+				"Team":        "Engineering",
+				"TeamName":    "engineering",
+				"Time":        "now",
+				"BotName":     "Bot",
+			},
+			expected: "jdoe Jane Doe General general Engineering engineering now Bot",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := prompts.FormatString(tt.template, tt.vars)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
 
 func TestEscapePromptContent(t *testing.T) {
 	tests := []struct {

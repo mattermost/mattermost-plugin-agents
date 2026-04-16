@@ -155,7 +155,7 @@ func TestDirectMessageConversations(t *testing.T) {
 			bot := bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
 
 			// Process the DM request
-			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), false)
+			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), false, false)
 			require.NoError(t, err, "Failed to process DM request")
 			require.NotNil(t, textStream, "Expected a non-nil text stream")
 

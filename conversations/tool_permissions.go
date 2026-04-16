@@ -39,6 +39,28 @@ func setAllowToolsInChannelProp(post *model.Post, allow bool) {
 	post.AddProp(streaming.AllowToolsInChannelProp, "true")
 }
 
+func channelToolsAutoRunEverywhereOnlyFromPost(post *model.Post) bool {
+	if post == nil {
+		return false
+	}
+	value := post.GetProp(streaming.ChannelToolsAutoRunEverywhereOnlyProp)
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(typed, "true")
+	default:
+		return false
+	}
+}
+
+func setChannelToolsAutoRunEverywhereOnlyProp(post *model.Post, set bool) {
+	if post == nil || !set {
+		return
+	}
+	post.AddProp(streaming.ChannelToolsAutoRunEverywhereOnlyProp, "true")
+}
+
 func applyToolAvailability(context *llm.Context, isDM bool, allowToolsInChannel bool) bool {
 	toolsDisabled := !isDM && !allowToolsInChannel
 	if context != nil {
