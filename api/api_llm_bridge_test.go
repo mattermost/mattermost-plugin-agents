@@ -630,7 +630,7 @@ func TestBridgeClientServiceCompletionStream(t *testing.T) {
 				Posts: []bridgeclient.Post{
 					{Role: "user", Message: "Hello"},
 				},
-				AllowedTools: []bridgeclient.AllowedToolRef{{Name: "eligible_tool"}},
+				AllowedTools: []string{"eligible_tool"},
 			},
 			serviceConfig: llm.ServiceConfig{
 				ID:   "openai-service",
@@ -1343,7 +1343,7 @@ func TestBridgeClientServiceCompletionRejectsAllowedTools(t *testing.T) {
 		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "Hi"},
 		},
-		AllowedTools: []bridgeclient.AllowedToolRef{{Name: "eligible_tool"}},
+		AllowedTools: []string{"eligible_tool"},
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "allowed_tools is only supported for agent completion endpoints")
@@ -1382,17 +1382,19 @@ func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 		&testLLMContextToolProvider{
 			tools: []llm.Tool{
 				{
-					Name:        "eligible_tool",
-					Description: "eligible from context",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+					Name:         "eligible_tool",
+					ServerOrigin: server.URL,
+					Description:  "eligible from context",
+					Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
 					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 						return "ok", nil
 					},
 				},
 				{
-					Name:        "ineligible_tool",
-					Description: "should be filtered out",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+					Name:         "ineligible_tool",
+					ServerOrigin: server.URL,
+					Description:  "should be filtered out",
+					Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
 					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 						return "ok", nil
 					},
@@ -1507,9 +1509,10 @@ func TestBridgeGetAgentToolsSkipsUnreachableEligibleServer(t *testing.T) {
 		&testLLMContextToolProvider{
 			tools: []llm.Tool{
 				{
-					Name:        "eligible_tool",
-					Description: "eligible from context",
-					Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+					Name:         "eligible_tool",
+					ServerOrigin: server.URL,
+					Description:  "eligible from context",
+					Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
 					Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 						return "ok", nil
 					},
@@ -1587,7 +1590,7 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "Use the tool"},
 		},
-		AllowedTools: []bridgeclient.AllowedToolRef{{ServerOrigin: server.URL, Name: "eligible_tool"}},
+		AllowedTools: []string{"eligible_tool"},
 		UserID:       testUserID,
 	})
 	require.NoError(t, err)
@@ -1626,10 +1629,7 @@ func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {
 		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "Run tool once"},
 		},
-		AllowedTools: []bridgeclient.AllowedToolRef{
-			{ServerOrigin: server.URL, Name: "eligible_tool"},
-			{ServerOrigin: server.URL, Name: "eligible_tool"},
-		},
+		AllowedTools: []string{"eligible_tool", "eligible_tool"},
 		UserID: testUserID,
 	})
 	require.NoError(t, err)
@@ -1665,22 +1665,60 @@ func TestBridgeClientAgentCompletionRejectsIneligibleAllowedTool(t *testing.T) {
 		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "Try disallowed"},
 		},
-		AllowedTools: []bridgeclient.AllowedToolRef{{ServerOrigin: server.URL, Name: "not_eligible_tool"}},
+		AllowedTools: []string{"not_eligible_tool"},
 		UserID:       testUserID,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "is not eligible or not available for this agent")
 }
 
-func TestBridgeClientAgentCompletionRejectsWrongServerOriginForTool(t *testing.T) {
+func TestBridgeClientAgentCompletionRejectsBuiltinToolInAllowedTools(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
-	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
+	server := setupBridgeEligibleMCPServer(t, []string{"eligible_tool"})
 	defer server.Close()
+
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{
+			{
+				Name:    "service-account-server",
+				Enabled: true,
+				BaseURL: server.URL,
+				Headers: map[string]string{"Authorization": "Bearer test-token"},
+			},
+		},
+	}
+	e.api.mcpClientManager = newTestMCPClientManager(t)
+
+	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
+		e.client,
+		&testLLMContextToolProvider{tools: []llm.Tool{
+			{
+				Name:         "eligible_tool",
+				ServerOrigin: server.URL,
+				Description:  "eligible_tool",
+				Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+				Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+					return "ok", nil
+				},
+			},
+			{
+				Name:        "builtin_only",
+				Description: "built-in tool with no MCP origin",
+				Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+				Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+					return "ok", nil
+				},
+			},
+		}},
+		nil,
+		&testLLMContextConfigProvider{},
+	)
 
 	botConfig := llm.BotConfig{
 		Name:            "testbot",
@@ -1698,11 +1736,11 @@ func TestBridgeClientAgentCompletionRejectsWrongServerOriginForTool(t *testing.T
 		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "Hello"},
 		},
-		AllowedTools: []bridgeclient.AllowedToolRef{{ServerOrigin: "https://wrong.example", Name: "eligible_tool"}},
+		AllowedTools: []string{"builtin_only"},
 		UserID:       testUserID,
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "server_origin")
+	require.Contains(t, err.Error(), "built-in tools cannot be allowlisted")
 }
 
 func TestBridgeGetAgentToolsRespectsUserPermissions(t *testing.T) {
@@ -1793,7 +1831,7 @@ func TestBridgeClientAgentCompletionRejectsAllowedToolsWhenAgentToolsDisabled(t 
 		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "Hello"},
 		},
-		AllowedTools: []bridgeclient.AllowedToolRef{{Name: "eligible_tool"}},
+		AllowedTools: []string{"eligible_tool"},
 		UserID:       testUserID,
 	})
 	require.Error(t, err)
@@ -1893,7 +1931,7 @@ func TestBridgeClientAgentCompletionAllowedToolsFailsWhenNoEligibleToolsAvailabl
 		Posts: []bridgeclient.Post{
 			{Role: "user", Message: "Try tool call"},
 		},
-		AllowedTools: []bridgeclient.AllowedToolRef{{Name: "nonexistent_tool"}},
+		AllowedTools: []string{"nonexistent_tool"},
 		UserID:       testUserID,
 	})
 	require.Error(t, err)

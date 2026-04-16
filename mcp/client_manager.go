@@ -169,7 +169,8 @@ func (m *ClientManager) GetToolsForUser(userID string, channel *model.Channel) (
 	userClient, mcpErrors := m.getClientForUser(userID)
 
 	// Connect to embedded server using a dedicated per-user session (stored/created in KV).
-	// The channel is forwarded so the server context carries it for middleware filtering.
+	// The channel is forwarded so the server context carries it for automation tool
+	// visibility is decided in mcpserver middleware.
 	// If the channel changed since the last connection, the embedded client is reconnected.
 	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
 		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)

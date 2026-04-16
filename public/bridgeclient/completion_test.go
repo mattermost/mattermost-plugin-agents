@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,7 +33,7 @@ func TestAgentCompletionSendsExpectedPayload(t *testing.T) {
 		require.Equal(t, "hello", payload.Posts[0].Message)
 		require.Equal(t, 128, payload.MaxGeneratedTokens)
 		require.Equal(t, "json_schema", payload.JSONOutputFormat["type"])
-		require.Equal(t, []AllowedToolRef{{Name: "weather_lookup"}}, payload.AllowedTools)
+		require.Equal(t, []string{"weather_lookup"}, payload.AllowedTools)
 		require.Equal(t, "zyxwvutsrqponmlkjihgfedcba", payload.UserID)
 		require.Equal(t, "mnopqrstuvwxabcdefghijkl", payload.ChannelID)
 
@@ -52,7 +52,7 @@ func TestAgentCompletionSendsExpectedPayload(t *testing.T) {
 		JSONOutputFormat: map[string]interface{}{
 			"type": "json_schema",
 		},
-		AllowedTools: []AllowedToolRef{{Name: "weather_lookup"}},
+		AllowedTools: []string{"weather_lookup"},
 		UserID:       "zyxwvutsrqponmlkjihgfedcba",
 		ChannelID:    "mnopqrstuvwxabcdefghijkl",
 	})

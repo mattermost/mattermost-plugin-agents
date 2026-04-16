@@ -111,6 +111,8 @@ request := bridgeclient.CompletionRequest{
 
 ### Agent tool allowlist
 
+Use tool names exactly as returned by `GetAgentTools` (each entry in `allowed_tools` is a string tool name).
+
 ```go
 request := bridgeclient.CompletionRequest{
     Posts: []bridgeclient.Post{
@@ -126,7 +128,7 @@ response, err := client.AgentCompletion("bot-user-id", request)
 When `AllowedTools` is provided:
 - only tools in the list may run
 - tool execution is auto-run (no approval flow)
-- tools must come from enabled MCP servers or embedded MCP servers
+- tools must come from enabled MCP servers or embedded MCP servers (built-in agent tools are not exposed for bridge allowlists)
 - empty lists and blank tool names are rejected by the bridge API
 
 ## Permission Checking

@@ -4,6 +4,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,33 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// validateAutomationTriggerForTest mimics channel-automation plugin validation for triggers.
+func validateAutomationTriggerForTest(tr AutomationTrigger) string {
+	n := 0
+	if tr.MessagePosted != nil {
+		n++
+	}
+	if tr.Schedule != nil {
+		n++
+	}
+	if tr.MembershipChanged != nil {
+		n++
+	}
+	if tr.ChannelCreated != nil {
+		n++
+	}
+	if tr.UserJoinedTeam != nil {
+		n++
+	}
+	if n == 0 {
+		return "trigger is required"
+	}
+	if n > 1 {
+		return "exactly one type set"
+	}
+	return ""
+}
 
 // newTestAutomationServer creates an httptest server that mimics the channel-automation plugin API.
 func newTestAutomationServer(t *testing.T, flows []AutomationFlow) *httptest.Server {
@@ -47,6 +75,10 @@ func newTestAutomationServer(t *testing.T, flows []AutomationFlow) *httptest.Ser
 			var flow AutomationFlow
 			if err := json.Unmarshal(body, &flow); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if msg := validateAutomationTriggerForTest(flow.Trigger); msg != "" {
+				http.Error(w, msg, http.StatusBadRequest)
 				return
 			}
 			flow.ID = "new-flow-id"
@@ -101,6 +133,18 @@ func newTestAutomationServer(t *testing.T, flows []AutomationFlow) *httptest.Ser
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+
+	mux.HandleFunc("/plugins/com.mattermost.channel-automation/api/v1/automation-instructions", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		payload := automationInstructionsAPIResponse{
+			Instructions: "Channel automations are trigger-action workflows.\n\nTRIGGERS:\n- message_posted\n\nACTION SELECTION:\n- send_message",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
 	})
 
 	// Mattermost API v4 endpoint stubs needed by Client4
@@ -208,6 +252,26 @@ func TestAutomationListFlows(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, "invalid automation_id", result)
 	})
+}
+
+func TestGetAutomationInstructions(t *testing.T) {
+	ts := newTestAutomationServer(t, nil)
+	defer ts.Close()
+
+	provider := newTestProvider(t, ts.URL)
+	client := newTestClient(ts.URL)
+	mcpCtx := &MCPToolContext{
+		Ctx:    context.Background(),
+		Client: client,
+	}
+	argsGetter := func(target any) error {
+		return json.Unmarshal([]byte(`{}`), target)
+	}
+
+	result, err := provider.toolGetAutomationInstructions(mcpCtx, argsGetter)
+	require.NoError(t, err)
+	assert.Contains(t, result, "TRIGGERS:")
+	assert.Contains(t, result, "ACTION SELECTION:")
 }
 
 func TestAutomationCreateFlow(t *testing.T) {

@@ -173,29 +173,35 @@ func (a *API) convertAgentBridgeRequestToInternal(bot *bots.Bot, req bridgeclien
 	}, nil
 }
 
-func normalizeAllowedToolRefs(rawRefs []bridgeclient.AllowedToolRef) ([]bridgeclient.AllowedToolRef, error) {
-	if rawRefs == nil {
+func normalizeAllowedToolNames(rawNames []string) ([]string, error) {
+	if rawNames == nil {
 		return nil, nil
 	}
-	if len(rawRefs) == 0 {
+	if len(rawNames) == 0 {
 		return nil, errors.New("allowed_tools cannot be empty when provided")
 	}
 
-	seen := make(map[string]struct{}, len(rawRefs))
-	out := make([]bridgeclient.AllowedToolRef, 0, len(rawRefs))
-	for _, ref := range rawRefs {
-		if ref.Name == "" {
-			return nil, errors.New("allowed_tools entries must have a non-empty name")
+	seen := make(map[string]struct{}, len(rawNames))
+	out := make([]string, 0, len(rawNames))
+	for _, name := range rawNames {
+		if name == "" {
+			return nil, errors.New("allowed_tools entries must be non-empty strings")
 		}
-		key := llm.ToolAutoRunKey(ref.ServerOrigin, ref.Name)
-		if _, exists := seen[key]; exists {
+		if _, exists := seen[name]; exists {
 			continue
 		}
-		seen[key] = struct{}{}
-		out = append(out, ref)
+		seen[name] = struct{}{}
+		out = append(out, name)
 	}
 
 	return out, nil
+}
+
+// bridgeAllowlistToolEligible is true for MCP and embedded tools (non-empty ServerOrigin).
+// Built-in plugin tools use an empty ServerOrigin; they are excluded from bridge discovery
+// and allowed_tools so they cannot be auto-run via the bridge.
+func bridgeAllowlistToolEligible(serverOrigin string) bool {
+	return serverOrigin != ""
 }
 
 // validateAgentParam is gin middleware that validates the :agent path parameter.
@@ -253,7 +259,7 @@ func (a *API) prepareAgentBridgeCompletion(
 		return nil, llm.CompletionRequest{}, nil, statusCode, err
 	}
 
-	allowedRefs, err := normalizeAllowedToolRefs(req.AllowedTools)
+	allowedToolNames, err := normalizeAllowedToolNames(req.AllowedTools)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid allowed_tools: %w", err)
 	}
@@ -268,7 +274,7 @@ func (a *API) prepareAgentBridgeCompletion(
 		return nil, llm.CompletionRequest{}, nil, http.StatusForbidden, fmt.Errorf("permission denied: %v", err)
 	}
 
-	toolsRequested := allowedRefs != nil
+	toolsRequested := allowedToolNames != nil
 	llmRequest, err := a.convertAgentBridgeRequestToInternal(bot, req, toolsRequested, operation, operationSubType)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid request: %v", err)
@@ -285,15 +291,15 @@ func (a *API) prepareAgentBridgeCompletion(
 		}
 
 		scopedTools := llm.NewToolStore(nil, false)
-		for _, ref := range allowedRefs {
-			tool := llmRequest.Context.Tools.GetTool(ref.Name)
+		for _, name := range allowedToolNames {
+			tool := llmRequest.Context.Tools.GetTool(name)
 			if tool == nil {
-				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("tool %q is not eligible or not available for this agent", ref.Name)
+				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("tool %q is not eligible or not available for this agent", name)
 			}
-			if tool.ServerOrigin != ref.ServerOrigin {
+			if !bridgeAllowlistToolEligible(tool.ServerOrigin) {
 				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf(
-					"allowed_tools server_origin for tool %q does not match (got %q, expected %q)",
-					ref.Name, ref.ServerOrigin, tool.ServerOrigin,
+					"tool %q is not eligible for bridge allowed_tools (built-in tools cannot be allowlisted; use MCP or embedded tools from GET .../agents/{id}/tools only)",
+					name,
 				)
 			}
 			scopedTools.AddTools([]llm.Tool{*tool})
@@ -499,7 +505,8 @@ func (a *API) handleGetAgents(c *gin.Context) {
 }
 
 // handleGetAgentTools returns bridge-eligible tools for a specific agent.
-// Only tools that are eligible for allowed_tools execution are returned.
+// Only tools that are eligible for allowed_tools execution are returned (MCP and
+// embedded tools with a non-empty ServerOrigin; built-in tools are omitted).
 func (a *API) handleGetAgentTools(c *gin.Context) {
 	agent := c.Param("agent")
 	userID := c.Query("user_id")
@@ -539,6 +546,9 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 	var tools []bridgeclient.BridgeToolInfo
 	if toolContext.Tools != nil {
 		for _, info := range toolContext.Tools.GetToolsInfo() {
+			if !bridgeAllowlistToolEligible(info.ServerOrigin) {
+				continue
+			}
 			tools = append(tools, bridgeclient.BridgeToolInfo{
 				Name:         info.Name,
 				Description:  info.Description,
