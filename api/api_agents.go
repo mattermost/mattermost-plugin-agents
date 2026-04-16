@@ -163,6 +163,18 @@ func serviceIDExistsInConfig(cfg *config.Config, serviceID string) bool {
 	return false
 }
 
+func (a *API) validateAgentServiceID(c *gin.Context, serviceID string) (*config.Config, bool) {
+	cfg, ok := a.loadPluginConfigForAgents(c)
+	if !ok {
+		return nil, false
+	}
+	if !serviceIDExistsInConfig(cfg, serviceID) {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", serviceID))
+		return nil, false
+	}
+	return cfg, true
+}
+
 // refreshBotsAndNotify forces the bot registry to re-read DB-backed agents,
 // re-runs EnsureBots on this node, publishes a cluster event so other
 // nodes do the same, and tells connected web clients to drop their cached bot list
@@ -208,12 +220,8 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	}
 
 	// Validate that the referenced service exists in the config
-	cfg, ok := a.loadPluginConfigForAgents(c)
+	cfg, ok := a.validateAgentServiceID(c, req.ServiceID)
 	if !ok {
-		return
-	}
-	if !serviceIDExistsInConfig(cfg, req.ServiceID) {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", req.ServiceID))
 		return
 	}
 
@@ -398,12 +406,7 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		}
 	}
 	if req.ServiceID != nil {
-		cfg, ok := a.loadPluginConfigForAgents(c)
-		if !ok {
-			return
-		}
-		if !serviceIDExistsInConfig(cfg, *req.ServiceID) {
-			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", *req.ServiceID))
+		if _, ok := a.validateAgentServiceID(c, *req.ServiceID); !ok {
 			return
 		}
 		agent.ServiceID = *req.ServiceID

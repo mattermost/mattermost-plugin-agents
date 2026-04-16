@@ -37,6 +37,7 @@ import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands
 import SearchHints from './components/search_hints';
 import {useBotlist} from './bots';
 import AgentsTour from './components/tutorial/agents_tour';
+import AgentsDropdown from './components/agents/agents_dropdown';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
 import {isEnterpriseLicensedOrDevelopment} from './license';
@@ -306,6 +307,12 @@ export default class Plugin {
                 text: <FormattedMessage defaultMessage='Custom prompts'/>,
                 sortOrder: 10,
                 component: CustomPromptsDropdown,
+            });
+            registry.registerAIActionMenuItemComponent({
+                icon: <IconAI/>,
+                text: <FormattedMessage defaultMessage='Agents'/>,
+                sortOrder: 20,
+                component: AgentsDropdown,
             });
         }
     }

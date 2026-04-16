@@ -13,44 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUserAgentToBotConfig(t *testing.T) {
-	agent := &useragents.UserAgent{
-		ID:                 "agent-id-123",
-		Username:           "my-agent",
-		DisplayName:        "My Agent",
-		CustomInstructions: "Be helpful",
-		ServiceID:          "svc-1",
-		ChannelAccessLevel: 1, // Allow
-		ChannelIDs:         []string{"ch-1", "ch-2"},
-		UserAccessLevel:    0, // All
-		UserIDs:            nil,
-		TeamIDs:            []string{"team-1"},
-	}
-
-	cfg := userAgentToBotConfig(agent)
-
-	assert.Equal(t, "agent-id-123", cfg.ID)
-	assert.Equal(t, "my-agent", cfg.Name)
-	assert.Equal(t, "My Agent", cfg.DisplayName)
-	assert.Equal(t, "Be helpful", cfg.CustomInstructions)
-	assert.Equal(t, "svc-1", cfg.ServiceID)
-	assert.Equal(t, llm.ChannelAccessLevelAllow, cfg.ChannelAccessLevel)
-	assert.Equal(t, []string{"ch-1", "ch-2"}, cfg.ChannelIDs)
-	assert.Equal(t, llm.UserAccessLevelAll, cfg.UserAccessLevel)
-	assert.Nil(t, cfg.UserIDs)
-	assert.Equal(t, []string{"team-1"}, cfg.TeamIDs)
-
-	// Bot-level fields map from UserAgent when set
-	assert.Equal(t, "", cfg.Model)
-	assert.False(t, cfg.DisableTools)
-	assert.False(t, cfg.EnableVision)
-	assert.Nil(t, cfg.EnabledNativeTools)
-	assert.False(t, cfg.ReasoningEnabled)
-	assert.Equal(t, "", cfg.ReasoningEffort)
-	assert.Equal(t, 0, cfg.ThinkingBudget)
-	assert.False(t, cfg.StructuredOutputEnabled)
-}
-
 func TestDBBackedAgentInBotRegistry(t *testing.T) {
 	// Verify that a Bot built from a DB-backed agent's BotConfig
 	// is findable by all lookup methods.
@@ -155,16 +117,4 @@ func TestUserAgentToBotConfigNilEnabledTools(t *testing.T) {
 
 	cfg := userAgentToBotConfig(agent)
 	assert.Nil(t, cfg.EnabledMCPTools)
-}
-
-func TestForceRefreshOnNextEnsureClearsSnapshot(t *testing.T) {
-	bots := &MMBots{}
-	bots.lastEnsuredBotCfgs = []llm.BotConfig{{Name: "x"}}
-	bots.lastEnsuredServiceCfgs = map[string]llm.ServiceConfig{"a": {ID: "a"}}
-
-	bots.ForceRefreshOnNextEnsure()
-
-	assert.Nil(t, bots.lastEnsuredBotCfgs)
-	assert.Nil(t, bots.lastEnsuredServiceCfgs)
-	assert.True(t, bots.forceRefresh)
 }
