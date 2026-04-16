@@ -165,8 +165,11 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		return
 	}
 
-	// Set a static title on the conversation entity
+	// Update conversation with root post ID and title
 	if a.convService != nil {
+		if updateErr := a.convService.UpdateConversationRootPostID(result.ConversationID, analysisPost.Id); updateErr != nil {
+			a.pluginAPI.Log.Error("Failed to update conversation root post ID", "error", updateErr)
+		}
 		_ = a.convService.UpdateConversationTitle(result.ConversationID, TitleSummarizeChannel)
 	}
 

@@ -55,26 +55,30 @@ func (c *Conversations) DeleteConversationsForDeletedPost(post *model.Post) erro
 }
 
 func (c *Conversations) getAIThreads(dmChannelIDs []string) ([]AIThread, error) {
-	var dbPosts []AIThread
-	if err := c.db.DoQuery(&dbPosts, c.db.Builder().
+	var threads []AIThread
+	// Join on the root post's channel (not the conversation's ChannelID)
+	// because channel analysis conversations store the analyzed channel as
+	// their ChannelID, but the result post lives in the DM channel.
+	if err := c.db.DoQuery(&threads, c.db.Builder().
 		Select(
-			"p.Id",
-			"p.Message",
-			"p.ChannelID",
-			"COALESCE((SELECT t.Title FROM LLM_Conversations t WHERE t.RootPostID = p.Id AND t.DeleteAt = 0 LIMIT 1), '') as Title",
-			"(SELECT COUNT(*) FROM Posts WHERE Posts.RootId = p.Id AND DeleteAt = 0) AS ReplyCount",
-			"p.UpdateAt",
+			"c.ID",
+			"COALESCE(p.Message, '') as Message",
+			"c.Title",
+			"COALESCE(p.ChannelId, '') as ChannelID",
+			"c.BotID",
+			"COALESCE(c.RootPostID, '') as RootPostID",
+			"(SELECT COUNT(*) FROM Posts WHERE Posts.RootId = c.RootPostID AND Posts.DeleteAt = 0) AS ReplyCount",
+			"c.UpdatedAt as UpdateAt",
 		).
-		From("Posts as p").
-		Where(sq.Eq{"p.ChannelID": dmChannelIDs}).
-		Where(sq.Eq{"p.RootId": ""}).
-		Where(sq.Eq{"p.DeleteAt": 0}).
-		OrderBy("p.CreateAt DESC").
-		Limit(60).
-		Offset(0),
+		From("LLM_Conversations c").
+		Join("Posts p ON p.Id = c.RootPostID AND p.DeleteAt = 0").
+		Where(sq.Eq{"p.ChannelId": dmChannelIDs}).
+		Where(sq.Eq{"c.DeleteAt": 0}).
+		OrderBy("c.UpdatedAt DESC").
+		Limit(60),
 	); err != nil {
-		return nil, fmt.Errorf("failed to get posts for bot DM: %w", err)
+		return nil, fmt.Errorf("failed to get AI threads: %w", err)
 	}
 
-	return dbPosts, nil
+	return threads, nil
 }

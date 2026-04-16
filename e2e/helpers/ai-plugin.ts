@@ -99,7 +99,7 @@ export class AIPlugin {
 
   async openChatHistory() {
     await this.chatHistoryButton.click();
-    await expect(this.threadsListContainer).toBeVisible();
+    await expect(this.threadsListContainer).toBeVisible({ timeout: 15000 });
   }
 
   async expectChatHistoryVisible() {

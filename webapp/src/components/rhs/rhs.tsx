@@ -26,7 +26,9 @@ const ThreadViewer = UnstyledThreadViewer && styled(UnstyledThreadViewer)`
 `;
 
 const ThreadsList = styled.div`
-    overflow-y: scroll;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
 `;
 
 const RhsContainer = styled.div`

@@ -33,9 +33,11 @@ type AIThread struct {
 	ID         string `json:"id"`
 	Message    string `json:"message"`
 	Title      string `json:"title"`
-	ChannelID  string `json:"channel_id"`
-	ReplyCount int    `json:"reply_count"`
-	UpdateAt   int64  `json:"update_at"`
+	ChannelID  string `json:"channel_id" db:"ChannelID"`
+	BotID      string `json:"bot_id" db:"BotID"`
+	RootPostID string `json:"root_post_id" db:"RootPostID"`
+	ReplyCount int    `json:"reply_count" db:"ReplyCount"`
+	UpdateAt   int64  `json:"update_at" db:"UpdateAt"`
 }
 
 // ConfigProvider provides configuration values for conversation behavior
