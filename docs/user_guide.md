@@ -82,11 +82,12 @@ By default, tool calls are available in direct messages. If your system admin en
 
 If a tool execution fails, the Agent can continue with a follow-up response instead of stopping immediately. After three consecutive failed tool executions, the Agent stops calling further tools and is instructed to explain the latest error and ask you for guidance or any missing information. A successful tool execution resets that count.
 
-Available tools in direct messages, and in channels when enabled by your system admin, include:
+Depending on your workspace configuration, available tools in direct messages, and in channels when enabled by your system admin, can include:
 
-- Server search (semantic search across your Mattermost instance)
-- User lookup (find information about Mattermost users)
-- MCP tools (external tools provided by configured MCP servers if enabled). Tool availability depends on your user permissions and system configuration.
+- Mattermost MCP tools, including tools to search posts and find users in Mattermost, when your system admin has enabled the Mattermost MCP server for Agents
+- MCP tools provided by other configured MCP servers, if enabled
+
+Tool availability depends on your user permissions and system configuration.
 
 ## Analyze threads and channels
 
