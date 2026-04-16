@@ -9,9 +9,9 @@ import {
 } from 'helpers/api-config';
 
 /**
- * Test Suite: Auto Run Policy (Real API) (4.8)
+ * Test Suite: Auto Run (DM) Policy (Real API) (4.8)
  *
- * Verifies that tools configured with auto_run policy execute without
+ * Verifies that tools configured with the legacy auto_run policy execute without
  * user approval in a DM with the bot.
  *
  * Skip-gated: requires ANTHROPIC_API_KEY or OPENAI_API_KEY.
@@ -23,7 +23,7 @@ const skipMessage =
 const providers = config.shouldRunTests ? getAvailableProviders() : [];
 
 for (const provider of providers) {
-    test.describe(`Auto Run Policy (${provider.name})`, () => {
+    test.describe(`Auto Run (DM) Policy (${provider.name})`, () => {
         let mattermost: MattermostContainer;
 
         test.beforeAll(async () => {
@@ -63,7 +63,8 @@ for (const provider of providers) {
                 throw new Error('e2e setup: town-square channel not found');
             }
 
-            // Force a tool call: get_channel_info is vetted auto_run on the embedded server.
+            // Force a tool call: get_channel_info is vetted auto_run on the embedded server
+            // and now surfaced in the console as "Auto Run (DM)".
             await aiPlugin.sendMessage(
                 `Call the get_channel_info tool now with channel_id "${townSquare.id}". ` +
                     'Do not reply without calling the tool.',
@@ -90,7 +91,7 @@ for (const provider of providers) {
 
 // Ensure at least one test runs even when skipped
 if (providers.length === 0) {
-    test('auto_run policy (skipped - no API keys)', async () => {
+    test('auto_run DM policy (skipped - no API keys)', async () => {
         test.skip(!config.shouldRunTests, skipMessage);
     });
 }

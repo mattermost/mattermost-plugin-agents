@@ -8,12 +8,12 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
-	"github.com/mattermost/mattermost-plugin-ai/subtitles"
-	"github.com/mattermost/mattermost-plugin-ai/threads"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/threads"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -203,13 +203,15 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 
 		// Process the user request with the context that has the callback
 		allowToolsInChannel := allowToolsInChannelFromPost(post)
+		channelToolsAutoRunEverywhereOnly := channelToolsAutoRunEverywhereOnlyFromPost(post)
 		// Defense-in-depth: if config flag is off and not a DM, disable tools regardless of post prop
 		isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 		if !isDM && (c.configProvider == nil || !c.configProvider.EnableChannelMentionToolCalling()) {
 			allowToolsInChannel = false
+			channelToolsAutoRunEverywhereOnly = false
 		}
 		var processErr error
-		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback, allowToolsInChannel)
+		result, processErr = c.ProcessUserRequestWithContext(bot, user, channel, respondingToPost, contextWithCallback, allowToolsInChannel, channelToolsAutoRunEverywhereOnly)
 		if processErr != nil {
 			return fmt.Errorf("could not continue conversation on regen: %w", processErr)
 		}

@@ -10,7 +10,7 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 // MapServiceTypeToProvider maps our service type strings to Bifrost provider constants.

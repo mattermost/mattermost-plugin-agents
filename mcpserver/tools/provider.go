@@ -11,11 +11,11 @@ import (
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/types"
-	"github.com/mattermost/mattermost-plugin-ai/search"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/types"
+	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )

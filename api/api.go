@@ -12,23 +12,24 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-ai/bifrost"
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/config"
-	"github.com/mattermost/mattermost-plugin-ai/conversations"
-	"github.com/mattermost/mattermost-plugin-ai/embeddings"
-	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/i18n"
-	"github.com/mattermost/mattermost-plugin-ai/indexer"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
-	"github.com/mattermost/mattermost-plugin-ai/meetings"
-	"github.com/mattermost/mattermost-plugin-ai/metrics"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/search"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/customprompts"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/indexer"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/meetings"
+	"github.com/mattermost/mattermost-plugin-agents/metrics"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/search"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -100,6 +101,7 @@ type API struct {
 	configUpdater         ConfigUpdater
 	clusterNotifier       ClusterNotifier
 	getSearchInitError    func() string
+	customPromptsStore    *customprompts.Store
 }
 
 // New creates a new API instance
@@ -126,6 +128,7 @@ func New(
 	configUpdater ConfigUpdater,
 	clusterNotifier ClusterNotifier,
 	getSearchInitError func() string,
+	customPromptsStore *customprompts.Store,
 ) *API {
 	return &API{
 		bots:                  bots,
@@ -151,6 +154,7 @@ func New(
 		configUpdater:         configUpdater,
 		clusterNotifier:       clusterNotifier,
 		getSearchInitError:    getSearchInitError,
+		customPromptsStore:    customPromptsStore,
 	}
 }
 
@@ -208,6 +212,16 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
 	// Used by the MCP server for external search callbacks.
 	router.POST("/search/raw", a.handleRawSearch)
+
+	// Custom prompts routes — available to all authenticated users
+	promptsRouter := router.Group("/custom-prompts")
+	promptsRouter.POST("", a.handleCreateCustomPrompt)
+	promptsRouter.GET("", a.handleListCustomPrompts)
+	promptsRouter.PUT("/:id", a.handleUpdateCustomPrompt)
+	promptsRouter.DELETE("/:id", a.handleDeleteCustomPrompt)
+	promptsRouter.GET("/pins", a.handleGetPromptPins)
+	promptsRouter.PUT("/pins", a.handleSetPromptPin)
+	promptsRouter.POST("/:id/render", a.handleRenderCustomPrompt)
 
 	botRequiredRouter := router.Group("")
 	botRequiredRouter.Use(a.aiBotRequired)

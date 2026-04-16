@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-ai/bifrost"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 

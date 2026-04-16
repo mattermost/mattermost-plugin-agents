@@ -11,8 +11,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
-	"github.com/mattermost/mattermost-plugin-ai/search"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

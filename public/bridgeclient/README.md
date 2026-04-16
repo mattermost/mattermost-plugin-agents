@@ -7,7 +7,7 @@ Go client library for Mattermost plugins and the server to interact with the AI 
 ### From a Plugin
 
 ```go
-import "github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
+import "github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 
 type MyPlugin struct {
     plugin.MattermostPlugin
@@ -34,7 +34,7 @@ func (p *MyPlugin) handleCommand() {
 ### From Mattermost Server
 
 ```go
-import "github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
+import "github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 
 type MyService struct {
     app       *app.App
@@ -73,7 +73,7 @@ response, err := client.ServiceCompletion("openai", request)
 ### Streaming
 
 ```go
-import "github.com/mattermost/mattermost-plugin-ai/llm"
+import "github.com/mattermost/mattermost-plugin-agents/llm"
 
 // Start streaming request (using Bot ID)
 result, err := client.AgentCompletionStream("bot-user-id", request)

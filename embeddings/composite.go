@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/chunking"
 )
 
 // CompositeSearch implements EmbeddingSearch using separate vector store and embedding provider

@@ -6,13 +6,21 @@ package bifrost
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 func TestCalculateThinkingBudget(t *testing.T) {
@@ -661,7 +669,8 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 				cfg.JSONOutputFormat = llm.NewJSONSchemaFromStruct[testStructuredOutput]()
 			}
 
-			req := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, cfg)
+			req, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, cfg)
+			require.NoError(t, err)
 
 			if tt.expectFormat {
 				require.NotNil(t, req.Params.Text)
@@ -670,7 +679,15 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 				assert.Equal(t, "response", *req.Params.Text.Format.Name)
 				assert.Equal(t, true, *req.Params.Text.Format.Strict)
 				require.NotNil(t, req.Params.Text.Format.JSONSchema)
-				require.NotNil(t, req.Params.Text.Format.JSONSchema.Schema)
+				assert.Nil(t, req.Params.Text.Format.JSONSchema.Schema)
+				require.NotNil(t, req.Params.Text.Format.JSONSchema.Type)
+				assert.Equal(t, "object", *req.Params.Text.Format.JSONSchema.Type)
+				require.NotNil(t, req.Params.Text.Format.JSONSchema.Properties)
+				assert.Len(t, *req.Params.Text.Format.JSONSchema.Properties, 2)
+				assert.ElementsMatch(t, []string{"name", "score"}, req.Params.Text.Format.JSONSchema.Required)
+				require.NotNil(t, req.Params.Text.Format.JSONSchema.AdditionalProperties)
+				require.NotNil(t, req.Params.Text.Format.JSONSchema.AdditionalProperties.AdditionalPropertiesBool)
+				assert.False(t, *req.Params.Text.Format.JSONSchema.AdditionalProperties.AdditionalPropertiesBool)
 			} else {
 				assert.Nil(t, req.Params.Text)
 			}
@@ -839,7 +856,8 @@ func TestConvertToBifrostResponsesRequest_WithFallbacks(t *testing.T) {
 			{Provider: schemas.Anthropic, Model: "claude-sonnet-4-20250514"},
 		},
 	}
-	req := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, b.GetDefaultConfig())
+	req, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, b.GetDefaultConfig())
+	require.NoError(t, err)
 
 	require.Len(t, req.Fallbacks, 1)
 	assert.Equal(t, schemas.Anthropic, req.Fallbacks[0].Provider)
@@ -852,7 +870,8 @@ func TestConvertToBifrostResponsesRequest_NoFallbacks(t *testing.T) {
 		defaultModel:    "gpt-4o",
 		useResponsesAPI: true,
 	}
-	req := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, b.GetDefaultConfig())
+	req, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, b.GetDefaultConfig())
+	require.NoError(t, err)
 	assert.Nil(t, req.Fallbacks)
 }
 
@@ -1073,4 +1092,198 @@ func TestServiceConfigToFallbackEntry(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConvertToBifrostResponsesRequestStructuredOutputStringEnum(t *testing.T) {
+	b := &LLM{
+		provider:        schemas.OpenAI,
+		defaultModel:    "gpt-4",
+		useResponsesAPI: true,
+	}
+
+	cfg := llm.LanguageModelConfig{
+		Model:              "gpt-4",
+		MaxGeneratedTokens: 1000,
+		JSONOutputFormat: &jsonschema.Schema{
+			Type: "string",
+			Enum: []any{"open", "closed"},
+		},
+	}
+
+	req, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, req.Params.Text)
+	require.NotNil(t, req.Params.Text.Format)
+	require.NotNil(t, req.Params.Text.Format.JSONSchema)
+	assert.Equal(t, []string{"open", "closed"}, req.Params.Text.Format.JSONSchema.Enum)
+}
+
+func TestConvertToBifrostResponsesRequestStructuredOutputRejectsNonStringEnum(t *testing.T) {
+	b := &LLM{
+		provider:        schemas.OpenAI,
+		defaultModel:    "gpt-4",
+		useResponsesAPI: true,
+	}
+
+	cfg := llm.LanguageModelConfig{
+		Model:              "gpt-4",
+		MaxGeneratedTokens: 1000,
+		JSONOutputFormat: &jsonschema.Schema{
+			Type: "integer",
+			Enum: []any{1, 2},
+		},
+	}
+
+	_, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, cfg)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "enum[0] must be a string")
+}
+
+func TestConvertToBifrostResponsesRequestStructuredOutputMultiTypeArray(t *testing.T) {
+	b := &LLM{
+		provider:        schemas.OpenAI,
+		defaultModel:    "gpt-4",
+		useResponsesAPI: true,
+	}
+
+	cfg := llm.LanguageModelConfig{
+		Model:              "gpt-4",
+		MaxGeneratedTokens: 1000,
+		JSONOutputFormat: &jsonschema.Schema{
+			Types: []string{"string", "null"},
+		},
+	}
+
+	req, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, req.Params.Text.Format.JSONSchema)
+	js := req.Params.Text.Format.JSONSchema
+	assert.Nil(t, js.Type)
+	require.Len(t, js.AnyOf, 2)
+	assert.Equal(t, map[string]any{"type": "string"}, js.AnyOf[0])
+	assert.Equal(t, map[string]any{"type": "null"}, js.AnyOf[1])
+}
+
+func TestConvertToBifrostResponsesRequestStructuredOutputTopLevelAnyOf(t *testing.T) {
+	b := &LLM{
+		provider:        schemas.OpenAI,
+		defaultModel:    "gpt-4",
+		useResponsesAPI: true,
+	}
+
+	cfg := llm.LanguageModelConfig{
+		Model:              "gpt-4",
+		MaxGeneratedTokens: 1000,
+		JSONOutputFormat: &jsonschema.Schema{
+			AnyOf: []*jsonschema.Schema{
+				{Type: "string"},
+				{Type: "number"},
+			},
+		},
+	}
+
+	req, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, req.Params.Text.Format.JSONSchema)
+	js := req.Params.Text.Format.JSONSchema
+	require.Len(t, js.AnyOf, 2)
+	assert.Equal(t, map[string]any{"type": "string"}, js.AnyOf[0])
+	assert.Equal(t, map[string]any{"type": "number"}, js.AnyOf[1])
+}
+
+func TestChatCompletionNoStreamReturnsErrorForUnsupportedResponsesSchema(t *testing.T) {
+	b := &LLM{
+		provider:        schemas.OpenAI,
+		defaultModel:    "gpt-4",
+		useResponsesAPI: true,
+	}
+
+	_, err := b.ChatCompletionNoStream(
+		llm.CompletionRequest{},
+		func(cfg *llm.LanguageModelConfig) {
+			cfg.Model = "gpt-4"
+			cfg.JSONOutputFormat = &jsonschema.Schema{
+				Type: "integer",
+				Enum: []any{1, 2},
+			}
+		},
+	)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "enum[0] must be a string")
+}
+
+func TestEnvProxyRouting(t *testing.T) {
+	// Backend: fake OpenAI API that returns a valid SSE streaming response.
+	var backendHit atomic.Bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendHit.Store(true)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello\"},\"finish_reason\":null}]}\n\n")
+		fmt.Fprint(w, "data: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer backend.Close()
+
+	// Proxy: minimal HTTP CONNECT proxy that tunnels TCP to the backend.
+	var proxyHit atomic.Bool
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "expected CONNECT", http.StatusMethodNotAllowed)
+			return
+		}
+		proxyHit.Store(true)
+
+		targetConn, err := net.DialTimeout("tcp", r.Host, 5*time.Second)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer targetConn.Close()
+
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "hijacking not supported", http.StatusInternalServerError)
+			return
+		}
+		clientConn, _, err := hijacker.Hijack()
+		if err != nil {
+			return
+		}
+		defer clientConn.Close()
+
+		_, _ = clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+
+		done := make(chan struct{})
+		go func() {
+			_, _ = io.Copy(targetConn, clientConn)
+			close(done)
+		}()
+		_, _ = io.Copy(clientConn, targetConn)
+		<-done
+	}))
+	defer proxy.Close()
+
+	// Point HTTP_PROXY and HTTPS_PROXY at our test proxy before Bifrost
+	// initializes its dialer. Both are needed so fasthttpproxy's fast path
+	// activates (it only proxies unconditionally when the two values match).
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("HTTPS_PROXY", proxy.URL)
+
+	llmClient, err := New(Config{
+		Provider:         schemas.OpenAI,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "gpt-4",
+		StreamingTimeout: 10 * time.Second,
+	})
+	require.NoError(t, err)
+	defer llmClient.client.Shutdown()
+
+	result, err := llmClient.ChatCompletionNoStream(llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "hello", result)
+	assert.True(t, proxyHit.Load(), "request should have been tunneled through the proxy")
+	assert.True(t, backendHit.Load(), "request should have reached the backend")
 }

@@ -108,7 +108,7 @@ export class ToolConfigUIHelper {
     }
 
     /** Set tool policy via dropdown */
-    async setToolPolicy(toolName: string, policy: 'Auto Run' | 'Ask Every Time'): Promise<void> {
+    async setToolPolicy(toolName: string, policy: 'Auto Run (DM)' | 'Auto Run (Everywhere)' | 'Ask Every Time'): Promise<void> {
         const dropdown = this.getToolPolicyDropdown(toolName);
         await dropdown.selectOption({ label: policy });
     }
