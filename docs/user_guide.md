@@ -82,6 +82,10 @@ By default, tool calls are available in direct messages. If your system admin en
 
 If a tool execution fails, the Agent can continue with a follow-up response instead of stopping immediately. After three consecutive failed tool executions, the Agent stops calling further tools and is instructed to explain the latest error and ask you for guidance or any missing information. A successful tool execution resets that count.
 
+On web and desktop, start a new chat in the Agents right-hand pane and open the **Tools** menu in the header. The menu lists configured tool providers. For MCP servers that use OAuth, you'll see **Connect** when you're not authenticated and **Disconnect** when an OAuth session applies. You can turn individual providers on or off from this menu, and your choices are saved as your personal preferences. Mattermost doesn't send OAuth connection prompts as ephemeral posts in the conversation; use the **Tools** menu to check connection state and complete **Connect** or **Disconnect** flows.
+
+> **Note:** The Mattermost mobile apps don't currently support starting MCP OAuth connections from the Agents experience. Use web or desktop to connect OAuth-backed MCP providers.
+
 Available tools in direct messages, and in channels when enabled by your system admin, include:
 
 - Server search (semantic search across your Mattermost instance)
