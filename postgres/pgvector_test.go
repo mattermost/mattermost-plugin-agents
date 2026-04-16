@@ -6,7 +6,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"testing"
 
@@ -26,24 +25,8 @@ import (
 // testDB creates a test database and returns a connection to it.
 // This function will automatically create a temporary database for testing.
 // If PG_ROOT_DSN environment variable is set, it will be used as the root connection.
-// Default: "postgres://mmuser:mostest@localhost:5432/postgres?sslmode=disable"
-var rootDSN string
-
-func init() {
-	rootDSN = os.Getenv("PG_ROOT_DSN")
-	if rootDSN == "" {
-		rootDSN = "postgres://mmuser:mostest@localhost:5432/postgres?sslmode=disable"
-	}
-}
-
-func testDatabaseDSN(dbName string) string {
-	u, err := url.Parse(rootDSN)
-	if err != nil {
-		return fmt.Sprintf("postgres://mmuser:mostest@localhost:5432/%s?sslmode=disable", dbName)
-	}
-	u.Path = "/" + dbName
-	return u.String()
-}
+// Default: "postgres://root:mostest@localhost:5432/postgres?sslmode=disable"
+var rootDSN = "postgres://mmuser:mostest@localhost:5432/postgres?sslmode=disable"
 
 func testDB(t *testing.T) *sqlx.DB {
 	rootDB, err := sqlx.Connect("postgres", rootDSN)
@@ -65,7 +48,7 @@ func testDB(t *testing.T) *sqlx.DB {
 	t.Logf("Created test database: %s", dbName)
 
 	// Connect to the new database
-	testDSN := testDatabaseDSN(dbName)
+	testDSN := fmt.Sprintf("postgres://mmuser:mostest@localhost:5432/%s?sslmode=disable", dbName)
 	db, err := sqlx.Connect("postgres", testDSN)
 	if err != nil {
 		// Try to clean up the database even if connection fails
