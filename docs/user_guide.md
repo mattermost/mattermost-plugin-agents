@@ -86,7 +86,7 @@ Available tools in direct messages, and in channels when enabled by your system 
 
 - Server search (semantic search across your Mattermost instance)
 - User lookup (find information about Mattermost users)
-- MCP tools (external tools provided by configured MCP servers if enabled). Tool availability depends on your user permissions and system configuration.
+- MCP tools (additional tools from MCP servers your admin has connected for Agents). Tool availability depends on your user permissions and workspace configuration.
 
 ## Analyze threads and channels
 

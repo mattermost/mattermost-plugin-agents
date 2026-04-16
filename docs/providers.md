@@ -40,16 +40,19 @@ The OpenAI Compatible option allows integration with any OpenAI-compatible LLM p
 | **Default Model** | Yes | The model to use by default |
 | **Organization ID** | No | Organization ID if your service supports it |
 | **Send User ID** | No | Whether to send user IDs to the service |
+| **Use Responses API** | No | Defaults to enabled. Uses the OpenAI Responses API when supported. Turn off for legacy Chat Completions compatibility with endpoints that do not implement the Responses API. |
 
 ### Special Considerations
 
-Ensure your self-hosted solution has sufficient compute resources and test for compatibility with the Mattermost plugin. Some advanced features may not be available with all compatible providers, so adjust token limits based on your deployment's capabilities.
+Ensure your self-hosted solution has sufficient compute resources and test for compatibility with the Mattermost plugin. Some advanced features may not be available with all compatible providers, so adjust token limits based on your deployment's capabilities. If you need OpenAI-compatible behavior without the Responses API, use **OpenAI Compatible** with **Use Responses API** disabled instead of the **OpenAI** service type.
 
 ## OpenAI
 
 ### Authentication
 
 Obtain an [OpenAI API key](https://platform.openai.com/account/api-keys), then select **OpenAI** in the **Service** dropdown and enter your API key. Specify a model name in the **Default Model** field that corresponds with the model's label in the API. If your API key belongs to an OpenAI organization, you can optionally specify your **Organization ID**.
+
+Direct **OpenAI** services always use the OpenAI **Responses** API. There is no System Console setting to disable the Responses API for this service type.
 
 ### Configuration Options
 
@@ -154,7 +157,7 @@ For more details about integrating with Microsoft Azure's OpenAI services, see t
 5. Select **Deploy model** then **Deploy base model**
 6. Select your desired model and select **Confirm**
 7. Select **Deploy** to start your model
-8. In Mattermost, select **OpenAI Compatible** in the **Service** dropdown
+8. In Mattermost, select **Azure** in the **Service** dropdown
 9. In the **Endpoint** panel for your new model deployment, copy the base URI of the **Target URI** (everything up to and including `.com`) and paste it in the **API URL** field in Mattermost
 10. In the **Endpoint** panel for your new model deployment, copy the **Key** and paste it in the **API Key** field in Mattermost
 11. In the **Deployment** panel for your new model deployment, copy the **Model name** and paste it in the **Default Model** field in Mattermost
@@ -167,3 +170,4 @@ For more details about integrating with Microsoft Azure's OpenAI services, see t
 | **API URL** | Yes | Your Azure OpenAI endpoint |
 | **Default Model** | Yes | The model to use by default (see [Azure OpenAI's model documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models)) |
 | **Send User ID** | No | Whether to send user IDs to Azure OpenAI |
+| **Use Responses API** | No | Defaults to enabled. Uses the OpenAI Responses API when your Azure deployment supports it. Turn off for legacy Chat Completions compatibility if your endpoint or deployment does not support the Responses API. |
