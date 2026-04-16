@@ -36,6 +36,7 @@ const groups = {
         'tests/rhs-core/new-messages-rhs.spec.ts',
         'tests/tool-config/policy-change.spec.ts',
         'tests/tool-config/tab-layout.spec.ts',
+        'tests/custom-prompts/custom-prompts.spec.ts',
     ],
     'e2e-shard-2': [
         'tests/system-console/bot-validation.spec.ts',
@@ -50,6 +51,7 @@ const groups = {
         'tests/agents-tour/display-conditions.spec.ts',
         'tests/tool-config/tools-tab-display.spec.ts',
         'tests/tool-config/user-toggle.spec.ts',
+        'tests/tool-config/mcp-oauth-auth.spec.ts',
     ],
     'e2e-shard-3': [
         'tests/system-console/bot-native-tools.spec.ts',

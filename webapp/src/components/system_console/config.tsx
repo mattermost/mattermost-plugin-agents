@@ -113,11 +113,11 @@ const defaultConfig: Config = {
         },
     },
     mcp: {
-        enabled: false,
+        enabled: true,
         enablePluginServer: false,
         servers: [],
         embeddedServer: {
-            enabled: false,
+            enabled: true,
         },
         idleTimeoutMinutes: 30,
     },

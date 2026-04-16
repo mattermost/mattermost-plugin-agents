@@ -31,18 +31,16 @@ import (
 type mockToolProvider struct{}
 
 func (m *mockToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
-	tools := []llm.Tool{}
-
-	tools = append(tools, llm.Tool{
-		Name:        "SearchServer",
-		Description: "Search the Mattermost chat server for relevant messages.",
-		Schema:      llm.NewJSONSchemaFromStruct[struct{ Term string }](),
-		Resolver: func(context *llm.Context, args llm.ToolArgumentGetter) (string, error) {
-			return "No relevant messages found.", nil
+	return []llm.Tool{
+		{
+			Name:        "WebSearch",
+			Description: "Search the web for information.",
+			Schema:      llm.NewJSONSchemaFromStruct[struct{ Term string }](),
+			Resolver: func(context *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+				return "No results found.", nil
+			},
 		},
-	})
-
-	return tools
+	}
 }
 
 type mockMCPClientManager struct{}
@@ -155,7 +153,7 @@ func TestConversationMentionHandling(t *testing.T) {
 
 			bot := bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
 
-			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), true)
+			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), true, false)
 			require.NoError(t, err, "Failed to process user request")
 			require.NotNil(t, textStream, "Expected a non-nil text stream")
 

@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/config"
 	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/i18n"
@@ -53,6 +54,7 @@ type MCPClientManager interface {
 	GetToolsCache() *mcp.ToolsCache
 	GetHTTPClient() *http.Client
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
+	DisconnectUserOAuth(userID, serverName string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (string, error)
 	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
@@ -100,6 +102,7 @@ type API struct {
 	configUpdater         ConfigUpdater
 	clusterNotifier       ClusterNotifier
 	getSearchInitError    func() string
+	customPromptsStore    *customprompts.Store
 }
 
 // New creates a new API instance
@@ -126,6 +129,7 @@ func New(
 	configUpdater ConfigUpdater,
 	clusterNotifier ClusterNotifier,
 	getSearchInitError func() string,
+	customPromptsStore *customprompts.Store,
 ) *API {
 	return &API{
 		bots:                  bots,
@@ -151,6 +155,7 @@ func New(
 		configUpdater:         configUpdater,
 		clusterNotifier:       clusterNotifier,
 		getSearchInitError:    getSearchInitError,
+		customPromptsStore:    customPromptsStore,
 	}
 }
 
@@ -202,12 +207,24 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
 	router.GET("/mcp/tools", a.handleGetUserMCPTools)
+	router.GET("/mcp/oauth/:serverName/start", a.handleOAuthStart)
 	router.GET("/mcp/user-preferences", a.handleGetUserPreferences)
 	router.PUT("/mcp/user-preferences", a.handlePutUserPreferences)
+	router.DELETE("/mcp/oauth/:serverName", a.handleDeleteUserMCPOAuth)
 
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
 	// Used by the MCP server for external search callbacks.
 	router.POST("/search/raw", a.handleRawSearch)
+
+	// Custom prompts routes — available to all authenticated users
+	promptsRouter := router.Group("/custom-prompts")
+	promptsRouter.POST("", a.handleCreateCustomPrompt)
+	promptsRouter.GET("", a.handleListCustomPrompts)
+	promptsRouter.PUT("/:id", a.handleUpdateCustomPrompt)
+	promptsRouter.DELETE("/:id", a.handleDeleteCustomPrompt)
+	promptsRouter.GET("/pins", a.handleGetPromptPins)
+	promptsRouter.PUT("/pins", a.handleSetPromptPin)
+	promptsRouter.POST("/:id/render", a.handleRenderCustomPrompt)
 
 	botRequiredRouter := router.Group("")
 	botRequiredRouter.Use(a.aiBotRequired)

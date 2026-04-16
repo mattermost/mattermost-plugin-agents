@@ -49,10 +49,29 @@ func isAutomatedInvoker(post *model.Post, postingUser *model.User) bool {
 	return false
 }
 
+// isBotActivateAI is true when a bot account (or from_bot integration post) opts in with activate_ai.
+func isBotActivateAI(post *model.Post, postingUser *model.User) bool {
+	if post == nil || post.GetProp(ActivateAIProp) == nil {
+		return false
+	}
+	if postingUser != nil && postingUser.IsBot {
+		return true
+	}
+	return post.GetProp(FromBotProp) != nil
+}
+
 // computeAllowToolsInChannel returns whether tools should be allowed for a channel mention,
-// given the config flag and whether the invoker is automated.
-func computeAllowToolsInChannel(configEnabled bool, post *model.Post, postingUser *model.User) bool {
-	return configEnabled && !isAutomatedInvoker(post, postingUser)
+// given the config flag and whether the invoker is automated. Bot activate_ai requires a
+// tool policy checker: without it, strict filtering and MCP auto-approval are no-ops and tools
+// must stay disabled so automated invokers cannot strand pending approvals.
+func computeAllowToolsInChannel(configEnabled bool, post *model.Post, postingUser *model.User, hasToolPolicyChecker bool) bool {
+	if !configEnabled {
+		return false
+	}
+	if isBotActivateAI(post, postingUser) {
+		return hasToolPolicyChecker
+	}
+	return !isAutomatedInvoker(post, postingUser)
 }
 
 func (c *Conversations) MessageHasBeenPosted(ctx *plugin.Context, post *model.Post) {
@@ -126,7 +145,9 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 
 	// Check config to determine if tools should be allowed in channel mentions
 	configEnabled := c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
-	allowToolsInChannel := computeAllowToolsInChannel(configEnabled, post, postingUser)
+	hasToolPolicyChecker := c.toolPolicyChecker != nil
+	allowToolsInChannel := computeAllowToolsInChannel(configEnabled, post, postingUser, hasToolPolicyChecker)
+	channelToolsAutoRunEverywhereOnly := configEnabled && isBotActivateAI(post, postingUser) && hasToolPolicyChecker
 
 	responseRootID := post.Id
 	if post.RootId != "" {
@@ -138,8 +159,9 @@ func (c *Conversations) handleMentions(bot *bots.Bot, post *model.Post, postingU
 		RootId:    responseRootID,
 	}
 	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
+	setChannelToolsAutoRunEverywhereOnlyProp(responsePost, channelToolsAutoRunEverywhereOnly)
 	return c.respondToPost(bot, postingUser, channel, responsePost, post.Id, func() (*llm.TextStreamResult, error) {
-		stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, allowToolsInChannel)
+		stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, allowToolsInChannel, channelToolsAutoRunEverywhereOnly)
 		if err != nil {
 			return nil, fmt.Errorf("unable to process bot mention: %w", err)
 		}
@@ -162,7 +184,7 @@ func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, posting
 		RootId:    responseRootID,
 	}
 	return c.respondToPost(bot, postingUser, channel, responsePost, post.Id, func() (*llm.TextStreamResult, error) {
-		stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, false)
+		stream, err := c.ProcessUserRequest(bot, postingUser, channel, post, false, false)
 		if err != nil {
 			return nil, fmt.Errorf("unable to process bot mention: %w", err)
 		}

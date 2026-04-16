@@ -250,6 +250,11 @@ export class ToolConfigAPIHelper {
     async setUserPreferences(authToken: string, prefs: any): Promise<any> {
         return this.routes.putJson('mcp/user-preferences', authToken, prefs);
     }
+
+    /** Call DELETE /mcp/oauth/:serverName to disconnect a user from an OAuth MCP server */
+    async disconnectMCPOAuth(authToken: string, serverName: string): Promise<void> {
+        return this.routes.deleteRequest(`mcp/oauth/${encodeURIComponent(serverName)}`, authToken);
+    }
 }
 
 /** Factory to create API helper from container */

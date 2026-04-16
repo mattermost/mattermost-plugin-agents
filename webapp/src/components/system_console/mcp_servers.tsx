@@ -352,7 +352,12 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // Tool-affecting config fingerprint (must be declared before prefetch effect)
     const configFingerprint = JSON.stringify({
-        servers: normalizedServers.map((s) => ({url: s.baseURL, enabled: s.enabled})),
+        servers: normalizedServers.map((s) => ({
+            url: s.baseURL,
+            enabled: s.enabled,
+            clientID: s.clientID || '',
+            hasClientSecret: Boolean(s.clientSecret),
+        })),
         embeddedEnabled: mcpConfig?.embeddedServer?.enabled,
         enablePluginServer: mcpConfig?.enablePluginServer,
     });
@@ -366,15 +371,9 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         }
     }, [configFingerprint]);
 
-    // Pre-fetch tools data when MCP is enabled so they're ready when the Tools tab is clicked.
+    // Pre-fetch tools data so they're ready when the Tools tab is clicked.
     // Ignore responses from outdated requests (cleanup + fingerprint match) so config changes cannot apply stale data.
     useEffect(() => {
-        if (!mcpConfig?.enabled) {
-            return () => {
-                // no-op: MCP disabled, nothing to cancel
-            };
-        }
-
         const fingerprintAtFetchStart = configFingerprint;
         let cancelled = false;
 
@@ -399,19 +398,21 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         return () => {
             cancelled = true;
         };
-    }, [mcpConfig?.enabled, configFingerprint]);
+    }, [configFingerprint]);
 
     useEffect(() => {
         setIdleTimeoutInputValue(getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
     }, [mcpConfig?.idleTimeoutMinutes]);
 
-    // Create a properly initialized config object
+    // MCP client and embedded server are always enabled; users can still
+    // disable individual tools but cannot turn off MCP entirely.
     const config: MCPConfig = {
-        enabled: mcpConfig?.enabled || false,
+        enabled: true,
         enablePluginServer: mcpConfig?.enablePluginServer ?? false,
         servers: normalizedServers,
-        embeddedServer: mcpConfig?.embeddedServer || {
-            enabled: !mcpConfig?.enabled,
+        embeddedServer: {
+            ...(mcpConfig?.embeddedServer || {}),
+            enabled: true,
         },
         idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
     };
@@ -471,146 +472,107 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     return (
         <div>
-            {config.enabled && (
-                <>
-                    <TabsContainer>
-                        <TabButton
-                            active={activeTab === 'config'}
-                            onClick={() => setActiveTab('config')}
-                        >
-                            <FormattedMessage defaultMessage='Configuration'/>
-                        </TabButton>
-                        <TabButton
-                            active={activeTab === 'tools'}
-                            onClick={() => setActiveTab('tools')}
-                        >
-                            <FormattedMessage defaultMessage='Tools'/>
-                        </TabButton>
-                    </TabsContainer>
+            <TabsContainer>
+                <TabButton
+                    active={activeTab === 'config'}
+                    onClick={() => setActiveTab('config')}
+                >
+                    <FormattedMessage defaultMessage='Configuration'/>
+                </TabButton>
+                <TabButton
+                    active={activeTab === 'tools'}
+                    onClick={() => setActiveTab('tools')}
+                >
+                    <FormattedMessage defaultMessage='Tools'/>
+                </TabButton>
+            </TabsContainer>
 
-                    <TabContent>
-                        {activeTab === 'config' && (
-                            <>
-                                <ItemList title={intl.formatMessage({defaultMessage: 'MCP Configuration'})}>
-                                    <BooleanItem
-                                        label={intl.formatMessage({defaultMessage: 'Enable MCP Client'})}
-                                        value={config.enabled}
-                                        onChange={(enabled) => onChange({...config, enabled})}
-                                        helpText={intl.formatMessage({defaultMessage: 'Enable the Model Context Protocol (MCP) client to access tools from MCP servers. MCP tools will be available to your Mattermost AI agents.'})}
-                                    />
-                                    <BooleanItem
-                                        label={intl.formatMessage({defaultMessage: 'Enable Mattermost MCP Server (HTTP)'})}
-                                        value={config.enablePluginServer}
-                                        onChange={(enablePluginServer) => onChange({...config, enablePluginServer})}
-                                        helpText={intl.formatMessage({defaultMessage: 'Enable the Mattermost MCP server over HTTP to allow external MCP clients to access Mattermost channels, users, and posts through the MCP protocol. Note: Streaming support requires Mattermost v11.2+.'})}
-                                    />
-                                    <TextItem
-                                        label={intl.formatMessage({defaultMessage: 'Connection Idle Timeout (minutes)'})}
-                                        value={idleTimeoutInputValue}
-                                        type='number'
-                                        onChange={(e) => {
-                                            const nextValue = e.target.value;
-                                            setIdleTimeoutInputValue(nextValue);
-
-                                            if (nextValue.trim() === '') {
-                                                const configWithoutIdleTimeout = {...config};
-                                                delete configWithoutIdleTimeout.idleTimeoutMinutes;
-                                                onChange({
-                                                    ...configWithoutIdleTimeout,
-                                                });
-                                                return;
-                                            }
-
-                                            const idleTimeoutMinutes = Number.parseInt(nextValue, 10);
-                                            if (Number.isNaN(idleTimeoutMinutes)) {
-                                                return;
-                                            }
-
-                                            if (idleTimeoutMinutes <= 0) {
-                                                const configWithoutIdleTimeout = {...config};
-                                                delete configWithoutIdleTimeout.idleTimeoutMinutes;
-                                                onChange({
-                                                    ...configWithoutIdleTimeout,
-                                                });
-                                                return;
-                                            }
-
-                                            onChange({
-                                                ...config,
-                                                idleTimeoutMinutes,
-                                            });
-                                        }}
-                                        helptext={intl.formatMessage({defaultMessage: 'How long to keep an inactive user connection open before closing it automatically. Lower values save resources, higher values improve response times. Default: 30 minutes'})}
-                                    />
-                                    <BooleanItem
-                                        label={intl.formatMessage({defaultMessage: 'Enable Embedded Server'})}
-                                        value={config.embeddedServer.enabled}
-                                        onChange={(enabled) => onChange({
-                                            ...config,
-                                            embeddedServer: {
-                                                ...config.embeddedServer,
-                                                enabled,
-                                            },
-                                        })}
-                                        helpText={intl.formatMessage({defaultMessage: 'Enable the built-in Mattermost MCP server that provides AI tools for reading/creating channels, posts, searching content, and managing users and teams. Tools operate with the permissions of the user who invokes them.'})}
-                                    />
-                                </ItemList>
-                                <ServersList>
-                                    {!Array.isArray(config.servers) || config.servers.length < 1 ? (
-                                        <EmptyState>
-                                            <FormattedMessage defaultMessage='No remote MCP servers configured. Add a server to connect to external MCP tools.'/>
-                                        </EmptyState>
-                                    ) : (
-                                        config.servers.map((serverConfig, index) => (
-                                            <MCPServer
-                                                key={index}
-                                                serverIndex={index}
-                                                serverConfig={serverConfig}
-                                                onChange={updateServer}
-                                                onDelete={() => deleteServer(index)}
-                                            />
-                                        ))
-                                    )}
-                                </ServersList>
-
-                                <AddServerContainer>
-                                    <TertiaryButton
-                                        onClick={addServer}
-                                    >
-                                        <PlusServerIcon/>
-                                        <FormattedMessage defaultMessage='Add Remote MCP Server'/>
-                                    </TertiaryButton>
-                                </AddServerContainer>
-                            </>
-                        )}
-
-                        {activeTab === 'tools' && (
-                            <MCPToolsViewer
-                                mcpConfig={config}
-                                onConfigChange={(updatedConfig) => onChange(updatedConfig)}
-                                initialToolsData={preloadedToolsData}
+            <TabContent>
+                {activeTab === 'config' && (
+                    <>
+                        <ItemList title={intl.formatMessage({defaultMessage: 'MCP Configuration'})}>
+                            <BooleanItem
+                                label={intl.formatMessage({defaultMessage: 'Enable Mattermost MCP Server (HTTP)'})}
+                                value={config.enablePluginServer}
+                                onChange={(enablePluginServer) => onChange({...config, enablePluginServer})}
+                                helpText={intl.formatMessage({defaultMessage: 'Enable the Mattermost MCP server over HTTP to allow external MCP clients to access Mattermost channels, users, and posts through the MCP protocol. Note: Streaming support requires Mattermost v11.2+.'})}
                             />
-                        )}
-                    </TabContent>
-                </>
-            )}
+                            <TextItem
+                                label={intl.formatMessage({defaultMessage: 'Connection Idle Timeout (minutes)'})}
+                                value={idleTimeoutInputValue}
+                                type='number'
+                                onChange={(e) => {
+                                    const nextValue = e.target.value;
+                                    setIdleTimeoutInputValue(nextValue);
 
-            {!config.enabled && (
-                <ItemList title={intl.formatMessage({defaultMessage: 'MCP Configuration'})}>
-                    <BooleanItem
-                        label={intl.formatMessage({defaultMessage: 'Enable MCP Client'})}
-                        value={config.enabled}
-                        onChange={(enabled) => onChange({...config, enabled})}
-                        helpText={intl.formatMessage({defaultMessage: 'Enable the Model Context Protocol (MCP) client to access tools from MCP servers. MCP tools will be available to your Mattermost AI agents.'})}
+                                    if (nextValue.trim() === '') {
+                                        const configWithoutIdleTimeout = {...config};
+                                        delete configWithoutIdleTimeout.idleTimeoutMinutes;
+                                        onChange({
+                                            ...configWithoutIdleTimeout,
+                                        });
+                                        return;
+                                    }
+
+                                    const idleTimeoutMinutes = Number.parseInt(nextValue, 10);
+                                    if (Number.isNaN(idleTimeoutMinutes)) {
+                                        return;
+                                    }
+
+                                    if (idleTimeoutMinutes <= 0) {
+                                        const configWithoutIdleTimeout = {...config};
+                                        delete configWithoutIdleTimeout.idleTimeoutMinutes;
+                                        onChange({
+                                            ...configWithoutIdleTimeout,
+                                        });
+                                        return;
+                                    }
+
+                                    onChange({
+                                        ...config,
+                                        idleTimeoutMinutes,
+                                    });
+                                }}
+                                helptext={intl.formatMessage({defaultMessage: 'How long to keep an inactive user connection open before closing it automatically. Lower values save resources, higher values improve response times. Default: 30 minutes'})}
+                            />
+                        </ItemList>
+                        <ServersList>
+                            {!Array.isArray(config.servers) || config.servers.length < 1 ? (
+                                <EmptyState>
+                                    <FormattedMessage defaultMessage='No remote MCP servers configured. Add a server to connect to external MCP tools.'/>
+                                </EmptyState>
+                            ) : (
+                                config.servers.map((serverConfig, index) => (
+                                    <MCPServer
+                                        key={index}
+                                        serverIndex={index}
+                                        serverConfig={serverConfig}
+                                        onChange={updateServer}
+                                        onDelete={() => deleteServer(index)}
+                                    />
+                                ))
+                            )}
+                        </ServersList>
+
+                        <AddServerContainer>
+                            <TertiaryButton
+                                onClick={addServer}
+                            >
+                                <PlusServerIcon/>
+                                <FormattedMessage defaultMessage='Add Remote MCP Server'/>
+                            </TertiaryButton>
+                        </AddServerContainer>
+                    </>
+                )}
+
+                {activeTab === 'tools' && (
+                    <MCPToolsViewer
+                        mcpConfig={config}
+                        onConfigChange={(updatedConfig) => onChange(updatedConfig)}
+                        initialToolsData={preloadedToolsData}
                     />
-                    <BooleanItem
-                        label={intl.formatMessage({defaultMessage: 'Enable Mattermost MCP Server (HTTP)'})}
-                        value={config.enablePluginServer}
-                        onChange={(enablePluginServer) => onChange({...config, enablePluginServer})}
-                        helpText={intl.formatMessage({defaultMessage: 'Enable the Mattermost MCP server over HTTP to allow external MCP clients (like Claude Desktop) to access Mattermost channels, users, and posts through the MCP protocol. Note: Streaming support requires Mattermost v11.2+.'})}
-                    />
-                </ItemList>
-            )}
+                )}
+            </TabContent>
         </div>
     );
 };

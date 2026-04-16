@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -667,7 +668,8 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 				cfg.JSONOutputFormat = llm.NewJSONSchemaFromStruct[testStructuredOutput]()
 			}
 
-			req := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, cfg)
+			req, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, cfg)
+			require.NoError(t, err)
 
 			if tt.expectFormat {
 				require.NotNil(t, req.Params.Text)
@@ -676,12 +678,138 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 				assert.Equal(t, "response", *req.Params.Text.Format.Name)
 				assert.Equal(t, true, *req.Params.Text.Format.Strict)
 				require.NotNil(t, req.Params.Text.Format.JSONSchema)
-				require.NotNil(t, req.Params.Text.Format.JSONSchema.Schema)
+				assert.Nil(t, req.Params.Text.Format.JSONSchema.Schema)
+				require.NotNil(t, req.Params.Text.Format.JSONSchema.Type)
+				assert.Equal(t, "object", *req.Params.Text.Format.JSONSchema.Type)
+				require.NotNil(t, req.Params.Text.Format.JSONSchema.Properties)
+				assert.Len(t, *req.Params.Text.Format.JSONSchema.Properties, 2)
+				assert.ElementsMatch(t, []string{"name", "score"}, req.Params.Text.Format.JSONSchema.Required)
+				require.NotNil(t, req.Params.Text.Format.JSONSchema.AdditionalProperties)
+				require.NotNil(t, req.Params.Text.Format.JSONSchema.AdditionalProperties.AdditionalPropertiesBool)
+				assert.False(t, *req.Params.Text.Format.JSONSchema.AdditionalProperties.AdditionalPropertiesBool)
 			} else {
 				assert.Nil(t, req.Params.Text)
 			}
 		})
 	}
+}
+
+func TestConvertToBifrostResponsesRequestStructuredOutputStringEnum(t *testing.T) {
+	b := &LLM{
+		provider:        schemas.OpenAI,
+		defaultModel:    "gpt-4",
+		useResponsesAPI: true,
+	}
+
+	cfg := llm.LanguageModelConfig{
+		Model:              "gpt-4",
+		MaxGeneratedTokens: 1000,
+		JSONOutputFormat: &jsonschema.Schema{
+			Type: "string",
+			Enum: []any{"open", "closed"},
+		},
+	}
+
+	req, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, req.Params.Text)
+	require.NotNil(t, req.Params.Text.Format)
+	require.NotNil(t, req.Params.Text.Format.JSONSchema)
+	assert.Equal(t, []string{"open", "closed"}, req.Params.Text.Format.JSONSchema.Enum)
+}
+
+func TestConvertToBifrostResponsesRequestStructuredOutputRejectsNonStringEnum(t *testing.T) {
+	b := &LLM{
+		provider:        schemas.OpenAI,
+		defaultModel:    "gpt-4",
+		useResponsesAPI: true,
+	}
+
+	cfg := llm.LanguageModelConfig{
+		Model:              "gpt-4",
+		MaxGeneratedTokens: 1000,
+		JSONOutputFormat: &jsonschema.Schema{
+			Type: "integer",
+			Enum: []any{1, 2},
+		},
+	}
+
+	_, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, cfg)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "enum[0] must be a string")
+}
+
+func TestConvertToBifrostResponsesRequestStructuredOutputMultiTypeArray(t *testing.T) {
+	b := &LLM{
+		provider:        schemas.OpenAI,
+		defaultModel:    "gpt-4",
+		useResponsesAPI: true,
+	}
+
+	cfg := llm.LanguageModelConfig{
+		Model:              "gpt-4",
+		MaxGeneratedTokens: 1000,
+		JSONOutputFormat: &jsonschema.Schema{
+			Types: []string{"string", "null"},
+		},
+	}
+
+	req, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, req.Params.Text.Format.JSONSchema)
+	js := req.Params.Text.Format.JSONSchema
+	assert.Nil(t, js.Type)
+	require.Len(t, js.AnyOf, 2)
+	assert.Equal(t, map[string]any{"type": "string"}, js.AnyOf[0])
+	assert.Equal(t, map[string]any{"type": "null"}, js.AnyOf[1])
+}
+
+func TestConvertToBifrostResponsesRequestStructuredOutputTopLevelAnyOf(t *testing.T) {
+	b := &LLM{
+		provider:        schemas.OpenAI,
+		defaultModel:    "gpt-4",
+		useResponsesAPI: true,
+	}
+
+	cfg := llm.LanguageModelConfig{
+		Model:              "gpt-4",
+		MaxGeneratedTokens: 1000,
+		JSONOutputFormat: &jsonschema.Schema{
+			AnyOf: []*jsonschema.Schema{
+				{Type: "string"},
+				{Type: "number"},
+			},
+		},
+	}
+
+	req, err := b.convertToBifrostResponsesRequest(llm.CompletionRequest{}, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, req.Params.Text.Format.JSONSchema)
+	js := req.Params.Text.Format.JSONSchema
+	require.Len(t, js.AnyOf, 2)
+	assert.Equal(t, map[string]any{"type": "string"}, js.AnyOf[0])
+	assert.Equal(t, map[string]any{"type": "number"}, js.AnyOf[1])
+}
+
+func TestChatCompletionNoStreamReturnsErrorForUnsupportedResponsesSchema(t *testing.T) {
+	b := &LLM{
+		provider:        schemas.OpenAI,
+		defaultModel:    "gpt-4",
+		useResponsesAPI: true,
+	}
+
+	_, err := b.ChatCompletionNoStream(
+		llm.CompletionRequest{},
+		func(cfg *llm.LanguageModelConfig) {
+			cfg.Model = "gpt-4"
+			cfg.JSONOutputFormat = &jsonschema.Schema{
+				Type: "integer",
+				Enum: []any{1, 2},
+			}
+		},
+	)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "enum[0] must be a string")
 }
 
 func TestEnvProxyRouting(t *testing.T) {

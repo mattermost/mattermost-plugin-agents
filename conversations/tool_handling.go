@@ -191,6 +191,9 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		contextOpts...,
 	)
 	toolsDisabled := applyToolAvailability(llmContext, isDM, allowToolsInChannel)
+	if !isDM && channelToolsAutoRunEverywhereOnlyFromPost(post) {
+		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+	}
 
 	for i := range tools {
 		if tools[i].Status != llm.ToolCallStatusPending && tools[i].Status != llm.ToolCallStatusAccepted {
@@ -403,6 +406,9 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		contextOpts...,
 	)
 	toolsDisabled := applyToolAvailability(llmContext, isDM, allowToolsInChannel)
+	if !isDM && channelToolsAutoRunEverywhereOnlyFromPost(post) {
+		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+	}
 
 	resolvedToolsJSON, err := json.Marshal(tools)
 	if err != nil {
@@ -499,6 +505,7 @@ func (c *Conversations) completeAndStreamToolResponse(
 		opts = append(opts, llm.WithToolsDisabled())
 	}
 	opts = c.appendDMAutoRunOptions(mmapi.IsDMWith(bot.GetMMBot().UserId, channel), llmContext, opts)
+	channelStrictEverywhere := channelToolsAutoRunEverywhereOnlyFromPost(toolCallPost)
 	result, err := bot.LLM().ChatCompletion(completionRequest, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to get chat completion: %w", err)
@@ -515,7 +522,7 @@ func (c *Conversations) completeAndStreamToolResponse(
 	// Same channel-only MCP auto-approval as ProcessUserRequestWithContext. DMs
 	// use the model-level auto-run wrapper via WithAutoRunTools.
 	if !mmapi.IsDMWith(bot.GetMMBot().UserId, channel) && !toolsDisabled && llmContext != nil && llmContext.Tools != nil && c.toolPolicyChecker != nil {
-		result = wrapStreamWithMCPAutoApproval(result, llmContext, c.toolPolicyChecker)
+		result = wrapStreamWithMCPAutoApproval(result, llmContext, c.toolPolicyChecker, channelStrictEverywhere)
 	}
 
 	responsePost := &model.Post{
@@ -523,6 +530,7 @@ func (c *Conversations) completeAndStreamToolResponse(
 		RootId:    responseRootID,
 	}
 	setAllowToolsInChannelProp(responsePost, allowToolsInChannel)
+	setChannelToolsAutoRunEverywhereOnlyProp(responsePost, channelStrictEverywhere)
 	if err := c.streamingService.StreamToNewPost(context.Background(), bot.GetMMBot().UserId, user.Id, result, responsePost, toolCallPost.Id); err != nil {
 		return fmt.Errorf("failed to stream result to new post: %w", err)
 	}

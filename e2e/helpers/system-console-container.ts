@@ -126,6 +126,7 @@ export async function RunSystemConsoleContainer(config: SystemConsolePluginConfi
     }
 
     const mattermost = await new MattermostContainer()
+        .withEnv('MM_SERVICESETTINGS_ALLOWEDUNTRUSTEDINTERNALCONNECTIONS', 'openai')
         .withPlugin(filename, 'mattermost-ai', pluginConfig)
         .start();
 
