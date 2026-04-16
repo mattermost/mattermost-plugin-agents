@@ -303,6 +303,7 @@ The plugin configuration is stored in the Mattermost database. To backup:
 
 1. Ensure your regular Mattermost backup includes plugin configurations
 2. For larger deployments, consider backing up indexed vector data separately
+3. User-created custom prompt templates and prompt pins are stored in the `LLM_CustomPrompts` and `LLM_CustomPromptPins` tables, so include plugin database tables in your normal backup and restore process.
 
 ### Configuration format
 
@@ -365,22 +366,6 @@ When users report repeated tool failures, use **LLM Trace** and debug logging to
 ## Integrations
 
 Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**.
-
-### Built-in tool integrations
-
-#### Server Search
-
-- **Function**: Semantic search across Mattermost content.
-- **Requirements**: Embedding search must be configured and enabled.
-- **Security**: Respects user permissions - users only see content they have access to.
-
-#### User Lookup
-
-- **Function**: Look up Mattermost user information by username
-- **Data Available**: Username, full name, email, nickname, position, locale, timezone, last activity, status
-- **Permissions**: Requires `VIEW_MEMBERS` permission
-
-**Security Note**: Tool availability and approval behavior depend on your system configuration. Tools can be configured to require explicit user approval or to run automatically under the selected tool policy.
 
 ## Model Context Protocol (MCP) Integration
 

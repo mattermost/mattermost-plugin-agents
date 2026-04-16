@@ -7,6 +7,7 @@ import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
 import {GlobalState} from '@mattermost/types/store';
+import {CodeTagsIcon} from '@mattermost/compass-icons/components';
 
 //@ts-ignore it exists
 import aiIcon from '../../assets/bot_icon.png';
@@ -18,6 +19,8 @@ import PostMenu from './components/post_menu';
 import IconThreadSummarization from './components/assets/icon_thread_summarization';
 import IconReactForMe from './components/assets/icon_react_for_me';
 import RHS from './components/rhs/rhs';
+import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
+import CustomPromptsManagement from './components/custom_prompts/custom_prompts_management';
 import Config from './components/system_console/config';
 import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis, getAIDirectChannel} from './client';
 
@@ -204,6 +207,7 @@ export default class Plugin {
 
         if (registry.registerRootComponent) {
             registry.registerRootComponent(AgentsTour);
+            registry.registerRootComponent(CustomPromptsManagement);
         }
 
         if (registry.registerSearchComponents) {
@@ -229,6 +233,16 @@ export default class Plugin {
                         store.dispatch(rhs.showRHSPlugin);
                     }
                 },
+            });
+        }
+
+        // Register Custom Prompts AI action menu item
+        if (registry.registerAIActionMenuItemComponent) {
+            registry.registerAIActionMenuItemComponent({
+                icon: <CodeTagsIcon size={18}/>,
+                text: <FormattedMessage defaultMessage='Custom prompts'/>,
+                sortOrder: 10,
+                component: CustomPromptsDropdown,
             });
         }
     }

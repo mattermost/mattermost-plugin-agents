@@ -65,6 +65,15 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 
 	apiURL = normalizeOpenAIBaseURL(provider, apiURL)
 
+	// OpenAI direct always uses the Responses API
+	useResponsesAPI := serviceConfig.UseResponsesAPI
+	if serviceConfig.Type == llm.ServiceTypeOpenAI {
+		useResponsesAPI = true
+	}
+
+	// Only pass native tools for providers that support them
+	enabledNativeTools := filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools)
+
 	cfg := Config{
 		Provider:           provider,
 		APIKey:             serviceConfig.APIKey,
@@ -78,10 +87,10 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		OutputTokenLimit:   serviceConfig.OutputTokenLimit,
 		StreamingTimeout:   streamingTimeout,
 		SendUserID:         serviceConfig.SendUserID,
-		UseResponsesAPI:    serviceConfig.UseResponsesAPI,
+		UseResponsesAPI:    useResponsesAPI,
 
 		// Bot-specific configuration
-		EnabledNativeTools: botConfig.EnabledNativeTools,
+		EnabledNativeTools: enabledNativeTools,
 		ReasoningEnabled:   botConfig.ReasoningEnabled,
 		ReasoningEffort:    botConfig.ReasoningEffort,
 		ThinkingBudget:     botConfig.ThinkingBudget,
@@ -106,6 +115,30 @@ func normalizeOpenAIBaseURL(provider schemas.ModelProvider, apiURL string) strin
 		apiURL = strings.TrimSuffix(apiURL, "/v1")
 	}
 	return apiURL
+}
+
+// supportsNativeTools returns true if the service type supports native tools
+// (e.g., web_search). Only OpenAI-family and Anthropic services support them.
+func supportsNativeTools(serviceType string) bool {
+	switch serviceType {
+	case llm.ServiceTypeOpenAI,
+		llm.ServiceTypeOpenAICompatible,
+		llm.ServiceTypeAzure,
+		llm.ServiceTypeAnthropic:
+		return true
+	default:
+		return false
+	}
+}
+
+// filterNativeToolsForServiceType returns the native tools list only for
+// providers that support them. For unsupported providers, returns nil to
+// prevent enabledNativeTools from incorrectly triggering the Responses API path.
+func filterNativeToolsForServiceType(serviceType string, tools []string) []string {
+	if !supportsNativeTools(serviceType) {
+		return nil
+	}
+	return tools
 }
 
 // IsSupported returns true if the service type is supported by Bifrost.

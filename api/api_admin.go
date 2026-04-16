@@ -238,20 +238,12 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 
 	mcpConfig := a.config.MCP()
 
-	// If MCP is not enabled, return empty response
-	if !mcpConfig.Enabled {
-		c.JSON(http.StatusOK, MCPToolsResponse{
-			Servers: []MCPServerInfo{},
-		})
-		return
-	}
-
 	response := MCPToolsResponse{
 		Servers: make([]MCPServerInfo, 0, len(mcpConfig.Servers)+1),
 	}
 
-	// Discover tools from embedded server if enabled
-	if mcpConfig.EmbeddedServer.Enabled {
+	// Discover tools from embedded server
+	{
 		embeddedServer := a.mcpClientManager.GetEmbeddedServer()
 		if embeddedServer != nil {
 			serverInfo := MCPServerInfo{

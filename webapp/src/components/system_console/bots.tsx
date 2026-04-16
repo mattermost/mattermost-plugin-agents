@@ -28,10 +28,11 @@ const defaultNewBot: LLMBotConfig = {
     userAccessLevel: UserAccessLevel.All,
     userIDs: [],
     teamIDs: [],
-    enabledNativeTools: [],
+    enabledNativeTools: ['web_search'],
     reasoningEnabled: true,
     reasoningEffort: 'medium',
     thinkingBudget: 0,
+    structuredOutputEnabled: true,
 };
 
 export const firstNewBot = {

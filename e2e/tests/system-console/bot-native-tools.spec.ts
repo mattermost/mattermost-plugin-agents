@@ -13,8 +13,8 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
  *
  * Tests native tools configuration that is conditionally visible based on service type.
  * - Shows "Native Claude Tools" for Anthropic services
- * - Shows "Native OpenAI Tools" for OpenAI-based services with ResponsesAPI
- * - Hidden for other service types or OpenAI without ResponsesAPI
+ * - Shows "Native OpenAI Tools" for OpenAI direct (always) and OpenAI Compatible/Azure with ResponsesAPI
+ * - Hidden for other service types or OpenAI Compatible/Azure without ResponsesAPI
  * - Web Search checkbox with provider-specific help text
  */
 
@@ -222,17 +222,19 @@ test.describe.serial('Bot Native Tools', () => {
         await mattermost.stop();
     });
 
-    test('should NOT show native tools for OpenAI service without ResponsesAPI', async ({ page }) => {
+    test('should NOT show native tools for OpenAI Compatible service without ResponsesAPI', async ({ page }) => {
         test.setTimeout(60000);
 
-        // Start container with OpenAI service that has useResponsesAPI set to false
+        // Start container with OpenAI Compatible service that has useResponsesAPI set to false
+        // (OpenAI direct always uses Responses API, so this test uses openaicompatible)
         mattermost = await RunSystemConsoleContainer({
             services: [
                 {
                     id: 'openai-service',
-                    name: 'OpenAI Service',
-                    type: 'openai',
+                    name: 'OpenAI Compatible Service',
+                    type: 'openaicompatible',
                     apiKey: 'test-key-openai',
+                    apiURL: 'http://openai:8080',
                     orgId: '',
                     defaultModel: 'gpt-4',
                     tokenLimit: 16384,
