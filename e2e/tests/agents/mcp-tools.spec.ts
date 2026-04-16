@@ -46,6 +46,7 @@ test.describe('Agent MCP Tools', () => {
             username: 'notoolsagent',
             service_id: mockServiceId,
             enabled_tools: [],
+            enabled_native_tools: [],
         });
 
         // Prove enabled_tools=[] reaches the LLM without read_post in the completion payload: first rule
@@ -109,6 +110,7 @@ test.describe('Agent MCP Tools', () => {
             enabled_tools: [
                 { server_origin: embeddedMattermostOrigin, tool_name: 'read_post' },
             ],
+            enabled_native_tools: [],
         });
 
         const seededPost = await adminClient.createPost({
@@ -171,6 +173,7 @@ test.describe('Agent MCP Tools', () => {
             display_name: 'RHS Empty MCP Agent',
             service_id: mockServiceId,
             enabled_tools: [],
+            enabled_native_tools: [],
         });
 
         const mmPage = new MattermostPage(page);
@@ -202,6 +205,7 @@ test.describe('Agent MCP Tools', () => {
             enabled_tools: [
                 { server_origin: embeddedMattermostOrigin, tool_name: 'read_post' },
             ],
+            enabled_native_tools: [],
         });
 
         const mmPage = new MattermostPage(page);

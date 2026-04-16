@@ -17,6 +17,7 @@ export interface CreateAgentRequest {
     team_ids?: string[];
     admin_user_ids?: string[];
     enabled_tools?: EnabledTool[];
+    enabled_native_tools?: string[];
 }
 
 export interface AgentResponse {
@@ -34,6 +35,7 @@ export interface AgentResponse {
     team_ids: string[];
     admin_user_ids: string[];
     enabled_tools: EnabledTool[];
+    enabled_native_tools: string[];
     create_at: number;
     update_at: number;
     delete_at: number;
