@@ -28,13 +28,15 @@ import (
 )
 
 type fakeMMClient struct {
-	users        map[string]*model.User
-	postThreads  map[string]*model.PostList
-	kv           map[string]interface{}
-	updatedPosts []*model.Post
-	kvDeletes    []string
-	posts        map[string]*model.Post
-	channels     map[string]*model.Channel
+	users                map[string]*model.User
+	postThreads          map[string]*model.PostList
+	kv                   map[string]interface{}
+	updatedPosts         []*model.Post
+	kvDeletes            []string
+	posts                map[string]*model.Post
+	channels             map[string]*model.Channel
+	ephemeralPosts       []*model.Post
+	ephemeralPostUserIDs []string
 }
 
 func (c *fakeMMClient) GetUser(userID string) (*model.User, error) {
@@ -183,7 +185,10 @@ func (c *fakeMMClient) GetFile(string) (io.ReadCloser, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (c *fakeMMClient) SendEphemeralPost(string, *model.Post) {}
+func (c *fakeMMClient) SendEphemeralPost(userID string, post *model.Post) {
+	c.ephemeralPosts = append(c.ephemeralPosts, post.Clone())
+	c.ephemeralPostUserIDs = append(c.ephemeralPostUserIDs, userID)
+}
 
 type capturingLanguageModel struct {
 	autoRunTools      []string

@@ -470,6 +470,48 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 	c.Render(http.StatusOK, render.JSON{Data: result})
 }
 
+// handleLoopInAgent creates a new user-authored post in the thread containing
+// only an @mention of the resolved bot. This backs the "click here to loop in"
+// affordance in the ephemeral agent mention reminder rendered by the webapp.
+// The new post triggers the existing MessageHasBeenPosted/handleMentions flow
+// so the agent responds naturally.
+func (a *API) handleLoopInAgent(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+	bot := c.MustGet(ContextBotKey).(*bots.Bot)
+
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	mmBot := bot.GetMMBot()
+	if mmBot == nil || mmBot.Username == "" {
+		c.AbortWithError(http.StatusInternalServerError, errors.New("bot has no resolved username"))
+		return
+	}
+
+	rootID := post.RootId
+	if rootID == "" {
+		rootID = post.Id
+	}
+
+	newPost := &model.Post{
+		UserId:    userID,
+		ChannelId: post.ChannelId,
+		RootId:    rootID,
+		Message:   "@" + mmBot.Username,
+	}
+	if err := a.pluginAPI.Post.CreatePost(newPost); err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to create loop-in post: %w", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, map[string]string{
+		"post_id": newPost.Id,
+	})
+}
+
 // makeAnalysisPost creates a post for thread analysis results
 func (a *API) makeAnalysisPost(locale string, postIDToAnalyze string, analysisType string, siteURL string) *model.Post {
 	post := &model.Post{}

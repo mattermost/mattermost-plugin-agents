@@ -135,6 +135,10 @@ func (c *Conversations) handleMessages(post *model.Post) error {
 		return c.handleDMs(bot, channel, postingUser, post)
 	}
 
+	// Reply in a thread that did not @mention an agent: when the previous post
+	// was authored by an agent, nudge the user with an ephemeral reminder.
+	c.maybeNotifyAgentMentionNeeded(post, channel)
+
 	return nil
 }
 

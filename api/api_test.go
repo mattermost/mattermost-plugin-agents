@@ -228,6 +228,7 @@ func TestPostRouter(t *testing.T) {
 		"summarize_transcription": "/post/postid/summarize_transcription",
 		"stop":                    "/post/postid/stop",
 		"regenerate":              "/post/postid/regenerate",
+		"loop_in_agent":           "/post/postid/loop_in_agent",
 	} {
 		for name, test := range map[string]struct {
 			request        *http.Request
@@ -410,6 +411,7 @@ func TestEmptyBodyCheckerInApi(t *testing.T) {
 		"summarize transcription": "/post/postid/summarize_transcription?botUsername=thebot",
 		"regen":                   "/post/postid/regenerate",
 		"postback summary":        "/post/postid/postback_summary",
+		"loop in agent":           "/post/postid/loop_in_agent?botUsername=thebot",
 		"cancel":                  "/admin/reindex/cancel",
 	} {
 		t.Run(urlName, func(t *testing.T) {
