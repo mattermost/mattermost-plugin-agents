@@ -188,12 +188,16 @@ export default class Plugin {
             );
         };
 
-        registry.registerWebSocketEventHandler('config_changed', () => {
+        const invalidateRuntimeBotsCache = () => {
             store.dispatch({
                 type: BotsHandler,
                 bots: null,
             } as any);
-        });
+        };
+
+        registry.registerWebSocketEventHandler('config_changed', invalidateRuntimeBotsCache);
+        // Agent CRUD refreshes server-side bot cache but does not emit config_changed; mirror that invalidate so RHS dropdown refetches.
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_bots_invalidate', invalidateRuntimeBotsCache);
 
         registry.registerPostTypeComponent('custom_llmbot', LLMBotPostWithWebsockets);
         registry.registerPostTypeComponent('custom_llm_postback', PostbackPost);

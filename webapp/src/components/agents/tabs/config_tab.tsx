@@ -74,7 +74,7 @@ const ConfigTab = (props: Props) => {
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
                         thinkingBudget: 0,
-                        structuredOutputEnabled: true,
+                        structuredOutputEnabled: false,
                     }),
             });
         }

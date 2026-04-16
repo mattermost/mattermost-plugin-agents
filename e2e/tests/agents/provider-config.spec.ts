@@ -128,7 +128,7 @@ test.describe('Agent provider configuration', () => {
         });
     });
 
-    test('creates direct OpenAI agents with native tools and structured output defaults', async ({page}) => {
+    test('creates direct OpenAI agents with native tools and structured output off by default', async ({page}) => {
         test.setTimeout(providerConfigTestTimeoutMs);
 
         const mm = await startFixture({
@@ -166,7 +166,7 @@ test.describe('Agent provider configuration', () => {
         await expect(agentPage.getNativeToolsSection('Native OpenAI Tools')).toBeVisible({timeout: 10000});
         await expect(agentPage.getNativeToolCheckbox('Native OpenAI Tools')).toBeChecked();
         await expect(agentPage.getReasoningEffortSelect()).toBeVisible({timeout: 10000});
-        await expect(agentPage.getBooleanFieldRadios('Structured Output').nth(0)).toBeChecked();
+        await expect(agentPage.getBooleanFieldRadios('Structured Output').nth(1)).toBeChecked();
     });
 
     test('edits migrated OpenAI-compatible settings from the agent builder', async ({page}) => {

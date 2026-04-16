@@ -23,6 +23,9 @@ import (
 
 var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 
+// WebsocketEventBotsInvalidate is the short name passed to PublishWebSocketEvent; the webapp receives it as custom_mattermost-ai_<name>.
+const WebsocketEventBotsInvalidate = "bots_invalidate"
+
 // CreateAgentRequest is the JSON body for POST /agents.
 type CreateAgentRequest struct {
 	DisplayName             string               `json:"display_name" binding:"required"`
@@ -161,8 +164,9 @@ func serviceIDExistsInConfig(cfg *config.Config, serviceID string) bool {
 }
 
 // refreshBotsAndNotify forces the bot registry to re-read DB-backed agents,
-// re-runs EnsureBots on this node, and publishes a cluster event so other
-// nodes do the same.
+// re-runs EnsureBots on this node, publishes a cluster event so other
+// nodes do the same, and tells connected web clients to drop their cached bot list
+// (same idea as the core config_changed handler).
 func (a *API) refreshBotsAndNotify() {
 	if a.bots != nil {
 		a.bots.ForceRefreshOnNextEnsure()
@@ -174,6 +178,10 @@ func (a *API) refreshBotsAndNotify() {
 		if err := a.clusterAgentNotifier.PublishAgentUpdate(); err != nil {
 			a.pluginAPI.Log.Error("Failed to publish agent update cluster event", "error", err.Error())
 		}
+	}
+	if a.mmClient != nil {
+		// Non-nil broadcast required: server Publish path dereferences the pointer (nil panics).
+		a.mmClient.PublishWebSocketEvent(WebsocketEventBotsInvalidate, map[string]interface{}{}, &model.WebsocketBroadcast{})
 	}
 }
 
@@ -244,7 +252,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	if def.ReasoningEffort != nil && *def.ReasoningEffort != "" {
 		reasoningEffort = *def.ReasoningEffort
 	}
-	structuredOutput := true
+	structuredOutput := false
 	if def.StructuredOutputEnabled != nil {
 		structuredOutput = *def.StructuredOutputEnabled
 	}

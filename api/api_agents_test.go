@@ -130,6 +130,8 @@ func TestCreateAgentWithPermission(t *testing.T) {
 	assert.Equal(t, "my-agent", agent.Username)
 	assert.Equal(t, testUserID, agent.CreatorID)
 	assert.NotEmpty(t, agent.ID)
+	assert.True(t, agent.ReasoningEnabled)
+	assert.False(t, agent.StructuredOutputEnabled)
 }
 
 func TestCreateAgentUsesServerDefaultsWhenOptionalFieldsOmitted(t *testing.T) {

@@ -4,6 +4,8 @@
 package main
 
 import (
+	"github.com/mattermost/mattermost-plugin-agents/api"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
@@ -52,5 +54,7 @@ func (p *Plugin) OnPluginClusterEvent(_ *plugin.Context, ev model.PluginClusterE
 		if err := p.bots.EnsureBots(); err != nil {
 			p.pluginAPI.Log.Error("Failed to re-ensure bots after agent update cluster event", "error", err.Error())
 		}
+		// Clients connected to this node need the same RHS cache invalidation as on the originating node.
+		mmapi.NewClient(p.pluginAPI).PublishWebSocketEvent(api.WebsocketEventBotsInvalidate, map[string]interface{}{}, &model.WebsocketBroadcast{})
 	}
 }

@@ -72,7 +72,7 @@ const emptyDraft: AgentDraft = {
     reasoningEnabled: true,
     reasoningEffort: 'medium',
     thinkingBudget: 0,
-    structuredOutputEnabled: true,
+    structuredOutputEnabled: false,
 };
 
 function draftToCreateAgentPayload(draft: AgentDraft, touchedDefaults: Set<DefaultControlledField>): CreateAgentRequest {
