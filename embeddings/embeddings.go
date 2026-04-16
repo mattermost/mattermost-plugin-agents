@@ -7,7 +7,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/mattermost/mattermost-plugin-ai/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/chunking"
 )
 
 // Provider types

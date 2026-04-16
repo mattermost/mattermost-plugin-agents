@@ -21,7 +21,7 @@ import (
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
 const (
@@ -157,6 +157,9 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 	config := &schemas.ProviderConfig{
 		NetworkConfig:            networkConfig,
 		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
+		ProxyConfig: &schemas.ProxyConfig{
+			Type: schemas.EnvProxy,
+		},
 	}
 
 	return config, nil

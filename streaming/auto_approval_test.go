@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-ai/i18n"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )
@@ -20,11 +20,18 @@ import (
 type mockPolicyChecker struct {
 	approveAll bool
 	approved   map[string]bool
+	policies   map[string]string
 }
 
 func (m *mockPolicyChecker) GetToolPolicy(serverBaseURL string, toolName string) (string, bool) {
 	if m == nil {
 		return "ask", false
+	}
+	if policy, ok := m.policies[toolName]; ok {
+		if serverBaseURL == "" {
+			return "ask", false
+		}
+		return policy, true
 	}
 	if m.approveAll {
 		// Still reject empty server origins (built-in tools)

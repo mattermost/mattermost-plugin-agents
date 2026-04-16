@@ -6,13 +6,13 @@ package conversations
 import (
 	"encoding/json"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
 )
 
 // wrapStreamWithMCPAutoApproval wraps a text stream to automatically execute
-// MCP tool calls whose per-tool policy is ToolPolicyAutoRun + enabled.
+// MCP tool calls whose per-tool policy satisfies mcp.IsToolPolicyAutoRun + enabled.
 //
 // When ALL tool calls in a batch are auto-runnable, the wrapper:
 //  1. Executes each tool via the ToolStore
@@ -57,7 +57,7 @@ func wrapStreamWithMCPAutoApproval(
 					toolCalls[i].ServerOrigin = tool.ServerOrigin
 				}
 				policy, enabled := policyChecker.GetToolPolicy(toolCalls[i].ServerOrigin, toolCalls[i].Name)
-				if policy != mcp.ToolPolicyAutoRun || !enabled {
+				if !mcp.IsToolPolicyAutoRun(policy) || !enabled {
 					allAutoRun = false
 				}
 			}

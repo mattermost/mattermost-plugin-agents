@@ -63,6 +63,18 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 			wantEnabled: true,
 		},
 		{
+			name: "auto run everywhere enabled",
+			config: &ServerConfig{
+				Enabled: true,
+				ToolConfigs: []ToolConfig{
+					{Name: "search", Policy: ToolPolicyAutoRunEverywhere, Enabled: true},
+				},
+			},
+			toolName:    "search",
+			wantPolicy:  ToolPolicyAutoRunEverywhere,
+			wantEnabled: true,
+		},
+		{
 			name: "auto run disabled",
 			config: &ServerConfig{
 				Enabled: true,
@@ -193,6 +205,17 @@ func TestServerConfigIsToolAutoRun(t *testing.T) {
 				Enabled: true,
 				ToolConfigs: []ToolConfig{
 					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
+				},
+			},
+			toolName: "search",
+			want:     true,
+		},
+		{
+			name: "auto run everywhere enabled",
+			config: &ServerConfig{
+				Enabled: true,
+				ToolConfigs: []ToolConfig{
+					{Name: "search", Policy: ToolPolicyAutoRunEverywhere, Enabled: true},
 				},
 			},
 			toolName: "search",
