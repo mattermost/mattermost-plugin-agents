@@ -429,7 +429,8 @@ func TestToolRunner_LLMStreamError(t *testing.T) {
 	}
 
 	result, err := runner.Run(request, alwaysExecute)
-	assert.Nil(t, result)
+	assert.NotNil(t, result, "partial result should be returned even on stream error")
+	assert.Empty(t, result.ToolTurns)
 	assert.ErrorContains(t, err, "stream interrupted")
 }
 

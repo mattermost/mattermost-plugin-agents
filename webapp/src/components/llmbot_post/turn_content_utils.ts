@@ -107,6 +107,7 @@ export function extractReasoningFromTurn(turn: Turn): {summary: string; signatur
 /** Extract Annotation[] from annotation blocks and citations on text blocks. */
 export function extractAnnotationsFromTurn(turn: Turn): Annotation[] {
     const annotations: Annotation[] = [];
+    let runningIndex = 0;
 
     for (const block of turn.content) {
         // Annotations block (web search context citations)
@@ -126,8 +127,9 @@ export function extractAnnotationsFromTurn(turn: Turn): Annotation[] {
                     end_index: c.end_index,
                     url: c.url,
                     title: c.title,
-                    index: i,
+                    index: runningIndex,
                 });
+                runningIndex++;
             }
         }
     }

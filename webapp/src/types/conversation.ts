@@ -80,14 +80,14 @@ export interface ContentBlock {
 
 export interface Turn {
     id: string;
-    conversation_id: string;
+    conversation_id?: string;
     post_id: string | null;
     role: 'user' | 'assistant' | 'tool_result';
     content: ContentBlock[];
     tokens_in: number;
     tokens_out: number;
     sequence: number;
-    created_at: number;
+    created_at?: number;
 }
 
 export interface ConversationResponse {

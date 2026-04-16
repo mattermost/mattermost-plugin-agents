@@ -175,9 +175,11 @@ func (r *ToolRunner) Run(
 		acc := &streamAccumulator{}
 		acc.consume(stream)
 
-		// Check for stream errors.
 		if acc.err != nil {
-			return nil, acc.err
+			return &ToolRunResult{
+				Stream:    acc.toStream(),
+				ToolTurns: toolTurns,
+			}, acc.err
 		}
 
 		// Step 3: If no tool calls, this is the final response.

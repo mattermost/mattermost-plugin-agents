@@ -286,6 +286,17 @@ func (c *Conversations) streamToolFollowUp(
 		llmContext.DisabledToolsInfo = llmContext.Tools.GetToolsInfo()
 	}
 
+	if !isDM && !toolsDisabled && conv.RootPostID != nil {
+		if rootPost, rootErr := c.mmClient.GetPost(*conv.RootPostID); rootErr == nil {
+			if rootUser, userErr := c.mmClient.GetUser(rootPost.UserId); userErr == nil {
+				configEnabled := c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
+				if configEnabled && isBotActivateAI(rootPost, rootUser) && c.toolPolicyChecker != nil {
+					c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+				}
+			}
+		}
+	}
+
 	completionReq, err := c.convService.BuildCompletionRequest(conv, llmContext)
 	if err != nil {
 		return fmt.Errorf("failed to build completion request for tool follow-up: %w", err)
@@ -303,15 +314,16 @@ func (c *Conversations) streamToolFollowUp(
 
 	runner := toolrunner.New(bot.LLM())
 	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext), opts...)
-	if err != nil {
-		return fmt.Errorf("tool runner failed on tool follow-up: %w", err)
-	}
 
-	if len(runResult.ToolTurns) > 0 {
+	if runResult != nil && len(runResult.ToolTurns) > 0 {
 		shared := isDM
 		if writeErr := c.convService.WriteToolTurns(conv.ID, runResult.ToolTurns, shared); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns on follow-up", "error", writeErr)
 		}
+	}
+
+	if err != nil {
+		return fmt.Errorf("tool runner failed on tool follow-up: %w", err)
 	}
 
 	responsePost := &model.Post{

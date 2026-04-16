@@ -69,12 +69,13 @@ func toolUseBlocks(
 			status = StatusError
 		}
 		blocks = append(blocks, ContentBlock{
-			Type:   BlockTypeToolUse,
-			ID:     tc.ID,
-			Name:   tc.Name,
-			Input:  tc.Arguments,
-			Status: status,
-			Shared: BoolPtr(shared),
+			Type:         BlockTypeToolUse,
+			ID:           tc.ID,
+			Name:         tc.Name,
+			ServerOrigin: tc.ServerOrigin,
+			Input:        tc.Arguments,
+			Status:       status,
+			Shared:       BoolPtr(shared),
 		})
 	}
 

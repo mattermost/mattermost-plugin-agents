@@ -156,15 +156,18 @@ func (c *Channels) AnalyzeChannelWithRequest(
 		func(_ llm.ToolCall) bool { return true },
 		llm.WithReasoningDisabled(),
 	)
-	if err != nil {
-		return nil, fmt.Errorf("tool runner failed: %w", err)
+
+	if runResult != nil && len(runResult.ToolTurns) > 0 {
+		if writeErr := c.convSvc.WriteToolTurns(convResult.ConversationID, runResult.ToolTurns, true); writeErr != nil {
+			if err != nil {
+				return nil, fmt.Errorf("tool runner failed: %w (also failed to write tool turns: %v)", err, writeErr)
+			}
+			return nil, fmt.Errorf("failed to write tool turns: %w", writeErr)
+		}
 	}
 
-	// Persist intermediate tool turns (shared=true for pre-bound safe tools).
-	if len(runResult.ToolTurns) > 0 {
-		if err := c.convSvc.WriteToolTurns(convResult.ConversationID, runResult.ToolTurns, true); err != nil {
-			return nil, fmt.Errorf("failed to write tool turns: %w", err)
-		}
+	if err != nil {
+		return nil, fmt.Errorf("tool runner failed: %w", err)
 	}
 
 	return &AnalysisResult{

@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin/render"
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/react"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/threads"
@@ -168,6 +169,10 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 
 	// Create analysis post with conversation ID
 	siteURL := a.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
+	if siteURL == nil || *siteURL == "" {
+		c.AbortWithError(http.StatusInternalServerError, errors.New("site URL not configured"))
+		return
+	}
 	analysisPost := a.makeAnalysisPost(user.Locale, post.Id, data.AnalysisType, *siteURL, analyzeResult.ConversationID)
 	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
@@ -272,6 +277,11 @@ func (a *API) handleRegenerate(c *gin.Context) {
 		return
 	}
 
+	if !a.isConversationOwner(post, userID) {
+		c.AbortWithError(http.StatusForbidden, errors.New("only the original poster can regenerate"))
+		return
+	}
+
 	err := a.conversationsService.HandleRegenerate(userID, post, channel)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to regenerate post: %w", err))
@@ -288,6 +298,12 @@ func (a *API) handleToolCall(c *gin.Context) {
 
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	isDM := mmapi.IsDMWith(post.UserId, channel)
+	if !isDM && !a.config.EnableChannelMentionToolCalling() {
+		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
 		return
 	}
 
@@ -326,6 +342,12 @@ func (a *API) handleToolResult(c *gin.Context) {
 
 	if !a.licenseChecker.IsBasicsLicensed() {
 		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	isDM := mmapi.IsDMWith(post.UserId, channel)
+	if !isDM && !a.config.EnableChannelMentionToolCalling() {
+		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
 		return
 	}
 

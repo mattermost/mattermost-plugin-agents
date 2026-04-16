@@ -54,16 +54,6 @@ func (c *Conversations) DeleteConversationsForDeletedPost(post *model.Post) erro
 	return err
 }
 
-// DeletePostMetaForDeletedPost removes the stored thread title when the given post is deleted.
-// Rows are keyed by root post ID only; deleting a reply is a no-op at the database layer.
-func (c *Conversations) DeletePostMetaForDeletedPost(post *model.Post) error {
-	if c.db == nil || post == nil || post.Id == "" {
-		return nil
-	}
-	_, err := c.db.ExecBuilder(c.db.Builder().Delete("LLM_PostMeta").Where(sq.Eq{"RootPostID": post.Id}))
-	return err
-}
-
 func (c *Conversations) getAIThreads(dmChannelIDs []string) ([]AIThread, error) {
 	var dbPosts []AIThread
 	if err := c.db.DoQuery(&dbPosts, c.db.Builder().
@@ -71,16 +61,15 @@ func (c *Conversations) getAIThreads(dmChannelIDs []string) ([]AIThread, error) 
 			"p.Id",
 			"p.Message",
 			"p.ChannelID",
-			"COALESCE(t.Title, '') as Title",
+			"COALESCE((SELECT t.Title FROM LLM_Conversations t WHERE t.RootPostID = p.Id AND t.DeleteAt = 0 LIMIT 1), '') as Title",
 			"(SELECT COUNT(*) FROM Posts WHERE Posts.RootId = p.Id AND DeleteAt = 0) AS ReplyCount",
 			"p.UpdateAt",
 		).
 		From("Posts as p").
-		Where(sq.Eq{"ChannelID": dmChannelIDs}).
-		Where(sq.Eq{"RootId": ""}).
-		Where(sq.Eq{"DeleteAt": 0}).
-		LeftJoin("LLM_Conversations as t ON t.RootPostID = p.Id").
-		OrderBy("CreateAt DESC").
+		Where(sq.Eq{"p.ChannelID": dmChannelIDs}).
+		Where(sq.Eq{"p.RootId": ""}).
+		Where(sq.Eq{"p.DeleteAt": 0}).
+		OrderBy("p.CreateAt DESC").
 		Limit(60).
 		Offset(0),
 	); err != nil {

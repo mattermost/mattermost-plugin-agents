@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/subtitles"
@@ -212,15 +213,26 @@ func (c *Conversations) ProcessDMRequest(
 
 	runner := toolrunner.New(lm)
 	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmCtx))
-	if err != nil {
-		return nil, fmt.Errorf("tool runner failed: %w", err)
-	}
-	if len(runResult.ToolTurns) > 0 {
+
+	if runResult != nil && len(runResult.ToolTurns) > 0 {
 		if writeErr := c.convService.WriteToolTurns(convID, runResult.ToolTurns, true); writeErr != nil {
+			if err != nil {
+				return nil, fmt.Errorf("tool runner failed: %w (also failed to write tool turns: %v)", err, writeErr)
+			}
 			return nil, fmt.Errorf("failed to write tool turns: %w", writeErr)
 		}
 	}
-	return &DMStreamResult{Stream: runResult.Stream}, nil
+
+	if err != nil {
+		return nil, fmt.Errorf("tool runner failed: %w", err)
+	}
+
+	stream := runResult.Stream
+	if webSearchData := mmtools.ConsumeWebSearchContexts(llmCtx); len(webSearchData) > 0 {
+		stream = mmtools.DecorateStreamWithAnnotations(stream, webSearchData, nil)
+	}
+
+	return &DMStreamResult{Stream: stream}, nil
 }
 
 // shouldAutoExecuteTool returns a callback that decides whether a tool call
@@ -237,24 +249,6 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context) func(llm.Tool
 		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
 		return mcp.IsToolPolicyAutoRun(policy) && enabled
 	}
-}
-
-func (c *Conversations) GenerateTitle(bot *bots.Bot, request string, postID string, context *llm.Context) error {
-	titleRequest := llm.CompletionRequest{
-		Posts:            []llm.Post{{Role: llm.PostRoleUser, Message: request}},
-		Context:          context,
-		Operation:        llm.OperationTitleGeneration,
-		OperationSubType: llm.SubTypeNoStream,
-	}
-	conversationTitle, err := bot.LLM().ChatCompletionNoStream(titleRequest, llm.WithMaxGeneratedTokens(25), llm.WithReasoningDisabled(), llm.WithToolsDisabled())
-	if err != nil {
-		return fmt.Errorf("failed to get title: %w", err)
-	}
-	conversationTitle = strings.Trim(conversationTitle, "\n \"'")
-	if err := c.SaveTitle(postID, conversationTitle); err != nil {
-		return fmt.Errorf("failed to save title: %w", err)
-	}
-	return nil
 }
 
 // GetAIThreads gets AI conversation threads for a user

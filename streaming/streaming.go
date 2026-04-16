@@ -55,10 +55,9 @@ type postStreamContext struct {
 // TurnStore is the subset of store operations needed by the streaming layer
 // for persisting assistant turns during streaming.
 type TurnStore interface {
-	CreateTurn(turn *store.Turn) error
+	CreateTurnAutoSequence(turn *store.Turn) error
 	UpdateTurnContent(id string, content json.RawMessage) error
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
-	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
 }
 
 // turnAccumulator collects stream state for turn persistence.
@@ -317,17 +316,6 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 // createPlaceholderTurn creates a placeholder turn row for the streaming assistant response.
 // Returns nil if the turn cannot be created (error is logged).
 func (p *MMPostStreamService) createPlaceholderTurn(conversationID, postID string) *turnAccumulator {
-	turns, err := p.turnStore.GetTurnsForConversation(conversationID)
-	if err != nil {
-		p.mmClient.LogError("Failed to get turns for sequence number", "error", err, "conversation_id", conversationID)
-		return nil
-	}
-
-	nextSeq := 0
-	if len(turns) > 0 {
-		nextSeq = turns[len(turns)-1].Sequence + 1
-	}
-
 	turnID := model.NewId()
 	postIDPtr := &postID
 
@@ -337,11 +325,10 @@ func (p *MMPostStreamService) createPlaceholderTurn(conversationID, postID strin
 		PostID:         postIDPtr,
 		Role:           "assistant",
 		Content:        json.RawMessage("[]"),
-		Sequence:       nextSeq,
 		CreatedAt:      model.GetMillis(),
 	}
 
-	if err := p.turnStore.CreateTurn(turn); err != nil {
+	if err := p.turnStore.CreateTurnAutoSequence(turn); err != nil {
 		p.mmClient.LogError("Failed to create placeholder turn", "error", err, "conversation_id", conversationID)
 		return nil
 	}

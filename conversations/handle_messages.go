@@ -251,18 +251,24 @@ func (c *Conversations) handleMentionViaConversation(
 		}
 		return autoExec(tc)
 	}, opts...)
-	if runErr != nil {
-		c.failResponsePlaceholder(responsePost, postingUser.Locale)
-		return fmt.Errorf("tool runner failed: %w", runErr)
-	}
 
-	if len(result.ToolTurns) > 0 {
+	if result != nil && len(result.ToolTurns) > 0 {
 		if writeErr := c.convService.WriteToolTurns(convResult.Conversation.ID, result.ToolTurns, false); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns", "error", writeErr)
 		}
 	}
 
-	if streamErr := c.streamResponseToExistingPost(result.Stream, responsePost, postingUser, channel); streamErr != nil {
+	if runErr != nil {
+		c.failResponsePlaceholder(responsePost, postingUser.Locale)
+		return fmt.Errorf("tool runner failed: %w", runErr)
+	}
+
+	stream := result.Stream
+	if webSearchData := mmtools.ConsumeWebSearchContexts(llmContext); len(webSearchData) > 0 {
+		stream = mmtools.DecorateStreamWithAnnotations(stream, webSearchData, nil)
+	}
+
+	if streamErr := c.streamResponseToExistingPost(stream, responsePost, postingUser, channel); streamErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
@@ -311,11 +317,16 @@ func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Ch
 		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
 	}
 
+	var disabledServerSet map[string]bool
 	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
 		if err != nil {
 			c.mmClient.LogWarn("Failed to load user tool preferences", "error", err.Error(), "userID", postingUser.Id)
 		} else if len(prefs.DisabledServers) > 0 {
+			disabledServerSet = make(map[string]bool, len(prefs.DisabledServers))
+			for _, origin := range prefs.DisabledServers {
+				disabledServerSet[origin] = true
+			}
 			if llmContext.Tools != nil {
 				llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
 			}
@@ -324,6 +335,15 @@ func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Ch
 
 	if llmContext.Tools != nil {
 		authErrors := llmContext.Tools.GetAuthErrors()
+		if len(disabledServerSet) > 0 {
+			filtered := authErrors[:0]
+			for _, ae := range authErrors {
+				if !disabledServerSet[ae.ServerOrigin] {
+					filtered = append(filtered, ae)
+				}
+			}
+			authErrors = filtered
+		}
 		if len(authErrors) > 0 {
 			rootID := post.RootId
 			if rootID == "" {

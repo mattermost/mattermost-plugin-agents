@@ -40,12 +40,20 @@ type turnTokenUpdate struct {
 	TokensOut int64
 }
 
-func (f *fakeTurnStore) CreateTurn(turn *store.Turn) error {
+func (f *fakeTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.createErr != nil {
 		return f.createErr
 	}
+	// Simulate auto-sequence: find max sequence for this conversation and increment.
+	maxSeq := 0
+	for _, t := range f.turns {
+		if t.ConversationID == turn.ConversationID && t.Sequence > maxSeq {
+			maxSeq = t.Sequence
+		}
+	}
+	turn.Sequence = maxSeq + 1
 	f.turns = append(f.turns, turn)
 	return nil
 }
@@ -68,21 +76,6 @@ func (f *fakeTurnStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) e
 	}
 	f.tokenCalls = append(f.tokenCalls, turnTokenUpdate{ID: id, TokensIn: tokensIn, TokensOut: tokensOut})
 	return nil
-}
-
-func (f *fakeTurnStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var result []store.Turn
-	for _, t := range f.turns {
-		if t.ConversationID == conversationID {
-			result = append(result, *t)
-		}
-	}
-	if result == nil {
-		result = []store.Turn{}
-	}
-	return result, nil
 }
 
 // parseContentBlocks is a test helper that unmarshals content JSON into content blocks.
@@ -131,7 +124,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.NotNil(t, turn.PostID)
 		require.Equal(t, postID, *turn.PostID)
 		require.Equal(t, json.RawMessage("[]"), turn.Content)
-		require.Equal(t, 0, turn.Sequence)
+		require.Equal(t, 1, turn.Sequence)
 	})
 
 	t.Run("sequence number increments from existing turns", func(t *testing.T) {
