@@ -157,6 +157,7 @@ func TestBuildChatReasoning(t *testing.T) {
 func TestShouldUseResponsesAPI(t *testing.T) {
 	tests := []struct {
 		name               string
+		provider           schemas.ModelProvider
 		enabledNativeTools []string
 		useResponsesAPI    bool
 		cfg                llm.LanguageModelConfig
@@ -164,23 +165,42 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 	}{
 		{
 			name:               "native tools configured returns true",
+			provider:           schemas.OpenAI,
 			enabledNativeTools: []string{"web_search"},
 			expected:           true,
 		},
 		{
 			name:               "NativeWebSearchAllowed with web_search enabled returns true",
+			provider:           schemas.OpenAI,
 			enabledNativeTools: []string{"web_search"},
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
 			expected:           true,
 		},
 		{
 			name:               "NativeWebSearchAllowed without web_search in tools returns true",
+			provider:           schemas.OpenAI,
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
 			expected:           true,
 		},
 		{
+			name:               "explicit responses API flag wins for direct OpenAI",
+			provider:           schemas.OpenAI,
+			useResponsesAPI:    true,
+			enabledNativeTools: nil,
+			cfg:                llm.LanguageModelConfig{},
+			expected:           true,
+		},
+		{
+			name:               "unsupported provider ignores native tools",
+			provider:           schemas.Bedrock,
+			enabledNativeTools: []string{"web_search"},
+			cfg:                llm.LanguageModelConfig{},
+			expected:           false,
+		},
+		{
 			name:               "nothing configured returns false",
+			provider:           schemas.OpenAI,
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{},
 			expected:           false,
@@ -190,11 +210,85 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &LLM{
+				provider:           tt.provider,
 				enabledNativeTools: tt.enabledNativeTools,
 				useResponsesAPI:    tt.useResponsesAPI,
 			}
 			result := b.shouldUseResponsesAPI(tt.cfg)
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestServiceUsesResponsesAPI(t *testing.T) {
+	tests := []struct {
+		name     string
+		service  llm.ServiceConfig
+		expected bool
+	}{
+		{
+			name: "direct OpenAI always uses responses",
+			service: llm.ServiceConfig{
+				Type:            llm.ServiceTypeOpenAI,
+				UseResponsesAPI: false,
+			},
+			expected: true,
+		},
+		{
+			name: "OpenAI compatible respects toggle",
+			service: llm.ServiceConfig{
+				Type:            llm.ServiceTypeOpenAICompatible,
+				UseResponsesAPI: false,
+			},
+			expected: false,
+		},
+		{
+			name: "Azure respects toggle",
+			service: llm.ServiceConfig{
+				Type:            llm.ServiceTypeAzure,
+				UseResponsesAPI: true,
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, serviceUsesResponsesAPI(tt.service))
+		})
+	}
+}
+
+func TestFilterNativeToolsForServiceType(t *testing.T) {
+	tests := []struct {
+		name        string
+		serviceType string
+		tools       []string
+		expected    []string
+	}{
+		{
+			name:        "OpenAI compatible keeps native tools",
+			serviceType: llm.ServiceTypeOpenAICompatible,
+			tools:       []string{"web_search"},
+			expected:    []string{"web_search"},
+		},
+		{
+			name:        "unsupported providers strip native tools",
+			serviceType: llm.ServiceTypeMistral,
+			tools:       []string{"web_search"},
+			expected:    []string{},
+		},
+		{
+			name:        "empty native tools stay empty",
+			serviceType: llm.ServiceTypeOpenAI,
+			tools:       nil,
+			expected:    nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, filterNativeToolsForServiceType(tt.serviceType, tt.tools))
 		})
 	}
 }

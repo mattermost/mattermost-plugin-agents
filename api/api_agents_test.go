@@ -132,6 +132,84 @@ func TestCreateAgentWithPermission(t *testing.T) {
 	assert.NotEmpty(t, agent.ID)
 }
 
+func TestCreateAgentUsesServerDefaultsWhenOptionalFieldsOmitted(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.api.configStore = &mockConfigStore{
+		cfg: &config.Config{
+			Services: []llm.ServiceConfig{
+				{ID: "svc-1", Name: "Test Service", Type: "openai"},
+			},
+			SelfServiceAgentDefaults: config.SelfServiceAgentDefaults{
+				EnableVision:            model.NewPointer(false),
+				DisableTools:            model.NewPointer(true),
+				ReasoningEnabled:        model.NewPointer(false),
+				ReasoningEffort:         model.NewPointer("high"),
+				StructuredOutputEnabled: model.NewPointer(false),
+			},
+		},
+	}
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+	e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+		UserId:      "bot-user-id-created",
+		Username:    "my-agent",
+		DisplayName: "My Agent",
+		Description: "User-created AI agent",
+	}, nil)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	body := CreateAgentRequest{
+		DisplayName: "My Agent",
+		Username:    "my-agent",
+		ServiceID:   "svc-1",
+	}
+
+	recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
+	require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
+
+	var agent useragents.UserAgent
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
+	assert.False(t, agent.EnableVision)
+	assert.True(t, agent.DisableTools)
+	assert.False(t, agent.ReasoningEnabled)
+	assert.Equal(t, "high", agent.ReasoningEffort)
+	assert.False(t, agent.StructuredOutputEnabled)
+	assert.Equal(t, []string{"web_search"}, agent.EnabledNativeTools)
+}
+
+func TestCreateAgentHonorsExplicitNativeToolOverrides(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+	e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+		UserId:      "bot-user-id-created",
+		Username:    "my-agent",
+		DisplayName: "My Agent",
+		Description: "User-created AI agent",
+	}, nil)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	emptyNativeTools := []string{}
+	body := CreateAgentRequest{
+		DisplayName:        "My Agent",
+		Username:           "my-agent",
+		ServiceID:          "svc-1",
+		EnabledNativeTools: &emptyNativeTools,
+	}
+
+	recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
+	require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
+
+	var agent useragents.UserAgent
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
+	assert.Empty(t, agent.EnabledNativeTools)
+}
+
 func TestCreateAgentForbiddenWithoutManageOwnPermission(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
@@ -348,6 +426,7 @@ func TestListServicesNoSecrets(t *testing.T) {
 	assert.Equal(t, "svc-1", services[0].ID)
 	assert.Equal(t, "Test Service", services[0].Name)
 	assert.Equal(t, "openai", services[0].Type)
+	assert.True(t, services[0].UseResponsesAPI)
 
 	// Verify no secret fields leak through
 	raw, _ := json.Marshal(services[0])

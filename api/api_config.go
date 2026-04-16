@@ -13,6 +13,19 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 )
 
+func normalizeAdminConfig(cfg config.Config) config.Config {
+	cfg.MCP.Enabled = true
+	cfg.MCP.EmbeddedServer.Enabled = true
+
+	for i := range cfg.Services {
+		if cfg.Services[i].Type == llm.ServiceTypeOpenAI {
+			cfg.Services[i].UseResponsesAPI = true
+		}
+	}
+
+	return cfg
+}
+
 // handleGetConfig returns the current plugin configuration from the database.
 // GET /admin/config
 func (a *API) handleGetConfig(c *gin.Context) {
@@ -23,20 +36,24 @@ func (a *API) handleGetConfig(c *gin.Context) {
 	}
 
 	if cfg == nil {
-		c.JSON(http.StatusOK, config.Config{
+		c.JSON(http.StatusOK, normalizeAdminConfig(config.Config{
 			Services: []llm.ServiceConfig{},
 			Bots:     []llm.BotConfig{},
 			MCP: mcp.Config{
+				Enabled: true,
 				Servers: []mcp.ServerConfig{},
+				EmbeddedServer: mcp.EmbeddedServerConfig{
+					Enabled: true,
+				},
 			},
 			WebSearch: config.WebSearchConfig{
 				DomainDenylist: []string{},
 			},
-		})
+		}))
 		return
 	}
 
-	c.JSON(http.StatusOK, cfg)
+	c.JSON(http.StatusOK, normalizeAdminConfig(*cfg))
 }
 
 // handleSaveConfig saves a new plugin configuration to the database,
@@ -48,6 +65,8 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
+
+	cfg = normalizeAdminConfig(cfg)
 
 	if err := a.configStore.SaveConfig(cfg); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save config: %w", err))

@@ -29,6 +29,22 @@ function createCompatibleService(overrides: Record<string, unknown> = {}) {
     };
 }
 
+function createOpenAIService(overrides: Record<string, unknown> = {}) {
+    return {
+        id: 'openai-service',
+        name: 'OpenAI Service',
+        type: 'openai',
+        apiKey: 'mock-openai-key',
+        apiURL: 'http://openai:8080',
+        defaultModel: 'gpt-mock',
+        tokenLimit: 16384,
+        outputTokenLimit: 4096,
+        streamingTimeoutSeconds: 30,
+        useResponsesAPI: false,
+        ...overrides,
+    };
+}
+
 function createAnthropicService(overrides: Record<string, unknown> = {}) {
     return {
         id: 'anthropic-service',
@@ -110,6 +126,47 @@ test.describe('Agent provider configuration', () => {
         await expect(page.getByText('Username must start with a letter and contain only lowercase letters, numbers, periods, hyphens, and underscores')).toBeVisible({
             timeout: 10000,
         });
+    });
+
+    test('creates direct OpenAI agents with native tools and structured output defaults', async ({page}) => {
+        test.setTimeout(providerConfigTestTimeoutMs);
+
+        const mm = await startFixture({
+            services: [
+                createOpenAIService({
+                    id: 'openai-direct-service',
+                    name: 'OpenAI Direct Service',
+                    useResponsesAPI: false,
+                }),
+            ],
+            bots: [],
+        });
+
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+
+        await stubAgentModelFetch(page);
+        await mmPage.login(mm.url(), adminUsername, adminPassword);
+        await agentPage.navigateToAgents(mm.url());
+        await agentPage.getCreateButton().click();
+        await agentPage.waitForModal();
+
+        await agentPage.getDisplayNameInput().fill('Direct OpenAI Agent');
+        await agentPage.getUsernameInput().fill('directopenaibot');
+        await agentPage.getAIServiceSelect().selectOption({label: 'OpenAI Direct Service'});
+
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
+        await expect(agentPage.getAgentRowByName('Direct OpenAI Agent')).toBeVisible({timeout: 15000});
+
+        await agentPage.openAgentActions('Direct OpenAI Agent');
+        await agentPage.clickEditAction('Direct OpenAI Agent');
+        await agentPage.waitForModal();
+
+        await expect(agentPage.getNativeToolsSection('Native OpenAI Tools')).toBeVisible({timeout: 10000});
+        await expect(agentPage.getNativeToolCheckbox('Native OpenAI Tools')).toBeChecked();
+        await expect(agentPage.getReasoningEffortSelect()).toBeVisible({timeout: 10000});
+        await expect(agentPage.getBooleanFieldRadios('Structured Output').nth(0)).toBeChecked();
     });
 
     test('edits migrated OpenAI-compatible settings from the agent builder', async ({page}) => {

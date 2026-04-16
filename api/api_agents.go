@@ -25,50 +25,50 @@ var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 
 // CreateAgentRequest is the JSON body for POST /agents.
 type CreateAgentRequest struct {
-	DisplayName             string                   `json:"display_name" binding:"required"`
-	Username                string                   `json:"username" binding:"required"`
-	ServiceID               string                   `json:"service_id" binding:"required"`
-	CustomInstructions      string                   `json:"custom_instructions"`
-	ChannelAccessLevel      int                      `json:"channel_access_level"`
-	ChannelIDs              []string                 `json:"channel_ids"`
-	UserAccessLevel         int                      `json:"user_access_level"`
-	UserIDs                 []string                 `json:"user_ids"`
-	TeamIDs                 []string                 `json:"team_ids"`
-	AdminUserIDs            []string                 `json:"admin_user_ids"`
+	DisplayName             string               `json:"display_name" binding:"required"`
+	Username                string               `json:"username" binding:"required"`
+	ServiceID               string               `json:"service_id" binding:"required"`
+	CustomInstructions      string               `json:"custom_instructions"`
+	ChannelAccessLevel      int                  `json:"channel_access_level"`
+	ChannelIDs              []string             `json:"channel_ids"`
+	UserAccessLevel         int                  `json:"user_access_level"`
+	UserIDs                 []string             `json:"user_ids"`
+	TeamIDs                 []string             `json:"team_ids"`
+	AdminUserIDs            []string             `json:"admin_user_ids"`
 	EnabledTools            []llm.EnabledMCPTool `json:"enabled_tools"`
-	Model                   string                   `json:"model"`
-	EnableVision            *bool                    `json:"enable_vision"`
-	DisableTools            *bool                    `json:"disable_tools"`
-	EnabledNativeTools      []string                 `json:"enabled_native_tools"`
-	ReasoningEnabled        *bool                    `json:"reasoning_enabled"`
-	ReasoningEffort         string                   `json:"reasoning_effort"`
-	ThinkingBudget          int                      `json:"thinking_budget"`
-	StructuredOutputEnabled *bool                    `json:"structured_output_enabled"`
+	Model                   string               `json:"model"`
+	EnableVision            *bool                `json:"enable_vision"`
+	DisableTools            *bool                `json:"disable_tools"`
+	EnabledNativeTools      *[]string            `json:"enabled_native_tools"`
+	ReasoningEnabled        *bool                `json:"reasoning_enabled"`
+	ReasoningEffort         string               `json:"reasoning_effort"`
+	ThinkingBudget          int                  `json:"thinking_budget"`
+	StructuredOutputEnabled *bool                `json:"structured_output_enabled"`
 }
 
 // UpdateAgentRequest is the JSON body for PUT /agents/:agentid.
 // All fields are optional — only provided fields are applied via read-modify-write.
 // Field names match CreateAgentRequest so clients may send a full document on each save.
 type UpdateAgentRequest struct {
-	DisplayName             *string                   `json:"display_name"`
-	Username                *string                   `json:"username"`
-	ServiceID               *string                   `json:"service_id"`
-	CustomInstructions      *string                   `json:"custom_instructions"`
-	ChannelAccessLevel      *int                      `json:"channel_access_level"`
-	ChannelIDs              *[]string                 `json:"channel_ids"`
-	UserAccessLevel         *int                      `json:"user_access_level"`
-	UserIDs                 *[]string                 `json:"user_ids"`
-	TeamIDs                 *[]string                 `json:"team_ids"`
-	AdminUserIDs            *[]string                 `json:"admin_user_ids"`
+	DisplayName             *string               `json:"display_name"`
+	Username                *string               `json:"username"`
+	ServiceID               *string               `json:"service_id"`
+	CustomInstructions      *string               `json:"custom_instructions"`
+	ChannelAccessLevel      *int                  `json:"channel_access_level"`
+	ChannelIDs              *[]string             `json:"channel_ids"`
+	UserAccessLevel         *int                  `json:"user_access_level"`
+	UserIDs                 *[]string             `json:"user_ids"`
+	TeamIDs                 *[]string             `json:"team_ids"`
+	AdminUserIDs            *[]string             `json:"admin_user_ids"`
 	EnabledTools            *[]llm.EnabledMCPTool `json:"enabled_tools"`
-	Model                   *string                   `json:"model"`
-	EnableVision            *bool                     `json:"enable_vision"`
-	DisableTools            *bool                     `json:"disable_tools"`
-	EnabledNativeTools      *[]string                 `json:"enabled_native_tools"`
-	ReasoningEnabled        *bool                     `json:"reasoning_enabled"`
-	ReasoningEffort         *string                   `json:"reasoning_effort"`
-	ThinkingBudget          *int                      `json:"thinking_budget"`
-	StructuredOutputEnabled *bool                     `json:"structured_output_enabled"`
+	Model                   *string               `json:"model"`
+	EnableVision            *bool                 `json:"enable_vision"`
+	DisableTools            *bool                 `json:"disable_tools"`
+	EnabledNativeTools      *[]string             `json:"enabled_native_tools"`
+	ReasoningEnabled        *bool                 `json:"reasoning_enabled"`
+	ReasoningEffort         *string               `json:"reasoning_effort"`
+	ThinkingBudget          *int                  `json:"thinking_budget"`
+	StructuredOutputEnabled *bool                 `json:"structured_output_enabled"`
 }
 
 // ServiceInfo is a safe-to-expose subset of llm.ServiceConfig (no API keys or secrets).
@@ -79,6 +79,10 @@ type ServiceInfo struct {
 	DefaultModel     string `json:"default_model"`
 	OutputTokenLimit int    `json:"output_token_limit"`
 	UseResponsesAPI  bool   `json:"use_responses_api"`
+}
+
+func serviceUsesResponsesAPIForUI(service llm.ServiceConfig) bool {
+	return service.Type == llm.ServiceTypeOpenAI || service.UseResponsesAPI
 }
 
 // agentLicenseRequired is a gin middleware that gates agent endpoints behind an E20+ license.
@@ -240,10 +244,11 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	if def.ReasoningEffort != nil && *def.ReasoningEffort != "" {
 		reasoningEffort = *def.ReasoningEffort
 	}
-	structuredOutput := false
+	structuredOutput := true
 	if def.StructuredOutputEnabled != nil {
 		structuredOutput = *def.StructuredOutputEnabled
 	}
+	enabledNativeTools := []string{"web_search"}
 
 	agent := &useragents.UserAgent{
 		BotUserID:               mmBot.UserId,
@@ -262,6 +267,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		Model:                   req.Model,
 		EnableVision:            enableVision,
 		DisableTools:            disableTools,
+		EnabledNativeTools:      enabledNativeTools,
 		ReasoningEnabled:        reasoningEnabled,
 		ReasoningEffort:         reasoningEffort,
 		ThinkingBudget:          req.ThinkingBudget,
@@ -282,8 +288,8 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	if req.ReasoningEffort != "" {
 		agent.ReasoningEffort = req.ReasoningEffort
 	}
-	if len(req.EnabledNativeTools) > 0 {
-		agent.EnabledNativeTools = req.EnabledNativeTools
+	if req.EnabledNativeTools != nil {
+		agent.EnabledNativeTools = append([]string(nil), (*req.EnabledNativeTools)...)
 	}
 
 	if err := a.agentStore.CreateAgent(agent); err != nil {
@@ -576,7 +582,7 @@ func (a *API) handleListServices(c *gin.Context) {
 			Type:             svc.Type,
 			DefaultModel:     svc.DefaultModel,
 			OutputTokenLimit: svc.OutputTokenLimit,
-			UseResponsesAPI:  svc.UseResponsesAPI,
+			UseResponsesAPI:  serviceUsesResponsesAPIForUI(svc),
 		})
 	}
 

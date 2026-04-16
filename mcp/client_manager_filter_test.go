@@ -158,10 +158,7 @@ func TestFilterToolsByConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var embeddedClient *EmbeddedServerClient
-			if tt.config.EmbeddedServer.Enabled {
-				embeddedClient = &EmbeddedServerClient{}
-			}
+			embeddedClient := &EmbeddedServerClient{}
 
 			filtered := filterToolsByConfig(tt.rawTools, tt.config, embeddedClient)
 

@@ -36,6 +36,7 @@ type Props = {
 
 // Keep in sync with legacy System Console bot form (webapp/src/components/system_console/bot.tsx).
 const visionToolServiceTypes = ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral'];
+const openAIStructuredOutputServiceTypes = ['openai', 'openaicompatible', 'azure'];
 
 const ConfigTab = (props: Props) => {
     const {draft, onChange, onAvatarChange, services, errors = {}} = props;
@@ -69,11 +70,11 @@ const ConfigTab = (props: Props) => {
                 ...(sameServiceType ?
                     {} :
                     {
-                        enabledNativeTools: [],
+                        enabledNativeTools: ['web_search'],
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
                         thinkingBudget: 0,
-                        structuredOutputEnabled: false,
+                        structuredOutputEnabled: true,
                     }),
             });
         }
@@ -104,7 +105,7 @@ const ConfigTab = (props: Props) => {
             streamingTimeoutSeconds: 0,
             sendUserId: false,
             outputTokenLimit: selectedService.output_token_limit || 4096,
-            useResponsesAPI: selectedService.use_responses_api,
+            useResponsesAPI: selectedService.type === 'openai' ? true : selectedService.use_responses_api,
             region: '',
             awsAccessKeyID: '',
             awsSecretAccessKey: '',
@@ -182,7 +183,10 @@ const ConfigTab = (props: Props) => {
 
     const isAnthropic = selectedService?.type === 'anthropic';
     const isOpenAIWithResponses = Boolean(selectedService &&
-        ['openai', 'openaicompatible', 'azure'].includes(selectedService.type) && selectedService.use_responses_api);
+        (selectedService.type === 'openai' ||
+         (['openaicompatible', 'azure'].includes(selectedService.type) && selectedService.use_responses_api)));
+    const supportsStructuredOutput = Boolean(selectedService &&
+        (isAnthropic || openAIStructuredOutputServiceTypes.includes(selectedService.type)));
 
     const maxTokens = selectedService?.output_token_limit || 4096;
 
@@ -329,30 +333,35 @@ const ConfigTab = (props: Props) => {
                                 onChange={handleReasoningBotChange}
                             />
                         )}
-                        {isAnthropic && (
+                        {supportsStructuredOutput && (
                             <>
                                 <BooleanItem
                                     label={intl.formatMessage({defaultMessage: 'Structured Output'})}
                                     value={draft.structuredOutputEnabled}
                                     onChange={(to: boolean) => {
-                                        if (to) {
+                                        if (isAnthropic && to) {
                                             reasoningBeforeStructuredRef.current = draft.reasoningEnabled;
                                             onChange({
                                                 structuredOutputEnabled: true,
                                                 reasoningEnabled: false,
                                             });
-                                        } else {
+                                        } else if (isAnthropic) {
                                             const restore = reasoningBeforeStructuredRef.current;
                                             reasoningBeforeStructuredRef.current = null;
                                             onChange({
                                                 structuredOutputEnabled: false,
                                                 reasoningEnabled: restore === null ? true : restore,
                                             });
+                                        } else {
+                                            onChange({structuredOutputEnabled: to});
                                         }
                                     }}
-                                    helpText={intl.formatMessage({defaultMessage: 'Enable structured JSON output for this agent. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Structured output and extended thinking cannot be used simultaneously.'})}
+                                    helpText={isAnthropic ?
+                                        intl.formatMessage({defaultMessage: 'Enable structured JSON output for this agent. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Structured output and extended thinking cannot be used simultaneously.'}) :
+                                        intl.formatMessage({defaultMessage: 'Enable structured JSON output for this agent. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema.'})
+                                    }
                                 />
-                                {draft.structuredOutputEnabled && (
+                                {isAnthropic && draft.structuredOutputEnabled && (
                                     <StructuredOutputNote>
                                         {intl.formatMessage({
                                             defaultMessage:

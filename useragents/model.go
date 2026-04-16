@@ -12,31 +12,31 @@ import (
 
 // UserAgent represents a user-created AI agent persisted in the Agents_UserAgents table.
 type UserAgent struct {
-	ID                      string        `json:"id" db:"ID"`
-	BotUserID               string        `json:"bot_user_id" db:"BotUserID"`
-	CreatorID               string        `json:"creator_id" db:"CreatorID"`
-	DisplayName             string        `json:"display_name" db:"DisplayName"`
-	Username                string        `json:"username" db:"Username"`
-	ServiceID               string        `json:"service_id" db:"ServiceID"`
-	CustomInstructions      string        `json:"custom_instructions" db:"CustomInstructions"`
-	ChannelAccessLevel      int           `json:"channel_access_level" db:"ChannelAccessLevel"`
-	ChannelIDs              []string      `json:"channel_ids"`
-	UserAccessLevel         int           `json:"user_access_level" db:"UserAccessLevel"`
-	UserIDs                 []string      `json:"user_ids"`
-	TeamIDs                 []string      `json:"team_ids"`
-	AdminUserIDs            []string               `json:"admin_user_ids"`
-	EnabledTools            []llm.EnabledMCPTool   `json:"enabled_tools"`
-	Model                   string                 `json:"model"`
-	EnableVision            bool          `json:"enable_vision"`
-	DisableTools            bool          `json:"disable_tools"`
-	EnabledNativeTools      []string      `json:"enabled_native_tools"`
-	ReasoningEnabled        bool          `json:"reasoning_enabled"`
-	ReasoningEffort         string        `json:"reasoning_effort"`
-	ThinkingBudget          int           `json:"thinking_budget"`
-	StructuredOutputEnabled bool          `json:"structured_output_enabled"`
-	CreateAt                int64         `json:"create_at" db:"CreateAt"`
-	UpdateAt                int64         `json:"update_at" db:"UpdateAt"`
-	DeleteAt                int64         `json:"delete_at" db:"DeleteAt"`
+	ID                      string               `json:"id" db:"ID"`
+	BotUserID               string               `json:"bot_user_id" db:"BotUserID"`
+	CreatorID               string               `json:"creator_id" db:"CreatorID"`
+	DisplayName             string               `json:"display_name" db:"DisplayName"`
+	Username                string               `json:"username" db:"Username"`
+	ServiceID               string               `json:"service_id" db:"ServiceID"`
+	CustomInstructions      string               `json:"custom_instructions" db:"CustomInstructions"`
+	ChannelAccessLevel      int                  `json:"channel_access_level" db:"ChannelAccessLevel"`
+	ChannelIDs              []string             `json:"channel_ids"`
+	UserAccessLevel         int                  `json:"user_access_level" db:"UserAccessLevel"`
+	UserIDs                 []string             `json:"user_ids"`
+	TeamIDs                 []string             `json:"team_ids"`
+	AdminUserIDs            []string             `json:"admin_user_ids"`
+	EnabledTools            []llm.EnabledMCPTool `json:"enabled_tools"`
+	Model                   string               `json:"model"`
+	EnableVision            bool                 `json:"enable_vision"`
+	DisableTools            bool                 `json:"disable_tools"`
+	EnabledNativeTools      []string             `json:"enabled_native_tools"`
+	ReasoningEnabled        bool                 `json:"reasoning_enabled"`
+	ReasoningEffort         string               `json:"reasoning_effort"`
+	ThinkingBudget          int                  `json:"thinking_budget"`
+	StructuredOutputEnabled bool                 `json:"structured_output_enabled"`
+	CreateAt                int64                `json:"create_at" db:"CreateAt"`
+	UpdateAt                int64                `json:"update_at" db:"UpdateAt"`
+	DeleteAt                int64                `json:"delete_at" db:"DeleteAt"`
 }
 
 // --- JSON helpers for DB TEXT columns ---

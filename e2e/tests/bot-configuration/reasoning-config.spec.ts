@@ -30,7 +30,7 @@ function createTestSuite() {
             await mattermost.stop();
         });
 
-        test('should require Responses API for OpenAI reasoning', async () => {
+        test('should require Responses API for OpenAI-compatible reasoning', async () => {
             const botConfig = await createBotConfigHelper(mattermost);
             const serviceId = 'no-responses-api-service';
             const botId = generateBotId();
@@ -39,7 +39,7 @@ function createTestSuite() {
             await botConfig.addService({
                 id: serviceId,
                 name: 'No Responses API Service',
-                type: 'openai',
+                type: 'openaicompatible',
                 apiKey: 'test-key',
                 apiURL: 'http://openai:8080',
                 useResponsesAPI: false, // Responses API disabled
