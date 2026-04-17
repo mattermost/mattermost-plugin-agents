@@ -254,6 +254,53 @@ func TestMessageHasBeenPostedReminderHandlesNoPreviousPost(t *testing.T) {
 	require.Empty(t, fix.client.ephemeralPosts)
 }
 
+func TestMessageHasBeenPostedReminderUsesThreadOrderForEqualTimestamps(t *testing.T) {
+	fix := newReminderFixture(t)
+	channel := &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen}
+	fix.setChannel(channel)
+
+	rootPost := &model.Post{
+		Id:        reminderRootID,
+		ChannelId: channel.Id,
+		UserId:    reminderUserID,
+		CreateAt:  100,
+		Message:   "start",
+	}
+	humanPost := &model.Post{
+		Id:        "h-prev",
+		ChannelId: channel.Id,
+		UserId:    reminderOtherUserID,
+		RootId:    reminderRootID,
+		CreateAt:  200,
+		Message:   "human response",
+	}
+	agentPost := &model.Post{
+		Id:        "a-prev",
+		ChannelId: channel.Id,
+		UserId:    reminderBotID,
+		RootId:    reminderRootID,
+		CreateAt:  200,
+		Message:   "agent response",
+	}
+	reply := &model.Post{
+		Id:        "r-reply",
+		ChannelId: channel.Id,
+		UserId:    reminderUserID,
+		RootId:    reminderRootID,
+		CreateAt:  200,
+		Message:   "reply without mention",
+	}
+
+	fix.setThread(reminderRootID, rootPost, humanPost, agentPost, reply)
+
+	fix.conv.MessageHasBeenPosted(nil, reply)
+
+	require.Len(t, fix.client.ephemeralPosts, 1, "expected reminder based on immediate predecessor in thread order")
+	ephemeral := fix.client.ephemeralPosts[0]
+	require.Equal(t, reminderBotID, ephemeral.GetProp(conversations.AgentMentionReminderBotUserIDProp))
+	require.Equal(t, reminderBotUsername, ephemeral.GetProp(conversations.AgentMentionReminderBotUsernameProp))
+}
+
 func TestMessageHasBeenPostedReminderSkipsRestrictedBot(t *testing.T) {
 	fix := newReminderFixtureWithBotConfig(t, llm.BotConfig{
 		ID:                 reminderBotID,

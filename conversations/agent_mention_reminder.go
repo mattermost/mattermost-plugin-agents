@@ -91,16 +91,29 @@ func (c *Conversations) maybeNotifyAgentMentionNeeded(post *model.Post, channel 
 	c.mmClient.SendEphemeralPost(post.UserId, ephemeral)
 }
 
-// findPreviousThreadPost returns the post in the same thread as `post` with
-// the greatest CreateAt strictly less than post.CreateAt. Returns (nil, nil)
-// when no such post exists. Ties on CreateAt are broken by lexicographic Id
-// to keep the result stable.
+// findPreviousThreadPost returns the post immediately preceding `post` in the
+// server-provided thread order when available. If the current post is not
+// present in the ordered thread list, it falls back to choosing the latest post
+// at or before the current post's CreateAt.
 func (c *Conversations) findPreviousThreadPost(post *model.Post) (*model.Post, error) {
 	thread, err := c.mmClient.GetPostThread(post.Id)
 	if err != nil {
 		return nil, err
 	}
 	if thread == nil {
+		return nil, nil
+	}
+
+	for i, id := range thread.Order {
+		if id != post.Id {
+			continue
+		}
+		for j := i - 1; j >= 0; j-- {
+			prevID := thread.Order[j]
+			if prev := thread.Posts[prevID]; prev != nil {
+				return prev, nil
+			}
+		}
 		return nil, nil
 	}
 
