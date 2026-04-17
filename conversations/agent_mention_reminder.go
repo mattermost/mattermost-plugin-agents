@@ -34,7 +34,7 @@ func (c *Conversations) maybeNotifyAgentMentionNeeded(post *model.Post, channel 
 	if post.RootId == "" {
 		return
 	}
-	if channel.Type == model.ChannelTypeDirect {
+	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 		return
 	}
 
@@ -54,6 +54,16 @@ func (c *Conversations) maybeNotifyAgentMentionNeeded(post *model.Post, channel 
 
 	mmBot := bot.GetMMBot()
 	if mmBot == nil {
+		return
+	}
+	if err := c.bots.CheckUsageRestrictions(post.UserId, bot, channel); err != nil {
+		c.mmClient.LogDebug(
+			"agent mention reminder: bot unavailable for user/channel",
+			"error", err.Error(),
+			"post_id", post.Id,
+			"user_id", post.UserId,
+			"bot_username", mmBot.Username,
+		)
 		return
 	}
 

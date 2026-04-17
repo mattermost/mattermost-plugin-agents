@@ -124,6 +124,9 @@ func TestComputeAllowToolsInChannel(t *testing.T) {
 	oauthAppPost := postWithProp(FromOAuthAppProp)
 	botActivateAIPost := &model.Post{UserId: "b1"}
 	botActivateAIPost.AddProp(ActivateAIProp, true)
+	humanActivateAIPost := postWithProp(FromPluginProp)
+	humanActivateAIPost.UserId = "u1"
+	humanActivateAIPost.AddProp(ActivateAIProp, true)
 
 	tests := []struct {
 		name                 string
@@ -138,6 +141,7 @@ func TestComputeAllowToolsInChannel(t *testing.T) {
 		{"config enabled, bot user", true, humanPost, botUser, false, false},
 		{"config enabled, bot user with activate_ai and policy checker", true, botActivateAIPost, botUser, true, true},
 		{"config enabled, bot user with activate_ai without policy checker", true, botActivateAIPost, botUser, false, false},
+		{"config enabled, human user with activate_ai", true, humanActivateAIPost, humanUser, false, true},
 		{"config enabled, from_webhook post", true, webhookPost, humanUser, false, false},
 		{"config enabled, from_plugin post", true, pluginPost, humanUser, false, false},
 		{"config enabled, from_bot post", true, botPropPost, humanUser, false, false},

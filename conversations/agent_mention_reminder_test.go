@@ -39,6 +39,18 @@ type reminderFixture struct {
 func newReminderFixture(t *testing.T) *reminderFixture {
 	t.Helper()
 
+	return newReminderFixtureWithBotConfig(t, llm.BotConfig{
+		ID:                 reminderBotID,
+		Name:               reminderBotUsername,
+		DisplayName:        reminderBotDisplay,
+		ChannelAccessLevel: llm.ChannelAccessLevelAll,
+		UserAccessLevel:    llm.UserAccessLevelAll,
+	})
+}
+
+func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *reminderFixture {
+	t.Helper()
+
 	mockAPI := &plugintest.API{}
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
 	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
@@ -47,7 +59,7 @@ func newReminderFixture(t *testing.T) *reminderFixture {
 
 	botService := bots.New(mockAPI, pluginClient, licenseChecker, nil, &http.Client{}, nil)
 	bot := bots.NewBot(
-		llm.BotConfig{ID: reminderBotID, Name: reminderBotUsername, DisplayName: reminderBotDisplay},
+		botConfig,
 		llm.ServiceConfig{},
 		&model.Bot{UserId: reminderBotID, Username: reminderBotUsername, DisplayName: reminderBotDisplay},
 		nil,
@@ -99,13 +111,12 @@ func (f *reminderFixture) setThread(rootID string, posts ...*model.Post) {
 
 func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) {
 	cases := []struct {
-		name             string
-		channel          *model.Channel
-		previousUserID   string
-		replyHasMention  bool
-		replyHasRootID   bool
-		expectEphemeral  bool
-		expectReplyTopic string
+		name            string
+		channel         *model.Channel
+		previousUserID  string
+		replyHasMention bool
+		replyHasRootID  bool
+		expectEphemeral bool
 	}{
 		{
 			name:            "thread reply after agent post triggers reminder",
@@ -134,6 +145,14 @@ func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) 
 		{
 			name:            "thread reply in DM channel does not trigger reminder",
 			channel:         &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeDirect},
+			previousUserID:  reminderBotID,
+			replyHasMention: false,
+			replyHasRootID:  true,
+			expectEphemeral: false,
+		},
+		{
+			name:            "thread reply in group DM channel does not trigger reminder",
+			channel:         &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeGroup},
 			previousUserID:  reminderBotID,
 			replyHasMention: false,
 			replyHasRootID:  true,
@@ -229,6 +248,48 @@ func TestMessageHasBeenPostedReminderHandlesNoPreviousPost(t *testing.T) {
 	}
 
 	fix.setThread(reminderRootID, reply)
+
+	fix.conv.MessageHasBeenPosted(nil, reply)
+
+	require.Empty(t, fix.client.ephemeralPosts)
+}
+
+func TestMessageHasBeenPostedReminderSkipsRestrictedBot(t *testing.T) {
+	fix := newReminderFixtureWithBotConfig(t, llm.BotConfig{
+		ID:                 reminderBotID,
+		Name:               reminderBotUsername,
+		DisplayName:        reminderBotDisplay,
+		ChannelAccessLevel: llm.ChannelAccessLevelNone,
+		UserAccessLevel:    llm.UserAccessLevelAll,
+	})
+	channel := &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen}
+	fix.setChannel(channel)
+
+	rootPost := &model.Post{
+		Id:        reminderRootID,
+		ChannelId: channel.Id,
+		UserId:    reminderUserID,
+		CreateAt:  100,
+		Message:   "start",
+	}
+	previousPost := &model.Post{
+		Id:        "prev-post-id",
+		ChannelId: channel.Id,
+		UserId:    reminderBotID,
+		RootId:    reminderRootID,
+		CreateAt:  200,
+		Message:   "agent response",
+	}
+	reply := &model.Post{
+		Id:        reminderReplyID,
+		ChannelId: channel.Id,
+		UserId:    reminderUserID,
+		RootId:    reminderRootID,
+		CreateAt:  300,
+		Message:   "reply without mention",
+	}
+
+	fix.setThread(reminderRootID, rootPost, previousPost, reply)
 
 	fix.conv.MessageHasBeenPosted(nil, reply)
 

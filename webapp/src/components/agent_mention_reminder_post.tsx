@@ -13,6 +13,11 @@ const Hint = styled.div`
     line-height: 18px;
 `;
 
+const ErrorMessage = styled.div`
+    color: rgba(var(--error-text-color-rgb), 1);
+    margin-top: 4px;
+`;
+
 const LoopInLink = styled.a<{$pending: boolean}>`
     color: rgba(var(--link-color-rgb), 1);
     cursor: ${(props) => (props.$pending ? 'progress' : 'pointer')};
@@ -30,7 +35,6 @@ interface Props {
         id: string;
         message: string;
         props?: {
-            bot_user_id?: string;
             bot_username?: string;
             bot_display_name?: string;
             target_post_id?: string;
@@ -45,6 +49,7 @@ export const AgentMentionReminderPost = ({post}: Props) => {
 
     const [pending, setPending] = useState(false);
     const [done, setDone] = useState(false);
+    const [error, setError] = useState(false);
 
     const onClick = async (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
@@ -52,10 +57,13 @@ export const AgentMentionReminderPost = ({post}: Props) => {
             return;
         }
         setPending(true);
+        setError(false);
         try {
             await doLoopInAgent(targetPostId, botUsername);
             setDone(true);
         } catch {
+            setError(true);
+        } finally {
             setPending(false);
         }
     };
@@ -95,6 +103,14 @@ export const AgentMentionReminderPost = ({post}: Props) => {
                     ),
                 }}
             />
+            {error && (
+                <ErrorMessage>
+                    <FormattedMessage
+                        defaultMessage='Failed to loop in @{botDisplayName}. Please try again.'
+                        values={{botDisplayName}}
+                    />
+                </ErrorMessage>
+            )}
         </Hint>
     );
 };

@@ -74,7 +74,7 @@ func TestHandleLoopInAgentCreatesUserPostMentioningBot(t *testing.T) {
 				return clone
 			}, nil)
 
-			req := httptest.NewRequest(http.MethodPost, "/post/postid/loop_in_agent", nil)
+			req := httptest.NewRequest(http.MethodPost, "/post/postid/loop_in_agent?botUsername=test-bot", nil)
 			req.Header.Add("Mattermost-User-ID", "userid")
 			recorder := httptest.NewRecorder()
 
