@@ -1,6 +1,6 @@
 import { Client4 } from '@mattermost/client';
 import MattermostContainer from './mmcontainer';
-import type { AgentResponse } from './agent-api';
+import { mergeAgentIntoUpdate, type AgentResponse, type UpdateAgentRequest } from './agent-api';
 import {
     mattermostAIAdminConfigApiFromClient,
     mattermostAIPluginRoutes,
@@ -59,6 +59,36 @@ export interface PluginConfig {
         bots: BotConfig[];
         mcp?: PluginMCPConfig;
     };
+}
+
+/** Maps legacy BotConfig partial updates to UpdateAgentRequest overrides for mergeAgentIntoUpdate. */
+function botConfigPartialToUpdateOverrides(updates: Partial<BotConfig>): Partial<UpdateAgentRequest> {
+    const o: Partial<UpdateAgentRequest> = {};
+    if (updates.displayName !== undefined) {
+        o.displayName = updates.displayName;
+    }
+    if (updates.customInstructions !== undefined) {
+        o.customInstructions = updates.customInstructions;
+    }
+    if (updates.serviceID !== undefined) {
+        o.serviceID = updates.serviceID;
+    }
+    if (updates.enableVision !== undefined) {
+        o.enableVision = updates.enableVision;
+    }
+    if (updates.disableTools !== undefined) {
+        o.disableTools = updates.disableTools;
+    }
+    if (updates.reasoningEnabled !== undefined) {
+        o.reasoningEnabled = updates.reasoningEnabled;
+    }
+    if (updates.reasoningEffort !== undefined) {
+        o.reasoningEffort = updates.reasoningEffort;
+    }
+    if (updates.thinkingBudget !== undefined) {
+        o.thinkingBudget = updates.thinkingBudget;
+    }
+    return o;
 }
 
 export class BotConfigHelper {
@@ -163,35 +193,19 @@ export class BotConfigHelper {
         }
 
         // Legacy config bots were migrated to Agents_UserAgents; update via user-agent API.
-        const body: Record<string, unknown> = {};
-        if (updates.displayName !== undefined) {
-            body.displayName = updates.displayName;
-        }
-        if (updates.customInstructions !== undefined) {
-            body.customInstructions = updates.customInstructions;
-        }
-        if (updates.serviceID !== undefined) {
-            body.serviceID = updates.serviceID;
-        }
-        if (updates.enableVision !== undefined) {
-            body.enableVision = updates.enableVision;
-        }
-        if (updates.disableTools !== undefined) {
-            body.disableTools = updates.disableTools;
-        }
-        if (updates.reasoningEnabled !== undefined) {
-            body.reasoningEnabled = updates.reasoningEnabled;
-        }
-        if (updates.reasoningEffort !== undefined) {
-            body.reasoningEffort = updates.reasoningEffort;
-        }
-        if (updates.thinkingBudget !== undefined) {
-            body.thinkingBudget = updates.thinkingBudget;
-        }
-        if (Object.keys(body).length === 0) {
+        // PUT /agents/:id requires a full replacement body (displayName, serviceID,
+        // enabledMCPTools tri-state, etc.); partial JSON is rejected with 400.
+        const overrides = botConfigPartialToUpdateOverrides(updates);
+        if (Object.keys(overrides).length === 0) {
             throw new Error(`Bot with ID ${botId} not found and no migratable fields to update`);
         }
-        await this.routes.putJson(`agents/${botId}`, this.client.getToken(), body);
+        const token = this.client.getToken();
+        const current = (await this.routes.getJson(
+            `agents/${botId}`,
+            token,
+        )) as AgentResponse;
+        const body = mergeAgentIntoUpdate(current, overrides);
+        await this.routes.putJson(`agents/${botId}`, token, body);
     }
 
     /**

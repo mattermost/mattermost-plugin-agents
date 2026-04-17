@@ -79,7 +79,7 @@ export interface AgentResponse {
 /** Build a full UpdateAgentRequest payload from an existing agent response, merging
  * in the caller's overrides. This matches the backend's full-replacement contract:
  * every mutable field is sent on every update. */
-function mergeAgentIntoUpdate(
+export function mergeAgentIntoUpdate(
     agent: AgentResponse,
     overrides: Partial<UpdateAgentRequest>,
 ): UpdateAgentRequest {
