@@ -36,19 +36,6 @@ type Config struct {
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                             MCPConfig                        `json:"mcp"`
 	WebSearch                       WebSearchConfig                  `json:"webSearch"`
-	// SelfServiceAgentDefaults are optional defaults for new self-service agents (System Console).
-	// Zero value means handleCreateAgent uses its built-in legacy defaults.
-	SelfServiceAgentDefaults SelfServiceAgentDefaults `json:"selfServiceAgentDefaults,omitempty"`
-}
-
-// SelfServiceAgentDefaults configures organization-wide defaults when users create agents via POST /agents.
-// Pointer fields distinguish unset (nil) from explicit false.
-type SelfServiceAgentDefaults struct {
-	EnableVision            *bool   `json:"enableVision,omitempty"`
-	DisableTools            *bool   `json:"disableTools,omitempty"`
-	ReasoningEnabled        *bool   `json:"reasoningEnabled,omitempty"`
-	ReasoningEffort         *string `json:"reasoningEffort,omitempty"`
-	StructuredOutputEnabled *bool   `json:"structuredOutputEnabled,omitempty"`
 }
 
 type WebSearchConfig struct {

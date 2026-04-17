@@ -61,6 +61,18 @@ export type UserAgent = {
 }
 
 // CreateAgentRequest matches api.CreateAgentRequest in Go.
+//
+// Create is an explicit full-object request: the UI is the sole source of truth for
+// create-time defaults, so clients send every field they want persisted. There are no
+// hidden server-side defaults layered on top.
+//
+// `enabledMCPTools` is a required tri-state field with the same semantics as `UserAgent`:
+//   - `null` = all MCP tools allowed
+//   - `[]`   = no MCP tools allowed
+//   - `[..]` = only the listed tools are allowed
+//
+// Omitting `enabledMCPTools` from the payload is rejected by the backend.
+//
 // NOTE: this DTO still uses the JSON key "username" (json:"username" in
 // api/api_agents.go) even though the response emits the same value as "name".
 export type CreateAgentRequest = {
@@ -74,7 +86,7 @@ export type CreateAgentRequest = {
     userIDs?: string[];
     teamIDs?: string[];
     adminUserIDs?: string[];
-    enabledMCPTools?: EnabledTool[] | null;
+    enabledMCPTools: EnabledTool[] | null;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;
@@ -86,11 +98,15 @@ export type CreateAgentRequest = {
 }
 
 // UpdateAgentRequest matches api.UpdateAgentRequest in Go.
-// All fields optional (pointer fields in Go → undefined in TS).
+//
+// Update is a full-object replacement, not a patch: every mutable field the caller wants
+// to keep must be sent on every save. Fields omitted here are overwritten with their
+// JSON zero values. `enabledMCPTools` follows the same required tri-state contract as
+// CreateAgentRequest; omitting it is rejected by the backend.
 export type UpdateAgentRequest = {
-    displayName?: string;
+    displayName: string;
     username?: string;
-    serviceID?: string;
+    serviceID: string;
     customInstructions?: string;
     channelAccessLevel?: number;
     channelIDs?: string[];
@@ -98,7 +114,7 @@ export type UpdateAgentRequest = {
     userIDs?: string[];
     teamIDs?: string[];
     adminUserIDs?: string[];
-    enabledMCPTools?: EnabledTool[] | null;
+    enabledMCPTools: EnabledTool[] | null;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;

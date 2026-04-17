@@ -26,6 +26,16 @@ var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 const WebsocketEventBotsInvalidate = "bots_invalidate"
 
 // CreateAgentRequest is the JSON body for POST /agents.
+// The UI is the sole source of truth for create-time defaults; the backend no longer
+// substitutes hidden defaults for omitted fields. All fields below are taken verbatim
+// from the request payload.
+//
+// `enabledMCPTools` is a required tri-state field:
+//   - `null` means "allow all MCP tools"
+//   - `[]`   means "allow no MCP tools"
+//   - `[..]` means "allow only the listed tools"
+//
+// Omitting `enabledMCPTools` from the JSON is rejected as an invalid request.
 type CreateAgentRequest struct {
 	DisplayName             string               `json:"displayName" binding:"required"`
 	Username                string               `json:"username" binding:"required"`
@@ -39,39 +49,68 @@ type CreateAgentRequest struct {
 	AdminUserIDs            []string             `json:"adminUserIDs"`
 	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
 	Model                   string               `json:"model"`
-	EnableVision            *bool                `json:"enableVision"`
-	DisableTools            *bool                `json:"disableTools"`
-	EnabledNativeTools      *[]string            `json:"enabledNativeTools"`
-	ReasoningEnabled        *bool                `json:"reasoningEnabled"`
+	EnableVision            bool                 `json:"enableVision"`
+	DisableTools            bool                 `json:"disableTools"`
+	EnabledNativeTools      []string             `json:"enabledNativeTools"`
+	ReasoningEnabled        bool                 `json:"reasoningEnabled"`
 	ReasoningEffort         string               `json:"reasoningEffort"`
 	ThinkingBudget          int                  `json:"thinkingBudget"`
-	StructuredOutputEnabled *bool                `json:"structuredOutputEnabled"`
+	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
+
+	enabledMCPToolsProvided bool
+}
+
+func (r *CreateAgentRequest) UnmarshalJSON(data []byte) error {
+	type alias CreateAgentRequest
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	_, enabledMCPToolsProvided := raw["enabledMCPTools"]
+	*r = CreateAgentRequest(decoded)
+	r.enabledMCPToolsProvided = enabledMCPToolsProvided
+	return nil
 }
 
 // UpdateAgentRequest is the JSON body for PUT /agents/:agentid.
-// All fields are optional — only provided fields are applied via read-modify-write.
-// Field names match CreateAgentRequest so clients may send a full document on each save.
+// This endpoint is a full-object replacement, not a patch: every field the caller wants
+// to keep must be sent on every save. Field names mirror CreateAgentRequest so clients
+// can send the same document shape for both flows.
+//
+// `enabledMCPTools` is a required tri-state field with the same semantics as
+// CreateAgentRequest: `null` = all, `[]` = none, `[..]` = allowlist. Omitting it is
+// rejected as an invalid request.
+//
+// `username` is still validated against the stored agent's name and cannot be changed
+// after creation; see handleUpdateAgent.
 type UpdateAgentRequest struct {
-	DisplayName             *string               `json:"displayName"`
-	Username                *string               `json:"username"`
-	ServiceID               *string               `json:"serviceID"`
-	CustomInstructions      *string               `json:"customInstructions"`
-	ChannelAccessLevel      *int                  `json:"channelAccessLevel"`
-	ChannelIDs              *[]string             `json:"channelIDs"`
-	UserAccessLevel         *int                  `json:"userAccessLevel"`
-	UserIDs                 *[]string             `json:"userIDs"`
-	TeamIDs                 *[]string             `json:"teamIDs"`
-	AdminUserIDs            *[]string             `json:"adminUserIDs"`
-	EnabledMCPTools         *[]llm.EnabledMCPTool `json:"enabledMCPTools"`
-	Model                   *string               `json:"model"`
-	EnableVision            *bool                 `json:"enableVision"`
-	DisableTools            *bool                 `json:"disableTools"`
-	EnabledNativeTools      *[]string             `json:"enabledNativeTools"`
-	ReasoningEnabled        *bool                 `json:"reasoningEnabled"`
-	ReasoningEffort         *string               `json:"reasoningEffort"`
-	ThinkingBudget          *int                  `json:"thinkingBudget"`
-	StructuredOutputEnabled *bool                 `json:"structuredOutputEnabled"`
+	DisplayName             string               `json:"displayName" binding:"required"`
+	Username                string               `json:"username"`
+	ServiceID               string               `json:"serviceID" binding:"required"`
+	CustomInstructions      string               `json:"customInstructions"`
+	ChannelAccessLevel      int                  `json:"channelAccessLevel"`
+	ChannelIDs              []string             `json:"channelIDs"`
+	UserAccessLevel         int                  `json:"userAccessLevel"`
+	UserIDs                 []string             `json:"userIDs"`
+	TeamIDs                 []string             `json:"teamIDs"`
+	AdminUserIDs            []string             `json:"adminUserIDs"`
+	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
+	Model                   string               `json:"model"`
+	EnableVision            bool                 `json:"enableVision"`
+	DisableTools            bool                 `json:"disableTools"`
+	EnabledNativeTools      []string             `json:"enabledNativeTools"`
+	ReasoningEnabled        bool                 `json:"reasoningEnabled"`
+	ReasoningEffort         string               `json:"reasoningEffort"`
+	ThinkingBudget          int                  `json:"thinkingBudget"`
+	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
 
+	usernameProvided        bool
 	enabledMCPToolsProvided bool
 }
 
@@ -87,20 +126,10 @@ func (r *UpdateAgentRequest) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	_, usernameProvided := raw["username"]
 	_, enabledMCPToolsProvided := raw["enabledMCPTools"]
-	if value, ok := raw["enabledMCPTools"]; ok {
-		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			decoded.EnabledMCPTools = nil
-		} else {
-			var tools []llm.EnabledMCPTool
-			if err := json.Unmarshal(value, &tools); err != nil {
-				return err
-			}
-			decoded.EnabledMCPTools = &tools
-		}
-	}
-
 	*r = UpdateAgentRequest(decoded)
+	r.usernameProvided = usernameProvided
 	r.enabledMCPToolsProvided = enabledMCPToolsProvided
 	return nil
 }
@@ -204,6 +233,62 @@ func (a *API) validateAgentServiceID(c *gin.Context, serviceID string) (*config.
 	return cfg, true
 }
 
+// buildAgentConfigForCreate maps an explicit CreateAgentRequest into a new llm.BotConfig.
+// No hidden server-side defaults are applied: the caller (the UI) is the sole source of
+// truth for create-time defaults.
+func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string) *llm.BotConfig {
+	return &llm.BotConfig{
+		BotUserID:               botUserID,
+		CreatorID:               userID,
+		DisplayName:             req.DisplayName,
+		Name:                    req.Username,
+		ServiceID:               req.ServiceID,
+		CustomInstructions:      req.CustomInstructions,
+		ChannelAccessLevel:      llm.ChannelAccessLevel(req.ChannelAccessLevel),
+		ChannelIDs:              req.ChannelIDs,
+		UserAccessLevel:         llm.UserAccessLevel(req.UserAccessLevel),
+		UserIDs:                 req.UserIDs,
+		TeamIDs:                 req.TeamIDs,
+		AdminUserIDs:            req.AdminUserIDs,
+		EnabledMCPTools:         req.EnabledMCPTools,
+		Model:                   req.Model,
+		EnableVision:            req.EnableVision,
+		DisableTools:            req.DisableTools,
+		EnabledNativeTools:      req.EnabledNativeTools,
+		ReasoningEnabled:        req.ReasoningEnabled,
+		ReasoningEffort:         req.ReasoningEffort,
+		ThinkingBudget:          req.ThinkingBudget,
+		StructuredOutputEnabled: req.StructuredOutputEnabled,
+	}
+}
+
+// applyAgentUpdateRequest replaces mutable fields on cfg with the values from req.
+// This is an intentional full-object replacement: every mutable field on the stored
+// agent is overwritten with the request payload. Immutable fields (BotUserID,
+// CreatorID, Name, CreateAt, etc.) are preserved by not being touched here.
+func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displayNameChanged bool) {
+	displayNameChanged = cfg.DisplayName != req.DisplayName
+	cfg.DisplayName = req.DisplayName
+	cfg.ServiceID = req.ServiceID
+	cfg.CustomInstructions = req.CustomInstructions
+	cfg.ChannelAccessLevel = llm.ChannelAccessLevel(req.ChannelAccessLevel)
+	cfg.ChannelIDs = req.ChannelIDs
+	cfg.UserAccessLevel = llm.UserAccessLevel(req.UserAccessLevel)
+	cfg.UserIDs = req.UserIDs
+	cfg.TeamIDs = req.TeamIDs
+	cfg.AdminUserIDs = req.AdminUserIDs
+	cfg.EnabledMCPTools = req.EnabledMCPTools
+	cfg.Model = req.Model
+	cfg.EnableVision = req.EnableVision
+	cfg.DisableTools = req.DisableTools
+	cfg.EnabledNativeTools = req.EnabledNativeTools
+	cfg.ReasoningEnabled = req.ReasoningEnabled
+	cfg.ReasoningEffort = req.ReasoningEffort
+	cfg.ThinkingBudget = req.ThinkingBudget
+	cfg.StructuredOutputEnabled = req.StructuredOutputEnabled
+	return displayNameChanged
+}
+
 // refreshBotsAndNotify forces the bot registry to re-read DB-backed agents,
 // re-runs EnsureBots on this node, publishes a cluster event so other
 // nodes do the same, and tells connected web clients to drop their cached bot list
@@ -242,6 +327,11 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
+	if !req.enabledMCPToolsProvided {
+		c.AbortWithError(http.StatusBadRequest, errors.New("enabledMCPTools is required: send null to allow all tools, [] to allow none, or an array of {server_origin, tool_name} to allow specific tools"))
+		return
+	}
+
 	// Validate username format before hitting the server
 	if !validUsernameRe.MatchString(req.Username) {
 		c.AbortWithError(http.StatusBadRequest, errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores"))
@@ -249,8 +339,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	}
 
 	// Validate that the referenced service exists in the config
-	cfg, ok := a.validateAgentServiceID(c, req.ServiceID)
-	if !ok {
+	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
 		return
 	}
 
@@ -270,72 +359,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
-	// Build the BotConfig record: defaults from plugin config (SelfServiceAgentDefaults) when set,
-	// otherwise legacy System Console new-bot defaults.
-	def := cfg.SelfServiceAgentDefaults
-	enableVision := true
-	if def.EnableVision != nil {
-		enableVision = *def.EnableVision
-	}
-	disableTools := false
-	if def.DisableTools != nil {
-		disableTools = *def.DisableTools
-	}
-	reasoningEnabled := true
-	if def.ReasoningEnabled != nil {
-		reasoningEnabled = *def.ReasoningEnabled
-	}
-	reasoningEffort := "medium"
-	if def.ReasoningEffort != nil && *def.ReasoningEffort != "" {
-		reasoningEffort = *def.ReasoningEffort
-	}
-	structuredOutput := false
-	if def.StructuredOutputEnabled != nil {
-		structuredOutput = *def.StructuredOutputEnabled
-	}
-	enabledNativeTools := []string{"web_search"}
-
-	agent := &llm.BotConfig{
-		BotUserID:               mmBot.UserId,
-		CreatorID:               userID,
-		DisplayName:             req.DisplayName,
-		Name:                    req.Username,
-		ServiceID:               req.ServiceID,
-		CustomInstructions:      req.CustomInstructions,
-		ChannelAccessLevel:      llm.ChannelAccessLevel(req.ChannelAccessLevel),
-		ChannelIDs:              req.ChannelIDs,
-		UserAccessLevel:         llm.UserAccessLevel(req.UserAccessLevel),
-		UserIDs:                 req.UserIDs,
-		TeamIDs:                 req.TeamIDs,
-		AdminUserIDs:            req.AdminUserIDs,
-		EnabledMCPTools:         req.EnabledMCPTools,
-		Model:                   req.Model,
-		EnableVision:            enableVision,
-		DisableTools:            disableTools,
-		EnabledNativeTools:      enabledNativeTools,
-		ReasoningEnabled:        reasoningEnabled,
-		ReasoningEffort:         reasoningEffort,
-		ThinkingBudget:          req.ThinkingBudget,
-		StructuredOutputEnabled: structuredOutput,
-	}
-	if req.EnableVision != nil {
-		agent.EnableVision = *req.EnableVision
-	}
-	if req.DisableTools != nil {
-		agent.DisableTools = *req.DisableTools
-	}
-	if req.ReasoningEnabled != nil {
-		agent.ReasoningEnabled = *req.ReasoningEnabled
-	}
-	if req.StructuredOutputEnabled != nil {
-		agent.StructuredOutputEnabled = *req.StructuredOutputEnabled
-	}
-	if req.ReasoningEffort != "" {
-		agent.ReasoningEffort = req.ReasoningEffort
-	}
-	if req.EnabledNativeTools != nil {
-		agent.EnabledNativeTools = append([]string(nil), (*req.EnabledNativeTools)...)
-	}
+	agent := buildAgentConfigForCreate(req, userID, mmBot.UserId)
 
 	if err := a.agentStore.CreateAgent(agent); err != nil {
 		// Best effort: deactivate the bot we just created since the DB insert failed
@@ -422,76 +446,19 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
-	// Apply partial update (read-modify-write)
-	displayNameChanged := false
-	if req.DisplayName != nil {
-		displayNameChanged = cfg.DisplayName != *req.DisplayName
-		cfg.DisplayName = *req.DisplayName
+	if !req.enabledMCPToolsProvided {
+		c.AbortWithError(http.StatusBadRequest, errors.New("enabledMCPTools is required: send null to allow all tools, [] to allow none, or an array of {server_origin, tool_name} to allow specific tools"))
+		return
 	}
-	if req.Username != nil {
-		if *req.Username != cfg.Name {
-			c.AbortWithError(http.StatusBadRequest, errors.New("username cannot be changed after the agent is created"))
-			return
-		}
+
+	if req.usernameProvided && req.Username != cfg.Name {
+		c.AbortWithError(http.StatusBadRequest, errors.New("username cannot be changed after the agent is created"))
+		return
 	}
-	if req.ServiceID != nil {
-		if _, ok := a.validateAgentServiceID(c, *req.ServiceID); !ok {
-			return
-		}
-		cfg.ServiceID = *req.ServiceID
+	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
+		return
 	}
-	if req.CustomInstructions != nil {
-		cfg.CustomInstructions = *req.CustomInstructions
-	}
-	if req.ChannelAccessLevel != nil {
-		cfg.ChannelAccessLevel = llm.ChannelAccessLevel(*req.ChannelAccessLevel)
-	}
-	if req.ChannelIDs != nil {
-		cfg.ChannelIDs = *req.ChannelIDs
-	}
-	if req.UserAccessLevel != nil {
-		cfg.UserAccessLevel = llm.UserAccessLevel(*req.UserAccessLevel)
-	}
-	if req.UserIDs != nil {
-		cfg.UserIDs = *req.UserIDs
-	}
-	if req.TeamIDs != nil {
-		cfg.TeamIDs = *req.TeamIDs
-	}
-	if req.AdminUserIDs != nil {
-		cfg.AdminUserIDs = *req.AdminUserIDs
-	}
-	if req.enabledMCPToolsProvided {
-		if req.EnabledMCPTools == nil {
-			cfg.EnabledMCPTools = nil
-		} else {
-			cfg.EnabledMCPTools = *req.EnabledMCPTools
-		}
-	}
-	if req.Model != nil {
-		cfg.Model = *req.Model
-	}
-	if req.EnableVision != nil {
-		cfg.EnableVision = *req.EnableVision
-	}
-	if req.DisableTools != nil {
-		cfg.DisableTools = *req.DisableTools
-	}
-	if req.EnabledNativeTools != nil {
-		cfg.EnabledNativeTools = *req.EnabledNativeTools
-	}
-	if req.ReasoningEnabled != nil {
-		cfg.ReasoningEnabled = *req.ReasoningEnabled
-	}
-	if req.ReasoningEffort != nil {
-		cfg.ReasoningEffort = *req.ReasoningEffort
-	}
-	if req.ThinkingBudget != nil {
-		cfg.ThinkingBudget = *req.ThinkingBudget
-	}
-	if req.StructuredOutputEnabled != nil {
-		cfg.StructuredOutputEnabled = *req.StructuredOutputEnabled
-	}
+	displayNameChanged := applyAgentUpdateRequest(cfg, req)
 
 	if err := a.agentStore.UpdateAgent(cfg); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to update agent: %w", err))

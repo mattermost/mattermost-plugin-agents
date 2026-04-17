@@ -19,17 +19,6 @@ type Tab = 'config' | 'access' | 'mcps';
 
 type Mode = 'create' | 'edit';
 
-const defaultControlledFields = [
-    'enableVision',
-    'disableTools',
-    'enabledNativeTools',
-    'reasoningEnabled',
-    'reasoningEffort',
-    'structuredOutputEnabled',
-] as const;
-
-type DefaultControlledField = (typeof defaultControlledFields)[number];
-
 // AgentDraft holds the mutable form state. All fields correspond to UserAgent/CreateAgentRequest.
 export type AgentDraft = {
     displayName: string;
@@ -75,8 +64,14 @@ const emptyDraft: AgentDraft = {
     structuredOutputEnabled: false,
 };
 
-function draftToCreateAgentPayload(draft: AgentDraft, touchedDefaults: Set<DefaultControlledField>): CreateAgentRequest {
-    const payload: CreateAgentRequest = {
+/**
+ * Full-document create payload from the form draft. The backend uses the UI as the sole
+ * source of truth for create-time defaults, so every field is sent explicitly.
+ * `enabledMCPTools` is always included (as `null`, `[]`, or an array) because the
+ * backend rejects requests that omit it.
+ */
+function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
+    return {
         displayName: draft.displayName,
         username: draft.username,
         serviceID: draft.serviceId,
@@ -87,48 +82,7 @@ function draftToCreateAgentPayload(draft: AgentDraft, touchedDefaults: Set<Defau
         userIDs: draft.userIds,
         teamIDs: draft.teamIds,
         adminUserIDs: draft.adminUserIds,
-        model: draft.model,
-        thinkingBudget: draft.thinkingBudget,
-    };
-    if (draft.enabledTools !== null) {
-        payload.enabledMCPTools = draft.enabledTools;
-    }
-
-    if (touchedDefaults.has('enableVision')) {
-        payload.enableVision = draft.enableVision;
-    }
-    if (touchedDefaults.has('disableTools')) {
-        payload.disableTools = draft.disableTools;
-    }
-    if (touchedDefaults.has('enabledNativeTools')) {
-        payload.enabledNativeTools = draft.enabledNativeTools;
-    }
-    if (touchedDefaults.has('reasoningEnabled')) {
-        payload.reasoningEnabled = draft.reasoningEnabled;
-    }
-    if (touchedDefaults.has('reasoningEffort')) {
-        payload.reasoningEffort = draft.reasoningEffort;
-    }
-    if (touchedDefaults.has('structuredOutputEnabled')) {
-        payload.structuredOutputEnabled = draft.structuredOutputEnabled;
-    }
-
-    return payload;
-}
-
-/** Full-document update payload from the form draft. */
-function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
-    const payload: UpdateAgentRequest = {
-        displayName: draft.displayName,
-        username: draft.username,
-        serviceID: draft.serviceId,
-        customInstructions: draft.customInstructions,
-        channelAccessLevel: draft.channelAccessLevel,
-        channelIDs: draft.channelIds,
-        userAccessLevel: draft.userAccessLevel,
-        userIDs: draft.userIds,
-        teamIDs: draft.teamIds,
-        adminUserIDs: draft.adminUserIds,
+        enabledMCPTools: draft.enabledTools,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -138,10 +92,35 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         thinkingBudget: draft.thinkingBudget,
         structuredOutputEnabled: draft.structuredOutputEnabled,
     };
-    if (draft.enabledTools !== null) {
-        payload.enabledMCPTools = draft.enabledTools;
-    }
-    return payload;
+}
+
+/**
+ * Full-document update payload from the form draft. PUT /agents/:id is a full-object
+ * replacement, so every mutable field is sent on every save. `enabledMCPTools` is
+ * always included for the same reason as the create path.
+ */
+function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
+    return {
+        displayName: draft.displayName,
+        username: draft.username,
+        serviceID: draft.serviceId,
+        customInstructions: draft.customInstructions,
+        channelAccessLevel: draft.channelAccessLevel,
+        channelIDs: draft.channelIds,
+        userAccessLevel: draft.userAccessLevel,
+        userIDs: draft.userIds,
+        teamIDs: draft.teamIds,
+        adminUserIDs: draft.adminUserIds,
+        enabledMCPTools: draft.enabledTools,
+        model: draft.model,
+        enableVision: draft.enableVision,
+        disableTools: draft.disableTools,
+        enabledNativeTools: draft.enabledNativeTools,
+        reasoningEnabled: draft.reasoningEnabled,
+        reasoningEffort: draft.reasoningEffort,
+        thinkingBudget: draft.thinkingBudget,
+        structuredOutputEnabled: draft.structuredOutputEnabled,
+    };
 }
 
 function agentToDraft(agent: UserAgent): AgentDraft {
@@ -183,7 +162,6 @@ const AgentConfigModal = (props: Props) => {
 
     const [activeTab, setActiveTab] = useState<Tab>('config');
     const [draft, setDraft] = useState<AgentDraft>(emptyDraft);
-    const [defaultControlledFieldsTouched, setDefaultControlledFieldsTouched] = useState<Set<DefaultControlledField>>(new Set());
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
@@ -193,7 +171,6 @@ const AgentConfigModal = (props: Props) => {
         if (show) {
             setActiveTab('config');
             setDraft(agent ? agentToDraft(agent) : emptyDraft);
-            setDefaultControlledFieldsTouched(new Set());
             setAvatarFile(null);
             setErrors({});
         }
@@ -224,17 +201,6 @@ const AgentConfigModal = (props: Props) => {
 
     const updateDraft = useCallback((updates: Partial<AgentDraft>) => {
         setDraft((prev) => ({...prev, ...updates}));
-        if (mode === 'create') {
-            setDefaultControlledFieldsTouched((prev) => {
-                const next = new Set(prev);
-                for (const key of Object.keys(updates) as Array<keyof AgentDraft>) {
-                    if (defaultControlledFields.includes(key as DefaultControlledField)) {
-                        next.add(key as DefaultControlledField);
-                    }
-                }
-                return next;
-            });
-        }
         setErrors((prev) => {
             const next = {...prev};
             for (const key of Object.keys(updates)) {
@@ -243,7 +209,7 @@ const AgentConfigModal = (props: Props) => {
             delete next.general;
             return next;
         });
-    }, [mode]);
+    }, []);
 
     const validate = useCallback((): Record<string, string> => {
         const errs: Record<string, string> = {};
@@ -274,7 +240,7 @@ const AgentConfigModal = (props: Props) => {
         try {
             let savedAgent: UserAgent;
             if (mode === 'create') {
-                savedAgent = await createAgent(draftToCreateAgentPayload(draft, defaultControlledFieldsTouched));
+                savedAgent = await createAgent(draftToCreateAgentPayload(draft));
             } else {
                 savedAgent = await updateAgent(agent!.id, draftToUpdateAgentPayload(draft));
             }
@@ -302,7 +268,7 @@ const AgentConfigModal = (props: Props) => {
         } finally {
             setSaving(false);
         }
-    }, [mode, agent, draft, avatarFile, defaultControlledFieldsTouched, intl, onSaved, validate]);
+    }, [mode, agent, draft, avatarFile, intl, onSaved, validate]);
 
     if (!show) {
         return null;
