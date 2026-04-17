@@ -4,8 +4,6 @@
 package conversations
 
 import (
-	"fmt"
-
 	sq "github.com/Masterminds/squirrel"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -52,33 +50,4 @@ func (c *Conversations) DeleteConversationsForDeletedPost(post *model.Post) erro
 			sq.Eq{"DeleteAt": 0},
 		}))
 	return err
-}
-
-func (c *Conversations) getAIThreads(dmChannelIDs []string) ([]AIThread, error) {
-	var threads []AIThread
-	// Join on the root post's channel (not the conversation's ChannelID)
-	// because channel analysis conversations store the analyzed channel as
-	// their ChannelID, but the result post lives in the DM channel.
-	if err := c.db.DoQuery(&threads, c.db.Builder().
-		Select(
-			"c.ID",
-			"COALESCE(p.Message, '') as Message",
-			"c.Title",
-			"COALESCE(p.ChannelId, '') as ChannelID",
-			"c.BotID",
-			"COALESCE(c.RootPostID, '') as RootPostID",
-			"(SELECT COUNT(*) FROM Posts WHERE Posts.RootId = c.RootPostID AND Posts.DeleteAt = 0) AS ReplyCount",
-			"c.UpdatedAt as UpdateAt",
-		).
-		From("LLM_Conversations c").
-		Join("Posts p ON p.Id = c.RootPostID AND p.DeleteAt = 0").
-		Where(sq.Eq{"p.ChannelId": dmChannelIDs}).
-		Where(sq.Eq{"c.DeleteAt": 0}).
-		OrderBy("c.UpdatedAt DESC").
-		Limit(60),
-	); err != nil {
-		return nil, fmt.Errorf("failed to get AI threads: %w", err)
-	}
-
-	return threads, nil
 }

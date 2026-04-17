@@ -93,7 +93,7 @@ func TestRunMigrations(t *testing.T) {
 				require.NoError(t, err)
 				assert.True(t, exists, "Agents_System table should exist")
 
-				// Check LLM_PostMeta table does NOT exist (dropped by migration 6)
+				// Check LLM_PostMeta table does NOT exist (dropped by migration 5)
 				err = s.db.Get(&exists, `
 					SELECT EXISTS (
 						SELECT 1 FROM information_schema.tables
@@ -159,7 +159,7 @@ func TestRunMigrations(t *testing.T) {
 				err := s.db.Get(&count, `
 					SELECT COUNT(*) FROM Agents_DB_Migrations`)
 				require.NoError(t, err)
-				assert.Equal(t, 10, count, "Should have 10 migration records")
+				assert.Equal(t, 5, count, "Should have 5 migration records")
 			},
 		},
 	}

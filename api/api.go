@@ -357,8 +357,6 @@ func (a *API) enforceEmptyBody(c *gin.Context) error {
 }
 
 // aiThreadResponse is the JSON shape for items in the GET /ai_threads response.
-// It preserves backward compatibility with the old AIThread struct while adding
-// root_post_id and bot_id from conversation entities.
 type aiThreadResponse struct {
 	ID         string  `json:"id"`
 	Message    string  `json:"message"`

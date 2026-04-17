@@ -4,7 +4,6 @@
 package conversations
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -22,23 +21,10 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/subtitles"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 const ThreadIDProp = "referenced_thread"
 const AnalysisTypeProp = "prompt_type"
-
-// AIThread represents a user's conversation with an AI
-type AIThread struct {
-	ID         string `json:"id"`
-	Message    string `json:"message"`
-	Title      string `json:"title"`
-	ChannelID  string `json:"channel_id" db:"ChannelID"`
-	BotID      string `json:"bot_id" db:"BotID"`
-	RootPostID string `json:"root_post_id" db:"RootPostID"`
-	ReplyCount int    `json:"reply_count" db:"ReplyCount"`
-	UpdateAt   int64  `json:"update_at" db:"UpdateAt"`
-}
 
 // ConfigProvider provides configuration values for conversation behavior
 type ConfigProvider interface {
@@ -267,38 +253,6 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 		}
 	}
 	return len(turns) > 0
-}
-
-// GetAIThreads gets AI conversation threads for a user
-func (c *Conversations) GetAIThreads(userID string) ([]AIThread, error) {
-	allBots := c.bots.GetAllBots()
-	dmChannelIDs := []string{}
-	for _, bot := range allBots {
-		channelName := model.GetDMNameFromIds(userID, bot.GetMMBot().UserId)
-		botDMChannel, err := c.mmClient.GetChannelByName("", channelName, false)
-		if err != nil {
-			if errors.Is(err, pluginapi.ErrNotFound) {
-				continue
-			}
-			c.mmClient.LogError("unable to get DM channel for bot", "error", err, "bot_id", bot.GetMMBot().UserId)
-			continue
-		}
-		if !c.mmClient.HasPermissionToChannel(userID, botDMChannel.Id, model.PermissionReadChannel) {
-			c.mmClient.LogDebug("user doesn't have permission to read channel", "user_id", userID, "channel_id", botDMChannel.Id, "bot_id", bot.GetMMBot().UserId)
-			continue
-		}
-		dmChannelIDs = append(dmChannelIDs, botDMChannel.Id)
-	}
-	return c.getAIThreads(dmChannelIDs)
-}
-
-func (c *Conversations) BotCreateNonResponsePost(botid string, requesterUserID string, post *model.Post) error {
-	streaming.ModifyPostForBot(botid, requesterUserID, post, "")
-	post.AddProp(streaming.NoRegen, true)
-	if err := c.mmClient.CreatePost(post); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (c *Conversations) sendOAuthNotifications(bot *bots.Bot, userID, channelID, rootID string, authErrors []llm.ToolAuthError) {
