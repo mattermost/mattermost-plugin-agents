@@ -9,6 +9,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBlocksToPost(t *testing.T) {
@@ -170,10 +171,45 @@ func TestBlocksToPost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := BlocksToPost(tt.blocks, tt.role)
+			result := BlocksToPost(tt.blocks, tt.role, false)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestBlocksToPost_RedactUnshared(t *testing.T) {
+	blocks := []ContentBlock{
+		{Type: BlockTypeToolUse, ID: "t-shared", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolResult, ToolUseID: "t-shared", Content: "PUBLIC", Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolUse, ID: "t-private", Name: "read_dm", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolResult, ToolUseID: "t-private", Content: "SECRET", Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolUse, ID: "t-nilshared", Name: "foo", Input: json.RawMessage(`{}`), Status: StatusSuccess},
+		{Type: BlockTypeToolResult, ToolUseID: "t-nilshared", Content: "ALSO SECRET", Status: StatusSuccess},
+	}
+
+	t.Run("redactUnshared=false", func(t *testing.T) {
+		got := BlocksToPost(blocks, "assistant", false)
+		require.Len(t, got.ToolUse, 3)
+		results := map[string]string{}
+		for _, tc := range got.ToolUse {
+			results[tc.ID] = tc.Result
+		}
+		assert.Equal(t, "PUBLIC", results["t-shared"])
+		assert.Equal(t, "SECRET", results["t-private"])
+		assert.Equal(t, "ALSO SECRET", results["t-nilshared"])
+	})
+
+	t.Run("redactUnshared=true", func(t *testing.T) {
+		got := BlocksToPost(blocks, "assistant", true)
+		require.Len(t, got.ToolUse, 3)
+		results := map[string]string{}
+		for _, tc := range got.ToolUse {
+			results[tc.ID] = tc.Result
+		}
+		assert.Equal(t, "PUBLIC", results["t-shared"])
+		assert.Equal(t, UnsharedToolResultRedaction, results["t-private"])
+		assert.Equal(t, UnsharedToolResultRedaction, results["t-nilshared"])
+	})
 }
 
 func TestPostToBlocks(t *testing.T) {
@@ -396,7 +432,7 @@ func TestPostToBlocksToPostRoundTrip(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			blocks := PostToBlocks(tt.post, tt.shared)
 			role := RoleToString(tt.post.Role)
-			roundTripped := BlocksToPost(blocks, role)
+			roundTripped := BlocksToPost(blocks, role, false)
 
 			assert.Equal(t, tt.post.Role, roundTripped.Role)
 			assert.Equal(t, tt.post.Message, roundTripped.Message)

@@ -6,6 +6,7 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {doToolCall, doToolResult} from '@/client';
+import {invalidateConversation} from '@/hooks/use_conversation';
 
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 import ToolCard from './tool_card';
@@ -58,6 +59,7 @@ const BatchButton = styled.button`
 // Tool call interfaces
 interface ToolApprovalSetProps {
     postID: string;
+    conversationID?: string;
     toolCalls: ToolCall[];
     approvalStage: ToolApprovalStage;
     canApprove: boolean;
@@ -133,6 +135,13 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             } else {
                 await doToolResult(props.postID, approvedToolIDs);
             }
+
+            // The channel path for Accept does not stream a follow-up (that
+            // happens on Share). Force a refetch so the UI transitions from
+            // 'call' to 'result' stage without waiting for a WebSocket event.
+            if (props.conversationID) {
+                invalidateConversation(props.conversationID);
+            }
             setIsSubmitting(false);
         } catch (err) {
             setError(formatMessage({
@@ -143,7 +152,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         } finally {
             submitInFlightRef.current = false;
         }
-    }, [isCallStage, props.postID]);
+    }, [isCallStage, props.postID, props.conversationID]);
 
     useEffect(() => {
         if (isCallStage || !effectiveCanApprove) {

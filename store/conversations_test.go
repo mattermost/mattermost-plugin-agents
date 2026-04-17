@@ -84,9 +84,10 @@ func TestCreateConversation(t *testing.T) {
 			},
 		},
 		{
-			name: "duplicate RootPostID+BotID returns conflict error",
+			name: "duplicate RootPostID+BotID+UserID returns conflict error",
 			setup: func(t *testing.T, s *Store) {
 				conv := makeConversation(func(c *Conversation) {
+					c.UserID = "userDup"
 					c.RootPostID = stringPtr("post1")
 					c.BotID = "bot1"
 				})
@@ -95,11 +96,37 @@ func TestCreateConversation(t *testing.T) {
 			},
 			validate: func(t *testing.T, s *Store) {
 				conv := makeConversation(func(c *Conversation) {
+					c.UserID = "userDup"
 					c.RootPostID = stringPtr("post1")
 					c.BotID = "bot1"
 				})
 				err := s.CreateConversation(conv)
 				assert.ErrorIs(t, err, ErrConversationConflict)
+			},
+		},
+		{
+			name: "allows same RootPostID+BotID with different UserID",
+			setup: func(t *testing.T, s *Store) {
+				conv := makeConversation(func(c *Conversation) {
+					c.UserID = "userA"
+					c.RootPostID = stringPtr("post1")
+					c.BotID = "bot1"
+				})
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+			},
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation(func(c *Conversation) {
+					c.UserID = "userB"
+					c.RootPostID = stringPtr("post1")
+					c.BotID = "bot1"
+				})
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				got, err := s.GetConversation(conv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, conv.ID, got.ID)
 			},
 		},
 		{
@@ -221,17 +248,19 @@ func TestGetConversation(t *testing.T) {
 	}
 }
 
-func TestGetConversationByThreadAndBot(t *testing.T) {
+func TestGetConversationByThreadBotUser(t *testing.T) {
 	tests := []struct {
 		name     string
 		setup    func(t *testing.T, s *Store)
 		validate func(t *testing.T, s *Store)
 	}{
 		{
-			name:  "returns conversation by RootPostID and BotID",
+			name:  "returns conversation by RootPostID, BotID, and UserID",
 			setup: func(t *testing.T, s *Store) {},
 			validate: func(t *testing.T, s *Store) {
+				userID := model.NewId()
 				conv := makeConversation(func(c *Conversation) {
+					c.UserID = userID
 					c.RootPostID = stringPtr("post1")
 					c.BotID = "bot1"
 					c.Title = "Thread Conversation"
@@ -239,7 +268,7 @@ func TestGetConversationByThreadAndBot(t *testing.T) {
 				err := s.CreateConversation(conv)
 				require.NoError(t, err)
 
-				got, err := s.GetConversationByThreadAndBot("post1", "bot1")
+				got, err := s.GetConversationByThreadBotUser("post1", "bot1", userID)
 				require.NoError(t, err)
 				require.NotNil(t, got)
 				assert.Equal(t, conv.ID, got.ID)
@@ -247,10 +276,29 @@ func TestGetConversationByThreadAndBot(t *testing.T) {
 			},
 		},
 		{
-			name:  "returns ErrConversationNotFound for nonexistent pair",
+			name:  "returns ErrConversationNotFound for nonexistent tuple",
 			setup: func(t *testing.T, s *Store) {},
 			validate: func(t *testing.T, s *Store) {
-				got, err := s.GetConversationByThreadAndBot("nonexistent", "nonexistent")
+				got, err := s.GetConversationByThreadBotUser("nonexistent", "nonexistent", "nonexistent")
+				assert.ErrorIs(t, err, ErrConversationNotFound)
+				assert.Nil(t, got)
+			},
+		},
+		{
+			name:  "does not return conversation owned by a different user",
+			setup: func(t *testing.T, s *Store) {},
+			validate: func(t *testing.T, s *Store) {
+				ownerID := model.NewId()
+				otherID := model.NewId()
+				conv := makeConversation(func(c *Conversation) {
+					c.UserID = ownerID
+					c.RootPostID = stringPtr("post1")
+					c.BotID = "bot1"
+				})
+				err := s.CreateConversation(conv)
+				require.NoError(t, err)
+
+				got, err := s.GetConversationByThreadBotUser("post1", "bot1", otherID)
 				assert.ErrorIs(t, err, ErrConversationNotFound)
 				assert.Nil(t, got)
 			},
@@ -259,7 +307,9 @@ func TestGetConversationByThreadAndBot(t *testing.T) {
 			name:  "does not return soft-deleted conversation",
 			setup: func(t *testing.T, s *Store) {},
 			validate: func(t *testing.T, s *Store) {
+				userID := model.NewId()
 				conv := makeConversation(func(c *Conversation) {
+					c.UserID = userID
 					c.RootPostID = stringPtr("post1")
 					c.BotID = "bot1"
 				})
@@ -269,7 +319,7 @@ func TestGetConversationByThreadAndBot(t *testing.T) {
 				err = s.SoftDeleteConversation(conv.ID, model.GetMillis())
 				require.NoError(t, err)
 
-				got, err := s.GetConversationByThreadAndBot("post1", "bot1")
+				got, err := s.GetConversationByThreadBotUser("post1", "bot1", userID)
 				assert.ErrorIs(t, err, ErrConversationNotFound)
 				assert.Nil(t, got)
 			},

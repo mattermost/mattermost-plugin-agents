@@ -537,4 +537,104 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await expect(rhs.getByRole('button', {name: /keep private/i})).not.toBeVisible();
         await expect(rhs.getByText('Auto-approved')).toBeVisible();
     });
+
+    test('channel ask: LLM follow-up stream is gated on Share approval', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const townSquareChannelID = await getTownSquareChannelID();
+        const mmPage = new MattermostPage(page);
+
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await page.goto(`${mattermost.url()}/test/channels/off-topic`);
+        await waitForChannelReady(page, 'Off-Topic');
+
+        await setEmbeddedToolPolicies([
+            {name: 'get_channel_info', policy: 'ask', enabled: true},
+        ]);
+
+        const userMessageMarker = 'follow-up-gating marker ' + Date.now();
+        const toolCallID = 'call_followup_gating';
+        const followUpMarker = 'FOLLOWUP_AFTER_SHARE_' + Date.now();
+
+        await openAIMock.addMocks([
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value:
+                            'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
+                    },
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildTextResponse('follow-up gating'),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    // Main turn includes the MCP tools list; title generation runs
+                    // WithToolsDisabled so its request body has no `get_channel_info`.
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: 'get_channel_info',
+                    },
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildToolCallResponse(
+                        toolCallID,
+                        'get_channel_info',
+                        `{"channel_id":"${townSquareChannelID}"}`,
+                    ),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: toolCallID,
+                    },
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildTextResponse(followUpMarker),
+                },
+            },
+        ]);
+
+        await mentionBotAndOpenThread(page, mmPage, 'toolbot', userMessageMarker);
+
+        const rhs = page.locator('#rhsContainer');
+
+        const acceptButton = rhs.getByRole('button', {name: /^accept$/i});
+        await expect(acceptButton).toBeVisible({timeout: 30000});
+        await expect(rhs.getByText(followUpMarker)).not.toBeVisible();
+
+        await acceptButton.click();
+
+        // Accept runs the tool but must NOT trigger the channel-visible follow-up.
+        const shareButton = rhs.getByRole('button', {name: /^share$/i});
+        await expect(shareButton).toBeVisible({timeout: 30000});
+        await expect(rhs.getByRole('button', {name: /keep private/i})).toBeVisible();
+        await page.waitForTimeout(3000);
+        await expect(rhs.getByText(followUpMarker)).not.toBeVisible();
+
+        await shareButton.click();
+
+        // Share releases the follow-up stream and consumes the last mock.
+        await expect(rhs.getByText(followUpMarker)).toBeVisible({timeout: 30000});
+        await expect(rhs.getByRole('button', {name: /^share$/i})).not.toBeVisible();
+    });
 });

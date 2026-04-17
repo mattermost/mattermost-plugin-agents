@@ -105,7 +105,7 @@ func (m *mockConvServiceStore) GetConversation(id string) (*store.Conversation, 
 	return conv, nil
 }
 
-func (m *mockConvServiceStore) GetConversationByThreadAndBot(_, _ string) (*store.Conversation, error) {
+func (m *mockConvServiceStore) GetConversationByThreadBotUser(_, _, _ string) (*store.Conversation, error) {
 	return nil, store.ErrConversationNotFound
 }
 

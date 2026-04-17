@@ -142,7 +142,7 @@ func (s *evalInMemoryStore) GetConversation(id string) (*store.Conversation, err
 	return &c.Conversation, nil
 }
 
-func (s *evalInMemoryStore) GetConversationByThreadAndBot(_, _ string) (*store.Conversation, error) {
+func (s *evalInMemoryStore) GetConversationByThreadBotUser(_, _, _ string) (*store.Conversation, error) {
 	return nil, store.ErrConversationNotFound
 }
 

@@ -116,8 +116,7 @@ func TestChannelMentionFirstMentionCreatesConversation(t *testing.T) {
 	require.True(t, result.IsNew)
 	require.NotEmpty(t, result.Conversation.ID)
 
-	// Verify conversation is retrievable by thread+bot
-	conv, err := s.GetConversationByThreadAndBot(rootPostID, botID)
+	conv, err := s.GetConversationByThreadBotUser(rootPostID, botID, userID)
 	require.NoError(t, err)
 	require.NotNil(t, conv)
 	assert.Equal(t, result.Conversation.ID, conv.ID)
@@ -177,6 +176,70 @@ func TestChannelMentionSecondMentionContinuesConversation(t *testing.T) {
 	require.Len(t, turns, 2)
 	assert.Equal(t, 1, turns[0].Sequence)
 	assert.Equal(t, 2, turns[1].Sequence)
+}
+
+func TestChannelMentionPerUserThreadIsolation(t *testing.T) {
+	svc, s := setupChannelMentionService(t)
+
+	botID := model.NewId()
+	aliceID := model.NewId()
+	bobID := model.NewId()
+	channelID := model.NewId()
+	rootPostID := model.NewId()
+	alicePostID := model.NewId()
+	bobPostID := model.NewId()
+
+	aliceResult, err := svc.GetOrCreateConversation(conversation.GetOrCreateParams{
+		UserID:       aliceID,
+		BotID:        botID,
+		ChannelID:    channelID,
+		RootPostID:   rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "You are helpful",
+		UserMessage:  "Alice question",
+		UserPostID:   &alicePostID,
+	})
+	require.NoError(t, err)
+	require.True(t, aliceResult.IsNew)
+
+	bobResult, err := svc.GetOrCreateConversation(conversation.GetOrCreateParams{
+		UserID:       bobID,
+		BotID:        botID,
+		ChannelID:    channelID,
+		RootPostID:   rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "You are helpful",
+		UserMessage:  "Bob question",
+		UserPostID:   &bobPostID,
+	})
+	require.NoError(t, err)
+	require.True(t, bobResult.IsNew)
+	assert.NotEqual(t, aliceResult.Conversation.ID, bobResult.Conversation.ID)
+	assert.Equal(t, aliceID, aliceResult.Conversation.UserID)
+	assert.Equal(t, bobID, bobResult.Conversation.UserID)
+
+	alicePostID2 := model.NewId()
+	aliceAgain, err := svc.GetOrCreateConversation(conversation.GetOrCreateParams{
+		UserID:       aliceID,
+		BotID:        botID,
+		ChannelID:    channelID,
+		RootPostID:   rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "You are helpful",
+		UserMessage:  "Alice follow-up",
+		UserPostID:   &alicePostID2,
+	})
+	require.NoError(t, err)
+	require.False(t, aliceAgain.IsNew)
+	assert.Equal(t, aliceResult.Conversation.ID, aliceAgain.Conversation.ID)
+
+	aliceLookup, err := s.GetConversationByThreadBotUser(rootPostID, botID, aliceID)
+	require.NoError(t, err)
+	assert.Equal(t, aliceResult.Conversation.ID, aliceLookup.ID)
+
+	bobLookup, err := s.GetConversationByThreadBotUser(rootPostID, botID, bobID)
+	require.NoError(t, err)
+	assert.Equal(t, bobResult.Conversation.ID, bobLookup.ID)
 }
 
 func TestChannelMentionMultiBotThreadIsolation(t *testing.T) {

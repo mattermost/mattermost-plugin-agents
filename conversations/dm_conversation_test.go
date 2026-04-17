@@ -71,12 +71,12 @@ func (s *fakeConvStore) GetConversation(id string) (*store.Conversation, error) 
 	return &c, nil
 }
 
-func (s *fakeConvStore) GetConversationByThreadAndBot(rootPostID, botID string) (*store.Conversation, error) {
+func (s *fakeConvStore) GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, conv := range s.conversations {
 		if conv.RootPostID != nil && *conv.RootPostID == rootPostID &&
-			conv.BotID == botID && conv.DeleteAt == 0 {
+			conv.BotID == botID && conv.UserID == userID && conv.DeleteAt == 0 {
 			c := *conv
 			return &c, nil
 		}

@@ -334,6 +334,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             {toolCalls && toolCalls.length > 0 && (
                 <ToolApprovalSet
                     postID={props.post.id}
+                    conversationID={conversationId}
                     toolCalls={toolCalls}
                     approvalStage={toolApprovalStage}
                     canApprove={requesterIsCurrentUser}

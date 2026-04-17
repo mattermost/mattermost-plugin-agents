@@ -44,13 +44,12 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return errors.New("only the original requester can approve/reject tool calls")
 	}
 
-	// Find the latest assistant turn with pending tool calls.
 	turns, err := c.convService.GetTurns(convID)
 	if err != nil {
 		return fmt.Errorf("failed to get turns: %w", err)
 	}
 
-	pendingTurn, pendingBlocks, err := findPendingToolTurn(turns)
+	pendingTurn, pendingBlocks, err := findPendingToolTurn(turns, post.Id)
 	if err != nil {
 		return err
 	}
@@ -162,9 +161,6 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return fmt.Errorf("failed to create tool result turn: %w", err)
 	}
 
-	// Continue when there is any executed tool result (success or error).
-	// Error results are included because the agent may recover on the next turn.
-	// Only skip continuation when all tools were rejected.
 	hasExecuted := slices.ContainsFunc(pendingBlocks, func(b conversation.ContentBlock) bool {
 		return b.Type == conversation.BlockTypeToolUse &&
 			(b.Status == conversation.StatusSuccess || b.Status == conversation.StatusError)
@@ -173,17 +169,21 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return nil
 	}
 
-	// Continue the LLM loop: rebuild from conversation and stream follow-up.
-	return c.streamToolFollowUp(bot, user, channel, post, conv, isDM)
+	// In channels the follow-up is a channel-visible post that may paraphrase tool
+	// output, so it must not stream until the requester approves sharing in
+	// HandleToolResult.
+	if !isDM {
+		return nil
+	}
+
+	return c.streamToolFollowUp(bot, user, channel, post, conv, isDM, false)
 }
 
-// HandleToolResult handles user approval of tool results in channel contexts.
-// In DMs, tool results are auto-shared. In channels, this handles the second
-// approval step after tool execution.
+// HandleToolResult handles user approval of the second-stage tool-result sharing.
+// It flips shared flags for accepted results and, in channels, streams the LLM
+// follow-up with unshared content redacted so private tool output cannot leak
+// into the channel-visible reply.
 func (c *Conversations) HandleToolResult(userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
-	// In the conversation entity model, tool results are already written
-	// to the conversation turns during HandleToolCall. The result approval
-	// step updates the shared flag on tool blocks.
 	bot := c.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
@@ -203,13 +203,11 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return errors.New("only the original requester can approve/reject tool results")
 	}
 
-	// Build a set of accepted tool IDs for quick lookup.
 	acceptedSet := make(map[string]bool, len(acceptedToolIDs))
 	for _, id := range acceptedToolIDs {
 		acceptedSet[id] = true
 	}
 
-	// Update shared flags on tool_use and tool_result blocks for accepted tools.
 	turns, err := c.convService.GetTurns(conv.ID)
 	if err != nil {
 		return fmt.Errorf("failed to get turns: %w", err)
@@ -248,13 +246,54 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		}
 	}
 
-	// HandleToolResult only updates shared flags for visibility.
-	// The LLM follow-up already happened in HandleToolCall.
-	return nil
+	// DMs stream the follow-up from HandleToolCall.
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	if isDM {
+		return nil
+	}
+
+	// Guard against duplicate share clicks: if an assistant turn linked to a
+	// PostID exists past the last tool_result turn, the follow-up has already streamed.
+	freshTurns, err := c.convService.GetTurns(conv.ID)
+	if err != nil {
+		return fmt.Errorf("failed to reload turns: %w", err)
+	}
+	if followUpAlreadyStreamed(freshTurns) {
+		return nil
+	}
+
+	user, err := c.mmClient.GetUser(userID)
+	if err != nil {
+		return fmt.Errorf("unable to get user: %w", err)
+	}
+
+	return c.streamToolFollowUp(bot, user, channel, post, conv, false, true)
 }
 
-// streamToolFollowUp rebuilds the completion request from the conversation entity
-// and streams a follow-up LLM response after tool execution.
+// followUpAlreadyStreamed reports whether the LLM follow-up for the most recent
+// tool round has already been streamed to a channel post.
+func followUpAlreadyStreamed(turns []store.Turn) bool {
+	maxToolResultSeq := 0
+	for _, t := range turns {
+		if t.Role == "tool_result" && t.Sequence > maxToolResultSeq {
+			maxToolResultSeq = t.Sequence
+		}
+	}
+	if maxToolResultSeq == 0 {
+		return false
+	}
+	for _, t := range turns {
+		if t.Role == "assistant" && t.PostID != nil && t.Sequence > maxToolResultSeq {
+			return true
+		}
+	}
+	return false
+}
+
+// streamToolFollowUp rebuilds the completion request from the conversation and
+// streams a follow-up LLM response after tool execution. When redactUnshared is
+// true, tool_result content whose Shared flag is not true is replaced with a
+// redaction marker so private tool output cannot reach a channel-visible reply.
 func (c *Conversations) streamToolFollowUp(
 	bot *bots.Bot,
 	user *model.User,
@@ -262,6 +301,7 @@ func (c *Conversations) streamToolFollowUp(
 	post *model.Post,
 	conv *store.Conversation,
 	isDM bool,
+	redactUnshared bool,
 ) error {
 	contextOpts := []llm.ContextOption{
 		c.contextBuilder.WithLLMContextDefaultTools(bot),
@@ -297,7 +337,9 @@ func (c *Conversations) streamToolFollowUp(
 		}
 	}
 
-	completionReq, err := c.convService.BuildCompletionRequest(conv, llmContext)
+	completionReq, err := c.convService.BuildCompletionRequest(conv, llmContext, conversation.BuildOptions{
+		RedactUnsharedToolContent: redactUnshared,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to build completion request for tool follow-up: %w", err)
 	}
@@ -336,28 +378,32 @@ func (c *Conversations) streamToolFollowUp(
 	return nil
 }
 
-// findPendingToolTurn finds the latest assistant turn with pending tool_use blocks.
-func findPendingToolTurn(turns []store.Turn) (*store.Turn, []conversation.ContentBlock, error) {
-	// Walk backward to find the last assistant turn with pending tool calls.
-	for i := len(turns) - 1; i >= 0; i-- {
+// findPendingToolTurn returns the assistant turn linked to clickedPostID along
+// with its blocks, provided the turn contains pending tool_use blocks.
+func findPendingToolTurn(turns []store.Turn, clickedPostID string) (*store.Turn, []conversation.ContentBlock, error) {
+	for i := range turns {
 		if turns[i].Role != "assistant" {
+			continue
+		}
+		if turns[i].PostID == nil || *turns[i].PostID != clickedPostID {
 			continue
 		}
 
 		var blocks []conversation.ContentBlock
 		if err := json.Unmarshal(turns[i].Content, &blocks); err != nil {
-			continue
+			return nil, nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turns[i].ID, err)
 		}
 
 		hasPending := slices.ContainsFunc(blocks, func(b conversation.ContentBlock) bool {
 			return b.Type == conversation.BlockTypeToolUse && b.Status == conversation.StatusPending
 		})
-		if hasPending {
-			return &turns[i], blocks, nil
+		if !hasPending {
+			return nil, nil, errors.New("clicked post has no pending tool calls")
 		}
+		return &turns[i], blocks, nil
 	}
 
-	return nil, nil, errors.New("no pending tool calls found in conversation")
+	return nil, nil, errors.New("no pending tool calls found for clicked post")
 }
 
 // responseRootIDFromPost returns the root ID for responding in a thread.

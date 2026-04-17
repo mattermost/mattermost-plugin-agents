@@ -95,14 +95,16 @@ func (s *Store) GetConversation(id string) (*Conversation, error) {
 	return &conv, nil
 }
 
-// GetConversationByThreadAndBot looks up a non-deleted conversation by RootPostID and BotID.
-// Returns nil, nil if no conversation exists for the given pair.
-func (s *Store) GetConversationByThreadAndBot(rootPostID, botID string) (*Conversation, error) {
+// GetConversationByThreadBotUser looks up a non-deleted conversation by
+// (RootPostID, BotID, UserID). Returns ErrConversationNotFound when no
+// conversation exists for the given tuple.
+func (s *Store) GetConversationByThreadBotUser(rootPostID, botID, userID string) (*Conversation, error) {
 	query, args, err := s.builder.
 		Select(conversationColumns...).
 		From("LLM_Conversations").
 		Where(sq.Eq{"RootPostID": rootPostID}).
 		Where(sq.Eq{"BotID": botID}).
+		Where(sq.Eq{"UserID": userID}).
 		Where(sq.Eq{"DeleteAt": 0}).
 		ToSql()
 	if err != nil {
@@ -113,7 +115,7 @@ func (s *Store) GetConversationByThreadAndBot(rootPostID, botID string) (*Conver
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrConversationNotFound
 		}
-		return nil, fmt.Errorf("failed to get conversation by thread and bot: %w", err)
+		return nil, fmt.Errorf("failed to get conversation by thread/bot/user: %w", err)
 	}
 	return &conv, nil
 }

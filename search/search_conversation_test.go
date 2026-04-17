@@ -47,9 +47,9 @@ func (s *fakeConversationStore) GetConversation(id string) (*store.Conversation,
 	return nil, store.ErrConversationNotFound
 }
 
-func (s *fakeConversationStore) GetConversationByThreadAndBot(rootPostID, botID string) (*store.Conversation, error) {
+func (s *fakeConversationStore) GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
 	for _, c := range s.conversations {
-		if c.RootPostID != nil && *c.RootPostID == rootPostID && c.BotID == botID {
+		if c.RootPostID != nil && *c.RootPostID == rootPostID && c.BotID == botID && c.UserID == userID {
 			return c, nil
 		}
 	}

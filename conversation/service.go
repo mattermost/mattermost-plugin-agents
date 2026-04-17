@@ -21,7 +21,7 @@ import (
 type Store interface {
 	CreateConversation(conv *store.Conversation) error
 	GetConversation(id string) (*store.Conversation, error)
-	GetConversationByThreadAndBot(rootPostID, botID string) (*store.Conversation, error)
+	GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
 	UpdateConversationTitle(id, title string) error
 	UpdateConversationRootPostID(id string, rootPostID string) error
 	CreateTurn(turn *store.Turn) error
@@ -186,7 +186,7 @@ type GetOrCreateResult struct {
 // GetOrCreateConversation looks up an existing conversation by (RootPostID, BotID),
 // or creates a new one if none exists.
 func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreateResult, error) {
-	existing, err := s.store.GetConversationByThreadAndBot(params.RootPostID, params.BotID)
+	existing, err := s.store.GetConversationByThreadBotUser(params.RootPostID, params.BotID, params.UserID)
 	if err != nil && !errors.Is(err, store.ErrConversationNotFound) {
 		return nil, fmt.Errorf("failed to look up conversation: %w", err)
 	}
@@ -219,7 +219,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	})
 	if errors.Is(err, store.ErrConversationConflict) {
 		// Another request created the conversation concurrently. Look it up and append the user turn.
-		raceConv, lookupErr := s.store.GetConversationByThreadAndBot(params.RootPostID, params.BotID)
+		raceConv, lookupErr := s.store.GetConversationByThreadBotUser(params.RootPostID, params.BotID, params.UserID)
 		if lookupErr != nil && !errors.Is(lookupErr, store.ErrConversationNotFound) {
 			return nil, fmt.Errorf("failed to look up conversation after conflict: %w", lookupErr)
 		}
@@ -279,6 +279,10 @@ func (s *Service) appendUserTurn(conversationID, message string, postID *string)
 // BuildOptions controls optional behavior of BuildCompletionRequest.
 type BuildOptions struct {
 	ExcludeAfterPostID string
+
+	// RedactUnsharedToolContent replaces tool_result content whose Shared flag
+	// is not true with a redaction marker before the request reaches the LLM.
+	RedactUnsharedToolContent bool
 }
 
 // BuildCompletionRequest builds an llm.CompletionRequest from the conversation's
@@ -293,14 +297,18 @@ func (s *Service) BuildCompletionRequest(
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
 
-	// If ExcludeAfterPostID is set, truncate the turn slice at (and including)
-	// the turn whose PostID matches, so that turn and all subsequent turns are dropped.
-	if len(opts) > 0 && opts[0].ExcludeAfterPostID != "" {
-		excludeID := opts[0].ExcludeAfterPostID
-		for i, turn := range turns {
-			if turn.PostID != nil && *turn.PostID == excludeID {
-				turns = turns[:i]
-				break
+	redactUnshared := false
+	if len(opts) > 0 {
+		redactUnshared = opts[0].RedactUnsharedToolContent
+		// If ExcludeAfterPostID is set, truncate the turn slice at (and including)
+		// the turn whose PostID matches, so that turn and all subsequent turns are dropped.
+		if opts[0].ExcludeAfterPostID != "" {
+			excludeID := opts[0].ExcludeAfterPostID
+			for i, turn := range turns {
+				if turn.PostID != nil && *turn.PostID == excludeID {
+					turns = turns[:i]
+					break
+				}
 			}
 		}
 	}
@@ -318,7 +326,7 @@ func (s *Service) BuildCompletionRequest(
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turn.ID, err)
 		}
-		posts = append(posts, BlocksToPost(blocks, turn.Role))
+		posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared))
 	}
 
 	return &llm.CompletionRequest{
@@ -487,10 +495,16 @@ func (s *Service) BuildChannelMentionRequest(
 	conv *store.Conversation,
 	context *llm.Context,
 	threadData *mmapi.ThreadData,
+	opts ...BuildOptions,
 ) (*llm.CompletionRequest, error) {
+	redactUnshared := false
+	if len(opts) > 0 {
+		redactUnshared = opts[0].RedactUnsharedToolContent
+	}
+
 	// If no thread data, fall back to standard request building.
 	if threadData == nil || len(threadData.Posts) == 0 {
-		return s.BuildCompletionRequest(conv, context)
+		return s.BuildCompletionRequest(conv, context, opts...)
 	}
 
 	turns, err := s.store.GetTurnsForConversation(conv.ID)
@@ -558,7 +572,7 @@ func (s *Service) BuildChannelMentionRequest(
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal turn %s: %w", turn.ID, err)
 		}
-		posts = append(posts, BlocksToPost(blocks, turn.Role))
+		posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared))
 	}
 
 	for _, threadPost := range threadData.Posts {
@@ -569,7 +583,7 @@ func (s *Service) BuildChannelMentionRequest(
 			if err != nil {
 				return nil, fmt.Errorf("failed to unmarshal turn %s: %w", turn.ID, err)
 			}
-			posts = append(posts, BlocksToPost(blocks, turn.Role))
+			posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared))
 
 			// Emit any non-post turns that follow this post-linked turn.
 			for _, followingTurn := range turnsByPrecedingPost[turn.Sequence] {
@@ -577,7 +591,7 @@ func (s *Service) BuildChannelMentionRequest(
 				if err != nil {
 					return nil, fmt.Errorf("failed to unmarshal turn %s: %w", followingTurn.ID, err)
 				}
-				posts = append(posts, BlocksToPost(fBlocks, followingTurn.Role))
+				posts = append(posts, BlocksToPost(fBlocks, followingTurn.Role, redactUnshared))
 			}
 		} else {
 			// Render as plain text with @username prefix.

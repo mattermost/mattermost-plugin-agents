@@ -195,14 +195,15 @@ func TestCreateConversation(t *testing.T) {
 	}
 }
 
-func TestCreateConversation_DuplicateThreadBot(t *testing.T) {
+func TestCreateConversation_DuplicateThreadBotUser(t *testing.T) {
 	svc, _ := setupTestService(t)
 
 	botID := model.NewId()
+	userID := model.NewId()
 	rootPostID := "dup_root"
 
 	_, err := svc.CreateConversation(CreateConversationParams{
-		UserID:       model.NewId(),
+		UserID:       userID,
 		BotID:        botID,
 		RootPostID:   &rootPostID,
 		Operation:    "conversation",
@@ -212,7 +213,7 @@ func TestCreateConversation_DuplicateThreadBot(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = svc.CreateConversation(CreateConversationParams{
-		UserID:       model.NewId(),
+		UserID:       userID,
 		BotID:        botID,
 		RootPostID:   &rootPostID,
 		Operation:    "conversation",
@@ -220,6 +221,16 @@ func TestCreateConversation_DuplicateThreadBot(t *testing.T) {
 		UserMessage:  "second",
 	})
 	assert.ErrorIs(t, err, store.ErrConversationConflict)
+
+	_, err = svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        botID,
+		RootPostID:   &rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "prompt",
+		UserMessage:  "third",
+	})
+	assert.NoError(t, err, "different users in the same thread must get separate conversations")
 }
 
 func TestGetOrCreateConversation_New(t *testing.T) {
@@ -251,11 +262,12 @@ func TestGetOrCreateConversation_Existing(t *testing.T) {
 	svc, s := setupTestService(t)
 
 	botID := model.NewId()
+	userID := model.NewId()
 	rootPostID := "existing_root"
 
 	// Create the initial conversation.
 	first, err := svc.CreateConversation(CreateConversationParams{
-		UserID:       model.NewId(),
+		UserID:       userID,
 		BotID:        botID,
 		RootPostID:   &rootPostID,
 		Operation:    "conversation",
@@ -265,9 +277,9 @@ func TestGetOrCreateConversation_Existing(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// GetOrCreate should find it and add a new user turn.
+	// GetOrCreate with the SAME user should find it and add a new user turn.
 	result, err := svc.GetOrCreateConversation(GetOrCreateParams{
-		UserID:       model.NewId(),
+		UserID:       userID,
 		BotID:        botID,
 		ChannelID:    "chan1",
 		RootPostID:   rootPostID,
@@ -292,12 +304,13 @@ func TestGetOrCreateConversation_AppendsUserTurn(t *testing.T) {
 	svc, s := setupTestService(t)
 
 	botID := model.NewId()
+	userID := model.NewId()
 	rootPostID := "multi_turn_root"
 	convID := ""
 
 	// Create initial conversation with 1 user turn.
 	createResult, err := svc.CreateConversation(CreateConversationParams{
-		UserID:       model.NewId(),
+		UserID:       userID,
 		BotID:        botID,
 		RootPostID:   &rootPostID,
 		Operation:    "conversation",
@@ -332,7 +345,7 @@ func TestGetOrCreateConversation_AppendsUserTurn(t *testing.T) {
 
 	// GetOrCreate should add a turn at seq=4.
 	result, err := svc.GetOrCreateConversation(GetOrCreateParams{
-		UserID:      model.NewId(),
+		UserID:      userID,
 		BotID:       botID,
 		ChannelID:   "chan1",
 		RootPostID:  rootPostID,
@@ -514,6 +527,76 @@ func TestBuildCompletionRequest_WithToolTurns(t *testing.T) {
 	assert.Equal(t, llm.PostRoleUser, req.Posts[3].Role)
 	assert.Equal(t, llm.PostRoleBot, req.Posts[4].Role)
 	assert.Equal(t, "The weather is 72F and sunny.", req.Posts[4].Message)
+}
+
+func TestBuildCompletionRequest_RedactUnsharedToolContent(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "question",
+	})
+	require.NoError(t, err)
+	convID := result.ConversationID
+
+	// Two tool calls, one shared, one unshared.
+	assistantBlocks := []ContentBlock{
+		{Type: BlockTypeToolUse, ID: "tc-shared", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolUse, ID: "tc-private", Name: "read_dm", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(false)},
+	}
+	assistantContent, err := json.Marshal(assistantBlocks)
+	require.NoError(t, err)
+	err = s.CreateTurn(&store.Turn{
+		ID: model.NewId(), ConversationID: convID, Role: "assistant",
+		Content: assistantContent, Sequence: 2, CreatedAt: model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	resultBlocks := []ContentBlock{
+		{Type: BlockTypeToolResult, ToolUseID: "tc-shared", Content: "PUBLIC DATA", Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc-private", Content: "PRIVATE SECRET", Status: StatusSuccess, Shared: BoolPtr(false)},
+	}
+	resultContent, err := json.Marshal(resultBlocks)
+	require.NoError(t, err)
+	err = s.CreateTurn(&store.Turn{
+		ID: model.NewId(), ConversationID: convID, Role: "tool_result",
+		Content: resultContent, Sequence: 3, CreatedAt: model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	conv, err := s.GetConversation(convID)
+	require.NoError(t, err)
+
+	resultsByID := func(req *llm.CompletionRequest) map[string]string {
+		out := map[string]string{}
+		for _, p := range req.Posts {
+			for _, tc := range p.ToolUse {
+				if tc.Result != "" {
+					out[tc.ID] = tc.Result
+				}
+			}
+		}
+		return out
+	}
+
+	t.Run("without redaction", func(t *testing.T) {
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		require.NoError(t, err)
+		results := resultsByID(req)
+		assert.Equal(t, "PUBLIC DATA", results["tc-shared"])
+		assert.Equal(t, "PRIVATE SECRET", results["tc-private"])
+	})
+
+	t.Run("with redaction", func(t *testing.T) {
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{RedactUnsharedToolContent: true})
+		require.NoError(t, err)
+		results := resultsByID(req)
+		assert.Equal(t, "PUBLIC DATA", results["tc-shared"])
+		assert.Equal(t, UnsharedToolResultRedaction, results["tc-private"])
+	})
 }
 
 func TestBuildCompletionRequest_SystemPromptIsFirst(t *testing.T) {
@@ -1172,6 +1255,7 @@ func TestGetOrCreateConversation_RaceConflict(t *testing.T) {
 	svc, s := setupTestService(t)
 
 	botID := model.NewId()
+	userID := model.NewId()
 	rootPostID := "race_root"
 
 	// Pre-create a conversation directly via the store to simulate a race.
@@ -1179,7 +1263,7 @@ func TestGetOrCreateConversation_RaceConflict(t *testing.T) {
 	convID := model.NewId()
 	err := s.CreateConversation(&store.Conversation{
 		ID:           convID,
-		UserID:       model.NewId(),
+		UserID:       userID,
 		BotID:        botID,
 		RootPostID:   &rootPostID,
 		Title:        "",
@@ -1204,10 +1288,10 @@ func TestGetOrCreateConversation_RaceConflict(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// GetOrCreateConversation with the same (RootPostID, BotID) should
+	// GetOrCreateConversation with the same (RootPostID, BotID, UserID) should
 	// hit the conflict path, retry the lookup, and append the user turn.
 	result, err := svc.GetOrCreateConversation(GetOrCreateParams{
-		UserID:       model.NewId(),
+		UserID:       userID,
 		BotID:        botID,
 		ChannelID:    "chan1",
 		RootPostID:   rootPostID,

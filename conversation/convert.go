@@ -9,9 +9,15 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
 
+// UnsharedToolResultRedaction replaces tool_result content the requester has
+// not shared, preserving the tool_use/tool_result pairing required by LLM
+// providers.
+const UnsharedToolResultRedaction = "[result not shared by user]"
+
 // BlocksToPost converts a slice of content blocks and a role string into an llm.Post.
-// This is used when reading turns from the database to build a CompletionRequest.
-func BlocksToPost(blocks []ContentBlock, role string) llm.Post {
+// When redactUnshared is true, tool_result content whose Shared flag is not
+// true is replaced with UnsharedToolResultRedaction.
+func BlocksToPost(blocks []ContentBlock, role string, redactUnshared bool) llm.Post {
 	post := llm.Post{
 		Role: RoleFromString(role),
 	}
@@ -38,10 +44,14 @@ func BlocksToPost(blocks []ContentBlock, role string) llm.Post {
 			})
 
 		case BlockTypeToolResult:
+			content := block.Content
+			if redactUnshared && (block.Shared == nil || !*block.Shared) {
+				content = UnsharedToolResultRedaction
+			}
 			merged := false
 			for i := range post.ToolUse {
 				if post.ToolUse[i].ID == block.ToolUseID {
-					post.ToolUse[i].Result = block.Content
+					post.ToolUse[i].Result = content
 					merged = true
 					break
 				}
@@ -49,7 +59,7 @@ func BlocksToPost(blocks []ContentBlock, role string) llm.Post {
 			if !merged {
 				post.ToolUse = append(post.ToolUse, llm.ToolCall{
 					ID:     block.ToolUseID,
-					Result: block.Content,
+					Result: content,
 					Status: StatusFromString(block.Status),
 				})
 			}
