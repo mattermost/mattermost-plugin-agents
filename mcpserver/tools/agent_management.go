@@ -113,11 +113,21 @@ type UpdateAgentToolArgs struct {
 	StructuredOutputEnabled *bool                 `json:"structured_output_enabled,omitempty" jsonschema:"Optional replacement value"`
 }
 
+type GetAgentsToolArgs struct {
+	AgentID       string `json:"agent_id,omitempty" jsonschema:"Optional agent ID to fetch"`
+	AgentUsername string `json:"agent_username,omitempty" jsonschema:"Optional agent username to fetch when the agent ID is unknown"`
+}
+
 type CreateCustomPromptToolArgs struct {
 	Name        string `json:"name" jsonschema:"The custom prompt name,minLength=1"`
 	Description string `json:"description,omitempty" jsonschema:"Optional prompt description"`
 	Template    string `json:"template" jsonschema:"The prompt template text,minLength=1"`
 	IsShared    *bool  `json:"is_shared,omitempty" jsonschema:"Optional; whether the prompt is shared with other users. Defaults to false"`
+}
+
+type GetCustomPromptToolArgs struct {
+	PromptID   string `json:"prompt_id,omitempty" jsonschema:"Optional prompt ID to fetch"`
+	PromptName string `json:"prompt_name,omitempty" jsonschema:"Optional exact prompt name to fetch when the prompt ID is unknown"`
 }
 
 type UpdateCustomPromptToolArgs struct {
@@ -132,6 +142,12 @@ type UpdateCustomPromptToolArgs struct {
 func (p *MattermostToolProvider) getAgentManagementTools() []MCPTool {
 	return []MCPTool{
 		{
+			Name:        "get_agents",
+			Description: "Get visible self-serve AI agents from the Mattermost Agents plugin. With no arguments, returns every visible agent including IDs. Optionally filter by agent_id or agent_username when you want a specific agent before updating it.",
+			Schema:      NewJSONSchemaForAccessMode[GetAgentsToolArgs](string(p.accessMode)),
+			Resolver:    p.toolGetAgents,
+		},
+		{
 			Name:        "create_agent",
 			Description: "Create a new self-serve AI agent in the Mattermost Agents plugin. Provide display_name, username, and either service_id or service_name. Defaults mirror the UI: tools enabled, vision enabled, reasoning enabled, web_search native tool enabled, broad channel/user access, and all MCP tools allowed unless you narrow them.",
 			Schema:      NewJSONSchemaForAccessMode[CreateAgentToolArgs](string(p.accessMode)),
@@ -142,6 +158,12 @@ func (p *MattermostToolProvider) getAgentManagementTools() []MCPTool {
 			Description: "Update an existing self-serve AI agent in the Mattermost Agents plugin. Identify the agent with agent_id or agent_username. This tool fetches the current agent, merges only the fields you supply, and saves the full updated configuration for you.",
 			Schema:      NewJSONSchemaForAccessMode[UpdateAgentToolArgs](string(p.accessMode)),
 			Resolver:    p.toolUpdateAgent,
+		},
+		{
+			Name:        "get_custom_prompts",
+			Description: "Get visible custom prompt templates from the Mattermost Agents plugin. With no arguments, returns every visible prompt including IDs. Optionally filter by prompt_id or prompt_name when you want a specific prompt before updating it.",
+			Schema:      NewJSONSchemaForAccessMode[GetCustomPromptToolArgs](string(p.accessMode)),
+			Resolver:    p.toolGetCustomPrompts,
 		},
 		{
 			Name:        "create_custom_prompt",
@@ -156,6 +178,25 @@ func (p *MattermostToolProvider) getAgentManagementTools() []MCPTool {
 			Resolver:    p.toolUpdateCustomPrompt,
 		},
 	}
+}
+
+func (p *MattermostToolProvider) toolGetAgents(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+	var args GetAgentsToolArgs
+	if err := argsGetter(&args); err != nil {
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool get_agents: %w", err)
+	}
+
+	agents, err := doPluginJSON[[]llm.BotConfig](mcpContext, http.MethodGet, "/agents", nil)
+	if err != nil {
+		return "failed to list agents", fmt.Errorf("get_agents request failed: %w", err)
+	}
+
+	filteredAgents, err := filterAgentsByLookup(agents, args.AgentID, args.AgentUsername)
+	if err != nil {
+		return "failed to resolve agent", err
+	}
+
+	return marshalToolResult(filteredAgents)
 }
 
 func (p *MattermostToolProvider) toolCreateAgent(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
@@ -300,6 +341,25 @@ func (p *MattermostToolProvider) toolUpdateAgent(mcpContext *MCPToolContext, arg
 	}
 
 	return marshalToolResult(updatedAgent)
+}
+
+func (p *MattermostToolProvider) toolGetCustomPrompts(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+	var args GetCustomPromptToolArgs
+	if err := argsGetter(&args); err != nil {
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool get_custom_prompts: %w", err)
+	}
+
+	prompts, err := doPluginJSON[[]customprompts.CustomPrompt](mcpContext, http.MethodGet, "/custom-prompts", nil)
+	if err != nil {
+		return "failed to list custom prompts", fmt.Errorf("get_custom_prompts request failed: %w", err)
+	}
+
+	filteredPrompts, err := filterPromptsByLookup(prompts, args.PromptID, args.PromptName)
+	if err != nil {
+		return "failed to resolve custom prompt", err
+	}
+
+	return marshalToolResult(filteredPrompts)
 }
 
 func (p *MattermostToolProvider) toolCreateCustomPrompt(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
@@ -506,10 +566,22 @@ func resolveAgent(mcpContext *MCPToolContext, agentID, agentUsername string) (ll
 		return llm.BotConfig{}, fmt.Errorf("failed to list agents: %w", err)
 	}
 
+	filteredAgents, err := filterAgentsByLookup(agents, agentID, agentUsername)
+	if err != nil {
+		return llm.BotConfig{}, err
+	}
+	if len(filteredAgents) == 0 {
+		return llm.BotConfig{}, fmt.Errorf("agent lookup returned no results")
+	}
+
+	return filteredAgents[0], nil
+}
+
+func filterAgentsByLookup(agents []llm.BotConfig, agentID, agentUsername string) ([]llm.BotConfig, error) {
 	trimmedID := strings.TrimSpace(agentID)
 	trimmedUsername := strings.TrimPrefix(strings.TrimSpace(agentUsername), "@")
 	if trimmedID == "" && trimmedUsername == "" {
-		return llm.BotConfig{}, fmt.Errorf("agent_id or agent_username is required")
+		return agents, nil
 	}
 
 	var matchedByID *llm.BotConfig
@@ -521,7 +593,7 @@ func resolveAgent(mcpContext *MCPToolContext, agentID, agentUsername string) (ll
 		}
 		if trimmedUsername != "" && strings.EqualFold(agent.Name, trimmedUsername) {
 			if matchedByUsername != nil && matchedByUsername.ID != agent.ID {
-				return llm.BotConfig{}, fmt.Errorf("agent_username %q matched multiple agents; use agent_id instead", trimmedUsername)
+				return nil, fmt.Errorf("agent_username %q matched multiple agents; use agent_id instead", trimmedUsername)
 			}
 			matchedByUsername = &agent
 		}
@@ -529,15 +601,15 @@ func resolveAgent(mcpContext *MCPToolContext, agentID, agentUsername string) (ll
 
 	switch {
 	case matchedByID != nil && matchedByUsername != nil && matchedByID.ID != matchedByUsername.ID:
-		return llm.BotConfig{}, fmt.Errorf("agent_id %q and agent_username %q refer to different agents", trimmedID, trimmedUsername)
+		return nil, fmt.Errorf("agent_id %q and agent_username %q refer to different agents", trimmedID, trimmedUsername)
 	case matchedByID != nil:
-		return *matchedByID, nil
+		return []llm.BotConfig{*matchedByID}, nil
 	case matchedByUsername != nil:
-		return *matchedByUsername, nil
+		return []llm.BotConfig{*matchedByUsername}, nil
 	case trimmedID != "":
-		return llm.BotConfig{}, fmt.Errorf("agent_id %q was not found", trimmedID)
+		return nil, fmt.Errorf("agent_id %q was not found", trimmedID)
 	default:
-		return llm.BotConfig{}, fmt.Errorf("agent_username %q was not found", trimmedUsername)
+		return nil, fmt.Errorf("agent_username %q was not found", trimmedUsername)
 	}
 }
 
@@ -547,10 +619,22 @@ func resolveCustomPrompt(mcpContext *MCPToolContext, promptID, promptName string
 		return customprompts.CustomPrompt{}, fmt.Errorf("failed to list custom prompts: %w", err)
 	}
 
+	filteredPrompts, err := filterPromptsByLookup(prompts, promptID, promptName)
+	if err != nil {
+		return customprompts.CustomPrompt{}, err
+	}
+	if len(filteredPrompts) == 0 {
+		return customprompts.CustomPrompt{}, fmt.Errorf("custom prompt lookup returned no results")
+	}
+
+	return filteredPrompts[0], nil
+}
+
+func filterPromptsByLookup(prompts []customprompts.CustomPrompt, promptID, promptName string) ([]customprompts.CustomPrompt, error) {
 	trimmedID := strings.TrimSpace(promptID)
 	trimmedName := strings.TrimSpace(promptName)
 	if trimmedID == "" && trimmedName == "" {
-		return customprompts.CustomPrompt{}, fmt.Errorf("prompt_id or prompt_name is required")
+		return prompts, nil
 	}
 
 	var matchedByID *customprompts.CustomPrompt
@@ -562,7 +646,7 @@ func resolveCustomPrompt(mcpContext *MCPToolContext, promptID, promptName string
 		}
 		if trimmedName != "" && strings.EqualFold(prompt.Name, trimmedName) {
 			if matchedByName != nil && matchedByName.ID != prompt.ID {
-				return customprompts.CustomPrompt{}, fmt.Errorf("prompt_name %q matched multiple prompts; use prompt_id instead", trimmedName)
+				return nil, fmt.Errorf("prompt_name %q matched multiple prompts; use prompt_id instead", trimmedName)
 			}
 			matchedByName = &prompt
 		}
@@ -570,15 +654,15 @@ func resolveCustomPrompt(mcpContext *MCPToolContext, promptID, promptName string
 
 	switch {
 	case matchedByID != nil && matchedByName != nil && matchedByID.ID != matchedByName.ID:
-		return customprompts.CustomPrompt{}, fmt.Errorf("prompt_id %q and prompt_name %q refer to different prompts", trimmedID, trimmedName)
+		return nil, fmt.Errorf("prompt_id %q and prompt_name %q refer to different prompts", trimmedID, trimmedName)
 	case matchedByID != nil:
-		return *matchedByID, nil
+		return []customprompts.CustomPrompt{*matchedByID}, nil
 	case matchedByName != nil:
-		return *matchedByName, nil
+		return []customprompts.CustomPrompt{*matchedByName}, nil
 	case trimmedID != "":
-		return customprompts.CustomPrompt{}, fmt.Errorf("prompt_id %q was not found", trimmedID)
+		return nil, fmt.Errorf("prompt_id %q was not found", trimmedID)
 	default:
-		return customprompts.CustomPrompt{}, fmt.Errorf("prompt_name %q was not found", trimmedName)
+		return nil, fmt.Errorf("prompt_name %q was not found", trimmedName)
 	}
 }
 

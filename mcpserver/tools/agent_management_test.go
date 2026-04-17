@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -89,6 +90,91 @@ func TestToolCreateAgentUsesPluginRoutes(t *testing.T) {
 	assert.Equal(t, "medium", createdBody.ReasoningEffort)
 	assert.Equal(t, []string{"web_search"}, createdBody.EnabledNativeTools)
 	assert.Nil(t, createdBody.EnabledMCPTools)
+}
+
+func TestToolGetAgentsAndGetCustomPromptsUsePluginRoutes(t *testing.T) {
+	t.Parallel()
+
+	agents := []llm.BotConfig{
+		{
+			ID:                 "agent-1",
+			Name:               "release-bot",
+			DisplayName:        "Release Notes Agent",
+			CustomInstructions: "Summarize releases.",
+			ServiceID:          "svc-anthropic",
+		},
+		{
+			ID:                 "agent-2",
+			Name:               "support-bot",
+			DisplayName:        "Support Agent",
+			CustomInstructions: "Help users troubleshoot issues.",
+			ServiceID:          "svc-openai",
+		},
+	}
+	prompts := []customprompts.CustomPrompt{
+		{
+			ID:          "prompt-1",
+			CreatorID:   "user-1",
+			Name:        "Daily Summary",
+			Description: "Summarizes the day.",
+			Template:    "Summarize today.",
+			IsShared:    true,
+		},
+		{
+			ID:          "prompt-2",
+			CreatorID:   "user-1",
+			Name:        "Incident Report",
+			Description: "Formats incidents.",
+			Template:    "Format the incident.",
+			IsShared:    false,
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "BEARER test-token", r.Header.Get(model.HeaderAuth))
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/plugins/mattermost-ai/agents":
+			require.Equal(t, http.MethodGet, r.Method)
+			require.NoError(t, json.NewEncoder(w).Encode(agents))
+		case "/plugins/mattermost-ai/custom-prompts":
+			require.Equal(t, http.MethodGet, r.Method)
+			require.NoError(t, json.NewEncoder(w).Encode(prompts))
+		default:
+			t.Fatalf("unexpected request to %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	provider := &MattermostToolProvider{logger: &testLogger{t: t}}
+	mcpContext := newTestMCPToolContext(server.URL)
+
+	getAgentsResult, err := provider.toolGetAgents(mcpContext, jsonArgsGetter(t, GetAgentsToolArgs{}))
+	require.NoError(t, err)
+	assert.Contains(t, getAgentsResult, "\"id\": \"agent-1\"")
+	assert.Contains(t, getAgentsResult, "\"name\": \"release-bot\"")
+	assert.Contains(t, getAgentsResult, "\"id\": \"agent-2\"")
+
+	getPromptsResult, err := provider.toolGetCustomPrompts(mcpContext, jsonArgsGetter(t, GetCustomPromptToolArgs{}))
+	require.NoError(t, err)
+	assert.Contains(t, getPromptsResult, "\"id\": \"prompt-1\"")
+	assert.Contains(t, getPromptsResult, "\"id\": \"prompt-2\"")
+	assert.Contains(t, getPromptsResult, "\"name\": \"Incident Report\"")
+
+	getAgentResult, err := provider.toolGetAgents(mcpContext, jsonArgsGetter(t, GetAgentsToolArgs{
+		AgentUsername: "release-bot",
+	}))
+	require.NoError(t, err)
+	assert.Contains(t, getAgentResult, "\"id\": \"agent-1\"")
+	assert.NotContains(t, getAgentResult, "\"id\": \"agent-2\"")
+
+	getPromptResult, err := provider.toolGetCustomPrompts(mcpContext, jsonArgsGetter(t, GetCustomPromptToolArgs{
+		PromptName: "Incident Report",
+	}))
+	require.NoError(t, err)
+	assert.Contains(t, getPromptResult, "\"id\": \"prompt-2\"")
+	assert.NotContains(t, getPromptResult, "\"id\": \"prompt-1\"")
 }
 
 func TestToolUpdateAgentMergesExistingState(t *testing.T) {
@@ -284,6 +370,31 @@ func TestToolCreateAndUpdateCustomPromptUsePluginRoutes(t *testing.T) {
 	assert.Equal(t, "", updatedPromptBody["description"])
 	assert.Equal(t, "Updated template", updatedPromptBody["template"])
 	assert.Equal(t, true, updatedPromptBody["is_shared"])
+}
+
+func TestToolGetAgentsRequiresVisibleMatch(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/plugins/mattermost-ai/agents", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode([]llm.BotConfig{{
+			ID:          "agent-1",
+			Name:        "release-bot",
+			DisplayName: "Release Notes Agent",
+			ServiceID:   "svc-anthropic",
+		}}))
+	}))
+	defer server.Close()
+
+	provider := &MattermostToolProvider{logger: &testLogger{t: t}}
+	mcpContext := newTestMCPToolContext(server.URL)
+
+	_, err := provider.toolGetAgents(mcpContext, jsonArgsGetter(t, GetAgentsToolArgs{
+		AgentID: "missing-agent",
+	}))
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "agent_id \"missing-agent\" was not found"))
 }
 
 func newTestMCPToolContext(serverURL string) *MCPToolContext {
