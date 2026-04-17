@@ -10,7 +10,6 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -20,7 +19,7 @@ import (
 
 type failingAgentStore struct{}
 
-func (failingAgentStore) ListAgents() ([]*useragents.UserAgent, error) {
+func (failingAgentStore) ListAgents() ([]*llm.BotConfig, error) {
 	return nil, fmt.Errorf("list agents failed")
 }
 

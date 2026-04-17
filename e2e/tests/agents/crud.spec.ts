@@ -65,9 +65,9 @@ test.describe('Agent CRUD', () => {
         const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
         const token = adminClient.getToken();
         await agentApi.createTestAgent(token, {
-            display_name: 'Edit Me',
+            displayName: 'Edit Me',
             username: 'editmeagent',
-            service_id: mockServiceId,
+            serviceID: mockServiceId,
         });
 
         await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
@@ -101,9 +101,9 @@ test.describe('Agent CRUD', () => {
         const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
         const token = adminClient.getToken();
         await agentApi.createTestAgent(token, {
-            display_name: 'Delete Me',
+            displayName: 'Delete Me',
             username: 'deletemeagent',
-            service_id: mockServiceId,
+            serviceID: mockServiceId,
         });
 
         await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
@@ -131,9 +131,9 @@ test.describe('Agent CRUD', () => {
         const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
         const token = adminClient.getToken();
         await agentApi.createTestAgent(token, {
-            display_name: 'Existing Agent',
+            displayName: 'Existing Agent',
             username: 'existingagent',
-            service_id: mockServiceId,
+            serviceID: mockServiceId,
         });
 
         await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
@@ -191,10 +191,10 @@ test.describe('Agent CRUD', () => {
         const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
         const token = adminClient.getToken();
         await agentApi.createTestAgent(token, {
-            display_name: `Visible To Regular ${suffix}`,
+            displayName: `Visible To Regular ${suffix}`,
             username: `visibletoreg${suffix}`,
-            service_id: mockServiceId,
-            user_access_level: 0,
+            serviceID: mockServiceId,
+            userAccessLevel: 0,
         });
 
         await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);

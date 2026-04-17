@@ -5,18 +5,17 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
-	"slices"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/config"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -28,50 +27,82 @@ const WebsocketEventBotsInvalidate = "bots_invalidate"
 
 // CreateAgentRequest is the JSON body for POST /agents.
 type CreateAgentRequest struct {
-	DisplayName             string               `json:"display_name" binding:"required"`
+	DisplayName             string               `json:"displayName" binding:"required"`
 	Username                string               `json:"username" binding:"required"`
-	ServiceID               string               `json:"service_id" binding:"required"`
-	CustomInstructions      string               `json:"custom_instructions"`
-	ChannelAccessLevel      int                  `json:"channel_access_level"`
-	ChannelIDs              []string             `json:"channel_ids"`
-	UserAccessLevel         int                  `json:"user_access_level"`
-	UserIDs                 []string             `json:"user_ids"`
-	TeamIDs                 []string             `json:"team_ids"`
-	AdminUserIDs            []string             `json:"admin_user_ids"`
-	EnabledTools            []llm.EnabledMCPTool `json:"enabled_tools"`
+	ServiceID               string               `json:"serviceID" binding:"required"`
+	CustomInstructions      string               `json:"customInstructions"`
+	ChannelAccessLevel      int                  `json:"channelAccessLevel"`
+	ChannelIDs              []string             `json:"channelIDs"`
+	UserAccessLevel         int                  `json:"userAccessLevel"`
+	UserIDs                 []string             `json:"userIDs"`
+	TeamIDs                 []string             `json:"teamIDs"`
+	AdminUserIDs            []string             `json:"adminUserIDs"`
+	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
 	Model                   string               `json:"model"`
-	EnableVision            *bool                `json:"enable_vision"`
-	DisableTools            *bool                `json:"disable_tools"`
-	EnabledNativeTools      *[]string            `json:"enabled_native_tools"`
-	ReasoningEnabled        *bool                `json:"reasoning_enabled"`
-	ReasoningEffort         string               `json:"reasoning_effort"`
-	ThinkingBudget          int                  `json:"thinking_budget"`
-	StructuredOutputEnabled *bool                `json:"structured_output_enabled"`
+	EnableVision            *bool                `json:"enableVision"`
+	DisableTools            *bool                `json:"disableTools"`
+	EnabledNativeTools      *[]string            `json:"enabledNativeTools"`
+	ReasoningEnabled        *bool                `json:"reasoningEnabled"`
+	ReasoningEffort         string               `json:"reasoningEffort"`
+	ThinkingBudget          int                  `json:"thinkingBudget"`
+	StructuredOutputEnabled *bool                `json:"structuredOutputEnabled"`
 }
 
 // UpdateAgentRequest is the JSON body for PUT /agents/:agentid.
 // All fields are optional — only provided fields are applied via read-modify-write.
 // Field names match CreateAgentRequest so clients may send a full document on each save.
 type UpdateAgentRequest struct {
-	DisplayName             *string               `json:"display_name"`
+	DisplayName             *string               `json:"displayName"`
 	Username                *string               `json:"username"`
-	ServiceID               *string               `json:"service_id"`
-	CustomInstructions      *string               `json:"custom_instructions"`
-	ChannelAccessLevel      *int                  `json:"channel_access_level"`
-	ChannelIDs              *[]string             `json:"channel_ids"`
-	UserAccessLevel         *int                  `json:"user_access_level"`
-	UserIDs                 *[]string             `json:"user_ids"`
-	TeamIDs                 *[]string             `json:"team_ids"`
-	AdminUserIDs            *[]string             `json:"admin_user_ids"`
-	EnabledTools            *[]llm.EnabledMCPTool `json:"enabled_tools"`
+	ServiceID               *string               `json:"serviceID"`
+	CustomInstructions      *string               `json:"customInstructions"`
+	ChannelAccessLevel      *int                  `json:"channelAccessLevel"`
+	ChannelIDs              *[]string             `json:"channelIDs"`
+	UserAccessLevel         *int                  `json:"userAccessLevel"`
+	UserIDs                 *[]string             `json:"userIDs"`
+	TeamIDs                 *[]string             `json:"teamIDs"`
+	AdminUserIDs            *[]string             `json:"adminUserIDs"`
+	EnabledMCPTools         *[]llm.EnabledMCPTool `json:"enabledMCPTools"`
 	Model                   *string               `json:"model"`
-	EnableVision            *bool                 `json:"enable_vision"`
-	DisableTools            *bool                 `json:"disable_tools"`
-	EnabledNativeTools      *[]string             `json:"enabled_native_tools"`
-	ReasoningEnabled        *bool                 `json:"reasoning_enabled"`
-	ReasoningEffort         *string               `json:"reasoning_effort"`
-	ThinkingBudget          *int                  `json:"thinking_budget"`
-	StructuredOutputEnabled *bool                 `json:"structured_output_enabled"`
+	EnableVision            *bool                 `json:"enableVision"`
+	DisableTools            *bool                 `json:"disableTools"`
+	EnabledNativeTools      *[]string             `json:"enabledNativeTools"`
+	ReasoningEnabled        *bool                 `json:"reasoningEnabled"`
+	ReasoningEffort         *string               `json:"reasoningEffort"`
+	ThinkingBudget          *int                  `json:"thinkingBudget"`
+	StructuredOutputEnabled *bool                 `json:"structuredOutputEnabled"`
+
+	enabledMCPToolsProvided bool
+}
+
+func (r *UpdateAgentRequest) UnmarshalJSON(data []byte) error {
+	type alias UpdateAgentRequest
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	_, enabledMCPToolsProvided := raw["enabledMCPTools"]
+	if value, ok := raw["enabledMCPTools"]; ok {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			decoded.EnabledMCPTools = nil
+		} else {
+			var tools []llm.EnabledMCPTool
+			if err := json.Unmarshal(value, &tools); err != nil {
+				return err
+			}
+			decoded.EnabledMCPTools = &tools
+		}
+	}
+
+	*r = UpdateAgentRequest(decoded)
+	r.enabledMCPToolsProvided = enabledMCPToolsProvided
+	return nil
 }
 
 // ServiceInfo is a safe-to-expose subset of llm.ServiceConfig (no API keys or secrets).
@@ -79,9 +110,9 @@ type ServiceInfo struct {
 	ID               string `json:"id"`
 	Name             string `json:"name"`
 	Type             string `json:"type"`
-	DefaultModel     string `json:"default_model"`
-	OutputTokenLimit int    `json:"output_token_limit"`
-	UseResponsesAPI  bool   `json:"use_responses_api"`
+	DefaultModel     string `json:"defaultModel"`
+	OutputTokenLimit int    `json:"outputTokenLimit"`
+	UseResponsesAPI  bool   `json:"useResponsesAPI"`
 }
 
 func serviceUsesResponsesAPIForUI(service llm.ServiceConfig) bool {
@@ -96,24 +127,22 @@ func (a *API) agentLicenseRequired(c *gin.Context) {
 	}
 }
 
-// isAgentAdmin returns true if userID is the creator or an explicit admin of the agent.
-func isAgentAdmin(agent *useragents.UserAgent, userID string) bool {
-	return agent.CreatorID == userID || slices.Contains(agent.AdminUserIDs, userID)
-}
-
 // canManageAgent returns true if the user may update or delete the agent.
 // Holders of PermissionManageOthersAgent may manage any agent (including others' agents
 // and migrated legacy bots with no owner).
 // Migrated legacy bots have no CreatorID; system admins (PermissionManageSystem) retain the
 // same operational access they had via System Console before self-service agents.
-func canManageAgent(client *pluginapi.Client, agent *useragents.UserAgent, userID string) bool {
-	if isAgentAdmin(agent, userID) {
+func canManageAgent(client *pluginapi.Client, cfg *llm.BotConfig, userID string) bool {
+	if cfg == nil {
+		return false
+	}
+	if cfg.IsAdmin(userID) {
 		return true
 	}
 	if client.User.HasPermissionTo(userID, model.PermissionManageOthersAgent) {
 		return true
 	}
-	if agent.CreatorID == "" && client.User.HasPermissionTo(userID, model.PermissionManageSystem) {
+	if cfg.CreatorID == "" && client.User.HasPermissionTo(userID, model.PermissionManageSystem) {
 		return true
 	}
 	return false
@@ -241,7 +270,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
-	// Build the UserAgent record: defaults from plugin config (SelfServiceAgentDefaults) when set,
+	// Build the BotConfig record: defaults from plugin config (SelfServiceAgentDefaults) when set,
 	// otherwise legacy System Console new-bot defaults.
 	def := cfg.SelfServiceAgentDefaults
 	enableVision := true
@@ -266,20 +295,20 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	}
 	enabledNativeTools := []string{"web_search"}
 
-	agent := &useragents.UserAgent{
+	agent := &llm.BotConfig{
 		BotUserID:               mmBot.UserId,
 		CreatorID:               userID,
 		DisplayName:             req.DisplayName,
-		Username:                req.Username,
+		Name:                    req.Username,
 		ServiceID:               req.ServiceID,
 		CustomInstructions:      req.CustomInstructions,
-		ChannelAccessLevel:      req.ChannelAccessLevel,
+		ChannelAccessLevel:      llm.ChannelAccessLevel(req.ChannelAccessLevel),
 		ChannelIDs:              req.ChannelIDs,
-		UserAccessLevel:         req.UserAccessLevel,
+		UserAccessLevel:         llm.UserAccessLevel(req.UserAccessLevel),
 		UserIDs:                 req.UserIDs,
 		TeamIDs:                 req.TeamIDs,
 		AdminUserIDs:            req.AdminUserIDs,
-		EnabledTools:            req.EnabledTools,
+		EnabledMCPTools:         req.EnabledMCPTools,
 		Model:                   req.Model,
 		EnableVision:            enableVision,
 		DisableTools:            disableTools,
@@ -332,10 +361,10 @@ func (a *API) handleListAgents(c *gin.Context) {
 		return
 	}
 
-	accessible := make([]*useragents.UserAgent, 0, len(agents))
-	for _, agent := range agents {
-		if a.canUserAccessAgent(agent, userID) {
-			accessible = append(accessible, agent)
+	accessible := make([]*llm.BotConfig, 0, len(agents))
+	for _, cfg := range agents {
+		if a.canUserAccessAgent(cfg, userID) {
+			accessible = append(accessible, cfg)
 		}
 	}
 
@@ -348,22 +377,22 @@ func (a *API) handleGetAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	agentID := c.Param("agentid")
 
-	agent, err := a.agentStore.GetAgent(agentID)
+	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
 		return
 	}
-	if agent == nil {
+	if cfg == nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
 
-	if !a.canUserAccessAgent(agent, userID) {
+	if !a.canUserAccessAgent(cfg, userID) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
 
-	c.JSON(http.StatusOK, agent)
+	c.JSON(http.StatusOK, cfg)
 }
 
 // handleUpdateAgent updates a user agent's mutable fields.
@@ -372,17 +401,17 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	agentID := c.Param("agentid")
 
-	agent, err := a.agentStore.GetAgent(agentID)
+	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
 		return
 	}
-	if agent == nil {
+	if cfg == nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
 
-	if !canManageAgent(a.pluginAPI, agent, userID) {
+	if !canManageAgent(a.pluginAPI, cfg, userID) {
 		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to modify this agent"))
 		return
 	}
@@ -396,11 +425,11 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	// Apply partial update (read-modify-write)
 	displayNameChanged := false
 	if req.DisplayName != nil {
-		displayNameChanged = agent.DisplayName != *req.DisplayName
-		agent.DisplayName = *req.DisplayName
+		displayNameChanged = cfg.DisplayName != *req.DisplayName
+		cfg.DisplayName = *req.DisplayName
 	}
 	if req.Username != nil {
-		if *req.Username != agent.Username {
+		if *req.Username != cfg.Name {
 			c.AbortWithError(http.StatusBadRequest, errors.New("username cannot be changed after the agent is created"))
 			return
 		}
@@ -409,58 +438,62 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		if _, ok := a.validateAgentServiceID(c, *req.ServiceID); !ok {
 			return
 		}
-		agent.ServiceID = *req.ServiceID
+		cfg.ServiceID = *req.ServiceID
 	}
 	if req.CustomInstructions != nil {
-		agent.CustomInstructions = *req.CustomInstructions
+		cfg.CustomInstructions = *req.CustomInstructions
 	}
 	if req.ChannelAccessLevel != nil {
-		agent.ChannelAccessLevel = *req.ChannelAccessLevel
+		cfg.ChannelAccessLevel = llm.ChannelAccessLevel(*req.ChannelAccessLevel)
 	}
 	if req.ChannelIDs != nil {
-		agent.ChannelIDs = *req.ChannelIDs
+		cfg.ChannelIDs = *req.ChannelIDs
 	}
 	if req.UserAccessLevel != nil {
-		agent.UserAccessLevel = *req.UserAccessLevel
+		cfg.UserAccessLevel = llm.UserAccessLevel(*req.UserAccessLevel)
 	}
 	if req.UserIDs != nil {
-		agent.UserIDs = *req.UserIDs
+		cfg.UserIDs = *req.UserIDs
 	}
 	if req.TeamIDs != nil {
-		agent.TeamIDs = *req.TeamIDs
+		cfg.TeamIDs = *req.TeamIDs
 	}
 	if req.AdminUserIDs != nil {
-		agent.AdminUserIDs = *req.AdminUserIDs
+		cfg.AdminUserIDs = *req.AdminUserIDs
 	}
-	if req.EnabledTools != nil {
-		agent.EnabledTools = *req.EnabledTools
+	if req.enabledMCPToolsProvided {
+		if req.EnabledMCPTools == nil {
+			cfg.EnabledMCPTools = nil
+		} else {
+			cfg.EnabledMCPTools = *req.EnabledMCPTools
+		}
 	}
 	if req.Model != nil {
-		agent.Model = *req.Model
+		cfg.Model = *req.Model
 	}
 	if req.EnableVision != nil {
-		agent.EnableVision = *req.EnableVision
+		cfg.EnableVision = *req.EnableVision
 	}
 	if req.DisableTools != nil {
-		agent.DisableTools = *req.DisableTools
+		cfg.DisableTools = *req.DisableTools
 	}
 	if req.EnabledNativeTools != nil {
-		agent.EnabledNativeTools = *req.EnabledNativeTools
+		cfg.EnabledNativeTools = *req.EnabledNativeTools
 	}
 	if req.ReasoningEnabled != nil {
-		agent.ReasoningEnabled = *req.ReasoningEnabled
+		cfg.ReasoningEnabled = *req.ReasoningEnabled
 	}
 	if req.ReasoningEffort != nil {
-		agent.ReasoningEffort = *req.ReasoningEffort
+		cfg.ReasoningEffort = *req.ReasoningEffort
 	}
 	if req.ThinkingBudget != nil {
-		agent.ThinkingBudget = *req.ThinkingBudget
+		cfg.ThinkingBudget = *req.ThinkingBudget
 	}
 	if req.StructuredOutputEnabled != nil {
-		agent.StructuredOutputEnabled = *req.StructuredOutputEnabled
+		cfg.StructuredOutputEnabled = *req.StructuredOutputEnabled
 	}
 
-	if err := a.agentStore.UpdateAgent(agent); err != nil {
+	if err := a.agentStore.UpdateAgent(cfg); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to update agent: %w", err))
 		return
 	}
@@ -469,15 +502,15 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 
 	// Sync display name change to the underlying Mattermost bot account
 	if displayNameChanged {
-		if _, err := a.pluginAPI.Bot.Patch(agent.BotUserID, &model.BotPatch{
-			DisplayName: &agent.DisplayName,
+		if _, err := a.pluginAPI.Bot.Patch(cfg.BotUserID, &model.BotPatch{
+			DisplayName: &cfg.DisplayName,
 		}); err != nil {
 			// Non-fatal: the DB is already updated, log and continue
 			_ = c.Error(fmt.Errorf("failed to patch bot display name: %w", err))
 		}
 	}
 
-	c.JSON(http.StatusOK, agent)
+	c.JSON(http.StatusOK, cfg)
 }
 
 // handleDeleteAgent soft-deletes an agent and deactivates its bot account.
@@ -486,17 +519,17 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	agentID := c.Param("agentid")
 
-	agent, err := a.agentStore.GetAgent(agentID)
+	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
 		return
 	}
-	if agent == nil {
+	if cfg == nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
 
-	if !canManageAgent(a.pluginAPI, agent, userID) {
+	if !canManageAgent(a.pluginAPI, cfg, userID) {
 		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to delete this agent"))
 		return
 	}
@@ -509,7 +542,7 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 	a.refreshBotsAndNotify()
 
 	// Deactivate the backing bot account
-	if _, err := a.pluginAPI.Bot.UpdateActive(agent.BotUserID, false); err != nil {
+	if _, err := a.pluginAPI.Bot.UpdateActive(cfg.BotUserID, false); err != nil {
 		// Non-fatal: the DB record is already soft-deleted
 		_ = c.Error(fmt.Errorf("failed to deactivate bot: %w", err))
 	}
@@ -523,17 +556,17 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	agentID := c.Param("agentid")
 
-	agent, err := a.agentStore.GetAgent(agentID)
+	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
 		return
 	}
-	if agent == nil {
+	if cfg == nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
 
-	if !canManageAgent(a.pluginAPI, agent, userID) {
+	if !canManageAgent(a.pluginAPI, cfg, userID) {
 		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to modify this agent"))
 		return
 	}
@@ -557,7 +590,7 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 		return
 	}
 
-	if err := a.pluginAPI.User.SetProfileImage(agent.BotUserID, bytes.NewReader(imageBytes)); err != nil {
+	if err := a.pluginAPI.User.SetProfileImage(cfg.BotUserID, bytes.NewReader(imageBytes)); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to set profile image: %w", err))
 		return
 	}
@@ -602,7 +635,7 @@ func (a *API) handleListServices(c *gin.Context) {
 
 // FetchModelsForServiceRequest is the JSON body for POST /agents/models/fetch.
 type FetchModelsForServiceRequest struct {
-	ServiceID string `json:"service_id" binding:"required"`
+	ServiceID string `json:"serviceID" binding:"required"`
 }
 
 // handleFetchModelsForService lists models for a configured service using stored credentials (non-admin).
@@ -671,49 +704,15 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	c.JSON(http.StatusOK, models)
 }
 
-// canUserAccessAgent checks whether the given user can see/use the agent,
-// based on the agent's UserAccessLevel, UserIDs, and TeamIDs.
-func (a *API) canUserAccessAgent(agent *useragents.UserAgent, userID string) bool {
-	// Creators and admins always have access
-	if isAgentAdmin(agent, userID) {
-		return true
-	}
-
-	switch llm.UserAccessLevel(agent.UserAccessLevel) {
-	case llm.UserAccessLevelAll:
-		return true
-	case llm.UserAccessLevelAllow:
-		if slices.Contains(agent.UserIDs, userID) {
-			return true
-		}
-		for _, teamID := range agent.TeamIDs {
-			if a.isMemberOfTeam(teamID, userID) {
-				return true
-			}
-		}
-		return false
-	case llm.UserAccessLevelBlock:
-		if slices.Contains(agent.UserIDs, userID) {
-			return false
-		}
-		for _, teamID := range agent.TeamIDs {
-			if a.isMemberOfTeam(teamID, userID) {
-				return false
-			}
-		}
-		return true
-	case llm.UserAccessLevelNone:
-		return false
-	default:
+// canUserAccessAgent reports whether userID is allowed to see/use the given agent.
+// Creators and admins always have access; otherwise the shared
+// bots.CheckUsageRestrictionsForUserConfig rules apply.
+func (a *API) canUserAccessAgent(cfg *llm.BotConfig, userID string) bool {
+	if cfg == nil {
 		return false
 	}
-}
-
-// isMemberOfTeam checks whether the user is an active member of the given team.
-func (a *API) isMemberOfTeam(teamID, userID string) bool {
-	member, err := a.pluginAPI.Team.GetMember(teamID, userID)
-	if err != nil {
-		return false
+	if cfg.IsAdmin(userID) {
+		return true
 	}
-	return member != nil && member.DeleteAt == 0
+	return a.bots.CheckUsageRestrictionsForUserConfig(*cfg, userID) == nil
 }

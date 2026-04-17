@@ -26,7 +26,7 @@ type UserMCPServerInfo = {
 }
 
 type Props = {
-    enabledTools: EnabledTool[];
+    enabledTools: EnabledTool[] | null;
     onChange: (tools: EnabledTool[]) => void;
 }
 
@@ -59,24 +59,39 @@ const McpsTab = (props: Props) => {
         load();
     }, [intl]);
 
+    const allEnabledTools = useMemo(() => {
+        return servers.flatMap((server) => server.tools.filter((tool) => tool.enabled).map((tool) => ({
+            server_origin: server.serverOrigin,
+            tool_name: tool.name,
+        })));
+    }, [servers]);
+
+    const materializeEnabledTools = useCallback(() => {
+        return enabledTools ?? allEnabledTools;
+    }, [allEnabledTools, enabledTools]);
+
     const isToolEnabled = useCallback((serverOrigin: string, toolName: string) => {
+        if (enabledTools === null) {
+            return true;
+        }
         return enabledTools.some(
             (t) => t.server_origin === serverOrigin && t.tool_name === toolName,
         );
     }, [enabledTools]);
 
     const toggleTool = useCallback((serverOrigin: string, toolName: string) => {
-        const exists = enabledTools.some(
+        const currentTools = materializeEnabledTools();
+        const exists = currentTools.some(
             (t) => t.server_origin === serverOrigin && t.tool_name === toolName,
         );
         if (exists) {
-            onChange(enabledTools.filter(
+            onChange(currentTools.filter(
                 (t) => !(t.server_origin === serverOrigin && t.tool_name === toolName),
             ));
         } else {
-            onChange([...enabledTools, {server_origin: serverOrigin, tool_name: toolName}]);
+            onChange([...currentTools, {server_origin: serverOrigin, tool_name: toolName}]);
         }
-    }, [enabledTools, onChange]);
+    }, [materializeEnabledTools, onChange]);
 
     const toggleServer = useCallback((serverOrigin: string) => {
         setExpandedServers((prev) => {
@@ -91,26 +106,27 @@ const McpsTab = (props: Props) => {
     }, []);
 
     const toggleAllServerTools = useCallback((server: UserMCPServerInfo) => {
+        const currentTools = materializeEnabledTools();
         const serverTools = server.tools.filter((t) => t.enabled);
         const allEnabled = serverTools.every((t) => isToolEnabled(server.serverOrigin, t.name));
 
         if (allEnabled) {
             // Remove all tools for this server
-            onChange(enabledTools.filter((t) => t.server_origin !== server.serverOrigin));
+            onChange(currentTools.filter((t) => t.server_origin !== server.serverOrigin));
         } else {
             // Add all enabled tools for this server
-            const existing = enabledTools.filter((t) => t.server_origin !== server.serverOrigin);
+            const existing = currentTools.filter((t) => t.server_origin !== server.serverOrigin);
             const newTools = serverTools.map((t) => ({
                 server_origin: server.serverOrigin,
                 tool_name: t.name,
             }));
             onChange([...existing, ...newTools]);
         }
-    }, [enabledTools, isToolEnabled, onChange]);
+    }, [isToolEnabled, materializeEnabledTools, onChange]);
 
     // Detect orphaned tools (enabled but no longer available)
     const orphanedTools = useMemo(() => {
-        if (servers.length === 0) {
+        if (enabledTools === null || servers.length === 0) {
             return [];
         }
         return enabledTools.filter((et) =>
@@ -123,7 +139,7 @@ const McpsTab = (props: Props) => {
 
     // Auto-remove orphaned tools from enabledTools so they're cleaned on save
     useEffect(() => {
-        if (orphanedTools.length > 0 && servers.length > 0) {
+        if (enabledTools !== null && orphanedTools.length > 0 && servers.length > 0) {
             const cleaned = enabledTools.filter((et) =>
                 servers.some((s) =>
                     s.serverOrigin === et.server_origin &&
@@ -133,7 +149,7 @@ const McpsTab = (props: Props) => {
             onChange(cleaned);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [servers]);
+    }, [enabledTools, servers]);
 
     // Filter servers/tools by search
     const filteredServers = servers.filter((server) => {

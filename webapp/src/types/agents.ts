@@ -4,86 +4,109 @@
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 
 // EnabledTool matches llm.EnabledMCPTool (persisted agents and config bots).
+// Inner field names stay snake_case to match the backend's json:"server_origin"
+// / json:"tool_name" tags; see .planning/phase-1/PLAN.md pitfall P2.
 export type EnabledTool = {
     server_origin: string; // MCP server origin URL
     tool_name: string; // tool identifier on that server
 }
 
-// UserAgent matches the JSON serialization of useragents.UserAgent from the backend.
-// The backend API (GET /agents, GET /agents/:id) returns this shape.
+// UserAgent matches the JSON serialization of *llm.BotConfig from the backend.
+// The backend API (GET /agents, GET /agents/:id, POST /agents, PUT /agents/:id)
+// returns this shape.
+//
+// NOTE on `name`: the backend emits the agent's Mattermost username under the
+// JSON key "name" (llm.BotConfig.Name). The CreateAgentRequest / UpdateAgentRequest
+// DTOs accept the same value under the JSON key "username" — see the asymmetry
+// called out in §2.5 of .planning/phase-2/PLAN.md. UI layers typically display
+// this value prefixed with "@" as the agent's username.
+//
+// The admin/lifecycle fields (botUserID, creatorID, adminUserIDs, createAt,
+// updateAt, deleteAt) are all `omitempty` on the backend; for config-defined
+// bots (returned via /agents only if/when surfaced, and for migrated legacy
+// bots with CreatorID == "") they may be absent from the response.
+//
+// `enabledMCPTools` uses a tri-state contract:
+// - null: all MCP tools currently/future available are allowed
+// - []: no MCP tools are allowed
+// - [..]: only the listed tools are allowed
 export type UserAgent = {
     id: string;
-    bot_user_id: string;
-    creator_id: string;
-    display_name: string;
-    username: string;
-    service_id: string;
-    custom_instructions: string;
-    channel_access_level: ChannelAccessLevel;
-    channel_ids: string[];
-    user_access_level: UserAccessLevel;
-    user_ids: string[];
-    team_ids: string[];
-    admin_user_ids: string[];
-    enabled_tools: EnabledTool[];
+    name: string;
+    displayName: string;
+    customInstructions: string;
+    serviceID: string;
     model: string;
-    enable_vision: boolean;
-    disable_tools: boolean;
-    enabled_native_tools: string[];
-    reasoning_enabled: boolean;
-    reasoning_effort: string;
-    thinking_budget: number;
-    structured_output_enabled: boolean;
-    create_at: number;
-    update_at: number;
-    delete_at: number;
+    enableVision: boolean;
+    disableTools: boolean;
+    channelAccessLevel: ChannelAccessLevel;
+    channelIDs: string[];
+    userAccessLevel: UserAccessLevel;
+    userIDs: string[];
+    teamIDs: string[];
+    enabledNativeTools: string[];
+    enabledMCPTools: EnabledTool[] | null;
+    reasoningEnabled: boolean;
+    reasoningEffort: string;
+    thinkingBudget: number;
+    structuredOutputEnabled: boolean;
+
+    // Admin / lifecycle metadata (omitempty on backend).
+    botUserID?: string;
+    creatorID?: string;
+    adminUserIDs?: string[];
+    createAt?: number;
+    updateAt?: number;
+    deleteAt?: number;
 }
 
 // CreateAgentRequest matches api.CreateAgentRequest in Go.
+// NOTE: this DTO still uses the JSON key "username" (json:"username" in
+// api/api_agents.go) even though the response emits the same value as "name".
 export type CreateAgentRequest = {
-    display_name: string;
+    displayName: string;
     username: string;
-    service_id: string;
-    custom_instructions?: string;
-    channel_access_level?: number;
-    channel_ids?: string[];
-    user_access_level?: number;
-    user_ids?: string[];
-    team_ids?: string[];
-    admin_user_ids?: string[];
-    enabled_tools?: EnabledTool[];
+    serviceID: string;
+    customInstructions?: string;
+    channelAccessLevel?: number;
+    channelIDs?: string[];
+    userAccessLevel?: number;
+    userIDs?: string[];
+    teamIDs?: string[];
+    adminUserIDs?: string[];
+    enabledMCPTools?: EnabledTool[] | null;
     model?: string;
-    enable_vision?: boolean;
-    disable_tools?: boolean;
-    enabled_native_tools?: string[];
-    reasoning_enabled?: boolean;
-    reasoning_effort?: string;
-    thinking_budget?: number;
-    structured_output_enabled?: boolean;
+    enableVision?: boolean;
+    disableTools?: boolean;
+    enabledNativeTools?: string[];
+    reasoningEnabled?: boolean;
+    reasoningEffort?: string;
+    thinkingBudget?: number;
+    structuredOutputEnabled?: boolean;
 }
 
 // UpdateAgentRequest matches api.UpdateAgentRequest in Go.
-// All fields are optional (pointer fields in Go → undefined in TS).
+// All fields optional (pointer fields in Go → undefined in TS).
 export type UpdateAgentRequest = {
-    display_name?: string;
+    displayName?: string;
     username?: string;
-    service_id?: string;
-    custom_instructions?: string;
-    channel_access_level?: number;
-    channel_ids?: string[];
-    user_access_level?: number;
-    user_ids?: string[];
-    team_ids?: string[];
-    admin_user_ids?: string[];
-    enabled_tools?: EnabledTool[];
+    serviceID?: string;
+    customInstructions?: string;
+    channelAccessLevel?: number;
+    channelIDs?: string[];
+    userAccessLevel?: number;
+    userIDs?: string[];
+    teamIDs?: string[];
+    adminUserIDs?: string[];
+    enabledMCPTools?: EnabledTool[] | null;
     model?: string;
-    enable_vision?: boolean;
-    disable_tools?: boolean;
-    enabled_native_tools?: string[];
-    reasoning_enabled?: boolean;
-    reasoning_effort?: string;
-    thinking_budget?: number;
-    structured_output_enabled?: boolean;
+    enableVision?: boolean;
+    disableTools?: boolean;
+    enabledNativeTools?: string[];
+    reasoningEnabled?: boolean;
+    reasoningEffort?: string;
+    thinkingBudget?: number;
+    structuredOutputEnabled?: boolean;
 }
 
 // ServiceInfo matches api.ServiceInfo in Go (safe subset, no secrets).
@@ -91,7 +114,7 @@ export type ServiceInfo = {
     id: string;
     name: string;
     type: string;
-    default_model: string;
-    output_token_limit: number;
-    use_responses_api: boolean;
+    defaultModel: string;
+    outputTokenLimit: number;
+    useResponsesAPI: boolean;
 }

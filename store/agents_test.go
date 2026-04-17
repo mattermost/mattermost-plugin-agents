@@ -8,28 +8,27 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/useragents"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// testAgent returns a fully-populated UserAgent for testing.
+// testAgent returns a fully-populated BotConfig for testing.
 // ID, CreateAt, UpdateAt, and DeleteAt are set by the store on create.
-func testAgent(creatorID, username, displayName string) *useragents.UserAgent {
-	return &useragents.UserAgent{
+func testAgent(creatorID, username, displayName string) *llm.BotConfig {
+	return &llm.BotConfig{
 		BotUserID:          "bot-user-id-" + username,
 		CreatorID:          creatorID,
 		DisplayName:        displayName,
-		Username:           username,
+		Name:               username,
 		ServiceID:          "svc-1",
 		CustomInstructions: "Be helpful and concise",
-		ChannelAccessLevel: 1, // ChannelAccessLevelAllow
+		ChannelAccessLevel: llm.ChannelAccessLevelAllow,
 		ChannelIDs:         []string{"ch-1", "ch-2"},
-		UserAccessLevel:    0, // UserAccessLevelAll
+		UserAccessLevel:    llm.UserAccessLevelAll,
 		UserIDs:            nil,
 		TeamIDs:            []string{"team-1"},
 		AdminUserIDs:       []string{"admin-1", "admin-2"},
-		EnabledTools: []llm.EnabledMCPTool{
+		EnabledMCPTools: []llm.EnabledMCPTool{
 			{ServerOrigin: "https://mcp.example.com", ToolName: "web_search"},
 			{ServerOrigin: "https://mcp.example.com", ToolName: "file_search"},
 		},
@@ -70,11 +69,11 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.Equal(t, agent.BotUserID, fetched.BotUserID)
 	assert.Equal(t, agent.CreatorID, fetched.CreatorID)
 	assert.Equal(t, agent.DisplayName, fetched.DisplayName)
-	assert.Equal(t, agent.Username, fetched.Username)
+	assert.Equal(t, agent.Name, fetched.Name)
 	assert.Equal(t, agent.ServiceID, fetched.ServiceID)
 	assert.Equal(t, agent.CustomInstructions, fetched.CustomInstructions)
-	assert.Equal(t, agent.ChannelAccessLevel, fetched.ChannelAccessLevel)
-	assert.Equal(t, agent.UserAccessLevel, fetched.UserAccessLevel)
+	assert.Equal(t, llm.ChannelAccessLevelAllow, fetched.ChannelAccessLevel)
+	assert.Equal(t, llm.UserAccessLevelAll, fetched.UserAccessLevel)
 	assert.Equal(t, agent.CreateAt, fetched.CreateAt)
 	assert.Equal(t, agent.UpdateAt, fetched.UpdateAt)
 	assert.Equal(t, agent.DeleteAt, fetched.DeleteAt)
@@ -84,10 +83,10 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.Nil(t, fetched.UserIDs) // nil slice round-trips as nil
 	assert.Equal(t, []string{"team-1"}, fetched.TeamIDs)
 	assert.Equal(t, []string{"admin-1", "admin-2"}, fetched.AdminUserIDs)
-	require.Len(t, fetched.EnabledTools, 2)
-	assert.Equal(t, "web_search", fetched.EnabledTools[0].ToolName)
-	assert.Equal(t, "https://mcp.example.com", fetched.EnabledTools[0].ServerOrigin)
-	assert.Equal(t, "file_search", fetched.EnabledTools[1].ToolName)
+	require.Len(t, fetched.EnabledMCPTools, 2)
+	assert.Equal(t, "web_search", fetched.EnabledMCPTools[0].ToolName)
+	assert.Equal(t, "https://mcp.example.com", fetched.EnabledMCPTools[0].ServerOrigin)
+	assert.Equal(t, "file_search", fetched.EnabledMCPTools[1].ToolName)
 
 	assert.Equal(t, "gpt-4", fetched.Model)
 	assert.True(t, fetched.EnableVision)
@@ -183,7 +182,7 @@ func TestAgentUpdate(t *testing.T) {
 	agent.DisplayName = "Updated Agent"
 	agent.CustomInstructions = "New instructions"
 	agent.ChannelIDs = []string{"ch-3"}
-	agent.EnabledTools = nil
+	agent.EnabledMCPTools = nil
 	agent.ServiceID = "svc-2"
 
 	require.NoError(t, s.UpdateAgent(agent))
@@ -199,7 +198,7 @@ func TestAgentUpdate(t *testing.T) {
 	assert.Equal(t, "Updated Agent", fetched.DisplayName)
 	assert.Equal(t, "New instructions", fetched.CustomInstructions)
 	assert.Equal(t, []string{"ch-3"}, fetched.ChannelIDs)
-	assert.Nil(t, fetched.EnabledTools)
+	assert.Nil(t, fetched.EnabledMCPTools)
 	assert.Equal(t, "svc-2", fetched.ServiceID)
 
 	// Immutable fields should not change
@@ -213,10 +212,10 @@ func TestAgentUpdateNonexistent(t *testing.T) {
 	err := s.RunMigrations()
 	require.NoError(t, err)
 
-	agent := &useragents.UserAgent{
+	agent := &llm.BotConfig{
 		ID:          "nonexistent-id",
 		DisplayName: "Ghost",
-		Username:    "ghost",
+		Name:        "ghost",
 		ServiceID:   "svc-1",
 	}
 	err = s.UpdateAgent(agent)
@@ -296,11 +295,11 @@ func TestAgentEmptySliceFields(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create agent with all slice fields nil/empty
-	agent := &useragents.UserAgent{
+	agent := &llm.BotConfig{
 		BotUserID:   "bot-empty",
 		CreatorID:   "creator-empty",
 		DisplayName: "Empty Agent",
-		Username:    "empty-agent",
+		Name:        "empty-agent",
 		ServiceID:   "svc-1",
 		// All slice fields intentionally left nil
 	}
@@ -315,7 +314,23 @@ func TestAgentEmptySliceFields(t *testing.T) {
 	assert.Nil(t, fetched.UserIDs)
 	assert.Nil(t, fetched.TeamIDs)
 	assert.Nil(t, fetched.AdminUserIDs)
-	assert.Nil(t, fetched.EnabledTools)
+	assert.Nil(t, fetched.EnabledMCPTools)
+}
+
+func TestAgentEmptyEnabledMCPToolsRoundTrip(t *testing.T) {
+	s := setupTestStore(t)
+	err := s.RunMigrations()
+	require.NoError(t, err)
+
+	agent := testAgent("creator-1", "emptymcp", "Empty MCP Tools")
+	agent.EnabledMCPTools = []llm.EnabledMCPTool{}
+	require.NoError(t, s.CreateAgent(agent))
+
+	fetched, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	require.NotNil(t, fetched.EnabledMCPTools)
+	assert.Empty(t, fetched.EnabledMCPTools)
 }
 
 func TestAgentConcurrentCreates(t *testing.T) {
@@ -340,4 +355,38 @@ func TestAgentConcurrentCreates(t *testing.T) {
 	agents, err := s.ListAgents()
 	require.NoError(t, err)
 	assert.Len(t, agents, count)
+}
+
+func TestAgentAdminLifecycleRoundTrip(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	cfg := &llm.BotConfig{
+		BotUserID:    "bot-admin-test",
+		CreatorID:    "creator-1",
+		DisplayName:  "Admin Test",
+		Name:         "admin-test",
+		ServiceID:    "svc-1",
+		AdminUserIDs: []string{"admin-a", "admin-b", "admin-c"},
+	}
+	require.NoError(t, s.CreateAgent(cfg))
+	assert.NotZero(t, cfg.CreateAt)
+	assert.Equal(t, cfg.CreateAt, cfg.UpdateAt)
+	assert.Zero(t, cfg.DeleteAt)
+
+	fetched, err := s.GetAgent(cfg.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	assert.Equal(t, []string{"admin-a", "admin-b", "admin-c"}, fetched.AdminUserIDs)
+	assert.Equal(t, cfg.CreateAt, fetched.CreateAt)
+	assert.Equal(t, cfg.UpdateAt, fetched.UpdateAt)
+	assert.Zero(t, fetched.DeleteAt)
+
+	originalCreateAt := cfg.CreateAt
+	cfg.AdminUserIDs = []string{"admin-a"} // shrink
+	require.NoError(t, s.UpdateAgent(cfg))
+	fetched, err = s.GetAgent(cfg.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"admin-a"}, fetched.AdminUserIDs)
+	assert.GreaterOrEqual(t, fetched.UpdateAt, originalCreateAt)
 }

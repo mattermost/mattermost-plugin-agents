@@ -26,7 +26,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
-	"github.com/mattermost/mattermost-plugin-agents/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -137,15 +136,15 @@ func (m *mockMCPClientManager) GetConfig() mcp.Config {
 
 // mockAgentStore is a minimal in-memory implementation of AgentStore for testing.
 type mockAgentStore struct {
-	agents map[string]*useragents.UserAgent
+	agents map[string]*llm.BotConfig
 }
 
 func newMockAgentStore() *mockAgentStore {
-	return &mockAgentStore{agents: make(map[string]*useragents.UserAgent)}
+	return &mockAgentStore{agents: make(map[string]*llm.BotConfig)}
 }
 
-// cloneUserAgent returns a deep copy so API callers cannot mutate mock store internals via returned pointers.
-func cloneUserAgent(src *useragents.UserAgent) *useragents.UserAgent {
+// cloneBotConfig returns a deep copy so API callers cannot mutate mock store internals via returned pointers.
+func cloneBotConfig(src *llm.BotConfig) *llm.BotConfig {
 	if src == nil {
 		return nil
 	}
@@ -162,8 +161,8 @@ func cloneUserAgent(src *useragents.UserAgent) *useragents.UserAgent {
 	if len(src.AdminUserIDs) > 0 {
 		dst.AdminUserIDs = append([]string(nil), src.AdminUserIDs...)
 	}
-	if len(src.EnabledTools) > 0 {
-		dst.EnabledTools = append([]llm.EnabledMCPTool(nil), src.EnabledTools...)
+	if len(src.EnabledMCPTools) > 0 {
+		dst.EnabledMCPTools = append([]llm.EnabledMCPTool(nil), src.EnabledMCPTools...)
 	}
 	if len(src.EnabledNativeTools) > 0 {
 		dst.EnabledNativeTools = append([]string(nil), src.EnabledNativeTools...)
@@ -171,59 +170,59 @@ func cloneUserAgent(src *useragents.UserAgent) *useragents.UserAgent {
 	return &dst
 }
 
-func (m *mockAgentStore) CreateAgent(agent *useragents.UserAgent) error {
-	agent.ID = "agen" + fmt.Sprintf("%022d", len(m.agents)+1)
+func (m *mockAgentStore) CreateAgent(cfg *llm.BotConfig) error {
+	cfg.ID = "agen" + fmt.Sprintf("%022d", len(m.agents)+1)
 	now := time.Now().UnixMilli()
-	agent.CreateAt = now
-	agent.UpdateAt = now
-	m.agents[agent.ID] = cloneUserAgent(agent)
+	cfg.CreateAt = now
+	cfg.UpdateAt = now
+	m.agents[cfg.ID] = cloneBotConfig(cfg)
 	return nil
 }
 
-func (m *mockAgentStore) GetAgent(id string) (*useragents.UserAgent, error) {
-	agent, ok := m.agents[id]
-	if !ok || agent.DeleteAt != 0 {
+func (m *mockAgentStore) GetAgent(id string) (*llm.BotConfig, error) {
+	cfg, ok := m.agents[id]
+	if !ok || cfg.DeleteAt != 0 {
 		return nil, nil
 	}
-	return cloneUserAgent(agent), nil
+	return cloneBotConfig(cfg), nil
 }
 
-func (m *mockAgentStore) ListAgents() ([]*useragents.UserAgent, error) {
-	result := make([]*useragents.UserAgent, 0, len(m.agents))
-	for _, agent := range m.agents {
-		if agent.DeleteAt == 0 {
-			result = append(result, cloneUserAgent(agent))
+func (m *mockAgentStore) ListAgents() ([]*llm.BotConfig, error) {
+	result := make([]*llm.BotConfig, 0, len(m.agents))
+	for _, cfg := range m.agents {
+		if cfg.DeleteAt == 0 {
+			result = append(result, cloneBotConfig(cfg))
 		}
 	}
 	return result, nil
 }
 
-func (m *mockAgentStore) ListAgentsByCreator(creatorID string) ([]*useragents.UserAgent, error) {
-	result := make([]*useragents.UserAgent, 0)
-	for _, agent := range m.agents {
-		if agent.DeleteAt == 0 && agent.CreatorID == creatorID {
-			result = append(result, cloneUserAgent(agent))
+func (m *mockAgentStore) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error) {
+	result := make([]*llm.BotConfig, 0)
+	for _, cfg := range m.agents {
+		if cfg.DeleteAt == 0 && cfg.CreatorID == creatorID {
+			result = append(result, cloneBotConfig(cfg))
 		}
 	}
 	return result, nil
 }
 
-func (m *mockAgentStore) UpdateAgent(agent *useragents.UserAgent) error {
-	existing, ok := m.agents[agent.ID]
+func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig) error {
+	existing, ok := m.agents[cfg.ID]
 	if !ok || existing.DeleteAt != 0 {
-		return fmt.Errorf("agent %q not found or already deleted", agent.ID)
+		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
 	}
-	agent.UpdateAt = time.Now().UnixMilli()
-	m.agents[agent.ID] = cloneUserAgent(agent)
+	cfg.UpdateAt = time.Now().UnixMilli()
+	m.agents[cfg.ID] = cloneBotConfig(cfg)
 	return nil
 }
 
 func (m *mockAgentStore) DeleteAgent(id string) error {
-	agent, ok := m.agents[id]
-	if !ok || agent.DeleteAt != 0 {
+	cfg, ok := m.agents[id]
+	if !ok || cfg.DeleteAt != 0 {
 		return fmt.Errorf("agent %q not found or already deleted", id)
 	}
-	agent.DeleteAt = time.Now().UnixMilli()
+	cfg.DeleteAt = time.Now().UnixMilli()
 	return nil
 }
 

@@ -28,10 +28,10 @@ const AgentRow = (props: Props) => {
     const menuRef = useRef<HTMLDivElement>(null);
     const intl = useIntl();
 
-    const avatarUrl = getProfilePictureUrl(agent.bot_user_id, 0);
-    const toolCount = agent.enabled_tools?.length ?? 0;
-    const service = services.find((s) => s.id === agent.service_id);
-    const serviceUnavailable = agent.service_id && !service;
+    const avatarUrl = getProfilePictureUrl(agent.botUserID ?? '', 0);
+    const toolCount = agent.enabledMCPTools?.length ?? 0;
+    const service = services.find((s) => s.id === agent.serviceID);
+    const serviceUnavailable = agent.serviceID && !service;
 
     // Close menu on outside click
     useEffect(() => {
@@ -63,11 +63,11 @@ const AgentRow = (props: Props) => {
         <RowContainer>
             <Avatar
                 src={avatarUrl}
-                alt={agent.display_name || agent.username || 'agent avatar'}
+                alt={agent.displayName || agent.name || 'agent avatar'}
             />
             <NameColumn>
-                <DisplayName>{agent.display_name}</DisplayName>
-                <Username>{'@'}{agent.username}</Username>
+                <DisplayName>{agent.displayName}</DisplayName>
+                <Username>{'@'}{agent.name}</Username>
             </NameColumn>
             <BadgesColumn>
                 {serviceUnavailable && (

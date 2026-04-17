@@ -117,22 +117,22 @@ const AgentsList = () => {
 
     // Filter agents based on active tab and search query
     const userCanManageAgent = useCallback((a: UserAgent) => {
-        const isOwner = a.creator_id === currentUserId || (a.admin_user_ids?.includes(currentUserId) ?? false);
+        const isOwner = a.creatorID === currentUserId || (a.adminUserIDs?.includes(currentUserId) ?? false);
         if (isOwner || hasManageOthersAgent) {
             return true;
         }
 
         // Migrated legacy bots have no creator; system admins had full control via System Console.
-        return Boolean(!a.creator_id && hasManageSystem);
+        return Boolean(!a.creatorID && hasManageSystem);
     }, [currentUserId, hasManageOthersAgent, hasManageSystem]);
 
     const filteredAgents = agents.filter((a) => {
-        if (activeTab === 'yours' && a.creator_id !== currentUserId) {
+        if (activeTab === 'yours' && a.creatorID !== currentUserId) {
             return false;
         }
         if (searchQuery.trim()) {
             const query = searchQuery.toLowerCase();
-            return a.display_name.toLowerCase().includes(query) || a.username.toLowerCase().includes(query);
+            return a.displayName.toLowerCase().includes(query) || a.name.toLowerCase().includes(query);
         }
         return true;
     });
@@ -230,7 +230,7 @@ const AgentsList = () => {
 
             {deletingAgent && (
                 <DeleteAgentDialog
-                    agentName={deletingAgent.display_name}
+                    agentName={deletingAgent.displayName}
                     confirmPending={deleteInFlight}
                     onConfirm={handleDeleteConfirm}
                     onCancel={handleDeleteCancel}

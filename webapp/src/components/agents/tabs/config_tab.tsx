@@ -100,12 +100,12 @@ const ConfigTab = (props: Props) => {
             apiURL: '',
             apiKey: '',
             orgId: '',
-            defaultModel: selectedService.default_model,
+            defaultModel: selectedService.defaultModel,
             tokenLimit: 0,
             streamingTimeoutSeconds: 0,
             sendUserId: false,
-            outputTokenLimit: selectedService.output_token_limit || 4096,
-            useResponsesAPI: selectedService.type === 'openai' ? true : selectedService.use_responses_api,
+            outputTokenLimit: selectedService.outputTokenLimit || 4096,
+            useResponsesAPI: selectedService.type === 'openai' ? true : selectedService.useResponsesAPI,
             region: '',
             awsAccessKeyID: '',
             awsSecretAccessKey: '',
@@ -184,11 +184,11 @@ const ConfigTab = (props: Props) => {
     const isAnthropic = selectedService?.type === 'anthropic';
     const isOpenAIWithResponses = Boolean(selectedService &&
         (selectedService.type === 'openai' ||
-         (['openaicompatible', 'azure'].includes(selectedService.type) && selectedService.use_responses_api)));
+         (['openaicompatible', 'azure'].includes(selectedService.type) && selectedService.useResponsesAPI)));
     const supportsStructuredOutput = Boolean(selectedService &&
         (isAnthropic || openAIStructuredOutputServiceTypes.includes(selectedService.type)));
 
-    const maxTokens = selectedService?.output_token_limit || 4096;
+    const maxTokens = selectedService?.outputTokenLimit || 4096;
 
     const handleReasoningBotChange = (bot: LLMBotConfig) => {
         const re = bot.reasoningEnabled ?? true;

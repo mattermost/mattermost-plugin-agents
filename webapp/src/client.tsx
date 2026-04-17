@@ -841,7 +841,7 @@ export async function fetchModelsForAgentService(serviceId: string, signal?: Abo
     const response = await fetch(url, {
         ...Client4.getOptions({
             method: 'POST',
-            body: JSON.stringify({service_id: serviceId}),
+            body: JSON.stringify({serviceID: serviceId}),
         }),
         signal,
     });

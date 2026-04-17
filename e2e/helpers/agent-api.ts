@@ -1,44 +1,63 @@
 import { mattermostAIPluginRoutes, PluginRoutesApi } from './plugin-http';
 
+// EnabledTool matches llm.EnabledMCPTool on the backend.
+// Inner field names stay snake_case to match the backend's json:"server_origin"
+// / json:"tool_name" tags; see .planning/phase-1/PLAN.md pitfall P2.
 export interface EnabledTool {
     server_origin: string;
     tool_name: string;
 }
 
 export interface CreateAgentRequest {
-    display_name: string;
+    displayName: string;
     username: string;
-    service_id: string;
-    custom_instructions?: string;
-    channel_access_level?: number;
-    channel_ids?: string[];
-    user_access_level?: number;
-    user_ids?: string[];
-    team_ids?: string[];
-    admin_user_ids?: string[];
-    enabled_tools?: EnabledTool[];
-    enabled_native_tools?: string[];
+    serviceID: string;
+    customInstructions?: string;
+    channelAccessLevel?: number;
+    channelIDs?: string[];
+    userAccessLevel?: number;
+    userIDs?: string[];
+    teamIDs?: string[];
+    adminUserIDs?: string[];
+    enabledMCPTools?: EnabledTool[] | null;
+    enabledNativeTools?: string[];
+    // Optional defaults-controlled fields (matches api.CreateAgentRequest pointer fields).
+    model?: string;
+    enableVision?: boolean;
+    disableTools?: boolean;
+    reasoningEnabled?: boolean;
+    reasoningEffort?: string;
+    thinkingBudget?: number;
+    structuredOutputEnabled?: boolean;
 }
 
 export interface AgentResponse {
     id: string;
-    bot_user_id: string;
-    creator_id: string;
-    display_name: string;
-    username: string;
-    service_id: string;
-    custom_instructions: string;
-    channel_access_level: number;
-    channel_ids: string[];
-    user_access_level: number;
-    user_ids: string[];
-    team_ids: string[];
-    admin_user_ids: string[];
-    enabled_tools: EnabledTool[];
-    enabled_native_tools: string[];
-    create_at: number;
-    update_at: number;
-    delete_at: number;
+    name: string; // backend emits BotConfig.Name under JSON key "name" (see Phase 2 PLAN §2.5)
+    displayName: string;
+    customInstructions: string;
+    serviceID: string;
+    model: string;
+    enableVision: boolean;
+    disableTools: boolean;
+    channelAccessLevel: number;
+    channelIDs: string[];
+    userAccessLevel: number;
+    userIDs: string[];
+    teamIDs: string[];
+    enabledNativeTools: string[];
+    enabledMCPTools?: EnabledTool[] | null;
+    reasoningEnabled: boolean;
+    reasoningEffort: string;
+    thinkingBudget: number;
+    structuredOutputEnabled: boolean;
+    // Admin / lifecycle metadata (omitempty on backend).
+    botUserID?: string;
+    creatorID?: string;
+    adminUserIDs?: string[];
+    createAt?: number;
+    updateAt?: number;
+    deleteAt?: number;
 }
 
 /**
@@ -88,9 +107,9 @@ export class AgentAPIHelper {
     ): Promise<AgentResponse> {
         const uniqueSuffix = Date.now().toString(36);
         const req: CreateAgentRequest = {
-            display_name: `Test Agent ${uniqueSuffix}`,
+            displayName: `Test Agent ${uniqueSuffix}`,
             username: `testagent${uniqueSuffix}`,
-            service_id: 'mock-service',
+            serviceID: 'mock-service',
             ...overrides,
         };
         return this.createAgent(token, req);

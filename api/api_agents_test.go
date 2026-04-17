@@ -16,7 +16,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/config"
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -124,10 +123,10 @@ func TestCreateAgentWithPermission(t *testing.T) {
 	resp := recorder.Result()
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 
-	var agent useragents.UserAgent
+	var agent llm.BotConfig
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&agent))
 	assert.Equal(t, "My Agent", agent.DisplayName)
-	assert.Equal(t, "my-agent", agent.Username)
+	assert.Equal(t, "my-agent", agent.Name)
 	assert.Equal(t, testUserID, agent.CreatorID)
 	assert.NotEmpty(t, agent.ID)
 	assert.True(t, agent.ReasoningEnabled)
@@ -172,7 +171,7 @@ func TestCreateAgentUsesServerDefaultsWhenOptionalFieldsOmitted(t *testing.T) {
 	recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
 	require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
 
-	var agent useragents.UserAgent
+	var agent llm.BotConfig
 	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
 	assert.False(t, agent.EnableVision)
 	assert.True(t, agent.DisableTools)
@@ -207,7 +206,7 @@ func TestCreateAgentHonorsExplicitNativeToolOverrides(t *testing.T) {
 	recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
 	require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
 
-	var agent useragents.UserAgent
+	var agent llm.BotConfig
 	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
 	assert.Empty(t, agent.EnabledNativeTools)
 }
@@ -274,21 +273,21 @@ func TestListAgentsFiltersByAccess(t *testing.T) {
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	// Seed agents: one accessible (UserAccessLevelAll=0), one blocked (UserAccessLevelNone=3)
-	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+	// Seed agents: one accessible (UserAccessLevelAll), one blocked (UserAccessLevelNone)
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: "other-user", DisplayName: "Public Agent",
-		UserAccessLevel: 0, // All
+		UserAccessLevel: llm.UserAccessLevelAll,
 	}
-	e.agentStore.agents["agent-2"] = &useragents.UserAgent{
+	e.agentStore.agents["agent-2"] = &llm.BotConfig{
 		ID: "agent-2", CreatorID: "other-user", DisplayName: "Private Agent",
-		UserAccessLevel: 3, // None
+		UserAccessLevel: llm.UserAccessLevelNone,
 	}
 
 	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
 	resp := recorder.Result()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var agents []*useragents.UserAgent
+	var agents []*llm.BotConfig
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&agents))
 	assert.Len(t, agents, 1)
 	assert.Equal(t, "Public Agent", agents[0].DisplayName)
@@ -302,9 +301,9 @@ func TestUpdateAgentAsCreator(t *testing.T) {
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	// Seed an agent owned by testUserID
-	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
-		DisplayName: "Original", Username: "original", ServiceID: "svc-1",
+		DisplayName: "Original", Name: "original", ServiceID: "svc-1",
 	}
 
 	newName := "Updated"
@@ -316,7 +315,7 @@ func TestUpdateAgentAsCreator(t *testing.T) {
 	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 
-	var agent useragents.UserAgent
+	var agent llm.BotConfig
 	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agent))
 	assert.Equal(t, "Updated", agent.DisplayName)
 }
@@ -329,9 +328,9 @@ func TestUpdateAgentAsAdminUser(t *testing.T) {
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	// Seed an agent where testUserID is an admin but NOT the creator
-	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: "other-user", BotUserID: "bot-1",
-		DisplayName: "Original", Username: "original", ServiceID: "svc-1",
+		DisplayName: "Original", Name: "original", ServiceID: "svc-1",
 		AdminUserIDs: []string{testUserID},
 	}
 
@@ -351,9 +350,9 @@ func TestUpdateAgentAsNonAdmin(t *testing.T) {
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	// Seed an agent NOT owned by testUserID
-	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: "other-user", BotUserID: "bot-1",
-		DisplayName: "Not Mine", Username: "not-mine", ServiceID: "svc-1",
+		DisplayName: "Not Mine", Name: "not-mine", ServiceID: "svc-1",
 	}
 
 	newName := "Hacked"
@@ -371,9 +370,9 @@ func TestUpdateAgentOwnedByOtherWithManageOthersPermission(t *testing.T) {
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: "other-user", BotUserID: "bot-1",
-		DisplayName: "Theirs", Username: "theirs", ServiceID: "svc-1",
+		DisplayName: "Theirs", Name: "theirs", ServiceID: "svc-1",
 	}
 
 	newName := "Admin Renamed"
@@ -383,7 +382,7 @@ func TestUpdateAgentOwnedByOtherWithManageOthersPermission(t *testing.T) {
 	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 
-	var agent useragents.UserAgent
+	var agent llm.BotConfig
 	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agent))
 	assert.Equal(t, "Admin Renamed", agent.DisplayName)
 }
@@ -397,9 +396,9 @@ func TestDeleteAgentDeactivatesBot(t *testing.T) {
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	// Seed an agent owned by testUserID
-	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
-		DisplayName: "Doomed", Username: "doomed", ServiceID: "svc-1",
+		DisplayName: "Doomed", Name: "doomed", ServiceID: "svc-1",
 	}
 
 	recorder := doRequest(e.api, http.MethodDelete, "/agents/agent-1", nil, testUserID)
@@ -444,9 +443,9 @@ func TestUpdateMigratedAgentWithManageOthersPermission(t *testing.T) {
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: "", BotUserID: "bot-1",
-		DisplayName: "Migrated", Username: "migrated", ServiceID: "svc-1",
+		DisplayName: "Migrated", Name: "migrated", ServiceID: "svc-1",
 	}
 
 	newName := "Updated Migrated"
@@ -456,7 +455,7 @@ func TestUpdateMigratedAgentWithManageOthersPermission(t *testing.T) {
 	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 
-	var agent useragents.UserAgent
+	var agent llm.BotConfig
 	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agent))
 	assert.Equal(t, "Updated Migrated", agent.DisplayName)
 }
@@ -470,9 +469,9 @@ func TestUpdateMigratedAgentForbiddenWithoutManageOthersPermission(t *testing.T)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: "", BotUserID: "bot-1",
-		DisplayName: "Migrated", Username: "migrated", ServiceID: "svc-1",
+		DisplayName: "Migrated", Name: "migrated", ServiceID: "svc-1",
 	}
 
 	newName := "Hacked"
@@ -491,9 +490,9 @@ func TestUpdateMigratedAgentWithManageSystemPermission(t *testing.T) {
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: "", BotUserID: "bot-1",
-		DisplayName: "Migrated", Username: "migrated", ServiceID: "svc-1",
+		DisplayName: "Migrated", Name: "migrated", ServiceID: "svc-1",
 	}
 
 	newName := "Updated By System Admin"
@@ -504,7 +503,7 @@ func TestUpdateMigratedAgentWithManageSystemPermission(t *testing.T) {
 	resp := recorder.Result()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var agent useragents.UserAgent
+	var agent llm.BotConfig
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&agent))
 	assert.Equal(t, "Updated By System Admin", agent.DisplayName)
 }
@@ -517,7 +516,7 @@ func TestFetchModelsForServiceMissingCredentials(t *testing.T) {
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	body := map[string]string{"service_id": "svc-1"}
+	body := map[string]string{"serviceID": "svc-1"}
 	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 }
@@ -530,7 +529,7 @@ func TestFetchModelsForServiceUnknownService(t *testing.T) {
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	body := map[string]string{"service_id": "missing-svc"}
+	body := map[string]string{"serviceID": "missing-svc"}
 	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 }
@@ -559,7 +558,7 @@ func TestFetchModelsForbiddenWithoutManageOwnPermission(t *testing.T) {
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	body := map[string]string{"service_id": "svc-1"}
+	body := map[string]string{"serviceID": "svc-1"}
 	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
 	require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
 }
@@ -586,7 +585,7 @@ func TestFetchModelsForServiceWithManageOthersPermission(t *testing.T) {
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	body := map[string]string{"service_id": "svc-1"}
+	body := map[string]string{"serviceID": "svc-1"}
 	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 }
@@ -598,9 +597,9 @@ func TestUpdateAgentUsernameChangeForbidden(t *testing.T) {
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
-		DisplayName: "Agent", Username: "same-user", ServiceID: "svc-1",
+		DisplayName: "Agent", Name: "same-user", ServiceID: "svc-1",
 	}
 
 	newUsername := "other-user"
@@ -617,9 +616,9 @@ func TestUpdateAgentInvalidServiceID(t *testing.T) {
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	e.agentStore.agents["agent-1"] = &useragents.UserAgent{
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
-		DisplayName: "Agent", Username: "my-agent", ServiceID: "svc-1",
+		DisplayName: "Agent", Name: "my-agent", ServiceID: "svc-1",
 	}
 
 	badSvc := "not-a-configured-service"
@@ -629,5 +628,251 @@ func TestUpdateAgentInvalidServiceID(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 }
 
+func TestUpdateAgentEnabledMCPToolsOmittedPreservesImplicitAll(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
+		ID:              "agent-1",
+		CreatorID:       testUserID,
+		BotUserID:       "bot-1",
+		DisplayName:     "Agent",
+		Name:            "my-agent",
+		ServiceID:       "svc-1",
+		EnabledMCPTools: nil,
+	}
+
+	instructions := "Updated instructions"
+	body := UpdateAgentRequest{CustomInstructions: &instructions}
+
+	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	updated := e.agentStore.agents["agent-1"]
+	require.NotNil(t, updated)
+	assert.Nil(t, updated.EnabledMCPTools)
+	assert.Contains(t, recorder.Body.String(), `"enabledMCPTools":null`)
+}
+
+func TestUpdateAgentEnabledMCPToolsNullSetsImplicitAll(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
+		ID:          "agent-1",
+		CreatorID:   testUserID,
+		BotUserID:   "bot-1",
+		DisplayName: "Agent",
+		Name:        "my-agent",
+		ServiceID:   "svc-1",
+		EnabledMCPTools: []llm.EnabledMCPTool{
+			{ServerOrigin: "embedded://mattermost", ToolName: "read_post"},
+		},
+	}
+
+	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", map[string]any{
+		"enabledMCPTools": nil,
+	}, testUserID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	updated := e.agentStore.agents["agent-1"]
+	require.NotNil(t, updated)
+	assert.Nil(t, updated.EnabledMCPTools)
+	assert.Contains(t, recorder.Body.String(), `"enabledMCPTools":null`)
+}
+
+func TestUpdateAgentEnabledMCPToolsEmptyArraySetsNoTools(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
+		ID:          "agent-1",
+		CreatorID:   testUserID,
+		BotUserID:   "bot-1",
+		DisplayName: "Agent",
+		Name:        "my-agent",
+		ServiceID:   "svc-1",
+		EnabledMCPTools: []llm.EnabledMCPTool{
+			{ServerOrigin: "embedded://mattermost", ToolName: "read_post"},
+		},
+	}
+
+	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", map[string]any{
+		"enabledMCPTools": []llm.EnabledMCPTool{},
+	}, testUserID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	updated := e.agentStore.agents["agent-1"]
+	require.NotNil(t, updated)
+	require.NotNil(t, updated.EnabledMCPTools)
+	assert.Empty(t, updated.EnabledMCPTools)
+	assert.Contains(t, recorder.Body.String(), `"enabledMCPTools":[]`)
+}
+
 // Suppress unused import warnings for multipart (used for avatar test below)
 var _ = multipart.NewWriter
+
+func TestCreateAgentRequestJSONRoundTrip(t *testing.T) {
+	enableVision := true
+	req := CreateAgentRequest{
+		DisplayName:        "My Agent",
+		Username:           "my-agent",
+		ServiceID:          "svc-1",
+		CustomInstructions: "Be brief",
+		ChannelAccessLevel: int(llm.ChannelAccessLevelAllow),
+		ChannelIDs:         []string{"c1", "c2"},
+		UserAccessLevel:    int(llm.UserAccessLevelBlock),
+		UserIDs:            []string{"u1"},
+		TeamIDs:            []string{"t1"},
+		AdminUserIDs:       []string{"admin-1"},
+		EnabledMCPTools:    []llm.EnabledMCPTool{{ServerOrigin: "https://x", ToolName: "t"}},
+		Model:              "gpt-4",
+		EnableVision:       &enableVision,
+		ReasoningEffort:    "high",
+		ThinkingBudget:     4096,
+	}
+	raw, err := json.Marshal(req)
+	require.NoError(t, err)
+	s := string(raw)
+
+	// Verify camelCase only — no snake_case escapees.
+	assert.Contains(t, s, `"displayName"`)
+	assert.Contains(t, s, `"serviceID"`)
+	assert.Contains(t, s, `"channelAccessLevel"`)
+	assert.Contains(t, s, `"adminUserIDs"`)
+	assert.Contains(t, s, `"enabledMCPTools"`)
+	assert.Contains(t, s, `"reasoningEffort"`)
+	assert.NotContains(t, s, `"display_name"`)
+	assert.NotContains(t, s, `"service_id"`)
+	assert.NotContains(t, s, `"admin_user_ids"`)
+	assert.NotContains(t, s, `"enabled_tools"`)
+
+	var decoded CreateAgentRequest
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	assert.Equal(t, req.DisplayName, decoded.DisplayName)
+	assert.Equal(t, req.ServiceID, decoded.ServiceID)
+	assert.Equal(t, req.AdminUserIDs, decoded.AdminUserIDs)
+	assert.Equal(t, req.EnabledMCPTools, decoded.EnabledMCPTools)
+	require.NotNil(t, decoded.EnableVision)
+	assert.Equal(t, enableVision, *decoded.EnableVision)
+}
+
+func TestBotConfigJSONRoundTrip(t *testing.T) {
+	cfg := llm.BotConfig{
+		ID:           "agent-1",
+		Name:         "my-agent",
+		DisplayName:  "My Agent",
+		ServiceID:    "svc-1",
+		BotUserID:    "bot-user-id",
+		CreatorID:    "creator-1",
+		AdminUserIDs: []string{"admin-1"},
+		CreateAt:     100,
+		UpdateAt:     200,
+	}
+	raw, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	s := string(raw)
+
+	assert.Contains(t, s, `"botUserID":"bot-user-id"`)
+	assert.Contains(t, s, `"creatorID":"creator-1"`)
+	assert.Contains(t, s, `"adminUserIDs":["admin-1"]`)
+	assert.Contains(t, s, `"createAt":100`)
+	assert.Contains(t, s, `"updateAt":200`)
+	assert.Contains(t, s, `"enabledMCPTools":null`)
+	assert.NotContains(t, s, `"deleteAt"`) // omitempty
+
+	// Round-trip
+	var decoded llm.BotConfig
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	assert.Equal(t, cfg.ID, decoded.ID)
+	assert.Equal(t, cfg.BotUserID, decoded.BotUserID)
+	assert.Equal(t, cfg.CreatorID, decoded.CreatorID)
+	assert.Equal(t, cfg.AdminUserIDs, decoded.AdminUserIDs)
+	assert.Nil(t, decoded.EnabledMCPTools)
+}
+
+func TestBotConfigJSONPreservesEmptyEnabledMCPTools(t *testing.T) {
+	cfg := llm.BotConfig{
+		ID:              "agent-1",
+		Name:            "my-agent",
+		DisplayName:     "My Agent",
+		ServiceID:       "svc-1",
+		EnabledMCPTools: []llm.EnabledMCPTool{},
+	}
+
+	raw, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"enabledMCPTools":[]`)
+
+	var decoded llm.BotConfig
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	require.NotNil(t, decoded.EnabledMCPTools)
+	assert.Empty(t, decoded.EnabledMCPTools)
+}
+
+func TestBotConfigIsCreatorIsAdmin(t *testing.T) {
+	cfg := llm.BotConfig{
+		CreatorID:    "creator-1",
+		AdminUserIDs: []string{"admin-1", "admin-2"},
+	}
+	assert.True(t, cfg.IsCreator("creator-1"))
+	assert.False(t, cfg.IsCreator("admin-1"))
+	assert.False(t, cfg.IsCreator(""))
+	assert.False(t, cfg.IsCreator("other"))
+
+	assert.True(t, cfg.IsAdmin("creator-1"))
+	assert.True(t, cfg.IsAdmin("admin-1"))
+	assert.True(t, cfg.IsAdmin("admin-2"))
+	assert.False(t, cfg.IsAdmin("other"))
+	assert.False(t, cfg.IsAdmin(""))
+
+	// Migrated legacy bot: CreatorID == ""
+	migrated := llm.BotConfig{CreatorID: "", AdminUserIDs: []string{"admin-1"}}
+	assert.False(t, migrated.IsCreator(""))
+	assert.False(t, migrated.IsCreator("anyone"))
+	assert.True(t, migrated.IsAdmin("admin-1"))
+	assert.False(t, migrated.IsAdmin(""))
+}
+
+func TestCanUserAccessAgentCreatorAdminBypass(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	// Agent that normally blocks every user, but grants access to creator + admin.
+	e.agentStore.agents["agent-1"] = &llm.BotConfig{
+		ID:              "agent-1",
+		CreatorID:       "creator-user",
+		AdminUserIDs:    []string{"admin-user"},
+		UserAccessLevel: llm.UserAccessLevelNone,
+	}
+
+	// Creator can see it via GET /agents.
+	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, "creator-user")
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+	var agents []*llm.BotConfig
+	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agents))
+	require.Len(t, agents, 1)
+
+	// Admin can see it.
+	recorder = doRequest(e.api, http.MethodGet, "/agents", nil, "admin-user")
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agents))
+	require.Len(t, agents, 1)
+
+	// Random user cannot — UserAccessLevelNone blocks them.
+	recorder = doRequest(e.api, http.MethodGet, "/agents", nil, "random-user")
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agents))
+	require.Empty(t, agents)
+}

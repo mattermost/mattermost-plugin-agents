@@ -5,10 +5,11 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-agents/useragents"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -20,6 +21,78 @@ const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, Ser
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
 	CreateAt, UpdateAt, DeleteAt`
+
+// mustMarshalSlice marshals a string slice to JSON, returning "[]" on nil/empty or error.
+func mustMarshalSlice(s []string) string {
+	if len(s) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// unmarshalStringSlice parses a JSON string into a *[]string, setting nil for "" or "[]".
+func unmarshalStringSlice(raw string, target *[]string) error {
+	if raw == "" || raw == "[]" {
+		*target = nil
+		return nil
+	}
+	if err := json.Unmarshal([]byte(raw), target); err != nil {
+		return fmt.Errorf("failed to unmarshal JSON slice: %w", err)
+	}
+	return nil
+}
+
+// marshalEnabledMCPTools serializes EnabledMCPTools preserving nil vs empty semantics:
+// nil → "null" (all tools allowed), empty non-nil slice → "[]" (no tools allowed).
+func marshalEnabledMCPTools(tools []llm.EnabledMCPTool) string {
+	if tools == nil {
+		return "null"
+	}
+	if len(tools) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(tools)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// unmarshalEnabledMCPTools preserves nil vs empty semantics:
+// "" or "null" → nil (all tools), "[]" → empty slice (no tools), populated → slice.
+func unmarshalEnabledMCPTools(raw string, target *[]llm.EnabledMCPTool) error {
+	if raw == "" || raw == "null" {
+		*target = nil
+		return nil
+	}
+	return json.Unmarshal([]byte(raw), target)
+}
+
+// marshalNativeTools serializes a []string for the EnabledNativeTools column.
+// Nil serializes as "[]" (no separate null vs empty semantics here).
+func marshalNativeTools(tools []string) string {
+	if tools == nil {
+		return "[]"
+	}
+	b, err := json.Marshal(tools)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// unmarshalNativeTools parses the EnabledNativeTools TEXT column. "" or "[]" → nil.
+func unmarshalNativeTools(raw string, target *[]string) error {
+	if raw == "" || raw == "[]" {
+		*target = nil
+		return nil
+	}
+	return json.Unmarshal([]byte(raw), target)
+}
 
 // agentRow is the DB-level representation of a UserAgent row.
 // All JSON slice fields are stored as TEXT and scanned as strings.
@@ -52,18 +125,18 @@ type agentRow struct {
 	DeleteAt                int64  `db:"deleteat"`
 }
 
-// toUserAgent converts an agentRow (DB scan result) to a useragents.UserAgent.
-func (r *agentRow) toUserAgent() (*useragents.UserAgent, error) {
-	agent := &useragents.UserAgent{
+// toBotConfig converts an agentRow (DB scan result) to an *llm.BotConfig.
+func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
+	cfg := &llm.BotConfig{
 		ID:                      r.ID,
 		BotUserID:               r.BotUserID,
 		CreatorID:               r.CreatorID,
 		DisplayName:             r.DisplayName,
-		Username:                r.Username,
+		Name:                    r.Username,
 		ServiceID:               r.ServiceID,
 		CustomInstructions:      r.CustomInstructions,
-		ChannelAccessLevel:      r.ChannelAccessLevel,
-		UserAccessLevel:         r.UserAccessLevel,
+		ChannelAccessLevel:      llm.ChannelAccessLevel(r.ChannelAccessLevel),
+		UserAccessLevel:         llm.UserAccessLevel(r.UserAccessLevel),
 		Model:                   r.Model,
 		EnableVision:            r.EnableVision,
 		DisableTools:            r.DisableTools,
@@ -76,36 +149,36 @@ func (r *agentRow) toUserAgent() (*useragents.UserAgent, error) {
 		DeleteAt:                r.DeleteAt,
 	}
 
-	if err := agent.SetChannelIDsFromJSON(r.ChannelIDs); err != nil {
+	if err := unmarshalStringSlice(r.ChannelIDs, &cfg.ChannelIDs); err != nil {
 		return nil, fmt.Errorf("failed to parse ChannelIDs: %w", err)
 	}
-	if err := agent.SetUserIDsFromJSON(r.UserIDs); err != nil {
+	if err := unmarshalStringSlice(r.UserIDs, &cfg.UserIDs); err != nil {
 		return nil, fmt.Errorf("failed to parse UserIDs: %w", err)
 	}
-	if err := agent.SetTeamIDsFromJSON(r.TeamIDs); err != nil {
+	if err := unmarshalStringSlice(r.TeamIDs, &cfg.TeamIDs); err != nil {
 		return nil, fmt.Errorf("failed to parse TeamIDs: %w", err)
 	}
-	if err := agent.SetAdminUserIDsFromJSON(r.AdminUserIDs); err != nil {
+	if err := unmarshalStringSlice(r.AdminUserIDs, &cfg.AdminUserIDs); err != nil {
 		return nil, fmt.Errorf("failed to parse AdminUserIDs: %w", err)
 	}
-	if err := agent.SetEnabledToolsFromJSON(r.EnabledTools); err != nil {
+	if err := unmarshalEnabledMCPTools(r.EnabledTools, &cfg.EnabledMCPTools); err != nil {
 		return nil, fmt.Errorf("failed to parse EnabledTools: %w", err)
 	}
-	if err := agent.SetEnabledNativeToolsFromJSON(r.EnabledNativeTools); err != nil {
+	if err := unmarshalNativeTools(r.EnabledNativeTools, &cfg.EnabledNativeTools); err != nil {
 		return nil, fmt.Errorf("failed to parse EnabledNativeTools: %w", err)
 	}
 
-	return agent, nil
+	return cfg, nil
 }
 
 // CreateAgent inserts a new user agent into the database.
 // It generates the ID and sets CreateAt/UpdateAt timestamps automatically.
-func (s *Store) CreateAgent(agent *useragents.UserAgent) error {
-	agent.ID = model.NewId()
+func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
+	cfg.ID = model.NewId()
 	now := model.GetMillis()
-	agent.CreateAt = now
-	agent.UpdateAt = now
-	agent.DeleteAt = 0
+	cfg.CreateAt = now
+	cfg.UpdateAt = now
+	cfg.DeleteAt = 0
 
 	_, err := s.db.Exec(
 		`INSERT INTO Agents_UserAgents (
@@ -117,31 +190,31 @@ func (s *Store) CreateAgent(agent *useragents.UserAgent) error {
 			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
 			CreateAt, UpdateAt, DeleteAt
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
-		agent.ID,
-		agent.BotUserID,
-		agent.CreatorID,
-		agent.DisplayName,
-		agent.Username,
-		agent.ServiceID,
-		agent.CustomInstructions,
-		agent.ChannelAccessLevel,
-		agent.ChannelIDsJSON(),
-		agent.UserAccessLevel,
-		agent.UserIDsJSON(),
-		agent.TeamIDsJSON(),
-		agent.AdminUserIDsJSON(),
-		agent.EnabledToolsJSON(),
-		agent.Model,
-		agent.EnableVision,
-		agent.DisableTools,
-		agent.EnabledNativeToolsJSON(),
-		agent.ReasoningEnabled,
-		agent.ReasoningEffort,
-		agent.ThinkingBudget,
-		agent.StructuredOutputEnabled,
-		agent.CreateAt,
-		agent.UpdateAt,
-		agent.DeleteAt,
+		cfg.ID,
+		cfg.BotUserID,
+		cfg.CreatorID,
+		cfg.DisplayName,
+		cfg.Name,
+		cfg.ServiceID,
+		cfg.CustomInstructions,
+		int(cfg.ChannelAccessLevel),
+		mustMarshalSlice(cfg.ChannelIDs),
+		int(cfg.UserAccessLevel),
+		mustMarshalSlice(cfg.UserIDs),
+		mustMarshalSlice(cfg.TeamIDs),
+		mustMarshalSlice(cfg.AdminUserIDs),
+		marshalEnabledMCPTools(cfg.EnabledMCPTools),
+		cfg.Model,
+		cfg.EnableVision,
+		cfg.DisableTools,
+		marshalNativeTools(cfg.EnabledNativeTools),
+		cfg.ReasoningEnabled,
+		cfg.ReasoningEffort,
+		cfg.ThinkingBudget,
+		cfg.StructuredOutputEnabled,
+		cfg.CreateAt,
+		cfg.UpdateAt,
+		cfg.DeleteAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
@@ -152,7 +225,7 @@ func (s *Store) CreateAgent(agent *useragents.UserAgent) error {
 
 // GetAgent retrieves a single active (non-deleted) agent by ID.
 // Returns nil, nil if the agent does not exist or is soft-deleted.
-func (s *Store) GetAgent(id string) (*useragents.UserAgent, error) {
+func (s *Store) GetAgent(id string) (*llm.BotConfig, error) {
 	var row agentRow
 	err := s.db.Get(&row,
 		`SELECT `+agentSelectColumns+`
@@ -167,11 +240,11 @@ func (s *Store) GetAgent(id string) (*useragents.UserAgent, error) {
 		return nil, fmt.Errorf("failed to get agent %q: %w", id, err)
 	}
 
-	return row.toUserAgent()
+	return row.toBotConfig()
 }
 
 // ListAgents returns all active (non-deleted) agents, ordered by creation time descending.
-func (s *Store) ListAgents() ([]*useragents.UserAgent, error) {
+func (s *Store) ListAgents() ([]*llm.BotConfig, error) {
 	var rows []agentRow
 	err := s.db.Select(&rows,
 		`SELECT `+agentSelectColumns+`
@@ -183,20 +256,20 @@ func (s *Store) ListAgents() ([]*useragents.UserAgent, error) {
 		return nil, fmt.Errorf("failed to list agents: %w", err)
 	}
 
-	agents := make([]*useragents.UserAgent, 0, len(rows))
+	agents := make([]*llm.BotConfig, 0, len(rows))
 	for i := range rows {
-		agent, parseErr := rows[i].toUserAgent()
+		cfg, parseErr := rows[i].toBotConfig()
 		if parseErr != nil {
 			return nil, parseErr
 		}
-		agents = append(agents, agent)
+		agents = append(agents, cfg)
 	}
 
 	return agents, nil
 }
 
 // ListAgentsByCreator returns all active agents created by the specified user.
-func (s *Store) ListAgentsByCreator(creatorID string) ([]*useragents.UserAgent, error) {
+func (s *Store) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error) {
 	var rows []agentRow
 	err := s.db.Select(&rows,
 		`SELECT `+agentSelectColumns+`
@@ -209,13 +282,13 @@ func (s *Store) ListAgentsByCreator(creatorID string) ([]*useragents.UserAgent, 
 		return nil, fmt.Errorf("failed to list agents by creator %q: %w", creatorID, err)
 	}
 
-	agents := make([]*useragents.UserAgent, 0, len(rows))
+	agents := make([]*llm.BotConfig, 0, len(rows))
 	for i := range rows {
-		agent, parseErr := rows[i].toUserAgent()
+		cfg, parseErr := rows[i].toBotConfig()
 		if parseErr != nil {
 			return nil, parseErr
 		}
-		agents = append(agents, agent)
+		agents = append(agents, cfg)
 	}
 
 	return agents, nil
@@ -224,8 +297,8 @@ func (s *Store) ListAgentsByCreator(creatorID string) ([]*useragents.UserAgent, 
 // UpdateAgent updates an existing agent's mutable fields.
 // It sets UpdateAt automatically. The caller must supply the full agent struct
 // (read-modify-write pattern). Does NOT update ID, CreatorID, BotUserID, CreateAt, or DeleteAt.
-func (s *Store) UpdateAgent(agent *useragents.UserAgent) error {
-	agent.UpdateAt = model.GetMillis()
+func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
+	cfg.UpdateAt = model.GetMillis()
 
 	result, err := s.db.Exec(
 		`UPDATE Agents_UserAgents SET
@@ -250,38 +323,38 @@ func (s *Store) UpdateAgent(agent *useragents.UserAgent) error {
 			StructuredOutputEnabled = $19,
 			UpdateAt = $20
 		WHERE ID = $21 AND DeleteAt = 0`,
-		agent.DisplayName,
-		agent.Username,
-		agent.ServiceID,
-		agent.CustomInstructions,
-		agent.ChannelAccessLevel,
-		agent.ChannelIDsJSON(),
-		agent.UserAccessLevel,
-		agent.UserIDsJSON(),
-		agent.TeamIDsJSON(),
-		agent.AdminUserIDsJSON(),
-		agent.EnabledToolsJSON(),
-		agent.Model,
-		agent.EnableVision,
-		agent.DisableTools,
-		agent.EnabledNativeToolsJSON(),
-		agent.ReasoningEnabled,
-		agent.ReasoningEffort,
-		agent.ThinkingBudget,
-		agent.StructuredOutputEnabled,
-		agent.UpdateAt,
-		agent.ID,
+		cfg.DisplayName,
+		cfg.Name,
+		cfg.ServiceID,
+		cfg.CustomInstructions,
+		int(cfg.ChannelAccessLevel),
+		mustMarshalSlice(cfg.ChannelIDs),
+		int(cfg.UserAccessLevel),
+		mustMarshalSlice(cfg.UserIDs),
+		mustMarshalSlice(cfg.TeamIDs),
+		mustMarshalSlice(cfg.AdminUserIDs),
+		marshalEnabledMCPTools(cfg.EnabledMCPTools),
+		cfg.Model,
+		cfg.EnableVision,
+		cfg.DisableTools,
+		marshalNativeTools(cfg.EnabledNativeTools),
+		cfg.ReasoningEnabled,
+		cfg.ReasoningEffort,
+		cfg.ThinkingBudget,
+		cfg.StructuredOutputEnabled,
+		cfg.UpdateAt,
+		cfg.ID,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to update agent %q: %w", agent.ID, err)
+		return fmt.Errorf("failed to update agent %q: %w", cfg.ID, err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to check rows affected for agent %q: %w", agent.ID, err)
+		return fmt.Errorf("failed to check rows affected for agent %q: %w", cfg.ID, err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("agent %q not found or already deleted", agent.ID)
+		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
 	}
 
 	return nil
@@ -311,10 +384,10 @@ func (s *Store) DeleteAgent(id string) error {
 
 // Compile-time check that *Store satisfies the AgentStore interface.
 var _ interface {
-	CreateAgent(agent *useragents.UserAgent) error
-	GetAgent(id string) (*useragents.UserAgent, error)
-	ListAgents() ([]*useragents.UserAgent, error)
-	ListAgentsByCreator(creatorID string) ([]*useragents.UserAgent, error)
-	UpdateAgent(agent *useragents.UserAgent) error
+	CreateAgent(cfg *llm.BotConfig) error
+	GetAgent(id string) (*llm.BotConfig, error)
+	ListAgents() ([]*llm.BotConfig, error)
+	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
+	UpdateAgent(cfg *llm.BotConfig) error
 	DeleteAgent(id string) error
 } = (*Store)(nil)

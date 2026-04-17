@@ -7,24 +7,13 @@ import (
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-agents/config"
-	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/store"
-	"github.com/mattermost/mattermost-plugin-agents/useragents"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 )
 
 const legacyConfigBotsMigratedKey = "legacy_config_bots_migrated"
-
-func copyEnabledMCPToolsFromBot(tools []llm.EnabledMCPTool) []llm.EnabledMCPTool {
-	if tools == nil {
-		return nil
-	}
-	out := make([]llm.EnabledMCPTool, len(tools))
-	copy(out, tools)
-	return out
-}
 
 // migrateLegacyConfigBotsToUserAgents copies config-defined bots into Agents_UserAgents once,
 // then removes them from stored plugin config to avoid duplicate bot registration in EnsureBots.
@@ -62,7 +51,7 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 	}
 	byUsername := make(map[string]struct{}, len(existingAgents))
 	for _, a := range existingAgents {
-		byUsername[a.Username] = struct{}{}
+		byUsername[a.Name] = struct{}{}
 	}
 
 	previousMMBots, err := pluginAPI.Bot.List(0, 1000, pluginapi.BotOwner("mattermost-ai"), pluginapi.BotIncludeDeleted())
@@ -102,31 +91,18 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 		}
 		botUserID := mmByUsername[bc.Name]
 
-		ua := &useragents.UserAgent{
-			BotUserID:               botUserID,
-			CreatorID:               "",
-			DisplayName:             bc.DisplayName,
-			Username:                bc.Name,
-			ServiceID:               bc.ServiceID,
-			CustomInstructions:      bc.CustomInstructions,
-			ChannelAccessLevel:      int(bc.ChannelAccessLevel),
-			ChannelIDs:              bc.ChannelIDs,
-			UserAccessLevel:         int(bc.UserAccessLevel),
-			UserIDs:                 bc.UserIDs,
-			TeamIDs:                 bc.TeamIDs,
-			AdminUserIDs:            nil,
-			EnabledTools:            copyEnabledMCPToolsFromBot(bc.EnabledMCPTools),
-			Model:                   bc.Model,
-			EnableVision:            bc.EnableVision,
-			DisableTools:            bc.DisableTools,
-			EnabledNativeTools:      bc.EnabledNativeTools,
-			ReasoningEnabled:        bc.ReasoningEnabled,
-			ReasoningEffort:         bc.ReasoningEffort,
-			ThinkingBudget:          bc.ThinkingBudget,
-			StructuredOutputEnabled: bc.StructuredOutputEnabled,
-		}
+		ua := bc
 
-		if createErr := st.CreateAgent(ua); createErr != nil {
+		// Reset identity/lifecycle so store.CreateAgent assigns a new ID & timestamps.
+		ua.ID = ""
+		ua.BotUserID = botUserID
+		ua.CreatorID = "" // migrated legacy bot has no owner
+		ua.AdminUserIDs = nil
+		ua.CreateAt = 0
+		ua.UpdateAt = 0
+		ua.DeleteAt = 0
+
+		if createErr := st.CreateAgent(&ua); createErr != nil {
 			return false, fmt.Errorf("failed to create user agent for legacy bot %q: %w", bc.Name, createErr)
 		}
 		byUsername[bc.Name] = struct{}{}

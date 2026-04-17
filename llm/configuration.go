@@ -3,6 +3,8 @@
 
 package llm
 
+import "slices"
+
 type ServiceConfig struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -84,9 +86,9 @@ type BotConfig struct {
 
 	// EnabledMCPTools is the per-agent allowlist of MCP tools.
 	// When non-nil, only tools matching these (ServerOrigin, ToolName) pairs are kept.
-	// A nil value means "all MCP tools allowed" (config-defined bots, backward compat).
-	// An empty non-nil slice means "no MCP tools allowed".
-	EnabledMCPTools []EnabledMCPTool `json:"enabledMCPTools,omitempty"`
+	// A nil value means "all MCP tools allowed" and is encoded as JSON null.
+	// An empty non-nil slice means "no MCP tools allowed" and is encoded as JSON [].
+	EnabledMCPTools []EnabledMCPTool `json:"enabledMCPTools"`
 
 	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot
 	// Applicable to OpenAI (with ResponsesAPI) and Anthropic
@@ -109,6 +111,15 @@ type BotConfig struct {
 	// to constrain the model's output to valid JSON matching the schema.
 	// Only applicable to Anthropic (Claude 4.5/4.6+ models)
 	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
+
+	// Admin / lifecycle metadata. These are populated only for DB-backed user agents;
+	// they stay zero for config-defined bots so JSON omits them (omitempty).
+	BotUserID    string   `json:"botUserID,omitempty"`
+	CreatorID    string   `json:"creatorID,omitempty"`
+	AdminUserIDs []string `json:"adminUserIDs,omitempty"`
+	CreateAt     int64    `json:"createAt,omitempty"`
+	UpdateAt     int64    `json:"updateAt,omitempty"`
+	DeleteAt     int64    `json:"deleteAt,omitempty"`
 }
 
 func (c *BotConfig) IsValid() bool {
@@ -158,4 +169,22 @@ func IsValidService(service ServiceConfig) bool {
 	default:
 		return false
 	}
+}
+
+// IsCreator reports whether userID is the agent's creator.
+// Returns false for migrated/config bots whose CreatorID is empty.
+func (c *BotConfig) IsCreator(userID string) bool {
+	if userID == "" || c.CreatorID == "" {
+		return false
+	}
+	return c.CreatorID == userID
+}
+
+// IsAdmin reports whether userID is the agent's creator or in the admin list.
+// Returns false for the empty userID to avoid matching legacy bots (CreatorID == "").
+func (c *BotConfig) IsAdmin(userID string) bool {
+	if userID == "" {
+		return false
+	}
+	return c.IsCreator(userID) || slices.Contains(c.AdminUserIDs, userID)
 }

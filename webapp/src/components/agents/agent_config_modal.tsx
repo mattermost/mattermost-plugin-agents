@@ -42,7 +42,7 @@ export type AgentDraft = {
     userIds: string[];
     teamIds: string[];
     adminUserIds: string[];
-    enabledTools: EnabledTool[];
+    enabledTools: EnabledTool[] | null;
     model: string;
     enableVision: boolean;
     disableTools: boolean;
@@ -77,38 +77,40 @@ const emptyDraft: AgentDraft = {
 
 function draftToCreateAgentPayload(draft: AgentDraft, touchedDefaults: Set<DefaultControlledField>): CreateAgentRequest {
     const payload: CreateAgentRequest = {
-        display_name: draft.displayName,
+        displayName: draft.displayName,
         username: draft.username,
-        service_id: draft.serviceId,
-        custom_instructions: draft.customInstructions,
-        channel_access_level: draft.channelAccessLevel,
-        channel_ids: draft.channelIds,
-        user_access_level: draft.userAccessLevel,
-        user_ids: draft.userIds,
-        team_ids: draft.teamIds,
-        admin_user_ids: draft.adminUserIds,
-        enabled_tools: draft.enabledTools,
+        serviceID: draft.serviceId,
+        customInstructions: draft.customInstructions,
+        channelAccessLevel: draft.channelAccessLevel,
+        channelIDs: draft.channelIds,
+        userAccessLevel: draft.userAccessLevel,
+        userIDs: draft.userIds,
+        teamIDs: draft.teamIds,
+        adminUserIDs: draft.adminUserIds,
         model: draft.model,
-        thinking_budget: draft.thinkingBudget,
+        thinkingBudget: draft.thinkingBudget,
     };
+    if (draft.enabledTools !== null) {
+        payload.enabledMCPTools = draft.enabledTools;
+    }
 
     if (touchedDefaults.has('enableVision')) {
-        payload.enable_vision = draft.enableVision;
+        payload.enableVision = draft.enableVision;
     }
     if (touchedDefaults.has('disableTools')) {
-        payload.disable_tools = draft.disableTools;
+        payload.disableTools = draft.disableTools;
     }
     if (touchedDefaults.has('enabledNativeTools')) {
-        payload.enabled_native_tools = draft.enabledNativeTools;
+        payload.enabledNativeTools = draft.enabledNativeTools;
     }
     if (touchedDefaults.has('reasoningEnabled')) {
-        payload.reasoning_enabled = draft.reasoningEnabled;
+        payload.reasoningEnabled = draft.reasoningEnabled;
     }
     if (touchedDefaults.has('reasoningEffort')) {
-        payload.reasoning_effort = draft.reasoningEffort;
+        payload.reasoningEffort = draft.reasoningEffort;
     }
     if (touchedDefaults.has('structuredOutputEnabled')) {
-        payload.structured_output_enabled = draft.structuredOutputEnabled;
+        payload.structuredOutputEnabled = draft.structuredOutputEnabled;
     }
 
     return payload;
@@ -116,50 +118,53 @@ function draftToCreateAgentPayload(draft: AgentDraft, touchedDefaults: Set<Defau
 
 /** Full-document update payload from the form draft. */
 function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
-    return {
-        display_name: draft.displayName,
+    const payload: UpdateAgentRequest = {
+        displayName: draft.displayName,
         username: draft.username,
-        service_id: draft.serviceId,
-        custom_instructions: draft.customInstructions,
-        channel_access_level: draft.channelAccessLevel,
-        channel_ids: draft.channelIds,
-        user_access_level: draft.userAccessLevel,
-        user_ids: draft.userIds,
-        team_ids: draft.teamIds,
-        admin_user_ids: draft.adminUserIds,
-        enabled_tools: draft.enabledTools,
+        serviceID: draft.serviceId,
+        customInstructions: draft.customInstructions,
+        channelAccessLevel: draft.channelAccessLevel,
+        channelIDs: draft.channelIds,
+        userAccessLevel: draft.userAccessLevel,
+        userIDs: draft.userIds,
+        teamIDs: draft.teamIds,
+        adminUserIDs: draft.adminUserIds,
         model: draft.model,
-        enable_vision: draft.enableVision,
-        disable_tools: draft.disableTools,
-        enabled_native_tools: draft.enabledNativeTools,
-        reasoning_enabled: draft.reasoningEnabled,
-        reasoning_effort: draft.reasoningEffort,
-        thinking_budget: draft.thinkingBudget,
-        structured_output_enabled: draft.structuredOutputEnabled,
+        enableVision: draft.enableVision,
+        disableTools: draft.disableTools,
+        enabledNativeTools: draft.enabledNativeTools,
+        reasoningEnabled: draft.reasoningEnabled,
+        reasoningEffort: draft.reasoningEffort,
+        thinkingBudget: draft.thinkingBudget,
+        structuredOutputEnabled: draft.structuredOutputEnabled,
     };
+    if (draft.enabledTools !== null) {
+        payload.enabledMCPTools = draft.enabledTools;
+    }
+    return payload;
 }
 
 function agentToDraft(agent: UserAgent): AgentDraft {
     return {
-        displayName: agent.display_name,
-        username: agent.username,
-        serviceId: agent.service_id,
-        customInstructions: agent.custom_instructions,
-        channelAccessLevel: agent.channel_access_level,
-        channelIds: agent.channel_ids ?? [],
-        userAccessLevel: agent.user_access_level,
-        userIds: agent.user_ids ?? [],
-        teamIds: agent.team_ids ?? [],
-        adminUserIds: agent.admin_user_ids ?? [],
-        enabledTools: agent.enabled_tools ?? [],
+        displayName: agent.displayName,
+        username: agent.name,
+        serviceId: agent.serviceID,
+        customInstructions: agent.customInstructions,
+        channelAccessLevel: agent.channelAccessLevel,
+        channelIds: agent.channelIDs ?? [],
+        userAccessLevel: agent.userAccessLevel,
+        userIds: agent.userIDs ?? [],
+        teamIds: agent.teamIDs ?? [],
+        adminUserIds: agent.adminUserIDs ?? [],
+        enabledTools: agent.enabledMCPTools ?? null,
         model: agent.model ?? '',
-        enableVision: agent.enable_vision ?? true,
-        disableTools: agent.disable_tools ?? false,
-        enabledNativeTools: agent.enabled_native_tools ?? [],
-        reasoningEnabled: agent.reasoning_enabled ?? true,
-        reasoningEffort: agent.reasoning_effort || 'medium',
-        thinkingBudget: agent.thinking_budget ?? 0,
-        structuredOutputEnabled: agent.structured_output_enabled ?? false,
+        enableVision: agent.enableVision ?? true,
+        disableTools: agent.disableTools ?? false,
+        enabledNativeTools: agent.enabledNativeTools ?? [],
+        reasoningEnabled: agent.reasoningEnabled ?? true,
+        reasoningEffort: agent.reasoningEffort || 'medium',
+        thinkingBudget: agent.thinkingBudget ?? 0,
+        structuredOutputEnabled: agent.structuredOutputEnabled ?? false,
     };
 }
 
@@ -352,7 +357,7 @@ const AgentConfigModal = (props: Props) => {
                             draft={draft}
                             onChange={updateDraft}
                             onAvatarChange={setAvatarFile}
-                            botUserId={agent?.bot_user_id}
+                            botUserId={agent?.botUserID}
                             services={services}
                             errors={errors}
                         />

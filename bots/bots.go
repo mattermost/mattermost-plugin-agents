@@ -18,7 +18,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/subtitles"
-	"github.com/mattermost/mattermost-plugin-agents/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
@@ -39,7 +38,7 @@ type Config interface {
 // AgentStore provides read access to user-created agents from the database.
 // This is a subset of the full store.AgentStore — only read methods needed here.
 type AgentStore interface {
-	ListAgents() ([]*useragents.UserAgent, error)
+	ListAgents() ([]*llm.BotConfig, error)
 }
 
 // Transcriber interface defines the contract for transcription services
@@ -114,44 +113,6 @@ func (b *MMBots) ForceRefreshOnNextEnsure() {
 	b.lastEnsuredBotCfgs = nil
 	b.lastEnsuredServiceCfgs = nil
 	b.forceRefresh = true
-}
-
-// userAgentToBotConfig converts a useragents.UserAgent to an llm.BotConfig
-// so that DB-backed agents can participate in the same EnsureBots pipeline
-// as config-defined bots.
-func userAgentToBotConfig(agent *useragents.UserAgent) llm.BotConfig {
-	return llm.BotConfig{
-		ID:                      agent.ID,
-		Name:                    agent.Username,
-		DisplayName:             agent.DisplayName,
-		CustomInstructions:      agent.CustomInstructions,
-		ServiceID:               agent.ServiceID,
-		Model:                   agent.Model,
-		EnableVision:            agent.EnableVision,
-		DisableTools:            agent.DisableTools,
-		EnabledNativeTools:      agent.EnabledNativeTools,
-		ReasoningEnabled:        agent.ReasoningEnabled,
-		ReasoningEffort:         agent.ReasoningEffort,
-		ThinkingBudget:          agent.ThinkingBudget,
-		StructuredOutputEnabled: agent.StructuredOutputEnabled,
-		ChannelAccessLevel:      llm.ChannelAccessLevel(agent.ChannelAccessLevel),
-		ChannelIDs:              agent.ChannelIDs,
-		UserAccessLevel:         llm.UserAccessLevel(agent.UserAccessLevel),
-		UserIDs:                 agent.UserIDs,
-		TeamIDs:                 agent.TeamIDs,
-		EnabledMCPTools:         copyEnabledMCPTools(agent.EnabledTools),
-	}
-}
-
-// copyEnabledMCPTool slice preserves nil vs empty semantics: nil → nil (all tools allowed),
-// non-nil → copied slice (possibly empty = no tools).
-func copyEnabledMCPTools(tools []llm.EnabledMCPTool) []llm.EnabledMCPTool {
-	if tools == nil {
-		return nil
-	}
-	out := make([]llm.EnabledMCPTool, len(tools))
-	copy(out, tools)
-	return out
 }
 
 // botConfigsEqual compares two bot config slices for equality.
@@ -301,12 +262,15 @@ func (b *MMBots) EnsureBots() error {
 	// These bypass the license multi-LLM check — they are gated by
 	// PermissionManageOwnAgent at the API layer.
 	if b.agentStore != nil {
-		userAgents, err := b.agentStore.ListAgents()
+		dbAgents, err := b.agentStore.ListAgents()
 		if err != nil {
 			return fmt.Errorf("failed to list user agents: %w", err)
 		}
-		for _, ua := range userAgents {
-			botCfgs = append(botCfgs, userAgentToBotConfig(ua))
+		for _, cfg := range dbAgents {
+			if cfg == nil {
+				continue
+			}
+			botCfgs = append(botCfgs, *cfg)
 		}
 	}
 

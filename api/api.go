@@ -30,7 +30,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
-	"github.com/mattermost/mattermost-plugin-agents/useragents"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -70,11 +69,11 @@ type ConfigStore interface {
 
 // AgentStore provides CRUD access to user-created agents in the database.
 type AgentStore interface {
-	CreateAgent(agent *useragents.UserAgent) error
-	GetAgent(id string) (*useragents.UserAgent, error)
-	ListAgents() ([]*useragents.UserAgent, error)
-	ListAgentsByCreator(creatorID string) ([]*useragents.UserAgent, error)
-	UpdateAgent(agent *useragents.UserAgent) error
+	CreateAgent(cfg *llm.BotConfig) error
+	GetAgent(id string) (*llm.BotConfig, error)
+	ListAgents() ([]*llm.BotConfig, error)
+	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
+	UpdateAgent(cfg *llm.BotConfig) error
 	DeleteAgent(id string) error
 }
 

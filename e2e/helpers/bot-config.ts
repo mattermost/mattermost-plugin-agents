@@ -80,15 +80,15 @@ export class BotConfigHelper {
     private agentToBotConfig(a: AgentResponse): BotConfig {
         return {
             id: a.id,
-            name: a.username,
-            displayName: a.display_name,
-            customInstructions: a.custom_instructions,
-            serviceID: a.service_id,
-            enableVision: a.enable_vision,
-            disableTools: a.disable_tools,
-            reasoningEnabled: a.reasoning_enabled,
-            reasoningEffort: a.reasoning_effort,
-            thinkingBudget: a.thinking_budget,
+            name: a.name,
+            displayName: a.displayName,
+            customInstructions: a.customInstructions,
+            serviceID: a.serviceID,
+            enableVision: a.enableVision,
+            disableTools: a.disableTools,
+            reasoningEnabled: a.reasoningEnabled,
+            reasoningEffort: a.reasoningEffort,
+            thinkingBudget: a.thinkingBudget,
         };
     }
 
@@ -139,7 +139,7 @@ export class BotConfigHelper {
         }
         try {
             const agents = await this.listAgents();
-            const match = agents.find(a => a.username === botName);
+            const match = agents.find(a => a.name === botName);
             return match ? this.agentToBotConfig(match) : undefined;
         } catch {
             return undefined;
@@ -165,28 +165,28 @@ export class BotConfigHelper {
         // Legacy config bots were migrated to Agents_UserAgents; update via user-agent API.
         const body: Record<string, unknown> = {};
         if (updates.displayName !== undefined) {
-            body.display_name = updates.displayName;
+            body.displayName = updates.displayName;
         }
         if (updates.customInstructions !== undefined) {
-            body.custom_instructions = updates.customInstructions;
+            body.customInstructions = updates.customInstructions;
         }
         if (updates.serviceID !== undefined) {
-            body.service_id = updates.serviceID;
+            body.serviceID = updates.serviceID;
         }
         if (updates.enableVision !== undefined) {
-            body.enable_vision = updates.enableVision;
+            body.enableVision = updates.enableVision;
         }
         if (updates.disableTools !== undefined) {
-            body.disable_tools = updates.disableTools;
+            body.disableTools = updates.disableTools;
         }
         if (updates.reasoningEnabled !== undefined) {
-            body.reasoning_enabled = updates.reasoningEnabled;
+            body.reasoningEnabled = updates.reasoningEnabled;
         }
         if (updates.reasoningEffort !== undefined) {
-            body.reasoning_effort = updates.reasoningEffort;
+            body.reasoningEffort = updates.reasoningEffort;
         }
         if (updates.thinkingBudget !== undefined) {
-            body.thinking_budget = updates.thinkingBudget;
+            body.thinkingBudget = updates.thinkingBudget;
         }
         if (Object.keys(body).length === 0) {
             throw new Error(`Bot with ID ${botId} not found and no migratable fields to update`);

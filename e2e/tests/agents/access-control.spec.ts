@@ -40,11 +40,11 @@ test.describe('Agent Access Control', () => {
 
         // Create agent that blocks regularuser
         await agentApi.createTestAgent(token, {
-            display_name: 'Blocking Agent',
+            displayName: 'Blocking Agent',
             username: 'blockingagent',
-            service_id: mockServiceId,
-            user_access_level: 2, // UserAccessLevelBlock
-            user_ids: [regularUser.id],
+            serviceID: mockServiceId,
+            userAccessLevel: 2, // UserAccessLevelBlock
+            userIDs: [regularUser.id],
         });
 
         const mmPage = new MattermostPage(page);
@@ -73,11 +73,11 @@ test.describe('Agent Access Control', () => {
 
         // Create agent that only allows regularuser
         await agentApi.createTestAgent(token, {
-            display_name: 'Restricted Agent',
+            displayName: 'Restricted Agent',
             username: 'restrictedagent',
-            service_id: mockServiceId,
-            user_access_level: 1, // UserAccessLevelAllow
-            user_ids: [regularUser.id],
+            serviceID: mockServiceId,
+            userAccessLevel: 1, // UserAccessLevelAllow
+            userIDs: [regularUser.id],
         });
 
         const mmPage = new MattermostPage(page);
@@ -100,15 +100,15 @@ test.describe('Agent Access Control', () => {
 
         // Create agent
         const agent = await agentApi.createTestAgent(token, {
-            display_name: 'Admin Check Agent',
+            displayName: 'Admin Check Agent',
             username: 'admincheckagent',
-            service_id: mockServiceId,
+            serviceID: mockServiceId,
         });
 
         // Verify via API that the agent is accessible
         const fetched = await agentApi.getAgent(token, agent.id);
-        expect(fetched.display_name).toBe('Admin Check Agent');
-        expect(fetched.creator_id).toBeTruthy();
+        expect(fetched.displayName).toBe('Admin Check Agent');
+        expect(fetched.creatorID).toBeTruthy();
     });
 
     test('should block user not on allowlist when UserAccessLevel=Allow', async ({ page }) => {
@@ -119,11 +119,11 @@ test.describe('Agent Access Control', () => {
         const adminUser = await adminClient.getMe();
 
         await agentApi.createTestAgent(token, {
-            display_name: 'Allowlist Only Admin',
+            displayName: 'Allowlist Only Admin',
             username: 'allowonlyadmin',
-            service_id: mockServiceId,
-            user_access_level: 1,
-            user_ids: [adminUser.id],
+            serviceID: mockServiceId,
+            userAccessLevel: 1,
+            userIDs: [adminUser.id],
         });
 
         const mmPage = new MattermostPage(page);
@@ -148,10 +148,10 @@ test.describe('Agent Access Control', () => {
         const token = adminClient.getToken();
 
         await agentApi.createTestAgent(token, {
-            display_name: 'Private To Creator Only',
+            displayName: 'Private To Creator Only',
             username: 'privatetocreator',
-            service_id: mockServiceId,
-            user_access_level: 3,
+            serviceID: mockServiceId,
+            userAccessLevel: 3,
         });
 
         const mmPage = new MattermostPage(page);
@@ -178,13 +178,13 @@ test.describe('Agent Access Control', () => {
         const regularUser = await regularClient.getMe();
 
         const created = await agentApi.createTestAgent(token, {
-            display_name: 'Delegate Me',
+            displayName: 'Delegate Me',
             username: 'delegatemeagent',
-            service_id: mockServiceId,
+            serviceID: mockServiceId,
         });
 
         await agentApi.updateAgent(token, created.id, {
-            admin_user_ids: [regularUser.id],
+            adminUserIDs: [regularUser.id],
         });
 
         const mmPage = new MattermostPage(page);

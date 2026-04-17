@@ -60,17 +60,20 @@ func (m *MMBots) isMemberOfTeam(teamID string, userID string) (bool, error) {
 	return member != nil && member.DeleteAt == 0, nil
 }
 
-func (m *MMBots) CheckUsageRestrictionsForUser(bot *Bot, requestingUserID string) error {
-	switch bot.GetConfig().UserAccessLevel {
+// CheckUsageRestrictionsForUserConfig returns nil if userID is allowed by cfg's
+// UserAccessLevel / UserIDs / TeamIDs, otherwise an error wrapping ErrUsageRestriction.
+// This is the shared source of truth for user-scope access checks; both config-bot
+// Bot-based callers (CheckUsageRestrictionsForUser) and DB-agent BotConfig-based
+// callers (api.canUserAccessAgent) use it.
+func (m *MMBots) CheckUsageRestrictionsForUserConfig(cfg llm.BotConfig, requestingUserID string) error {
+	switch cfg.UserAccessLevel {
 	case llm.UserAccessLevelAll:
 		return nil
 	case llm.UserAccessLevelAllow:
-		// Check direct user allowlist
-		if slices.Contains(bot.GetConfig().UserIDs, requestingUserID) {
+		if slices.Contains(cfg.UserIDs, requestingUserID) {
 			return nil
 		}
-		// Check team membership
-		for _, teamID := range bot.GetConfig().TeamIDs {
+		for _, teamID := range cfg.TeamIDs {
 			isMember, err := m.isMemberOfTeam(teamID, requestingUserID)
 			if err != nil {
 				return err
@@ -81,12 +84,10 @@ func (m *MMBots) CheckUsageRestrictionsForUser(bot *Bot, requestingUserID string
 		}
 		return fmt.Errorf("user not allowed: %w", ErrUsageRestriction)
 	case llm.UserAccessLevelBlock:
-		// Check direct user blocklist
-		if slices.Contains(bot.GetConfig().UserIDs, requestingUserID) {
+		if slices.Contains(cfg.UserIDs, requestingUserID) {
 			return fmt.Errorf("user blocked: %w", ErrUsageRestriction)
 		}
-		// Check team membership
-		for _, teamID := range bot.GetConfig().TeamIDs {
+		for _, teamID := range cfg.TeamIDs {
 			isMember, err := m.isMemberOfTeam(teamID, requestingUserID)
 			if err != nil {
 				return err
@@ -99,6 +100,9 @@ func (m *MMBots) CheckUsageRestrictionsForUser(bot *Bot, requestingUserID string
 	case llm.UserAccessLevelNone:
 		return fmt.Errorf("user usage block for bot: %w", ErrUsageRestriction)
 	}
-
 	return fmt.Errorf("unknown user assistance level")
+}
+
+func (m *MMBots) CheckUsageRestrictionsForUser(bot *Bot, requestingUserID string) error {
+	return m.CheckUsageRestrictionsForUserConfig(bot.GetConfig(), requestingUserID)
 }
