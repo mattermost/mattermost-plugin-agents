@@ -408,7 +408,7 @@ func (c *Conversations) streamResponseToExistingPost(stream *llm.TextStreamResul
 	locale := c.responseLocale(postingUser, channel)
 	go func() {
 		defer c.streamingService.FinishStreaming(post.Id)
-		c.streamingService.StreamToPost(ctx, stream, post, locale)
+		c.streamingService.StreamToPost(ctx, stream, post, locale, postingUser.Id)
 	}()
 
 	return nil

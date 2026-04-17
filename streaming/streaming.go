@@ -42,7 +42,7 @@ const WebSearchContextProp = "web_search_context"
 type Service interface {
 	StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error
 	StreamToNewDM(ctx context.Context, botID string, stream *llm.TextStreamResult, userID string, post *model.Post, respondingToPostID string) error
-	StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string)
+	StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string, requesterUserID string)
 	StopStreaming(postID string)
 	GetStreamingContext(inCtx context.Context, postID string) (context.Context, error)
 	FinishStreaming(postID string)
@@ -181,23 +181,23 @@ func (p *MMPostStreamService) StreamToNewPost(ctx context.Context, botID string,
 		user, err := p.mmClient.GetUser(requesterUserID)
 		locale := *p.mmClient.GetConfig().LocalizationSettings.DefaultServerLocale
 		if err != nil {
-			p.StreamToPost(ctx, stream, post, locale)
+			p.StreamToPost(ctx, stream, post, locale, requesterUserID)
 			return
 		}
 
 		channel, err := p.mmClient.GetChannel(post.ChannelId)
 		if err != nil {
-			p.StreamToPost(ctx, stream, post, locale)
+			p.StreamToPost(ctx, stream, post, locale, requesterUserID)
 			return
 		}
 
 		if channel.Type == model.ChannelTypeDirect {
 			if channel.Name == botID+"__"+user.Id || channel.Name == user.Id+"__"+botID {
-				p.StreamToPost(ctx, stream, post, user.Locale)
+				p.StreamToPost(ctx, stream, post, user.Locale, requesterUserID)
 				return
 			}
 		}
-		p.StreamToPost(ctx, stream, post, locale)
+		p.StreamToPost(ctx, stream, post, locale, requesterUserID)
 	}()
 
 	return nil
@@ -223,23 +223,23 @@ func (p *MMPostStreamService) StreamToNewDM(ctx context.Context, botID string, s
 		user, err := p.mmClient.GetUser(userID)
 		locale := *p.mmClient.GetConfig().LocalizationSettings.DefaultServerLocale
 		if err != nil {
-			p.StreamToPost(ctx, stream, post, locale)
+			p.StreamToPost(ctx, stream, post, locale, userID)
 			return
 		}
 
 		channel, err := p.mmClient.GetChannel(post.ChannelId)
 		if err != nil {
-			p.StreamToPost(ctx, stream, post, locale)
+			p.StreamToPost(ctx, stream, post, locale, userID)
 			return
 		}
 
 		if channel.Type == model.ChannelTypeDirect {
 			if channel.Name == botID+"__"+user.Id || channel.Name == user.Id+"__"+botID {
-				p.StreamToPost(ctx, stream, post, user.Locale)
+				p.StreamToPost(ctx, stream, post, user.Locale, userID)
 				return
 			}
 		}
-		p.StreamToPost(ctx, stream, post, locale)
+		p.StreamToPost(ctx, stream, post, locale, userID)
 	}()
 
 	return nil
@@ -364,9 +364,62 @@ func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator) {
 	}
 }
 
+// broadcastToolCalls sends tool call WebSocket events with privacy scoping.
+// The requester receives full tool call data (arguments, results).
+// Other channel members receive redacted tool calls (names and status only).
+func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []llm.ToolCall, requesterUserID string) {
+	// Full data to the requester only.
+	fullJSON, err := json.Marshal(toolCalls)
+	if err != nil {
+		p.mmClient.LogError("Failed to marshal tool calls", "error", err)
+		return
+	}
+	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+		"post_id":   post.Id,
+		"control":   "tool_call",
+		"tool_call": string(fullJSON),
+	}, &model.WebsocketBroadcast{
+		ChannelId: post.ChannelId,
+		UserId:    requesterUserID,
+	})
+
+	// Redacted data to the rest of the channel (omit requester to avoid duplicates).
+	redacted := redactToolCalls(toolCalls)
+	redactedJSON, err := json.Marshal(redacted)
+	if err != nil {
+		p.mmClient.LogError("Failed to marshal redacted tool calls", "error", err)
+		return
+	}
+	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+		"post_id":   post.Id,
+		"control":   "tool_call",
+		"tool_call": string(redactedJSON),
+	}, &model.WebsocketBroadcast{
+		ChannelId: post.ChannelId,
+		OmitUsers: map[string]bool{requesterUserID: true},
+	})
+}
+
+// redactToolCalls returns a copy of the tool calls with Arguments and Result
+// cleared so that non-requesters see tool names and status but not payloads.
+func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
+	redacted := make([]llm.ToolCall, len(toolCalls))
+	for i, tc := range toolCalls {
+		redacted[i] = llm.ToolCall{
+			ID:           tc.ID,
+			Name:         tc.Name,
+			ServerOrigin: tc.ServerOrigin,
+			Status:       tc.Status,
+		}
+	}
+	return redacted
+}
+
 // StreamToPost streams the result of a TextStreamResult to a post.
 // it will internally handle logging needs and updating the post.
-func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string) {
+// requesterUserID is the user who initiated the request; tool call details
+// are scoped to this user while other channel members see redacted metadata.
+func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string, requesterUserID string) {
 	broadcast := &model.WebsocketBroadcast{ChannelId: post.ChannelId}
 	p.sendPostStreamingControlEventWithBroadcast(post, PostStreamingControlStart, broadcast)
 
@@ -483,16 +536,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					if acc != nil {
 						acc.toolCalls = toolCalls
 					}
-					toolCallJSON, jsonErr := json.Marshal(toolCalls)
-					if jsonErr != nil {
-						p.mmClient.LogError("Failed to marshal tool calls", "error", jsonErr)
-					} else {
-						p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
-							"post_id":   post.Id,
-							"control":   "tool_call",
-							"tool_call": string(toolCallJSON),
-						}, broadcast)
-					}
+					p.broadcastToolCalls(post, toolCalls, requesterUserID)
 				}
 			case llm.EventTypeAnnotations:
 				// Handle annotations - might include cleaned message for web search citations

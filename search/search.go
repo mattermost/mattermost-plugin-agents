@@ -417,7 +417,7 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 		return
 	}
 	defer s.streamingService.FinishStreaming(responsePost.Id)
-	s.streamingService.StreamToPost(streamContext, resultStream, responsePost, "")
+	s.streamingService.StreamToPost(streamContext, resultStream, responsePost, "", userID)
 }
 
 // SearchQuery performs a search and returns results immediately

@@ -199,13 +199,13 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 
 	if mmapi.IsDMWith(bot.GetMMBot().UserId, channel) {
 		if channel.Name == bot.GetMMBot().UserId+"__"+user.Id || channel.Name == user.Id+"__"+bot.GetMMBot().UserId {
-			c.streamingService.StreamToPost(ctx, result, post, user.Locale)
+			c.streamingService.StreamToPost(ctx, result, post, user.Locale, user.Id)
 			return nil
 		}
 	}
 
 	config := c.mmClient.GetConfig()
-	c.streamingService.StreamToPost(ctx, result, post, *config.LocalizationSettings.DefaultServerLocale)
+	c.streamingService.StreamToPost(ctx, result, post, *config.LocalizationSettings.DefaultServerLocale, user.Id)
 
 	return nil
 }

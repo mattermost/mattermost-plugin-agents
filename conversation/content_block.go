@@ -3,7 +3,11 @@
 
 package conversation
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+)
 
 // Block type constants identify the type of content in a ContentBlock.
 const (
@@ -99,6 +103,33 @@ func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 		case BlockTypeToolResult:
 			if block.Shared == nil || !*block.Shared {
 				result[i].Content = ""
+			}
+		}
+	}
+	return result
+}
+
+// SanitizeForDisplay returns a new slice of content blocks with LLM-generated
+// string fields sanitized against Unicode bidi/spoofing attacks. Tool use
+// blocks have their Input field sanitized, and tool result blocks have their
+// Content field sanitized. The original slice is never mutated.
+// Returns nil if the input is nil.
+func SanitizeForDisplay(blocks []ContentBlock) []ContentBlock {
+	if blocks == nil {
+		return nil
+	}
+	result := make([]ContentBlock, len(blocks))
+	for i, block := range blocks {
+		result[i] = block
+
+		switch block.Type {
+		case BlockTypeToolUse:
+			if len(block.Input) > 0 {
+				result[i].Input = json.RawMessage(llm.SanitizeNonPrintableChars(string(block.Input)))
+			}
+		case BlockTypeToolResult:
+			if block.Content != "" {
+				result[i].Content = llm.SanitizeNonPrintableChars(block.Content)
 			}
 		}
 	}

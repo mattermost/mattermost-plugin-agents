@@ -25,7 +25,7 @@ func (s *fakeStreamingService) StreamToNewDM(context.Context, string, *llm.TextS
 	return nil
 }
 
-func (s *fakeStreamingService) StreamToPost(context.Context, *llm.TextStreamResult, *model.Post, string) {
+func (s *fakeStreamingService) StreamToPost(context.Context, *llm.TextStreamResult, *model.Post, string, string) {
 }
 
 func (s *fakeStreamingService) StopStreaming(string) {}

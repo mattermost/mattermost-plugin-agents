@@ -113,7 +113,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -158,7 +158,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -185,7 +185,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -220,7 +220,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -257,7 +257,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -301,7 +301,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -330,7 +330,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -358,7 +358,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeError, Value: fmt.Errorf("upstream failure")}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -395,7 +395,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 			cancel()
 		}()
 
-		service.StreamToPost(ctx, &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(ctx, &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -425,7 +425,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeError, Value: fmt.Errorf("crash")}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -462,7 +462,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		close(streamChannel)
 
 		// Should not panic.
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		require.GreaterOrEqual(t, len(client.updatedPosts), 1)
 		require.Equal(t, "Hello", client.updatedPosts[len(client.updatedPosts)-1].Message)
@@ -486,7 +486,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -512,7 +512,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		require.GreaterOrEqual(t, len(client.updatedPosts), 1)
 		require.Equal(t, "Hello", client.updatedPosts[len(client.updatedPosts)-1].Message)
@@ -539,7 +539,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		require.GreaterOrEqual(t, len(client.updatedPosts), 1)
 		require.Equal(t, "Hello", client.updatedPosts[len(client.updatedPosts)-1].Message)
@@ -573,7 +573,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -612,7 +612,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
@@ -652,7 +652,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		require.Equal(t, conversationID, post.GetProp(ConversationIDProp))
 	})
@@ -684,7 +684,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en")
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
