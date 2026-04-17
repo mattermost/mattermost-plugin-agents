@@ -418,7 +418,7 @@ func (p *MattermostToolProvider) toolUpdateCustomPrompt(mcpContext *MCPToolConte
 		body["is_shared"] = *args.IsShared
 	}
 
-	if _, err := doPluginNoContent(mcpContext, http.MethodPut, "/custom-prompts/"+currentPrompt.ID, body); err != nil {
+	if err := doPluginNoContent(mcpContext, http.MethodPut, "/custom-prompts/"+currentPrompt.ID, body); err != nil {
 		return "failed to update custom prompt", fmt.Errorf("update_custom_prompt request failed: %w", err)
 	}
 
@@ -451,18 +451,18 @@ func doPluginJSON[T any](mcpContext *MCPToolContext, method, route string, paylo
 	return result, nil
 }
 
-func doPluginNoContent(mcpContext *MCPToolContext, method, route string, payload any) (*http.Response, error) {
+func doPluginNoContent(mcpContext *MCPToolContext, method, route string, payload any) error {
 	response, err := doPluginRequest(mcpContext, method, route, payload)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return nil, pluginRequestError(method, route, response)
+		return pluginRequestError(method, route, response)
 	}
 
-	return response, nil
+	return nil
 }
 
 func doPluginRequest(mcpContext *MCPToolContext, method, route string, payload any) (*http.Response, error) {
