@@ -111,6 +111,7 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	// Automation tools are always registered; availability is checked dynamically
 	// via middleware on each tools/list request.
 	mcpTools = append(mcpTools, p.getAutomationTools()...)
+	mcpTools = append(mcpTools, p.getAgentManagementTools()...)
 
 	// Add dev tools if dev mode is enabled
 	if p.devMode {
