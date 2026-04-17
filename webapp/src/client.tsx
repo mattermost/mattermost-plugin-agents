@@ -249,6 +249,21 @@ export async function getAIThreads() {
     });
 }
 
+// normalizeConversationResponse coerces every turn's content to a non-null
+// array. The backend may persist a turn whose content column is the JSON
+// literal `null` (e.g. when a stream finalizes before any blocks accumulate),
+// and downstream code iterates turn.content freely. Normalizing once here
+// keeps every consumer free of defensive null checks.
+export function normalizeConversationResponse(raw: ConversationResponse): ConversationResponse {
+    return {
+        ...raw,
+        turns: (raw.turns ?? []).map((turn) => ({
+            ...turn,
+            content: turn.content ?? [],
+        })),
+    };
+}
+
 export async function getConversation(conversationId: string): Promise<ConversationResponse> {
     const url = `${baseRoute()}/conversations/${conversationId}`;
     const response = await fetch(url, Client4.getOptions({
@@ -256,7 +271,8 @@ export async function getConversation(conversationId: string): Promise<Conversat
     }));
 
     if (response.ok) {
-        return response.json() as Promise<ConversationResponse>;
+        const raw = await response.json() as ConversationResponse;
+        return normalizeConversationResponse(raw);
     }
 
     throw new ClientError(Client4.url, {

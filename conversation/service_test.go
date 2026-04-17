@@ -516,17 +516,82 @@ func TestBuildCompletionRequest_WithToolTurns(t *testing.T) {
 	req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
 	require.NoError(t, err)
 
-	// system + user + assistant(tool_use) + tool_result + final_assistant = 5
-	require.Len(t, req.Posts, 5)
+	// tool_result turn is merged into the preceding assistant turn, so:
+	// system + user + assistant(tool_use+result) + final_assistant = 4
+	require.Len(t, req.Posts, 4)
 	assert.Equal(t, llm.PostRoleSystem, req.Posts[0].Role)
 	assert.Equal(t, llm.PostRoleUser, req.Posts[1].Role)
 	assert.Equal(t, llm.PostRoleBot, req.Posts[2].Role)
 	require.Len(t, req.Posts[2].ToolUse, 1)
 	assert.Equal(t, "get_weather", req.Posts[2].ToolUse[0].Name)
-	// tool_result maps to PostRoleUser
-	assert.Equal(t, llm.PostRoleUser, req.Posts[3].Role)
-	assert.Equal(t, llm.PostRoleBot, req.Posts[4].Role)
-	assert.Equal(t, "The weather is 72F and sunny.", req.Posts[4].Message)
+	assert.Equal(t, "72F, sunny", req.Posts[2].ToolUse[0].Result)
+	assert.Equal(t, llm.PostRoleBot, req.Posts[3].Role)
+	assert.Equal(t, "The weather is 72F and sunny.", req.Posts[3].Message)
+}
+
+// TestBuildCompletionRequest_MultipleToolRoundsMerged verifies that multiple
+// tool rounds (each stored as a separate assistant + tool_result turn pair)
+// each get merged into a single assistant llm.Post with Result populated on
+// every ToolUse entry, which is what bifrost requires.
+func TestBuildCompletionRequest_MultipleToolRoundsMerged(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "multi-round",
+	})
+	require.NoError(t, err)
+	convID := result.ConversationID
+
+	addTurn := func(role string, seq int, blocks []ContentBlock) {
+		content, _ := json.Marshal(blocks)
+		addErr := s.CreateTurn(&store.Turn{
+			ID:             model.NewId(),
+			ConversationID: convID,
+			Role:           role,
+			Content:        content,
+			Sequence:       seq,
+			CreatedAt:      model.GetMillis(),
+		})
+		require.NoError(t, addErr)
+	}
+
+	addTurn("assistant", 2, []ContentBlock{
+		{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+	})
+	addTurn("tool_result", 3, []ContentBlock{
+		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "first result", Status: StatusSuccess, Shared: BoolPtr(true)},
+	})
+	addTurn("assistant", 4, []ContentBlock{
+		{Type: BlockTypeToolUse, ID: "tc2", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+	})
+	addTurn("tool_result", 5, []ContentBlock{
+		{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "second result", Status: StatusSuccess, Shared: BoolPtr(true)},
+	})
+
+	conv, err := s.GetConversation(convID)
+	require.NoError(t, err)
+
+	req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+	require.NoError(t, err)
+
+	// system + user + round-1 assistant + round-2 assistant = 4
+	require.Len(t, req.Posts, 4)
+
+	round1 := req.Posts[2]
+	assert.Equal(t, llm.PostRoleBot, round1.Role)
+	require.Len(t, round1.ToolUse, 1)
+	assert.Equal(t, "tc1", round1.ToolUse[0].ID)
+	assert.Equal(t, "first result", round1.ToolUse[0].Result)
+
+	round2 := req.Posts[3]
+	assert.Equal(t, llm.PostRoleBot, round2.Role)
+	require.Len(t, round2.ToolUse, 1)
+	assert.Equal(t, "tc2", round2.ToolUse[0].ID)
+	assert.Equal(t, "second result", round2.ToolUse[0].Result)
 }
 
 func TestBuildCompletionRequest_RedactUnsharedToolContent(t *testing.T) {

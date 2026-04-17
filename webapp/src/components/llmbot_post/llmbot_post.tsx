@@ -21,11 +21,11 @@ import {ToolApprovalStage, ToolCall} from '../tool_types';
 import {Annotation} from '../citations/types';
 
 import {
-    extractToolCallsFromTurn,
+    extractToolCallsForPost,
     extractReasoningFromTurn,
     extractAnnotationsFromTurn,
-    deriveApprovalStage,
-    hasAutoApprovedTools,
+    deriveApprovalStageForPost,
+    hasAutoApprovedToolsForPost,
 } from './turn_content_utils';
 import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
 import {ControlsBarComponent} from './controls_bar';
@@ -97,12 +97,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             return;
         }
 
-        // Tool calls
+        // Tool calls — aggregate across every turn that belongs to this
+        // post's response so multi-round tool use displays all calls.
         if (conversation) {
-            const derived = extractToolCallsFromTurn(turn, conversation);
+            const derived = extractToolCallsForPost(conversation, props.post.id);
             setToolCalls(derived);
-            setToolApprovalStage(deriveApprovalStage(turn, conversation));
-            setIsAutoApproved(hasAutoApprovedTools(turn));
+            setToolApprovalStage(deriveApprovalStageForPost(conversation, props.post.id));
+            setIsAutoApproved(hasAutoApprovedToolsForPost(conversation, props.post.id));
         }
 
         // Reasoning
@@ -122,7 +123,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
         // Precontent should be false when we have turn data
         setPrecontent(false);
-    }, [turn, generating, conversation]);
+    }, [turn, generating, conversation, props.post.id]);
 
     // Sync message from post.message changes (e.g. after post update)
     useEffect(() => {
@@ -160,11 +161,29 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     return;
                 }
 
-                // Handle tool call events from the websocket event
+                // Handle tool call events from the websocket event.
+                // Each round emits its own event; merge by id so live display
+                // shows every round's calls instead of only the last round's.
                 if (data.control === 'tool_call' && data.tool_call) {
                     try {
-                        const parsedToolCalls = JSON.parse(data.tool_call);
-                        setToolCalls(parsedToolCalls);
+                        const parsedToolCalls = JSON.parse(data.tool_call) as ToolCall[];
+                        setToolCalls((prev) => {
+                            const byID = new Map<string, number>();
+                            const next = [...prev];
+                            for (let i = 0; i < next.length; i++) {
+                                byID.set(next[i].id, i);
+                            }
+                            for (const tc of parsedToolCalls) {
+                                const idx = byID.get(tc.id);
+                                if (idx === undefined) { // eslint-disable-line no-undefined
+                                    byID.set(tc.id, next.length);
+                                    next.push(tc);
+                                } else {
+                                    next[idx] = tc;
+                                }
+                            }
+                            return next;
+                        });
                         setPrecontent(false);
                     } catch {
                         setError('Error parsing tool call data');

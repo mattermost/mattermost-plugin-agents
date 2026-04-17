@@ -43,39 +43,57 @@ export function statusStringToEnum(status: ConvToolCallStatus | undefined): Tool
 }
 
 /**
- * Build a ToolCall[] from a turn's content blocks and the subsequent
- * tool_result turn(s) in the conversation.  The result is compatible with
- * the existing ToolApprovalSet / ToolCard interfaces.
+ * Collect all turns that belong to the same assistant response as the post
+ * identified by `postId`. The anchor is the turn whose post_id matches; the
+ * response also includes any subsequent assistant/tool_result turns until a
+ * new user turn appears. Tool rounds live in those subsequent turns (they
+ * currently have no post_id), so the UI must aggregate across them to show
+ * every tool call from every round rather than just the anchor's.
  */
-export function extractToolCallsFromTurn(
-    turn: Turn,
+function collectResponseTurns(
     conversation: ConversationResponse,
-): ToolCall[] {
-    const toolUseBlocks = turn.content.filter(
-        (b: ContentBlock) => b.type === BlockTypeToolUse,
-    );
-
-    if (toolUseBlocks.length === 0) {
+    postId: string,
+): Turn[] {
+    const sorted = [...conversation.turns].sort((a, b) => a.sequence - b.sequence);
+    const anchorIdx = sorted.findIndex((t) => t.post_id === postId);
+    if (anchorIdx === -1) {
         return [];
     }
 
-    // Collect tool_result blocks from subsequent turns that match this turn's
-    // tool_use IDs.  We search all turns rather than stopping at the first
-    // non-tool_result turn because WriteToolTurns may insert intermediate
-    // assistant turns between the streaming turn and the tool_result turn.
-    const toolUseIDs = new Set(
-        toolUseBlocks.map((b) => b.id).filter(Boolean),
-    );
-    const resultMap = new Map<string, ContentBlock>();
-    for (const t of conversation.turns) {
-        if (t.sequence <= turn.sequence) {
-            continue;
+    const out: Turn[] = [sorted[anchorIdx]];
+    for (let i = anchorIdx + 1; i < sorted.length; i++) {
+        if (sorted[i].role === 'user') {
+            break;
         }
+        out.push(sorted[i]);
+    }
+    return out;
+}
+
+/**
+ * Build a ToolCall[] from every tool_use block across the turns that belong
+ * to a given post's response, pairing each with its matching tool_result by
+ * id. The result is compatible with the existing ToolApprovalSet / ToolCard
+ * interfaces.
+ */
+export function extractToolCallsForPost(
+    conversation: ConversationResponse,
+    postId: string,
+): ToolCall[] {
+    const turns = collectResponseTurns(conversation, postId);
+    if (turns.length === 0) {
+        return [];
+    }
+
+    const toolUseBlocks: ContentBlock[] = [];
+    const resultMap = new Map<string, ContentBlock>();
+    for (const t of turns) {
         for (const block of t.content) {
-            if (
+            if (block.type === BlockTypeToolUse) {
+                toolUseBlocks.push(block);
+            } else if (
                 block.type === BlockTypeToolResult &&
-                block.tool_use_id &&
-                toolUseIDs.has(block.tool_use_id)
+                block.tool_use_id
             ) {
                 resultMap.set(block.tool_use_id, block);
             }
@@ -84,7 +102,6 @@ export function extractToolCallsFromTurn(
 
     return toolUseBlocks.map((block: ContentBlock): ToolCall => {
         const resultBlock = block.id ? resultMap.get(block.id) : undefined; // eslint-disable-line no-undefined
-
         return {
             id: block.id ?? '',
             name: block.name ?? '',
@@ -146,35 +163,31 @@ export function extractAnnotationsFromTurn(turn: Turn): Annotation[] {
 
 /**
  * Determine whether the tool approval UI should show the 'call' stage
- * (accept/reject tool execution) or the 'result' stage (share/keep-private).
+ * (accept/reject tool execution) or the 'result' stage (share/keep-private)
+ * across every turn that belongs to this post's response.
  */
-export function deriveApprovalStage(
-    turn: Turn,
+export function deriveApprovalStageForPost(
     conversation: ConversationResponse,
+    postId: string,
 ): ToolApprovalStage {
-    const toolUseBlocks = turn.content.filter(
-        (b: ContentBlock) => b.type === BlockTypeToolUse,
-    );
-
-    if (toolUseBlocks.length === 0) {
+    const turns = collectResponseTurns(conversation, postId);
+    if (turns.length === 0) {
         return 'call';
     }
 
-    // Collect tool_use IDs from this turn.
-    const toolUseIDs = new Set(
-        toolUseBlocks.map((b) => b.id).filter(Boolean),
-    );
-
-    // Search all subsequent turns for tool_result blocks that reference
-    // one of this turn's tool_use IDs.  We cannot simply walk sequentially
-    // and break on the first non-tool_result turn because WriteToolTurns
-    // may insert intermediate assistant turns between the streaming turn
-    // and the corresponding tool_result turn.
+    const toolUseIDs = new Set<string>();
     const matchedResults: ContentBlock[] = [];
-    for (const t of conversation.turns) {
-        if (t.sequence <= turn.sequence) {
-            continue;
+    for (const t of turns) {
+        for (const block of t.content) {
+            if (block.type === BlockTypeToolUse && block.id) {
+                toolUseIDs.add(block.id);
+            }
         }
+    }
+    if (toolUseIDs.size === 0) {
+        return 'call';
+    }
+    for (const t of turns) {
         for (const block of t.content) {
             if (
                 block.type === BlockTypeToolResult &&
@@ -199,9 +212,15 @@ export function deriveApprovalStage(
     return 'result';
 }
 
-/** Check whether any tool_use block in the turn has auto_approved status. */
-export function hasAutoApprovedTools(turn: Turn): boolean {
-    return turn.content.some(
-        (b: ContentBlock) => b.type === BlockTypeToolUse && b.status === StatusAutoApproved,
+/** True if any tool_use block across the post's response has auto_approved status. */
+export function hasAutoApprovedToolsForPost(
+    conversation: ConversationResponse,
+    postId: string,
+): boolean {
+    const turns = collectResponseTurns(conversation, postId);
+    return turns.some((t) =>
+        t.content.some(
+            (b: ContentBlock) => b.type === BlockTypeToolUse && b.status === StatusAutoApproved,
+        ),
     );
 }

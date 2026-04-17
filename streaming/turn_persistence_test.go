@@ -549,7 +549,12 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.Len(t, ts.turns, 1)
 	})
 
-	t.Run("DM tool calls accumulate in turn content", func(t *testing.T) {
+	t.Run("resolved tool call in DM does not land on placeholder turn", func(t *testing.T) {
+		// Tool rounds are persisted as their own turns by
+		// conversation.Service.WriteToolTurns; the placeholder turn represents
+		// only the final bot-response post. On the post-execution "resolved"
+		// event the accumulator must drop the round's text, reasoning and
+		// tool calls so none of it leaks onto the placeholder.
 		ts := &fakeTurnStore{}
 		client := &fakeStreamingClient{
 			channels: map[string]*model.Channel{
@@ -562,14 +567,18 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
 		post.AddProp(ConversationIDProp, conversationID)
 
-		toolCalls := []llm.ToolCall{
+		pending := []llm.ToolCall{
+			{ID: "tc-1", Name: "search", ServerOrigin: "https://mcp.example.com", Arguments: json.RawMessage(`{"q":"test"}`), Status: llm.ToolCallStatusPending},
+		}
+		resolved := []llm.ToolCall{
 			{ID: "tc-1", Name: "search", ServerOrigin: "https://mcp.example.com", Arguments: json.RawMessage(`{"q":"test"}`), Status: llm.ToolCallStatusAutoApproved},
 		}
 
-		streamChannel := make(chan llm.TextStreamEvent, 4)
+		streamChannel := make(chan llm.TextStreamEvent, 5)
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Searching"}
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: " done"}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: pending}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolved}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Done"}
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
 
@@ -579,15 +588,21 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		defer ts.mu.Unlock()
 		require.Len(t, ts.updateCalls, 1)
 		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
-		var foundToolUse bool
+
 		for _, b := range blocks {
-			if b.Type == conversation.BlockTypeToolUse {
-				foundToolUse = true
-				require.Equal(t, "tc-1", b.ID)
-				require.Equal(t, "search", b.Name)
+			require.NotEqual(t, conversation.BlockTypeToolUse, b.Type,
+				"resolved tool_use leaked onto the final placeholder turn")
+		}
+
+		var textBlock *conversation.ContentBlock
+		for i := range blocks {
+			if blocks[i].Type == conversation.BlockTypeText {
+				textBlock = &blocks[i]
+				break
 			}
 		}
-		require.True(t, foundToolUse, "expected a tool_use block in finalized DM turn")
+		require.NotNil(t, textBlock, "expected a text block with the final round's text")
+		require.Equal(t, "Done", textBlock.Text, "placeholder must hold only the final round's text")
 	})
 
 	t.Run("channel tool call persists via defer before return", func(t *testing.T) {
@@ -712,5 +727,116 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.NoError(t, json.Unmarshal(annotationsBlock.WebSearchContext.Results, &parsedAnnotations))
 		require.Len(t, parsedAnnotations, 1)
 		require.Equal(t, "https://example.com", parsedAnnotations[0].URL)
+	})
+
+	// Reproducer: a stream that produces no text/reasoning/tool_calls should
+	// finalize to "[]" so the webapp can safely iterate `turn.content`. The
+	// current implementation marshals a nil slice to "null" instead, which
+	// crashes the webapp with "turn.content is null".
+	t.Run("empty stream finalizes to empty array not null", func(t *testing.T) {
+		ts := &fakeTurnStore{}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		streamChannel := make(chan llm.TextStreamEvent, 1)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
+
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		require.Len(t, ts.updateCalls, 1)
+		// The persisted content must be a JSON array so the webapp can iterate it.
+		require.NotEqual(t, "null", string(ts.updateCalls[0].Content),
+			"empty stream must not persist literal null; webapp crashes on turn.content.filter")
+		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
+		require.Empty(t, blocks)
+	})
+
+	// Reproducer: when the ToolRunner emits multiple rounds of tool calls on
+	// the same stream (round 1: text + tool_calls, round 2: text), the
+	// placeholder turn (which is bound to the final bot-response post) must
+	// end up with only the FINAL round's text/reasoning/tool_calls. Otherwise
+	// intermediate round state leaks onto the final post — the UI shows
+	// concatenated text and only the last round's tool call.
+	t.Run("multi-round tool calls do not leak into placeholder turn", func(t *testing.T) {
+		ts := &fakeTurnStore{}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		// ToolRunner emits each round as (pending event → execute → resolved
+		// event). The pending event carries whatever status the LLM stream
+		// produced (Pending); buildResolvedToolCalls re-tags successful
+		// auto-run calls as AutoApproved and errored ones as Error.
+		round1Pending := []llm.ToolCall{
+			{ID: "tc-round-1", Name: "search", Arguments: json.RawMessage(`{"q":"AOC alerts"}`), Status: llm.ToolCallStatusPending},
+		}
+		round1Resolved := []llm.ToolCall{
+			{ID: "tc-round-1", Name: "search", Arguments: json.RawMessage(`{"q":"AOC alerts"}`), Status: llm.ToolCallStatusAutoApproved},
+		}
+		round2Pending := []llm.ToolCall{
+			{ID: "tc-round-2", Name: "search", Arguments: json.RawMessage(`{"q":"alerts"}`), Status: llm.ToolCallStatusPending},
+		}
+		round2Resolved := []llm.ToolCall{
+			{ID: "tc-round-2", Name: "search", Arguments: json.RawMessage(`{"q":"alerts"}`), Status: llm.ToolCallStatusAutoApproved},
+		}
+
+		// Two rounds of (text + tool_calls) followed by a final round with text only.
+		streamChannel := make(chan llm.TextStreamEvent, 8)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Let me look that up for you!"}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: round1Pending}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: round1Resolved}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: round2Pending}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: round2Resolved}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "I wasn't able to find that channel."}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
+
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		require.Len(t, ts.updateCalls, 1)
+		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
+
+		// The placeholder turn represents only the final bot-response post.
+		// Intermediate-round tool calls are persisted separately by
+		// conversation.Service.WriteToolTurns, so they must NOT appear here.
+		for _, b := range blocks {
+			require.NotEqual(t, conversation.BlockTypeToolUse, b.Type,
+				"intermediate-round tool_use block leaked onto final placeholder turn")
+		}
+
+		// Final text should only reflect the final round, not a concatenation
+		// of all rounds' text. "Let me look that up for you!" came from round
+		// 1 and should have been reset once round 1 was persisted via
+		// WriteToolTurns.
+		var textBlock *conversation.ContentBlock
+		for i := range blocks {
+			if blocks[i].Type == conversation.BlockTypeText {
+				textBlock = &blocks[i]
+				break
+			}
+		}
+		require.NotNil(t, textBlock, "expected final text block")
+		require.Equal(t, "I wasn't able to find that channel.", textBlock.Text,
+			"final placeholder turn must contain only the final round's text")
 	})
 }

@@ -321,10 +321,24 @@ func (s *Service) BuildCompletionRequest(
 		Message: conv.SystemPrompt,
 	})
 
-	for _, turn := range turns {
+	// Merge each tool_result turn into the preceding assistant turn's blocks so
+	// that BlocksToPost can match tool_result blocks to their tool_use entries
+	// within the same llm.Post. Otherwise tool_use entries go out with empty
+	// Result fields and bifrost emits empty-content tool messages, which
+	// Anthropic rejects with "text content blocks must be non-empty".
+	for i := 0; i < len(turns); i++ {
+		turn := turns[i]
 		blocks, err := unmarshalBlocks(turn.Content)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turn.ID, err)
+		}
+		if turn.Role == "assistant" && i+1 < len(turns) && turns[i+1].Role == "tool_result" {
+			nextBlocks, err := unmarshalBlocks(turns[i+1].Content)
+			if err != nil {
+				return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turns[i+1].ID, err)
+			}
+			blocks = append(blocks, nextBlocks...)
+			i++
 		}
 		posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared))
 	}
