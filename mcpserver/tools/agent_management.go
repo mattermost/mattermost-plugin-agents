@@ -418,7 +418,8 @@ func (p *MattermostToolProvider) toolUpdateCustomPrompt(mcpContext *MCPToolConte
 		body["is_shared"] = *args.IsShared
 	}
 
-	if err := doPluginNoContent(mcpContext, http.MethodPut, "/custom-prompts/"+currentPrompt.ID, body); err != nil {
+	err = doPluginNoContent(mcpContext, http.MethodPut, "/custom-prompts/"+currentPrompt.ID, body)
+	if err != nil {
 		return "failed to update custom prompt", fmt.Errorf("update_custom_prompt request failed: %w", err)
 	}
 
