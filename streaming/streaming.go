@@ -52,18 +52,18 @@ type postStreamContext struct {
 	cancel context.CancelFunc
 }
 
-// TurnStore is the subset of store operations needed by the streaming layer
-// for persisting assistant turns during streaming.
+// TurnStore is the subset of store operations needed by the streaming layer.
+// The streaming layer creates exactly one assistant turn per stream, at the
+// END of the stream, with the fully-accumulated content — that way the turn's
+// auto-assigned sequence lands after any tool-round turns that WriteToolTurns
+// persisted during the stream.
 type TurnStore interface {
 	CreateTurnAutoSequence(turn *store.Turn) error
-	UpdateTurnContent(id string, content json.RawMessage) error
-	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
 }
 
-// turnAccumulator collects stream state for turn persistence.
-// It is created at stream start and finalized at stream end/error/cancel.
+// turnAccumulator collects stream state. The turn is not written to the
+// database until finalizeTurn runs at stream end/error/cancel.
 type turnAccumulator struct {
-	turnID         string
 	conversationID string
 	postID         string
 	isDM           bool // true for DM channels; controls shared flag on tool_use blocks
@@ -317,53 +317,44 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 	delete(p.contexts, postID)
 }
 
-// createPlaceholderTurn creates a placeholder turn row for the streaming assistant response.
-// isDM controls the shared flag on persisted tool_use blocks.
-// Returns nil if the turn cannot be created (error is logged).
-func (p *MMPostStreamService) createPlaceholderTurn(conversationID, postID string, isDM bool) *turnAccumulator {
-	turnID := model.NewId()
-	postIDPtr := &postID
-
-	turn := &store.Turn{
-		ID:             turnID,
-		ConversationID: conversationID,
-		PostID:         postIDPtr,
-		Role:           "assistant",
-		Content:        json.RawMessage("[]"),
-		CreatedAt:      model.GetMillis(),
-	}
-
-	if err := p.turnStore.CreateTurnAutoSequence(turn); err != nil {
-		p.mmClient.LogError("Failed to create placeholder turn", "error", err, "conversation_id", conversationID)
-		return nil
-	}
-
+// newTurnAccumulator constructs an in-memory accumulator for a streaming
+// assistant response. Nothing is persisted until finalizeTurn runs.
+func newTurnAccumulator(conversationID, postID string, isDM bool) *turnAccumulator {
 	return &turnAccumulator{
-		turnID:         turnID,
 		conversationID: conversationID,
 		postID:         postID,
 		isDM:           isDM,
 	}
 }
 
-// finalizeTurn builds content blocks from accumulated state and persists them.
+// finalizeTurn builds content blocks from accumulated state and persists them
+// as a single new assistant turn. Creating the turn at stream END rather than
+// start gives it the highest sequence in the conversation — ensuring the
+// final response sits after any tool-round turns WriteToolTurns persisted
+// during the stream.
 func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator) {
 	blocks := acc.buildContentBlocks()
 
 	contentJSON, err := json.Marshal(blocks)
 	if err != nil {
-		p.mmClient.LogError("Failed to marshal turn content blocks", "error", err, "turn_id", acc.turnID)
+		p.mmClient.LogError("Failed to marshal turn content blocks", "error", err, "post_id", acc.postID)
 		return
 	}
 
-	if err := p.turnStore.UpdateTurnContent(acc.turnID, contentJSON); err != nil {
-		p.mmClient.LogError("Failed to update turn content", "error", err, "turn_id", acc.turnID)
+	postIDCopy := acc.postID
+	turn := &store.Turn{
+		ID:             model.NewId(),
+		ConversationID: acc.conversationID,
+		PostID:         &postIDCopy,
+		Role:           "assistant",
+		Content:        contentJSON,
+		TokensIn:       acc.tokensIn,
+		TokensOut:      acc.tokensOut,
+		CreatedAt:      model.GetMillis(),
 	}
 
-	if acc.tokensIn > 0 || acc.tokensOut > 0 {
-		if err := p.turnStore.UpdateTurnTokens(acc.turnID, acc.tokensIn, acc.tokensOut); err != nil {
-			p.mmClient.LogError("Failed to update turn tokens", "error", err, "turn_id", acc.turnID)
-		}
+	if err := p.turnStore.CreateTurnAutoSequence(turn); err != nil {
+		p.mmClient.LogError("Failed to create finalized assistant turn", "error", err, "post_id", acc.postID)
 	}
 }
 
@@ -458,7 +449,7 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 			if ch, chErr := p.mmClient.GetChannel(post.ChannelId); chErr == nil {
 				isDM = ch.Type == model.ChannelTypeDirect || ch.Type == model.ChannelTypeGroup
 			}
-			acc = p.createPlaceholderTurn(convID, post.Id, isDM)
+			acc = newTurnAccumulator(convID, post.Id, isDM)
 		}
 	}
 

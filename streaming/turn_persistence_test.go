@@ -18,26 +18,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeTurnStore implements TurnStore and records all calls for test assertions.
+// fakeTurnStore implements TurnStore and records every created turn.
+// Streaming now creates its assistant turn exactly once, at finalize, so
+// there's no separate update path to mock.
 type fakeTurnStore struct {
-	mu          sync.Mutex
-	turns       []*store.Turn
-	updateCalls []turnContentUpdate
-	tokenCalls  []turnTokenUpdate
-	createErr   error
-	updateErr   error
-	tokenErr    error
-}
-
-type turnContentUpdate struct {
-	ID      string
-	Content json.RawMessage
-}
-
-type turnTokenUpdate struct {
-	ID        string
-	TokensIn  int64
-	TokensOut int64
+	mu        sync.Mutex
+	turns     []*store.Turn
+	createErr error
 }
 
 func (f *fakeTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {
@@ -58,32 +45,23 @@ func (f *fakeTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {
 	return nil
 }
 
-func (f *fakeTurnStore) UpdateTurnContent(id string, content json.RawMessage) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.updateErr != nil {
-		return f.updateErr
-	}
-	f.updateCalls = append(f.updateCalls, turnContentUpdate{ID: id, Content: content})
-	return nil
-}
-
-func (f *fakeTurnStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.tokenErr != nil {
-		return f.tokenErr
-	}
-	f.tokenCalls = append(f.tokenCalls, turnTokenUpdate{ID: id, TokensIn: tokensIn, TokensOut: tokensOut})
-	return nil
-}
-
 // parseContentBlocks is a test helper that unmarshals content JSON into content blocks.
 func parseContentBlocks(t *testing.T, raw json.RawMessage) []conversation.ContentBlock {
 	t.Helper()
 	var blocks []conversation.ContentBlock
 	require.NoError(t, json.Unmarshal(raw, &blocks))
 	return blocks
+}
+
+// findStreamTurn returns the assistant turn for the given streaming post, or
+// nil if finalize did not persist one (e.g. turnStore was nil).
+func findStreamTurn(turns []*store.Turn, postID string) *store.Turn {
+	for _, tr := range turns {
+		if tr.PostID != nil && *tr.PostID == postID && tr.Role == "assistant" {
+			return tr
+		}
+	}
+	return nil
 }
 
 func TestStreamToPostTurnPersistence(t *testing.T) {
@@ -95,7 +73,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		conversationID = "conv-id"
 	)
 
-	t.Run("creates placeholder turn on stream start", func(t *testing.T) {
+	t.Run("creates assistant turn at stream end with accumulated content", func(t *testing.T) {
 		ts := &fakeTurnStore{}
 		client := &fakeStreamingClient{
 			channels: map[string]*model.Channel{
@@ -123,8 +101,95 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.Equal(t, conversationID, turn.ConversationID)
 		require.NotNil(t, turn.PostID)
 		require.Equal(t, postID, *turn.PostID)
-		require.Equal(t, json.RawMessage("[]"), turn.Content)
+		// Content is the accumulated state — the turn is not created empty.
+		blocks := parseContentBlocks(t, turn.Content)
+		require.Len(t, blocks, 1)
+		require.Equal(t, conversation.BlockTypeText, blocks[0].Type)
+		require.Equal(t, "Hello", blocks[0].Text)
 		require.Equal(t, 1, turn.Sequence)
+	})
+
+	// Regression: the streaming assistant turn must land AFTER the tool-round
+	// turns that WriteToolTurns persists during the stream. If the turn is
+	// created at stream START, it gets the low sequence and the final answer
+	// appears before the rounds that produced it when history is replayed
+	// on the next user message.
+	t.Run("final assistant turn is sequenced AFTER tool-round turns written during stream", func(t *testing.T) {
+		ts := &fakeTurnStore{}
+
+		userPost := "user-post-id"
+		ts.turns = append(ts.turns, &store.Turn{
+			ID:             "u1",
+			ConversationID: conversationID,
+			PostID:         &userPost,
+			Role:           "user",
+			Sequence:       1,
+			Content:        json.RawMessage("[]"),
+		})
+
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		// Unbuffered channel so every send blocks until StreamToPost reads it,
+		// giving us a happens-before edge with the service goroutine.
+		streamChannel := make(chan llm.TextStreamEvent)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+		}()
+
+		// After the first send completes, StreamToPost has already passed
+		// createPlaceholderTurn (if any) and entered its event loop.
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "ok "}
+
+		// Simulate WriteToolTurns persisting a round mid-stream.
+		require.NoError(t, ts.CreateTurnAutoSequence(&store.Turn{
+			ID:             "a1",
+			ConversationID: conversationID,
+			Role:           "assistant",
+			Content:        json.RawMessage(`[{"type":"tool_use","id":"tc1","name":"search"}]`),
+		}))
+		require.NoError(t, ts.CreateTurnAutoSequence(&store.Turn{
+			ID:             "tr1",
+			ConversationID: conversationID,
+			Role:           "tool_result",
+			Content:        json.RawMessage(`[{"type":"tool_result","tool_use_id":"tc1","content":"r1"}]`),
+		}))
+
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "final answer"}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+		<-done
+
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+
+		var streamTurn *store.Turn
+		for _, tr := range ts.turns {
+			if tr.PostID != nil && *tr.PostID == postID {
+				streamTurn = tr
+			}
+		}
+		require.NotNil(t, streamTurn, "expected an assistant turn linked to the streaming post")
+
+		for _, tr := range ts.turns {
+			if tr == streamTurn {
+				continue
+			}
+			require.Less(t, tr.Sequence, streamTurn.Sequence,
+				"turn id=%s role=%s seq=%d should have a lower sequence than the final streaming turn seq=%d",
+				tr.ID, tr.Role, tr.Sequence, streamTurn.Sequence,
+			)
+		}
 	})
 
 	t.Run("sequence number increments from existing turns", func(t *testing.T) {
@@ -189,8 +254,9 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Len(t, ts.updateCalls, 1)
-		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
 		require.Len(t, blocks, 1)
 		require.Equal(t, conversation.BlockTypeText, blocks[0].Type)
 		require.Equal(t, "Hello world", blocks[0].Text)
@@ -224,8 +290,9 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Len(t, ts.updateCalls, 1)
-		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
 		require.Len(t, blocks, 2)
 		require.Equal(t, conversation.BlockTypeThinking, blocks[0].Type)
 		require.Equal(t, "Let me think about this", blocks[0].Text)
@@ -261,8 +328,9 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Len(t, ts.updateCalls, 1)
-		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
 		require.GreaterOrEqual(t, len(blocks), 2)
 		// Find the annotations block and verify it has data.
 		var annotationsBlock *conversation.ContentBlock
@@ -305,9 +373,10 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Len(t, ts.tokenCalls, 1)
-		require.Equal(t, int64(100), ts.tokenCalls[0].TokensIn)
-		require.Equal(t, int64(50), ts.tokenCalls[0].TokensOut)
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		require.Equal(t, int64(100), streamTurn.TokensIn)
+		require.Equal(t, int64(50), streamTurn.TokensOut)
 	})
 
 	t.Run("multiple usage events are summed", func(t *testing.T) {
@@ -334,9 +403,10 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Len(t, ts.tokenCalls, 1)
-		require.Equal(t, int64(80), ts.tokenCalls[0].TokensIn)
-		require.Equal(t, int64(30), ts.tokenCalls[0].TokensOut)
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		require.Equal(t, int64(80), streamTurn.TokensIn)
+		require.Equal(t, int64(30), streamTurn.TokensOut)
 	})
 
 	t.Run("error persists partial content", func(t *testing.T) {
@@ -362,8 +432,9 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Len(t, ts.updateCalls, 1)
-		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
 		require.Len(t, blocks, 1)
 		require.Equal(t, conversation.BlockTypeText, blocks[0].Type)
 		require.Equal(t, "Partial text", blocks[0].Text)
@@ -399,8 +470,9 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Len(t, ts.updateCalls, 1)
-		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
 		require.Len(t, blocks, 1)
 		require.Equal(t, conversation.BlockTypeText, blocks[0].Type)
 		require.Equal(t, "Before cancel", blocks[0].Text)
@@ -429,8 +501,9 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Len(t, ts.updateCalls, 1)
-		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
 		// Expect a thinking block (partial, no signature) and a text block.
 		var thinkingBlock *conversation.ContentBlock
 		for i := range blocks {
@@ -491,10 +564,9 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
 		require.Empty(t, ts.turns)
-		require.Empty(t, ts.updateCalls)
 	})
 
-	t.Run("create turn failure does not break stream", func(t *testing.T) {
+	t.Run("create turn failure is logged but stream completes", func(t *testing.T) {
 		ts := &fakeTurnStore{createErr: fmt.Errorf("db error")}
 		client := &fakeStreamingClient{
 			channels: map[string]*model.Channel{
@@ -516,37 +588,12 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		require.GreaterOrEqual(t, len(client.updatedPosts), 1)
 		require.Equal(t, "Hello", client.updatedPosts[len(client.updatedPosts)-1].Message)
+		// Create errored, so no turn was persisted. The streaming post still
+		// updates so the user sees the text — the DB write failure is logged
+		// but non-fatal.
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Empty(t, ts.updateCalls)
-	})
-
-	t.Run("update content failure is logged but stream completes", func(t *testing.T) {
-		ts := &fakeTurnStore{updateErr: fmt.Errorf("update error")}
-		client := &fakeStreamingClient{
-			channels: map[string]*model.Channel{
-				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
-			},
-		}
-		service := NewMMPostStreamService(client, i18n.Init())
-		service.SetTurnStore(ts)
-
-		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
-		post.AddProp(ConversationIDProp, conversationID)
-
-		streamChannel := make(chan llm.TextStreamEvent, 2)
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Hello"}
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
-		close(streamChannel)
-
-		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
-
-		require.GreaterOrEqual(t, len(client.updatedPosts), 1)
-		require.Equal(t, "Hello", client.updatedPosts[len(client.updatedPosts)-1].Message)
-		// Placeholder was still created.
-		ts.mu.Lock()
-		defer ts.mu.Unlock()
-		require.Len(t, ts.turns, 1)
+		require.Empty(t, ts.turns)
 	})
 
 	t.Run("resolved tool call in DM does not land on placeholder turn", func(t *testing.T) {
@@ -586,8 +633,9 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Len(t, ts.updateCalls, 1)
-		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
 
 		for _, b := range blocks {
 			require.NotEqual(t, conversation.BlockTypeToolUse, b.Type,
@@ -633,8 +681,9 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		defer ts.mu.Unlock()
 		// Turn was created and finalized (via defer) even though the channel tool call path returns early.
 		require.Len(t, ts.turns, 1)
-		require.Len(t, ts.updateCalls, 1)
-		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
 		// Should have at least a text block for "Checking" and a tool_use block.
 		var hasText, hasToolUse bool
 		for _, b := range blocks {
@@ -703,8 +752,9 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Len(t, ts.updateCalls, 1)
-		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
 
 		// Verify the text block uses the cleaned message, not the original with citation markers.
 		var textBlock *conversation.ContentBlock
@@ -754,11 +804,12 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Len(t, ts.updateCalls, 1)
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
 		// The persisted content must be a JSON array so the webapp can iterate it.
-		require.NotEqual(t, "null", string(ts.updateCalls[0].Content),
+		require.NotEqual(t, "null", string(streamTurn.Content),
 			"empty stream must not persist literal null; webapp crashes on turn.content.filter")
-		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
+		blocks := parseContentBlocks(t, streamTurn.Content)
 		require.Empty(t, blocks)
 	})
 
@@ -813,8 +864,9 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
-		require.Len(t, ts.updateCalls, 1)
-		blocks := parseContentBlocks(t, ts.updateCalls[0].Content)
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
 
 		// The placeholder turn represents only the final bot-response post.
 		// Intermediate-round tool calls are persisted separately by
