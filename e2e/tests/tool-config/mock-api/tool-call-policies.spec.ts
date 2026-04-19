@@ -383,6 +383,98 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
     });
 
+    test('approval continuation creates a second post that does not duplicate the first post tools or show the empty-result fallback', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const townSquareChannelID = await getTownSquareChannelID();
+        const userMessage = 'Post split regression ' + Date.now();
+        const toolCallID = 'call_split_' + Date.now();
+        const continuationMarker = 'POST_SPLIT_CONTINUATION_' + Date.now();
+
+        await openAIMock.addMocks([
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {matcher: 'ShouldContainSubstring', value: 'Write a short title'},
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildTextResponse('Post split'),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {matcher: 'ShouldContainSubstring', value: 'get_channel_info'},
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildToolCallResponse(
+                        toolCallID,
+                        'get_channel_info',
+                        `{"channel_id":"${townSquareChannelID}"}`,
+                    ),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {matcher: 'ShouldContainSubstring', value: toolCallID},
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildTextResponse(continuationMarker),
+                },
+            },
+        ]);
+
+        const mmPage = new MattermostPage(page);
+
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await mmPage.createAndNavigateToDMWithBot(
+            mattermost,
+            adminUsername,
+            adminPassword,
+            'toolbot',
+        );
+
+        await mentionBotAndOpenThread(page, mmPage, 'toolbot', userMessage);
+
+        const rhs = page.locator('#rhsContainer');
+        await rhs.waitFor({state: 'visible', timeout: 10000});
+
+        const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
+        const postA = botPosts.nth(0);
+
+        await expect(postA.getByText('Get Channel Info', {exact: true})).toBeVisible({timeout: 30000});
+
+        // A pending-tool response has no text; it must not be overwritten with
+        // the empty-result fallback that would mask the tool approval UI.
+        await expect(postA.getByText(/did not return a result/i)).not.toBeVisible();
+
+        const acceptButton = rhs.getByRole('button', {name: /^accept$/i});
+        await expect(acceptButton).toBeVisible({timeout: 30000});
+        await acceptButton.click();
+
+        const postB = botPosts.nth(1);
+        await expect(postB.getByText(continuationMarker)).toBeVisible({timeout: 30000});
+
+        // Each post scopes its tool cards to its own response — the aggregation
+        // must stop at the previous anchor so the continuation does not render
+        // the predecessor's tool_use blocks (and vice versa).
+        await expect(postA.getByText('Get Channel Info', {exact: true})).toBeVisible();
+        await expect(postB.getByText('Get Channel Info', {exact: true})).not.toBeVisible();
+    });
+
     test('channel auto_run still requires Share, while auto_run_everywhere skips it', async ({ page }) => {
         test.setTimeout(120000);
 
