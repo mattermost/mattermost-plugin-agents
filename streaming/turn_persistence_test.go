@@ -109,6 +109,38 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.Equal(t, 1, turn.Sequence)
 	})
 
+	// Regression: a stream that produced tool_use (pending approval) and no
+	// text must not overwrite the post with "Sorry! The LLM did not return a
+	// result." — the tool cards are the result, rendered via the turn.
+	t.Run("stream ending with only tool calls does not overwrite post with the empty-result message", func(t *testing.T) {
+		ts := &fakeTurnStore{}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		streamChannel := make(chan llm.TextStreamEvent, 2)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+			{ID: "tc1", Name: "search", Status: llm.ToolCallStatusPending},
+		}}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+		for _, updated := range client.updatedPosts {
+			require.NotContains(t, updated.Message, "did not return a result",
+				"post text must stay empty when the stream produced tool calls; the tool UI renders via the turn instead")
+		}
+		require.Empty(t, post.Message, "post.Message should remain empty when only tool calls were produced")
+	})
+
 	// Regression: the streaming assistant turn must land AFTER the tool-round
 	// turns that WriteToolTurns persists during the stream. If the turn is
 	// created at stream START, it gets the low sequence and the final answer

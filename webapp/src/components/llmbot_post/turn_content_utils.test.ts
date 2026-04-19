@@ -142,6 +142,49 @@ describe('extractToolCallsForPost', () => {
         expect(result[0].status).toBe(ToolCallStatus.Pending);
     });
 
+    // Regression: after an approval flow the conversation has two anchors (post A
+    // with pending tools, post B with the continuation). Post B's backward walk
+    // must stop at post A's anchor so A's tool_use doesn't appear under B as a
+    // duplicate.
+    test('does not leak tool calls from a preceding post into this post', () => {
+        const user = makeTurn({
+            id: 'u',
+            post_id: 'post-user',
+            sequence: 1,
+            role: 'user',
+            content: [{type: 'text', text: 'x'}],
+        });
+        const anchorA = makeTurn({
+            id: 'aA',
+            post_id: 'post-A',
+            sequence: 2,
+            role: 'assistant',
+            content: [{type: 'tool_use', id: 'tc_a', name: 'search', input: {}, status: 'success', shared: true}],
+        });
+        const approvedResult = makeTurn({
+            id: 'tr',
+            post_id: null,
+            sequence: 3,
+            role: 'tool_result',
+            content: [{type: 'tool_result', tool_use_id: 'tc_a', content: 'A done', status: 'success', shared: true}],
+        });
+        const anchorB = makeTurn({
+            id: 'aB',
+            post_id: 'post-B',
+            sequence: 4,
+            role: 'assistant',
+            content: [{type: 'text', text: 'continuation'}],
+        });
+        const conv = makeConversation([user, anchorA, approvedResult, anchorB]);
+
+        const a = extractToolCallsForPost(conv, 'post-A');
+        expect(a).toHaveLength(1);
+        expect(a[0]).toMatchObject({id: 'tc_a', result: 'A done'});
+
+        const b = extractToolCallsForPost(conv, 'post-B');
+        expect(b).toEqual([]);
+    });
+
     // Regression: the streaming refactor creates the anchor assistant turn at
     // the END of the stream (highest sequence), AFTER the tool-round turns
     // persisted during the stream. Aggregation must therefore walk BACKWARDS

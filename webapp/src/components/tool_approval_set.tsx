@@ -240,8 +240,6 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         return <div className='error'>{error}</div>;
     }
 
-    const nonDecisionToolCalls = props.toolCalls.filter((call) => !decisionToolIDSet.has(call.id));
-
     // Calculate how many tools are left to decide on
     const undecidedCount = decisionToolCalls.filter((call) => !Object.hasOwn(toolDecisions, call.id)).length;
 
@@ -253,9 +251,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         }
 
         // Pending tools are expanded by default, others are collapsed
-        const defaultExpanded = isCallStage ?
-            tool.status === ToolCallStatus.Pending :
-            tool.status === ToolCallStatus.Success ||
+        const defaultExpanded = isCallStage ? tool.status === ToolCallStatus.Pending : tool.status === ToolCallStatus.Success ||
             tool.status === ToolCallStatus.Error ||
             tool.status === ToolCallStatus.AutoApproved;
 
@@ -269,38 +265,26 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     return (
         <ToolCallsContainer>
-            {decisionToolCalls.map((tool) => (
-                <ToolCard
-                    key={tool.id}
-                    tool={tool}
-                    isCollapsed={isToolCollapsed(tool)}
-                    isProcessing={isSubmitting}
-                    localDecision={toolDecisions[tool.id]}
-                    onToggleCollapse={() => toggleCollapse(tool.id)}
-                    onApprove={() => handleToolDecision(tool.id, true)}
-                    onReject={() => handleToolDecision(tool.id, false)}
-                    canExpand={props.canExpand}
-                    showArguments={props.showArguments}
-                    showResults={props.showResults}
-                    approvalStage={props.approvalStage}
-                    isAutoApproved={props.isAutoApproved || tool.status === ToolCallStatus.AutoApproved}
-                />
-            ))}
-
-            {nonDecisionToolCalls.map((tool) => (
-                <ToolCard
-                    key={tool.id}
-                    tool={tool}
-                    isCollapsed={isToolCollapsed(tool)}
-                    isProcessing={false}
-                    onToggleCollapse={() => toggleCollapse(tool.id)}
-                    canExpand={props.canExpand}
-                    showArguments={props.showArguments}
-                    showResults={props.showResults}
-                    approvalStage={props.approvalStage}
-                    isAutoApproved={props.isAutoApproved || tool.status === ToolCallStatus.AutoApproved}
-                />
-            ))}
+            {props.toolCalls.map((tool) => {
+                const isDecisionCall = decisionToolIDSet.has(tool.id);
+                return (
+                    <ToolCard
+                        key={tool.id}
+                        tool={tool}
+                        isCollapsed={isToolCollapsed(tool)}
+                        isProcessing={isDecisionCall && isSubmitting}
+                        localDecision={isDecisionCall ? toolDecisions[tool.id] : undefined} // eslint-disable-line no-undefined
+                        onToggleCollapse={() => toggleCollapse(tool.id)}
+                        onApprove={isDecisionCall ? () => handleToolDecision(tool.id, true) : undefined} // eslint-disable-line no-undefined
+                        onReject={isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined} // eslint-disable-line no-undefined
+                        canExpand={props.canExpand}
+                        showArguments={props.showArguments}
+                        showResults={props.showResults}
+                        approvalStage={props.approvalStage}
+                        isAutoApproved={props.isAutoApproved || tool.status === ToolCallStatus.AutoApproved}
+                    />
+                );
+            })}
 
             {/* Only show status bar for multiple decisions */}
             {decisionToolCalls.length > 1 && isSubmitting && (

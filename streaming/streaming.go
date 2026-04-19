@@ -486,8 +486,12 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 					}
 				}
 			case llm.EventTypeEnd:
-				// Stream has closed cleanly
-				if strings.TrimSpace(post.Message) == "" {
+				// Stream has closed cleanly. The "empty" fallback message only
+				// applies when the LLM truly produced nothing; a stream that
+				// stopped after emitting tool_use blocks (e.g. awaiting user
+				// approval) is a valid response rendered via the tool UI.
+				hasToolCalls := acc != nil && len(acc.toolCalls) > 0
+				if strings.TrimSpace(post.Message) == "" && !hasToolCalls {
 					p.mmClient.LogError("LLM closed stream with no result")
 					T := i18n.LocalizerFunc(p.i18n, userLocale)
 					post.Message = T("agents.stream_to_post_llm_not_return", "Sorry! The LLM did not return a result.")

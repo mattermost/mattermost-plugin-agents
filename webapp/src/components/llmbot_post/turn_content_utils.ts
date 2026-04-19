@@ -62,10 +62,18 @@ function collectResponseTurns(
 
     const out: Turn[] = [];
     for (let i = anchorIdx - 1; i >= 0; i--) {
-        if (sorted[i].role === 'user') {
+        const t = sorted[i];
+        if (t.role === 'user') {
             break;
         }
-        out.unshift(sorted[i]);
+
+        // Stop when we cross into another post's response — its anchor turn
+        // has a post_id of its own. Without this, an approval-continuation
+        // post would also sweep in the preceding post's tool_use blocks.
+        if (t.post_id && t.post_id !== postId) {
+            break;
+        }
+        out.unshift(t);
     }
     out.push(sorted[anchorIdx]);
     return out;
