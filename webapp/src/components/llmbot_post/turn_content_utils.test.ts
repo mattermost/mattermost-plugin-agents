@@ -142,106 +142,112 @@ describe('extractToolCallsForPost', () => {
         expect(result[0].status).toBe(ToolCallStatus.Pending);
     });
 
-    // Regression test for the multi-round display bug: tool rounds are
-    // persisted as separate turns (no post_id) following the anchor
-    // placeholder. The UI must aggregate tool calls from all of those
-    // rounds, not only the anchor, so every call is visible to the user.
-    test('aggregates tool calls across subsequent tool-round turns', () => {
-        const anchorPlaceholder = makeTurn({
-            id: 'anchor',
-            post_id: 'post_1',
-            sequence: 10,
-            role: 'assistant',
-            content: [], // final text would go here; in a mid-stream error it may be empty
+    // Regression: the streaming refactor creates the anchor assistant turn at
+    // the END of the stream (highest sequence), AFTER the tool-round turns
+    // persisted during the stream. Aggregation must therefore walk BACKWARDS
+    // from the anchor to pick up those preceding rounds. Matches the shape of
+    // the reported bug (six turns: user, a1/tr1, a2/tr2, final anchor).
+    test('aggregates tool calls from preceding rounds when anchor has only final text', () => {
+        const userTurn = makeTurn({
+            id: 'u1',
+            post_id: 'post-user',
+            sequence: 1,
+            role: 'user',
+            content: [{type: 'text', text: 'use tools'}],
         });
         const round1Assistant = makeTurn({
             id: 'r1a',
             post_id: null,
-            sequence: 11,
+            sequence: 2,
             role: 'assistant',
             content: [
-                {type: 'tool_use', id: 'tc_r1', name: 'search', input: {q: 'a'}, status: 'success', shared: true},
+                {type: 'tool_use', id: 'tc_a', name: 'get_channel_info', input: {name: 'a'}, status: 'success', shared: true},
+                {type: 'tool_use', id: 'tc_b', name: 'get_channel_info', input: {name: 'b'}, status: 'success', shared: true},
             ],
         });
         const round1Result = makeTurn({
             id: 'r1r',
             post_id: null,
-            sequence: 12,
+            sequence: 3,
             role: 'tool_result',
             content: [
-                {type: 'tool_result', tool_use_id: 'tc_r1', content: 'first', status: 'success', shared: true},
+                {type: 'tool_result', tool_use_id: 'tc_a', content: 'result A', status: 'success', shared: true},
+                {type: 'tool_result', tool_use_id: 'tc_b', content: 'result B', status: 'success', shared: true},
             ],
         });
         const round2Assistant = makeTurn({
             id: 'r2a',
             post_id: null,
-            sequence: 13,
+            sequence: 4,
             role: 'assistant',
             content: [
-                {type: 'tool_use', id: 'tc_r2', name: 'search', input: {q: 'b'}, status: 'success', shared: true},
+                {type: 'tool_use', id: 'tc_c', name: 'read_channel', input: {}, status: 'success', shared: true},
             ],
         });
         const round2Result = makeTurn({
             id: 'r2r',
             post_id: null,
-            sequence: 14,
+            sequence: 5,
             role: 'tool_result',
             content: [
-                {type: 'tool_result', tool_use_id: 'tc_r2', content: 'second', status: 'success', shared: true},
+                {type: 'tool_result', tool_use_id: 'tc_c', content: 'result C', status: 'success', shared: true},
             ],
+        });
+        const anchor = makeTurn({
+            id: 'anchor',
+            post_id: 'post-final',
+            sequence: 6,
+            role: 'assistant',
+            content: [{type: 'text', text: 'summary'}],
         });
 
         const conv = makeConversation([
-            anchorPlaceholder,
+            userTurn,
             round1Assistant,
             round1Result,
             round2Assistant,
             round2Result,
+            anchor,
         ]);
-        const result = extractToolCallsForPost(conv, 'post_1');
+        const result = extractToolCallsForPost(conv, 'post-final');
 
-        expect(result).toHaveLength(2);
-        expect(result[0]).toMatchObject({id: 'tc_r1', result: 'first'});
-        expect(result[1]).toMatchObject({id: 'tc_r2', result: 'second'});
+        expect(result).toHaveLength(3);
+        expect(result[0]).toMatchObject({id: 'tc_a', result: 'result A'});
+        expect(result[1]).toMatchObject({id: 'tc_b', result: 'result B'});
+        expect(result[2]).toMatchObject({id: 'tc_c', result: 'result C'});
     });
 
-    test('stops aggregation at the next user turn', () => {
+    test('stops aggregation at the preceding user turn', () => {
+        // An earlier response's tool_use should not leak into this post's
+        // display. The walk backwards from the anchor must stop at the user
+        // turn that introduced this response.
+        const earlierAssistant = makeTurn({
+            id: 'earliera',
+            post_id: null,
+            sequence: 1,
+            role: 'assistant',
+            content: [
+                {type: 'tool_use', id: 'tc_earlier', name: 'search', input: {}, status: 'pending'},
+            ],
+        });
+        const earlierUser = makeTurn({
+            id: 'earlieru',
+            post_id: 'post_earlier_user',
+            sequence: 2,
+            role: 'user',
+            content: [{type: 'text', text: 'earlier question'}],
+        });
         const anchor = makeTurn({
             id: 'anchor',
             post_id: 'post_1',
-            sequence: 5,
+            sequence: 3,
             role: 'assistant',
             content: [
                 {type: 'tool_use', id: 'tc_here', name: 'search', input: {}, status: 'success', shared: true},
             ],
         });
-        const followResult = makeTurn({
-            id: 'follow',
-            post_id: null,
-            sequence: 6,
-            role: 'tool_result',
-            content: [
-                {type: 'tool_result', tool_use_id: 'tc_here', content: 'ok', status: 'success', shared: true},
-            ],
-        });
-        const nextUser = makeTurn({
-            id: 'nextu',
-            post_id: 'post_user2',
-            sequence: 7,
-            role: 'user',
-            content: [{type: 'text', text: 'follow-up question'}],
-        });
-        const laterAssistant = makeTurn({
-            id: 'latera',
-            post_id: null,
-            sequence: 8,
-            role: 'assistant',
-            content: [
-                {type: 'tool_use', id: 'tc_next_response', name: 'search', input: {}, status: 'pending'},
-            ],
-        });
 
-        const conv = makeConversation([anchor, followResult, nextUser, laterAssistant]);
+        const conv = makeConversation([earlierAssistant, earlierUser, anchor]);
         const result = extractToolCallsForPost(conv, 'post_1');
 
         expect(result).toHaveLength(1);
@@ -387,23 +393,23 @@ describe('hasAutoApprovedToolsForPost', () => {
         expect(hasAutoApprovedToolsForPost(conv, 'post_1')).toBe(false);
     });
 
-    test('returns true when a later round contains an auto_approved tool_use', () => {
-        const anchor = makeTurn({
-            id: 'anchor',
-            post_id: 'post_1',
-            sequence: 1,
-            content: [],
-        });
+    test('returns true when a preceding tool-round turn contains an auto_approved tool_use', () => {
         const round = makeTurn({
             id: 'round',
             post_id: null,
-            sequence: 2,
+            sequence: 1,
             role: 'assistant',
             content: [
                 {type: 'tool_use', id: 'tc_1', name: 'search', status: 'auto_approved'},
             ],
         });
-        const conv = makeConversation([anchor, round]);
+        const anchor = makeTurn({
+            id: 'anchor',
+            post_id: 'post_1',
+            sequence: 2,
+            content: [{type: 'text', text: 'done'}],
+        });
+        const conv = makeConversation([round, anchor]);
         expect(hasAutoApprovedToolsForPost(conv, 'post_1')).toBe(true);
     });
 

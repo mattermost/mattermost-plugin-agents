@@ -45,10 +45,10 @@ export function statusStringToEnum(status: ConvToolCallStatus | undefined): Tool
 /**
  * Collect all turns that belong to the same assistant response as the post
  * identified by `postId`. The anchor is the turn whose post_id matches; the
- * response also includes any subsequent assistant/tool_result turns until a
- * new user turn appears. Tool rounds live in those subsequent turns (they
- * currently have no post_id), so the UI must aggregate across them to show
- * every tool call from every round rather than just the anchor's.
+ * streaming layer creates this turn at finalize with the highest sequence in
+ * the response, so tool-round turns that WriteToolTurns persisted during the
+ * stream sit BEFORE it. We walk backwards from the anchor, stopping at the
+ * user turn that introduced this response, and include the anchor itself.
  */
 function collectResponseTurns(
     conversation: ConversationResponse,
@@ -60,13 +60,14 @@ function collectResponseTurns(
         return [];
     }
 
-    const out: Turn[] = [sorted[anchorIdx]];
-    for (let i = anchorIdx + 1; i < sorted.length; i++) {
+    const out: Turn[] = [];
+    for (let i = anchorIdx - 1; i >= 0; i--) {
         if (sorted[i].role === 'user') {
             break;
         }
-        out.push(sorted[i]);
+        out.unshift(sorted[i]);
     }
+    out.push(sorted[anchorIdx]);
     return out;
 }
 
@@ -86,15 +87,25 @@ export function extractToolCallsForPost(
     }
 
     const toolUseBlocks: ContentBlock[] = [];
-    const resultMap = new Map<string, ContentBlock>();
     for (const t of turns) {
         for (const block of t.content) {
             if (block.type === BlockTypeToolUse) {
                 toolUseBlocks.push(block);
-            } else if (
-                block.type === BlockTypeToolResult &&
-                block.tool_use_id
-            ) {
+            }
+        }
+    }
+
+    if (toolUseBlocks.length === 0) {
+        return [];
+    }
+
+    // Results may land AFTER the anchor when the user just approved
+    // previously pending tool calls, so search every turn by tool_use_id
+    // rather than only the collected response range.
+    const resultMap = new Map<string, ContentBlock>();
+    for (const t of conversation.turns) {
+        for (const block of t.content) {
+            if (block.type === BlockTypeToolResult && block.tool_use_id) {
                 resultMap.set(block.tool_use_id, block);
             }
         }
@@ -187,7 +198,11 @@ export function deriveApprovalStageForPost(
     if (toolUseIDs.size === 0) {
         return 'call';
     }
-    for (const t of turns) {
+
+    // Results for the anchor's tool_use blocks may live in a later tool_result
+    // turn (after user approval of pending tools), so look across the whole
+    // conversation.
+    for (const t of conversation.turns) {
         for (const block of t.content) {
             if (
                 block.type === BlockTypeToolResult &&
