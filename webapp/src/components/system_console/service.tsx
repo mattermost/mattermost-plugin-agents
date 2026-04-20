@@ -217,7 +217,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                             helpText={intl.formatMessage({defaultMessage: 'Sends the Mattermost user ID to the upstream LLM.'})}
                         />
                     )}
-                    {(type === 'openai' || type === 'openaicompatible' || type === 'azure') && (
+                    {(type === 'openaicompatible' || type === 'azure') && (
                         <BooleanItem
                             label={intl.formatMessage({defaultMessage: 'Use Responses API'})}
                             value={props.service.useResponsesAPI ?? false}

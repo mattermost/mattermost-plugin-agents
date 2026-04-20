@@ -214,12 +214,12 @@ type MCPToolInfo struct {
 
 // MCPServerInfo represents a server and its tools for API response
 type MCPServerInfo struct {
-	Name        string        `json:"name"`
-	URL         string        `json:"url"`
-	Tools       []MCPToolInfo `json:"tools"`
-	NeethsOAuth bool          `json:"needsOAuth"`
-	OAuthURL    string        `json:"oauthURL,omitempty"` // URL to redirect for OAuth if needed
-	Error       *string       `json:"error"`
+	Name       string        `json:"name"`
+	URL        string        `json:"url"`
+	Tools      []MCPToolInfo `json:"tools"`
+	NeedsOAuth bool          `json:"needsOAuth"`
+	OAuthURL   string        `json:"oauthURL,omitempty"` // URL to redirect for OAuth if needed
+	Error      *string       `json:"error"`
 }
 
 // MCPToolsResponse represents the response structure for MCP tools endpoint
@@ -238,20 +238,12 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 
 	mcpConfig := a.config.MCP()
 
-	// If MCP is not enabled, return empty response
-	if !mcpConfig.Enabled {
-		c.JSON(http.StatusOK, MCPToolsResponse{
-			Servers: []MCPServerInfo{},
-		})
-		return
-	}
-
 	response := MCPToolsResponse{
 		Servers: make([]MCPServerInfo, 0, len(mcpConfig.Servers)+1),
 	}
 
-	// Discover tools from embedded server if enabled
-	if mcpConfig.EmbeddedServer.Enabled {
+	// Discover tools from embedded server
+	{
 		embeddedServer := a.mcpClientManager.GetEmbeddedServer()
 		if embeddedServer != nil {
 			serverInfo := MCPServerInfo{
@@ -291,7 +283,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		if err != nil {
 			var oauthErr *mcp.OAuthNeededError
 			if errors.As(err, &oauthErr) {
-				serverInfo.NeethsOAuth = true
+				serverInfo.NeedsOAuth = true
 				serverInfo.OAuthURL = oauthErr.AuthURL()
 			} else {
 				errMsg := err.Error()

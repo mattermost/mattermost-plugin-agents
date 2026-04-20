@@ -627,6 +627,23 @@ export async function updateUserToolPreferences(prefs: {disabled_servers: string
     });
 }
 
+export async function disconnectMCPOAuth(serverName: string): Promise<void> {
+    const url = `${baseRoute()}/mcp/oauth/${encodeURIComponent(serverName)}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'DELETE',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function getChannelInterval(
     channelID: string,
     startTime: number,

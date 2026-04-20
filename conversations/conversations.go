@@ -255,6 +255,9 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 	return len(turns) > 0
 }
 
+// sendOAuthNotifications sends an ephemeral post listing MCP servers that
+// require authentication so the user can complete the OAuth flow before
+// retrying their request.
 func (c *Conversations) sendOAuthNotifications(bot *bots.Bot, userID, channelID, rootID string, authErrors []llm.ToolAuthError) {
 	if len(authErrors) == 0 {
 		return

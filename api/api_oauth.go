@@ -4,10 +4,61 @@
 package api
 
 import (
+	"html/template"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 )
+
+func (a *API) handleOAuthStart(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	serverName := c.Param("serverName")
+	if serverName == "" {
+		a.renderOAuthErrorPage(c, http.StatusBadRequest, "Authorization Failed", "Missing MCP server name.")
+		return
+	}
+
+	oauthManager := a.mcpClientManager.GetOAuthManager()
+	if oauthManager == nil {
+		a.pluginAPI.Log.Error("OAuth manager is not configured")
+		a.renderOAuthErrorPage(c, http.StatusInternalServerError, "Authorization Failed", "OAuth is not configured for this plugin.")
+		return
+	}
+
+	serverConfig, ok := a.getMCPServerConfig(serverName)
+	if !ok {
+		a.renderOAuthErrorPage(c, http.StatusNotFound, "Authorization Failed", "The selected MCP server was not found.")
+		return
+	}
+	if !serverConfig.Enabled || serverConfig.BaseURL == "" {
+		a.renderOAuthErrorPage(c, http.StatusBadRequest, "Authorization Failed", "The selected MCP server is not available for OAuth.")
+		return
+	}
+
+	metadataURL := c.Query("resource_metadata")
+	if metadataURL != "" {
+		if err := mcp.ValidateResourceMetadataURL(metadataURL); err != nil {
+			a.pluginAPI.Log.Debug("Rejected MCP OAuth start resource_metadata query", "serverName", serverConfig.Name, "error", err)
+			a.renderOAuthErrorPage(c, http.StatusBadRequest, "Authorization Failed", "Invalid resource metadata URL.")
+			return
+		}
+		if err := mcp.ValidateResourceMetadataMatchesServerBaseURL(serverConfig.BaseURL, metadataURL); err != nil {
+			a.pluginAPI.Log.Debug("Rejected MCP OAuth start resource_metadata origin mismatch", "serverName", serverConfig.Name, "error", err)
+			a.renderOAuthErrorPage(c, http.StatusBadRequest, "Authorization Failed", "Invalid resource metadata URL.")
+			return
+		}
+	}
+
+	authURL, err := oauthManager.InitiateOAuthFlowForServerWithMetadata(c.Request.Context(), userID, serverConfig, metadataURL)
+	if err != nil {
+		a.pluginAPI.Log.Error("Failed to start OAuth flow", "serverName", serverConfig.Name, "error", err)
+		a.renderOAuthErrorPage(c, http.StatusInternalServerError, "Authorization Failed", "Unable to start the MCP authorization flow.")
+		return
+	}
+
+	c.Redirect(http.StatusFound, authURL)
+}
 
 func (a *API) handleOAuthCallback(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
@@ -15,84 +66,65 @@ func (a *API) handleOAuthCallback(c *gin.Context) {
 	code := c.Query("code")
 	errorParam := c.Query("error")
 
-	// Handle error responses
 	if errorParam != "" {
 		errorDescription := c.Query("error_description")
 		a.pluginAPI.Log.Error("OAuth authorization failed", "error", errorParam, "description", errorDescription)
-
-		c.Header("Content-Type", "text/html")
-		c.String(http.StatusBadRequest, `
-<!DOCTYPE html>
-<html>
-<head>
-	<title>Authorization Failed</title>
-</head>
-<body>
-	<script>
-		// Close window immediately
-		window.close();
-	</script>
-</body>
-</html>`)
+		a.renderOAuthWindowClosePage(c, http.StatusBadRequest, "Authorization Failed")
 		return
 	}
 
-	// Validate required parameters
 	if state == "" || code == "" {
 		a.pluginAPI.Log.Error("Missing required OAuth parameters", "state", state, "code", code)
-
-		c.Header("Content-Type", "text/html")
-		c.String(http.StatusBadRequest, `
-<!DOCTYPE html>
-<html>
-<head>
-	<title>Authorization Failed</title>
-</head>
-<body>
-	<script>
-		// Close window immediately
-		window.close();
-	</script>
-</body>
-</html>`)
+		a.renderOAuthWindowClosePage(c, http.StatusBadRequest, "Authorization Failed")
 		return
 	}
 
-	// Process the OAuth callback
 	_, err := a.mcpClientManager.ProcessOAuthCallback(c.Request.Context(), userID, state, code)
 	if err != nil {
 		a.pluginAPI.Log.Error("Failed to process OAuth callback", "error", err)
+		a.renderOAuthWindowClosePage(c, http.StatusInternalServerError, "Authorization Failed")
+		return
+	}
 
-		c.Header("Content-Type", "text/html")
-		c.String(http.StatusInternalServerError, `
-<!DOCTYPE html>
+	a.renderOAuthWindowClosePage(c, http.StatusOK, "Authorization Successful")
+}
+
+func (a *API) getMCPServerConfig(serverName string) (mcp.ServerConfig, bool) {
+	mcpCfg := a.config.MCP()
+	for _, serverConfig := range mcpCfg.Servers {
+		if serverConfig.Name == serverName {
+			return serverConfig, true
+		}
+	}
+
+	return mcp.ServerConfig{}, false
+}
+
+func (a *API) renderOAuthWindowClosePage(c *gin.Context, statusCode int, title string) {
+	c.Header("Content-Type", "text/html")
+	c.String(statusCode, `<!DOCTYPE html>
 <html>
 <head>
-	<title>Authorization Failed</title>
+	<title>`+template.HTMLEscapeString(title)+`</title>
 </head>
 <body>
 	<script>
-		// Close window immediately
 		window.close();
 	</script>
 </body>
 </html>`)
-		return
-	}
+}
 
-	// Success response
+func (a *API) renderOAuthErrorPage(c *gin.Context, statusCode int, title, message string) {
 	c.Header("Content-Type", "text/html")
-	c.String(http.StatusOK, `
-<!DOCTYPE html>
+	c.String(statusCode, `<!DOCTYPE html>
 <html>
 <head>
-	<title>Authorization Successful</title>
+	<title>`+template.HTMLEscapeString(title)+`</title>
 </head>
 <body>
-	<script>
-		// Close window immediately
-		window.close();
-	</script>
+	<h1>`+template.HTMLEscapeString(title)+`</h1>
+	<p>`+template.HTMLEscapeString(message)+`</p>
 </body>
 </html>`)
 }

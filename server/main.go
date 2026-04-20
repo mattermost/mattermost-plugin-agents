@@ -353,16 +353,13 @@ func (p *Plugin) OnActivate() error {
 	manifestID := manifest.Id
 	oauthCallbackURL := fmt.Sprintf("%s/plugins/%s/oauth/callback", *siteURL, manifestID)
 
-	// Create embedded MCP server if enabled
+	// Create embedded MCP server
 	var embeddedMCPServer mcp.EmbeddedMCPServer
-	if p.configuration.MCP().EmbeddedServer.Enabled {
-		embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
-		if err != nil {
-			pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
-			// Continue without embedded server
-		} else {
-			pluginAPI.Log.Info("Embedded MCP server created successfully")
-		}
+	embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
+	if err != nil {
+		pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
+	} else {
+		pluginAPI.Log.Info("Embedded MCP server created successfully")
 	}
 
 	serverConfigLookup := func(serverID string) (mcp.ServerConfig, bool) {
@@ -375,13 +372,9 @@ func (p *Plugin) OnActivate() error {
 	}
 	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient)
 	p.configuration.RegisterUpdateListener(func() {
-		var embeddedServer mcp.EmbeddedMCPServer
-		var embeddedErr error
-		if p.configuration.MCP().EmbeddedServer.Enabled {
-			embeddedServer, embeddedErr = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
-			if embeddedErr != nil {
-				pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
-			}
+		embeddedServer, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
+		if embeddedErr != nil {
+			pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
 		}
 
 		mcpClientManager.ReInit(p.configuration.MCP(), embeddedServer)
@@ -430,7 +423,7 @@ func (p *Plugin) OnActivate() error {
 	// Wire per-tool policy checker for auto-approval in streaming and conversations
 	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
 		mcpCfg := p.configuration.MCP()
-		if serverBaseURL == mcp.EmbeddedClientKey && mcpCfg.EmbeddedServer.Enabled {
+		if serverBaseURL == mcp.EmbeddedClientKey {
 			toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
 			if len(toolConfigs) == 0 {
 				toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)

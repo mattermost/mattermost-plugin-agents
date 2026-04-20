@@ -83,6 +83,12 @@ func (m *OAuthManager) deleteToken(userID, serverID string) error {
 	return nil
 }
 
+// DeleteUserToken removes the stored OAuth token for a user and server,
+// effectively disconnecting the user from that MCP server.
+func (m *OAuthManager) DeleteUserToken(userID, serverID string) error {
+	return m.deleteToken(userID, serverID)
+}
+
 type ClientCredentials struct {
 	ClientID     string    `json:"clientID"`
 	ClientSecret string    `json:"clientSecret"`

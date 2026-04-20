@@ -317,9 +317,10 @@ const Bot = (props: Props) => {
                                         helpText={intl.formatMessage({defaultMessage: 'By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools.'})}
                                     />
                                     {(() => {
-                                        // Show native tools for Anthropic or OpenAI-based services with ResponsesAPI enabled
+                                        // Show native tools for Anthropic or OpenAI-based services with ResponsesAPI
+                                        // OpenAI direct always uses the Responses API
                                         const isAnthropic = selectedService.type === 'anthropic';
-                                        const isOpenAIWithResponses = ['openai', 'openaicompatible', 'azure'].includes(selectedService.type) && selectedService.useResponsesAPI;
+                                        const isOpenAIWithResponses = selectedService.type === 'openai' || (['openaicompatible', 'azure'].includes(selectedService.type) && selectedService.useResponsesAPI);
 
                                         if (isAnthropic) {
                                             return (
@@ -349,12 +350,14 @@ const Bot = (props: Props) => {
                                         maxTokens={selectedService?.outputTokenLimit || 4096}
                                         onChange={props.onChange}
                                     />
-                                    {selectedService.type === 'anthropic' && (
+                                    {(selectedService.type === 'anthropic' || selectedService.type === 'openai' || selectedService.type === 'openaicompatible' || selectedService.type === 'azure') && (
                                         <BooleanItem
                                             label={intl.formatMessage({defaultMessage: 'Structured Output'})}
                                             value={props.bot.structuredOutputEnabled ?? false}
                                             onChange={(to: boolean) => props.onChange({...props.bot, structuredOutputEnabled: to})}
-                                            helpText={intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Structured output and extended thinking cannot be used simultaneously.'})}
+                                            helpText={selectedService.type === 'anthropic' ?
+                                                intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Structured output and extended thinking cannot be used simultaneously.'}) :
+                                                intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema.'})}
                                         />
                                     )}
                                 </>

@@ -10,10 +10,11 @@ You can access AI features in Mattermost in the following ways:
 
 ### Web and desktop
 
-Access AI features through the right pane in one of the following ways:
+Access AI features in one of the following ways:
 
 - Select the **Agents** icon in the apps sidebar.
 - @mention an AI bot in any channel where you have access (such as `@copilot`).
+- Open the **AI Actions** menu in the message composer to insert saved **Custom prompts** templates or open **Manage prompts**.
 - Use the **AI Actions** menu by hovering over the first message in any conversation thread (see [license requirements](admin_guide.md#license-requirements))
 - Use the **Ask AI** option in channels with unread messages (see [license requirements](admin_guide.md#license-requirements))
 - Use **Ask Agents about this channel** in a channel header to summarize recent activity, focus on a date range, or ask a question about the current channel. See [Channel Summaries](features/channel_summaries.md).
@@ -28,7 +29,7 @@ Start or open a direct message with the Agent bot. If your system admin has conf
 
 You can have conversations with Agents in several ways:
 
-**Agents pane**: Use the Agents right-hand pane for a streamlined experience. Begin with suggested prompts, or engage in a private thread with an Agent for a tailored experience. If you have follow-up questions or need further insights, simply ask. You can also attach files for AI analysis or reference.
+**Agents pane**: Use the Agents right-hand pane for a streamlined experience. Begin with suggested prompts or pinned custom prompt buttons, or engage in a private thread with an Agent for a tailored experience. If you have follow-up questions or need further insights, simply ask. You can also attach files for AI analysis or reference.
 
 **Direct messages**: Start a direct message with an Agent bot to have a private conversation. Chat privately with an Agent in direct message threads like you would any other Mattermost user.
 
@@ -39,6 +40,39 @@ You can have conversations with Agents in several ways:
 ### Select a bot
 
 If multiple Agent bots are configured for your Mattermost workspace, select your preferred bot in the Agents pane or @mention specific bots by name in channels.
+
+### Use custom prompt templates
+
+Custom prompts are saved prompt templates that you can reuse from the message composer or from pinned buttons in the Agents pane.
+
+To manage custom prompts:
+
+1. Open the message composer in any channel or direct message.
+2. Select **AI Actions**.
+3. Open **Custom prompts**, then select **Manage prompts**.
+4. Select **Create new** to add a prompt with an **Action Title**, optional description, and template.
+5. Choose **Public** to share the prompt with other users, or **Private** to keep it visible only to you.
+6. Pin prompts you use often so they appear as shortcuts in the Agents pane.
+
+The **All Prompts** tab shows prompts you created plus shared prompts from other users. The **Your Prompts** tab shows only prompts you created. Shared prompts from other users are read-only. Only the prompt creator can edit or delete a prompt. Prompt titles can be up to 64 characters, and every prompt requires a template.
+
+When you select a saved prompt from **Custom prompts**, Mattermost renders the template with the current context and inserts the result into your draft. If you use this menu outside a bot direct message, Mattermost adds the currently selected bot mention before the rendered text. Pinned prompts in the Agents pane render the current saved template and send it immediately as a message.
+
+Custom prompt templates support the following variables:
+
+| Variable | Inserts |
+|----------|---------|
+| `{{.Username}}` | Your Mattermost username |
+| `{{.FirstName}}` | Your first name |
+| `{{.LastName}}` | Your last name |
+| `{{.Channel}}` | The current channel display name |
+| `{{.ChannelName}}` | The current channel name |
+| `{{.Team}}` | The current team display name |
+| `{{.TeamName}}` | The current team name |
+| `{{.Time}}` | The current UTC time |
+| `{{.BotName}}` | The selected agent display name, when available |
+
+If a value isn't available in the current context, the rendered prompt leaves it blank.
 
 ### Use tools
 
@@ -82,7 +116,7 @@ To summarize unread Mattermost channels:
 
 The channel summary is generated in the Agents pane, and only you can view the summary.
 
-For more flexible channel analysis options, including **Ask Agents about this channel**, custom prompts, and date ranges, see [Channel Summaries](features/channel_summaries.md).
+For more flexible channel analysis options, including **Ask Agents about this channel**, prompts, and date ranges, see [Channel Summaries](features/channel_summaries.md).
 
 ## Search with AI
 
