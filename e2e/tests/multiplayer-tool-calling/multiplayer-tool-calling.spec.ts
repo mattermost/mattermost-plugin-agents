@@ -54,6 +54,12 @@ async function setupToolCallingContainer(provider: ProviderBundle): Promise<Matt
         customInstructions: 'You have access to Mattermost tools including create_post and get_channel_info. When a user asks you to post a message or create a post in a channel, you MUST use get_channel_info to find the channel ID first, then use create_post to create the post. Always use your tools when the user asks you to take action. Never refuse to use tools.',
     };
 
+    // In channels, the legacy auto_run policy is DM-only — auto_run tools in a
+    // channel still require Accept. To keep these suites focused on the
+    // invoker/onlooker approval flow for the write tool (create_post), mark
+    // read tools as auto_run_everywhere so they auto-execute in channels just
+    // like they used to. Without this every read tool would add an extra
+    // Accept click and amplify LLM variance between providers.
     const pluginConfig = {
         config: {
             allowPrivateChannels: true,
@@ -64,7 +70,20 @@ async function setupToolCallingContainer(provider: ProviderBundle): Promise<Matt
             enableVectorIndex: true,
             enableChannelMentionToolCalling: true,
             mcp: {
-                embeddedServer: { enabled: true },
+                embeddedServer: {
+                    enabled: true,
+                    tool_configs: [
+                        { name: 'get_channel_info', policy: 'auto_run_everywhere', enabled: true },
+                        { name: 'read_channel', policy: 'auto_run_everywhere', enabled: true },
+                        { name: 'read_post', policy: 'auto_run_everywhere', enabled: true },
+                        { name: 'search_posts', policy: 'auto_run_everywhere', enabled: true },
+                        { name: 'search_users', policy: 'auto_run_everywhere', enabled: true },
+                        { name: 'get_channel_members', policy: 'auto_run_everywhere', enabled: true },
+                        { name: 'get_team_info', policy: 'auto_run_everywhere', enabled: true },
+                        { name: 'get_team_members', policy: 'auto_run_everywhere', enabled: true },
+                        { name: 'get_user_channels', policy: 'auto_run_everywhere', enabled: true },
+                    ],
+                },
                 enablePluginServer: true,
                 enabled: true,
                 idleTimeoutMinutes: 30,

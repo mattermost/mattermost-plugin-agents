@@ -475,7 +475,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await expect(postB.getByText('Get Channel Info', {exact: true})).not.toBeVisible();
     });
 
-    test('channel auto_run still requires Share, while auto_run_everywhere skips it', async ({ page }) => {
+    test('channel auto_run requires Accept (DM-only policy), while auto_run_everywhere skips approval entirely', async ({ page }) => {
         test.setTimeout(120000);
 
         const townSquareChannelID = await getTownSquareChannelID();
@@ -542,9 +542,12 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await mentionBotAndOpenThread(page, mmPage, 'toolbot', 'tool policy channel dm-only');
 
         const rhs = page.locator('#rhsContainer');
-        await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible({timeout: 30000});
-        await expect(rhs.getByRole('button', {name: /^share$/i})).toBeVisible({timeout: 30000});
-        await expect(rhs.getByRole('button', {name: /keep private/i})).toBeVisible();
+        // In a channel, the legacy auto_run policy is DM-only: the call stage
+        // must still be approved. Share/Keep private are the post-approval
+        // stage and must not appear yet.
+        await expect(rhs.getByRole('button', {name: /^accept$/i})).toBeVisible({timeout: 30000});
+        await expect(rhs.getByRole('button', {name: /^share$/i})).not.toBeVisible();
+        await expect(rhs.getByRole('button', {name: /keep private/i})).not.toBeVisible();
 
         await setEmbeddedToolPolicies([
             {name: 'read_post', policy: 'auto_run', enabled: true},

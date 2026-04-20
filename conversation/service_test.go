@@ -983,7 +983,9 @@ func TestWriteToolTurns_SingleRound(t *testing.T) {
 	assert.Equal(t, BlockTypeText, assistantBlocks[0].Type)
 	assert.Equal(t, BlockTypeToolUse, assistantBlocks[1].Type)
 	assert.Equal(t, "tc1", assistantBlocks[1].ID)
-	assert.Equal(t, StatusSuccess, assistantBlocks[1].Status)
+	// WriteToolTurns is invoked only after the toolrunner auto-executes a
+	// round, so successful tool_use blocks are tagged auto_approved.
+	assert.Equal(t, StatusAutoApproved, assistantBlocks[1].Status)
 	require.NotNil(t, assistantBlocks[1].Shared)
 	assert.True(t, *assistantBlocks[1].Shared)
 	assert.Equal(t, BlockTypeToolUse, assistantBlocks[2].Type)

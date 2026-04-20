@@ -64,10 +64,12 @@ func toolUseBlocks(
 	}
 
 	for i, tc := range toolCalls {
-		status := StatusSuccess
-		if tc.Status == llm.ToolCallStatusAutoApproved {
-			status = StatusAutoApproved
-		}
+		// Every round written here was auto-executed by the toolrunner
+		// (WriteToolTurns is only called after all tool calls in a round
+		// pass shouldExecute). Tool call status on tt.AssistantToolCalls is
+		// the pre-execution value, so derive the persisted status from the
+		// results instead.
+		status := StatusAutoApproved
 		if i < len(results) && results[i].IsError {
 			status = StatusError
 		}
