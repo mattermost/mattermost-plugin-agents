@@ -316,39 +316,12 @@ func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Ch
 		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
 	}
 
-	var disabledServerSet map[string]bool
 	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
 		if err != nil {
 			c.mmClient.LogWarn("Failed to load user tool preferences", "error", err.Error(), "userID", postingUser.Id)
-		} else if len(prefs.DisabledServers) > 0 {
-			disabledServerSet = make(map[string]bool, len(prefs.DisabledServers))
-			for _, origin := range prefs.DisabledServers {
-				disabledServerSet[origin] = true
-			}
-			if llmContext.Tools != nil {
-				llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
-			}
-		}
-	}
-
-	if llmContext.Tools != nil {
-		authErrors := llmContext.Tools.GetAuthErrors()
-		if len(disabledServerSet) > 0 {
-			filtered := authErrors[:0]
-			for _, ae := range authErrors {
-				if !disabledServerSet[ae.ServerOrigin] {
-					filtered = append(filtered, ae)
-				}
-			}
-			authErrors = filtered
-		}
-		if len(authErrors) > 0 {
-			rootID := post.RootId
-			if rootID == "" {
-				rootID = post.Id
-			}
-			c.sendOAuthNotifications(bot, postingUser.Id, channel.Id, rootID, authErrors)
+		} else if len(prefs.DisabledServers) > 0 && llmContext.Tools != nil {
+			llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
 		}
 	}
 
