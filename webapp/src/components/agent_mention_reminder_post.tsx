@@ -75,14 +75,7 @@ export const AgentMentionReminderPost = ({post}: Props) => {
     }
 
     if (done) {
-        return (
-            <Hint>
-                <FormattedMessage
-                    defaultMessage='Looped in @{botUsername}.'
-                    values={{botUsername}}
-                />
-            </Hint>
-        );
+        return null;
     }
 
     return (
