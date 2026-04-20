@@ -118,6 +118,75 @@ func TestFindPendingToolTurn_StaleClickErrorsAreTyped(t *testing.T) {
 	})
 }
 
+// TestHasExecutedToolUseForPost guards against a channel-mention infinite loop:
+// the webapp auto-submits doToolResult([]) on any all-rejected post, and
+// HandleToolResult used to always stream a follow-up when not in DM — each
+// empty share would kick a fresh LLM round and create another pending
+// tool-use post, which the UI would again flag as all-rejected and submit
+// again. This helper lets HandleToolResult short-circuit on posts whose
+// tool_use blocks never executed.
+func TestHasExecutedToolUseForPost(t *testing.T) {
+	turn := func(id, postID string, status string) store.Turn {
+		blocks := []conversation.ContentBlock{
+			{Type: conversation.BlockTypeToolUse, ID: "tu_" + id, Name: "search", Status: status},
+		}
+		content, err := json.Marshal(blocks)
+		require.NoError(t, err)
+		return store.Turn{
+			ID: id, Role: "assistant", PostID: stringPtr(postID),
+			Content: content, Sequence: 1,
+		}
+	}
+
+	t.Run("rejected tool_use alone is not executed", func(t *testing.T) {
+		turns := []store.Turn{turn("a1", "p1", conversation.StatusRejected)}
+		assert.False(t, hasExecutedToolUseForPost(turns, "p1"))
+	})
+
+	t.Run("success counts as executed", func(t *testing.T) {
+		turns := []store.Turn{turn("a1", "p1", conversation.StatusSuccess)}
+		assert.True(t, hasExecutedToolUseForPost(turns, "p1"))
+	})
+
+	t.Run("error counts as executed", func(t *testing.T) {
+		turns := []store.Turn{turn("a1", "p1", conversation.StatusError)}
+		assert.True(t, hasExecutedToolUseForPost(turns, "p1"))
+	})
+
+	t.Run("auto_approved counts as executed", func(t *testing.T) {
+		turns := []store.Turn{turn("a1", "p1", conversation.StatusAutoApproved)}
+		assert.True(t, hasExecutedToolUseForPost(turns, "p1"))
+	})
+
+	t.Run("mixed statuses count if any executed", func(t *testing.T) {
+		blocks := []conversation.ContentBlock{
+			{Type: conversation.BlockTypeToolUse, ID: "tu_1", Name: "read", Status: conversation.StatusRejected},
+			{Type: conversation.BlockTypeToolUse, ID: "tu_2", Name: "write", Status: conversation.StatusSuccess},
+		}
+		content, err := json.Marshal(blocks)
+		require.NoError(t, err)
+		turns := []store.Turn{{
+			ID: "a1", Role: "assistant", PostID: stringPtr("p1"),
+			Content: content, Sequence: 1,
+		}}
+		assert.True(t, hasExecutedToolUseForPost(turns, "p1"))
+	})
+
+	t.Run("only considers the turn for the clicked post", func(t *testing.T) {
+		turns := []store.Turn{
+			turn("a1", "p1", conversation.StatusRejected),
+			turn("a2", "p2", conversation.StatusSuccess),
+		}
+		assert.False(t, hasExecutedToolUseForPost(turns, "p1"),
+			"a successful tool on another post must not satisfy the check for p1")
+	})
+
+	t.Run("no matching assistant turn returns false", func(t *testing.T) {
+		turns := []store.Turn{turn("a1", "p1", conversation.StatusSuccess)}
+		assert.False(t, hasExecutedToolUseForPost(turns, "missing"))
+	})
+}
+
 func TestFollowUpAlreadyStreamed(t *testing.T) {
 	t.Run("no tool_result turn yet returns false", func(t *testing.T) {
 		turns := []store.Turn{

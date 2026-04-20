@@ -210,11 +210,21 @@ export function deriveApprovalStageForPost(
         return 'call';
     }
 
+    // Only consider tool_use blocks that were actually executed. Rejected
+    // tools have no shareable output, so they must not push the UI into the
+    // 'result' stage — otherwise the auto-submit-on-all-rejected effect in
+    // ToolApprovalSet will fire doToolResult([]) in a loop, and each empty
+    // share call triggers a fresh follow-up stream on the server.
     const toolUseIDs = new Set<string>();
     const matchedResults: ContentBlock[] = [];
     for (const t of turns) {
         for (const block of t.content) {
-            if (block.type === BlockTypeToolUse && block.id) {
+            if (block.type !== BlockTypeToolUse || !block.id) {
+                continue;
+            }
+            if (block.status === StatusSuccess ||
+                block.status === StatusError ||
+                block.status === StatusAutoApproved) {
                 toolUseIDs.add(block.id);
             }
         }
@@ -246,6 +256,27 @@ export function deriveApprovalStageForPost(
     // or DM context), no result-approval UI is needed.
     if (matchedResults.every((b) => b.shared === true)) {
         return 'call';
+    }
+
+    // "Keep Private" does not flip any shared flag server-side, so a naive
+    // `shared === true` check cannot tell "user hasn't decided" apart from
+    // "user chose keep private". A follow-up assistant turn (a post-linked
+    // turn written after the last tool_result) only exists once the decision
+    // has been made and the server streamed the next reply, so treat that as
+    // proof the result stage is done.
+    const sortedForFollowUp = [...conversation.turns].sort((a, b) => a.sequence - b.sequence);
+    let maxToolResultSeq = 0;
+    for (const t of sortedForFollowUp) {
+        if (t.role === 'tool_result' && t.sequence > maxToolResultSeq) {
+            maxToolResultSeq = t.sequence;
+        }
+    }
+    if (maxToolResultSeq > 0) {
+        for (const t of sortedForFollowUp) {
+            if (t.role === 'assistant' && t.post_id && t.sequence > maxToolResultSeq) {
+                return 'call';
+            }
+        }
     }
 
     return 'result';

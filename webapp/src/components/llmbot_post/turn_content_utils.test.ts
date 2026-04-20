@@ -475,6 +475,89 @@ describe('deriveApprovalStageForPost', () => {
         const conv = makeConversation([anchor]);
         expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('call');
     });
+
+    // ToolApprovalSet auto-submits doToolResult([]) once every tool on a post
+    // is Rejected and the stage is 'result'. In channels that kicks off a new
+    // LLM round, which creates another pending post, which the UI flags as
+    // all-rejected on the next conversation refetch — a loop that generates
+    // dozens of Claude replies until the test times out. Returning 'call'
+    // here short-circuits the auto-submit effect.
+    test('returns call when every tool_use block is rejected', () => {
+        const assistantTurn = makeTurn({
+            post_id: 'post_1',
+            sequence: 1,
+            content: [
+                {type: 'tool_use', id: 'tc_1', name: 'get_channel_info', status: 'rejected', shared: false},
+            ],
+        });
+        const resultTurn = makeTurn({
+            id: 'turn_2',
+            post_id: null,
+            sequence: 2,
+            role: 'tool_result',
+            content: [
+                {type: 'tool_result', tool_use_id: 'tc_1', content: 'Tool call rejected by user', status: 'error', shared: false},
+            ],
+        });
+        const conv = makeConversation([assistantTurn, resultTurn]);
+        expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('call');
+    });
+
+    // "Keep Private" does not flip any shared flag on the tool_result, so the
+    // naive `shared === true` check keeps returning 'result' forever, and the
+    // UI keeps rendering Share/Keep private buttons even after the user
+    // already clicked Keep Private. The follow-up assistant turn is the
+    // server's signal that the decision was made.
+    test('returns call when a follow-up post-linked assistant turn exists after the tool_result', () => {
+        const assistantTurn = makeTurn({
+            id: 'turn_1',
+            post_id: 'post_1',
+            sequence: 1,
+            content: [
+                {type: 'tool_use', id: 'tc_1', name: 'create_post', status: 'success', shared: false},
+            ],
+        });
+        const resultTurn = makeTurn({
+            id: 'turn_2',
+            post_id: null,
+            sequence: 2,
+            role: 'tool_result',
+            content: [
+                {type: 'tool_result', tool_use_id: 'tc_1', content: 'posted', status: 'success', shared: false},
+            ],
+        });
+        const followUp = makeTurn({
+            id: 'turn_3',
+            post_id: 'post_followup',
+            sequence: 3,
+            content: [{type: 'text', text: 'Kept private, here is my summary.'}],
+        });
+        const conv = makeConversation([assistantTurn, resultTurn, followUp]);
+        expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('call');
+    });
+
+    test('returns result when some tool_use blocks executed even with rejected siblings', () => {
+        const assistantTurn = makeTurn({
+            post_id: 'post_1',
+            sequence: 1,
+            content: [
+                {type: 'tool_use', id: 'tc_1', name: 'read', status: 'rejected', shared: false},
+                {type: 'tool_use', id: 'tc_2', name: 'write', status: 'success', shared: false},
+            ],
+        });
+        const resultTurn = makeTurn({
+            id: 'turn_2',
+            post_id: null,
+            sequence: 2,
+            role: 'tool_result',
+            content: [
+                {type: 'tool_result', tool_use_id: 'tc_1', content: 'rejected', status: 'error', shared: false},
+                {type: 'tool_result', tool_use_id: 'tc_2', content: 'ok', status: 'success', shared: false},
+            ],
+        });
+        const conv = makeConversation([assistantTurn, resultTurn]);
+        expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('result');
+    });
 });
 
 describe('hasAutoApprovedToolsForPost', () => {

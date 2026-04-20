@@ -269,6 +269,15 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return nil
 	}
 
+	// If the post has no executed tool_use blocks (e.g. every tool was
+	// rejected), there is nothing to share and no follow-up to stream.
+	// Skipping here prevents a UI race — the webapp auto-submits
+	// doToolResult([]) when every tool call is Rejected, and without this
+	// guard each click would kick off another LLM round.
+	if !hasExecutedToolUseForPost(turns, post.Id) {
+		return nil
+	}
+
 	// Guard against duplicate share clicks: if an assistant turn linked to a
 	// PostID exists past the last tool_result turn, the follow-up has already streamed.
 	freshTurns, err := c.convService.GetTurns(conv.ID)
@@ -289,6 +298,34 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	// via the share toggle — the LLM just needs the complete context to
 	// produce a coherent answer.
 	return c.streamToolFollowUp(bot, user, channel, post, conv, false, false)
+}
+
+// hasExecutedToolUseForPost reports whether the assistant turn linked to
+// postID contains any tool_use block that actually ran (Success or Error).
+// Rejected tool_use blocks produce no shareable output, so a "share" click
+// on such a post must not start an LLM follow-up.
+func hasExecutedToolUseForPost(turns []store.Turn, postID string) bool {
+	for i := range turns {
+		if turns[i].Role != "assistant" {
+			continue
+		}
+		if turns[i].PostID == nil || *turns[i].PostID != postID {
+			continue
+		}
+		var blocks []conversation.ContentBlock
+		if err := json.Unmarshal(turns[i].Content, &blocks); err != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type == conversation.BlockTypeToolUse &&
+				(b.Status == conversation.StatusSuccess ||
+					b.Status == conversation.StatusError ||
+					b.Status == conversation.StatusAutoApproved) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // followUpAlreadyStreamed reports whether the LLM follow-up for the most recent
