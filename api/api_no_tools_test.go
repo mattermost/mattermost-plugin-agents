@@ -24,6 +24,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -149,7 +150,7 @@ func (m *mockConvServiceStore) GetMaxSequenceForConversation(conversationID stri
 	return len(m.turns[conversationID]), nil
 }
 
-func setupNoToolsAPI(t *testing.T, mcpProvider *noToolsTestMCPProvider, mmClient *mmapimocks.MockClient) (*TestEnvironment, *noToolsStreamingService) {
+func setupNoToolsAPI(t *testing.T, mcpProvider *noToolsTestMCPProvider, mmClient *mmapimocks.MockClient) (*TestEnvironment, *noToolsStreamingService, *mockConvServiceStore) {
 	t.Helper()
 
 	e := SetupTestEnvironment(t)
@@ -192,7 +193,7 @@ func setupNoToolsAPI(t *testing.T, mcpProvider *noToolsTestMCPProvider, mmClient
 	)
 	e.bots.SetBotsForTesting([]*bots.Bot{bot})
 
-	return e, streamingService
+	return e, streamingService, convStore
 }
 
 func TestHandleThreadAnalysisDoesNotLoadToolsWhenToolsAreDisabled(t *testing.T) {
@@ -201,7 +202,7 @@ func TestHandleThreadAnalysisDoesNotLoadToolsWhenToolsAreDisabled(t *testing.T) 
 
 	mcpProvider := &noToolsTestMCPProvider{}
 	mmClient := mmapimocks.NewMockClient(t)
-	e, streamingService := setupNoToolsAPI(t, mcpProvider, mmClient)
+	e, streamingService, _ := setupNoToolsAPI(t, mcpProvider, mmClient)
 	defer e.Cleanup(t)
 
 	requestingUser := &model.User{Id: testUserID, Username: "requester", Locale: "en"}
@@ -241,7 +242,7 @@ func TestHandleIntervalDoesNotLoadToolsWhenToolsAreDisabled(t *testing.T) {
 
 	mcpProvider := &noToolsTestMCPProvider{}
 	mmClient := mmapimocks.NewMockClient(t)
-	e, streamingService := setupNoToolsAPI(t, mcpProvider, mmClient)
+	e, streamingService, _ := setupNoToolsAPI(t, mcpProvider, mmClient)
 	defer e.Cleanup(t)
 
 	requestingUser := &model.User{Id: testUserID, Username: "requester", Locale: "en"}
@@ -269,4 +270,57 @@ func TestHandleIntervalDoesNotLoadToolsWhenToolsAreDisabled(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	require.Equal(t, 1, streamingService.newDMCalls)
 	require.Equal(t, 0, mcpProvider.calls, "channel interval should not build MCP tools when the LLM call disables tools")
+}
+
+// TestHandleIntervalSetsConversationRootPostID verifies that after an
+// interval summary completes, the conversation's RootPostID is set to the
+// newly-created response post. Without this, interval summaries appear as
+// conversation entities with root_post_id == nil and the RHS threads list
+// filters them out — so they disappear from history entirely.
+func TestHandleIntervalSetsConversationRootPostID(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	mcpProvider := &noToolsTestMCPProvider{}
+	mmClient := mmapimocks.NewMockClient(t)
+	e, streamingService, convStore := setupNoToolsAPI(t, mcpProvider, mmClient)
+	defer e.Cleanup(t)
+
+	requestingUser := &model.User{Id: testUserID, Username: "requester", Locale: "en"}
+	channel := &model.Channel{Id: testChannelID, Type: model.ChannelTypeOpen, TeamId: "teamid"}
+	channelPost := &model.Post{Id: "post-1", ChannelId: testChannelID, UserId: testOtherUserID, Message: "hello", CreateAt: 2}
+
+	e.mockAPI.On("GetChannel", testChannelID).Return(channel, nil)
+	e.mockAPI.On("GetTeam", "teamid").Return(&model.Team{Id: "teamid", Name: "team"}, nil)
+	e.mockAPI.On("HasPermissionToChannel", testUserID, testChannelID, model.PermissionReadChannel).Return(true)
+	e.mockAPI.On("GetUser", testUserID).Return(requestingUser, nil)
+
+	postList := &model.PostList{
+		Order: []string{"post-1"},
+		Posts: map[string]*model.Post{"post-1": channelPost},
+	}
+	mmClient.On("GetPostsSince", testChannelID, int64(1)).Return(postList, nil)
+	mmClient.On("GetUser", testOtherUserID).Return(&model.User{Id: testOtherUserID, Username: "author"}, nil)
+
+	request := httptest.NewRequest(http.MethodPost, "/channel/"+testChannelID+"/interval", strings.NewReader(`{"start_time":1,"end_time":0,"preset_prompt":"summarize_range"}`))
+	request.Header.Add("Mattermost-User-ID", testUserID)
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+	require.Equal(t, 1, streamingService.newDMCalls, "interval summary should have streamed a response post")
+
+	// Locate the conversation that was created by the interval summary and
+	// assert its RootPostID points at the streamed response post.
+	require.Len(t, convStore.conversations, 1, "interval summary should create exactly one conversation")
+	var conv *store.Conversation
+	for _, c := range convStore.conversations {
+		conv = c
+	}
+	require.NotNil(t, conv)
+	require.NotNil(t, conv.RootPostID,
+		"interval summary must set RootPostID so the RHS history can navigate to it; without this, the RHS filter drops the entry")
+	assert.Equal(t, "response-post-id", *conv.RootPostID,
+		"RootPostID should match the post ID assigned by the streaming service")
 }

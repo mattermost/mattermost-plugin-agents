@@ -39,12 +39,11 @@ const RhsContainer = styled.div`
 
 export interface AIThread {
     id: string;
-    message: string;
     channel_id: string | null;
     bot_id: string;
     root_post_id: string | null;
     title: string;
-    reply_count: number;
+    turn_count: number;
     update_at: number;
 }
 
@@ -138,8 +137,7 @@ export default function RHS() {
                         <ThreadItem
                             key={p.id}
                             postTitle={p.title}
-                            postMessage={p.message}
-                            repliesCount={p.reply_count}
+                            turnCount={p.turn_count}
                             lastActivityDate={p.update_at}
                             label={bots.find((bot) => bot.id === p.bot_id)?.displayName ?? ''}
                             onClick={() => {

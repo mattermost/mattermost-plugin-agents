@@ -21,6 +21,23 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// ErrStaleToolClick is returned when a tool-approval click cannot be resolved
+// because the pending tool state no longer matches the request. Typical
+// causes: another browser tab already approved/rejected, the post is not an
+// approval post, or the approval has expired. The HTTP layer maps this to
+// 400 Bad Request rather than 500 Internal Server Error.
+var ErrStaleToolClick = errors.New("stale or duplicate tool-approval click")
+
+// ErrPostMissingConversationID is returned when a tool-approval request
+// arrives for a post that has no conversation_id prop. The HTTP layer maps
+// this to 400 Bad Request.
+var ErrPostMissingConversationID = errors.New("post missing conversation_id")
+
+// ErrNotRequester is returned when a user other than the original conversation
+// requester attempts to approve or reject tool calls/results. The HTTP layer
+// maps this to 403 Forbidden.
+var ErrNotRequester = errors.New("only the original requester can approve/reject tool calls")
+
 // HandleToolCall handles user approval/rejection of pending tool calls via conversation entities.
 // It looks up pending tool_use blocks in the conversation turns, executes approved tools,
 // writes results back as turns, and streams a follow-up LLM response.
@@ -32,7 +49,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 
 	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
 	if !ok || convID == "" {
-		return errors.New("post missing conversation_id")
+		return ErrPostMissingConversationID
 	}
 
 	conv, err := c.convService.GetConversation(convID)
@@ -41,7 +58,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	}
 
 	if conv.UserID != userID {
-		return errors.New("only the original requester can approve/reject tool calls")
+		return ErrNotRequester
 	}
 
 	turns, err := c.convService.GetTurns(convID)
@@ -191,7 +208,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 
 	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
 	if !ok || convID == "" {
-		return errors.New("post missing conversation_id")
+		return ErrPostMissingConversationID
 	}
 
 	conv, err := c.convService.GetConversation(convID)
@@ -200,7 +217,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	}
 
 	if conv.UserID != userID {
-		return errors.New("only the original requester can approve/reject tool results")
+		return ErrNotRequester
 	}
 
 	acceptedSet := make(map[string]bool, len(acceptedToolIDs))
@@ -398,12 +415,12 @@ func findPendingToolTurn(turns []store.Turn, clickedPostID string) (*store.Turn,
 			return b.Type == conversation.BlockTypeToolUse && b.Status == conversation.StatusPending
 		})
 		if !hasPending {
-			return nil, nil, errors.New("clicked post has no pending tool calls")
+			return nil, nil, fmt.Errorf("clicked post has no pending tool calls: %w", ErrStaleToolClick)
 		}
 		return &turns[i], blocks, nil
 	}
 
-	return nil, nil, errors.New("no pending tool calls found for clicked post")
+	return nil, nil, fmt.Errorf("no pending tool calls found for clicked post: %w", ErrStaleToolClick)
 }
 
 // responseRootIDFromPost returns the root ID for responding in a thread.

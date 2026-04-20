@@ -356,6 +356,59 @@ describe('extractAnnotationsFromTurn', () => {
             index: 0,
         });
     });
+
+    // Mirrors what streaming.go persists into a BlockTypeAnnotations block
+    // via WebSearchContext.Results. Without surfacing these, web-search
+    // citations disappear when the conversation reloads after stream end.
+    test('extracts annotations from BlockTypeAnnotations web_search_context', () => {
+        const turn = makeTurn({
+            content: [
+                {type: 'text', text: 'Answer citing a source.'},
+                {
+                    type: 'annotations',
+                    web_search_context: {
+                        results: [
+                            {
+                                type: 'url_citation',
+                                start_index: 7,
+                                end_index: 13,
+                                url: 'https://example.com/a',
+                                title: 'Source A',
+                                index: 1,
+                            },
+                            {
+                                type: 'url_citation',
+                                start_index: 14,
+                                end_index: 20,
+                                url: 'https://example.com/b',
+                                title: 'Source B',
+                                index: 2,
+                            },
+                        ],
+                        executed_queries: null,
+                        count: 2,
+                    },
+                },
+            ],
+        });
+
+        const result = extractAnnotationsFromTurn(turn);
+        expect(result).toHaveLength(2);
+        expect(result[0]).toEqual(expect.objectContaining({
+            type: 'url_citation',
+            url: 'https://example.com/a',
+            title: 'Source A',
+            start_index: 7,
+            end_index: 13,
+        }));
+        expect(result[1]).toEqual(expect.objectContaining({
+            type: 'url_citation',
+            url: 'https://example.com/b',
+            title: 'Source B',
+            start_index: 14,
+            end_index: 20,
+        }));
+    });
 });
 
 describe('deriveApprovalStageForPost', () => {

@@ -321,11 +321,27 @@ func (s *Service) BuildCompletionRequest(
 		Message: conv.SystemPrompt,
 	})
 
-	// Merge each tool_result turn into the preceding assistant turn's blocks so
-	// that BlocksToPost can match tool_result blocks to their tool_use entries
-	// within the same llm.Post. Otherwise tool_use entries go out with empty
-	// Result fields and bifrost emits empty-content tool messages, which
-	// Anthropic rejects with "text content blocks must be non-empty".
+	turnPosts, err := turnsToLLMPosts(turns, redactUnshared)
+	if err != nil {
+		return nil, err
+	}
+	posts = append(posts, turnPosts...)
+
+	return &llm.CompletionRequest{
+		Posts:     posts,
+		Context:   context,
+		Operation: conv.Operation,
+	}, nil
+}
+
+// turnsToLLMPosts converts a contiguous slice of turns into llm.Posts,
+// merging each tool_result turn into the preceding assistant turn so that
+// BlocksToPost can pair tool_result blocks with their tool_use entries in a
+// single llm.Post. Without this merge, tool_use entries go out with empty
+// Result fields and bifrost emits empty-content tool messages, which
+// Anthropic rejects with "text content blocks must be non-empty".
+func turnsToLLMPosts(turns []store.Turn, redactUnshared bool) ([]llm.Post, error) {
+	posts := make([]llm.Post, 0, len(turns))
 	for i := 0; i < len(turns); i++ {
 		turn := turns[i]
 		blocks, err := unmarshalBlocks(turn.Content)
@@ -342,12 +358,7 @@ func (s *Service) BuildCompletionRequest(
 		}
 		posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared))
 	}
-
-	return &llm.CompletionRequest{
-		Posts:     posts,
-		Context:   context,
-		Operation: conv.Operation,
-	}, nil
+	return posts, nil
 }
 
 // CreatePlaceholderAssistantTurn creates an empty assistant turn linked to the response post.
@@ -580,33 +591,28 @@ func (s *Service) BuildChannelMentionRequest(
 		}
 	}
 
-	// Emit any non-post turns that precede all post-linked turns (precedingSeq = 0).
-	for _, turn := range turnsByPrecedingPost[0] {
-		blocks, err := unmarshalBlocks(turn.Content)
-		if err != nil {
-			return nil, fmt.Errorf("failed to unmarshal turn %s: %w", turn.ID, err)
-		}
-		posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared))
+	// Emit any non-post turns that precede all post-linked turns
+	// (precedingSeq = 0). Route through turnsToLLMPosts so tool_use and
+	// tool_result within the same tool round merge into a single llm.Post,
+	// matching BuildCompletionRequest's behavior.
+	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], redactUnshared)
+	if err != nil {
+		return nil, err
 	}
+	posts = append(posts, leadingPosts...)
 
 	for _, threadPost := range threadData.Posts {
 		if turnPostIDs[threadPost.Id] {
-			// Render from the turn (full fidelity).
+			// Render the post-linked turn and any trailing tool-round turns
+			// as a single contiguous run so tool_result merges into the
+			// preceding assistant turn's tool_use blocks.
 			turn := turnByPostID[threadPost.Id]
-			blocks, err := unmarshalBlocks(turn.Content)
+			run := append([]store.Turn{turn}, turnsByPrecedingPost[turn.Sequence]...)
+			runPosts, err := turnsToLLMPosts(run, redactUnshared)
 			if err != nil {
-				return nil, fmt.Errorf("failed to unmarshal turn %s: %w", turn.ID, err)
+				return nil, err
 			}
-			posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared))
-
-			// Emit any non-post turns that follow this post-linked turn.
-			for _, followingTurn := range turnsByPrecedingPost[turn.Sequence] {
-				fBlocks, err := unmarshalBlocks(followingTurn.Content)
-				if err != nil {
-					return nil, fmt.Errorf("failed to unmarshal turn %s: %w", followingTurn.ID, err)
-				}
-				posts = append(posts, BlocksToPost(fBlocks, followingTurn.Role, redactUnshared))
-			}
+			posts = append(posts, runPosts...)
 		} else {
 			// Render as plain text with @username prefix.
 			username := ""

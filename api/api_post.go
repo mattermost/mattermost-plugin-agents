@@ -316,18 +316,28 @@ func (a *API) handleToolCall(c *gin.Context) {
 		return
 	}
 
-	err := a.conversationsService.HandleToolCall(userID, post, channel, data.AcceptedToolIDs)
-	if err != nil {
-		switch {
-		case err.Error() == "no pending tool calls found in conversation" || err.Error() == "post missing conversation_id":
-			c.AbortWithError(http.StatusBadRequest, err)
-		default:
-			c.AbortWithError(http.StatusInternalServerError, err)
-		}
+	if err := a.conversationsService.HandleToolCall(userID, post, channel, data.AcceptedToolIDs); err != nil {
+		c.AbortWithError(toolApprovalHTTPStatus(err), err)
 		return
 	}
 
 	c.Status(http.StatusOK)
+}
+
+// toolApprovalHTTPStatus maps errors from HandleToolCall/HandleToolResult to
+// HTTP statuses. Stale-click and missing-conversation cases are client-side
+// issues (400); requester-mismatch is a permission denial (403); everything
+// else falls through to 500.
+func toolApprovalHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, conversations.ErrStaleToolClick),
+		errors.Is(err, conversations.ErrPostMissingConversationID):
+		return http.StatusBadRequest
+	case errors.Is(err, conversations.ErrNotRequester):
+		return http.StatusForbidden
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 func (a *API) handleToolResult(c *gin.Context) {
@@ -361,7 +371,7 @@ func (a *API) handleToolResult(c *gin.Context) {
 	}
 
 	if err := a.conversationsService.HandleToolResult(userID, post, channel, data.AcceptedToolIDs); err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
+		c.AbortWithError(toolApprovalHTTPStatus(err), err)
 		return
 	}
 

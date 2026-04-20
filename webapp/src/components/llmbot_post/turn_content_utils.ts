@@ -153,11 +153,27 @@ export function extractAnnotationsFromTurn(turn: Turn): Annotation[] {
     let runningIndex = 0;
 
     for (const block of turn.content) {
-        // Annotations block (web search context citations)
+        // Annotations block (web search context citations). The streamer
+        // persists the live annotations array verbatim into web_search_context.results,
+        // so we surface those without re-deriving indices.
         if (block.type === BlockTypeAnnotations && block.web_search_context) {
-            // The web_search_context field is surfaced directly as annotations
-            // following the same shape the streaming path uses.
-            // TODO: map web_search_context.results to Annotation[] when backend provides them.
+            const results = block.web_search_context.results;
+            if (Array.isArray(results)) {
+                for (const r of results as Partial<Annotation>[]) {
+                    if (r && r.type === 'url_citation') {
+                        annotations.push({
+                            type: 'url_citation',
+                            start_index: r.start_index ?? 0,
+                            end_index: r.end_index ?? 0,
+                            url: r.url,
+                            title: r.title,
+                            cited_text: r.cited_text,
+                            index: r.index ?? runningIndex,
+                        });
+                        runningIndex++;
+                    }
+                }
+            }
         }
 
         // Text block with inline citations

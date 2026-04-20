@@ -357,14 +357,16 @@ func (a *API) enforceEmptyBody(c *gin.Context) error {
 }
 
 // aiThreadResponse is the JSON shape for items in the GET /ai_threads response.
+// This is a history DTO — only navigable, summary-level fields. No message
+// preview is included because the 2.0 conversation model stores assistant
+// content in typed blocks rather than a single message string.
 type aiThreadResponse struct {
 	ID         string  `json:"id"`
-	Message    string  `json:"message"`
 	Title      string  `json:"title"`
 	ChannelID  *string `json:"channel_id"`
 	BotID      string  `json:"bot_id"`
 	RootPostID *string `json:"root_post_id"`
-	ReplyCount int     `json:"reply_count"`
+	TurnCount  int     `json:"turn_count"`
 	UpdateAt   int64   `json:"update_at"`
 }
 
@@ -381,12 +383,11 @@ func (a *API) handleGetAIThreads(c *gin.Context) {
 	for i, s := range summaries {
 		threads[i] = aiThreadResponse{
 			ID:         s.ID,
-			Message:    "",
 			Title:      s.Title,
 			ChannelID:  s.ChannelID,
 			BotID:      s.BotID,
 			RootPostID: s.RootPostID,
-			ReplyCount: s.TurnCount,
+			TurnCount:  s.TurnCount,
 			UpdateAt:   s.UpdatedAt,
 		}
 	}

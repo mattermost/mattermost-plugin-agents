@@ -80,6 +80,44 @@ func TestFindPendingToolTurn(t *testing.T) {
 	})
 }
 
+// TestFindPendingToolTurn_StaleClickErrorsAreTyped verifies that both
+// stale-click cases (no matching turn / matching turn already resolved)
+// return a typed sentinel error. The API handler needs this so it can map
+// stale/duplicate clicks to 400 Bad Request rather than falling through to
+// 500 Internal Server Error via string comparison.
+func TestFindPendingToolTurn_StaleClickErrorsAreTyped(t *testing.T) {
+	turns := []store.Turn{
+		{ID: "u1", Role: "user", Sequence: 1, Content: json.RawMessage("[]")},
+		assistantTurnWithPending(t, "a-alice", "post-alice-pending", 2),
+	}
+
+	t.Run("no matching turn returns ErrStaleToolClick", func(t *testing.T) {
+		_, _, err := findPendingToolTurn(turns, "post-does-not-exist")
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrStaleToolClick,
+			"callers (HTTP handler) must be able to detect stale clicks via errors.Is; string matching is brittle and the current handler misses this case")
+	})
+
+	t.Run("matching turn already resolved returns ErrStaleToolClick", func(t *testing.T) {
+		resolvedBlocks := []conversation.ContentBlock{
+			{Type: conversation.BlockTypeToolUse, ID: "tu_x", Name: "search", Status: conversation.StatusSuccess},
+		}
+		content, err := json.Marshal(resolvedBlocks)
+		require.NoError(t, err)
+		resolved := store.Turn{
+			ID: "a-resolved", PostID: stringPtr("post-resolved"), Role: "assistant",
+			Content: content, Sequence: 5,
+		}
+		turnsWithResolved := append([]store.Turn{}, turns...)
+		turnsWithResolved = append(turnsWithResolved, resolved)
+
+		_, _, err = findPendingToolTurn(turnsWithResolved, "post-resolved")
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrStaleToolClick,
+			"a second click on an already-resolved approval is a client-side staleness issue, not a server error")
+	})
+}
+
 func TestFollowUpAlreadyStreamed(t *testing.T) {
 	t.Run("no tool_result turn yet returns false", func(t *testing.T) {
 		turns := []store.Turn{

@@ -267,8 +267,13 @@ func (a *API) handleInterval(c *gin.Context) {
 		return
 	}
 
-	// Set title on the conversation entity
+	// Persist the response post ID as the conversation's root so the RHS
+	// history list can navigate to it; without RootPostID the entry is
+	// filtered out of the threads list.
 	if a.convService != nil {
+		if updateErr := a.convService.UpdateConversationRootPostID(result.ConversationID, post.Id); updateErr != nil {
+			a.pluginAPI.Log.Error("Failed to update interval summary root post ID", "error", updateErr)
+		}
 		_ = a.convService.UpdateConversationTitle(result.ConversationID, promptTitle)
 	}
 

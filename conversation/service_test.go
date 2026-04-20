@@ -1287,6 +1287,126 @@ func TestBuildChannelMentionRequest_NoThreadPosts(t *testing.T) {
 	assert.Equal(t, llm.PostRoleUser, req.Posts[1].Role)
 }
 
+// TestBuildChannelMentionRequest_ToolRoundsMerged verifies that tool rounds
+// persisted as non-post assistant + tool_result turn pairs get merged into a
+// single assistant llm.Post — the same behavior BuildCompletionRequest
+// guarantees. Without this merge, the tool_result turn is emitted as a
+// separate user-role post and the assistant's tool_use goes out with an
+// empty Result field, which bifrost/Anthropic rejects with
+// "text content blocks must be non-empty".
+func TestBuildChannelMentionRequest_ToolRoundsMerged(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	botID := model.NewId()
+	userID := model.NewId()
+	rootPostID := "root_tool_merge"
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       userID,
+		BotID:        botID,
+		RootPostID:   &rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "what's the weather?",
+		UserPostID:   stringPtr("postU1"),
+	})
+	require.NoError(t, err)
+	convID := result.ConversationID
+
+	// Tool-round assistant turn (no PostID — WriteToolTurns doesn't attach one).
+	toolUseBlocks := []ContentBlock{
+		{
+			Type:   BlockTypeToolUse,
+			ID:     "tc1",
+			Name:   "get_weather",
+			Input:  json.RawMessage(`{"city":"NYC"}`),
+			Status: StatusSuccess,
+			Shared: BoolPtr(true),
+		},
+	}
+	toolUseContent, _ := json.Marshal(toolUseBlocks)
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		Role:           "assistant",
+		Content:        toolUseContent,
+		Sequence:       2,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	// Tool-result turn (no PostID).
+	toolResultBlocks := []ContentBlock{
+		{
+			Type:      BlockTypeToolResult,
+			ToolUseID: "tc1",
+			Content:   "72F, sunny",
+			Status:    StatusSuccess,
+			Shared:    BoolPtr(true),
+		},
+	}
+	toolResultContent, _ := json.Marshal(toolResultBlocks)
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		Role:           "tool_result",
+		Content:        toolResultContent,
+		Sequence:       3,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	// Final assistant turn linked to the visible response post.
+	finalBlocks := []ContentBlock{{Type: BlockTypeText, Text: "Weather in NYC is 72F and sunny."}}
+	finalContent, _ := json.Marshal(finalBlocks)
+	err = s.CreateTurn(&store.Turn{
+		ID:             model.NewId(),
+		ConversationID: convID,
+		PostID:         stringPtr("postBot1"),
+		Role:           "assistant",
+		Content:        finalContent,
+		Sequence:       4,
+		CreatedAt:      model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	conv, err := s.GetConversation(convID)
+	require.NoError(t, err)
+
+	threadData := &mmapi.ThreadData{
+		Posts: []*model.Post{
+			{Id: "postU1", UserId: userID, CreateAt: 1000, Message: "what's the weather?"},
+			{Id: "postBot1", UserId: botID, CreateAt: 2000, Message: "Weather in NYC is 72F and sunny."},
+		},
+		UsersByID: map[string]*model.User{
+			userID: {Id: userID, Username: "alice"},
+			botID:  {Id: botID, Username: "aibot"},
+		},
+	}
+	svc.bots = &testBotLookup{botUserIDs: map[string]bool{botID: true}}
+
+	req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+	require.NoError(t, err)
+
+	// Expected structure: system + user(postU1) + tool-round assistant (tool_use+result merged) + final assistant(postBot1) = 4.
+	require.Len(t, req.Posts, 4, "tool_result must merge into the preceding assistant turn instead of becoming its own llm.Post")
+
+	assert.Equal(t, llm.PostRoleSystem, req.Posts[0].Role)
+	assert.Equal(t, llm.PostRoleUser, req.Posts[1].Role)
+
+	toolRound := req.Posts[2]
+	assert.Equal(t, llm.PostRoleBot, toolRound.Role, "the tool round must surface as assistant/bot, not as two separate posts")
+	require.Len(t, toolRound.ToolUse, 1, "tool_use and its tool_result must pair into a single ToolCall")
+	assert.Equal(t, "tc1", toolRound.ToolUse[0].ID)
+	assert.Equal(t, "get_weather", toolRound.ToolUse[0].Name)
+	assert.Equal(t, "72F, sunny", toolRound.ToolUse[0].Result,
+		"tool_result content must merge onto the tool_use's Result field; otherwise providers see an orphan tool_use and reject the request")
+
+	final := req.Posts[3]
+	assert.Equal(t, llm.PostRoleBot, final.Role)
+	assert.Equal(t, "Weather in NYC is 72F and sunny.", final.Message)
+}
+
 func TestSequenceNumbering_Concurrent(t *testing.T) {
 	svc, s := setupTestService(t)
 
