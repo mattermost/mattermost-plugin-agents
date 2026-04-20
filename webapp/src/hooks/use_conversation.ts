@@ -14,6 +14,7 @@ export interface UseConversationResult {
 
 // Module-level cache and subscriber management
 const conversationCache = new Map<string, ConversationResponse>();
+const errorCache = new Map<string, Error>();
 const inflightRequests = new Map<string, Promise<ConversationResponse>>();
 const subscribers = new Set<() => void>();
 
@@ -24,6 +25,7 @@ function notifySubscribers() {
 /** Force re-fetch of a specific conversation (called from WebSocket handler). */
 export function invalidateConversation(conversationId: string) {
     conversationCache.delete(conversationId);
+    errorCache.delete(conversationId);
     inflightRequests.delete(conversationId);
     notifySubscribers();
 }
@@ -31,6 +33,7 @@ export function invalidateConversation(conversationId: string) {
 /** Clear all cached conversations. Exported for test cleanup only. */
 export function clearConversationCache() {
     conversationCache.clear();
+    errorCache.clear();
     inflightRequests.clear();
 }
 
@@ -41,11 +44,18 @@ function fetchConversation(id: string): Promise<ConversationResponse> {
     }
     const promise = getConversation(id).then((data) => {
         conversationCache.set(id, data);
+        errorCache.delete(id);
         inflightRequests.delete(id);
         notifySubscribers();
         return data;
     }).catch((err) => {
+        errorCache.set(id, err);
         inflightRequests.delete(id);
+
+        // Notify so sibling hooks that subscribed while this request was
+        // inflight can observe the error — otherwise they stay stuck in
+        // loading=true since the dedup path made them skip their own fetch.
+        notifySubscribers();
         throw err;
     });
     inflightRequests.set(id, promise);
@@ -75,6 +85,13 @@ export function useConversation(conversationId: string | undefined): UseConversa
         if (conversationCache.has(conversationId)) {
             return;
         }
+        const cachedError = errorCache.get(conversationId);
+        if (cachedError) {
+            // Adopt the cached error without re-fetching. A retry requires
+            // invalidateConversation() (e.g. from a WebSocket event).
+            setError(cachedError);
+            return;
+        }
         if (inflightRequests.has(conversationId)) {
             return;
         }
@@ -87,9 +104,10 @@ export function useConversation(conversationId: string | undefined): UseConversa
     }
 
     const cached = conversationCache.get(conversationId) ?? null;
-    const loading = !cached && !error;
+    const effectiveError = error ?? errorCache.get(conversationId) ?? null;
+    const loading = !cached && !effectiveError;
 
-    return {conversation: cached, loading, error};
+    return {conversation: cached, loading, error: effectiveError};
 }
 
 export function useTurnForPost(

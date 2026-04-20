@@ -36,16 +36,25 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 	if c.convService == nil {
 		return errors.New("conversation service not available for regeneration ownership check")
 	}
-	convIDProp, ok := post.GetProp(streaming.ConversationIDProp).(string)
-	if !ok || convIDProp == "" {
-		return errors.New("post missing conversation_id for ownership check")
-	}
-	conv, err := c.convService.GetConversation(convIDProp)
-	if err != nil {
-		return fmt.Errorf("failed to get conversation for ownership check: %w", err)
-	}
-	if conv.UserID != userID {
-		return errors.New("only the original poster can regenerate")
+	convIDProp, _ := post.GetProp(streaming.ConversationIDProp).(string)
+	if convIDProp == "" {
+		// Compatibility bridge for meeting summarization posts produced
+		// without a conversation entity. Remove once meeting flows migrate.
+		requester, _ := post.GetProp(streaming.LLMRequesterUserIDProp).(string)
+		if requester == "" {
+			return errors.New("post missing conversation_id for ownership check")
+		}
+		if requester != userID {
+			return errors.New("only the original poster can regenerate")
+		}
+	} else {
+		conv, err := c.convService.GetConversation(convIDProp)
+		if err != nil {
+			return fmt.Errorf("failed to get conversation for ownership check: %w", err)
+		}
+		if conv.UserID != userID {
+			return errors.New("only the original poster can regenerate")
+		}
 	}
 
 	if post.GetProp(streaming.NoRegen) != nil {

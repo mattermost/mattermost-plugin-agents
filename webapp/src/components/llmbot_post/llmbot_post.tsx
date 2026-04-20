@@ -57,9 +57,16 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
     const turn = useTurnForPost(conversation, props.post.id);
 
-    // Derive requester check from conversation entity
+    // Derive requester check from conversation entity. Meeting summarization
+    // posts currently have no conversation entity; fall back to the legacy
+    // llm_requester_user_id prop for those. Remove the fallback once meeting
+    // flows produce conversation entities.
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
-    const requesterIsCurrentUser = Boolean(conversation && conversation.user_id === currentUserId);
+    const legacyRequester: string | undefined = props.post.props?.llm_requester_user_id;
+    const requesterIsCurrentUser = Boolean(
+        (conversation && conversation.user_id === currentUserId) ||
+        (!conversationId && legacyRequester && legacyRequester === currentUserId),
+    );
 
     const channel = useSelector<GlobalState, {type?: string} | undefined>(
         (state) => state.entities.channels.channels[props.post.channel_id],

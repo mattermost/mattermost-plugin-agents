@@ -337,16 +337,14 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 		return
 	}
 
-	// Attach search results to response post for frontend rendering.
+	// Marshal results early; conversation_id is added alongside search_results
+	// in a single UpdatePost below so the requester's Stop button works as
+	// soon as streaming begins (Redux needs conversation_id to derive ownership).
 	resultsJSON, err := json.Marshal(results)
 	if err != nil {
 		s.mmclient.LogError("Error marshaling search results", "error", err)
 		processingError = err
 		return
-	}
-	responsePost.AddProp(SearchResultsProp, string(resultsJSON))
-	if updateErr := s.mmclient.UpdatePost(responsePost); updateErr != nil {
-		s.mmclient.LogError("Error updating post with search results", "error", updateErr)
 	}
 
 	// Build system prompt from template (contains RAG results)
@@ -401,6 +399,13 @@ func (s *Search) processSearch(bot *bots.Bot, userID, query, teamID, channelID s
 		completionReq = *req
 	} else {
 		completionReq = prompt
+	}
+
+	// Attach search results and persist in one round trip, so by the time
+	// streaming starts the DB post has both props.
+	responsePost.AddProp(SearchResultsProp, string(resultsJSON))
+	if updateErr := s.mmclient.UpdatePost(responsePost); updateErr != nil {
+		s.mmclient.LogError("Error updating post with search results", "error", updateErr)
 	}
 
 	resultStream, err := bot.LLM().ChatCompletion(completionReq, llm.WithToolsDisabled())

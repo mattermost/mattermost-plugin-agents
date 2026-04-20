@@ -211,6 +211,63 @@ describe('useConversation', () => {
 
         expect(getConversation).toHaveBeenCalledTimes(1);
     });
+
+    test('unblocks sibling hooks when a concurrent fetch fails', async () => {
+        const fetchError = new Error('Network failure');
+        let rejectPromise: (reason: Error) => void;
+        getConversation.mockReturnValueOnce(
+            new Promise<ConversationResponse>((_, reject) => {
+                rejectPromise = reject;
+            }),
+        );
+
+        const {result: resultA} = renderHook(() => useConversation('conv_123'));
+        const {result: resultB} = renderHook(() => useConversation('conv_123'));
+
+        expect(resultA.current.loading).toBe(true);
+        expect(resultB.current.loading).toBe(true);
+
+        await act(async () => {
+            rejectPromise!(fetchError);
+        });
+
+        // Sibling must not stay stuck in loading; both should adopt the error.
+        await waitFor(() => {
+            expect(resultA.current.error).toBe(fetchError);
+        });
+        await waitFor(() => {
+            expect(resultB.current.error).toBe(fetchError);
+        });
+
+        expect(resultA.current.loading).toBe(false);
+        expect(resultB.current.loading).toBe(false);
+
+        // No retry storm: neither hook re-fetches after the failure.
+        expect(getConversation).toHaveBeenCalledTimes(1);
+    });
+
+    test('invalidateConversation clears cached errors and retries', async () => {
+        const fetchError = new Error('Network failure');
+        getConversation.mockRejectedValueOnce(fetchError);
+
+        const {result} = renderHook(() => useConversation('conv_123'));
+
+        await waitFor(() => {
+            expect(result.current.error).toBe(fetchError);
+        });
+
+        const fixture = makeConversation();
+        getConversation.mockResolvedValueOnce(fixture);
+
+        act(() => {
+            invalidateConversation('conv_123');
+        });
+
+        await waitFor(() => {
+            expect(result.current.conversation).toEqual(fixture);
+        });
+        expect(result.current.error).toBeNull();
+    });
 });
 
 describe('useTurnForPost', () => {

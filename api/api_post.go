@@ -370,10 +370,15 @@ func (a *API) handleToolResult(c *gin.Context) {
 
 // isConversationOwner checks whether the given user is the owner of the
 // conversation associated with the post (via the conversation_id prop).
+//
+// Falls back to the llm_requester_user_id prop for legacy custom_llmbot posts
+// that were not produced via the conversation entity flow — currently only
+// meeting summarization. Remove the fallback once meeting flows migrate.
 func (a *API) isConversationOwner(post *model.Post, userID string) bool {
 	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
 	if !ok || convID == "" {
-		return false
+		requester, _ := post.GetProp(streaming.LLMRequesterUserIDProp).(string)
+		return requester != "" && requester == userID
 	}
 
 	// Try the full conversation service first, then fall back to the store interface.
