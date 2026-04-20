@@ -61,7 +61,8 @@ export const AgentMentionReminderPost = ({post}: Props) => {
         try {
             await doLoopInAgent(targetPostId, botUsername);
             setDone(true);
-        } catch {
+        } catch (err) {
+            console.error('Failed to loop in agent:', err); // eslint-disable-line no-console
             setError(true);
         } finally {
             setPending(false);
@@ -81,6 +82,7 @@ export const AgentMentionReminderPost = ({post}: Props) => {
     return (
         <Hint>
             <FormattedMessage
+                id='agents.agent_mention_reminder_body'
                 defaultMessage='To respond to an agent you must @mention them. <link>click here to loop in @{botDisplayName}</link>'
                 values={{
                     botDisplayName,
@@ -99,6 +101,7 @@ export const AgentMentionReminderPost = ({post}: Props) => {
             {error && (
                 <ErrorMessage>
                     <FormattedMessage
+                        id='agents.agent_mention_reminder_error'
                         defaultMessage='Failed to loop in @{botDisplayName}. Please try again.'
                         values={{botDisplayName}}
                     />
