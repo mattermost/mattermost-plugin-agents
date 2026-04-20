@@ -444,7 +444,7 @@ i18n-extract: i18n-extract-webapp i18n-extract-server
 
 .PHONY: i18n-extract-webapp
 i18n-extract-webapp:
-	cd webapp && $(NPM) run i18n-extract -- --out-file src/i18n/en.json --id-interpolation-pattern '[sha512:contenthash:base64:8]' --format simple src/index.tsx src/components/**/*.{ts,tsx}
+	cd webapp && $(NPM) run i18n-extract -- --out-file src/i18n/en.json --id-interpolation-pattern '[sha512:contenthash:base64:8]' --format simple src/index.tsx 'src/components/**/*.{ts,tsx}'
 
 .PHONY: i18n-extract-server
 i18n-extract-server:

@@ -45,6 +45,7 @@ test.describe('Agent MCP Tools', () => {
             displayName: 'No Tools Agent',
             username: 'notoolsagent',
             serviceID: mockServiceId,
+            autoEnableNewMCPTools: false,
             enabledMCPTools: [],
             enabledNativeTools: [],
         });
@@ -107,6 +108,7 @@ test.describe('Agent MCP Tools', () => {
             displayName: 'Selective Tools Agent',
             username: 'selectivetoolsagent',
             serviceID: mockServiceId,
+            autoEnableNewMCPTools: false,
             enabledMCPTools: [
                 { server_origin: embeddedMattermostOrigin, tool_name: 'read_post' },
             ],
@@ -161,8 +163,9 @@ test.describe('Agent MCP Tools', () => {
         await aiPlugin.waitForBotResponse('I used the selected tool at runtime.');
     });
 
-    // RHS Tool Providers popover filters by server (provider) using activeBot.enabledMCPTools origins;
-    // individual tools are not listed here — only MCPs tab / server policy cover tool-level affordances.
+    // RHS Tool Providers popover filters by server (provider): when the active bot has
+    // autoEnableNewMCPTools=false it shows only servers whose origins appear in enabledMCPTools.
+    // Individual tools are not listed here — the MCPs tab / server policy covers tool-level affordances.
     test('RHS Tools popover shows no providers when agent has empty enabledMCPTools', async ({ page }) => {
         test.setTimeout(90000);
         const agentApi = new AgentAPIHelper(mattermost.url());
@@ -172,6 +175,7 @@ test.describe('Agent MCP Tools', () => {
         const agent = await agentApi.createTestAgent(token, {
             displayName: 'RHS Empty MCP Agent',
             serviceID: mockServiceId,
+            autoEnableNewMCPTools: false,
             enabledMCPTools: [],
             enabledNativeTools: [],
         });
@@ -202,6 +206,7 @@ test.describe('Agent MCP Tools', () => {
         const agent = await agentApi.createTestAgent(token, {
             displayName: 'RHS Embedded Only Agent',
             serviceID: mockServiceId,
+            autoEnableNewMCPTools: false,
             enabledMCPTools: [
                 { server_origin: embeddedMattermostOrigin, tool_name: 'read_post' },
             ],
@@ -226,7 +231,7 @@ test.describe('Agent MCP Tools', () => {
         await expect(menu.getByText('No tool providers available')).not.toBeVisible();
     });
 
-    test('editing an implicit-all agent preserves MCP provider access', async ({ page }) => {
+    test('editing an auto-enable-all agent preserves MCP provider access', async ({ page }) => {
         test.setTimeout(90000);
         const agentApi = new AgentAPIHelper(mattermost.url());
         const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
@@ -236,10 +241,11 @@ test.describe('Agent MCP Tools', () => {
             displayName: 'Implicit All Agent',
             serviceID: mockServiceId,
             enabledNativeTools: [],
+            // createTestAgent defaults autoEnableNewMCPTools=true.
         });
 
         let fetched = await agentApi.getAgent(token, agent.id);
-        expect(fetched.enabledMCPTools).toBeNull();
+        expect(fetched.autoEnableNewMCPTools).toBe(true);
 
         const mmPage = new MattermostPage(page);
         const agentPage = new AgentPageHelper(page);
@@ -257,7 +263,7 @@ test.describe('Agent MCP Tools', () => {
         await agentPage.waitForModalClosed();
 
         fetched = await agentApi.getAgent(token, agent.id);
-        expect(fetched.enabledMCPTools).toBeNull();
+        expect(fetched.autoEnableNewMCPTools).toBe(true);
 
         await page.context().clearCookies();
         await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);

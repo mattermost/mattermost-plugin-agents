@@ -32,6 +32,7 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 			{ServerOrigin: "https://mcp.example.com", ToolName: "web_search"},
 			{ServerOrigin: "https://mcp.example.com", ToolName: "file_search"},
 		},
+		AutoEnableNewMCPTools:   true,
 		Model:                   "gpt-4",
 		EnableVision:            true,
 		DisableTools:            false,
@@ -87,6 +88,7 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.Equal(t, "web_search", fetched.EnabledMCPTools[0].ToolName)
 	assert.Equal(t, "https://mcp.example.com", fetched.EnabledMCPTools[0].ServerOrigin)
 	assert.Equal(t, "file_search", fetched.EnabledMCPTools[1].ToolName)
+	assert.True(t, fetched.AutoEnableNewMCPTools)
 
 	assert.Equal(t, "gpt-4", fetched.Model)
 	assert.True(t, fetched.EnableVision)
@@ -317,20 +319,30 @@ func TestAgentEmptySliceFields(t *testing.T) {
 	assert.Nil(t, fetched.EnabledMCPTools)
 }
 
-func TestAgentEmptyEnabledMCPToolsRoundTrip(t *testing.T) {
+func TestAgentAutoEnableNewMCPToolsRoundTrip(t *testing.T) {
 	s := setupTestStore(t)
 	err := s.RunMigrations()
 	require.NoError(t, err)
 
-	agent := testAgent("creator-1", "emptymcp", "Empty MCP Tools")
-	agent.EnabledMCPTools = []llm.EnabledMCPTool{}
+	agent := testAgent("creator-1", "auto-mcp", "Auto MCP Agent")
+	agent.AutoEnableNewMCPTools = true
+	agent.EnabledMCPTools = nil // allowlist is ignored when auto-enable is on
 	require.NoError(t, s.CreateAgent(agent))
 
 	fetched, err := s.GetAgent(agent.ID)
 	require.NoError(t, err)
 	require.NotNil(t, fetched)
-	require.NotNil(t, fetched.EnabledMCPTools)
-	assert.Empty(t, fetched.EnabledMCPTools)
+	assert.True(t, fetched.AutoEnableNewMCPTools)
+	assert.Nil(t, fetched.EnabledMCPTools)
+
+	// Flip it off and verify the flag updates cleanly.
+	fetched.AutoEnableNewMCPTools = false
+	require.NoError(t, s.UpdateAgent(fetched))
+
+	again, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, again)
+	assert.False(t, again.AutoEnableNewMCPTools)
 }
 
 func TestAgentConcurrentCreates(t *testing.T) {

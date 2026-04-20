@@ -12,11 +12,9 @@ export interface EnabledTool {
 //
 // Create is an explicit full-object request: the UI / calling helper is the sole
 // source of truth for create-time defaults; the backend no longer substitutes hidden
-// defaults for omitted fields. `enabledMCPTools` is a required tri-state field:
-//   - null  = allow all MCP tools
-//   - []    = allow no MCP tools
-//   - [..]  = allow only the listed tools
-// Omitting `enabledMCPTools` is rejected by the backend.
+// defaults for omitted fields. MCP tool access is controlled by two independent fields:
+//   - autoEnableNewMCPTools=true  → agent gets every MCP tool, current and future.
+//   - autoEnableNewMCPTools=false → agent gets only the tools listed in enabledMCPTools.
 export interface CreateAgentRequest {
     displayName: string;
     username: string;
@@ -28,7 +26,8 @@ export interface CreateAgentRequest {
     userIDs?: string[];
     teamIDs?: string[];
     adminUserIDs?: string[];
-    enabledMCPTools: EnabledTool[] | null;
+    enabledMCPTools?: EnabledTool[];
+    autoEnableNewMCPTools: boolean;
     enabledNativeTools?: string[];
     model?: string;
     enableVision?: boolean;
@@ -43,8 +42,7 @@ export interface CreateAgentRequest {
 //
 // Update is a full-object replacement, not a patch: every mutable field the caller
 // wants to keep must be included in the request. Fields omitted from the payload are
-// overwritten with their JSON zero values. `enabledMCPTools` follows the same
-// required tri-state contract as CreateAgentRequest.
+// overwritten with their JSON zero values.
 export type UpdateAgentRequest = CreateAgentRequest;
 
 export interface AgentResponse {
@@ -62,7 +60,8 @@ export interface AgentResponse {
     userIDs: string[];
     teamIDs: string[];
     enabledNativeTools: string[];
-    enabledMCPTools?: EnabledTool[] | null;
+    enabledMCPTools?: EnabledTool[];
+    autoEnableNewMCPTools: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
@@ -94,7 +93,8 @@ export function mergeAgentIntoUpdate(
         userIDs: agent.userIDs,
         teamIDs: agent.teamIDs,
         adminUserIDs: agent.adminUserIDs ?? [],
-        enabledMCPTools: agent.enabledMCPTools ?? null,
+        enabledMCPTools: agent.enabledMCPTools ?? [],
+        autoEnableNewMCPTools: agent.autoEnableNewMCPTools,
         enabledNativeTools: agent.enabledNativeTools,
         model: agent.model,
         enableVision: agent.enableVision,
@@ -104,15 +104,7 @@ export function mergeAgentIntoUpdate(
         thinkingBudget: agent.thinkingBudget,
         structuredOutputEnabled: agent.structuredOutputEnabled,
     };
-    const merged = { ...base, ...overrides };
-    // `Partial<UpdateAgentRequest>` allows `enabledMCPTools: undefined`, which would
-    // drop the field from the JSON payload and break the backend's required tri-state
-    // contract. Coerce `undefined` back to `null` so callers who only touch other
-    // fields still send a valid document.
-    if (merged.enabledMCPTools === undefined) {
-        merged.enabledMCPTools = null;
-    }
-    return merged;
+    return { ...base, ...overrides };
 }
 
 /**
@@ -166,9 +158,9 @@ export class AgentAPIHelper {
     }
 
     /**
-     * Create an agent with auto-generated unique username. `enabledMCPTools` defaults
-     * to `null` (all tools allowed) so the backend's required tri-state contract is
-     * satisfied even when callers don't care about MCP tool policy.
+     * Create an agent with auto-generated unique username. By default the agent
+     * auto-enables every MCP tool so tests that don't care about MCP policy still
+     * behave like pre-allowlist bots.
      */
     async createTestAgent(
         token: string,
@@ -179,15 +171,9 @@ export class AgentAPIHelper {
             displayName: `Test Agent ${uniqueSuffix}`,
             username: `testagent${uniqueSuffix}`,
             serviceID: 'mock-service',
-            enabledMCPTools: null,
+            autoEnableNewMCPTools: true,
             ...overrides,
         };
-        // See mergeAgentIntoUpdate above: `Partial<CreateAgentRequest>` allows
-        // `enabledMCPTools: undefined`, which would drop the field from JSON and
-        // be rejected by the backend. Coerce back to the tri-state null default.
-        if (req.enabledMCPTools === undefined) {
-            req.enabledMCPTools = null;
-        }
         return this.createAgent(token, req);
     }
 }

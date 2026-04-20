@@ -509,22 +509,21 @@ func TestRetainOnlyMCPTools(t *testing.T) {
 		wantToolNames []string
 	}{
 		{
-			name: "nil allowlist retains all tools",
-			tools: []Tool{
-				{Name: "builtin_search", ServerOrigin: ""},
-				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
-				{Name: "slack_post", ServerOrigin: "https://mcp.slack.com"},
-			},
-			allowlist:     nil,
-			wantToolNames: []string{"builtin_search", "jira_get", "slack_post"},
-		},
-		{
 			name: "empty allowlist removes all MCP tools but keeps built-in",
 			tools: []Tool{
 				{Name: "builtin_search", ServerOrigin: ""},
 				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
 			},
 			allowlist:     []EnabledMCPTool{},
+			wantToolNames: []string{"builtin_search"},
+		},
+		{
+			name: "nil allowlist removes all MCP tools but keeps built-in",
+			tools: []Tool{
+				{Name: "builtin_search", ServerOrigin: ""},
+				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
+			},
+			allowlist:     nil,
 			wantToolNames: []string{"builtin_search"},
 		},
 		{

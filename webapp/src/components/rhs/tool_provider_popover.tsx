@@ -30,24 +30,26 @@ type ToolProviderPopoverProps = {
     disabledServers: string[];
     onDisabledServersChange: (servers: string[]) => void;
     preloadedServers?: UserMCPServerInfo[];
-    enabledMCPTools?: EnabledMCPTool[] | null;
+    enabledMCPTools?: EnabledMCPTool[];
+    autoEnableNewMCPTools?: boolean;
 };
 
 // filterServersByEnabledTools filters the server list to only show servers
-// that the active agent is allowed to use. null = no filtering (all servers).
-// [] = no servers. [{...}] = only matching servers.
+// that the active agent is allowed to use. When autoEnableNewMCPTools is true,
+// every server is shown. Otherwise only servers appearing in enabledTools are kept.
 function filterServersByEnabledTools(
     servers: UserMCPServerInfo[],
-    enabledTools: EnabledMCPTool[] | null | undefined,
+    enabledTools: EnabledMCPTool[] | undefined,
+    autoEnableNewMCPTools: boolean | undefined,
 ): UserMCPServerInfo[] {
-    if (enabledTools == null) {
+    if (autoEnableNewMCPTools) {
         return servers;
     }
-    const allowedOrigins = new Set(enabledTools.map((t) => t.server_origin));
+    const allowedOrigins = new Set((enabledTools ?? []).map((t) => t.server_origin));
     return servers.filter((s) => allowedOrigins.has(s.serverOrigin));
 }
 
-const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools}: ToolProviderPopoverProps) => {
+const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: ToolProviderPopoverProps) => {
     const [allServers, setAllServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
     const [loading, setLoading] = useState(false);
 
@@ -57,7 +59,7 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
         }
     }, [preloadedServers]);
 
-    const servers = filterServersByEnabledTools(allServers, enabledMCPTools);
+    const servers = filterServersByEnabledTools(allServers, enabledMCPTools, autoEnableNewMCPTools);
 
     const fetchServers = useCallback(async () => {
         setLoading(true);

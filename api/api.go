@@ -389,16 +389,17 @@ func (a *API) handleGetAIThreads(c *gin.Context) {
 }
 
 type AIBotInfo struct {
-	ID                 string                 `json:"id"`
-	DisplayName        string                 `json:"displayName"`
-	Username           string                 `json:"username"`
-	LastIconUpdate     int64                  `json:"lastIconUpdate"`
-	DMChannelID        string                 `json:"dmChannelID"`
-	ChannelAccessLevel llm.ChannelAccessLevel `json:"channelAccessLevel"`
-	ChannelIDs         []string               `json:"channelIDs"`
-	UserAccessLevel    llm.UserAccessLevel    `json:"userAccessLevel"`
-	UserIDs            []string               `json:"userIDs"`
-	EnabledMCPTools    []llm.EnabledMCPTool   `json:"enabledMCPTools"`
+	ID                    string                 `json:"id"`
+	DisplayName           string                 `json:"displayName"`
+	Username              string                 `json:"username"`
+	LastIconUpdate        int64                  `json:"lastIconUpdate"`
+	DMChannelID           string                 `json:"dmChannelID"`
+	ChannelAccessLevel    llm.ChannelAccessLevel `json:"channelAccessLevel"`
+	ChannelIDs            []string               `json:"channelIDs"`
+	UserAccessLevel       llm.UserAccessLevel    `json:"userAccessLevel"`
+	UserIDs               []string               `json:"userIDs"`
+	EnabledMCPTools       []llm.EnabledMCPTool   `json:"enabledMCPTools"`
+	AutoEnableNewMCPTools bool                   `json:"autoEnableNewMCPTools"`
 }
 
 type AIBotsResponse struct {
@@ -431,16 +432,17 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 		}
 
 		bots = append(bots, AIBotInfo{
-			ID:                 bot.GetMMBot().UserId,
-			DisplayName:        bot.GetMMBot().DisplayName,
-			Username:           bot.GetMMBot().Username,
-			LastIconUpdate:     bot.GetMMBot().LastIconUpdate,
-			DMChannelID:        dmChannelID,
-			ChannelAccessLevel: bot.GetConfig().ChannelAccessLevel,
-			ChannelIDs:         bot.GetConfig().ChannelIDs,
-			UserAccessLevel:    bot.GetConfig().UserAccessLevel,
-			UserIDs:            bot.GetConfig().UserIDs,
-			EnabledMCPTools:    bot.GetConfig().EnabledMCPTools,
+			ID:                    bot.GetMMBot().UserId,
+			DisplayName:           bot.GetMMBot().DisplayName,
+			Username:              bot.GetMMBot().Username,
+			LastIconUpdate:        bot.GetMMBot().LastIconUpdate,
+			DMChannelID:           dmChannelID,
+			ChannelAccessLevel:    bot.GetConfig().ChannelAccessLevel,
+			ChannelIDs:            bot.GetConfig().ChannelIDs,
+			UserAccessLevel:       bot.GetConfig().UserAccessLevel,
+			UserIDs:               bot.GetConfig().UserIDs,
+			EnabledMCPTools:       bot.GetConfig().EnabledMCPTools,
+			AutoEnableNewMCPTools: bot.GetConfig().AutoEnableNewMCPTools,
 		})
 		if bot.GetMMBot().Username == defaultBotName {
 			bots[0], bots[i] = bots[i], bots[0]

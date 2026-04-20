@@ -27,7 +27,8 @@ export interface LLMBot {
     userAccessLevel: UserAccessLevel;
     userIDs: string[];
     teamIDs: string[];
-    enabledMCPTools: EnabledMCPTool[] | null;
+    enabledMCPTools: EnabledMCPTool[];
+    autoEnableNewMCPTools: boolean;
 }
 
 const defaultBotLocalStorageKey = 'defaultBot';

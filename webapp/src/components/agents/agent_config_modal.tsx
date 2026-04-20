@@ -31,7 +31,8 @@ export type AgentDraft = {
     userIds: string[];
     teamIds: string[];
     adminUserIds: string[];
-    enabledTools: EnabledTool[] | null;
+    enabledTools: EnabledTool[];
+    autoEnableNewMCPTools: boolean;
     model: string;
     enableVision: boolean;
     disableTools: boolean;
@@ -54,6 +55,7 @@ const emptyDraft: AgentDraft = {
     teamIds: [],
     adminUserIds: [],
     enabledTools: [],
+    autoEnableNewMCPTools: true,
     model: '',
     enableVision: true,
     disableTools: false,
@@ -67,8 +69,6 @@ const emptyDraft: AgentDraft = {
 /**
  * Full-document create payload from the form draft. The backend uses the UI as the sole
  * source of truth for create-time defaults, so every field is sent explicitly.
- * `enabledMCPTools` is always included (as `null`, `[]`, or an array) because the
- * backend rejects requests that omit it.
  */
 function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
     return {
@@ -83,6 +83,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         teamIDs: draft.teamIds,
         adminUserIDs: draft.adminUserIds,
         enabledMCPTools: draft.enabledTools,
+        autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -96,8 +97,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
 
 /**
  * Full-document update payload from the form draft. PUT /agents/:id is a full-object
- * replacement, so every mutable field is sent on every save. `enabledMCPTools` is
- * always included for the same reason as the create path.
+ * replacement, so every mutable field is sent on every save.
  */
 function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
     return {
@@ -112,6 +112,7 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         teamIDs: draft.teamIds,
         adminUserIDs: draft.adminUserIds,
         enabledMCPTools: draft.enabledTools,
+        autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -135,7 +136,8 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         userIds: agent.userIDs ?? [],
         teamIds: agent.teamIDs ?? [],
         adminUserIds: agent.adminUserIDs ?? [],
-        enabledTools: agent.enabledMCPTools ?? null,
+        enabledTools: agent.enabledMCPTools ?? [],
+        autoEnableNewMCPTools: agent.autoEnableNewMCPTools ?? false,
         model: agent.model ?? '',
         enableVision: agent.enableVision ?? true,
         disableTools: agent.disableTools ?? false,
@@ -337,7 +339,8 @@ const AgentConfigModal = (props: Props) => {
                     {activeTab === 'mcps' && (
                         <McpsTab
                             enabledTools={draft.enabledTools}
-                            onChange={(enabledTools) => updateDraft({enabledTools})}
+                            autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
+                            onChange={(updates) => updateDraft(updates)}
                         />
                     )}
                 </ModalBody>

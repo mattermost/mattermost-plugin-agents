@@ -22,20 +22,13 @@ import (
 
 var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 
-// WebsocketEventBotsInvalidate is the short name passed to PublishWebSocketEvent; the webapp receives it as custom_mattermost-ai_<name>.
+// WebsocketEventBotsInvalidate is the event name for PublishWebSocketEvent (webapp: custom_mattermost-ai_<name>).
 const WebsocketEventBotsInvalidate = "bots_invalidate"
 
-// CreateAgentRequest is the JSON body for POST /agents.
-// The UI is the sole source of truth for create-time defaults; the backend no longer
-// substitutes hidden defaults for omitted fields. All fields below are taken verbatim
-// from the request payload.
-//
-// `enabledMCPTools` is a required tri-state field:
-//   - `null` means "allow all MCP tools"
-//   - `[]`   means "allow no MCP tools"
-//   - `[..]` means "allow only the listed tools"
-//
-// Omitting `enabledMCPTools` from the JSON is rejected as an invalid request.
+// CreateAgentRequest is the JSON body for POST /agents. Field values are stored as given (no server-side fill-in).
+// MCP tool access is controlled by two independent fields:
+//   - autoEnableNewMCPTools=true gives the agent every currently configured MCP tool and any added later.
+//   - Otherwise, the agent gets only the tools listed in enabledMCPTools (empty/missing = no MCP tools).
 type CreateAgentRequest struct {
 	DisplayName             string               `json:"displayName" binding:"required"`
 	Username                string               `json:"username" binding:"required"`
@@ -48,6 +41,7 @@ type CreateAgentRequest struct {
 	TeamIDs                 []string             `json:"teamIDs"`
 	AdminUserIDs            []string             `json:"adminUserIDs"`
 	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
+	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
 	Model                   string               `json:"model"`
 	EnableVision            bool                 `json:"enableVision"`
 	DisableTools            bool                 `json:"disableTools"`
@@ -56,39 +50,10 @@ type CreateAgentRequest struct {
 	ReasoningEffort         string               `json:"reasoningEffort"`
 	ThinkingBudget          int                  `json:"thinkingBudget"`
 	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
-
-	enabledMCPToolsProvided bool
 }
 
-func (r *CreateAgentRequest) UnmarshalJSON(data []byte) error {
-	type alias CreateAgentRequest
-	var decoded alias
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	_, enabledMCPToolsProvided := raw["enabledMCPTools"]
-	*r = CreateAgentRequest(decoded)
-	r.enabledMCPToolsProvided = enabledMCPToolsProvided
-	return nil
-}
-
-// UpdateAgentRequest is the JSON body for PUT /agents/:agentid.
-// This endpoint is a full-object replacement, not a patch: every field the caller wants
-// to keep must be sent on every save. Field names mirror CreateAgentRequest so clients
-// can send the same document shape for both flows.
-//
-// `enabledMCPTools` is a required tri-state field with the same semantics as
-// CreateAgentRequest: `null` = all, `[]` = none, `[..]` = allowlist. Omitting it is
-// rejected as an invalid request.
-//
-// `username` is still validated against the stored agent's name and cannot be changed
-// after creation; see handleUpdateAgent.
+// UpdateAgentRequest is the JSON body for PUT /agents/:agentid (full document replace, same shape as create).
+// Username cannot change after create (enforced in the handler).
 type UpdateAgentRequest struct {
 	DisplayName             string               `json:"displayName" binding:"required"`
 	Username                string               `json:"username"`
@@ -101,6 +66,7 @@ type UpdateAgentRequest struct {
 	TeamIDs                 []string             `json:"teamIDs"`
 	AdminUserIDs            []string             `json:"adminUserIDs"`
 	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
+	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
 	Model                   string               `json:"model"`
 	EnableVision            bool                 `json:"enableVision"`
 	DisableTools            bool                 `json:"disableTools"`
@@ -110,8 +76,7 @@ type UpdateAgentRequest struct {
 	ThinkingBudget          int                  `json:"thinkingBudget"`
 	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
 
-	usernameProvided        bool
-	enabledMCPToolsProvided bool
+	usernameProvided bool
 }
 
 func (r *UpdateAgentRequest) UnmarshalJSON(data []byte) error {
@@ -127,14 +92,12 @@ func (r *UpdateAgentRequest) UnmarshalJSON(data []byte) error {
 	}
 
 	_, usernameProvided := raw["username"]
-	_, enabledMCPToolsProvided := raw["enabledMCPTools"]
 	*r = UpdateAgentRequest(decoded)
 	r.usernameProvided = usernameProvided
-	r.enabledMCPToolsProvided = enabledMCPToolsProvided
 	return nil
 }
 
-// ServiceInfo is a safe-to-expose subset of llm.ServiceConfig (no API keys or secrets).
+// ServiceInfo is a client-safe view of an AI service (no secrets).
 type ServiceInfo struct {
 	ID               string `json:"id"`
 	Name             string `json:"name"`
@@ -156,11 +119,8 @@ func (a *API) agentLicenseRequired(c *gin.Context) {
 	}
 }
 
-// canManageAgent returns true if the user may update or delete the agent.
-// Holders of PermissionManageOthersAgent may manage any agent (including others' agents
-// and migrated legacy bots with no owner).
-// Migrated legacy bots have no CreatorID; system admins (PermissionManageSystem) retain the
-// same operational access they had via System Console before self-service agents.
+// canManageAgent reports whether userID may update or delete cfg: agent admin, PermissionManageOthersAgent,
+// or (agent with empty CreatorID) PermissionManageSystem for migrated legacy bots.
 func canManageAgent(client *pluginapi.Client, cfg *llm.BotConfig, userID string) bool {
 	if cfg == nil {
 		return false
@@ -185,8 +145,7 @@ func canCreateAgent(client *pluginapi.Client, userID string) bool {
 	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
 }
 
-// canConfigureAgentServices returns true if the user may list services or fetch models
-// for agent configuration (ManageOwn or ManageOthers, same union as non-owner admin access).
+// canConfigureAgentServices reports whether userID may list services or fetch models (ManageOwnAgent, ManageOthersAgent, or ManageSystem).
 func canConfigureAgentServices(client *pluginapi.Client, userID string) bool {
 	if client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent) {
 		return true
@@ -197,8 +156,7 @@ func canConfigureAgentServices(client *pluginapi.Client, userID string) bool {
 	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
 }
 
-// loadPluginConfigForAgents loads the plugin configuration for agent create/update handlers.
-// On failure it aborts the request with the same status codes as the previous inline logic.
+// loadPluginConfigForAgents loads plugin config; on failure it aborts with 500.
 func (a *API) loadPluginConfigForAgents(c *gin.Context) (*config.Config, bool) {
 	cfg, err := a.configStore.GetConfig()
 	if err != nil {
@@ -233,9 +191,7 @@ func (a *API) validateAgentServiceID(c *gin.Context, serviceID string) (*config.
 	return cfg, true
 }
 
-// buildAgentConfigForCreate maps an explicit CreateAgentRequest into a new llm.BotConfig.
-// No hidden server-side defaults are applied: the caller (the UI) is the sole source of
-// truth for create-time defaults.
+// buildAgentConfigForCreate builds a new llm.BotConfig from req and the new bot/user IDs.
 func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string) *llm.BotConfig {
 	return &llm.BotConfig{
 		BotUserID:               botUserID,
@@ -251,6 +207,7 @@ func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string)
 		TeamIDs:                 req.TeamIDs,
 		AdminUserIDs:            req.AdminUserIDs,
 		EnabledMCPTools:         req.EnabledMCPTools,
+		AutoEnableNewMCPTools:   req.AutoEnableNewMCPTools,
 		Model:                   req.Model,
 		EnableVision:            req.EnableVision,
 		DisableTools:            req.DisableTools,
@@ -262,10 +219,7 @@ func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string)
 	}
 }
 
-// applyAgentUpdateRequest replaces mutable fields on cfg with the values from req.
-// This is an intentional full-object replacement: every mutable field on the stored
-// agent is overwritten with the request payload. Immutable fields (BotUserID,
-// CreatorID, Name, CreateAt, etc.) are preserved by not being touched here.
+// applyAgentUpdateRequest overwrites mutable fields on cfg from req; returns whether DisplayName changed.
 func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displayNameChanged bool) {
 	displayNameChanged = cfg.DisplayName != req.DisplayName
 	cfg.DisplayName = req.DisplayName
@@ -278,6 +232,7 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	cfg.TeamIDs = req.TeamIDs
 	cfg.AdminUserIDs = req.AdminUserIDs
 	cfg.EnabledMCPTools = req.EnabledMCPTools
+	cfg.AutoEnableNewMCPTools = req.AutoEnableNewMCPTools
 	cfg.Model = req.Model
 	cfg.EnableVision = req.EnableVision
 	cfg.DisableTools = req.DisableTools
@@ -289,10 +244,7 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	return displayNameChanged
 }
 
-// refreshBotsAndNotify forces the bot registry to re-read DB-backed agents,
-// re-runs EnsureBots on this node, publishes a cluster event so other
-// nodes do the same, and tells connected web clients to drop their cached bot list
-// (same idea as the core config_changed handler).
+// refreshBotsAndNotify reloads bots on this node, notifies the cluster, and broadcasts so clients refresh bot lists.
 func (a *API) refreshBotsAndNotify() {
 	if a.bots != nil {
 		a.bots.ForceRefreshOnNextEnsure()
@@ -306,13 +258,12 @@ func (a *API) refreshBotsAndNotify() {
 		}
 	}
 	if a.mmClient != nil {
-		// Non-nil broadcast required: server Publish path dereferences the pointer (nil panics).
+		// PublishWebSocketEvent requires a non-nil broadcast (server dereferences it).
 		a.mmClient.PublishWebSocketEvent(WebsocketEventBotsInvalidate, map[string]interface{}{}, &model.WebsocketBroadcast{})
 	}
 }
 
-// handleCreateAgent creates a new user agent with its backing bot account.
-// POST /agents
+// handleCreateAgent handles POST /agents: creates the bot user and persisted agent config.
 func (a *API) handleCreateAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
@@ -327,23 +278,15 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
-	if !req.enabledMCPToolsProvided {
-		c.AbortWithError(http.StatusBadRequest, errors.New("enabledMCPTools is required: send null to allow all tools, [] to allow none, or an array of {server_origin, tool_name} to allow specific tools"))
-		return
-	}
-
-	// Validate username format before hitting the server
 	if !validUsernameRe.MatchString(req.Username) {
 		c.AbortWithError(http.StatusBadRequest, errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores"))
 		return
 	}
 
-	// Validate that the referenced service exists in the config
 	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
 		return
 	}
 
-	// Create the backing Mattermost bot account.
 	mmBot := &model.Bot{
 		Username:    req.Username,
 		DisplayName: req.DisplayName,
@@ -362,7 +305,6 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	agent := buildAgentConfigForCreate(req, userID, mmBot.UserId)
 
 	if err := a.agentStore.CreateAgent(agent); err != nil {
-		// Best effort: deactivate the bot we just created since the DB insert failed
 		if _, deactivateErr := a.pluginAPI.Bot.UpdateActive(mmBot.UserId, false); deactivateErr != nil {
 			a.pluginAPI.Log.Error("Failed to deactivate bot after agent persist failure", "bot_user_id", mmBot.UserId, "error", deactivateErr.Error())
 		}
@@ -374,8 +316,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	c.JSON(http.StatusCreated, agent)
 }
 
-// handleListAgents returns all agents the requesting user has access to.
-// GET /agents
+// handleListAgents handles GET /agents: agents the caller may access.
 func (a *API) handleListAgents(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
@@ -395,8 +336,7 @@ func (a *API) handleListAgents(c *gin.Context) {
 	c.JSON(http.StatusOK, accessible)
 }
 
-// handleGetAgent returns a single agent by ID.
-// GET /agents/:agentid
+// handleGetAgent handles GET /agents/:agentid.
 func (a *API) handleGetAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	agentID := c.Param("agentid")
@@ -419,8 +359,7 @@ func (a *API) handleGetAgent(c *gin.Context) {
 	c.JSON(http.StatusOK, cfg)
 }
 
-// handleUpdateAgent updates a user agent's mutable fields.
-// PUT /agents/:agentid
+// handleUpdateAgent handles PUT /agents/:agentid (full replace).
 func (a *API) handleUpdateAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	agentID := c.Param("agentid")
@@ -446,11 +385,6 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
-	if !req.enabledMCPToolsProvided {
-		c.AbortWithError(http.StatusBadRequest, errors.New("enabledMCPTools is required: send null to allow all tools, [] to allow none, or an array of {server_origin, tool_name} to allow specific tools"))
-		return
-	}
-
 	if req.usernameProvided && req.Username != cfg.Name {
 		c.AbortWithError(http.StatusBadRequest, errors.New("username cannot be changed after the agent is created"))
 		return
@@ -467,12 +401,10 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 
 	a.refreshBotsAndNotify()
 
-	// Sync display name change to the underlying Mattermost bot account
 	if displayNameChanged {
 		if _, err := a.pluginAPI.Bot.Patch(cfg.BotUserID, &model.BotPatch{
 			DisplayName: &cfg.DisplayName,
 		}); err != nil {
-			// Non-fatal: the DB is already updated, log and continue
 			_ = c.Error(fmt.Errorf("failed to patch bot display name: %w", err))
 		}
 	}
@@ -480,8 +412,7 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	c.JSON(http.StatusOK, cfg)
 }
 
-// handleDeleteAgent soft-deletes an agent and deactivates its bot account.
-// DELETE /agents/:agentid
+// handleDeleteAgent handles DELETE /agents/:agentid (soft-delete and deactivate bot).
 func (a *API) handleDeleteAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	agentID := c.Param("agentid")
@@ -508,17 +439,14 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 
 	a.refreshBotsAndNotify()
 
-	// Deactivate the backing bot account
 	if _, err := a.pluginAPI.Bot.UpdateActive(cfg.BotUserID, false); err != nil {
-		// Non-fatal: the DB record is already soft-deleted
 		_ = c.Error(fmt.Errorf("failed to deactivate bot: %w", err))
 	}
 
 	c.Status(http.StatusOK)
 }
 
-// handleUploadAgentAvatar sets a custom profile image on the agent's bot account.
-// POST /agents/:agentid/avatar
+// handleUploadAgentAvatar handles POST /agents/:agentid/avatar.
 func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	agentID := c.Param("agentid")
@@ -565,8 +493,7 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// handleListServices returns a list of configured AI services without exposing secrets.
-// GET /services
+// handleListServices handles GET /services (non-secret fields only).
 func (a *API) handleListServices(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	if !canConfigureAgentServices(a.pluginAPI, userID) {
@@ -605,7 +532,7 @@ type FetchModelsForServiceRequest struct {
 	ServiceID string `json:"serviceID" binding:"required"`
 }
 
-// handleFetchModelsForService lists models for a configured service using stored credentials (non-admin).
+// handleFetchModelsForService handles POST /agents/models/fetch using stored service credentials.
 func (a *API) handleFetchModelsForService(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	if !canConfigureAgentServices(a.pluginAPI, userID) {
@@ -671,9 +598,7 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	c.JSON(http.StatusOK, models)
 }
 
-// canUserAccessAgent reports whether userID is allowed to see/use the given agent.
-// Creators and admins always have access; otherwise the shared
-// bots.CheckUsageRestrictionsForUserConfig rules apply.
+// canUserAccessAgent reports whether userID may view or use the agent (admin, then usage restrictions).
 func (a *API) canUserAccessAgent(cfg *llm.BotConfig, userID string) bool {
 	if cfg == nil {
 		return false

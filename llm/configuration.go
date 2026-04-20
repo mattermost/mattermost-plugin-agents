@@ -84,11 +84,15 @@ type BotConfig struct {
 	// For Anthropic: ["web_search"]
 	EnabledNativeTools []string `json:"enabledNativeTools"`
 
-	// EnabledMCPTools is the per-agent allowlist of MCP tools.
-	// When non-nil, only tools matching these (ServerOrigin, ToolName) pairs are kept.
-	// A nil value means "all MCP tools allowed" and is encoded as JSON null.
-	// An empty non-nil slice means "no MCP tools allowed" and is encoded as JSON [].
+	// EnabledMCPTools is the per-agent allowlist of MCP tools:
+	// only tools matching these (ServerOrigin, ToolName) pairs are kept.
+	// Ignored when AutoEnableNewMCPTools is true.
 	EnabledMCPTools []EnabledMCPTool `json:"enabledMCPTools"`
+
+	// AutoEnableNewMCPTools, when true, gives this agent access to every currently
+	// configured MCP tool and any MCP tool added later. EnabledMCPTools is ignored
+	// in that mode. When false, only tools listed in EnabledMCPTools are available.
+	AutoEnableNewMCPTools bool `json:"autoEnableNewMCPTools"`
 
 	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot
 	// Applicable to OpenAI (with ResponsesAPI) and Anthropic
@@ -112,8 +116,7 @@ type BotConfig struct {
 	// Only applicable to Anthropic (Claude 4.5/4.6+ models)
 	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
 
-	// Admin / lifecycle metadata. These are populated only for DB-backed user agents;
-	// they stay zero for config-defined bots so JSON omits them (omitempty).
+	// Admin / lifecycle metadata.
 	BotUserID    string   `json:"botUserID,omitempty"`
 	CreatorID    string   `json:"creatorID,omitempty"`
 	AdminUserIDs []string `json:"adminUserIDs,omitempty"`

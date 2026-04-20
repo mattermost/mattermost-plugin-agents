@@ -99,15 +99,15 @@ func doRequest(api *API, method, path string, body interface{}, userID string) *
 	return recorder
 }
 
-// createAgentBody returns a CreateAgentRequest populated via a JSON map so that
-// `enabledMCPTools` is explicitly present (required by the full-object contract).
-// Callers may override any field via `overrides`.
+// createAgentBody returns a CreateAgentRequest populated via a JSON map.
+// Callers may override any field via `overrides`. By default the agent auto-enables
+// every MCP tool, which matches the UI default for new agents.
 func createAgentBody(overrides map[string]any) map[string]any {
 	body := map[string]any{
-		"displayName":     "My Agent",
-		"username":        "my-agent",
-		"serviceID":       "svc-1",
-		"enabledMCPTools": nil,
+		"displayName":           "My Agent",
+		"username":              "my-agent",
+		"serviceID":             "svc-1",
+		"autoEnableNewMCPTools": true,
 	}
 	for k, v := range overrides {
 		body[k] = v
@@ -119,8 +119,6 @@ func createAgentBody(overrides map[string]any) map[string]any {
 // applying the caller's overrides. All fields the backend cares about are
 // included so the request satisfies the full-replacement contract.
 func updateAgentBodyFromStored(cfg *llm.BotConfig, overrides map[string]any) map[string]any {
-	// EnabledMCPTools is encoded as-is so nil surfaces as JSON null and []
-	// surfaces as an empty array, preserving tri-state semantics.
 	body := map[string]any{
 		"displayName":             cfg.DisplayName,
 		"username":                cfg.Name,
@@ -133,6 +131,7 @@ func updateAgentBodyFromStored(cfg *llm.BotConfig, overrides map[string]any) map
 		"teamIDs":                 cfg.TeamIDs,
 		"adminUserIDs":            cfg.AdminUserIDs,
 		"enabledMCPTools":         cfg.EnabledMCPTools,
+		"autoEnableNewMCPTools":   cfg.AutoEnableNewMCPTools,
 		"model":                   cfg.Model,
 		"enableVision":            cfg.EnableVision,
 		"disableTools":            cfg.DisableTools,
@@ -219,26 +218,7 @@ func TestCreateAgentPersistsExplicitRequestValues(t *testing.T) {
 	assert.Empty(t, agent.EnabledNativeTools)
 }
 
-func TestCreateAgentRejectsOmittedEnabledMCPTools(t *testing.T) {
-	e := setupAgentTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	mockLicensed(e.mockAPI)
-	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
-	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-
-	// Body omits `enabledMCPTools` entirely; the contract now rejects that.
-	body := map[string]any{
-		"displayName": "My Agent",
-		"username":    "my-agent",
-		"serviceID":   "svc-1",
-	}
-
-	recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
-	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
-}
-
-func TestCreateAgentEnabledMCPToolsNullAllowsAll(t *testing.T) {
+func TestCreateAgentAutoEnableAllMCPTools(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
 
@@ -252,39 +232,40 @@ func TestCreateAgentEnabledMCPToolsNullAllowsAll(t *testing.T) {
 	}, nil)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	body := createAgentBody(map[string]any{"enabledMCPTools": nil})
-	recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
-	require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
-
-	// Capture the body string before decoding consumes the buffer.
-	rawBody := recorder.Body.String()
-	var agent llm.BotConfig
-	require.NoError(t, json.Unmarshal([]byte(rawBody), &agent))
-	assert.Nil(t, agent.EnabledMCPTools)
-	assert.Contains(t, rawBody, `"enabledMCPTools":null`)
-}
-
-func TestCreateAgentEnabledMCPToolsEmptyAllowsNone(t *testing.T) {
-	e := setupAgentTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	mockLicensed(e.mockAPI)
-	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
-	e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
-		UserId:      "bot-user-id-created",
-		Username:    "my-agent",
-		DisplayName: "My Agent",
-		Description: "User-created AI agent",
-	}, nil)
-	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-
-	body := createAgentBody(map[string]any{"enabledMCPTools": []any{}})
+	body := createAgentBody(map[string]any{"autoEnableNewMCPTools": true})
 	recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
 	require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
 
 	var agent llm.BotConfig
 	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
-	require.NotNil(t, agent.EnabledMCPTools)
+	assert.True(t, agent.AutoEnableNewMCPTools)
+}
+
+func TestCreateAgentNoMCPToolsByDefault(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+	e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+		UserId:      "bot-user-id-created",
+		Username:    "my-agent",
+		DisplayName: "My Agent",
+		Description: "User-created AI agent",
+	}, nil)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	// autoEnableNewMCPTools=false + empty allowlist ⇒ no MCP tools for this agent.
+	body := createAgentBody(map[string]any{
+		"autoEnableNewMCPTools": false,
+		"enabledMCPTools":       []any{},
+	})
+	recorder := doRequest(e.api, http.MethodPost, "/agents", body, testUserID)
+	require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
+
+	var agent llm.BotConfig
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
+	assert.False(t, agent.AutoEnableNewMCPTools)
 	assert.Empty(t, agent.EnabledMCPTools)
 }
 
@@ -303,6 +284,7 @@ func TestCreateAgentEnabledMCPToolsAllowlist(t *testing.T) {
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	body := createAgentBody(map[string]any{
+		"autoEnableNewMCPTools": false,
 		"enabledMCPTools": []llm.EnabledMCPTool{
 			{ServerOrigin: "embedded://mattermost", ToolName: "read_post"},
 		},
@@ -313,6 +295,7 @@ func TestCreateAgentEnabledMCPToolsAllowlist(t *testing.T) {
 
 	var agent llm.BotConfig
 	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
+	assert.False(t, agent.AutoEnableNewMCPTools)
 	require.Len(t, agent.EnabledMCPTools, 1)
 	assert.Equal(t, "embedded://mattermost", agent.EnabledMCPTools[0].ServerOrigin)
 	assert.Equal(t, "read_post", agent.EnabledMCPTools[0].ToolName)
@@ -719,33 +702,42 @@ func TestUpdateAgentInvalidServiceID(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 }
 
-func TestUpdateAgentRejectsOmittedEnabledMCPTools(t *testing.T) {
+func TestUpdateAgentFlipsAutoEnableOff(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	e.agentStore.agents["agent-1"] = &llm.BotConfig{
-		ID:          "agent-1",
-		CreatorID:   testUserID,
-		BotUserID:   "bot-1",
-		DisplayName: "Agent",
-		Name:        "my-agent",
-		ServiceID:   "svc-1",
+	stored := &llm.BotConfig{
+		ID:                    "agent-1",
+		CreatorID:             testUserID,
+		BotUserID:             "bot-1",
+		DisplayName:           "Agent",
+		Name:                  "my-agent",
+		ServiceID:             "svc-1",
+		AutoEnableNewMCPTools: true,
 	}
+	e.agentStore.agents["agent-1"] = stored
 
-	// Body omits enabledMCPTools entirely: the new contract rejects that.
-	body := map[string]any{
-		"displayName": "Agent",
-		"serviceID":   "svc-1",
-	}
+	body := updateAgentBodyFromStored(stored, map[string]any{
+		"autoEnableNewMCPTools": false,
+		"enabledMCPTools": []llm.EnabledMCPTool{
+			{ServerOrigin: "embedded://mattermost", ToolName: "read_post"},
+		},
+	})
 
 	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
-	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	updated := e.agentStore.agents["agent-1"]
+	require.NotNil(t, updated)
+	assert.False(t, updated.AutoEnableNewMCPTools)
+	require.Len(t, updated.EnabledMCPTools, 1)
+	assert.Equal(t, "read_post", updated.EnabledMCPTools[0].ToolName)
 }
 
-func TestUpdateAgentEnabledMCPToolsNullAllowsAll(t *testing.T) {
+func TestUpdateAgentEmptyAllowlistAllowsNone(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
 
@@ -765,47 +757,18 @@ func TestUpdateAgentEnabledMCPToolsNullAllowsAll(t *testing.T) {
 	}
 	e.agentStore.agents["agent-1"] = stored
 
-	body := updateAgentBodyFromStored(stored, map[string]any{"enabledMCPTools": nil})
+	body := updateAgentBodyFromStored(stored, map[string]any{
+		"autoEnableNewMCPTools": false,
+		"enabledMCPTools":       []llm.EnabledMCPTool{},
+	})
 
 	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 
 	updated := e.agentStore.agents["agent-1"]
 	require.NotNil(t, updated)
-	assert.Nil(t, updated.EnabledMCPTools)
-	assert.Contains(t, recorder.Body.String(), `"enabledMCPTools":null`)
-}
-
-func TestUpdateAgentEnabledMCPToolsEmptyAllowsNone(t *testing.T) {
-	e := setupAgentTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	mockLicensed(e.mockAPI)
-	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-
-	stored := &llm.BotConfig{
-		ID:          "agent-1",
-		CreatorID:   testUserID,
-		BotUserID:   "bot-1",
-		DisplayName: "Agent",
-		Name:        "my-agent",
-		ServiceID:   "svc-1",
-		EnabledMCPTools: []llm.EnabledMCPTool{
-			{ServerOrigin: "embedded://mattermost", ToolName: "read_post"},
-		},
-	}
-	e.agentStore.agents["agent-1"] = stored
-
-	body := updateAgentBodyFromStored(stored, map[string]any{"enabledMCPTools": []llm.EnabledMCPTool{}})
-
-	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
-	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
-
-	updated := e.agentStore.agents["agent-1"]
-	require.NotNil(t, updated)
-	require.NotNil(t, updated.EnabledMCPTools)
+	assert.False(t, updated.AutoEnableNewMCPTools)
 	assert.Empty(t, updated.EnabledMCPTools)
-	assert.Contains(t, recorder.Body.String(), `"enabledMCPTools":[]`)
 }
 
 func TestUpdateAgentFullReplacementOverwritesMutableFields(t *testing.T) {
@@ -845,7 +808,8 @@ func TestUpdateAgentFullReplacementOverwritesMutableFields(t *testing.T) {
 		"userIDs":                 []string{},
 		"teamIDs":                 []string{},
 		"adminUserIDs":            []string{},
-		"enabledMCPTools":         nil,
+		"enabledMCPTools":         []llm.EnabledMCPTool{},
+		"autoEnableNewMCPTools":   false,
 		"model":                   "",
 		"enableVision":            false,
 		"disableTools":            false,

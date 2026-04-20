@@ -26,8 +26,9 @@ type UserMCPServerInfo = {
 }
 
 type Props = {
-    enabledTools: EnabledTool[] | null;
-    onChange: (tools: EnabledTool[]) => void;
+    enabledTools: EnabledTool[];
+    autoEnableNewMCPTools: boolean;
+    onChange: (updates: {enabledTools?: EnabledTool[]; autoEnableNewMCPTools?: boolean}) => void;
 }
 
 function serverToolsPanelId(serverOrigin: string): string {
@@ -35,7 +36,7 @@ function serverToolsPanelId(serverOrigin: string): string {
 }
 
 const McpsTab = (props: Props) => {
-    const {enabledTools, onChange} = props;
+    const {enabledTools, autoEnableNewMCPTools, onChange} = props;
     const intl = useIntl();
     const [servers, setServers] = useState<UserMCPServerInfo[]>([]);
     const [loading, setLoading] = useState(true);
@@ -59,39 +60,27 @@ const McpsTab = (props: Props) => {
         load();
     }, [intl]);
 
-    const allEnabledTools = useMemo(() => {
-        return servers.flatMap((server) => server.tools.filter((tool) => tool.enabled).map((tool) => ({
-            server_origin: server.serverOrigin,
-            tool_name: tool.name,
-        })));
-    }, [servers]);
-
-    const materializeEnabledTools = useCallback(() => {
-        return enabledTools ?? allEnabledTools;
-    }, [allEnabledTools, enabledTools]);
-
     const isToolEnabled = useCallback((serverOrigin: string, toolName: string) => {
-        if (enabledTools === null) {
+        if (autoEnableNewMCPTools) {
             return true;
         }
         return enabledTools.some(
             (t) => t.server_origin === serverOrigin && t.tool_name === toolName,
         );
-    }, [enabledTools]);
+    }, [autoEnableNewMCPTools, enabledTools]);
 
     const toggleTool = useCallback((serverOrigin: string, toolName: string) => {
-        const currentTools = materializeEnabledTools();
-        const exists = currentTools.some(
+        const exists = enabledTools.some(
             (t) => t.server_origin === serverOrigin && t.tool_name === toolName,
         );
         if (exists) {
-            onChange(currentTools.filter(
+            onChange({enabledTools: enabledTools.filter(
                 (t) => !(t.server_origin === serverOrigin && t.tool_name === toolName),
-            ));
+            )});
         } else {
-            onChange([...currentTools, {server_origin: serverOrigin, tool_name: toolName}]);
+            onChange({enabledTools: [...enabledTools, {server_origin: serverOrigin, tool_name: toolName}]});
         }
-    }, [materializeEnabledTools, onChange]);
+    }, [enabledTools, onChange]);
 
     const toggleServer = useCallback((serverOrigin: string) => {
         setExpandedServers((prev) => {
@@ -106,27 +95,28 @@ const McpsTab = (props: Props) => {
     }, []);
 
     const toggleAllServerTools = useCallback((server: UserMCPServerInfo) => {
-        const currentTools = materializeEnabledTools();
         const serverTools = server.tools.filter((t) => t.enabled);
-        const allEnabled = serverTools.every((t) => isToolEnabled(server.serverOrigin, t.name));
+        const allEnabled = serverTools.every((t) =>
+            enabledTools.some(
+                (e) => e.server_origin === server.serverOrigin && e.tool_name === t.name,
+            ),
+        );
 
         if (allEnabled) {
-            // Remove all tools for this server
-            onChange(currentTools.filter((t) => t.server_origin !== server.serverOrigin));
+            onChange({enabledTools: enabledTools.filter((t) => t.server_origin !== server.serverOrigin)});
         } else {
-            // Add all enabled tools for this server
-            const existing = currentTools.filter((t) => t.server_origin !== server.serverOrigin);
+            const existing = enabledTools.filter((t) => t.server_origin !== server.serverOrigin);
             const newTools = serverTools.map((t) => ({
                 server_origin: server.serverOrigin,
                 tool_name: t.name,
             }));
-            onChange([...existing, ...newTools]);
+            onChange({enabledTools: [...existing, ...newTools]});
         }
-    }, [isToolEnabled, materializeEnabledTools, onChange]);
+    }, [enabledTools, onChange]);
 
     // Detect orphaned tools (enabled but no longer available)
     const orphanedTools = useMemo(() => {
-        if (enabledTools === null || servers.length === 0) {
+        if (autoEnableNewMCPTools || servers.length === 0) {
             return [];
         }
         return enabledTools.filter((et) =>
@@ -135,21 +125,21 @@ const McpsTab = (props: Props) => {
                 s.tools.some((t) => t.name === et.tool_name),
             ),
         );
-    }, [enabledTools, servers]);
+    }, [autoEnableNewMCPTools, enabledTools, servers]);
 
     // Auto-remove orphaned tools from enabledTools so they're cleaned on save
     useEffect(() => {
-        if (enabledTools !== null && orphanedTools.length > 0 && servers.length > 0) {
+        if (!autoEnableNewMCPTools && orphanedTools.length > 0 && servers.length > 0) {
             const cleaned = enabledTools.filter((et) =>
                 servers.some((s) =>
                     s.serverOrigin === et.server_origin &&
                     s.tools.some((t) => t.name === et.tool_name),
                 ),
             );
-            onChange(cleaned);
+            onChange({enabledTools: cleaned});
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [enabledTools, servers]);
+    }, [autoEnableNewMCPTools, enabledTools, servers]);
 
     // Filter servers/tools by search
     const filteredServers = servers.filter((server) => {
@@ -183,12 +173,36 @@ const McpsTab = (props: Props) => {
 
     return (
         <Container>
+            <AutoEnableRow>
+                <AutoEnableCheckbox
+                    type='checkbox'
+                    id='mcp-auto-enable'
+                    checked={autoEnableNewMCPTools}
+                    onChange={(e) => onChange({autoEnableNewMCPTools: e.target.checked})}
+                />
+                <AutoEnableLabel htmlFor='mcp-auto-enable'>
+                    <AutoEnableTitle>
+                        <FormattedMessage defaultMessage='Automatically enable all MCP tools'/>
+                    </AutoEnableTitle>
+                    <AutoEnableHint>
+                        <FormattedMessage defaultMessage='Give this agent access to every currently available MCP tool and any added in the future.'/>
+                    </AutoEnableHint>
+                </AutoEnableLabel>
+            </AutoEnableRow>
+
             <SearchInput
                 type='text'
                 placeholder={intl.formatMessage({defaultMessage: 'Search servers and tools...'})}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                disabled={autoEnableNewMCPTools}
             />
+
+            {autoEnableNewMCPTools && (
+                <AutoEnableBanner>
+                    <FormattedMessage defaultMessage='Every MCP tool is enabled for this agent. Disable "Automatically enable all MCP tools" above to pick specific tools.'/>
+                </AutoEnableBanner>
+            )}
 
             {orphanedTools.length > 0 && (
                 <OrphanedToolsWarning>
@@ -275,7 +289,8 @@ const McpsTab = (props: Props) => {
                                 <ServerToggle
                                     type='button'
                                     aria-label={serverToggleLabel}
-                                    onClick={() => toggleAllServerTools(server)}
+                                    onClick={() => !autoEnableNewMCPTools && toggleAllServerTools(server)}
+                                    disabled={autoEnableNewMCPTools}
                                     $enabled={allOn}
                                 >
                                     <ToggleKnob $enabled={allOn}/>
@@ -309,7 +324,8 @@ const McpsTab = (props: Props) => {
                                                             {defaultMessage: 'Enable tool {toolName} on {serverName}'},
                                                             {toolName: tool.name, serverName: server.name},
                                                         )}
-                                                    onClick={() => toggleTool(server.serverOrigin, tool.name)}
+                                                    onClick={() => !autoEnableNewMCPTools && toggleTool(server.serverOrigin, tool.name)}
+                                                    disabled={autoEnableNewMCPTools}
                                                     $enabled={toolOn}
                                                 >
                                                     <ToggleKnob $enabled={toolOn}/>
@@ -333,6 +349,45 @@ const Container = styled.div`
     display: flex;
     flex-direction: column;
     gap: 16px;
+`;
+
+const AutoEnableRow = styled.div`
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+`;
+
+const AutoEnableCheckbox = styled.input`
+    margin-top: 2px;
+    cursor: pointer;
+`;
+
+const AutoEnableLabel = styled.label`
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    cursor: pointer;
+    user-select: none;
+`;
+
+const AutoEnableTitle = styled.span`
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--center-channel-color);
+`;
+
+const AutoEnableHint = styled.span`
+    font-size: 12px;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+`;
+
+const AutoEnableBanner = styled.div`
+    padding: 8px 12px;
+    background: rgba(var(--button-bg-rgb), 0.08);
+    border-radius: 4px;
+    border: 1px solid rgba(var(--button-bg-rgb), 0.24);
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+    font-size: 13px;
 `;
 
 const SearchInput = styled.input`
@@ -460,6 +515,11 @@ const ServerToggle = styled.button<{$enabled: boolean}>`
     flex-shrink: 0;
     transition: background 0.2s ease;
     background: ${(p) => (p.$enabled ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.24)')};
+
+    &:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+    }
 `;
 
 const ToggleKnob = styled.div<{$enabled: boolean}>`

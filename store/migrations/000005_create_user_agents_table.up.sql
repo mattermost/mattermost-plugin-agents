@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS Agents_UserAgents (
     TeamIDs TEXT NOT NULL DEFAULT '[]',
     AdminUserIDs TEXT NOT NULL DEFAULT '[]',
     EnabledTools TEXT NOT NULL DEFAULT '[]',
+    AutoEnableNewMCPTools BOOLEAN NOT NULL DEFAULT false,
     CreateAt BIGINT NOT NULL,
     UpdateAt BIGINT NOT NULL,
     DeleteAt BIGINT NOT NULL DEFAULT 0

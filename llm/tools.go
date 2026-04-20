@@ -485,10 +485,11 @@ func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
 // (ServerOrigin, Name) pair appears in the allowlist. Built-in tools (those
 // with empty ServerOrigin) are never removed by this method.
 //
-// If allowlist is nil, no filtering is applied (all tools retained).
-// If allowlist is empty (non-nil), all MCP tools are removed.
+// An empty or nil allowlist removes all MCP tools. Callers that want to keep
+// every MCP tool (e.g. agents with AutoEnableNewMCPTools=true) should skip
+// calling this method entirely.
 func (s *ToolStore) RetainOnlyMCPTools(allowlist []EnabledMCPTool) {
-	if s == nil || allowlist == nil {
+	if s == nil {
 		return
 	}
 

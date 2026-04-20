@@ -29,9 +29,28 @@ const AgentRow = (props: Props) => {
     const intl = useIntl();
 
     const avatarUrl = getProfilePictureUrl(agent.botUserID ?? '', 0);
-    const toolCount = agent.enabledMCPTools?.length ?? 0;
+    const autoEnableNewMCPTools = agent.autoEnableNewMCPTools ?? false;
+    const toolCount = autoEnableNewMCPTools ? 0 : (agent.enabledMCPTools?.length ?? 0);
     const service = services.find((s) => s.id === agent.serviceID);
     const serviceUnavailable = agent.serviceID && !service;
+
+    let mcpBadge: React.ReactNode = null;
+    if (autoEnableNewMCPTools) {
+        mcpBadge = (
+            <Badge>
+                <FormattedMessage defaultMessage='All MCP tools'/>
+            </Badge>
+        );
+    } else if (toolCount > 0) {
+        mcpBadge = (
+            <Badge>
+                {intl.formatMessage(
+                    {defaultMessage: '{count, plural, one {# tool} other {# tools}}'},
+                    {count: toolCount},
+                )}
+            </Badge>
+        );
+    }
 
     // Close menu on outside click
     useEffect(() => {
@@ -75,14 +94,7 @@ const AgentRow = (props: Props) => {
                         <FormattedMessage defaultMessage='Service unavailable'/>
                     </ServiceWarningBadge>
                 )}
-                {toolCount > 0 && (
-                    <Badge>
-                        {intl.formatMessage(
-                            {defaultMessage: '{count, plural, one {# tool} other {# tools}}'},
-                            {count: toolCount},
-                        )}
-                    </Badge>
-                )}
+                {mcpBadge}
             </BadgesColumn>
             {canManage && (
                 <ActionsColumn ref={menuRef}>

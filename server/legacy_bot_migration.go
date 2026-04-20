@@ -102,6 +102,11 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 		ua.UpdateAt = 0
 		ua.DeleteAt = 0
 
+		// Config bots predate per-agent MCP tool gating — they had access to every
+		// MCP tool. Preserve that by auto-enabling new MCP tools for migrated agents.
+		ua.AutoEnableNewMCPTools = true
+		ua.EnabledMCPTools = nil
+
 		if createErr := st.CreateAgent(&ua); createErr != nil {
 			return false, fmt.Errorf("failed to create user agent for legacy bot %q: %w", bc.Name, createErr)
 		}

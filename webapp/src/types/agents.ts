@@ -26,10 +26,9 @@ export type EnabledTool = {
 // bots (returned via /agents only if/when surfaced, and for migrated legacy
 // bots with CreatorID == "") they may be absent from the response.
 //
-// `enabledMCPTools` uses a tri-state contract:
-// - null: all MCP tools currently/future available are allowed
-// - []: no MCP tools are allowed
-// - [..]: only the listed tools are allowed
+// MCP tool access is controlled by two independent fields:
+// - autoEnableNewMCPTools=true: agent gets every MCP tool, including ones added later.
+// - autoEnableNewMCPTools=false: agent gets only the tools listed in enabledMCPTools.
 export type UserAgent = {
     id: string;
     name: string;
@@ -45,7 +44,8 @@ export type UserAgent = {
     userIDs: string[];
     teamIDs: string[];
     enabledNativeTools: string[];
-    enabledMCPTools: EnabledTool[] | null;
+    enabledMCPTools: EnabledTool[];
+    autoEnableNewMCPTools: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
@@ -66,12 +66,9 @@ export type UserAgent = {
 // create-time defaults, so clients send every field they want persisted. There are no
 // hidden server-side defaults layered on top.
 //
-// `enabledMCPTools` is a required tri-state field with the same semantics as `UserAgent`:
-//   - `null` = all MCP tools allowed
-//   - `[]`   = no MCP tools allowed
-//   - `[..]` = only the listed tools are allowed
-//
-// Omitting `enabledMCPTools` from the payload is rejected by the backend.
+// MCP tool access is controlled by two independent fields:
+//   - `autoEnableNewMCPTools: true`  = agent gets every MCP tool, including ones added later.
+//   - `autoEnableNewMCPTools: false` = agent gets only the tools listed in `enabledMCPTools`.
 //
 // NOTE: this DTO still uses the JSON key "username" (json:"username" in
 // api/api_agents.go) even though the response emits the same value as "name".
@@ -86,7 +83,8 @@ export type CreateAgentRequest = {
     userIDs?: string[];
     teamIDs?: string[];
     adminUserIDs?: string[];
-    enabledMCPTools: EnabledTool[] | null;
+    enabledMCPTools?: EnabledTool[];
+    autoEnableNewMCPTools: boolean;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;
@@ -101,8 +99,7 @@ export type CreateAgentRequest = {
 //
 // Update is a full-object replacement, not a patch: every mutable field the caller wants
 // to keep must be sent on every save. Fields omitted here are overwritten with their
-// JSON zero values. `enabledMCPTools` follows the same required tri-state contract as
-// CreateAgentRequest; omitting it is rejected by the backend.
+// JSON zero values.
 export type UpdateAgentRequest = {
     displayName: string;
     username?: string;
@@ -114,7 +111,8 @@ export type UpdateAgentRequest = {
     userIDs?: string[];
     teamIDs?: string[];
     adminUserIDs?: string[];
-    enabledMCPTools: EnabledTool[] | null;
+    enabledMCPTools?: EnabledTool[];
+    autoEnableNewMCPTools: boolean;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;

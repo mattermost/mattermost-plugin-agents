@@ -193,8 +193,7 @@ export class BotConfigHelper {
         }
 
         // Legacy config bots were migrated to Agents_UserAgents; update via user-agent API.
-        // PUT /agents/:id requires a full replacement body (displayName, serviceID,
-        // enabledMCPTools tri-state, etc.); partial JSON is rejected with 400.
+        // PUT /agents/:id requires a full replacement body; partial JSON is rejected with 400.
         const overrides = botConfigPartialToUpdateOverrides(updates);
         if (Object.keys(overrides).length === 0) {
             throw new Error(`Bot with ID ${botId} not found and no migratable fields to update`);

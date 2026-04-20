@@ -17,7 +17,7 @@ import (
 const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
 	CustomInstructions, ChannelAccessLevel, ChannelIDs,
 	UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
-	EnabledTools,
+	EnabledTools, AutoEnableNewMCPTools,
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
 	CreateAt, UpdateAt, DeleteAt`
@@ -46,12 +46,9 @@ func unmarshalStringSlice(raw string, target *[]string) error {
 	return nil
 }
 
-// marshalEnabledMCPTools serializes EnabledMCPTools preserving nil vs empty semantics:
-// nil → "null" (all tools allowed), empty non-nil slice → "[]" (no tools allowed).
+// marshalEnabledMCPTools serializes EnabledMCPTools as a JSON array.
+// nil and [] both encode as "[]".
 func marshalEnabledMCPTools(tools []llm.EnabledMCPTool) string {
-	if tools == nil {
-		return "null"
-	}
 	if len(tools) == 0 {
 		return "[]"
 	}
@@ -62,10 +59,9 @@ func marshalEnabledMCPTools(tools []llm.EnabledMCPTool) string {
 	return string(b)
 }
 
-// unmarshalEnabledMCPTools preserves nil vs empty semantics:
-// "" or "null" → nil (all tools), "[]" → empty slice (no tools), populated → slice.
+// unmarshalEnabledMCPTools parses the EnabledTools TEXT column. "" or "[]" → nil.
 func unmarshalEnabledMCPTools(raw string, target *[]llm.EnabledMCPTool) error {
-	if raw == "" || raw == "null" {
+	if raw == "" || raw == "[]" {
 		*target = nil
 		return nil
 	}
@@ -112,6 +108,7 @@ type agentRow struct {
 	TeamIDs                 string `db:"teamids"`
 	AdminUserIDs            string `db:"adminuserids"`
 	EnabledTools            string `db:"enabledtools"`
+	AutoEnableNewMCPTools   bool   `db:"autoenablenewmcptools"`
 	Model                   string `db:"model"`
 	EnableVision            bool   `db:"enablevision"`
 	DisableTools            bool   `db:"disabletools"`
@@ -137,6 +134,7 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 		CustomInstructions:      r.CustomInstructions,
 		ChannelAccessLevel:      llm.ChannelAccessLevel(r.ChannelAccessLevel),
 		UserAccessLevel:         llm.UserAccessLevel(r.UserAccessLevel),
+		AutoEnableNewMCPTools:   r.AutoEnableNewMCPTools,
 		Model:                   r.Model,
 		EnableVision:            r.EnableVision,
 		DisableTools:            r.DisableTools,
@@ -185,11 +183,11 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 			ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
 			CustomInstructions, ChannelAccessLevel, ChannelIDs,
 			UserAccessLevel, UserIDs, TeamIDs, AdminUserIDs,
-			EnabledTools,
+			EnabledTools, AutoEnableNewMCPTools,
 			Model, EnableVision, DisableTools, EnabledNativeTools,
 			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
 			CreateAt, UpdateAt, DeleteAt
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
 		cfg.ID,
 		cfg.BotUserID,
 		cfg.CreatorID,
@@ -204,6 +202,7 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 		mustMarshalSlice(cfg.TeamIDs),
 		mustMarshalSlice(cfg.AdminUserIDs),
 		marshalEnabledMCPTools(cfg.EnabledMCPTools),
+		cfg.AutoEnableNewMCPTools,
 		cfg.Model,
 		cfg.EnableVision,
 		cfg.DisableTools,
@@ -313,16 +312,17 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 			TeamIDs = $9,
 			AdminUserIDs = $10,
 			EnabledTools = $11,
-			Model = $12,
-			EnableVision = $13,
-			DisableTools = $14,
-			EnabledNativeTools = $15,
-			ReasoningEnabled = $16,
-			ReasoningEffort = $17,
-			ThinkingBudget = $18,
-			StructuredOutputEnabled = $19,
-			UpdateAt = $20
-		WHERE ID = $21 AND DeleteAt = 0`,
+			AutoEnableNewMCPTools = $12,
+			Model = $13,
+			EnableVision = $14,
+			DisableTools = $15,
+			EnabledNativeTools = $16,
+			ReasoningEnabled = $17,
+			ReasoningEffort = $18,
+			ThinkingBudget = $19,
+			StructuredOutputEnabled = $20,
+			UpdateAt = $21
+		WHERE ID = $22 AND DeleteAt = 0`,
 		cfg.DisplayName,
 		cfg.Name,
 		cfg.ServiceID,
@@ -334,6 +334,7 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 		mustMarshalSlice(cfg.TeamIDs),
 		mustMarshalSlice(cfg.AdminUserIDs),
 		marshalEnabledMCPTools(cfg.EnabledMCPTools),
+		cfg.AutoEnableNewMCPTools,
 		cfg.Model,
 		cfg.EnableVision,
 		cfg.DisableTools,
