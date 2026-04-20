@@ -284,7 +284,11 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return fmt.Errorf("unable to get user: %w", err)
 	}
 
-	return c.streamToolFollowUp(bot, user, channel, post, conv, false, true)
+	// Pass the full tool output to the LLM even if only some results were
+	// shared. The channel-visible follow-up is still the user's paraphrase
+	// via the share toggle — the LLM just needs the complete context to
+	// produce a coherent answer.
+	return c.streamToolFollowUp(bot, user, channel, post, conv, false, false)
 }
 
 // followUpAlreadyStreamed reports whether the LLM follow-up for the most recent
@@ -372,7 +376,7 @@ func (c *Conversations) streamToolFollowUp(
 	}
 
 	runner := toolrunner.New(bot.LLM())
-	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext), func(turns []toolrunner.ToolTurn) {
+	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
 		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
 		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns on follow-up", "error", writeErr)

@@ -280,7 +280,7 @@ func (c *Conversations) regenerateViaConversation(
 	}
 
 	runner := toolrunner.New(bot.LLM())
-	runResult, runErr := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext), func(turns []toolrunner.ToolTurn) {
+	runResult, runErr := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
 		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
 		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns on regen", "error", writeErr)

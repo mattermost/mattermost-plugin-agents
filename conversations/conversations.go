@@ -199,7 +199,7 @@ func (c *Conversations) ProcessDMRequest(
 	}
 
 	runner := toolrunner.New(lm)
-	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmCtx), func(turns []toolrunner.ToolTurn) {
+	runResult, err := runner.Run(*completionReq, c.shouldAutoExecuteTool(llmCtx, true), func(turns []toolrunner.ToolTurn) {
 		if writeErr := c.convService.WriteToolTurns(convID, turns, true); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", convID)
 		}
@@ -217,8 +217,12 @@ func (c *Conversations) ProcessDMRequest(
 }
 
 // shouldAutoExecuteTool returns a callback that decides whether a tool call
-// should be auto-executed based on the tool policy.
-func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context) func(llm.ToolCall) bool {
+// should be auto-executed based on the tool policy and the conversation
+// context. In DMs, both auto_run and auto_run_everywhere bypass approval.
+// In channels, only auto_run_everywhere bypasses approval — the legacy
+// auto_run policy is DM-only so the channel-visible follow-up cannot
+// reveal unshared tool output without an explicit Share from the requester.
+func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) func(llm.ToolCall) bool {
 	return func(tc llm.ToolCall) bool {
 		if c.toolPolicyChecker == nil {
 			return false
@@ -228,7 +232,13 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context) func(llm.Tool
 			origin = llmCtx.Tools.GetServerOrigin(tc.Name)
 		}
 		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
-		return mcp.IsToolPolicyAutoRun(policy) && enabled
+		if !enabled {
+			return false
+		}
+		if isDM {
+			return mcp.IsToolPolicyAutoRun(policy)
+		}
+		return mcp.IsToolPolicyAutoRunEverywhere(policy)
 	}
 }
 

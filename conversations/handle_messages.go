@@ -244,7 +244,8 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 
 	runner := toolrunner.New(bot.LLM())
-	autoExec := c.shouldAutoExecuteTool(llmContext)
+	// Channel mention: isDM=false gates auto-exec to auto_run_everywhere only.
+	autoExec := c.shouldAutoExecuteTool(llmContext, false)
 	result, runErr := runner.Run(*completionRequest, func(tc llm.ToolCall) bool {
 		if !allowToolsInChannel {
 			return false
