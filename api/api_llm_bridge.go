@@ -15,6 +15,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -253,10 +254,15 @@ func validateCompletionRequestIDs(req bridgeclient.CompletionRequest) (int, erro
 func (a *API) prepareAgentBridgeCompletion(
 	agent string,
 	req bridgeclient.CompletionRequest,
+	pluginID string,
 	operation, operationSubType string,
 ) (*bots.Bot, llm.CompletionRequest, []llm.LanguageModelOption, int, error) {
 	if statusCode, err := validateCompletionRequestIDs(req); err != nil {
 		return nil, llm.CompletionRequest{}, nil, statusCode, err
+	}
+
+	if len(req.ToolHooks) > 0 && strings.TrimSpace(pluginID) == "" {
+		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, errors.New("tool_hooks requires Mattermost-Plugin-ID header")
 	}
 
 	allowedToolNames, err := normalizeAllowedToolNames(req.AllowedTools)
@@ -278,6 +284,20 @@ func (a *API) prepareAgentBridgeCompletion(
 	llmRequest, err := a.convertAgentBridgeRequestToInternal(bot, req, toolsRequested, operation, operationSubType)
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid request: %v", err)
+	}
+
+	if len(req.ToolHooks) > 0 {
+		hooksPayload := make(map[string]any, len(req.ToolHooks))
+		for name, cfg := range req.ToolHooks {
+			hooksPayload[name] = map[string]any{
+				"before_callback": cfg.BeforeCallback,
+				"after_callback":  cfg.AfterCallback,
+			}
+		}
+		llmRequest.Context.SetMCPServerMetadata(mcp.EmbeddedClientKey, map[string]any{
+			"tool_hooks":     hooksPayload,
+			"hook_plugin_id": pluginID,
+		})
 	}
 
 	var autoRunKeys []string
@@ -631,7 +651,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, llm.OperationBridgeAgent, llm.SubTypeStreaming)
+	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, c.GetHeader("Mattermost-Plugin-ID"), llm.OperationBridgeAgent, llm.SubTypeStreaming)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),
@@ -662,7 +682,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, llm.OperationBridgeAgent, llm.SubTypeNoStream)
+	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, c.GetHeader("Mattermost-Plugin-ID"), llm.OperationBridgeAgent, llm.SubTypeNoStream)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),

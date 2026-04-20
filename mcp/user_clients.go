@@ -205,11 +205,16 @@ func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Co
 		return nil
 	}
 
-	var metadata map[string]any
+	// Only inject metadata for the embedded server
+	if client.config.Name != EmbeddedClientKey {
+		return nil
+	}
 
-	// For embedded server, inject Bot UserID for AI-generated content tracking
-	if client.config.Name == EmbeddedClientKey && llmContext.BotUserID != "" {
-		metadata = make(map[string]any)
+	metadata := llmContext.GetMCPServerMetadata(EmbeddedClientKey)
+	if llmContext.BotUserID != "" {
+		if metadata == nil {
+			metadata = make(map[string]any)
+		}
 		metadata["bot_user_id"] = llmContext.BotUserID
 	}
 

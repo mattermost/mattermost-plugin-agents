@@ -13,8 +13,10 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/format"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/public/mcptool"
 	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // CombinedSearchArgs represents arguments for search_posts when both semantic and keyword search are available.
@@ -43,8 +45,8 @@ type SearchUsersArgs struct {
 	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of results to return (default: 20, max: 100),minimum=1,maximum=100"`
 }
 
-// getSearchTools returns all search-related tools.
-func (p *MattermostToolProvider) getSearchTools() []MCPTool {
+// searchPostsRegistration returns schema and description for search_posts (shared with tests).
+func (p *MattermostToolProvider) searchPostsRegistration() (*jsonschema.Schema, string) {
 	semanticEnabled := p.searchService != nil && p.searchService.Enabled()
 
 	var schema *jsonschema.Schema
@@ -72,21 +74,19 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 			"Returns matching posts with content, author, and channel. " +
 			contextHint
 	}
+	return schema, description
+}
 
-	return []MCPTool{
-		{
-			Name:        "search_posts",
-			Description: description,
-			Schema:      schema,
-			Resolver:    p.toolCombinedSearch,
-		},
-		{
-			Name:        "search_users",
-			Description: "Search for existing users by username, email, or name. Parameters: term (required search text), limit (1-100, default 20). Returns user details including username, email, display name, and position for matching users. Example: {\"term\": \"john\", \"limit\": 5}",
-			Schema:      llm.NewJSONSchemaFromStruct[SearchUsersArgs](),
-			Resolver:    p.toolSearchUsers,
-		},
-	}
+// provideSearchTools registers all search-related MCP tools.
+func (p *MattermostToolProvider) provideSearchTools(s *mcp.Server) {
+	schema, description := p.searchPostsRegistration()
+	registerTool(s, p, "search_posts", description, schema, p.toolCombinedSearch, format.SearchPostsOutput)
+	registerTool(s, p, "search_users",
+		"Search for existing users by username, email, or name. Parameters: term (required search text), limit (1-100, default 20). Returns user details including username, email, display name, and position for matching users. Example: {\"term\": \"john\", \"limit\": 5}",
+		llm.NewJSONSchemaFromStruct[SearchUsersArgs](),
+		p.toolSearchUsers,
+		format.SearchUsersOutput,
+	)
 }
 
 // buildSearchTermWithChannel prepends an in:channelname modifier to the search query.
@@ -94,32 +94,43 @@ func buildSearchTermWithChannel(query, channelName string) string {
 	return "in:" + channelName + " " + query
 }
 
-// searchPostResult holds a post result with metadata for deduplication and formatting.
-type searchPostResult struct {
-	Post        *model.Post
-	ChannelName string
-	TeamName    string
-	Username    string
-	Score       float32 // Only set for semantic results.
-	Source      string  // "semantic" or "keyword".
+func buildSearchPostsOutput(query string, semanticResults, keywordResults []mcptool.SearchPostResult, semanticEnabled bool, channelIDFilter string) mcptool.SearchPostsOutput {
+	seenPostIDs := make(map[string]bool)
+	for _, r := range semanticResults {
+		seenPostIDs[r.Post.Id] = true
+	}
+	dedupedKeyword := make([]mcptool.SearchPostResult, 0, len(keywordResults))
+	for _, r := range keywordResults {
+		if !seenPostIDs[r.Post.Id] {
+			dedupedKeyword = append(dedupedKeyword, r)
+		}
+	}
+	return mcptool.SearchPostsOutput{
+		Query:           query,
+		ChannelIDFilter: channelIDFilter,
+		SemanticEnabled: semanticEnabled,
+		SemanticResults: semanticResults,
+		KeywordResults:  dedupedKeyword,
+		Terms:           strings.Fields(query),
+	}
 }
 
 // toolCombinedSearch implements the search_posts tool.
-func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.SearchPostsOutput, error) {
 	var args CombinedSearchArgs
 	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool search_posts: %w", err)
+		return mcptool.SearchPostsOutput{}, fmt.Errorf("failed to get arguments for tool search_posts: %w", err)
 	}
 
 	if args.Query == "" {
-		return "query is required", fmt.Errorf("query cannot be empty")
+		return mcptool.SearchPostsOutput{}, fmt.Errorf("query cannot be empty")
 	}
 
 	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
-		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+		return mcptool.SearchPostsOutput{}, fmt.Errorf("team_id must be a valid ID")
 	}
 	if args.ChannelID != "" && !model.IsValidId(args.ChannelID) {
-		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
+		return mcptool.SearchPostsOutput{}, fmt.Errorf("channel_id must be a valid ID")
 	}
 
 	if args.SemanticLimit <= 0 {
@@ -142,7 +153,7 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 	}
 
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return mcptool.SearchPostsOutput{}, fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -152,13 +163,13 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 	if semanticEnabled {
 		user, _, err := client.GetMe(ctx, "")
 		if err != nil {
-			return "failed to get user", fmt.Errorf("failed to get current user: %w", err)
+			return mcptool.SearchPostsOutput{}, fmt.Errorf("failed to get current user: %w", err)
 		}
 		userID = user.Id
 	}
 
-	var semanticResults []searchPostResult
-	var keywordResults []searchPostResult
+	var semanticResults []mcptool.SearchPostResult
+	var keywordResults []mcptool.SearchPostResult
 	var semanticErr, keywordErr error
 	var wg sync.WaitGroup
 
@@ -187,16 +198,17 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 
 	if keywordErr != nil && (!semanticEnabled || semanticErr != nil) {
 		if semanticEnabled {
-			return "search failed", fmt.Errorf("both search methods failed: semantic: %v, keyword: %v", semanticErr, keywordErr)
+			return mcptool.SearchPostsOutput{}, fmt.Errorf("both search methods failed: semantic: %v, keyword: %v", semanticErr, keywordErr)
 		}
-		return "search failed", fmt.Errorf("keyword search failed: %v", keywordErr)
+		return mcptool.SearchPostsOutput{}, fmt.Errorf("keyword search failed: %v", keywordErr)
 	}
 
-	return p.formatCombinedResults(args.Query, semanticResults, keywordResults, semanticEnabled, args.ChannelID)
+	output := buildSearchPostsOutput(args.Query, semanticResults, keywordResults, semanticEnabled, args.ChannelID)
+	return output, nil
 }
 
 // executeSemanticSearch runs the semantic search and returns enriched results.
-func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs, userID string) ([]searchPostResult, error) {
+func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs, userID string) ([]mcptool.SearchPostResult, error) {
 	opts := search.Options{
 		Limit:     args.SemanticLimit,
 		Offset:    args.SemanticOffset,
@@ -228,9 +240,9 @@ func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, clie
 		channelTeamCache[r.ChannelID] = ""
 	}
 
-	postResults := make([]searchPostResult, 0, len(results))
+	postResults := make([]mcptool.SearchPostResult, 0, len(results))
 	for _, r := range results {
-		postResults = append(postResults, searchPostResult{
+		postResults = append(postResults, mcptool.SearchPostResult{
 			Post: &model.Post{
 				Id:        r.PostID,
 				ChannelId: r.ChannelID,
@@ -249,7 +261,7 @@ func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, clie
 }
 
 // executeKeywordSearch runs the Mattermost keyword search and returns enriched results.
-func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs) ([]searchPostResult, error) {
+func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs) ([]mcptool.SearchPostResult, error) {
 	searchTerm := args.Query
 	teamID := args.TeamID
 
@@ -337,9 +349,9 @@ func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, clien
 		}
 	}
 
-	postResults := make([]searchPostResult, 0, len(posts))
+	postResults := make([]mcptool.SearchPostResult, 0, len(posts))
 	for _, post := range posts {
-		result := searchPostResult{
+		result := mcptool.SearchPostResult{
 			Post:   post,
 			Source: "keyword",
 		}
@@ -369,101 +381,16 @@ func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, clien
 	return postResults, nil
 }
 
-// formatCombinedResults formats the combined search results into a readable string.
-func (p *MattermostToolProvider) formatCombinedResults(query string, semanticResults, keywordResults []searchPostResult, semanticEnabled bool, channelIDFilter string) (string, error) {
-	// Deduplicate: if a post appears in both, keep it in semantic only.
-	seenPostIDs := make(map[string]bool)
-	for _, r := range semanticResults {
-		seenPostIDs[r.Post.Id] = true
-	}
-
-	dedupedKeywordResults := make([]searchPostResult, 0, len(keywordResults))
-	for _, r := range keywordResults {
-		if !seenPostIDs[r.Post.Id] {
-			dedupedKeywordResults = append(dedupedKeywordResults, r)
-		}
-	}
-
-	totalSemantic := len(semanticResults)
-	totalKeyword := len(dedupedKeywordResults)
-	total := totalSemantic + totalKeyword
-
-	if total == 0 {
-		terms := strings.Fields(query)
-		if len(terms) > 2 {
-			return fmt.Sprintf("No posts found for %q (%d terms). All terms must appear in a single post — try fewer terms (1-2).", query, len(terms)), nil
-		}
-		return fmt.Sprintf("No posts found for %q.", query), nil
-	}
-
-	var result strings.Builder
-
-	noun := "results"
-	if total == 1 {
-		noun = "result"
-	}
-	if semanticEnabled {
-		result.WriteString(fmt.Sprintf("Found %d %s for \"%s\" (%d semantic, %d keyword):\n", total, noun, query, totalSemantic, totalKeyword))
-	} else {
-		result.WriteString(fmt.Sprintf("Found %d %s for \"%s\":\n", total, noun, query))
-	}
-
-	if channelIDFilter != "" {
-		result.WriteString(fmt.Sprintf("Channel ID filter: %s\n", channelIDFilter))
-	}
-
-	if semanticEnabled && totalSemantic > 0 {
-		result.WriteString("\n## Semantic Search Results\n\n")
-		for i, r := range semanticResults {
-			p.formatSingleResult(&result, i+1, r, true, channelIDFilter)
-		}
-	}
-
-	if totalKeyword > 0 {
-		if semanticEnabled {
-			result.WriteString("\n## Keyword Search Results\n\n")
-		} else {
-			result.WriteString("\n")
-		}
-		for i, r := range dedupedKeywordResults {
-			p.formatSingleResult(&result, i+1, r, false, channelIDFilter)
-		}
-	}
-
-	return result.String(), nil
-}
-
-// formatSingleResult formats a single search result.
-func (p *MattermostToolProvider) formatSingleResult(result *strings.Builder, index int, r searchPostResult, includeScore bool, channelIDFilter string) {
-	var score float32
-	if includeScore {
-		score = r.Score
-	}
-	username := r.Username
-	if username != "" {
-		username = "@" + username
-	}
-	format.WritePost(result, format.PostEntry{
-		HeaderLabel: fmt.Sprintf("Result %d", index),
-		Username:    username,
-		Score:       score,
-		Post:        r.Post,
-		ChannelName: r.ChannelName,
-		TeamName:    r.TeamName,
-		ShowChannel: channelIDFilter == "",
-	})
-}
-
 // toolSearchUsers implements the search_users tool.
-func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.SearchUsersOutput, error) {
 	var args SearchUsersArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool search_users: %w", err)
+		return mcptool.SearchUsersOutput{}, fmt.Errorf("failed to get arguments for tool search_users: %w", err)
 	}
 
 	if args.Term == "" {
-		return "term is required", fmt.Errorf("search term cannot be empty")
+		return mcptool.SearchUsersOutput{}, fmt.Errorf("search term cannot be empty")
 	}
 
 	if args.Limit <= 0 {
@@ -474,7 +401,7 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 	}
 
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return mcptool.SearchUsersOutput{}, fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -488,22 +415,12 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 
 	users, _, err := client.SearchUsers(ctx, searchOptions)
 	if err != nil {
-		return "user search failed", fmt.Errorf("error searching users: %w", err)
+		return mcptool.SearchUsersOutput{}, fmt.Errorf("error searching users: %w", err)
 	}
 
-	if len(users) == 0 {
-		return "no users found matching the search criteria", nil
+	out := mcptool.SearchUsersOutput{
+		Term:  args.Term,
+		Users: users,
 	}
-
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d users matching '%s':\n\n", len(users), args.Term))
-
-	for i, user := range users {
-		format.WriteUser(&result, format.UserEntry{
-			HeaderLabel: fmt.Sprintf("User %d", i+1),
-			User:        user,
-		})
-	}
-
-	return result.String(), nil
+	return out, nil
 }

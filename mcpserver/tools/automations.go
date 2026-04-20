@@ -13,8 +13,10 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/format"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const automationPluginAPIPath = "/plugins/com.mattermost.channel-automation/api/v1"
@@ -42,7 +44,14 @@ func (p *MattermostToolProvider) isAutomationPluginInstalled() bool {
 	return installed
 }
 
-// --- Trigger types (union: exactly one pointer field should be non-nil) ---
+// --- Flow types ---
+//
+// These types mirror the channel-automation plugin's Flow model and are
+// intentionally kept internal (not in public/mcptool). Plugins consuming our
+// after-hook payloads for automation tools receive these fields as raw JSON
+// and should import github.com/mattermost/mattermost-plugin-channel-automation/public/pluginbridge
+// for typed access — we don't want other plugins taking a hard Go dependency
+// on types we mirror from an external plugin we don't control.
 
 // AutomationTrigger defines when a flow fires. Exactly one config pointer should be set.
 type AutomationTrigger struct {
@@ -78,8 +87,6 @@ type UserJoinedTeamConfig struct {
 	TeamID string `json:"team_id"`
 }
 
-// --- Action types (union: exactly one config pointer should be non-nil) ---
-
 // AutomationAction defines a single step in a flow. Exactly one config pointer should be set.
 type AutomationAction struct {
 	ID          string                   `json:"id"`
@@ -103,13 +110,21 @@ type SendMessageActionConfig struct {
 	Body          string `json:"body"`
 }
 
+// Guardrails constrains MCP tool calls for an ai_prompt action (opt-in).
+// Mirrors the channel-automation plugin's Guardrails model; additional fields may be
+// added over time without breaking callers.
+type Guardrails struct {
+	ChannelIDs []string `json:"channel_ids,omitempty" jsonschema:"26-character Mattermost channel IDs that the ai_prompt step's built-in Mattermost MCP tools (search_posts, get_channel_info, get_user_channels, read_channel, get_channel_members, read_post) are restricted to. Only meaningful when allowed_tools is non-empty."`
+}
+
 // AIPromptActionConfig holds config for the ai_prompt action type.
 type AIPromptActionConfig struct {
-	SystemPrompt string   `json:"system_prompt,omitempty"`
-	Prompt       string   `json:"prompt"`
-	ProviderType string   `json:"provider_type"`
-	ProviderID   string   `json:"provider_id"`
-	AllowedTools []string `json:"allowed_tools,omitempty"`
+	SystemPrompt string      `json:"system_prompt,omitempty"`
+	Prompt       string      `json:"prompt"`
+	ProviderType string      `json:"provider_type"`
+	ProviderID   string      `json:"provider_id"`
+	AllowedTools []string    `json:"allowed_tools,omitempty"`
+	Guardrails   *Guardrails `json:"guardrails,omitempty" jsonschema:"Optional channel scope for this step's built-in Mattermost MCP tools. Requires allowed_tools to be non-empty."`
 }
 
 // AutomationFlow mirrors the channel-automation plugin's Flow model.
@@ -122,6 +137,38 @@ type AutomationFlow struct {
 	CreatedAt int64              `json:"created_at,omitempty"`
 	UpdatedAt int64              `json:"updated_at,omitempty"`
 	CreatedBy string             `json:"created_by,omitempty"`
+}
+
+// --- After-hook DTOs for automation tools ---
+
+// AutomationInstructionsOutput is the after-hook DTO for the get_automation_instructions tool.
+type AutomationInstructionsOutput struct {
+	Instructions      string   `json:"instructions"`
+	PluginAnnotations []string `json:"plugin_annotations,omitempty"`
+}
+
+// ListAutomationsOutput is the after-hook DTO for the list_automations tool.
+type ListAutomationsOutput struct {
+	Flows             []AutomationFlow `json:"flows"`
+	PluginAnnotations []string         `json:"plugin_annotations,omitempty"`
+}
+
+// CreateAutomationOutput is the after-hook DTO for the create_automation tool.
+type CreateAutomationOutput struct {
+	Flow              AutomationFlow `json:"flow"`
+	PluginAnnotations []string       `json:"plugin_annotations,omitempty"`
+}
+
+// UpdateAutomationOutput is the after-hook DTO for the update_automation tool.
+type UpdateAutomationOutput struct {
+	Flow              AutomationFlow `json:"flow"`
+	PluginAnnotations []string       `json:"plugin_annotations,omitempty"`
+}
+
+// DeleteAutomationOutput is the after-hook DTO for the delete_automation tool.
+type DeleteAutomationOutput struct {
+	AutomationID      string   `json:"automation_id"`
+	PluginAnnotations []string `json:"plugin_annotations,omitempty"`
 }
 
 // automationAPIURL builds a full URL for the channel automation plugin API.
@@ -230,79 +277,78 @@ func IsAutomationTool(name string) bool {
 	return automationToolNames[name]
 }
 
-// getAutomationTools returns all automation-related tools.
-func (p *MattermostToolProvider) getAutomationTools() []MCPTool {
-	return []MCPTool{
-		{
-			Name: "list_automations",
-			Description: `List or get channel automations (trigger-action workflows).
+// provideAutomationTools registers all automation-related MCP tools.
+func (p *MattermostToolProvider) provideAutomationTools(s *mcp.Server) {
+	registerTool(s, p, "list_automations",
+		`List or get channel automations (trigger-action workflows).
 Provide automation_id to get a specific automation, or use optional channel_id to filter by trigger channel.
 Returns automation details including trigger configuration and action pipeline.`,
-			Schema:   llm.NewJSONSchemaFromStruct[ListAutomationsArgs](),
-			Resolver: p.toolListAutomations,
-		},
-		{
-			Name:        "get_automation_instructions",
-			Description: "Returns detailed documentation for creating and updating channel automations: triggers, actions, template syntax, allowed_tools, and required user-confirmation workflow. Call this before create_automation or update_automation.",
-			Schema:      nil,
-			Resolver:    p.toolGetAutomationInstructions,
-		},
-		{
-			Name:        "create_automation",
-			Description: createAutomationToolDescription,
-			Schema:      llm.NewJSONSchemaFromStruct[CreateAutomationArgs](),
-			Resolver:    p.toolCreateAutomation,
-		},
-		{
-			Name: "update_automation",
-			Description: `Update an existing channel automation. Replaces the full definition — provide all fields.
+		llm.NewJSONSchemaFromStruct[ListAutomationsArgs](),
+		p.toolListAutomations,
+		FormatListAutomationsOutput,
+	)
+	registerTool(s, p, "get_automation_instructions",
+		"Returns detailed documentation for creating and updating channel automations: triggers, actions, template syntax, allowed_tools, and required user-confirmation workflow. Call this before create_automation or update_automation.",
+		nil,
+		p.toolGetAutomationInstructions,
+		FormatAutomationInstructionsOutput,
+	)
+	registerTool(s, p, "create_automation",
+		createAutomationToolDescription,
+		llm.NewJSONSchemaFromStruct[CreateAutomationArgs](),
+		p.toolCreateAutomation,
+		FormatCreateAutomationOutput,
+	)
+	registerTool(s, p, "update_automation",
+		`Update an existing channel automation. Replaces the full definition — provide all fields.
 Call get_automation_instructions for trigger/action format details. Use list_automations first
 to get the current definition, then modify and pass the full updated flow.
 IMPORTANT: Show the user what will change and get their confirmation first.`,
-			Schema:   llm.NewJSONSchemaFromStruct[UpdateAutomationArgs](),
-			Resolver: p.toolUpdateAutomation,
-		},
-		{
-			Name:        "delete_automation",
-			Description: "Delete a channel automation by ID. This is permanent and cannot be undone.",
-			Schema:      llm.NewJSONSchemaFromStruct[DeleteAutomationArgs](),
-			Resolver:    p.toolDeleteAutomation,
-		},
-	}
+		llm.NewJSONSchemaFromStruct[UpdateAutomationArgs](),
+		p.toolUpdateAutomation,
+		FormatUpdateAutomationOutput,
+	)
+	registerTool(s, p, "delete_automation",
+		"Delete a channel automation by ID. This is permanent and cannot be undone.",
+		llm.NewJSONSchemaFromStruct[DeleteAutomationArgs](),
+		p.toolDeleteAutomation,
+		FormatDeleteAutomationOutput,
+	)
 }
 
 // --- Resolvers ---
 
-func (p *MattermostToolProvider) toolGetAutomationInstructions(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (p *MattermostToolProvider) toolGetAutomationInstructions(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (AutomationInstructionsOutput, error) {
 	var noArgs struct{}
 	if err := argsGetter(&noArgs); err != nil {
-		return "", fmt.Errorf("failed to get arguments for tool get_automation_instructions: %w", err)
+		return AutomationInstructionsOutput{}, fmt.Errorf("failed to get arguments for tool get_automation_instructions: %w", err)
 	}
 	if mcpContext.Client == nil {
-		return "", fmt.Errorf("client not available in context")
+		return AutomationInstructionsOutput{}, fmt.Errorf("client not available in context")
 	}
 	payload, err := p.fetchAutomationInstructions(mcpContext.Ctx, mcpContext.Client)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch automation instructions from Channel Automation plugin (upgrade plugin or check connectivity): %w", err)
+		return AutomationInstructionsOutput{}, fmt.Errorf("failed to fetch automation instructions from Channel Automation plugin (upgrade plugin or check connectivity): %w", err)
 	}
-	return payload.Instructions, nil
+
+	return AutomationInstructionsOutput{Instructions: payload.Instructions}, nil
 }
 
-func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (ListAutomationsOutput, error) {
 	var args ListAutomationsArgs
 	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool list_automations: %w", err)
+		return ListAutomationsOutput{}, fmt.Errorf("failed to get arguments for tool list_automations: %w", err)
 	}
 
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return ListAutomationsOutput{}, fmt.Errorf("client not available in context")
 	}
 	ctx := context.Background()
 
 	// If a specific automation ID was requested, fetch just that one.
 	if args.AutomationID != "" {
 		if !model.IsValidId(args.AutomationID) {
-			return "invalid automation_id", fmt.Errorf("invalid automation_id")
+			return ListAutomationsOutput{}, fmt.Errorf("invalid automation_id")
 		}
 		return p.getAutomationByID(ctx, mcpContext, args.AutomationID)
 	}
@@ -315,49 +361,47 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, flowsURL, "")
 	if err != nil {
-		return handleAutomationHTTPError(resp, err, "")
+		_, err = handleAutomationHTTPError(resp, err, "")
+		return ListAutomationsOutput{}, err
 	}
 	defer resp.Body.Close()
 
 	var flows []AutomationFlow
 	if err := json.NewDecoder(resp.Body).Decode(&flows); err != nil {
-		return "failed to parse automation list", fmt.Errorf("failed to decode automations response: %w", err)
+		return ListAutomationsOutput{}, fmt.Errorf("failed to decode automations response: %w", err)
 	}
 
-	if len(flows) == 0 {
-		return "No automations found matching the specified criteria.", nil
-	}
-
-	return formatAutomationFlows(flows), nil
+	return ListAutomationsOutput{Flows: flows}, nil
 }
 
-func (p *MattermostToolProvider) getAutomationByID(ctx context.Context, mcpContext *MCPToolContext, id string) (string, error) {
+func (p *MattermostToolProvider) getAutomationByID(ctx context.Context, mcpContext *MCPToolContext, id string) (ListAutomationsOutput, error) {
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, p.automationAPIURL("/flows/"+id), "")
 	if err != nil {
-		return handleAutomationHTTPError(resp, err, id)
+		_, err = handleAutomationHTTPError(resp, err, id)
+		return ListAutomationsOutput{}, err
 	}
 	defer resp.Body.Close()
 
 	var flow AutomationFlow
 	if err := json.NewDecoder(resp.Body).Decode(&flow); err != nil {
-		return "failed to parse automation", fmt.Errorf("failed to decode automation response: %w", err)
+		return ListAutomationsOutput{}, fmt.Errorf("failed to decode automation response: %w", err)
 	}
 
-	return formatAutomationFlow(flow), nil
+	return ListAutomationsOutput{Flows: []AutomationFlow{flow}}, nil
 }
 
-func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (CreateAutomationOutput, error) {
 	var args CreateAutomationArgs
 	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool create_automation: %w", err)
+		return CreateAutomationOutput{}, fmt.Errorf("failed to get arguments for tool create_automation: %w", err)
 	}
 
 	if args.Name == "" {
-		return "name is required", fmt.Errorf("name cannot be empty")
+		return CreateAutomationOutput{}, fmt.Errorf("name cannot be empty")
 	}
 
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return CreateAutomationOutput{}, fmt.Errorf("client not available in context")
 	}
 	ctx := context.Background()
 
@@ -370,7 +414,7 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 
 	body, err := json.Marshal(flow)
 	if err != nil {
-		return "failed to encode automation", fmt.Errorf("failed to marshal automation: %w", err)
+		return CreateAutomationOutput{}, fmt.Errorf("failed to marshal automation: %w", err)
 	}
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodPost, p.automationAPIURL("/flows"), string(body))
@@ -383,30 +427,31 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 			"status", statusCode,
 			"error", err.Error(),
 		)
-		return handleAutomationHTTPError(resp, err, "")
+		_, err = handleAutomationHTTPError(resp, err, "")
+		return CreateAutomationOutput{}, err
 	}
 	defer resp.Body.Close()
 
 	var created AutomationFlow
 	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		return "failed to parse created automation", fmt.Errorf("failed to decode create response: %w", err)
+		return CreateAutomationOutput{}, fmt.Errorf("failed to decode create response: %w", err)
 	}
 
-	return fmt.Sprintf("Successfully created automation '%s' (ID: %s).\n\n%s", created.Name, created.ID, formatAutomationFlow(created)), nil
+	return CreateAutomationOutput{Flow: created}, nil
 }
 
-func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (UpdateAutomationOutput, error) {
 	var args UpdateAutomationArgs
 	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool update_automation: %w", err)
+		return UpdateAutomationOutput{}, fmt.Errorf("failed to get arguments for tool update_automation: %w", err)
 	}
 
 	if !model.IsValidId(args.AutomationID) {
-		return "invalid automation_id", fmt.Errorf("invalid automation_id")
+		return UpdateAutomationOutput{}, fmt.Errorf("invalid automation_id")
 	}
 
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return UpdateAutomationOutput{}, fmt.Errorf("client not available in context")
 	}
 	ctx := context.Background()
 
@@ -420,7 +465,7 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 
 	body, err := json.Marshal(flow)
 	if err != nil {
-		return "failed to encode automation", fmt.Errorf("failed to marshal automation: %w", err)
+		return UpdateAutomationOutput{}, fmt.Errorf("failed to marshal automation: %w", err)
 	}
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodPut, p.automationAPIURL("/flows/"+args.AutomationID), string(body))
@@ -433,85 +478,45 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 			"status", statusCode,
 			"error", err.Error(),
 		)
-		return handleAutomationHTTPError(resp, err, args.AutomationID)
+		_, err = handleAutomationHTTPError(resp, err, args.AutomationID)
+		return UpdateAutomationOutput{}, err
 	}
 	defer resp.Body.Close()
 
 	var updated AutomationFlow
 	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
-		return "failed to parse updated automation", fmt.Errorf("failed to decode update response: %w", err)
+		return UpdateAutomationOutput{}, fmt.Errorf("failed to decode update response: %w", err)
 	}
 
-	return fmt.Sprintf("Successfully updated automation '%s' (ID: %s).\n\n%s", updated.Name, updated.ID, formatAutomationFlow(updated)), nil
+	return UpdateAutomationOutput{Flow: updated}, nil
 }
 
-func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (DeleteAutomationOutput, error) {
 	var args DeleteAutomationArgs
 	if err := argsGetter(&args); err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool delete_automation: %w", err)
+		return DeleteAutomationOutput{}, fmt.Errorf("failed to get arguments for tool delete_automation: %w", err)
 	}
 
 	if !model.IsValidId(args.AutomationID) {
-		return "invalid automation_id", fmt.Errorf("invalid automation_id")
+		return DeleteAutomationOutput{}, fmt.Errorf("invalid automation_id")
 	}
 
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return DeleteAutomationOutput{}, fmt.Errorf("client not available in context")
 	}
 	ctx := context.Background()
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodDelete, p.automationAPIURL("/flows/"+args.AutomationID), "")
 	if err != nil {
-		return handleAutomationHTTPError(resp, err, args.AutomationID)
+		_, err = handleAutomationHTTPError(resp, err, args.AutomationID)
+		return DeleteAutomationOutput{}, err
 	}
 	defer resp.Body.Close()
 
-	return fmt.Sprintf("Successfully deleted automation with ID '%s'.", args.AutomationID), nil
+	return DeleteAutomationOutput{AutomationID: args.AutomationID}, nil
 }
 
 // --- Helpers ---
-
-// triggerChannelID extracts the channel ID from any trigger variant.
-func triggerChannelID(t AutomationTrigger) string {
-	if t.MessagePosted != nil {
-		return t.MessagePosted.ChannelID
-	}
-	if t.Schedule != nil {
-		return t.Schedule.ChannelID
-	}
-	if t.MembershipChanged != nil {
-		return t.MembershipChanged.ChannelID
-	}
-	return ""
-}
-
-// triggerTypeName returns the trigger type name based on which config is present.
-func triggerTypeName(t AutomationTrigger) string {
-	if t.MessagePosted != nil {
-		return "message_posted"
-	}
-	if t.Schedule != nil {
-		return "schedule"
-	}
-	if t.MembershipChanged != nil {
-		return "membership_changed"
-	}
-	if t.ChannelCreated != nil {
-		return "channel_created"
-	}
-	return "unknown"
-}
-
-// actionTypeName returns the action type name based on which config is present.
-func actionTypeName(a AutomationAction) string {
-	if a.SendMessage != nil {
-		return "send_message"
-	}
-	if a.AIPrompt != nil {
-		return "ai_prompt"
-	}
-	return "unknown"
-}
 
 // handleAutomationHTTPError returns a user-friendly error message for automation API failures.
 // The Mattermost client's DoAPIRequestWithHeaders consumes the response body for non-2xx
@@ -568,62 +573,93 @@ func automationErrorDetail(err error) string {
 	return err.Error()
 }
 
-// formatAutomationFlows formats multiple automation flows for display.
-func formatAutomationFlows(flows []AutomationFlow) string {
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d automation(s):\n\n", len(flows)))
+// --- Formatters ---
 
-	for i, f := range flows {
-		result.WriteString(fmt.Sprintf("%d. %s\n", i+1, formatAutomationFlow(f)))
+// FormatAutomationInstructionsOutput formats the get_automation_instructions tool output for LLM consumption.
+func FormatAutomationInstructionsOutput(o AutomationInstructionsOutput) (string, error) {
+	return format.AppendPluginAnnotations(o.Instructions, o.PluginAnnotations), nil
+}
+
+// FormatListAutomationsOutput formats the list_automations tool output for LLM consumption.
+func FormatListAutomationsOutput(o ListAutomationsOutput) (string, error) {
+	if len(o.Flows) == 0 {
+		return format.AppendPluginAnnotations("No automations found matching the specified criteria.", o.PluginAnnotations), nil
 	}
 
-	return result.String()
+	var result strings.Builder
+	fmt.Fprintf(&result, "Found %d automation(s):\n\n", len(o.Flows))
+	for i, f := range o.Flows {
+		fmt.Fprintf(&result, "%d. %s\n", i+1, formatAutomationFlow(f))
+	}
+
+	return format.AppendPluginAnnotations(result.String(), o.PluginAnnotations), nil
+}
+
+// FormatCreateAutomationOutput formats the create_automation tool output for LLM consumption.
+func FormatCreateAutomationOutput(o CreateAutomationOutput) (string, error) {
+	base := fmt.Sprintf("Successfully created automation '%s' (ID: %s).\n\n%s", o.Flow.Name, o.Flow.ID, formatAutomationFlow(o.Flow))
+	return format.AppendPluginAnnotations(base, o.PluginAnnotations), nil
+}
+
+// FormatUpdateAutomationOutput formats the update_automation tool output for LLM consumption.
+func FormatUpdateAutomationOutput(o UpdateAutomationOutput) (string, error) {
+	base := fmt.Sprintf("Successfully updated automation '%s' (ID: %s).\n\n%s", o.Flow.Name, o.Flow.ID, formatAutomationFlow(o.Flow))
+	return format.AppendPluginAnnotations(base, o.PluginAnnotations), nil
+}
+
+// FormatDeleteAutomationOutput formats the delete_automation tool output for LLM consumption.
+func FormatDeleteAutomationOutput(o DeleteAutomationOutput) (string, error) {
+	base := fmt.Sprintf("Successfully deleted automation with ID '%s'.", o.AutomationID)
+	return format.AppendPluginAnnotations(base, o.PluginAnnotations), nil
 }
 
 // formatAutomationFlow formats a single automation flow for display.
 func formatAutomationFlow(f AutomationFlow) string {
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Name: %s\n", f.Name))
-	result.WriteString(fmt.Sprintf("ID: %s\n", f.ID))
-	result.WriteString(fmt.Sprintf("Enabled: %t\n", f.Enabled))
+	fmt.Fprintf(&result, "Name: %s\n", f.Name)
+	fmt.Fprintf(&result, "ID: %s\n", f.ID)
+	fmt.Fprintf(&result, "Enabled: %t\n", f.Enabled)
 
-	typeName := triggerTypeName(f.Trigger)
-	chID := triggerChannelID(f.Trigger)
+	typeName := automationTriggerTypeName(f.Trigger)
+	chID := automationTriggerChannelID(f.Trigger)
 	if chID != "" {
-		result.WriteString(fmt.Sprintf("Trigger: type=%s, channel=%s", typeName, chID))
+		fmt.Fprintf(&result, "Trigger: type=%s, channel=%s", typeName, chID)
 	} else {
-		result.WriteString(fmt.Sprintf("Trigger: type=%s", typeName))
+		fmt.Fprintf(&result, "Trigger: type=%s", typeName)
 	}
 	if f.Trigger.Schedule != nil && f.Trigger.Schedule.Interval != "" {
-		result.WriteString(fmt.Sprintf(", interval=%s", f.Trigger.Schedule.Interval))
+		fmt.Fprintf(&result, ", interval=%s", f.Trigger.Schedule.Interval)
 	}
 	result.WriteString("\n")
 
 	if len(f.Actions) > 0 {
 		result.WriteString("Actions:\n")
 		for j, a := range f.Actions {
-			typName := actionTypeName(a)
-			result.WriteString(fmt.Sprintf("  %d. id=%s (type=%s", j+1, a.ID, typName))
+			typName := automationActionTypeName(a)
+			fmt.Fprintf(&result, "  %d. id=%s (type=%s", j+1, a.ID, typName)
 			if a.SendMessage != nil {
 				if a.SendMessage.ChannelID != "" {
-					result.WriteString(fmt.Sprintf(", channel=%s", a.SendMessage.ChannelID))
+					fmt.Fprintf(&result, ", channel=%s", a.SendMessage.ChannelID)
 				}
 				if a.SendMessage.AsBotID != "" {
-					result.WriteString(fmt.Sprintf(", as_bot_id=%s", a.SendMessage.AsBotID))
+					fmt.Fprintf(&result, ", as_bot_id=%s", a.SendMessage.AsBotID)
 				}
 				if a.SendMessage.Body != "" {
-					result.WriteString(fmt.Sprintf(", body=%s", a.SendMessage.Body))
+					fmt.Fprintf(&result, ", body=%s", a.SendMessage.Body)
 				}
 			}
 			if a.AIPrompt != nil {
 				if a.AIPrompt.Prompt != "" {
-					result.WriteString(fmt.Sprintf(", prompt=%s", a.AIPrompt.Prompt))
+					fmt.Fprintf(&result, ", prompt=%s", a.AIPrompt.Prompt)
 				}
 				if a.AIPrompt.SystemPrompt != "" {
-					result.WriteString(fmt.Sprintf(", system_prompt=%s", a.AIPrompt.SystemPrompt))
+					fmt.Fprintf(&result, ", system_prompt=%s", a.AIPrompt.SystemPrompt)
 				}
 				if len(a.AIPrompt.AllowedTools) > 0 {
-					result.WriteString(fmt.Sprintf(", allowed_tools=%v", a.AIPrompt.AllowedTools))
+					fmt.Fprintf(&result, ", allowed_tools=%v", a.AIPrompt.AllowedTools)
+				}
+				if a.AIPrompt.Guardrails != nil && len(a.AIPrompt.Guardrails.ChannelIDs) > 0 {
+					fmt.Fprintf(&result, ", guardrails.channel_ids=%v", a.AIPrompt.Guardrails.ChannelIDs)
 				}
 			}
 			result.WriteString(")\n")
@@ -632,3 +668,47 @@ func formatAutomationFlow(f AutomationFlow) string {
 
 	return result.String()
 }
+
+func automationTriggerTypeName(t AutomationTrigger) string {
+	switch {
+	case t.MessagePosted != nil:
+		return "message_posted"
+	case t.Schedule != nil:
+		return "schedule"
+	case t.MembershipChanged != nil:
+		return "membership_changed"
+	case t.ChannelCreated != nil:
+		return "channel_created"
+	case t.UserJoinedTeam != nil:
+		return "user_joined_team"
+	default:
+		return "unknown"
+	}
+}
+
+func automationTriggerChannelID(t AutomationTrigger) string {
+	switch {
+	case t.MessagePosted != nil:
+		return t.MessagePosted.ChannelID
+	case t.Schedule != nil:
+		return t.Schedule.ChannelID
+	case t.MembershipChanged != nil:
+		return t.MembershipChanged.ChannelID
+	default:
+		return ""
+	}
+}
+
+func automationActionTypeName(a AutomationAction) string {
+	switch {
+	case a.SendMessage != nil:
+		return "send_message"
+	case a.AIPrompt != nil:
+		return "ai_prompt"
+	case a.SendDM != nil:
+		return "send_dm"
+	default:
+		return "unknown"
+	}
+}
+

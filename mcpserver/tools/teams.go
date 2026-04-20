@@ -9,7 +9,9 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/format"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/public/mcptool"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // GetTeamInfoArgs represents arguments for the get_team_info tool
@@ -41,53 +43,48 @@ type AddUserToTeamArgs struct {
 	TeamID string `json:"team_id" jsonschema:"ID of the team to add user to"`
 }
 
-// getTeamTools returns all team-related tools
-func (p *MattermostToolProvider) getTeamTools() []MCPTool {
-	return []MCPTool{
-		{
-			Name:        "get_team_info",
-			Description: "Get information about a team. Provide team_id (fastest) or team_name (matches against both display name and URL name, case-insensitive, supports partial matches). Returns team metadata including ID, names, type, description, and member count. Example: {\"team_name\": \"Engineering\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
-			Schema:      NewJSONSchemaForAccessMode[GetTeamInfoArgs](string(p.accessMode)),
-			Resolver:    p.toolGetTeamInfo,
-		},
-		{
-			Name:        "get_team_members",
-			Description: "Get members of a team with pagination support. Parameters: team_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and roles. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"limit\": 10, \"page\": 0}",
-			Schema:      NewJSONSchemaForAccessMode[GetTeamMembersArgs](string(p.accessMode)),
-			Resolver:    p.toolGetTeamMembers,
-		},
-	}
+// provideTeamTools registers all team-related MCP tools.
+func (p *MattermostToolProvider) provideTeamTools(s *mcp.Server) {
+	registerTool(s, p, "get_team_info",
+		"Get information about a team. Provide team_id (fastest) or team_name (matches against both display name and URL name, case-insensitive, supports partial matches). Returns team metadata including ID, names, type, description, and member count. Example: {\"team_name\": \"Engineering\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
+		NewJSONSchemaForAccessMode[GetTeamInfoArgs](string(p.accessMode)),
+		p.toolGetTeamInfo,
+		format.TeamInfoOutput,
+	)
+	registerTool(s, p, "get_team_members",
+		"Get members of a team with pagination support. Parameters: team_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and roles. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"limit\": 10, \"page\": 0}",
+		NewJSONSchemaForAccessMode[GetTeamMembersArgs](string(p.accessMode)),
+		p.toolGetTeamMembers,
+		format.TeamMembersOutput,
+	)
 }
 
-// getDevTeamTools returns development team-related tools for MCP
-func (p *MattermostToolProvider) getDevTeamTools() []MCPTool {
-	return []MCPTool{
-		{
-			Name:        "create_team",
-			Description: "Create a new team (dev mode only)",
-			Schema:      NewJSONSchemaForAccessMode[CreateTeamArgs](string(p.accessMode)),
-			Resolver:    p.toolCreateTeam,
-		},
-		{
-			Name:        "add_user_to_team",
-			Description: "Add a user to a team (dev mode only)",
-			Schema:      NewJSONSchemaForAccessMode[AddUserToTeamArgs](string(p.accessMode)),
-			Resolver:    p.toolAddUserToTeam,
-		},
-	}
+// provideDevTeamTools registers development team-related MCP tools.
+func (p *MattermostToolProvider) provideDevTeamTools(s *mcp.Server) {
+	registerTool(s, p, "create_team",
+		"Create a new team (dev mode only)",
+		NewJSONSchemaForAccessMode[CreateTeamArgs](string(p.accessMode)),
+		p.toolCreateTeam,
+		format.CreateTeamOutput,
+	)
+	registerTool(s, p, "add_user_to_team",
+		"Add a user to a team (dev mode only)",
+		NewJSONSchemaForAccessMode[AddUserToTeamArgs](string(p.accessMode)),
+		p.toolAddUserToTeam,
+		format.AddUserToTeamOutput,
+	)
 }
 
 // toolGetTeamInfo implements the get_team_info tool
-func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.TeamInfoOutput, error) {
 	var args GetTeamInfoArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool get_team_info: %w", err)
+		return mcptool.TeamInfoOutput{}, fmt.Errorf("failed to get arguments for tool get_team_info: %w", err)
 	}
 
-	// Get client from context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return mcptool.TeamInfoOutput{}, fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -97,76 +94,81 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 	switch {
 	case args.TeamID != "":
 		if !model.IsValidId(args.TeamID) {
-			return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+			return mcptool.TeamInfoOutput{}, fmt.Errorf("invalid team_id format")
 		}
-		team, _, err = client.GetTeam(ctx, args.TeamID, "")
+		var resp *model.Response
+		team, resp, err = client.GetTeam(ctx, args.TeamID, "")
 		if err != nil {
-			return "team not found by ID", fmt.Errorf("error fetching team by ID: %w", err)
+			return mcptool.TeamInfoOutput{}, fmt.Errorf("error fetching team by ID: %w", err)
 		}
+
 	case args.TeamName != "":
-		var msg string
-		team, msg, err = p.resolveTeamByName(mcpContext, args.TeamName)
+		var candidates []*model.Team
+		team, candidates, err = p.resolveTeamByName(mcpContext, args.TeamName)
 		if err != nil {
-			return msg, err
+			return mcptool.TeamInfoOutput{}, err
 		}
-		if msg != "" {
-			// Multiple matches — return disambiguation message (not an error)
-			return msg, nil
+		switch {
+		case team != nil:
+			// unique match — fall through to the happy-path emission below
+		case len(candidates) > 0:
+			return mcptool.TeamInfoOutput{Teams: candidates}, nil
+		default:
+			return mcptool.TeamInfoOutput{}, fmt.Errorf("no team found matching '%s'. ACTION REQUIRED - try get_user_channels to list channels (includes team info) you have access to before asking the user", args.TeamName)
 		}
+
 	default:
-		return "either team_id or team_name must be provided", fmt.Errorf("insufficient parameters for team lookup")
+		return mcptool.TeamInfoOutput{}, fmt.Errorf("either team_id or team_name must be provided")
 	}
 
-	// Get member count
 	var memberCount int64 = -1
 	teamStats, _, err := client.GetTeamStats(ctx, team.Id, "")
 	if err == nil {
 		memberCount = teamStats.TotalMemberCount
 	}
 
-	// Format the response
-	var result strings.Builder
-	format.WriteTeam(&result, format.TeamEntry{
-		Team:        team,
+	return mcptool.TeamInfoOutput{
+		Teams:       []*model.Team{team},
 		MemberCount: memberCount,
-	})
-
-	return result.String(), nil
+	}, nil
 }
 
 // resolveTeamByName resolves a team by name using multiple strategies:
-// 1. Exact display name match (case-insensitive) from user's teams
-// 2. Exact URL name match from user's teams
-// 3. Substring display name match from user's teams
-// 4. SearchTeams API as final fallback
+//  1. Exact display name match (case-insensitive) from user's teams
+//  2. Exact URL name match from user's teams
+//  3. Substring display name match from user's teams
+//  4. SearchTeams API as final fallback
 //
-// Returns (team, "", nil) on unique match, ("", disambiguationMsg, nil) on multiple matches,
-// or ("", errorMsg, error) on failure.
-func (p *MattermostToolProvider) resolveTeamByName(mcpContext *MCPToolContext, name string) (*model.Team, string, error) {
+// Returns one of:
+//   - (team, nil, nil)      — unique match
+//   - (nil, candidates, nil) — multiple matches; caller renders disambiguation
+//   - (nil, nil, nil)       — no matches found (not an error; caller renders not-found)
+//   - (nil, nil, err)       — upstream/API error
+func (p *MattermostToolProvider) resolveTeamByName(mcpContext *MCPToolContext, name string) (*model.Team, []*model.Team, error) {
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
 	user, _, userErr := client.GetMe(ctx, "")
 	if userErr != nil {
-		return nil, "failed to get current user", fmt.Errorf("error getting current user: %w", userErr)
+		return nil, nil, fmt.Errorf("error getting current user: %w", userErr)
 	}
 
 	teams, _, teamsErr := client.GetTeamsForUser(ctx, user.Id, "")
 	if teamsErr != nil {
-		return nil, "failed to fetch user teams", fmt.Errorf("error fetching user teams: %w", teamsErr)
+		return nil, nil, fmt.Errorf("error fetching user teams: %w", teamsErr)
 	}
 
 	// 1. Exact display name match (case-insensitive)
 	for _, t := range teams {
 		if strings.EqualFold(t.DisplayName, name) {
-			return t, "", nil
+			return t, nil, nil
 		}
 	}
 
 	// 2. Exact URL name match
 	for _, t := range teams {
 		if strings.EqualFold(t.Name, name) {
-			return t, "", nil
+			return t, nil, nil
 		}
 	}
 
@@ -180,50 +182,35 @@ func (p *MattermostToolProvider) resolveTeamByName(mcpContext *MCPToolContext, n
 	}
 
 	if len(substringMatches) == 1 {
-		return substringMatches[0], "", nil
+		return substringMatches[0], nil, nil
 	}
 	if len(substringMatches) > 1 {
-		return nil, formatTeamDisambiguation(name, substringMatches), nil
+		return nil, substringMatches, nil
 	}
 
 	// 4. SearchTeams API as fallback for teams the user may not be a member of
 	searchResults, _, searchErr := client.SearchTeams(ctx, &model.TeamSearch{Term: name})
 	if searchErr == nil && len(searchResults) == 1 {
-		return searchResults[0], "", nil
+		return searchResults[0], nil, nil
 	}
 	if searchErr == nil && len(searchResults) > 1 {
-		return nil, formatTeamDisambiguation(name, searchResults), nil
+		return nil, searchResults, nil
 	}
 
-	// Nothing found — return error with recovery guidance
-	msg := fmt.Sprintf("No team found matching '%s'.", name)
-	msg += "\n\nACTION REQUIRED - Try these alternatives before asking the user:\n"
-	msg += "1. Call get_user_channels to list all channels (includes team info) you have access to\n"
-	msg += "2. Only ask the user for help after trying alternatives above."
-	return nil, msg, fmt.Errorf("no team found matching: %s", name)
-}
-
-// formatTeamDisambiguation builds a message listing multiple team matches for the LLM to choose from.
-func formatTeamDisambiguation(searchTerm string, teams []*model.Team) string {
-	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("Multiple teams match '%s'. Please specify which one by calling get_team_info with team_id:\n\n", searchTerm))
-	for _, t := range teams {
-		msg.WriteString(fmt.Sprintf("- '%s' (URL name: %s, ID: %s)\n", t.DisplayName, t.Name, t.Id))
-	}
-	return msg.String()
+	return nil, nil, nil
 }
 
 // toolGetTeamMembers implements the get_team_members tool
-func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.TeamMembersOutput, error) {
 	var args GetTeamMembersArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool get_team_members: %w", err)
+		return mcptool.TeamMembersOutput{}, fmt.Errorf("failed to get arguments for tool get_team_members: %w", err)
 	}
 
 	// Validate required fields
 	if !model.IsValidId(args.TeamID) {
-		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+		return mcptool.TeamMembersOutput{}, fmt.Errorf("team_id must be a valid ID")
 	}
 
 	// Set defaults and validate
@@ -239,7 +226,7 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 
 	// Get client from context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return mcptool.TeamMembersOutput{}, fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -250,78 +237,73 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 	// Get team members
 	members, _, err := client.GetTeamMembers(ctx, args.TeamID, args.Page, args.Limit, "")
 	if err != nil {
-		return "failed to fetch team members", fmt.Errorf("error fetching team members: %w", err)
+		return mcptool.TeamMembersOutput{}, fmt.Errorf("error fetching team members: %w", err)
 	}
 
 	if len(members) == 0 {
-		return "no members found in this team", nil
+		return mcptool.TeamMembersOutput{
+			Rows:        nil,
+			Page:        args.Page,
+			ExcludeBots: excludeBots,
+		}, nil
 	}
 
-	// Get user details for each member, optionally filtering bots
-	var result strings.Builder
-	botsExcluded := 0
-	var written int
-
+	rows := make([]mcptool.TeamMemberRow, 0, len(members))
 	for _, member := range members {
-		user, _, err := client.GetUser(ctx, member.UserId, "")
-		if err != nil {
-			p.logger.Warn("failed to get user details for member", "user_id", member.UserId, "error", err)
-			format.WriteUser(&result, format.UserEntry{User: &model.User{Id: member.UserId, Username: "details unavailable"}})
-			written++
+		user, _, userErr := client.GetUser(ctx, member.UserId, "")
+		if userErr != nil {
+			p.logger.Warn("failed to get user details for member", "user_id", member.UserId, "error", userErr)
+			rows = append(rows, mcptool.TeamMemberRow{
+				User:        &model.User{Id: member.UserId, Username: "details unavailable"},
+				SchemeAdmin: member.SchemeAdmin,
+				SchemeGuest: member.SchemeGuest,
+				SchemeUser:  member.SchemeUser,
+			})
 			continue
 		}
-
-		if excludeBots && user.IsBot {
-			botsExcluded++
-			continue
-		}
-
-		format.WriteUser(&result, format.UserEntry{
-			User: user,
-			Role: format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),
+		rows = append(rows, mcptool.TeamMemberRow{
+			User:        user,
+			SchemeAdmin: member.SchemeAdmin,
+			SchemeGuest: member.SchemeGuest,
+			SchemeUser:  member.SchemeUser,
 		})
-		written++
 	}
 
-	// Build header and footer
-	var header strings.Builder
-	header.WriteString(fmt.Sprintf("Team Members (page %d, showing %d members):\n", args.Page, written))
-
-	var footer string
-	if botsExcluded > 0 {
-		footer = fmt.Sprintf("\n(%d bot account(s) excluded — set exclude_bots=false to include them)\n", botsExcluded)
+	out := mcptool.TeamMembersOutput{
+		Rows:        rows,
+		Page:        args.Page,
+		ExcludeBots: excludeBots,
 	}
-
-	return header.String() + result.String() + footer, nil
+	return out, nil
 }
 
 // toolCreateTeam implements the create_team tool using the context client
-func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.CreateTeamOutput, error) {
 	var args CreateTeamArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool create_team: %w", err)
+		return mcptool.CreateTeamOutput{}, fmt.Errorf("failed to get arguments for tool create_team: %w", err)
 	}
 
 	// Validate required fields
 	if args.Name == "" {
-		return "name is required", fmt.Errorf("name cannot be empty")
+		return mcptool.CreateTeamOutput{}, fmt.Errorf("name cannot be empty")
 	}
 	if args.DisplayName == "" {
-		return "display_name is required", fmt.Errorf("display_name cannot be empty")
+		return mcptool.CreateTeamOutput{}, fmt.Errorf("display_name cannot be empty")
 	}
 	if args.Type == "" {
-		return "type is required", fmt.Errorf("type cannot be empty")
+		return mcptool.CreateTeamOutput{}, fmt.Errorf("type cannot be empty")
 	}
 
 	// Validate team type
 	if args.Type != "O" && args.Type != "I" {
-		return "type must be 'O' for open or 'I' for invite only", fmt.Errorf("invalid team type: %s", args.Type)
+		return mcptool.CreateTeamOutput{}, fmt.Errorf("invalid team type: %s", args.Type)
 	}
 
 	// Get client from context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return mcptool.CreateTeamOutput{}, fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -336,7 +318,7 @@ func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, args
 
 	createdTeam, _, err := client.CreateTeam(ctx, team)
 	if err != nil {
-		return "failed to create team", fmt.Errorf("error creating team: %w", err)
+		return mcptool.CreateTeamOutput{}, fmt.Errorf("error creating team: %w", err)
 	}
 
 	var teamIconMessage string
@@ -361,45 +343,53 @@ func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, args
 		}
 	}
 
-	return fmt.Sprintf("Successfully created team '%s' with ID: %s%s", createdTeam.DisplayName, createdTeam.Id, teamIconMessage), nil
+	out := mcptool.CreateTeamOutput{
+		Team:            createdTeam,
+		TeamIconMessage: teamIconMessage,
+	}
+	return out, nil
 }
 
 // toolAddUserToTeam implements the add_user_to_team tool using the context client
-func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
+func (p *MattermostToolProvider) toolAddUserToTeam(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.AddUserToTeamOutput, error) {
 	var args AddUserToTeamArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool add_user_to_team: %w", err)
+		return mcptool.AddUserToTeamOutput{}, fmt.Errorf("failed to get arguments for tool add_user_to_team: %w", err)
 	}
 
 	// Validate required fields
 	if !model.IsValidId(args.UserID) {
-		return "invalid user_id format", fmt.Errorf("user_id must be a valid ID")
+		return mcptool.AddUserToTeamOutput{}, fmt.Errorf("user_id must be a valid ID")
 	}
 	if !model.IsValidId(args.TeamID) {
-		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
+		return mcptool.AddUserToTeamOutput{}, fmt.Errorf("team_id must be a valid ID")
 	}
 
 	// Get client from context
 	if mcpContext.Client == nil {
-		return "client not available", fmt.Errorf("client not available in context")
+		return mcptool.AddUserToTeamOutput{}, fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
-	// Add user to team
 	_, _, err = client.AddTeamMember(ctx, args.TeamID, args.UserID)
 	if err != nil {
-		return "failed to add user to team", fmt.Errorf("error adding user to team: %w", err)
+		return mcptool.AddUserToTeamOutput{}, fmt.Errorf("error adding user to team: %w", err)
 	}
 
-	// Get user and team info for confirmation
 	user, _, userErr := client.GetUser(ctx, args.UserID, "")
 	team, _, teamErr := client.GetTeam(ctx, args.TeamID, "")
 
-	if userErr != nil || teamErr != nil {
-		return fmt.Sprintf("Successfully added user %s to team %s", args.UserID, args.TeamID), nil
+	out := mcptool.AddUserToTeamOutput{
+		UserID: args.UserID,
+		TeamID: args.TeamID,
 	}
-
-	return fmt.Sprintf("Successfully added user '%s' to team '%s'", user.Username, team.DisplayName), nil
+	if userErr == nil {
+		out.User = user
+	}
+	if teamErr == nil {
+		out.Team = team
+	}
+	return out, nil
 }

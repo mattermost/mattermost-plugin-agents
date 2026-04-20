@@ -1602,6 +1602,92 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
 }
 
+func TestPrepareAgentBridgeCompletionToolHooksRequiresPluginID(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
+	defer server.Close()
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	_, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+		testBotUserID,
+		bridgeclient.CompletionRequest{
+			Posts: []bridgeclient.Post{
+				{Role: "user", Message: "Hi"},
+			},
+			AllowedTools: []string{"eligible_tool"},
+			UserID:       testUserID,
+			ToolHooks: map[string]bridgeclient.ToolHookConfig{
+				"eligible_tool": {BeforeCallback: "/hooks/before"},
+			},
+		},
+		"",
+		llm.OperationBridgeAgent,
+		llm.SubTypeNoStream,
+	)
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, statusCode)
+	require.Contains(t, err.Error(), "tool_hooks requires Mattermost-Plugin-ID header")
+}
+
+func TestPrepareAgentBridgeCompletionStoresToolHooksInMCPMetadata(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
+	defer server.Close()
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	_, llmRequest, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+		testBotUserID,
+		bridgeclient.CompletionRequest{
+			Posts: []bridgeclient.Post{
+				{Role: "user", Message: "Hi"},
+			},
+			AllowedTools: []string{"eligible_tool"},
+			UserID:       testUserID,
+			ToolHooks: map[string]bridgeclient.ToolHookConfig{
+				"eligible_tool": {BeforeCallback: "/hooks/before", AfterCallback: "/hooks/after"},
+			},
+		},
+		"com.example.caller",
+		llm.OperationBridgeAgent,
+		llm.SubTypeNoStream,
+	)
+	require.NoError(t, err)
+	require.Equal(t, 0, statusCode)
+	require.NotNil(t, llmRequest.Context)
+
+	md := llmRequest.Context.GetMCPServerMetadata(mcp.EmbeddedClientKey)
+	require.NotNil(t, md)
+	require.Equal(t, "com.example.caller", md["hook_plugin_id"])
+	hooks, ok := md["tool_hooks"].(map[string]any)
+	require.True(t, ok)
+	eligible, ok := hooks["eligible_tool"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "/hooks/before", eligible["before_callback"])
+	require.Equal(t, "/hooks/after", eligible["after_callback"])
+}
+
 func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard

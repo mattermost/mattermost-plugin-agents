@@ -18,6 +18,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// flowTriggerChannelIDForTest extracts the channel ID from any trigger variant (test helper).
+func flowTriggerChannelIDForTest(t AutomationTrigger) string {
+	switch {
+	case t.MessagePosted != nil:
+		return t.MessagePosted.ChannelID
+	case t.Schedule != nil:
+		return t.Schedule.ChannelID
+	case t.MembershipChanged != nil:
+		return t.MembershipChanged.ChannelID
+	default:
+		return ""
+	}
+}
+
 // validateAutomationTriggerForTest mimics channel-automation plugin validation for triggers.
 func validateAutomationTriggerForTest(tr AutomationTrigger) string {
 	n := 0
@@ -62,7 +76,7 @@ func newTestAutomationServer(t *testing.T, flows []AutomationFlow) *httptest.Ser
 			allFlows := make([]AutomationFlow, 0, len(flowMap))
 			filterChID := r.URL.Query().Get("channel_id")
 			for _, f := range flowMap {
-				if filterChID != "" && triggerChannelID(f.Trigger) != filterChID {
+				if filterChID != "" && flowTriggerChannelIDForTest(f.Trigger) != filterChID {
 					continue
 				}
 				allFlows = append(allFlows, f)
@@ -204,8 +218,10 @@ func TestAutomationListFlows(t *testing.T) {
 			return json.Unmarshal([]byte(`{}`), target)
 		}
 
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		out, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.NoError(t, err)
+		result, ferr := FormatListAutomationsOutput(out)
+		require.NoError(t, ferr)
 		assert.Contains(t, result, "Welcome Bot")
 		assert.Contains(t, result, "Bug Triage")
 	})
@@ -215,8 +231,10 @@ func TestAutomationListFlows(t *testing.T) {
 			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id":%q}`, flowID1)), target)
 		}
 
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		out, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.NoError(t, err)
+		result, ferr := FormatListAutomationsOutput(out)
+		require.NoError(t, ferr)
 		assert.Contains(t, result, "Welcome Bot")
 		assert.NotContains(t, result, "Bug Triage")
 	})
@@ -226,8 +244,10 @@ func TestAutomationListFlows(t *testing.T) {
 			return json.Unmarshal([]byte(fmt.Sprintf(`{"channel_id":%q}`, chID2)), target)
 		}
 
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		out, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.NoError(t, err)
+		result, ferr := FormatListAutomationsOutput(out)
+		require.NoError(t, ferr)
 		assert.Contains(t, result, "Bug Triage")
 		assert.NotContains(t, result, "Welcome Bot")
 	})
@@ -238,9 +258,9 @@ func TestAutomationListFlows(t *testing.T) {
 			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id":%q}`, missingID)), target)
 		}
 
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "Automation not found")
+		assert.Contains(t, err.Error(), "404")
 	})
 
 	t.Run("get by invalid id", func(t *testing.T) {
@@ -248,9 +268,9 @@ func TestAutomationListFlows(t *testing.T) {
 			return json.Unmarshal([]byte(`{"automation_id":"bad-id"}`), target)
 		}
 
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Equal(t, "invalid automation_id", result)
+		assert.Equal(t, "invalid automation_id", err.Error())
 	})
 }
 
@@ -268,8 +288,10 @@ func TestGetAutomationInstructions(t *testing.T) {
 		return json.Unmarshal([]byte(`{}`), target)
 	}
 
-	result, err := provider.toolGetAutomationInstructions(mcpCtx, argsGetter)
+	out, err := provider.toolGetAutomationInstructions(mcpCtx, argsGetter)
 	require.NoError(t, err)
+	result, ferr := FormatAutomationInstructionsOutput(out)
+	require.NoError(t, ferr)
 	assert.Contains(t, result, "TRIGGERS:")
 	assert.Contains(t, result, "ACTION SELECTION:")
 }
@@ -292,8 +314,10 @@ func TestAutomationCreateFlow(t *testing.T) {
 			}`), target)
 		}
 
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		out, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
 		require.NoError(t, err)
+		result, ferr := FormatCreateAutomationOutput(out)
+		require.NoError(t, ferr)
 		assert.Contains(t, result, "Successfully created automation")
 		assert.Contains(t, result, "Test Flow")
 		assert.Contains(t, result, "new-flow-id")
@@ -307,9 +331,9 @@ func TestAutomationCreateFlow(t *testing.T) {
 			}`), target)
 		}
 
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Equal(t, "name is required", result)
+		assert.Equal(t, "name cannot be empty", err.Error())
 	})
 
 	t.Run("create missing trigger", func(t *testing.T) {
@@ -320,9 +344,9 @@ func TestAutomationCreateFlow(t *testing.T) {
 			}`), target)
 		}
 
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "trigger is required")
+		assert.Contains(t, err.Error(), "trigger is required")
 	})
 
 	t.Run("create multiple triggers", func(t *testing.T) {
@@ -333,9 +357,9 @@ func TestAutomationCreateFlow(t *testing.T) {
 			}`), target)
 		}
 
-		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "exactly one type set")
+		assert.Contains(t, err.Error(), "exactly one type set")
 	})
 }
 
@@ -364,8 +388,10 @@ func TestAutomationUpdateFlow(t *testing.T) {
 			}`, flowID)), target)
 		}
 
-		result, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
+		out, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
 		require.NoError(t, err)
+		result, ferr := FormatUpdateAutomationOutput(out)
+		require.NoError(t, ferr)
 		assert.Contains(t, result, "Successfully updated automation")
 		assert.Contains(t, result, "Updated Name")
 	})
@@ -380,9 +406,9 @@ func TestAutomationUpdateFlow(t *testing.T) {
 			}`, missingID)), target)
 		}
 
-		result, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "Automation not found")
+		assert.Contains(t, err.Error(), "404")
 	})
 
 	t.Run("update invalid automation_id", func(t *testing.T) {
@@ -390,9 +416,9 @@ func TestAutomationUpdateFlow(t *testing.T) {
 			return json.Unmarshal([]byte(`{"name": "X"}`), target)
 		}
 
-		result, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Equal(t, "invalid automation_id", result)
+		assert.Equal(t, "invalid automation_id", err.Error())
 	})
 }
 
@@ -414,8 +440,10 @@ func TestAutomationDeleteFlow(t *testing.T) {
 			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id": %q}`, flowID)), target)
 		}
 
-		result, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
+		out, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
 		require.NoError(t, err)
+		result, ferr := FormatDeleteAutomationOutput(out)
+		require.NoError(t, ferr)
 		assert.Contains(t, result, "Successfully deleted automation")
 		assert.Contains(t, result, flowID)
 	})
@@ -426,9 +454,9 @@ func TestAutomationDeleteFlow(t *testing.T) {
 			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id": %q}`, missingID)), target)
 		}
 
-		result, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "Automation not found")
+		assert.Contains(t, err.Error(), "404")
 	})
 
 	t.Run("delete invalid automation_id", func(t *testing.T) {
@@ -436,9 +464,9 @@ func TestAutomationDeleteFlow(t *testing.T) {
 			return json.Unmarshal([]byte(`{}`), target)
 		}
 
-		result, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
+		_, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Equal(t, "invalid automation_id", result)
+		assert.Equal(t, "invalid automation_id", err.Error())
 	})
 }
 
@@ -462,9 +490,9 @@ func TestAutomationErrorHandling(t *testing.T) {
 			return json.Unmarshal([]byte(`{}`), target)
 		}
 
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "permission")
+		assert.Contains(t, err.Error(), "403")
 	})
 
 	t.Run("connection error", func(t *testing.T) {
@@ -477,9 +505,9 @@ func TestAutomationErrorHandling(t *testing.T) {
 			return json.Unmarshal([]byte(`{}`), target)
 		}
 
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, result, "not installed or not reachable")
+		assert.Contains(t, err.Error(), "connection refused")
 	})
 
 	t.Run("nil client", func(t *testing.T) {
@@ -490,9 +518,9 @@ func TestAutomationErrorHandling(t *testing.T) {
 			return json.Unmarshal([]byte(`{}`), target)
 		}
 
-		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
+		_, err := provider.toolListAutomations(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Equal(t, "client not available", result)
+		assert.Equal(t, "client not available in context", err.Error())
 	})
 }
 
@@ -646,6 +674,59 @@ func TestAutomationErrorDetail(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, automationErrorDetail(tt.err))
+		})
+	}
+}
+
+// TestAutomationFormatters_AlwaysAppendPluginAnnotations exercises every
+// automation output formatter with a DTO whose PluginAnnotations contain a
+// unique sentinel, and asserts the sentinel appears in the rendered output.
+//
+// When you add a new FormatXxxAutomationOutput-style formatter, add a case here
+// so we catch any return path that forgets to call format.AppendPluginAnnotations.
+func TestAutomationFormatters_AlwaysAppendPluginAnnotations(t *testing.T) {
+	const sentinel = "PLUGIN_ANNOTATION_SENTINEL_AUTO_F8C2A3"
+	anns := []string{sentinel}
+
+	cases := map[string]func() (string, error){
+		"FormatAutomationInstructionsOutput": func() (string, error) {
+			return FormatAutomationInstructionsOutput(AutomationInstructionsOutput{
+				Instructions:      "do thing",
+				PluginAnnotations: anns,
+			})
+		},
+		"FormatListAutomationsOutput": func() (string, error) {
+			return FormatListAutomationsOutput(ListAutomationsOutput{
+				Flows:             []AutomationFlow{{ID: "f1", Name: "Flow", Enabled: true}},
+				PluginAnnotations: anns,
+			})
+		},
+		"FormatCreateAutomationOutput": func() (string, error) {
+			return FormatCreateAutomationOutput(CreateAutomationOutput{
+				Flow:              AutomationFlow{ID: "f1", Name: "Flow"},
+				PluginAnnotations: anns,
+			})
+		},
+		"FormatUpdateAutomationOutput": func() (string, error) {
+			return FormatUpdateAutomationOutput(UpdateAutomationOutput{
+				Flow:              AutomationFlow{ID: "f1", Name: "Flow"},
+				PluginAnnotations: anns,
+			})
+		},
+		"FormatDeleteAutomationOutput": func() (string, error) {
+			return FormatDeleteAutomationOutput(DeleteAutomationOutput{
+				AutomationID:      "f1",
+				PluginAnnotations: anns,
+			})
+		},
+	}
+
+	for name, fn := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := fn()
+			require.NoError(t, err)
+			assert.Contains(t, out, sentinel,
+				"formatter %q must include plugin annotations in its output (call format.AppendPluginAnnotations on every return path)", name)
 		})
 	}
 }

@@ -20,24 +20,30 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// ToolHookConfig holds optional plugin-relative callback paths for a tool (from bridge metadata).
+type ToolHookConfig struct {
+	BeforeCallback string `json:"before_callback,omitempty"`
+	AfterCallback  string `json:"after_callback,omitempty"`
+}
+
 // MCPToolContext provides MCP-specific functionality with the authenticated client.
 type MCPToolContext struct {
 	Ctx        context.Context
 	Client     *model.Client4
 	AccessMode AccessMode
 	BotUserID  string // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
+
+	// MMServerURL is the Mattermost server base URL (same as API Client4 origin) for building /plugins/{id}/... hook URLs.
+	MMServerURL  string
+	HookPluginID string
+	ToolHooks    map[string]ToolHookConfig
 }
 
-// MCPToolResolver defines the signature for MCP tool resolvers
-type MCPToolResolver func(*MCPToolContext, llm.ToolArgumentGetter) (string, error)
+// TypedResolver returns the typed output for a tool; registerTool runs the after-hook and formatter.
+type TypedResolver[T any] func(*MCPToolContext, llm.ToolArgumentGetter) (T, error)
 
-// MCPTool represents a tool specifically for MCP use with our custom context
-type MCPTool struct {
-	Name        string
-	Description string
-	Schema      *jsonschema.Schema
-	Resolver    MCPToolResolver
-}
+// Formatter renders post-after-hook output for the LLM.
+type Formatter[T any] func(T) (string, error)
 
 type ToolProvider interface {
 	ProvideTools(*mcp.Server)
@@ -55,11 +61,11 @@ type SemanticSearchService interface {
 type MattermostToolProvider struct {
 	authProvider     auth.AuthenticationProvider
 	logger           logger.Logger
-	mmServerURL      string // Mattermost server URL for API communication (internal URL if set, otherwise external)
+	mmServerURL      string // Mattermost server URL for API communication and hook callbacks (internal URL if set, otherwise external)
 	devMode          bool
 	accessMode       AccessMode
-	trackAIGenerated bool                  // Whether to add ai_generated_by props to posts
-	searchService    SemanticSearchService // Optional semantic search service, can be nil
+	trackAIGenerated bool // Whether to add ai_generated_by props to posts
+	searchService    SemanticSearchService
 }
 
 // NewMattermostToolProvider creates a new tool provider
@@ -85,28 +91,17 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 
 // ProvideTools registers all available MCP tools with the server.
 func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
-	mcpTools := []MCPTool{}
+	p.providePostTools(mcpServer)
+	p.provideChannelTools(mcpServer)
+	p.provideTeamTools(mcpServer)
+	p.provideSearchTools(mcpServer)
+	p.provideAgentTools(mcpServer)
+	p.provideAutomationTools(mcpServer)
 
-	// Add regular tools
-	mcpTools = append(mcpTools, p.getPostTools()...)
-	mcpTools = append(mcpTools, p.getChannelTools()...)
-	mcpTools = append(mcpTools, p.getTeamTools()...)
-	mcpTools = append(mcpTools, p.getSearchTools()...)
-	mcpTools = append(mcpTools, p.getAgentTools()...)
-
-	// Automation tools are always registered; availability is checked dynamically
-	// via middleware on each tools/list request.
-	mcpTools = append(mcpTools, p.getAutomationTools()...)
-
-	// Add dev tools if dev mode is enabled
 	if p.devMode {
-		mcpTools = append(mcpTools, p.getDevUserTools()...)
-		mcpTools = append(mcpTools, p.getDevPostTools()...)
-		mcpTools = append(mcpTools, p.getDevTeamTools()...)
-	}
-
-	for _, mcpTool := range mcpTools {
-		p.registerDynamicTool(mcpServer, mcpTool)
+		p.provideDevUserTools(mcpServer)
+		p.provideDevPostTools(mcpServer)
+		p.provideDevTeamTools(mcpServer)
 	}
 
 	// Add middleware to dynamically filter automation tools from tools/list
@@ -177,88 +172,109 @@ func (p *MattermostToolProvider) automationToolFilterMiddleware() mcp.Middleware
 	}
 }
 
-// registerDynamicTool registers a single tool with the MCP server.
-func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool MCPTool) {
-	tool := &mcp.Tool{
-		Name:        mcpTool.Name,
-		Description: mcpTool.Description,
-		InputSchema: nil, // Initialize as nil, will be set below if schema is available
+func emptyObjectJSONSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type:       "object",
+		Properties: make(map[string]*jsonschema.Schema),
 	}
+}
 
-	// Set the InputSchema from the MCPTool schema
-	if mcpTool.Schema != nil {
-		tool.InputSchema = mcpTool.Schema
-		p.logger.Debug("Registered tool with schema", "tool", mcpTool.Name)
-	} else {
-		// The MCP SDK requires an input schema, so provide a basic empty object schema
-		// This maintains compatibility with tools that don't define schemas
-		emptySchema := &jsonschema.Schema{
-			Type:       "object",
-			Properties: make(map[string]*jsonschema.Schema),
+func toolInputSchema(schema *jsonschema.Schema) *jsonschema.Schema {
+	if schema != nil {
+		return schema
+	}
+	return emptyObjectJSONSchema()
+}
+
+func mcpCallToolError(msg string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: "Error: " + msg},
+		},
+		IsError: true,
+	}
+}
+
+func mcpCallToolText(text string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: text},
+		},
+		IsError: false,
+	}
+}
+
+func (p *MattermostToolProvider) newToolArgsGetter(req *mcp.CallToolRequest, mcpContext *MCPToolContext) llm.ToolArgumentGetter {
+	return func(target interface{}) error {
+		argumentsBytes, marshalErr := json.Marshal(req.Params.Arguments)
+		if marshalErr != nil {
+			return fmt.Errorf("failed to marshal arguments: %w", marshalErr)
 		}
-		tool.InputSchema = emptySchema
-		p.logger.Debug("Registered tool with empty schema (no schema provided)", "tool", mcpTool.Name)
+		if validationErr := validateAccessRestrictions(argumentsBytes, target, string(mcpContext.AccessMode)); validationErr != nil {
+			return fmt.Errorf("access validation failed: %w", validationErr)
+		}
+		return json.Unmarshal(argumentsBytes, target)
+	}
+}
+
+// registerTool registers a typed resolver; the dispatcher runs before-hook, resolver,
+// after-hook (success and error paths), and the formatter.
+func registerTool[T any](
+	server *mcp.Server,
+	p *MattermostToolProvider,
+	name, description string,
+	schema *jsonschema.Schema,
+	resolver TypedResolver[T],
+	formatter Formatter[T],
+) {
+	tool := &mcp.Tool{
+		Name:        name,
+		Description: description,
+		InputSchema: toolInputSchema(schema),
+	}
+	if schema != nil {
+		p.logger.Debug("Registered tool with schema", "tool", name)
+	} else {
+		p.logger.Debug("Registered tool with empty schema (no schema provided)", "tool", name)
 	}
 
-	handler := func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Log tool invocation
-		p.logger.Debug("MCP tool called", "tool", mcpTool.Name)
+	server.AddTool(tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		p.logger.Debug("MCP tool called", "tool", name)
 
-		// Create MCP context from the authenticated client, passing along any metadata
 		mcpContext, err := p.createMCPToolContext(ctx, req.Params.Meta)
 		if err != nil {
 			p.logger.Debug("Failed to create MCP tool context", "error", err)
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					&mcp.TextContent{Text: "Error: " + err.Error()},
-				},
-				IsError: true,
-			}, nil
+			return mcpCallToolError(err.Error()), nil
 		}
 
-		// Create argument getter that extracts arguments from the MCP request
-		argsGetter := func(target interface{}) error {
-			// Convert MCP arguments to the target struct
-			argumentsBytes, marshalErr := json.Marshal(req.Params.Arguments)
-			if marshalErr != nil {
-				return fmt.Errorf("failed to marshal arguments: %w", marshalErr)
-			}
-
-			// Validate access restrictions before unmarshaling
-			if validationErr := validateAccessRestrictions(argumentsBytes, target, string(mcpContext.AccessMode)); validationErr != nil {
-				return fmt.Errorf("access validation failed: %w", validationErr)
-			}
-
-			return json.Unmarshal(argumentsBytes, target)
+		rawArgs := mapFromMCPArguments(req.Params.Arguments)
+		if err := RunBeforeHook(mcpContext, name, rawArgs); err != nil {
+			p.logger.Debug("MCP tool before-hook rejected or failed", "tool", name, "error", err.Error())
+			return mcpCallToolError(err.Error()), nil
 		}
 
-		// Call the tool resolver
-		result, err := mcpTool.Resolver(mcpContext, argsGetter)
+		argsGetter := p.newToolArgsGetter(req, mcpContext)
+		out, err := resolver(mcpContext, argsGetter)
 		if err != nil {
-			p.logger.Debug("MCP tool failed", "tool", mcpTool.Name, "error", err.Error())
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					&mcp.TextContent{Text: "Error: " + err.Error()},
-				},
-				IsError: true,
-			}, nil
+			p.logger.Debug("MCP tool failed", "tool", name, "error", err.Error())
+			sanitized := RunAfterHookError(mcpContext, name, err)
+			return mcpCallToolError(sanitized.Error()), nil
 		}
 
-		// Log successful completion
-		p.logger.Debug("MCP tool completed successfully", "tool", mcpTool.Name)
-
-		// Return successful result
-		callToolResult := &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: result},
-			},
-			IsError: false,
+		out, err = RunAfterHook(mcpContext, name, out)
+		if err != nil {
+			p.logger.Debug("MCP tool after-hook rejected or failed", "tool", name, "error", err.Error())
+			return mcpCallToolError(err.Error()), nil
 		}
-		return callToolResult, nil
-	}
 
-	// Register the tool using the Server.AddTool method
-	server.AddTool(tool, handler)
+		text, err := formatter(out)
+		if err != nil {
+			return mcpCallToolError(err.Error()), nil
+		}
+
+		p.logger.Debug("MCP tool completed successfully", "tool", name)
+		return mcpCallToolText(text), nil
+	})
 }
 
 // createMCPToolContext creates an MCPToolContext from the Go context, authenticated client, and request metadata
@@ -268,10 +284,34 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 		return nil, err
 	}
 
+	// Propagate the resolved Mattermost auth token and user ID onto the tool-call
+	// context so downstream HTTP callbacks (e.g. tool hooks into the calling plugin)
+	// can set Authorization and include user_id. The embedded MCP server path only
+	// sets SessionIDContextKey / TokenResolverContextKey, so without this the hook
+	// HTTP call would be anonymous and the target plugin's auth middleware would 401.
+	if client != nil && client.AuthToken != "" {
+		ctx = context.WithValue(ctx, auth.AuthTokenContextKey, client.AuthToken)
+	}
+	if identityProvider, ok := p.authProvider.(auth.UserIdentityProvider); ok {
+		if user, userErr := identityProvider.GetAuthenticatedUser(ctx); userErr == nil && user != nil {
+			ctx = context.WithValue(ctx, auth.UserIDContextKey, user.Id)
+		} else if userErr != nil {
+			p.logger.Debug("failed to resolve authenticated user for tool-call context", "error", userErr.Error())
+		}
+	}
+
 	mcpContext := &MCPToolContext{
-		Ctx:        ctx,
-		Client:     client,
-		AccessMode: p.accessMode,
+		Ctx:         ctx,
+		Client:      client,
+		AccessMode:  p.accessMode,
+		MMServerURL: p.mmServerURL,
+		ToolHooks:   decodeToolHooksFromMetadata(metadata),
+	}
+
+	if metadata != nil {
+		if id, ok := metadata["hook_plugin_id"].(string); ok {
+			mcpContext.HookPluginID = id
+		}
 	}
 
 	// Extract bot_user_id from metadata if present (for embedded servers)
@@ -283,6 +323,54 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	}
 
 	return mcpContext, nil
+}
+
+func mapFromMCPArguments(arguments any) map[string]any {
+	if arguments == nil {
+		return nil
+	}
+	m, ok := arguments.(map[string]any)
+	if ok {
+		return m
+	}
+	b, err := json.Marshal(arguments)
+	if err != nil {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func decodeToolHooksFromMetadata(metadata mcp.Meta) map[string]ToolHookConfig {
+	if metadata == nil {
+		return nil
+	}
+	raw, ok := metadata["tool_hooks"].(map[string]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]ToolHookConfig, len(raw))
+	for name, v := range raw {
+		entry, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		var cfg ToolHookConfig
+		if s, ok := entry["before_callback"].(string); ok {
+			cfg.BeforeCallback = s
+		}
+		if s, ok := entry["after_callback"].(string); ok {
+			cfg.AfterCallback = s
+		}
+		out[name] = cfg
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // NewJSONSchemaForAccessMode creates a JSONSchema from a Go struct, filtering fields based on access mode
