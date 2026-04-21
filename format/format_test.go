@@ -512,6 +512,34 @@ func TestWriteChannel(t *testing.T) {
 			},
 			expected: "ID: ch1\nName: test\nDisplay Name: Test\nType: O\nTeam ID: team1\n\n",
 		},
+		{
+			name: "channel with role admin",
+			entry: ChannelEntry{
+				Channel: &model.Channel{
+					Id:          "ch1",
+					Name:        "test",
+					DisplayName: "Test",
+					Type:        model.ChannelTypeOpen,
+				},
+				MemberCount: -1,
+				Role:        "admin",
+			},
+			expected: "ID: ch1\nName: test\nDisplay Name: Test\nType: O\nYour role: admin\n\n",
+		},
+		{
+			name: "channel with role not_member",
+			entry: ChannelEntry{
+				Channel: &model.Channel{
+					Id:          "ch1",
+					Name:        "test",
+					DisplayName: "Test",
+					Type:        model.ChannelTypeOpen,
+				},
+				MemberCount: -1,
+				Role:        "not_member",
+			},
+			expected: "ID: ch1\nName: test\nDisplay Name: Test\nType: O\nYour role: not_member\n\n",
+		},
 	}
 
 	for _, tt := range tests {

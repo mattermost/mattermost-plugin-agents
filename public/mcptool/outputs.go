@@ -48,6 +48,7 @@ type ChannelInfoOutput struct {
 	Channels               []*model.Channel       `json:"channels"`
 	TeamByID               map[string]*model.Team `json:"team_by_id,omitempty"`
 	MemberCountByChannelID map[string]int64       `json:"member_count_by_channel_id,omitempty"`
+	ChannelRoleByID        map[string]string      `json:"channel_role_by_id,omitempty"`
 	PluginAnnotations      []string               `json:"plugin_annotations,omitempty"`
 }
 

@@ -96,8 +96,7 @@ func (p *MattermostToolProvider) toolGetTeamInfo(mcpContext *MCPToolContext, arg
 		if !model.IsValidId(args.TeamID) {
 			return mcptool.TeamInfoOutput{}, fmt.Errorf("invalid team_id format")
 		}
-		var resp *model.Response
-		team, resp, err = client.GetTeam(ctx, args.TeamID, "")
+		team, _, err = client.GetTeam(ctx, args.TeamID, "")
 		if err != nil {
 			return mcptool.TeamInfoOutput{}, fmt.Errorf("error fetching team by ID: %w", err)
 		}

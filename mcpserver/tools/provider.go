@@ -33,6 +33,10 @@ type MCPToolContext struct {
 	AccessMode AccessMode
 	BotUserID  string // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
 
+	// UserID is the Mattermost user ID of the user the Client is authenticated as.
+	// Empty when the auth provider cannot resolve an authenticated user.
+	UserID string
+
 	// MMServerURL is the Mattermost server base URL (same as API Client4 origin) for building /plugins/{id}/... hook URLs.
 	MMServerURL  string
 	HookPluginID string
@@ -262,9 +266,11 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	if client != nil && client.AuthToken != "" {
 		ctx = context.WithValue(ctx, auth.AuthTokenContextKey, client.AuthToken)
 	}
+	var userID string
 	if identityProvider, ok := p.authProvider.(auth.UserIdentityProvider); ok {
 		if user, userErr := identityProvider.GetAuthenticatedUser(ctx); userErr == nil && user != nil {
 			ctx = context.WithValue(ctx, auth.UserIDContextKey, user.Id)
+			userID = user.Id
 		} else if userErr != nil {
 			p.logger.Debug("failed to resolve authenticated user for tool-call context", "error", userErr.Error())
 		}
@@ -276,6 +282,7 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 		AccessMode:  p.accessMode,
 		MMServerURL: p.mmServerURL,
 		ToolHooks:   decodeToolHooksFromMetadata(metadata),
+		UserID:      userID,
 	}
 
 	if metadata != nil {

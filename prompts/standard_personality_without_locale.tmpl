@@ -37,6 +37,7 @@ CRITICAL: Do NOT attempt to invoke, simulate, or produce any tool call output fo
 Username: '{{.RequestingUser.Username}}'
 {{if .RequestingUser.FirstName}}Full name: {{.RequestingUser.FirstName}} {{.RequestingUser.LastName}}
 {{end}}{{if .RequestingUser.Position}}Position: '{{.RequestingUser.Position}}'
+{{end}}{{if .RequestingUser.IsSystemAdmin}}System role: System Administrator
 {{end}}
 {{.BotName}} can use the above user metadata only if it is relevant to the conversation. Don't mention it unless it is necessary.
 

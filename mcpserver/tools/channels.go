@@ -78,7 +78,7 @@ func (p *MattermostToolProvider) provideChannelTools(s *mcp.Server) {
 		format.CreateChannelOutput,
 	)
 	registerTool(s, p, "get_channel_info",
-		"Get information about channel(s). Provide channel_id (fastest) or channel_name (matches against both display name and URL name, case-insensitive, supports partial matches). Optional: team_id to limit search scope. If multiple channels match (e.g., 'General' exists in multiple teams), returns ALL matches with team context for disambiguation. Returns channel metadata including ID, names, type, team, purpose, and member count. Example: {\"channel_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}",
+		"Get information about channel(s). Provide channel_id (fastest) or channel_name (matches against both display name and URL name, case-insensitive, supports partial matches). Optional: team_id to limit search scope. If multiple channels match (e.g., 'General' exists in multiple teams), returns ALL matches with team context for disambiguation. Returns channel metadata including ID, names, type, team, purpose, member count, and the requesting user's role in the channel (admin, member, guest, or not_member). Example: {\"channel_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}",
 		llm.NewJSONSchemaFromStruct[GetChannelInfoArgs](),
 		p.toolGetChannelInfo,
 		format.ChannelInfoOutput,
@@ -333,6 +333,9 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 
 	teamByID := make(map[string]*model.Team)
 	memberCountByChannelID := make(map[string]int64)
+	channelRoleByID := make(map[string]string)
+	userID := mcpContext.UserID
+
 	for _, channel := range channels {
 		if channel.TeamId != "" {
 			if _, exists := teamByID[channel.TeamId]; !exists {
@@ -345,12 +348,32 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 		if stats, _, statsErr := client.GetChannelStats(ctx, channel.Id, "", false); statsErr == nil {
 			memberCountByChannelID[channel.Id] = stats.MemberCount
 		}
+
+		if userID != "" {
+			member, resp, memberErr := client.GetChannelMember(ctx, channel.Id, userID, "")
+			switch {
+			case memberErr == nil:
+				switch {
+				case member.SchemeAdmin:
+					channelRoleByID[channel.Id] = "admin"
+				case member.SchemeGuest:
+					channelRoleByID[channel.Id] = "guest"
+				default:
+					channelRoleByID[channel.Id] = "member"
+				}
+			case resp != nil && resp.StatusCode == http.StatusNotFound:
+				channelRoleByID[channel.Id] = "not_member"
+			default:
+				p.logger.Warn("failed to get channel member for role lookup", "channel_id", channel.Id, "error", memberErr)
+			}
+		}
 	}
 
 	return mcptool.ChannelInfoOutput{
 		Channels:               channels,
 		TeamByID:               teamByID,
 		MemberCountByChannelID: memberCountByChannelID,
+		ChannelRoleByID:        channelRoleByID,
 	}, nil
 }
 
