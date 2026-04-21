@@ -16,6 +16,7 @@ function selectMenuPortalTarget(): HTMLElement | null {
     if (typeof document === 'undefined') {
         return null;
     }
+
     // Prefer #root so portaled menus inherit Mattermost theme CSS variables (same as the main app).
     return document.getElementById('root') ?? document.body;
 }
