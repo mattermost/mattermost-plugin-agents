@@ -711,4 +711,3 @@ func automationActionTypeName(a AutomationAction) string {
 		return "unknown"
 	}
 }
-

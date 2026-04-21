@@ -23,10 +23,10 @@ import (
 func TestRunBeforeHook_NoHook(t *testing.T) {
 	ctx := context.WithValue(context.Background(), auth.UserIDContextKey, "user-1")
 	mcpCtx := &MCPToolContext{
-		Ctx:               ctx,
-		MMServerURL: "https://mm.example.com",
-		HookPluginID:      "com.example.plugin",
-		ToolHooks:         nil,
+		Ctx:          ctx,
+		MMServerURL:  "https://mm.example.com",
+		HookPluginID: "com.example.plugin",
+		ToolHooks:    nil,
 	}
 	err := RunBeforeHook(mcpCtx, "search_posts", map[string]any{"q": "x"})
 	require.NoError(t, err)
@@ -42,9 +42,9 @@ func TestRunBeforeHook_ErrorRejects(t *testing.T) {
 	ctx := context.WithValue(context.Background(), auth.UserIDContextKey, "user-1")
 	ctx = context.WithValue(ctx, auth.AuthTokenContextKey, "tok")
 	mcpCtx := &MCPToolContext{
-		Ctx:               ctx,
-		MMServerURL: strings.TrimSuffix(srv.URL, ""),
-		HookPluginID:      "com.example.plugin",
+		Ctx:          ctx,
+		MMServerURL:  strings.TrimSuffix(srv.URL, ""),
+		HookPluginID: "com.example.plugin",
 		ToolHooks: map[string]ToolHookConfig{
 			"search_posts": {BeforeCallback: "/hooks/before"},
 		},
@@ -62,9 +62,9 @@ func TestRunBeforeHook_Non2xx(t *testing.T) {
 
 	ctx := context.Background()
 	mcpCtx := &MCPToolContext{
-		Ctx:               ctx,
-		MMServerURL: strings.TrimSuffix(srv.URL, ""),
-		HookPluginID:      "com.example.plugin",
+		Ctx:          ctx,
+		MMServerURL:  strings.TrimSuffix(srv.URL, ""),
+		HookPluginID: "com.example.plugin",
 		ToolHooks: map[string]ToolHookConfig{
 			"search_posts": {BeforeCallback: "/hooks/before"},
 		},
@@ -83,9 +83,9 @@ func TestRunBeforeHook_InvalidJSONResponse(t *testing.T) {
 
 	ctx := context.Background()
 	mcpCtx := &MCPToolContext{
-		Ctx:               ctx,
-		MMServerURL: strings.TrimSuffix(srv.URL, ""),
-		HookPluginID:      "com.example.plugin",
+		Ctx:          ctx,
+		MMServerURL:  strings.TrimSuffix(srv.URL, ""),
+		HookPluginID: "com.example.plugin",
 		ToolHooks: map[string]ToolHookConfig{
 			"search_posts": {BeforeCallback: "/hooks/before"},
 		},
@@ -134,9 +134,9 @@ func TestRunAfterHook_ErrorField(t *testing.T) {
 
 	ctx := context.Background()
 	mcpCtx := &MCPToolContext{
-		Ctx:               ctx,
-		MMServerURL: strings.TrimSuffix(srv.URL, ""),
-		HookPluginID:      "com.example.plugin",
+		Ctx:          ctx,
+		MMServerURL:  strings.TrimSuffix(srv.URL, ""),
+		HookPluginID: "com.example.plugin",
 		ToolHooks: map[string]ToolHookConfig{
 			"read_post": {AfterCallback: "/hooks/after"},
 		},
@@ -159,9 +159,9 @@ func TestRunAfterHook_Timeout(t *testing.T) {
 
 	ctx := context.Background()
 	mcpCtx := &MCPToolContext{
-		Ctx:               ctx,
-		MMServerURL: strings.TrimSuffix(srv.URL, ""),
-		HookPluginID:      "com.example.plugin",
+		Ctx:          ctx,
+		MMServerURL:  strings.TrimSuffix(srv.URL, ""),
+		HookPluginID: "com.example.plugin",
 		ToolHooks: map[string]ToolHookConfig{
 			"read_post": {AfterCallback: "/hooks/after"},
 		},
@@ -173,19 +173,19 @@ func TestRunAfterHook_Timeout(t *testing.T) {
 func TestRunAfterHookError_NoHook(t *testing.T) {
 	orig := fmt.Errorf("raw mm error")
 	mcpCtx := &MCPToolContext{
-		Ctx:               context.Background(),
-		MMServerURL: "https://mm.example.com",
-		HookPluginID:      "com.example.plugin",
-		ToolHooks:         nil,
+		Ctx:          context.Background(),
+		MMServerURL:  "https://mm.example.com",
+		HookPluginID: "com.example.plugin",
+		ToolHooks:    nil,
 	}
 	err := RunAfterHookError(mcpCtx, "read_post", orig)
 	require.Error(t, err)
 	assert.Equal(t, orig, err)
 
 	mcpCtx2 := &MCPToolContext{
-		Ctx:               context.Background(),
-		MMServerURL: "https://mm.example.com",
-		HookPluginID:      "com.example.plugin",
+		Ctx:          context.Background(),
+		MMServerURL:  "https://mm.example.com",
+		HookPluginID: "com.example.plugin",
 		ToolHooks: map[string]ToolHookConfig{
 			"read_post": {AfterCallback: ""},
 		},
@@ -229,9 +229,9 @@ func TestRunAfterHookError_PassThrough(t *testing.T) {
 
 	ctx := context.Background()
 	mcpCtx := &MCPToolContext{
-		Ctx:               ctx,
-		MMServerURL: strings.TrimSuffix(srv.URL, ""),
-		HookPluginID:      "com.example.plugin",
+		Ctx:          ctx,
+		MMServerURL:  strings.TrimSuffix(srv.URL, ""),
+		HookPluginID: "com.example.plugin",
 		ToolHooks: map[string]ToolHookConfig{
 			"read_post": {AfterCallback: "/hooks/after"},
 		},
@@ -250,9 +250,9 @@ func TestRunAfterHookError_HTTPFailure(t *testing.T) {
 
 	ctx := context.Background()
 	mcpCtx := &MCPToolContext{
-		Ctx:               ctx,
-		MMServerURL: strings.TrimSuffix(srv.URL, ""),
-		HookPluginID:      "com.example.plugin",
+		Ctx:          ctx,
+		MMServerURL:  strings.TrimSuffix(srv.URL, ""),
+		HookPluginID: "com.example.plugin",
 		ToolHooks: map[string]ToolHookConfig{
 			"read_post": {AfterCallback: "/hooks/after"},
 		},

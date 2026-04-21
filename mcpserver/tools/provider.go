@@ -222,7 +222,7 @@ func registerTool[T any](
 		}
 
 		rawArgs := mapFromMCPArguments(req.Params.Arguments)
-		if err := RunBeforeHook(mcpContext, name, rawArgs); err != nil {
+		if err = RunBeforeHook(mcpContext, name, rawArgs); err != nil {
 			p.logger.Debug("MCP tool before-hook rejected or failed", "tool", name, "error", err.Error())
 			return mcpCallToolError(err.Error()), nil
 		}

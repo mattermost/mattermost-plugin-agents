@@ -852,4 +852,3 @@ func ListAgentsOutput(o mcptool.ListAgentsOutput) (string, error) {
 	}
 	return AppendPluginAnnotations(b.String(), o.PluginAnnotations), nil
 }
-
