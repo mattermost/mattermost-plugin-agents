@@ -740,6 +740,54 @@ func TestHandleGetAIBots(t *testing.T) {
 	}
 }
 
+func TestHandleGetAIBotsDefaultBotAfterFilteredBot(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	filteredBot := bots.NewBot(
+		llm.BotConfig{
+			Name:            "hidden",
+			DisplayName:     "Hidden Agent",
+			UserAccessLevel: llm.UserAccessLevelBlock,
+			UserIDs:         []string{"userid"},
+		},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: "hiddenbotuserid1234567890", Username: "hidden", DisplayName: "Hidden Agent"},
+		nil,
+	)
+	defaultBot := bots.NewBot(
+		llm.BotConfig{
+			Name:        "ai",
+			DisplayName: "Default Agent",
+		},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: "defaultbotuserid1234567890", Username: "ai", DisplayName: "Default Agent"},
+		nil,
+	)
+	e.bots.SetBotsForTesting([]*bots.Bot{filteredBot, defaultBot})
+
+	e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+	request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
+	request.Header.Add("Mattermost-User-ID", "userid")
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+	resp := recorder.Result()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response AIBotsResponse
+	err := json.NewDecoder(resp.Body).Decode(&response)
+	require.NoError(t, err)
+	require.Len(t, response.Bots, 1)
+	require.Equal(t, "ai", response.Bots[0].Username)
+}
+
 func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard

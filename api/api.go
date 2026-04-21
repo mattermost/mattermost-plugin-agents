@@ -419,7 +419,7 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 	// Put the default bot first.
 	bots := make([]AIBotInfo, 0, len(allBots))
 	defaultBotName := a.config.GetDefaultBotName()
-	for i, bot := range allBots {
+	for _, bot := range allBots {
 		// Don't return bots the user is excluded from using.
 		if a.bots.CheckUsageRestrictionsForUser(bot, userID) != nil {
 			continue
@@ -448,7 +448,8 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 			AutoEnableNewMCPTools: bot.GetConfig().AutoEnableNewMCPTools,
 		})
 		if bot.GetMMBot().Username == defaultBotName {
-			bots[0], bots[i] = bots[i], bots[0]
+			last := len(bots) - 1
+			bots[0], bots[last] = bots[last], bots[0]
 		}
 	}
 
