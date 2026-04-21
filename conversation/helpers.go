@@ -8,6 +8,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // textBlocks creates content blocks from a plain text message.
@@ -81,7 +82,11 @@ func toolUseBlocks(
 }
 
 // toolResultBlocks builds tool_result-side content blocks from ToolRunner output.
+// Auto-executed tool rounds are terminal: there is no share/keep-private step,
+// so stamp DecidedAt at creation time to reflect that no further approval UI
+// is needed. DMs inherit the same treatment (shared=true, decided).
 func toolResultBlocks(results []toolrunner.ToolResult, shared bool) []ContentBlock {
+	now := model.GetMillis()
 	blocks := make([]ContentBlock, len(results))
 	for i, tr := range results {
 		status := StatusSuccess
@@ -94,6 +99,7 @@ func toolResultBlocks(results []toolrunner.ToolResult, shared bool) []ContentBlo
 			Content:   tr.Result,
 			Status:    status,
 			Shared:    BoolPtr(shared),
+			DecidedAt: Int64Ptr(now),
 		}
 	}
 	return blocks

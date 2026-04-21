@@ -153,21 +153,36 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return fmt.Errorf("failed to update turn with resolved statuses: %w", updateErr)
 	}
 
-	// Write tool results as a tool_result turn.
+	// Write tool results as a tool_result turn. DecidedAt is set when the
+	// result is terminal — no share/keep-private decision remains. That
+	// applies to every DM result (auto-shared) and every rejected tool
+	// (nothing was produced to share). Channel results from accepted tools
+	// stay undecided until the requester clicks Share or Keep Private.
 	shared := isDM
+	toolUseStatusByID := make(map[string]string, len(pendingBlocks))
+	for _, b := range pendingBlocks {
+		if b.Type == conversation.BlockTypeToolUse {
+			toolUseStatusByID[b.ID] = b.Status
+		}
+	}
+	now := model.GetMillis()
 	resultBlocks := make([]conversation.ContentBlock, 0, len(toolResults))
 	for _, tr := range toolResults {
 		status := conversation.StatusSuccess
 		if tr.IsError {
 			status = conversation.StatusError
 		}
-		resultBlocks = append(resultBlocks, conversation.ContentBlock{
+		rb := conversation.ContentBlock{
 			Type:      conversation.BlockTypeToolResult,
 			ToolUseID: tr.ToolCallID,
 			Content:   tr.Result,
 			Status:    status,
 			Shared:    conversation.BoolPtr(shared),
-		})
+		}
+		if isDM || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
+			rb.DecidedAt = conversation.Int64Ptr(now)
+		}
+		resultBlocks = append(resultBlocks, rb)
 	}
 	resultContent, err := json.Marshal(resultBlocks)
 	if err != nil {
@@ -242,6 +257,28 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return fmt.Errorf("failed to get turns: %w", err)
 	}
 
+	// Collect the tool_use IDs carried by the clicked post's assistant turn.
+	// The share/keep-private decision applies to exactly those tools; we
+	// stamp DecidedAt on their matching tool_result blocks so future reads
+	// can tell "decision made" from "still pending". Keep Private records
+	// the decision without flipping Shared.
+	clickedPostToolUseIDs := make(map[string]struct{})
+	for _, turn := range turns {
+		if turn.Role != "assistant" || turn.PostID == nil || *turn.PostID != post.Id {
+			continue
+		}
+		var blocks []conversation.ContentBlock
+		if unmarshalErr := json.Unmarshal(turn.Content, &blocks); unmarshalErr != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type == conversation.BlockTypeToolUse && b.ID != "" {
+				clickedPostToolUseIDs[b.ID] = struct{}{}
+			}
+		}
+	}
+
+	now := model.GetMillis()
 	for _, turn := range turns {
 		var blocks []conversation.ContentBlock
 		if unmarshalErr := json.Unmarshal(turn.Content, &blocks); unmarshalErr != nil {
@@ -259,6 +296,10 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 			case conversation.BlockTypeToolResult:
 				if acceptedSet[blocks[i].ToolUseID] {
 					blocks[i].Shared = conversation.BoolPtr(true)
+					modified = true
+				}
+				if _, ok := clickedPostToolUseIDs[blocks[i].ToolUseID]; ok && blocks[i].DecidedAt == nil {
+					blocks[i].DecidedAt = conversation.Int64Ptr(now)
 					modified = true
 				}
 			}

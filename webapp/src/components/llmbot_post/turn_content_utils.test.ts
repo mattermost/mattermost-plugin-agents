@@ -445,7 +445,7 @@ describe('deriveApprovalStageForPost', () => {
         expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('result');
     });
 
-    test('returns call when every matching result is already shared', () => {
+    test('returns call when every matching result has decided_at (auto_run_everywhere / DM)', () => {
         const assistantTurn = makeTurn({
             post_id: 'post_1',
             sequence: 1,
@@ -459,7 +459,7 @@ describe('deriveApprovalStageForPost', () => {
             sequence: 2,
             role: 'tool_result',
             content: [
-                {type: 'tool_result', tool_use_id: 'tc_1', content: 'found it', status: 'auto_approved', shared: true},
+                {type: 'tool_result', tool_use_id: 'tc_1', content: 'found it', status: 'auto_approved', shared: true, decided_at: 1000},
             ],
         });
         const conv = makeConversation([assistantTurn, resultTurn]);
@@ -503,12 +503,9 @@ describe('deriveApprovalStageForPost', () => {
         expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('call');
     });
 
-    // "Keep Private" does not flip any shared flag on the tool_result, so the
-    // naive `shared === true` check keeps returning 'result' forever, and the
-    // UI keeps rendering Share/Keep private buttons even after the user
-    // already clicked Keep Private. The follow-up assistant turn is the
-    // server's signal that the decision was made.
-    test('returns call when a follow-up post-linked assistant turn exists after the tool_result', () => {
+    // "Keep Private" leaves Shared=false but sets decided_at, so the stage
+    // transitions out of 'result' without needing a follow-up post heuristic.
+    test('returns call after Keep Private records decided_at even when Shared stays false', () => {
         const assistantTurn = makeTurn({
             id: 'turn_1',
             post_id: 'post_1',
@@ -523,16 +520,10 @@ describe('deriveApprovalStageForPost', () => {
             sequence: 2,
             role: 'tool_result',
             content: [
-                {type: 'tool_result', tool_use_id: 'tc_1', content: 'posted', status: 'success', shared: false},
+                {type: 'tool_result', tool_use_id: 'tc_1', content: 'posted', status: 'success', shared: false, decided_at: 2000},
             ],
         });
-        const followUp = makeTurn({
-            id: 'turn_3',
-            post_id: 'post_followup',
-            sequence: 3,
-            content: [{type: 'text', text: 'Kept private, here is my summary.'}],
-        });
-        const conv = makeConversation([assistantTurn, resultTurn, followUp]);
+        const conv = makeConversation([assistantTurn, resultTurn]);
         expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('call');
     });
 

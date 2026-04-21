@@ -69,6 +69,10 @@ export interface ContentBlock {
     tool_use_id?: string;
     content?: string;
 
+    // Timestamp (ms) at which the share/keep-private decision was recorded.
+    // nil → decision still pending; non-nil → decision made, no approval UI.
+    decided_at?: number;
+
     // File / Image fields
     filename?: string;
     mime_type?: string;

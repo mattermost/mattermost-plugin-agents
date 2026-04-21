@@ -200,6 +200,11 @@ export function extractAnnotationsFromTurn(turn: Turn): Annotation[] {
  * Determine whether the tool approval UI should show the 'call' stage
  * (accept/reject tool execution) or the 'result' stage (share/keep-private)
  * across every turn that belongs to this post's response.
+ *
+ * 'call' is also returned when no decision is pending: rejected tools (nothing
+ * to share), auto-run everywhere tools (already shared), and tools whose
+ * share/keep-private decision has already been recorded (tool_result has
+ * decided_at set).
  */
 export function deriveApprovalStageForPost(
     conversation: ConversationResponse,
@@ -210,13 +215,9 @@ export function deriveApprovalStageForPost(
         return 'call';
     }
 
-    // Only consider tool_use blocks that were actually executed. Rejected
-    // tools have no shareable output, so they must not push the UI into the
-    // 'result' stage — otherwise the auto-submit-on-all-rejected effect in
-    // ToolApprovalSet will fire doToolResult([]) in a loop, and each empty
-    // share call triggers a fresh follow-up stream on the server.
-    const toolUseIDs = new Set<string>();
-    const matchedResults: ContentBlock[] = [];
+    // Only consider tool_use blocks that were actually executed — rejected
+    // tools have no shareable output, so they never drive a 'result' stage.
+    const executedToolUseIDs = new Set<string>();
     for (const t of turns) {
         for (const block of t.content) {
             if (block.type !== BlockTypeToolUse || !block.id) {
@@ -225,23 +226,24 @@ export function deriveApprovalStageForPost(
             if (block.status === StatusSuccess ||
                 block.status === StatusError ||
                 block.status === StatusAutoApproved) {
-                toolUseIDs.add(block.id);
+                executedToolUseIDs.add(block.id);
             }
         }
     }
-    if (toolUseIDs.size === 0) {
+    if (executedToolUseIDs.size === 0) {
         return 'call';
     }
 
-    // Results for the anchor's tool_use blocks may live in a later tool_result
-    // turn (after user approval of pending tools), so look across the whole
-    // conversation.
+    // Gather matching tool_result blocks. Results for the anchor's tool_use
+    // blocks may live in a later tool_result turn (after user approval),
+    // so scan the full conversation.
+    const matchedResults: ContentBlock[] = [];
     for (const t of conversation.turns) {
         for (const block of t.content) {
             if (
                 block.type === BlockTypeToolResult &&
                 block.tool_use_id &&
-                toolUseIDs.has(block.tool_use_id)
+                executedToolUseIDs.has(block.tool_use_id)
             ) {
                 matchedResults.push(block);
             }
@@ -252,31 +254,11 @@ export function deriveApprovalStageForPost(
         return 'call';
     }
 
-    // If all matching results are already shared (e.g. auto_run_everywhere
-    // or DM context), no result-approval UI is needed.
-    if (matchedResults.every((b) => b.shared === true)) {
+    // A result is "done" if the share/keep-private decision was recorded
+    // (decided_at set) — this distinguishes "kept private" from "still
+    // pending", which both present Shared=false.
+    if (matchedResults.every((b) => b.decided_at != null)) {
         return 'call';
-    }
-
-    // "Keep Private" does not flip any shared flag server-side, so a naive
-    // `shared === true` check cannot tell "user hasn't decided" apart from
-    // "user chose keep private". A follow-up assistant turn (a post-linked
-    // turn written after the last tool_result) only exists once the decision
-    // has been made and the server streamed the next reply, so treat that as
-    // proof the result stage is done.
-    const sortedForFollowUp = [...conversation.turns].sort((a, b) => a.sequence - b.sequence);
-    let maxToolResultSeq = 0;
-    for (const t of sortedForFollowUp) {
-        if (t.role === 'tool_result' && t.sequence > maxToolResultSeq) {
-            maxToolResultSeq = t.sequence;
-        }
-    }
-    if (maxToolResultSeq > 0) {
-        for (const t of sortedForFollowUp) {
-            if (t.role === 'assistant' && t.post_id && t.sequence > maxToolResultSeq) {
-                return 'call';
-            }
-        }
     }
 
     return 'result';

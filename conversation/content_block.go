@@ -49,6 +49,16 @@ type ContentBlock struct {
 	Status       string          `json:"status,omitempty"`
 	Shared       *bool           `json:"shared,omitempty"` // pointer to distinguish unset from false
 
+	// DecidedAt (tool_result blocks) records when the share/keep-private
+	// decision was made — either by the user clicking Share or Keep Private
+	// in a channel, or implicitly at creation time (DMs, rejected tools,
+	// auto_run_everywhere results). A nil value means the result still
+	// needs a user decision; any non-nil value means the decision is final
+	// and no further approval UI should appear. This distinguishes the
+	// "undecided" and "decided to keep private" states, which both present
+	// Shared=false but require opposite UI behavior.
+	DecidedAt *int64 `json:"decided_at,omitempty"`
+
 	// ToolResult fields
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	Content   string `json:"content,omitempty"` // tool_result or file content
@@ -80,6 +90,9 @@ type WebSearchContext struct {
 
 // BoolPtr returns a pointer to the given bool value.
 func BoolPtr(b bool) *bool { return &b }
+
+// Int64Ptr returns a pointer to the given int64 value.
+func Int64Ptr(v int64) *int64 { return &v }
 
 // FilterForNonRequester returns a new slice of content blocks with private
 // tool data redacted. Tool use blocks with shared != true have their Input
