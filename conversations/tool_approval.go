@@ -52,6 +52,12 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return ErrPostMissingConversationID
 	}
 
+	c.mmClient.LogDebug("HandleToolCall",
+		"post_id", post.Id,
+		"conv_id", convID,
+		"accepted_count", len(acceptedToolIDs),
+	)
+
 	conv, err := c.convService.GetConversation(convID)
 	if err != nil {
 		return fmt.Errorf("failed to get conversation: %w", err)
@@ -210,6 +216,12 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	if !ok || convID == "" {
 		return ErrPostMissingConversationID
 	}
+
+	c.mmClient.LogDebug("HandleToolResult",
+		"post_id", post.Id,
+		"conv_id", convID,
+		"accepted_count", len(acceptedToolIDs),
+	)
 
 	conv, err := c.convService.GetConversation(convID)
 	if err != nil {
