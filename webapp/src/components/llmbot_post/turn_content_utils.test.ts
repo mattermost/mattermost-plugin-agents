@@ -411,143 +411,41 @@ describe('extractAnnotationsFromTurn', () => {
     });
 });
 
+// deriveApprovalStageForPost now reads the server-computed approval_state
+// field on the post-anchor assistant turn. Server-side tests (see
+// conversation/approval_state_test.go) cover the actual state machine; these
+// tests guard the pass-through and the fail-safe default.
 describe('deriveApprovalStageForPost', () => {
-    test('returns call when no tool_result turn follows', () => {
-        const assistantTurn = makeTurn({
-            post_id: 'post_1',
-            sequence: 1,
-            content: [
-                {type: 'tool_use', id: 'tc_1', name: 'search', status: 'pending'},
-            ],
-        });
-        const conv = makeConversation([assistantTurn]);
-        expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('call');
-    });
-
-    test('returns result when tool_result turn follows (not shared)', () => {
-        const assistantTurn = makeTurn({
-            post_id: 'post_1',
-            sequence: 1,
-            content: [
-                {type: 'tool_use', id: 'tc_1', name: 'search', status: 'success', shared: false},
-            ],
-        });
-        const resultTurn = makeTurn({
-            id: 'turn_2',
-            post_id: null,
-            sequence: 2,
-            role: 'tool_result',
-            content: [
-                {type: 'tool_result', tool_use_id: 'tc_1', content: 'found it', status: 'success', shared: false},
-            ],
-        });
-        const conv = makeConversation([assistantTurn, resultTurn]);
-        expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('result');
-    });
-
-    test('returns call when every matching result has decided_at (auto_run_everywhere / DM)', () => {
-        const assistantTurn = makeTurn({
-            post_id: 'post_1',
-            sequence: 1,
-            content: [
-                {type: 'tool_use', id: 'tc_1', name: 'search', status: 'auto_approved', shared: true},
-            ],
-        });
-        const resultTurn = makeTurn({
-            id: 'turn_2',
-            post_id: null,
-            sequence: 2,
-            role: 'tool_result',
-            content: [
-                {type: 'tool_result', tool_use_id: 'tc_1', content: 'found it', status: 'auto_approved', shared: true, decided_at: 1000},
-            ],
-        });
-        const conv = makeConversation([assistantTurn, resultTurn]);
-        expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('call');
-    });
-
-    test('returns call when post has no tool_use blocks', () => {
+    test('returns the server-set approval_state on the post anchor', () => {
         const anchor = makeTurn({
             post_id: 'post_1',
             sequence: 1,
-            content: [{type: 'text', text: 'hello'}],
+            role: 'assistant',
+            approval_state: 'result',
+            content: [],
         });
         const conv = makeConversation([anchor]);
-        expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('call');
-    });
-
-    // ToolApprovalSet auto-submits doToolResult([]) once every tool on a post
-    // is Rejected and the stage is 'result'. In channels that kicks off a new
-    // LLM round, which creates another pending post, which the UI flags as
-    // all-rejected on the next conversation refetch — a loop that generates
-    // dozens of Claude replies until the test times out. Returning 'call'
-    // here short-circuits the auto-submit effect.
-    test('returns call when every tool_use block is rejected', () => {
-        const assistantTurn = makeTurn({
-            post_id: 'post_1',
-            sequence: 1,
-            content: [
-                {type: 'tool_use', id: 'tc_1', name: 'get_channel_info', status: 'rejected', shared: false},
-            ],
-        });
-        const resultTurn = makeTurn({
-            id: 'turn_2',
-            post_id: null,
-            sequence: 2,
-            role: 'tool_result',
-            content: [
-                {type: 'tool_result', tool_use_id: 'tc_1', content: 'Tool call rejected by user', status: 'error', shared: false},
-            ],
-        });
-        const conv = makeConversation([assistantTurn, resultTurn]);
-        expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('call');
-    });
-
-    // "Keep Private" leaves Shared=false but sets decided_at, so the stage
-    // transitions out of 'result' without needing a follow-up post heuristic.
-    test('returns call after Keep Private records decided_at even when Shared stays false', () => {
-        const assistantTurn = makeTurn({
-            id: 'turn_1',
-            post_id: 'post_1',
-            sequence: 1,
-            content: [
-                {type: 'tool_use', id: 'tc_1', name: 'create_post', status: 'success', shared: false},
-            ],
-        });
-        const resultTurn = makeTurn({
-            id: 'turn_2',
-            post_id: null,
-            sequence: 2,
-            role: 'tool_result',
-            content: [
-                {type: 'tool_result', tool_use_id: 'tc_1', content: 'posted', status: 'success', shared: false, decided_at: 2000},
-            ],
-        });
-        const conv = makeConversation([assistantTurn, resultTurn]);
-        expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('call');
-    });
-
-    test('returns result when some tool_use blocks executed even with rejected siblings', () => {
-        const assistantTurn = makeTurn({
-            post_id: 'post_1',
-            sequence: 1,
-            content: [
-                {type: 'tool_use', id: 'tc_1', name: 'read', status: 'rejected', shared: false},
-                {type: 'tool_use', id: 'tc_2', name: 'write', status: 'success', shared: false},
-            ],
-        });
-        const resultTurn = makeTurn({
-            id: 'turn_2',
-            post_id: null,
-            sequence: 2,
-            role: 'tool_result',
-            content: [
-                {type: 'tool_result', tool_use_id: 'tc_1', content: 'rejected', status: 'error', shared: false},
-                {type: 'tool_result', tool_use_id: 'tc_2', content: 'ok', status: 'success', shared: false},
-            ],
-        });
-        const conv = makeConversation([assistantTurn, resultTurn]);
         expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('result');
+    });
+
+    test('defaults to done when the anchor or approval_state is missing', () => {
+        const anchor = makeTurn({
+            post_id: 'post_1',
+            sequence: 1,
+            role: 'assistant',
+            content: [],
+        });
+        const conv = makeConversation([anchor]);
+
+        // Defaulting to 'done' renders no approval buttons — safer than
+        // 'call' or 'result' which would trigger approval UI on a post
+        // whose state the server chose not to report.
+        expect(deriveApprovalStageForPost(conv, 'post_1')).toBe('done');
+    });
+
+    test('returns done when the post is not in the conversation', () => {
+        const conv = makeConversation([]);
+        expect(deriveApprovalStageForPost(conv, 'missing')).toBe('done');
     });
 });
 

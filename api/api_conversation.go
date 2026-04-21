@@ -36,6 +36,10 @@ type TurnResponse struct {
 	TokensIn  int64           `json:"tokens_in"`
 	TokensOut int64           `json:"tokens_out"`
 	Sequence  int             `json:"sequence"`
+	// ApprovalState is set only on post-anchor assistant turns (those with
+	// a non-nil PostID). One of "call" | "result" | "done". Computed by the
+	// server so the webapp renders approval UI from a single source of truth.
+	ApprovalState string `json:"approval_state,omitempty"`
 }
 
 // handleGetConversation returns a conversation and its turns with privacy filtering applied.
@@ -104,6 +108,15 @@ func (a *API) handleGetConversation(c *gin.Context) {
 	})
 }
 
+// approvalStateForTurn computes the approval-stage string for a post-anchor
+// assistant turn, or "" for any turn that is not a post anchor.
+func approvalStateForTurn(turn store.Turn, allTurns []store.Turn) string {
+	if turn.Role != "assistant" || turn.PostID == nil {
+		return ""
+	}
+	return conversation.ComputePostApprovalState(allTurns, *turn.PostID)
+}
+
 // filterTurnsForNonRequester applies privacy filtering and display sanitization
 // to turn content for a user who is not the conversation owner.
 func filterTurnsForNonRequester(turns []store.Turn) ([]TurnResponse, error) {
@@ -120,13 +133,14 @@ func filterTurnsForNonRequester(turns []store.Turn) ([]TurnResponse, error) {
 			return nil, fmt.Errorf("failed to marshal filtered content: %w", err)
 		}
 		result[i] = TurnResponse{
-			ID:        turn.ID,
-			PostID:    turn.PostID,
-			Role:      turn.Role,
-			Content:   sanitizedJSON,
-			TokensIn:  turn.TokensIn,
-			TokensOut: turn.TokensOut,
-			Sequence:  turn.Sequence,
+			ID:            turn.ID,
+			PostID:        turn.PostID,
+			Role:          turn.Role,
+			Content:       sanitizedJSON,
+			TokensIn:      turn.TokensIn,
+			TokensOut:     turn.TokensOut,
+			Sequence:      turn.Sequence,
+			ApprovalState: approvalStateForTurn(turn, turns),
 		}
 	}
 	return result, nil
@@ -146,13 +160,14 @@ func turnsToResponse(turns []store.Turn) ([]TurnResponse, error) {
 			return nil, fmt.Errorf("failed to marshal sanitized content: %w", err)
 		}
 		result[i] = TurnResponse{
-			ID:        turn.ID,
-			PostID:    turn.PostID,
-			Role:      turn.Role,
-			Content:   sanitizedJSON,
-			TokensIn:  turn.TokensIn,
-			TokensOut: turn.TokensOut,
-			Sequence:  turn.Sequence,
+			ID:            turn.ID,
+			PostID:        turn.PostID,
+			Role:          turn.Role,
+			Content:       sanitizedJSON,
+			TokensIn:      turn.TokensIn,
+			TokensOut:     turn.TokensOut,
+			Sequence:      turn.Sequence,
+			ApprovalState: approvalStateForTurn(turn, turns),
 		}
 	}
 	return result, nil

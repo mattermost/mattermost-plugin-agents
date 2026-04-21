@@ -84,11 +84,11 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     // Track collapsed state for each tool
     const [collapsedTools, setCollapsedTools] = useState<string[]>([]);
     const [toolDecisions, setToolDecisions] = useState<ToolDecision>({});
-    const autoSubmitRef = useRef(false);
     const submitInFlightRef = useRef(false);
     const toolDecisionsRef = useRef<ToolDecision>({});
 
     const isCallStage = props.approvalStage === 'call';
+    const isResultStage = props.approvalStage === 'result';
 
     // When auto-approved during call stage, suppress approval buttons
     const effectiveCanApprove = props.isAutoApproved && isCallStage ? false : props.canApprove;
@@ -102,12 +102,17 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             return props.toolCalls.filter((call) => call.status === ToolCallStatus.Pending);
         }
 
+        if (!isResultStage) {
+            // 'done' stage — server says no decision remains, render no buttons.
+            return [];
+        }
+
         return props.toolCalls.filter((call) =>
             call.status === ToolCallStatus.Success ||
             call.status === ToolCallStatus.Error ||
             call.status === ToolCallStatus.AutoApproved,
         );
-    }, [props.toolCalls, effectiveCanApprove, isCallStage]);
+    }, [props.toolCalls, effectiveCanApprove, isCallStage, isResultStage]);
 
     const decisionToolIDSet = useMemo(() => {
         return new Set(decisionToolCalls.map((call) => call.id));
@@ -117,7 +122,6 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         setToolDecisions({});
         setIsSubmitting(false);
         setError('');
-        autoSubmitRef.current = false;
         submitInFlightRef.current = false;
         toolDecisionsRef.current = {};
     }, [props.toolCalls, props.approvalStage]);
@@ -153,28 +157,6 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             submitInFlightRef.current = false;
         }
     }, [isCallStage, props.postID, props.conversationID]);
-
-    useEffect(() => {
-        if (isCallStage || !effectiveCanApprove) {
-            return;
-        }
-
-        if (decisionToolCalls.length > 0 || props.toolCalls.length === 0) {
-            return;
-        }
-
-        const allRejected = props.toolCalls.every((call) => call.status === ToolCallStatus.Rejected);
-        if (!allRejected) {
-            return;
-        }
-
-        if (autoSubmitRef.current || isSubmitting || submitInFlightRef.current) {
-            return;
-        }
-
-        autoSubmitRef.current = true;
-        submitDecisions([]);
-    }, [decisionToolCalls.length, isCallStage, isSubmitting, effectiveCanApprove, props.postID, props.toolCalls, submitDecisions]);
 
     const handleToolDecision = useCallback((toolID: string, approved: boolean) => {
         if (!effectiveCanApprove || isSubmitting || submitInFlightRef.current || !decisionToolIDSet.has(toolID)) {
@@ -245,15 +227,21 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     // Helper to compute if a tool should be collapsed
     const isToolCollapsed = (tool: ToolCall) => {
-        // Auto-approved + call stage: collapsed by default
-        if (props.isAutoApproved && isCallStage) {
+        // Auto-approved tools are always collapsed by default — the user
+        // did not interact with them, so the expanded card would just be
+        // visual noise. Click still toggles.
+        if (tool.status === ToolCallStatus.AutoApproved) {
             return !collapsedTools.includes(tool.id);
         }
 
-        // Pending tools are expanded by default, others are collapsed
-        const defaultExpanded = isCallStage ? tool.status === ToolCallStatus.Pending : tool.status === ToolCallStatus.Success ||
-            tool.status === ToolCallStatus.Error ||
-            tool.status === ToolCallStatus.AutoApproved;
+        // Pending tools (call stage) expand by default so users see what
+        // they are being asked to approve. Executed tools in the result
+        // stage also expand so the output is visible during the share
+        // decision. Otherwise collapse.
+        const defaultExpanded = isCallStage ?
+            tool.status === ToolCallStatus.Pending :
+            isResultStage && (tool.status === ToolCallStatus.Success ||
+                tool.status === ToolCallStatus.Error);
 
         // Check if user has toggled this tool
         const isCollapsed = collapsedTools.includes(tool.id);

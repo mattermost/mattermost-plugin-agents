@@ -92,6 +92,11 @@ export interface Turn {
     tokens_out: number;
     sequence: number;
     created_at?: number;
+
+    // Set only on post-anchor assistant turns. Server-computed from the
+    // conversation state: 'call' → pending Accept/Reject; 'result' → pending
+    // Share/Keep private; 'done' → no user decision remains.
+    approval_state?: 'call' | 'result' | 'done';
 }
 
 export interface ConversationResponse {

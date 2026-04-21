@@ -197,71 +197,18 @@ export function extractAnnotationsFromTurn(turn: Turn): Annotation[] {
 }
 
 /**
- * Determine whether the tool approval UI should show the 'call' stage
- * (accept/reject tool execution) or the 'result' stage (share/keep-private)
- * across every turn that belongs to this post's response.
- *
- * 'call' is also returned when no decision is pending: rejected tools (nothing
- * to share), auto-run everywhere tools (already shared), and tools whose
- * share/keep-private decision has already been recorded (tool_result has
- * decided_at set).
+ * Returns the server-computed approval stage for the post's anchor turn.
+ * Defaults to 'done' (no buttons) when the anchor or the field is missing —
+ * safer than defaulting to a stage that would render approval controls.
  */
 export function deriveApprovalStageForPost(
     conversation: ConversationResponse,
     postId: string,
 ): ToolApprovalStage {
-    const turns = collectResponseTurns(conversation, postId);
-    if (turns.length === 0) {
-        return 'call';
-    }
-
-    // Only consider tool_use blocks that were actually executed — rejected
-    // tools have no shareable output, so they never drive a 'result' stage.
-    const executedToolUseIDs = new Set<string>();
-    for (const t of turns) {
-        for (const block of t.content) {
-            if (block.type !== BlockTypeToolUse || !block.id) {
-                continue;
-            }
-            if (block.status === StatusSuccess ||
-                block.status === StatusError ||
-                block.status === StatusAutoApproved) {
-                executedToolUseIDs.add(block.id);
-            }
-        }
-    }
-    if (executedToolUseIDs.size === 0) {
-        return 'call';
-    }
-
-    // Gather matching tool_result blocks. Results for the anchor's tool_use
-    // blocks may live in a later tool_result turn (after user approval),
-    // so scan the full conversation.
-    const matchedResults: ContentBlock[] = [];
-    for (const t of conversation.turns) {
-        for (const block of t.content) {
-            if (
-                block.type === BlockTypeToolResult &&
-                block.tool_use_id &&
-                executedToolUseIDs.has(block.tool_use_id)
-            ) {
-                matchedResults.push(block);
-            }
-        }
-    }
-
-    if (matchedResults.length === 0) {
-        return 'call';
-    }
-
-    // A result is "done" if the share/keep-private decision was recorded
-    // (decided_at set) — this distinguishes "kept private" from "still
-    // pending", which both present Shared=false.
-    if (matchedResults.every((b) => b.decided_at != null)) {
-        return 'call';
-    }
-
-    return 'result';
+    const anchor = conversation.turns.find(
+        (t) => t.post_id === postId && t.role === 'assistant',
+    );
+    return anchor?.approval_state ?? 'done';
 }
 
 /** True if any tool_use block across the post's response has auto_approved status. */
