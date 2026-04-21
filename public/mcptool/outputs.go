@@ -217,4 +217,3 @@ type AgentInfo struct {
 	DisplayName string `json:"display_name"`
 	Username    string `json:"username"`
 }
-
