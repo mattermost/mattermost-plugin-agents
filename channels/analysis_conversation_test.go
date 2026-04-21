@@ -237,7 +237,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				ctx.Tools = tools
 
 				ch := New(fakeLM, nil, nil, nil, convSvc)
-				result, err := ch.AnalyzeChannelWithRequest(ctx, "chan123", "user1", "bot1", "test system prompt", "test user prompt", "summary")
+				result, err := ch.AnalyzeChannelWithRequest(ctx, "user1", "bot1", "test system prompt", "test user prompt", "summary")
 				require.NoError(t, err)
 				require.NotNil(t, result)
 				assert.NotEmpty(t, result.ConversationID)
@@ -253,6 +253,11 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				assert.Equal(t, llm.OperationChannelSummary, conv.Operation)
 				assert.Equal(t, "user1", conv.UserID)
 				assert.Equal(t, "bot1", conv.BotID)
+				// Channel analysis is DM-delivered and personal, so the
+				// conversation must be owner-only (no ChannelID). This
+				// gates GET /conversations/{id} into the threadless
+				// (owner-only) branch rather than channel-membership.
+				assert.Nil(t, conv.ChannelID, "channel analysis conversation must be owner-only")
 
 				// Verify turns: user(1) + assistant-tool(2) + tool-result(3) = 3 turns.
 				turns, err := memStore.GetTurnsForConversation(result.ConversationID)
@@ -306,7 +311,6 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				// post-fetching infrastructure.
 				result, err := ch.IntervalWithRequest(
 					ctx,
-					"chan456",
 					"user2",
 					"bot2",
 					"formatted system prompt",
@@ -326,6 +330,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				assert.Equal(t, llm.OperationChannelInterval, conv.Operation)
 				assert.Equal(t, "user2", conv.UserID)
 				assert.Equal(t, "bot2", conv.BotID)
+				assert.Nil(t, conv.ChannelID, "interval conversation must be owner-only")
 
 				// Verify turns: just user(1). No tool turns.
 				turns, err := memStore.GetTurnsForConversation(result.ConversationID)
@@ -361,7 +366,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				ctx.Tools = tools
 
 				ch := New(fakeLM, nil, nil, nil, convSvc)
-				result, err := ch.AnalyzeChannelWithRequest(ctx, "chan789", "user3", "bot3", "test system prompt", "test user prompt", "deep_analysis")
+				result, err := ch.AnalyzeChannelWithRequest(ctx, "user3", "bot3", "test system prompt", "test user prompt", "deep_analysis")
 				require.NoError(t, err)
 
 				text, err := result.Stream.ReadAll()
@@ -407,7 +412,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				ctx.Tools = tools
 
 				ch := New(fakeLM, nil, nil, nil, convSvc)
-				result, err := ch.AnalyzeChannelWithRequest(ctx, "chanErr", "user4", "bot4", "test system prompt", "test user prompt", "summary")
+				result, err := ch.AnalyzeChannelWithRequest(ctx, "user4", "bot4", "test system prompt", "test user prompt", "summary")
 				require.NoError(t, err)
 
 				text, err := result.Stream.ReadAll()
@@ -452,7 +457,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				ctx.Tools = tools
 
 				ch := New(fakeLM, nil, nil, nil, convSvc)
-				result, err := ch.AnalyzeChannelWithRequest(ctx, "chanDirect", "user5", "bot5", "test system prompt", "test user prompt", "summary")
+				result, err := ch.AnalyzeChannelWithRequest(ctx, "user5", "bot5", "test system prompt", "test user prompt", "summary")
 				require.NoError(t, err)
 
 				text, err := result.Stream.ReadAll()
@@ -500,7 +505,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				ctx.Tools = tools
 
 				ch := New(fakeLM, nil, nil, nil, convSvc)
-				result, err := ch.AnalyzeChannelWithRequest(ctx, "chanTokens", "user6", "bot6", "test system prompt", "test user prompt", "summary")
+				result, err := ch.AnalyzeChannelWithRequest(ctx, "user6", "bot6", "test system prompt", "test user prompt", "summary")
 				require.NoError(t, err)
 				_, err = result.Stream.ReadAll()
 				require.NoError(t, err)
@@ -536,7 +541,7 @@ func TestAnalyzeChannelAndInterval(t *testing.T) {
 				ctx.Tools = tools
 
 				ch := New(fakeLM, nil, nil, nil, convSvc)
-				result, err := ch.AnalyzeChannelWithRequest(ctx, "chanShared", "user7", "bot7", "test system prompt", "test user prompt", "summary")
+				result, err := ch.AnalyzeChannelWithRequest(ctx, "user7", "bot7", "test system prompt", "test user prompt", "summary")
 				require.NoError(t, err)
 				_, err = result.Stream.ReadAll()
 				require.NoError(t, err)
@@ -602,7 +607,7 @@ func TestAnalysisResultConversationID(t *testing.T) {
 	ctx.Tools = tools
 
 	ch := New(fakeLM, nil, nil, nil, convSvc)
-	result, err := ch.AnalyzeChannelWithRequest(ctx, "chanMatch", "user8", "bot8", "test system prompt", "test user prompt", "summary")
+	result, err := ch.AnalyzeChannelWithRequest(ctx, "user8", "bot8", "test system prompt", "test user prompt", "summary")
 	require.NoError(t, err)
 	_, _ = result.Stream.ReadAll()
 
@@ -629,7 +634,7 @@ func TestIntervalWithRequestConversationID(t *testing.T) {
 
 	ch := New(fakeLM, nil, nil, nil, convSvc)
 	result, err := ch.IntervalWithRequest(
-		ctx, "chanInt", "user9", "bot9",
+		ctx, "user9", "bot9",
 		"sys prompt", "user prompt", "preset",
 	)
 	require.NoError(t, err)

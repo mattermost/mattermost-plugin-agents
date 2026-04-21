@@ -4,6 +4,7 @@
 package conversation
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
@@ -14,9 +15,16 @@ import (
 // providers.
 const UnsharedToolResultRedaction = "[result not shared by user]"
 
+// unsharedToolUseArgumentsRedaction replaces tool_use arguments the requester
+// has not shared. Empty JSON keeps the call well-formed for providers that
+// require a JSON object while stripping any sensitive parameter values.
+var unsharedToolUseArgumentsRedaction = json.RawMessage("{}")
+
 // BlocksToPost converts a slice of content blocks and a role string into an llm.Post.
 // When redactUnshared is true, tool_result content whose Shared flag is not
-// true is replaced with UnsharedToolResultRedaction.
+// true is replaced with UnsharedToolResultRedaction, and tool_use arguments
+// whose Shared flag is not true are replaced with an empty JSON object so the
+// LLM cannot paraphrase private tool parameters into a channel-visible reply.
 func BlocksToPost(blocks []ContentBlock, role string, redactUnshared bool) llm.Post {
 	post := llm.Post{
 		Role: RoleFromString(role),
@@ -35,11 +43,15 @@ func BlocksToPost(blocks []ContentBlock, role string, redactUnshared bool) llm.P
 			post.ReasoningSignature = block.Signature
 
 		case BlockTypeToolUse:
+			arguments := block.Input
+			if redactUnshared && (block.Shared == nil || !*block.Shared) {
+				arguments = unsharedToolUseArgumentsRedaction
+			}
 			post.ToolUse = append(post.ToolUse, llm.ToolCall{
 				ID:           block.ID,
 				Name:         block.Name,
 				ServerOrigin: block.ServerOrigin,
-				Arguments:    block.Input,
+				Arguments:    arguments,
 				Status:       StatusFromString(block.Status),
 			})
 

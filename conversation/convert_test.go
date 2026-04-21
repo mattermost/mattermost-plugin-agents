@@ -179,11 +179,11 @@ func TestBlocksToPost(t *testing.T) {
 
 func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	blocks := []ContentBlock{
-		{Type: BlockTypeToolUse, ID: "t-shared", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolUse, ID: "t-shared", Name: "search", Input: json.RawMessage(`{"q":"public"}`), Status: StatusSuccess, Shared: BoolPtr(true)},
 		{Type: BlockTypeToolResult, ToolUseID: "t-shared", Content: "PUBLIC", Status: StatusSuccess, Shared: BoolPtr(true)},
-		{Type: BlockTypeToolUse, ID: "t-private", Name: "read_dm", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolUse, ID: "t-private", Name: "read_dm", Input: json.RawMessage(`{"channel":"secret-dm"}`), Status: StatusSuccess, Shared: BoolPtr(false)},
 		{Type: BlockTypeToolResult, ToolUseID: "t-private", Content: "SECRET", Status: StatusSuccess, Shared: BoolPtr(false)},
-		{Type: BlockTypeToolUse, ID: "t-nilshared", Name: "foo", Input: json.RawMessage(`{}`), Status: StatusSuccess},
+		{Type: BlockTypeToolUse, ID: "t-nilshared", Name: "foo", Input: json.RawMessage(`{"token":"xyz"}`), Status: StatusSuccess},
 		{Type: BlockTypeToolResult, ToolUseID: "t-nilshared", Content: "ALSO SECRET", Status: StatusSuccess},
 	}
 
@@ -191,24 +191,37 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 		got := BlocksToPost(blocks, "assistant", false)
 		require.Len(t, got.ToolUse, 3)
 		results := map[string]string{}
+		args := map[string]string{}
 		for _, tc := range got.ToolUse {
 			results[tc.ID] = tc.Result
+			args[tc.ID] = string(tc.Arguments)
 		}
 		assert.Equal(t, "PUBLIC", results["t-shared"])
 		assert.Equal(t, "SECRET", results["t-private"])
 		assert.Equal(t, "ALSO SECRET", results["t-nilshared"])
+		assert.JSONEq(t, `{"q":"public"}`, args["t-shared"])
+		assert.JSONEq(t, `{"channel":"secret-dm"}`, args["t-private"])
+		assert.JSONEq(t, `{"token":"xyz"}`, args["t-nilshared"])
 	})
 
 	t.Run("redactUnshared=true", func(t *testing.T) {
 		got := BlocksToPost(blocks, "assistant", true)
 		require.Len(t, got.ToolUse, 3)
 		results := map[string]string{}
+		args := map[string]string{}
 		for _, tc := range got.ToolUse {
 			results[tc.ID] = tc.Result
+			args[tc.ID] = string(tc.Arguments)
 		}
 		assert.Equal(t, "PUBLIC", results["t-shared"])
 		assert.Equal(t, UnsharedToolResultRedaction, results["t-private"])
 		assert.Equal(t, UnsharedToolResultRedaction, results["t-nilshared"])
+		// Shared tool_use arguments pass through; unshared and nil-shared
+		// arguments are redacted to empty JSON so the LLM cannot paraphrase
+		// private tool parameters into a channel-visible reply.
+		assert.JSONEq(t, `{"q":"public"}`, args["t-shared"])
+		assert.JSONEq(t, `{}`, args["t-private"])
+		assert.JSONEq(t, `{}`, args["t-nilshared"])
 	})
 }
 

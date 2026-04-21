@@ -108,7 +108,7 @@ func (c *Channels) AnalyzeChannel(
 	scopedTools.AddTools([]llm.Tool{boundReadChannel, boundGetChannelInfo})
 	context.Tools = scopedTools
 
-	return c.AnalyzeChannelWithRequest(context, channelID, userID, botID, systemPrompt, userPrompt, operationSubType)
+	return c.AnalyzeChannelWithRequest(context, userID, botID, systemPrompt, userPrompt, operationSubType)
 }
 
 // AnalyzeChannelWithRequest creates a conversation and runs the ToolRunner with
@@ -117,18 +117,19 @@ func (c *Channels) AnalyzeChannel(
 // The context must have Tools set to a ToolStore containing the tools to use.
 func (c *Channels) AnalyzeChannelWithRequest(
 	context *llm.Context,
-	channelID string,
 	userID string,
 	botID string,
 	systemPrompt string,
 	userPrompt string,
 	operationSubType string,
 ) (*AnalysisResult, error) {
-	// Create conversation entity
+	// Create conversation entity.
+	// Channel analysis is delivered via DM to the requester, so the
+	// conversation is owner-only: ChannelID is deliberately not set, making
+	// GET /conversations/{id} fall into the threadless (owner-only) branch.
 	convResult, err := c.convSvc.CreateConversation(conversation.CreateConversationParams{
 		UserID:       userID,
 		BotID:        botID,
-		ChannelID:    &channelID,
 		Operation:    llm.OperationChannelSummary,
 		SystemPrompt: systemPrompt,
 		UserMessage:  userPrompt,
@@ -219,7 +220,7 @@ func (c *Channels) Interval(
 		return nil, err
 	}
 
-	return c.IntervalWithRequest(context, channelID, userID, botID, systemPrompt, userPrompt, promptName)
+	return c.IntervalWithRequest(context, userID, botID, systemPrompt, userPrompt, promptName)
 }
 
 // IntervalWithRequest creates a conversation and runs the LLM with pre-formatted
@@ -227,18 +228,16 @@ func (c *Channels) Interval(
 // needing real post-fetching infrastructure.
 func (c *Channels) IntervalWithRequest(
 	context *llm.Context,
-	channelID string,
 	userID string,
 	botID string,
 	systemPrompt string,
 	userPrompt string,
 	promptName string,
 ) (*AnalysisResult, error) {
-	// Create conversation entity
+	// Create conversation entity. Owner-only (see AnalyzeChannelWithRequest).
 	convResult, err := c.convSvc.CreateConversation(conversation.CreateConversationParams{
 		UserID:       userID,
 		BotID:        botID,
-		ChannelID:    &channelID,
 		Operation:    llm.OperationChannelInterval,
 		SystemPrompt: systemPrompt,
 		UserMessage:  userPrompt,
