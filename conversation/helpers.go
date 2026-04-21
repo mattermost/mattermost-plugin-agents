@@ -39,11 +39,13 @@ func unmarshalBlocks(raw json.RawMessage) ([]ContentBlock, error) {
 }
 
 // toolUseBlocks builds assistant-side content blocks from ToolRunner output.
+// Tool calls must carry their resolved status (AutoApproved / Error) — the
+// toolrunner stores resolved tool calls on ToolTurn.AssistantToolCalls after
+// execution, so this helper just forwards tc.Status verbatim.
 func toolUseBlocks(
 	message string,
 	reasoning llm.ReasoningData,
 	toolCalls []llm.ToolCall,
-	results []toolrunner.ToolResult,
 	shared bool,
 ) []ContentBlock {
 	var blocks []ContentBlock
@@ -63,23 +65,14 @@ func toolUseBlocks(
 		})
 	}
 
-	for i, tc := range toolCalls {
-		// Every round written here was auto-executed by the toolrunner
-		// (WriteToolTurns is only called after all tool calls in a round
-		// pass shouldExecute). Tool call status on tt.AssistantToolCalls is
-		// the pre-execution value, so derive the persisted status from the
-		// results instead.
-		status := StatusAutoApproved
-		if i < len(results) && results[i].IsError {
-			status = StatusError
-		}
+	for _, tc := range toolCalls {
 		blocks = append(blocks, ContentBlock{
 			Type:         BlockTypeToolUse,
 			ID:           tc.ID,
 			Name:         tc.Name,
 			ServerOrigin: tc.ServerOrigin,
 			Input:        tc.Arguments,
-			Status:       status,
+			Status:       StatusToString(tc.Status),
 			Shared:       BoolPtr(shared),
 		})
 	}

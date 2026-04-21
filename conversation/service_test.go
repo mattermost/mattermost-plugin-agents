@@ -949,8 +949,8 @@ func TestWriteToolTurns_SingleRound(t *testing.T) {
 		{
 			AssistantMessage: "I'll call two tools",
 			AssistantToolCalls: []llm.ToolCall{
-				{ID: "tc1", Name: "tool_a", Arguments: json.RawMessage(`{"x":1}`)},
-				{ID: "tc2", Name: "tool_b", Arguments: json.RawMessage(`{"y":2}`)},
+				{ID: "tc1", Name: "tool_a", Arguments: json.RawMessage(`{"x":1}`), Status: llm.ToolCallStatusAutoApproved},
+				{ID: "tc2", Name: "tool_b", Arguments: json.RawMessage(`{"y":2}`), Status: llm.ToolCallStatusAutoApproved},
 			},
 			ToolResults: []toolrunner.ToolResult{
 				{ToolCallID: "tc1", Name: "tool_a", Result: "result_a", IsError: false},
@@ -1128,7 +1128,7 @@ func TestWriteToolTurns_ErroredTool(t *testing.T) {
 	toolTurns := []toolrunner.ToolTurn{
 		{
 			AssistantToolCalls: []llm.ToolCall{
-				{ID: "tc1", Name: "failing_tool", Arguments: json.RawMessage(`{}`)},
+				{ID: "tc1", Name: "failing_tool", Arguments: json.RawMessage(`{}`), Status: llm.ToolCallStatusError},
 			},
 			ToolResults: []toolrunner.ToolResult{
 				{ToolCallID: "tc1", Name: "failing_tool", Result: "something went wrong", IsError: true},

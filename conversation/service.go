@@ -431,7 +431,6 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		tt.AssistantMessage,
 		tt.AssistantReasoning,
 		tt.AssistantToolCalls,
-		tt.ToolResults,
 		shared,
 	)
 	assistantContent, err := marshalBlocks(assistantBlocks)

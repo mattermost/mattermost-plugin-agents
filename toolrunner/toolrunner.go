@@ -240,19 +240,23 @@ func (r *ToolRunner) runLoop(
 		// Execute each tool call.
 		toolResults := r.executeTools(toolCalls, request)
 
+		// Build resolved tool calls with post-execution status
+		// (AutoApproved / Error). These flow into the ToolTurn so downstream
+		// persistence (WriteToolTurns → toolUseBlocks) can read the resolved
+		// status directly from tc.Status instead of inferring it from the
+		// fact that only the auto-execute path calls this function.
+		resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
+
 		// Build the ToolTurn for this round.
 		turn := ToolTurn{
 			AssistantMessage:   text.String(),
-			AssistantToolCalls: toolCalls,
+			AssistantToolCalls: resolvedToolCalls,
 			AssistantReasoning: reasoningData,
 			ToolResults:        toolResults,
 			TokensIn:           usage.InputTokens,
 			TokensOut:          usage.OutputTokens,
 		}
 		result.ToolTurns = append(result.ToolTurns, turn)
-
-		// Build resolved tool calls and append bot post to request.
-		resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
 
 		// Forward resolved tool calls so the UI can show success/error states.
 		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
