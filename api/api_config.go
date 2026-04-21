@@ -53,7 +53,9 @@ func (a *API) handleGetConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, normalizeAdminConfig(*cfg))
+	// Clone before normalizeAdminConfig: it mutates Services (e.g. UseResponsesAPI); the store
+	// pointer may alias the in-memory cached config, and GET must not mutate shared state.
+	c.JSON(http.StatusOK, normalizeAdminConfig(*cfg.Clone()))
 }
 
 // handleSaveConfig saves a new plugin configuration to the database,

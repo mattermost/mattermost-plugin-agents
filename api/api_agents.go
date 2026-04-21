@@ -596,7 +596,7 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	}
 
 	var req FetchModelsForServiceRequest
-	if err := c.BindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}

@@ -178,6 +178,29 @@ func TestHandleGetConfig(t *testing.T) {
 	}
 }
 
+func TestHandleGetConfigDoesNotMutateStoredServices(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stored := &config.Config{
+		Services: []llm.ServiceConfig{
+			{ID: "svc-1", Type: llm.ServiceTypeOpenAI, UseResponsesAPI: false},
+		},
+	}
+	store := &testConfigStore{cfg: stored}
+	router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/config", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, store.cfg.Services[0].UseResponsesAPI, "GET must not mutate stored config backing array")
+
+	var out config.Config
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out.Services, 1)
+	assert.True(t, out.Services[0].UseResponsesAPI)
+}
+
 func TestHandleSaveConfig(t *testing.T) {
 	tests := []struct {
 		name                  string
