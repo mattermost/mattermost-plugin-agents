@@ -56,7 +56,7 @@ type MCPClientManager interface {
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (string, error)
-	GetToolsForUser(userID string, channel *model.Channel) ([]llm.Tool, *mcp.Errors)
+	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
 	GetConfig() mcp.Config
 }
 

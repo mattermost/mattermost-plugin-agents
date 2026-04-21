@@ -55,7 +55,7 @@ func newMockEmbeddedMCPServer(toolNames []string) *mockEmbeddedMCPServer {
 	return &mockEmbeddedMCPServer{mcpServer: server}
 }
 
-func (m *mockEmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client, _ *model.Channel) (*gosdkmcp.InMemoryTransport, error) {
+func (m *mockEmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*gosdkmcp.InMemoryTransport, error) {
 	serverTransport, clientTransport := gosdkmcp.NewInMemoryTransports()
 	go func() {
 		_ = m.mcpServer.Run(context.Background(), serverTransport)

@@ -448,8 +448,7 @@ func (s *EmbeddedTestSuite) CreateClient(t *testing.T, user *model.User, session
 	// Create embedded server client
 	embeddedClient := NewEmbeddedServerClient(wrapper, pluginAPIClient.Log, pluginAPIClient)
 
-	// Create client (nil channel — no automation visibility scoping in tests)
-	client, err := embeddedClient.CreateClient(ctx, user.Id, session.Id, nil)
+	client, err := embeddedClient.CreateClient(ctx, user.Id, session.Id)
 	require.NoError(t, err, "Should create client successfully")
 	require.NotNil(t, client, "Client should not be nil")
 
@@ -465,7 +464,7 @@ type embeddedServerWrapper struct {
 // CreateClientTransport implements EmbeddedMCPServer interface
 // Note: The signature must match the interface (takes *pluginapi.Client), but in tests
 // we ignore the passed pluginAPI parameter and use our mock instead
-func (w *embeddedServerWrapper) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client, channel *model.Channel) (*mcp.InMemoryTransport, error) {
+func (w *embeddedServerWrapper) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
 	// Create token resolver using our mock (ignore the passed pluginAPI in tests)
 	tokenResolver := func(sid string) (string, error) {
 		session, err := w.api.GetSession(sid)
@@ -478,8 +477,7 @@ func (w *embeddedServerWrapper) CreateClientTransport(userID, sessionID string, 
 		return session.Token, nil
 	}
 
-	// Call the underlying server's CreateConnectionForUser
-	return w.server.CreateConnectionForUser(userID, sessionID, tokenResolver, channel)
+	return w.server.CreateConnectionForUser(userID, sessionID, tokenResolver)
 }
 
 // CreateClientManager creates a ClientManager for testing

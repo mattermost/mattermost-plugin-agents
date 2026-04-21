@@ -86,7 +86,7 @@ func DiscoverEmbeddedServerTools(
 	// Create embedded client helper and connect to the embedded server
 	embeddedClient := NewEmbeddedServerClient(embeddedServer, log, pluginAPI)
 
-	client, err := embeddedClient.CreateClient(ctx, userID, sessionID, nil)
+	client, err := embeddedClient.CreateClient(ctx, userID, sessionID)
 	if err != nil {
 		return nil, err
 	}

@@ -34,7 +34,7 @@ type noToolsTestMCPProvider struct {
 	calls int
 }
 
-func (p *noToolsTestMCPProvider) GetToolsForUser(string, *model.Channel) ([]llm.Tool, *mcp.Errors) {
+func (p *noToolsTestMCPProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors) {
 	p.calls++
 	return nil, nil
 }

@@ -57,7 +57,7 @@ func TestClient_CreateClient_InvalidSession(t *testing.T) {
 	embeddedClient := NewEmbeddedServerClient(wrapper, pluginAPIClient.Log, pluginAPIClient)
 
 	// Attempt to create client with invalid session - should fail
-	_, err := embeddedClient.CreateClient(ctx, user.Id, "invalid-session-id", nil)
+	_, err := embeddedClient.CreateClient(ctx, user.Id, "invalid-session-id")
 	require.Error(t, err, "Should fail with invalid session")
 	assert.Contains(t, err.Error(), "session", "Error should mention session issue")
 }
@@ -289,7 +289,7 @@ func TestClientManager_GetToolsForUser(t *testing.T) {
 	defer manager.Close()
 
 	// Call GetToolsForUser
-	tools, errors := manager.GetToolsForUser(user.Id, nil)
+	tools, errors := manager.GetToolsForUser(user.Id)
 
 	// Should succeed with no errors
 	assert.Nil(t, errors, "Should have no errors")

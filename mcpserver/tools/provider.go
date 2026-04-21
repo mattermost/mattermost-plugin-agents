@@ -124,16 +124,8 @@ func (p *MattermostToolProvider) stripAutomationFromToolsListResult(result mcp.R
 	return listResult
 }
 
-// resolveChannelForToolsList reads the channel from the request context (set on the
-// server Run context for embedded connections via ChannelContextKey).
-func (p *MattermostToolProvider) resolveChannelForToolsList(ctx context.Context) *model.Channel {
-	ch, _ := ctx.Value(auth.ChannelContextKey).(*model.Channel)
-	return ch
-}
-
 // automationToolFilterMiddleware returns MCP receiving middleware that filters
-// automation tools from tools/list when the automation plugin is missing, when a requested
-// channel cannot be resolved, or when the authenticated user may not see automation tools in that channel.
+// automation tools from tools/list when the channel automation plugin is not installed.
 func (p *MattermostToolProvider) automationToolFilterMiddleware() mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
@@ -143,28 +135,6 @@ func (p *MattermostToolProvider) automationToolFilterMiddleware() mcp.Middleware
 			}
 
 			if !p.isAutomationPluginInstalled() {
-				return p.stripAutomationFromToolsListResult(result), nil
-			}
-
-			ch := p.resolveChannelForToolsList(ctx)
-			if ch == nil {
-				// No channel context, return all tools (including automation) since we can't determine visibility without a channel.
-				return result, nil
-			}
-
-			identityProvider, ok := p.authProvider.(auth.UserIdentityProvider)
-			if !ok {
-				return p.stripAutomationFromToolsListResult(result), nil
-			}
-			client, err := identityProvider.GetAuthenticatedMattermostClient(ctx)
-			if err != nil {
-				return p.stripAutomationFromToolsListResult(result), nil
-			}
-			user, err := identityProvider.GetAuthenticatedUser(ctx)
-			if err != nil {
-				return p.stripAutomationFromToolsListResult(result), nil
-			}
-			if !automationToolsVisibleInList(ctx, client, user, ch) {
 				return p.stripAutomationFromToolsListResult(result), nil
 			}
 			return result, nil
