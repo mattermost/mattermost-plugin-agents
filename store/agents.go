@@ -306,7 +306,12 @@ func (s *Store) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error) 
 // It sets UpdateAt automatically. The caller must supply the full agent struct
 // (read-modify-write pattern). Does NOT update ID, CreatorID, BotUserID, CreateAt, or DeleteAt.
 func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
-	cfg.UpdateAt = model.GetMillis()
+	// Millisecond timestamps can collide when create and update run in the same ms; ensure UpdateAt advances.
+	now := model.GetMillis()
+	if now <= cfg.UpdateAt {
+		now = cfg.UpdateAt + 1
+	}
+	cfg.UpdateAt = now
 
 	result, err := s.db.Exec(
 		`UPDATE Agents_UserAgents SET
