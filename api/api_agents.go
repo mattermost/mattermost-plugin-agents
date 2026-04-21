@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/config"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -654,13 +655,14 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 
 // canUserAccessAgent reports whether userID may view or use the agent (admin, then usage restrictions).
 func (a *API) canUserAccessAgent(cfg *llm.BotConfig, userID string) bool {
-	if cfg == nil {
+	if cfg == nil || a.pluginAPI == nil {
 		return false
 	}
 	if cfg.IsAdmin(userID) {
 		return true
 	}
-	return a.bots.CheckUsageRestrictionsForUserConfig(*cfg, userID) == nil
+	// Do not use a.bots here: agent list/get routes are not bot-middleware-gated and a.bots may be nil.
+	return bots.UsageRestrictionsForUserConfig(a.pluginAPI, *cfg, userID) == nil
 }
 
 // sanitizeAgentForUser returns cfg unchanged for users who can manage the agent

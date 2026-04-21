@@ -17,6 +17,7 @@ import (
 
 type TestEnvironment struct {
 	bots    *MMBots
+	client  *pluginapi.Client
 	mockAPI *plugintest.API
 }
 
@@ -29,6 +30,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 
 	e := &TestEnvironment{
 		bots:    mmBots,
+		client:  client,
 		mockAPI: mockAPI,
 	}
 
@@ -365,12 +367,15 @@ func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			errDirect := UsageRestrictionsForUserConfig(e.client, tc.cfg, tc.user)
 			errConfig := e.bots.CheckUsageRestrictionsForUserConfig(tc.cfg, tc.user)
 			errBot := e.bots.CheckUsageRestrictionsForUser(&Bot{cfg: tc.cfg}, tc.user)
 			if tc.wantErr {
+				require.ErrorIs(t, errDirect, ErrUsageRestriction)
 				require.ErrorIs(t, errConfig, ErrUsageRestriction)
 				require.ErrorIs(t, errBot, ErrUsageRestriction)
 			} else {
+				require.NoError(t, errDirect)
 				require.NoError(t, errConfig)
 				require.NoError(t, errBot)
 			}
