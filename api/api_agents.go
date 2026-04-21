@@ -680,4 +680,3 @@ func sanitizeAgentForUser(client *pluginapi.Client, cfg *llm.BotConfig, userID s
 	redacted.CustomInstructions = ""
 	return &redacted
 }
-
