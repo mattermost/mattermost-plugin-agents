@@ -266,14 +266,14 @@ func (c *Conversations) regenerateViaConversation(
 		}
 	}
 
-	// Channel regenerations replay the conversation into the LLM and
-	// stream a channel-visible response, so tool_result content the user
-	// kept private earlier must be redacted before it reaches the LLM —
-	// otherwise regenerating could leak that data into the channel. DMs
-	// are already private to the requester, no redaction needed.
+	// BuildCompletionRequest redacts unshared tool output by default.
+	// DMs opt in to the full content because their follow-up stream is
+	// scoped to the requester; DM tool_results are always shared=true so
+	// nothing would actually be redacted either way, this just documents
+	// intent.
 	completionReq, buildErr := c.convService.BuildCompletionRequest(conv, llmContext, conversation.BuildOptions{
-		ExcludeAfterPostID:        post.Id,
-		RedactUnsharedToolContent: !isDM,
+		ExcludeAfterPostID:       post.Id,
+		AllowUnsharedToolContent: isDM,
 	})
 	if buildErr != nil {
 		return nil, fmt.Errorf("failed to build completion request for regen: %w", buildErr)

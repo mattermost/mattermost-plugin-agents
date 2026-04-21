@@ -700,7 +700,14 @@ func TestBuildCompletionRequest_MultipleToolRoundsMerged(t *testing.T) {
 	assert.Equal(t, "second result", round2.ToolUse[0].Result)
 }
 
-func TestBuildCompletionRequest_RedactUnsharedToolContent(t *testing.T) {
+// TestBuildCompletionRequest_RedactsUnsharedToolContentByDefault pins the
+// fail-safe contract: callers that do not explicitly opt in to full content
+// must never see kept-private tool_result bytes in the LLM prompt. The
+// redaction path is the only thing stopping kept-private data from being
+// paraphrased into channel-visible LLM replies. Inverting this default would
+// re-open a Medium-severity channel data leak, so this test double-covers:
+// (a) no options → redacted, (b) AllowUnsharedToolContent=true → full content.
+func TestBuildCompletionRequest_RedactsUnsharedToolContentByDefault(t *testing.T) {
 	svc, s := setupTestService(t)
 
 	result, err := svc.CreateConversation(CreateConversationParams{
@@ -753,21 +760,89 @@ func TestBuildCompletionRequest_RedactUnsharedToolContent(t *testing.T) {
 		return out
 	}
 
-	t.Run("without redaction", func(t *testing.T) {
+	t.Run("default redacts unshared content (fail-safe)", func(t *testing.T) {
 		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		require.NoError(t, err)
+		results := resultsByID(req)
+		assert.Equal(t, "PUBLIC DATA", results["tc-shared"])
+		assert.Equal(t, UnsharedToolResultRedaction, results["tc-private"],
+			"kept-private tool_result content must never leak into the default LLM prompt; "+
+				"a channel-visible response could paraphrase it")
+	})
+
+	t.Run("empty BuildOptions still redacts", func(t *testing.T) {
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{})
+		require.NoError(t, err)
+		results := resultsByID(req)
+		assert.Equal(t, UnsharedToolResultRedaction, results["tc-private"],
+			"a zero-value BuildOptions must behave like no options at all")
+	})
+
+	t.Run("AllowUnsharedToolContent=true sends full content (DM-only opt-in)", func(t *testing.T) {
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{AllowUnsharedToolContent: true})
 		require.NoError(t, err)
 		results := resultsByID(req)
 		assert.Equal(t, "PUBLIC DATA", results["tc-shared"])
 		assert.Equal(t, "PRIVATE SECRET", results["tc-private"])
 	})
+}
 
-	t.Run("with redaction", func(t *testing.T) {
-		req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{RedactUnsharedToolContent: true})
-		require.NoError(t, err)
-		results := resultsByID(req)
-		assert.Equal(t, "PUBLIC DATA", results["tc-shared"])
-		assert.Equal(t, UnsharedToolResultRedaction, results["tc-private"])
+// TestBuildChannelMentionRequest_RedactsUnsharedToolContentByDefault mirrors
+// the BuildCompletionRequest guard for the channel-mention path. A subsequent
+// @mention in the same thread must never see kept-private tool output from
+// an earlier mention.
+func TestBuildChannelMentionRequest_RedactsUnsharedToolContentByDefault(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "first mention",
 	})
+	require.NoError(t, err)
+	convID := result.ConversationID
+
+	// Prior mention executed a tool; user kept the result private.
+	assistantBlocks := []ContentBlock{
+		{Type: BlockTypeToolUse, ID: "tc-private", Name: "read_dm", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(false)},
+	}
+	assistantContent, err := json.Marshal(assistantBlocks)
+	require.NoError(t, err)
+	err = s.CreateTurn(&store.Turn{
+		ID: model.NewId(), ConversationID: convID, Role: "assistant",
+		Content: assistantContent, Sequence: 2, CreatedAt: model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	resultBlocks := []ContentBlock{
+		{Type: BlockTypeToolResult, ToolUseID: "tc-private", Content: "PRIVATE SECRET", Status: StatusSuccess, Shared: BoolPtr(false)},
+	}
+	resultContent, err := json.Marshal(resultBlocks)
+	require.NoError(t, err)
+	err = s.CreateTurn(&store.Turn{
+		ID: model.NewId(), ConversationID: convID, Role: "tool_result",
+		Content: resultContent, Sequence: 3, CreatedAt: model.GetMillis(),
+	})
+	require.NoError(t, err)
+
+	conv, err := s.GetConversation(convID)
+	require.NoError(t, err)
+
+	// threadData == nil is fine — it falls back to BuildCompletionRequest,
+	// which is the path the regression shows up on in practice (the
+	// webapp doesn't always have thread data on a fresh mention).
+	req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, nil)
+	require.NoError(t, err)
+
+	for _, p := range req.Posts {
+		for _, tc := range p.ToolUse {
+			assert.NotContains(t, tc.Result, "PRIVATE SECRET",
+				"channel-mention prompts must redact by default — "+
+					"a later @mention in the thread would otherwise leak kept-private tool output")
+		}
+	}
 }
 
 func TestBuildCompletionRequest_SystemPromptIsFirst(t *testing.T) {

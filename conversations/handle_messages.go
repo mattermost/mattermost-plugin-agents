@@ -231,14 +231,13 @@ func (c *Conversations) handleMentionViaConversation(
 
 	// Channel mention: the follow-up stream is channel-visible, so any
 	// tool_result content the requester previously kept private must be
-	// redacted before it reaches the LLM. Without this, a later mention
-	// in the same thread would let the LLM paraphrase kept-private data
-	// into a new channel reply.
+	// redacted before it reaches the LLM. BuildChannelMentionRequest
+	// defaults to redacting; we never opt in to AllowUnsharedToolContent
+	// here.
 	completionRequest, reqErr := c.convService.BuildChannelMentionRequest(
 		convResult.Conversation,
 		llmContext,
 		threadData,
-		conversation.BuildOptions{RedactUnsharedToolContent: true},
 	)
 	if reqErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)

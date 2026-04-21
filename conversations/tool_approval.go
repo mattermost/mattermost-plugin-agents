@@ -214,7 +214,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return nil
 	}
 
-	return c.streamToolFollowUp(bot, user, channel, post, conv, isDM, false)
+	return c.streamToolFollowUp(bot, user, channel, post, conv, isDM)
 }
 
 // HandleToolResult handles user approval of the second-stage tool-result sharing.
@@ -368,19 +368,15 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return fmt.Errorf("unable to get user: %w", err)
 	}
 
-	// Redact tool_result content the user chose to keep private before
-	// passing to the LLM. The follow-up is streamed to a channel-visible
-	// post, so sending unredacted private data would let the LLM
-	// paraphrase it into the channel reply and leak it to every member
-	// of the channel — defeating the whole point of the Keep Private
-	// decision.
-	return c.streamToolFollowUp(bot, user, channel, post, conv, false, true)
+	return c.streamToolFollowUp(bot, user, channel, post, conv, false)
 }
 
 // streamToolFollowUp rebuilds the completion request from the conversation and
-// streams a follow-up LLM response after tool execution. When redactUnshared is
-// true, tool_result content whose Shared flag is not true is replaced with a
-// redaction marker so private tool output cannot reach a channel-visible reply.
+// streams a follow-up LLM response after tool execution. The request redacts
+// tool_result content the user kept private before reaching the LLM — for DMs
+// this is a no-op (all tool_results are shared=true), for channels it is the
+// privacy guarantee that keeps unshared tool output from leaking into a
+// channel-visible reply.
 func (c *Conversations) streamToolFollowUp(
 	bot *bots.Bot,
 	user *model.User,
@@ -388,7 +384,6 @@ func (c *Conversations) streamToolFollowUp(
 	post *model.Post,
 	conv *store.Conversation,
 	isDM bool,
-	redactUnshared bool,
 ) error {
 	contextOpts := []llm.ContextOption{
 		c.contextBuilder.WithLLMContextDefaultTools(bot),
@@ -424,9 +419,7 @@ func (c *Conversations) streamToolFollowUp(
 		}
 	}
 
-	completionReq, err := c.convService.BuildCompletionRequest(conv, llmContext, conversation.BuildOptions{
-		RedactUnsharedToolContent: redactUnshared,
-	})
+	completionReq, err := c.convService.BuildCompletionRequest(conv, llmContext)
 	if err != nil {
 		return fmt.Errorf("failed to build completion request for tool follow-up: %w", err)
 	}

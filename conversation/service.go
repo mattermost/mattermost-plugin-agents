@@ -280,9 +280,16 @@ func (s *Service) appendUserTurn(conversationID, message string, postID *string)
 type BuildOptions struct {
 	ExcludeAfterPostID string
 
-	// RedactUnsharedToolContent replaces tool_result content whose Shared flag
-	// is not true with a redaction marker before the request reaches the LLM.
-	RedactUnsharedToolContent bool
+	// AllowUnsharedToolContent opts IN to sending tool_result content whose
+	// Shared flag is not true to the LLM. The default is to redact — any
+	// code path whose LLM response may reach other users (channel mentions,
+	// channel follow-ups, regenerations in channels) MUST leave this false
+	// so kept-private tool output cannot be paraphrased into a channel post.
+	//
+	// Set to true only in contexts where the LLM response is scoped to the
+	// requester (e.g. the DM follow-up stream), since DM tool_results are
+	// always shared=true anyway and nothing would be redacted in that case.
+	AllowUnsharedToolContent bool
 }
 
 // BuildCompletionRequest builds an llm.CompletionRequest from the conversation's
@@ -297,9 +304,12 @@ func (s *Service) BuildCompletionRequest(
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
 
-	redactUnshared := false
+	// Default: redact unshared tool_result content so privacy is the
+	// fail-safe. Callers whose LLM response will NOT reach other users
+	// (DM follow-ups) can opt in to full content via AllowUnsharedToolContent.
+	redactUnshared := true
 	if len(opts) > 0 {
-		redactUnshared = opts[0].RedactUnsharedToolContent
+		redactUnshared = !opts[0].AllowUnsharedToolContent
 		// If ExcludeAfterPostID is set, truncate the turn slice at (and including)
 		// the turn whose PostID matches, so that turn and all subsequent turns are dropped.
 		if opts[0].ExcludeAfterPostID != "" {
@@ -521,9 +531,10 @@ func (s *Service) BuildChannelMentionRequest(
 	threadData *mmapi.ThreadData,
 	opts ...BuildOptions,
 ) (*llm.CompletionRequest, error) {
-	redactUnshared := false
+	// Default redacts (safe); AllowUnsharedToolContent opts out.
+	redactUnshared := true
 	if len(opts) > 0 {
-		redactUnshared = opts[0].RedactUnsharedToolContent
+		redactUnshared = !opts[0].AllowUnsharedToolContent
 	}
 
 	// If no thread data, fall back to standard request building.
