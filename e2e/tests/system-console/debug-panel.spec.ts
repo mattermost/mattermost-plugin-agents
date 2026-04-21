@@ -247,7 +247,9 @@ test.describe.serial('Debug Panel', () => {
     });
 
     test('should configure both debug toggles independently', async ({ page }) => {
-        test.setTimeout(60000);
+        // This scenario performs multiple save/reload cycles after container startup and can
+        // exceed the default 60s budget on a busy CI shard before the first channel view loads.
+        test.setTimeout(120000);
 
         // Start container with both enableLLMTrace and enableTokenUsageLogging set to false
         mattermost = await RunSystemConsoleContainer({
@@ -287,7 +289,9 @@ test.describe.serial('Debug Panel', () => {
         const systemConsole = new SystemConsoleHelper(page);
 
         // Login as sysadmin
-        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword, {
+            channelViewTimeoutMs: 90000,
+        });
 
         // Navigate to system console
         await systemConsole.navigateToPluginConfig(mattermost.url());
