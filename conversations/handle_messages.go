@@ -229,7 +229,17 @@ func (c *Conversations) handleMentionViaConversation(
 		return fmt.Errorf("failed to get thread data: %w", threadErr)
 	}
 
-	completionRequest, reqErr := c.convService.BuildChannelMentionRequest(convResult.Conversation, llmContext, threadData)
+	// Channel mention: the follow-up stream is channel-visible, so any
+	// tool_result content the requester previously kept private must be
+	// redacted before it reaches the LLM. Without this, a later mention
+	// in the same thread would let the LLM paraphrase kept-private data
+	// into a new channel reply.
+	completionRequest, reqErr := c.convService.BuildChannelMentionRequest(
+		convResult.Conversation,
+		llmContext,
+		threadData,
+		conversation.BuildOptions{RedactUnsharedToolContent: true},
+	)
 	if reqErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("failed to build completion request: %w", reqErr)

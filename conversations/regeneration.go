@@ -266,7 +266,15 @@ func (c *Conversations) regenerateViaConversation(
 		}
 	}
 
-	completionReq, buildErr := c.convService.BuildCompletionRequest(conv, llmContext, conversation.BuildOptions{ExcludeAfterPostID: post.Id})
+	// Channel regenerations replay the conversation into the LLM and
+	// stream a channel-visible response, so tool_result content the user
+	// kept private earlier must be redacted before it reaches the LLM —
+	// otherwise regenerating could leak that data into the channel. DMs
+	// are already private to the requester, no redaction needed.
+	completionReq, buildErr := c.convService.BuildCompletionRequest(conv, llmContext, conversation.BuildOptions{
+		ExcludeAfterPostID:        post.Id,
+		RedactUnsharedToolContent: !isDM,
+	})
 	if buildErr != nil {
 		return nil, fmt.Errorf("failed to build completion request for regen: %w", buildErr)
 	}

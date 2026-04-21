@@ -368,11 +368,13 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return fmt.Errorf("unable to get user: %w", err)
 	}
 
-	// Pass the full tool output to the LLM even if only some results were
-	// shared. The channel-visible follow-up is still the user's paraphrase
-	// via the share toggle — the LLM just needs the complete context to
-	// produce a coherent answer.
-	return c.streamToolFollowUp(bot, user, channel, post, conv, false, false)
+	// Redact tool_result content the user chose to keep private before
+	// passing to the LLM. The follow-up is streamed to a channel-visible
+	// post, so sending unredacted private data would let the LLM
+	// paraphrase it into the channel reply and leak it to every member
+	// of the channel — defeating the whole point of the Keep Private
+	// decision.
+	return c.streamToolFollowUp(bot, user, channel, post, conv, false, true)
 }
 
 // streamToolFollowUp rebuilds the completion request from the conversation and
