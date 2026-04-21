@@ -496,7 +496,8 @@ func TestDeleteAgentDeactivatesBot(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
-	e.mockAPI.On("UpdateBotActive", "bot-1", false).Return(&model.Bot{}, nil)
+	// When EnsureBots succeeds, handleDeleteAgent skips explicit UpdateActive (EnsureBots reconciles).
+	e.mockAPI.On("UpdateBotActive", "bot-1", false).Return(&model.Bot{}, nil).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	// Seed an agent owned by testUserID

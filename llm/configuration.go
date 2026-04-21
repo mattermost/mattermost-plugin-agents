@@ -41,6 +41,15 @@ type ServiceConfig struct {
 	UseResponsesAPI bool `json:"useResponsesAPI"`
 }
 
+// ServiceUsesResponsesAPI reports whether the Responses API path is used for this service.
+// Direct OpenAI always uses the Responses API (PR #617); other types follow UseResponsesAPI.
+func ServiceUsesResponsesAPI(cfg ServiceConfig) bool {
+	if cfg.Type == ServiceTypeOpenAI {
+		return true
+	}
+	return cfg.UseResponsesAPI
+}
+
 type ChannelAccessLevel int
 
 const (

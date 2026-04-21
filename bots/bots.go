@@ -261,6 +261,7 @@ func (b *MMBots) EnsureBots() error {
 	// Load DB-backed user agents and merge into the bot config list.
 	// These bypass the license multi-LLM check — they are gated by
 	// PermissionManageOwnAgent at the API layer.
+	activeDBBotUsernames := make(map[string]struct{})
 	if b.agentStore != nil {
 		dbAgents, err := b.agentStore.ListAgents()
 		if err != nil {
@@ -270,6 +271,7 @@ func (b *MMBots) EnsureBots() error {
 			if cfg == nil {
 				continue
 			}
+			activeDBBotUsernames[cfg.Name] = struct{}{}
 			botCfgs = append(botCfgs, *cfg)
 		}
 	}
@@ -318,6 +320,10 @@ func (b *MMBots) EnsureBots() error {
 	// For each of the bots we found, if it's not in the configuration, delete it.
 	for _, bot := range previousMMBots {
 		if _, ok := aiBotsByUsername[bot.Username]; !ok {
+			if _, dbActive := activeDBBotUsernames[bot.Username]; dbActive {
+				b.pluginAPI.Log.Debug("EnsureBots: skipping deactivation for active DB agent not in ensure set (missing or invalid service)", "bot_name", bot.Username)
+				continue
+			}
 			if _, err := b.pluginAPI.Bot.UpdateActive(bot.UserId, false); err != nil {
 				b.pluginAPI.Log.Error("Failed to delete bot", "bot_name", bot.Username, "error", err.Error())
 				continue

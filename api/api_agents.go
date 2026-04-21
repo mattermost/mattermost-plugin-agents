@@ -111,10 +111,6 @@ type ServiceInfo struct {
 	UseResponsesAPI  bool   `json:"useResponsesAPI"`
 }
 
-func serviceUsesResponsesAPIForUI(service llm.ServiceConfig) bool {
-	return service.Type == llm.ServiceTypeOpenAI || service.UseResponsesAPI
-}
-
 // FreeTierAgentLimit is the maximum number of self-service agents allowed when
 // the server does not have a multi-LLM (E20+) license.
 const FreeTierAgentLimit = 1
@@ -264,11 +260,15 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 }
 
 // refreshBotsAndNotify reloads bots on this node, notifies the cluster, and broadcasts so clients refresh bot lists.
-func (a *API) refreshBotsAndNotify() {
+// It returns the error from EnsureBots when a.bots is non-nil, or nil when a.bots is nil; cluster and websocket
+// steps always run regardless.
+func (a *API) refreshBotsAndNotify() error {
+	var ensureErr error
 	if a.bots != nil {
 		a.bots.ForceRefreshOnNextEnsure()
-		if err := a.bots.EnsureBots(); err != nil {
-			a.pluginAPI.Log.Error("Failed to refresh bots after agent change", "error", err.Error())
+		ensureErr = a.bots.EnsureBots()
+		if ensureErr != nil {
+			a.pluginAPI.Log.Error("Failed to refresh bots after agent change", "error", ensureErr.Error())
 		}
 	}
 	if a.clusterAgentNotifier != nil {
@@ -280,6 +280,7 @@ func (a *API) refreshBotsAndNotify() {
 		// PublishWebSocketEvent requires a non-nil broadcast (server dereferences it).
 		a.mmClient.PublishWebSocketEvent(WebsocketEventBotsInvalidate, map[string]interface{}{}, &model.WebsocketBroadcast{})
 	}
+	return ensureErr
 }
 
 // handleCreateAgent handles POST /agents: creates the bot user and persisted agent config.
@@ -349,7 +350,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
-	a.refreshBotsAndNotify()
+	_ = a.refreshBotsAndNotify()
 	c.JSON(http.StatusCreated, agent)
 }
 
@@ -448,9 +449,10 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
-	a.refreshBotsAndNotify()
+	ensureErr := a.refreshBotsAndNotify()
 
-	if displayNameChanged {
+	// EnsureBots patches display name on success; when it did not run (no bot registry) or failed, sync explicitly.
+	if displayNameChanged && (ensureErr != nil || a.bots == nil) {
 		if _, err := a.pluginAPI.Bot.Patch(cfg.BotUserID, &model.BotPatch{
 			DisplayName: &cfg.DisplayName,
 		}); err != nil {
@@ -486,10 +488,13 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 		return
 	}
 
-	a.refreshBotsAndNotify()
+	ensureErr := a.refreshBotsAndNotify()
 
-	if _, err := a.pluginAPI.Bot.UpdateActive(cfg.BotUserID, false); err != nil {
-		_ = c.Error(fmt.Errorf("failed to deactivate bot: %w", err))
+	// EnsureBots deactivates removed bots on success; when it did not run or failed, deactivate explicitly.
+	if ensureErr != nil || a.bots == nil {
+		if _, err := a.pluginAPI.Bot.UpdateActive(cfg.BotUserID, false); err != nil {
+			_ = c.Error(fmt.Errorf("failed to deactivate bot: %w", err))
+		}
 	}
 
 	c.Status(http.StatusOK)
@@ -569,7 +574,7 @@ func (a *API) handleListServices(c *gin.Context) {
 			Type:             svc.Type,
 			DefaultModel:     svc.DefaultModel,
 			OutputTokenLimit: svc.OutputTokenLimit,
-			UseResponsesAPI:  serviceUsesResponsesAPIForUI(svc),
+			UseResponsesAPI:  llm.ServiceUsesResponsesAPI(svc),
 		})
 	}
 

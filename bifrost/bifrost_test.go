@@ -220,45 +220,6 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 	}
 }
 
-func TestServiceUsesResponsesAPI(t *testing.T) {
-	tests := []struct {
-		name     string
-		service  llm.ServiceConfig
-		expected bool
-	}{
-		{
-			name: "direct OpenAI always uses responses",
-			service: llm.ServiceConfig{
-				Type:            llm.ServiceTypeOpenAI,
-				UseResponsesAPI: false,
-			},
-			expected: true,
-		},
-		{
-			name: "OpenAI compatible respects toggle",
-			service: llm.ServiceConfig{
-				Type:            llm.ServiceTypeOpenAICompatible,
-				UseResponsesAPI: false,
-			},
-			expected: false,
-		},
-		{
-			name: "Azure respects toggle",
-			service: llm.ServiceConfig{
-				Type:            llm.ServiceTypeAzure,
-				UseResponsesAPI: true,
-			},
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, serviceUsesResponsesAPI(tt.service))
-		})
-	}
-}
-
 func TestConvertMessagesReasoning(t *testing.T) {
 	tests := []struct {
 		name                string

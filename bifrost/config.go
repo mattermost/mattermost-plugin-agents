@@ -35,15 +35,6 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 	}
 }
 
-func serviceUsesResponsesAPI(serviceConfig llm.ServiceConfig) bool {
-	// Direct OpenAI services always use the Responses API after PR #617.
-	if serviceConfig.Type == llm.ServiceTypeOpenAI {
-		return true
-	}
-
-	return serviceConfig.UseResponsesAPI
-}
-
 func supportsNativeTools(serviceType string) bool {
 	switch serviceType {
 	case llm.ServiceTypeOpenAI,
@@ -114,7 +105,7 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		OutputTokenLimit:   serviceConfig.OutputTokenLimit,
 		StreamingTimeout:   streamingTimeout,
 		SendUserID:         serviceConfig.SendUserID,
-		UseResponsesAPI:    serviceUsesResponsesAPI(serviceConfig),
+		UseResponsesAPI:    llm.ServiceUsesResponsesAPI(serviceConfig),
 
 		// Bot-specific configuration
 		EnabledNativeTools: enabledNativeTools,
