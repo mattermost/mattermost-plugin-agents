@@ -332,12 +332,36 @@ func TestCreateAgentWithoutPermission(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
 }
 
-func TestCreateAgentWithoutLicense(t *testing.T) {
+func TestCreateAgentFreeTierAllowsFirstAgent(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
 
 	mockUnlicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+	e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+		UserId:      "bot-user-id-created",
+		Username:    "my-agent",
+		DisplayName: "My Agent",
+		Description: "User-created AI agent",
+	}, nil)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(nil), testUserID)
+	require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
+}
+
+func TestCreateAgentFreeTierBlocksWhenQuotaReached(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mockUnlicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	// One existing agent is already at the free-tier quota.
+	e.agentStore.agents["existing"] = &llm.BotConfig{
+		ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing",
+	}
 
 	recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(nil), testUserID)
 	require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
@@ -348,12 +372,16 @@ func TestListAgentsFiltersByAccess(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
+	// sanitizeAgentForUser → canManageAgent checks PermissionManageOthersAgent for each accessible agent.
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	// Seed agents: one accessible (UserAccessLevelAll), one blocked (UserAccessLevelNone)
+	// Seed agents: one accessible (UserAccessLevelAll, with sensitive customInstructions),
+	// one blocked (UserAccessLevelNone)
 	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: "other-user", DisplayName: "Public Agent",
-		UserAccessLevel: llm.UserAccessLevelAll,
+		UserAccessLevel:    llm.UserAccessLevelAll,
+		CustomInstructions: "internal procedures",
 	}
 	e.agentStore.agents["agent-2"] = &llm.BotConfig{
 		ID: "agent-2", CreatorID: "other-user", DisplayName: "Private Agent",
@@ -368,6 +396,8 @@ func TestListAgentsFiltersByAccess(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&agents))
 	assert.Len(t, agents, 1)
 	assert.Equal(t, "Public Agent", agents[0].DisplayName)
+	// Non-managers must not see customInstructions.
+	assert.Empty(t, agents[0].CustomInstructions)
 }
 
 func TestUpdateAgentAsCreator(t *testing.T) {

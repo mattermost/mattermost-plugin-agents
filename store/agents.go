@@ -267,6 +267,15 @@ func (s *Store) ListAgents() ([]*llm.BotConfig, error) {
 	return agents, nil
 }
 
+// CountActiveAgents returns the number of non-deleted agents.
+func (s *Store) CountActiveAgents() (int, error) {
+	var count int
+	if err := s.db.Get(&count, `SELECT COUNT(*) FROM Agents_UserAgents WHERE DeleteAt = 0`); err != nil {
+		return 0, fmt.Errorf("failed to count active agents: %w", err)
+	}
+	return count, nil
+}
+
 // ListAgentsByCreator returns all active agents created by the specified user.
 func (s *Store) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error) {
 	var rows []agentRow
@@ -389,6 +398,7 @@ var _ interface {
 	GetAgent(id string) (*llm.BotConfig, error)
 	ListAgents() ([]*llm.BotConfig, error)
 	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
+	CountActiveAgents() (int, error)
 	UpdateAgent(cfg *llm.BotConfig) error
 	DeleteAgent(id string) error
 } = (*Store)(nil)

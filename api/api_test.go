@@ -207,6 +207,16 @@ func (m *mockAgentStore) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig
 	return result, nil
 }
 
+func (m *mockAgentStore) CountActiveAgents() (int, error) {
+	count := 0
+	for _, cfg := range m.agents {
+		if cfg.DeleteAt == 0 {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig) error {
 	existing, ok := m.agents[cfg.ID]
 	if !ok || existing.DeleteAt != 0 {

@@ -3,7 +3,16 @@
 
 package llm
 
-import "slices"
+import (
+	"errors"
+	"fmt"
+	"slices"
+	"unicode/utf8"
+)
+
+// MaxCustomInstructionsRunes caps BotConfig.CustomInstructions at a length that keeps
+// the system prompt bounded on every conversation turn.
+const MaxCustomInstructionsRunes = 16384
 
 type ServiceConfig struct {
 	ID           string `json:"id"`
@@ -125,21 +134,34 @@ type BotConfig struct {
 	DeleteAt     int64    `json:"deleteAt,omitempty"`
 }
 
-func (c *BotConfig) IsValid() bool {
-	// Basic validation - service validation happens separately
-	if c.Name == "" || c.DisplayName == "" || c.ServiceID == "" {
-		return false
+// Validate returns a descriptive error when the bot config is not valid. Service
+// configuration is validated separately.
+func (c *BotConfig) Validate() error {
+	if c.Name == "" {
+		return errors.New("name is required")
 	}
-
-	// Validate access levels are within bounds
+	if c.DisplayName == "" {
+		return errors.New("displayName is required")
+	}
+	if c.ServiceID == "" {
+		return errors.New("serviceID is required")
+	}
 	if c.ChannelAccessLevel < ChannelAccessLevelAll || c.ChannelAccessLevel > ChannelAccessLevelNone {
-		return false
+		return errors.New("channelAccessLevel is out of range")
 	}
 	if c.UserAccessLevel < UserAccessLevelAll || c.UserAccessLevel > UserAccessLevelNone {
-		return false
+		return errors.New("userAccessLevel is out of range")
 	}
+	if utf8.RuneCountInString(c.CustomInstructions) > MaxCustomInstructionsRunes {
+		return fmt.Errorf("customInstructions exceeds maximum length of %d characters", MaxCustomInstructionsRunes)
+	}
+	return nil
+}
 
-	return true
+// IsValid reports whether the bot config is valid. Prefer Validate when a
+// descriptive error is useful.
+func (c *BotConfig) IsValid() bool {
+	return c.Validate() == nil
 }
 
 // IsValidService validates a service configuration

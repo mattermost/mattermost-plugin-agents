@@ -138,10 +138,11 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
             minHeight: '35px',
             height: '35px',
             borderRadius: '2px',
-            borderColor: state.isFocused ? '#66afe9' : 'rgba(var(--center-channel-color-rgb), 0.16)',
-            boxShadow: state.isFocused ? 'inset 0 1px 1px rgba(0, 0, 0, 0.075), 0 0 8px rgba(102, 175, 233, 0.75)' : '0px 1px 1px rgba(0, 0, 0, 0.075) inset',
+            backgroundColor: 'var(--center-channel-bg)',
+            borderColor: state.isFocused ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.16)',
+            boxShadow: state.isFocused ? 'none' : '0px 1px 1px rgba(0, 0, 0, 0.075) inset',
             '&:hover': {
-                borderColor: state.isFocused ? '#66afe9' : 'rgba(var(--center-channel-color-rgb), 0.16)',
+                borderColor: state.isFocused ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.16)',
             },
         }),
         valueContainer: (base) => ({
@@ -149,10 +150,19 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
             height: '35px',
             padding: '0 12px',
         }),
+        singleValue: (base) => ({
+            ...base,
+            color: 'var(--center-channel-color)',
+        }),
+        placeholder: (base) => ({
+            ...base,
+            color: 'rgba(var(--center-channel-color-rgb), 0.48)',
+        }),
         input: (base) => ({
             ...base,
             margin: '0',
             padding: '0',
+            color: 'var(--center-channel-color)',
         }),
         indicatorSeparator: () => ({
             display: 'none',
@@ -177,7 +187,22 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
         menu: (base) => ({
             ...base,
             zIndex: 9999,
+            backgroundColor: 'var(--center-channel-bg)',
+            border: '1px solid rgba(var(--center-channel-color-rgb), 0.16)',
         }),
+        option: (base, state) => {
+            let backgroundColor = 'transparent';
+            if (state.isSelected) {
+                backgroundColor = 'rgba(var(--center-channel-color-rgb), 0.12)';
+            } else if (state.isFocused) {
+                backgroundColor = 'rgba(var(--center-channel-color-rgb), 0.08)';
+            }
+            return {
+                ...base,
+                backgroundColor,
+                color: 'var(--center-channel-color)',
+            };
+        },
     };
 
     return (
@@ -229,11 +254,16 @@ export const StyledInput = styled.input<{ as?: string }>`
 	border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
 	box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.075) inset;
 	height: 35px;
-	background: white;
+	background: var(--center-channel-bg);
+	color: var(--center-channel-color);
 
 	font-size: 14px;
 	font-weight: 400;
 	line-height: 20px;
+
+	&::placeholder {
+		color: rgba(var(--center-channel-color-rgb), 0.48);
+	}
 
 	${(props) => props.as === 'textarea' && `
 		resize: vertical;
@@ -241,9 +271,14 @@ export const StyledInput = styled.input<{ as?: string }>`
 	`}
 
 	&:focus {
-		border-color: $66afe9;
-		box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075), 0 0 8px rgba(102, 175, 233, 0.75);
-		outline: 0;
+		border-color: var(--button-bg);
+		outline: none;
+		box-shadow: none;
+	}
+
+	&:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
 	}
 `;
 

@@ -25,6 +25,10 @@ var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 // WebsocketEventBotsInvalidate is the event name for PublishWebSocketEvent (webapp: custom_mattermost-ai_<name>).
 const WebsocketEventBotsInvalidate = "bots_invalidate"
 
+// MaxAgentRequestBodyBytes caps the JSON body size for agent create/update requests
+// to protect against oversized payloads in the various ID slices and MCP tool lists.
+const MaxAgentRequestBodyBytes = 512 << 10 // 512 KiB
+
 // CreateAgentRequest is the JSON body for POST /agents. Field values are stored as given (no server-side fill-in).
 // MCP tool access is controlled by two independent fields:
 //   - autoEnableNewMCPTools=true gives the agent every currently configured MCP tool and any added later.
@@ -111,12 +115,27 @@ func serviceUsesResponsesAPIForUI(service llm.ServiceConfig) bool {
 	return service.Type == llm.ServiceTypeOpenAI || service.UseResponsesAPI
 }
 
-// agentLicenseRequired is a gin middleware that gates agent endpoints behind an E20+ license.
-func (a *API) agentLicenseRequired(c *gin.Context) {
-	if !a.licenseChecker.IsMultiLLMLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("self-service agents require an E20 or Enterprise license"))
-		return
+// FreeTierAgentLimit is the maximum number of self-service agents allowed when
+// the server does not have a multi-LLM (E20+) license.
+const FreeTierAgentLimit = 1
+
+// checkAgentCreateQuota allows unlimited creation when multi-LLM licensed; otherwise
+// enforces FreeTierAgentLimit across all self-service agents on the server. It writes
+// the abort response and returns false when creation must be blocked.
+func (a *API) checkAgentCreateQuota(c *gin.Context) bool {
+	if a.licenseChecker.IsMultiLLMLicensed() {
+		return true
 	}
+	count, err := a.agentStore.CountActiveAgents()
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to check agent quota: %w", err))
+		return false
+	}
+	if count >= FreeTierAgentLimit {
+		c.AbortWithError(http.StatusForbidden, fmt.Errorf("creating more than %d self-service agent(s) requires an E20 or Enterprise license", FreeTierAgentLimit))
+		return false
+	}
+	return true
 }
 
 // canManageAgent reports whether userID may update or delete cfg: agent admin, PermissionManageOthersAgent,
@@ -272,8 +291,19 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
+	if !a.checkAgentCreateQuota(c) {
+		return
+	}
+
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxAgentRequestBodyBytes)
+
 	var req CreateAgentRequest
-	if err := c.BindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			c.AbortWithError(http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
+			return
+		}
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
@@ -284,6 +314,13 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	}
 
 	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
+		return
+	}
+
+	// Validate the built config before creating the Mattermost bot account so an
+	// invalid request does not leave an orphan bot user behind.
+	if err := buildAgentConfigForCreate(req, userID, "").Validate(); err != nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
 		return
 	}
 
@@ -329,7 +366,7 @@ func (a *API) handleListAgents(c *gin.Context) {
 	accessible := make([]*llm.BotConfig, 0, len(agents))
 	for _, cfg := range agents {
 		if a.canUserAccessAgent(cfg, userID) {
-			accessible = append(accessible, cfg)
+			accessible = append(accessible, sanitizeAgentForUser(a.pluginAPI, cfg, userID))
 		}
 	}
 
@@ -356,7 +393,7 @@ func (a *API) handleGetAgent(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, cfg)
+	c.JSON(http.StatusOK, sanitizeAgentForUser(a.pluginAPI, cfg, userID))
 }
 
 // handleUpdateAgent handles PUT /agents/:agentid (full replace).
@@ -379,8 +416,15 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxAgentRequestBodyBytes)
+
 	var req UpdateAgentRequest
-	if err := c.BindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			c.AbortWithError(http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
+			return
+		}
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
@@ -393,6 +437,11 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 	displayNameChanged := applyAgentUpdateRequest(cfg, req)
+
+	if err := cfg.Validate(); err != nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
+		return
+	}
 
 	if err := a.agentStore.UpdateAgent(cfg); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to update agent: %w", err))
@@ -607,4 +656,20 @@ func (a *API) canUserAccessAgent(cfg *llm.BotConfig, userID string) bool {
 		return true
 	}
 	return a.bots.CheckUsageRestrictionsForUserConfig(*cfg, userID) == nil
+}
+
+// sanitizeAgentForUser returns cfg unchanged for users who can manage the agent
+// (creator / agent admin / PermissionManageOthersAgent / legacy bot ManageSystem).
+// For everyone else, it returns a shallow copy with CustomInstructions stripped
+// since that field can contain sensitive organizational procedures.
+func sanitizeAgentForUser(client *pluginapi.Client, cfg *llm.BotConfig, userID string) *llm.BotConfig {
+	if cfg == nil {
+		return nil
+	}
+	if canManageAgent(client, cfg, userID) {
+		return cfg
+	}
+	redacted := *cfg
+	redacted.CustomInstructions = ""
+	return &redacted
 }

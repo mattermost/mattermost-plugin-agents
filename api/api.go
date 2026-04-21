@@ -73,6 +73,7 @@ type AgentStore interface {
 	GetAgent(id string) (*llm.BotConfig, error)
 	ListAgents() ([]*llm.BotConfig, error)
 	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
+	CountActiveAgents() (int, error)
 	UpdateAgent(cfg *llm.BotConfig) error
 	DeleteAgent(id string) error
 }
@@ -233,19 +234,21 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.PUT("/mcp/user-preferences", a.handlePutUserPreferences)
 	router.DELETE("/mcp/oauth/:serverName", a.handleDeleteUserMCPOAuth)
 
-	// Agent CRUD routes — authenticated, license-gated
+	// Agent routes — authenticated. Free-tier instances (no multi-LLM license)
+	// can CRUD up to one self-service agent; the quota is enforced inside
+	// handleCreateAgent so reads, updates, deletes, and avatar uploads remain
+	// available even after a license downgrade.
 	agentRouter := router.Group("/agents")
-	agentRouter.Use(a.agentLicenseRequired)
 	agentRouter.POST("", a.handleCreateAgent)
 	agentRouter.GET("", a.handleListAgents)
+	// Register /models/fetch before /:agentid routes so "models" is never captured as :agentid.
 	agentRouter.POST("/models/fetch", a.handleFetchModelsForService)
 	agentRouter.GET("/:agentid", a.handleGetAgent)
 	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
 	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
 	agentRouter.POST("/:agentid/avatar", a.handleUploadAgentAvatar)
 
-	// Service listing — authenticated, license-gated (same gate)
-	router.GET("/services", a.agentLicenseRequired, a.handleListServices)
+	router.GET("/services", a.handleListServices)
 
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
 	// Used by the MCP server for external search callbacks.
