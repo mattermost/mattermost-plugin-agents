@@ -31,7 +31,9 @@ Install the plugin through the System Console by navigating to **System Console 
 
 ### Access plugin settings
 
-Navigate to **System Console > Plugins > Agents** to access the configuration interface.
+Navigate to **System Console > Plugins > Agents** to configure plugin-wide settings such as AI services, the default bot, web search, embedding search, and MCP settings.
+
+Create and manage agents from the top-level **Agents** product page. You can also open it from **AI Actions > Agents > Manage agents**. The **AI Bots** section in the System Console links to the Agents page instead of hosting the full agent editor.
 
 ### Enable the plugin
 
@@ -100,21 +102,26 @@ See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html)
 
 ### Agent configuration
 
-Create an Agent (Bot) that uses a configured Service. Multiple Agents can use the same Service configuration. See [license requirements](#license-requirements) for details on features that require a license.
+Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry or from **AI Actions > Agents > Manage agents**. Agents use the service inventory configured in **System Console > Plugins > Agents**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
 
-Navigate to **System Console > Plugins > Agents** and select **Add an Agent**.
+When you create or edit an agent, use the three tabs in the agent configuration flow:
+
+- **Configuration** for identity, model selection, instructions, and core capabilities
+- **Access** for channel, team, and user restrictions, plus delegated agent admins
+- **MCPs** for the agent's allowed MCP tools
+
+#### Configuration tab
 
 | Setting | Description |
 |---------|-------------|
 | **Display Name** | User-facing name shown in Mattermost |
-| **Agent Username** | The mattermost username for the agent. @ mentions to the agent will use this name |
+| **Agent Username** | The Mattermost username for the agent. @mentions use this name. Set it when creating the agent; it can't be changed later. |
 | **Agent Avatar** | Custom image for the agent |
 | **Service** | Select a configured Service from the dropdown |
 | **Model** | (Optional) Override the service's default model for this agent |
 | **Custom Instructions** | Custom instructions that define the agent's personality and capabilities |
 | **Enable Vision** | Enable Vision to allow the agent to process images. Requires a compatible model and service. |
-| **Enable Tools** | By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools. |
-| **Access Control** | Set which teams, channels, and users can access this agent |
+| **Enable Tools** | Enables tool use for integrations and other tool-based capabilities. Disable this only for models or use cases where tool calling shouldn't be available. Some features won't work without tools. |
 
 #### LLM Specific Agent Settings
 
@@ -126,11 +133,31 @@ Some capabilities depend on the selected Service type and, for OpenAI Compatible
 | **Reasoning Enabled** | Available for Anthropic and OpenAI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Enables extended thinking or reasoning capabilities for complex tasks. |
 | **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure. When enabled and a JSON schema is provided in the request, the model returns structured JSON matching that schema. Compatible model support is still required. |
 
-New bots enable native web search and structured output by default where the selected provider supports those features. For providers that don't support native tools, native tool selections are ignored.
+New agents enable native web search and structured output by default where the selected provider supports those features. For providers that don't support native tools, native tool selections are ignored.
+
+For Anthropic services, **Structured Output** and extended thinking can't be used at the same time.
 
 If you need an OpenAI-style endpoint without the Responses API path, use an **OpenAI Compatible** service and turn **Use Responses API** off for that service instead of using the **OpenAI** service type.
 
-Select **Save** to create the agent.
+#### Access tab
+
+Use this tab to control who can interact with and manage the agent:
+
+- **Channel access** controls which channels the agent can be mentioned in
+- **User access** controls which users can interact with the agent
+- **Agent admins** can edit and delete the agent; the agent creator is always an admin
+
+#### MCPs tab
+
+Use this tab to control which MCP tools the agent can use. This tab is available only when **Enable Tools** is turned on.
+
+- **Automatically enable all MCP tools** gives the agent access to every currently available MCP tool and any MCP tools added later.
+- When **Automatically enable all MCP tools** is off, select the specific MCP tools the agent may use.
+- If a previously selected MCP tool is no longer available, it is removed from the agent configuration when you save.
+
+Updating an agent's display name also updates the linked Mattermost bot display name. Deleting an agent deactivates the linked Mattermost bot account.
+
+Legacy bots previously stored in plugin configuration are migrated on startup into database-backed agents and then managed from the **Agents** page. Migrated agents don't have a creator and can be managed by system admins.
 
 ### Custom instructions
 
@@ -307,20 +334,24 @@ Post indexing occurs automatically during initial setup and when changing embedd
 
 ### Backup and restore
 
-The plugin configuration is stored in the Mattermost database. To backup:
+The plugin stores agent data across both plugin configuration and plugin database tables. To backup:
 
-1. Ensure your regular Mattermost backup includes plugin configurations
-2. For larger deployments, consider backing up indexed vector data separately
-3. User-created custom prompt templates and prompt pins are stored in the `LLM_CustomPrompts` and `LLM_CustomPromptPins` tables, so include plugin database tables in your normal backup and restore process.
+1. Ensure your regular Mattermost backup includes plugin configuration data.
+2. Include plugin database tables in your normal backup and restore process. In particular:
+   - `Agents_UserAgents` for agents created or managed from the **Agents** page
+   - `LLM_CustomPrompts` and `LLM_CustomPromptPins` for custom prompt templates and prompt pins
+3. For larger deployments, consider backing up indexed vector data separately.
+
+Restoring only plugin configuration isn't sufficient to restore agents managed from the **Agents** page.
 
 ### Configuration format
 
-The plugin uses a service-based architecture stored in the Mattermost database at `PluginSettings.Plugins["mattermost-ai"]`:
+The plugin uses a service-based architecture:
 
-- **Services** define LLM provider configurations (API keys, models, endpoints)
-- **Bots** reference services by ID and define agent personalities and access controls
+- `PluginSettings.Plugins["mattermost-ai"]["config"]` stores plugin-wide settings and AI service configurations, including `defaultBotName`
+- Agents are stored separately in the `Agents_UserAgents` table
 
-This separation allows multiple bots to share the same LLM service configuration.
+This separation allows multiple agents to share the same LLM service configuration while keeping agent lifecycle and access data out of `config.bots`.
 
 **Configuration structure:**
 ```json
@@ -335,22 +366,14 @@ This separation allows multiple bots to share the same LLM service configuration
         "defaultModel": "gpt-4o"
       }
     ],
-    "bots": [
-      {
-        "id": "bot-001",
-        "name": "ai",
-        "displayName": "AI Assistant",
-        "serviceID": "550e8400-e29b-41d4-a716-446655440000",
-        "customInstructions": "You are a helpful assistant."
-      }
-    ]
+    "defaultBotName": "ai"
   }
 }
 ```
 
 **Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`, `scale`
 
-**Legacy format:** Older configurations with embedded service objects within bots are automatically migrated to the current format on plugin startup.
+**Legacy format:** Older configurations that stored bots in `config.bots`, or embedded service objects within bots, are migrated on plugin startup. After legacy bot migration completes, stored `config.bots` entries are removed to avoid duplicate bot registration.
 
 ## Troubleshooting
 
@@ -379,7 +402,7 @@ Integrations are available in direct messages by default. If you enable the expe
 
 The Model Context Protocol (MCP) integration lets Agents use tools exposed by MCP servers, including the embedded Mattermost tools and optional remote servers.
 
-The MCP client and the embedded Mattermost MCP server are always enabled. Admins still manage remote MCP servers, connection timeout, and per-tool policies from the MCP UI.
+The MCP client and the embedded Mattermost MCP server are always enabled. Admins manage remote MCP servers, connection timeout, and per-tool enabled state and approval policies from the MCP UI in the System Console. Agent-level MCP access is configured separately on each agent's **MCPs** tab.
 
 ### Configuration
 
@@ -391,8 +414,9 @@ The MCP client and the embedded Mattermost MCP server are always enabled. Admins
    - Remote MCP servers, including URL, custom headers, OAuth client settings, and per-server enablement.
 
 3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy.
+4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools.
 
-You can't disable MCP entirely from the System Console. To limit access, disable individual tools or change their policy in the **Tools** tab.
+You can't disable MCP entirely from the System Console. To limit access, disable individual tools or change their policy in the **Tools** tab, and/or restrict tool access per agent from the agent's **MCPs** tab.
 
 ### Add MCP servers
 
@@ -411,6 +435,7 @@ You can't disable MCP entirely from the System Console. To limit access, disable
 - **Idle Cleanup**: Inactive client connections are automatically closed after the configured timeout
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation
 - **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools
+- **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent. Tool use is still subject to admin tool policies and the user's Mattermost permissions
 
 ### Atlassian MCP server authorization
 
@@ -485,9 +510,9 @@ The MCP server provides the following tools to AI agents and external clients:
 
 The embedded Mattermost MCP server is available automatically to configured AI agents. No System Console switch is required to enable embedded MCP for in-product agents.
 
-Use **System Console > Plugins > Agents > Model Context Protocol (MCP)** to configure remote MCP servers, the idle timeout, and the optional HTTP endpoint for external clients. Use the **Tools** tab to manage per-tool enablement and approval policies.
+Use **System Console > Plugins > Agents > Model Context Protocol (MCP)** to configure remote MCP servers, the idle timeout, the optional HTTP endpoint for external clients, and per-tool enablement and approval policies. Then use each agent's **MCPs** tab on the **Agents** page to either automatically enable all MCP tools or restrict that agent to specific tools.
 
-Configured agents can use these tools subject to bot settings, tool policies, user permissions, and any required approval flow.
+Configured agents can use these tools subject to their own MCP settings, admin tool policies, user permissions, and any required approval flow.
 
 #### For External Clients
 

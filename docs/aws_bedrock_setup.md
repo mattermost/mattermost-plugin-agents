@@ -201,13 +201,13 @@ Check [Amazon Bedrock model availability](https://docs.aws.amazon.com/bedrock/la
 
 ## Step 4: Create an AI agent
 
-1. Go to **System Console > Plugins > Agents**.
-2. Under **Agents**, select **Add an Agent**.
+1. Open the top-level **Agents** product page in Mattermost.
+2. Select **Add an Agent**.
 3. Configure the following fields:
 
 | Field | Value |
 |-------|-------|
-| **Agent Name** | The username for the bot (e.g., `ai`) |
+| **Agent Username** | The username for the bot (e.g., `ai`) |
 | **Display Name** | The display name shown in conversations (e.g., `AI Assistant`) |
 | **Service** | Select the Bedrock service you created in Step 3 |
 | **Custom Instructions** | Optional system prompt for the agent's behavior |
