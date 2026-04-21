@@ -257,12 +257,11 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return fmt.Errorf("failed to get turns: %w", err)
 	}
 
-	// Collect the tool_use IDs carried by the clicked post's assistant turn.
-	// The share/keep-private decision applies to exactly those tools; we
-	// stamp DecidedAt on their matching tool_result blocks so future reads
-	// can tell "decision made" from "still pending". Keep Private records
-	// the decision without flipping Shared.
+	// Classify the clicked post's tool_use blocks. DecidedAt applies to the
+	// matching tool_result blocks; we also need to know whether any tool
+	// actually executed to decide whether a follow-up stream is warranted.
 	clickedPostToolUseIDs := make(map[string]struct{})
+	clickedPostHasExecutedTool := false
 	for _, turn := range turns {
 		if turn.Role != "assistant" || turn.PostID == nil || *turn.PostID != post.Id {
 			continue
@@ -272,10 +271,45 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 			continue
 		}
 		for _, b := range blocks {
-			if b.Type == conversation.BlockTypeToolUse && b.ID != "" {
-				clickedPostToolUseIDs[b.ID] = struct{}{}
+			if b.Type != conversation.BlockTypeToolUse || b.ID == "" {
+				continue
+			}
+			clickedPostToolUseIDs[b.ID] = struct{}{}
+			if b.Status == conversation.StatusSuccess ||
+				b.Status == conversation.StatusError ||
+				b.Status == conversation.StatusAutoApproved {
+				clickedPostHasExecutedTool = true
 			}
 		}
+	}
+
+	// Idempotency: if every tool_result for this post already has
+	// DecidedAt, the decision was already recorded and no further work is
+	// needed. Returning early makes repeat clicks safe and cheap — the
+	// webapp no longer needs to defend against this but the server still
+	// should.
+	alreadyDecided := true
+	sawMatchingResult := false
+	for _, turn := range turns {
+		var blocks []conversation.ContentBlock
+		if unmarshalErr := json.Unmarshal(turn.Content, &blocks); unmarshalErr != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type != conversation.BlockTypeToolResult {
+				continue
+			}
+			if _, ok := clickedPostToolUseIDs[b.ToolUseID]; !ok {
+				continue
+			}
+			sawMatchingResult = true
+			if b.DecidedAt == nil {
+				alreadyDecided = false
+			}
+		}
+	}
+	if sawMatchingResult && alreadyDecided {
+		return nil
 	}
 
 	now := model.GetMillis()
@@ -322,22 +356,10 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return nil
 	}
 
-	// If the post has no executed tool_use blocks (e.g. every tool was
-	// rejected), there is nothing to share and no follow-up to stream.
-	// Skipping here prevents a UI race — the webapp auto-submits
-	// doToolResult([]) when every tool call is Rejected, and without this
-	// guard each click would kick off another LLM round.
-	if !hasExecutedToolUseForPost(turns, post.Id) {
-		return nil
-	}
-
-	// Guard against duplicate share clicks: if an assistant turn linked to a
-	// PostID exists past the last tool_result turn, the follow-up has already streamed.
-	freshTurns, err := c.convService.GetTurns(conv.ID)
-	if err != nil {
-		return fmt.Errorf("failed to reload turns: %w", err)
-	}
-	if followUpAlreadyStreamed(freshTurns) {
+	// Only stream a follow-up when there is something to follow up on:
+	// at least one executed tool_result exists on this post. Rejected-only
+	// posts produce no output worth streaming.
+	if !clickedPostHasExecutedTool {
 		return nil
 	}
 
@@ -351,54 +373,6 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 	// via the share toggle — the LLM just needs the complete context to
 	// produce a coherent answer.
 	return c.streamToolFollowUp(bot, user, channel, post, conv, false, false)
-}
-
-// hasExecutedToolUseForPost reports whether the assistant turn linked to
-// postID contains any tool_use block that actually ran (Success or Error).
-// Rejected tool_use blocks produce no shareable output, so a "share" click
-// on such a post must not start an LLM follow-up.
-func hasExecutedToolUseForPost(turns []store.Turn, postID string) bool {
-	for i := range turns {
-		if turns[i].Role != "assistant" {
-			continue
-		}
-		if turns[i].PostID == nil || *turns[i].PostID != postID {
-			continue
-		}
-		var blocks []conversation.ContentBlock
-		if err := json.Unmarshal(turns[i].Content, &blocks); err != nil {
-			continue
-		}
-		for _, b := range blocks {
-			if b.Type == conversation.BlockTypeToolUse &&
-				(b.Status == conversation.StatusSuccess ||
-					b.Status == conversation.StatusError ||
-					b.Status == conversation.StatusAutoApproved) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// followUpAlreadyStreamed reports whether the LLM follow-up for the most recent
-// tool round has already been streamed to a channel post.
-func followUpAlreadyStreamed(turns []store.Turn) bool {
-	maxToolResultSeq := 0
-	for _, t := range turns {
-		if t.Role == "tool_result" && t.Sequence > maxToolResultSeq {
-			maxToolResultSeq = t.Sequence
-		}
-	}
-	if maxToolResultSeq == 0 {
-		return false
-	}
-	for _, t := range turns {
-		if t.Role == "assistant" && t.PostID != nil && t.Sequence > maxToolResultSeq {
-			return true
-		}
-	}
-	return false
 }
 
 // streamToolFollowUp rebuilds the completion request from the conversation and
