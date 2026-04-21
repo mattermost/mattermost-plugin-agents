@@ -29,17 +29,21 @@ import (
 var legacyMigrationTestConnStr string
 
 func TestMain(m *testing.M) {
+	os.Exit(runLegacyBotMigrationTestMain(m))
+}
+
+func runLegacyBotMigrationTestMain(m *testing.M) int {
 	baseDir, err := os.MkdirTemp("", "legacy-bot-migration-testdb-*")
 	if err != nil {
 		fmt.Printf("Failed to create temp dir: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	defer os.RemoveAll(baseDir)
 
 	port, err := getFreePort()
 	if err != nil {
 		fmt.Printf("Failed to allocate postgres port: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	dbConfig := embeddedpostgres.DefaultConfig().
@@ -56,7 +60,7 @@ func TestMain(m *testing.M) {
 	postgres := embeddedpostgres.NewDatabase(dbConfig)
 	if err := postgres.Start(); err != nil {
 		fmt.Printf("Failed to start embedded postgres: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	legacyMigrationTestConnStr = dbConfig.GetConnectionURL()
@@ -64,10 +68,10 @@ func TestMain(m *testing.M) {
 
 	if err := postgres.Stop(); err != nil {
 		fmt.Printf("Failed to stop embedded postgres: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
-	os.Exit(code)
+	return code
 }
 
 func getFreePort() (uint32, error) {
@@ -80,6 +84,10 @@ func getFreePort() (uint32, error) {
 	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
 	if !ok {
 		return 0, fmt.Errorf("unexpected listener address type %T", listener.Addr())
+	}
+
+	if tcpAddr.Port < 0 || tcpAddr.Port > 65535 {
+		return 0, fmt.Errorf("unexpected TCP port %d", tcpAddr.Port)
 	}
 
 	return uint32(tcpAddr.Port), nil
