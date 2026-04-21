@@ -15,7 +15,7 @@ import {CustomPrompt} from './types';
 
 const Client4 = new Client4Class();
 
-type MCPToolPolicy = 'auto_run' | 'auto_run_everywhere' | 'ask';
+type MCPToolPolicy = 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
 type VettedToolConfig = {name: string; policy: MCPToolPolicy; enabled: boolean};
 
 export function setSiteURL(siteURL: string) {

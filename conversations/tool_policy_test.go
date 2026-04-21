@@ -27,12 +27,12 @@ func TestShouldAutoExecuteTool(t *testing.T) {
 		enabled bool
 		want    bool
 	}{
-		{name: "DM + auto_run enabled -> auto-execute", isDM: true, policy: mcp.ToolPolicyAutoRun, enabled: true, want: true},
+		{name: "DM + auto_run_in_dm enabled -> auto-execute", isDM: true, policy: mcp.ToolPolicyAutoRunInDM, enabled: true, want: true},
 		{name: "DM + auto_run_everywhere enabled -> auto-execute", isDM: true, policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true, want: true},
 		{name: "DM + ask -> approve", isDM: true, policy: mcp.ToolPolicyAsk, enabled: true, want: false},
-		{name: "DM + disabled -> approve", isDM: true, policy: mcp.ToolPolicyAutoRun, enabled: false, want: false},
+		{name: "DM + disabled -> approve", isDM: true, policy: mcp.ToolPolicyAutoRunInDM, enabled: false, want: false},
 
-		{name: "channel + auto_run enabled -> approve (DM-only policy)", isDM: false, policy: mcp.ToolPolicyAutoRun, enabled: true, want: false},
+		{name: "channel + auto_run_in_dm enabled -> approve (DM-only policy)", isDM: false, policy: mcp.ToolPolicyAutoRunInDM, enabled: true, want: false},
 		{name: "channel + auto_run_everywhere enabled -> auto-execute", isDM: false, policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true, want: true},
 		{name: "channel + ask -> approve", isDM: false, policy: mcp.ToolPolicyAsk, enabled: true, want: false},
 		{name: "channel + auto_run_everywhere disabled -> approve", isDM: false, policy: mcp.ToolPolicyAutoRunEverywhere, enabled: false, want: false},

@@ -55,11 +55,11 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 			config: &ServerConfig{
 				Enabled: true,
 				ToolConfigs: []ToolConfig{
-					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
+					{Name: "search", Policy: ToolPolicyAutoRunInDM, Enabled: true},
 				},
 			},
 			toolName:    "search",
-			wantPolicy:  ToolPolicyAutoRun,
+			wantPolicy:  ToolPolicyAutoRunInDM,
 			wantEnabled: true,
 		},
 		{
@@ -79,11 +79,11 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 			config: &ServerConfig{
 				Enabled: true,
 				ToolConfigs: []ToolConfig{
-					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: false},
+					{Name: "search", Policy: ToolPolicyAutoRunInDM, Enabled: false},
 				},
 			},
 			toolName:    "search",
-			wantPolicy:  ToolPolicyAutoRun,
+			wantPolicy:  ToolPolicyAutoRunInDM,
 			wantEnabled: false,
 		},
 		{
@@ -115,7 +115,7 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 			config: &ServerConfig{
 				Enabled: true,
 				ToolConfigs: []ToolConfig{
-					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
+					{Name: "search", Policy: ToolPolicyAutoRunInDM, Enabled: true},
 					{Name: "search", Policy: ToolPolicyAsk, Enabled: false},
 				},
 			},
@@ -128,7 +128,7 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 			config: &ServerConfig{
 				Enabled: true,
 				ToolConfigs: []ToolConfig{
-					{Name: "get_me", Policy: ToolPolicyAutoRun, Enabled: true},
+					{Name: "get_me", Policy: ToolPolicyAutoRunInDM, Enabled: true},
 				},
 			},
 			toolName:    "GET_ME",
@@ -140,7 +140,7 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 			config: &ServerConfig{
 				Enabled: false,
 				ToolConfigs: []ToolConfig{
-					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
+					{Name: "search", Policy: ToolPolicyAutoRunInDM, Enabled: true},
 				},
 			},
 			toolName:    "search",
@@ -158,7 +158,7 @@ func TestServerConfigGetToolPolicy(t *testing.T) {
 	}
 }
 
-func TestServerConfigIsToolAutoRun(t *testing.T) {
+func TestServerConfigIsToolAutoRunInDM(t *testing.T) {
 	tests := []struct {
 		name     string
 		config   *ServerConfig
@@ -193,7 +193,7 @@ func TestServerConfigIsToolAutoRun(t *testing.T) {
 			config: &ServerConfig{
 				Enabled: true,
 				ToolConfigs: []ToolConfig{
-					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: false},
+					{Name: "search", Policy: ToolPolicyAutoRunInDM, Enabled: false},
 				},
 			},
 			toolName: "search",
@@ -204,7 +204,7 @@ func TestServerConfigIsToolAutoRun(t *testing.T) {
 			config: &ServerConfig{
 				Enabled: true,
 				ToolConfigs: []ToolConfig{
-					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
+					{Name: "search", Policy: ToolPolicyAutoRunInDM, Enabled: true},
 				},
 			},
 			toolName: "search",
@@ -226,7 +226,7 @@ func TestServerConfigIsToolAutoRun(t *testing.T) {
 			config: &ServerConfig{
 				Enabled: false,
 				ToolConfigs: []ToolConfig{
-					{Name: "search", Policy: ToolPolicyAutoRun, Enabled: true},
+					{Name: "search", Policy: ToolPolicyAutoRunInDM, Enabled: true},
 				},
 			},
 			toolName: "search",
@@ -236,7 +236,7 @@ func TestServerConfigIsToolAutoRun(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, tt.config.IsToolAutoRun(tt.toolName))
+			require.Equal(t, tt.want, tt.config.IsToolAutoRunInDM(tt.toolName))
 		})
 	}
 }

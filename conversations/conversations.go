@@ -236,7 +236,7 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 			return false
 		}
 		if isDM {
-			return mcp.IsToolPolicyAutoRun(policy)
+			return mcp.IsToolPolicyAutoRunInDM(policy)
 		}
 		return mcp.IsToolPolicyAutoRunEverywhere(policy)
 	}

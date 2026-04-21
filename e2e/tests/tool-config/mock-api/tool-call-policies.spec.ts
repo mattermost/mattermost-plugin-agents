@@ -25,7 +25,7 @@ let openAIMock: OpenAIMockContainer;
 
 type EmbeddedToolConfig = {
     name: string;
-    policy: 'ask' | 'auto_run' | 'auto_run_everywhere';
+    policy: 'ask' | 'auto_run_in_dm' | 'auto_run_everywhere';
     enabled: boolean;
 };
 
@@ -104,9 +104,9 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         mattermost = await RunToolConfigContainerWithPolicies();
         openAIMock = await RunOpenAIMocks(mattermost.network);
         await setEmbeddedToolPolicies([
-            {name: 'read_post', policy: 'auto_run', enabled: true},
+            {name: 'read_post', policy: 'auto_run_in_dm', enabled: true},
             {name: 'get_channel_info', policy: 'ask', enabled: true},
-            {name: 'read_channel', policy: 'auto_run', enabled: true},
+            {name: 'read_channel', policy: 'auto_run_in_dm', enabled: true},
         ]);
     });
 
@@ -486,9 +486,9 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await waitForChannelReady(page, 'Off-Topic');
 
         await setEmbeddedToolPolicies([
-            {name: 'read_post', policy: 'auto_run', enabled: true},
+            {name: 'read_post', policy: 'auto_run_in_dm', enabled: true},
             {name: 'get_channel_info', policy: 'ask', enabled: true},
-            {name: 'read_channel', policy: 'auto_run', enabled: true},
+            {name: 'read_channel', policy: 'auto_run_in_dm', enabled: true},
         ]);
 
         await openAIMock.addMocks([
@@ -550,7 +550,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await expect(rhs.getByRole('button', {name: /keep private/i})).not.toBeVisible();
 
         await setEmbeddedToolPolicies([
-            {name: 'read_post', policy: 'auto_run', enabled: true},
+            {name: 'read_post', policy: 'auto_run_in_dm', enabled: true},
             {name: 'get_channel_info', policy: 'ask', enabled: true},
             {name: 'read_channel', policy: 'auto_run_everywhere', enabled: true},
         ]);

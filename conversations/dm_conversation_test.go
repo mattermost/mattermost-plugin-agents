@@ -268,7 +268,7 @@ func newDMPolicyChecker() *dmPolicyChecker {
 }
 
 func (f *dmPolicyChecker) setAutoRun(origin, name string) {
-	f.policies[origin+":"+name] = mcp.ToolPolicyAutoRun
+	f.policies[origin+":"+name] = mcp.ToolPolicyAutoRunInDM
 }
 
 func (f *dmPolicyChecker) GetToolPolicy(serverBaseURL, toolName string) (string, bool) {
