@@ -10,6 +10,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {SystemConsoleHelper} from 'helpers/system-console';
 import {AgentPageHelper} from 'helpers/agent-page';
+import {AgentAPIHelper} from 'helpers/agent-api';
 import {
     ProviderBundle,
     createCustomProvider,
@@ -391,12 +392,15 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
 
         const systemConsole = new SystemConsoleHelper(page);
         const mmPage = new MattermostPage(page);
+        const agentApi = new AgentAPIHelper(mattermost.url());
         const serviceName = provider.service.name;
         const botDisplayName = provider.bot.displayName;
         const botUsername = provider.bot.name;
         const avoidModelTokens = selectedProviderType === 'anthropic' ? ['haiku'] : [];
         let selectedServiceModel = '';
         let selectedBotModel = '';
+        const adminClient = await mattermost.getAdminClient();
+        const adminToken = adminClient.getToken();
 
         // 1) Login as admin and configure service + bot in System Console.
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
@@ -459,6 +463,15 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         }
 
         await expect(page.getByText(botDisplayName).first()).toBeVisible();
+        const createdAgent = (await agentApi.getAgents(adminToken)).find((agent) => agent.name === botUsername);
+        expect(createdAgent).toBeTruthy();
+
+        await agentApi.updateAgent(adminToken, createdAgent!.id, {
+            enabledNativeTools: provider.bot.enabledNativeTools || [],
+            autoEnableNewMCPTools: false,
+            enabledMCPTools: [],
+            disableTools: provider.bot.disableTools,
+        });
 
         await systemConsole.navigateToPluginConfig(mattermost.url());
         await page.waitForLoadState('domcontentloaded');
