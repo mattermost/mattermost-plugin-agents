@@ -379,11 +379,14 @@ const ModalOverlay = styled.div`
     z-index: 2000;
 `;
 
+// Fixed-height modal keeps the top edge anchored so it doesn't jump around when
+// the active tab or AI Service selection changes how tall the body content is.
+// The body scrolls internally (see ModalBody) when content exceeds the frame.
 const ModalContainer = styled.div`
     background-color: var(--center-channel-bg);
     border-radius: 12px;
     width: 700px;
-    max-height: 85vh;
+    height: min(720px, 85vh);
     min-height: 0;
     display: flex;
     flex-direction: column;

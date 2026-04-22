@@ -7,6 +7,16 @@ import {FormattedMessage} from 'react-intl';
 import CreatableSelect from 'react-select/creatable';
 import {StylesConfig, SingleValue} from 'react-select';
 
+// Portal Combobox menus so they are not clipped by ancestor scroll containers
+// (e.g. the Agent config modal body). Prefer #root so menu CSS variables match
+// the rest of the app.
+function comboboxMenuPortalTarget(): HTMLElement | null {
+    if (typeof document === 'undefined') {
+        return null;
+    }
+    return document.getElementById('root') ?? document.body;
+}
+
 export const ItemList = styled.div`
 	display: grid;
 	grid-template-columns: minmax(auto, 275px) 1fr;
@@ -190,6 +200,10 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
             backgroundColor: 'var(--center-channel-bg)',
             border: '1px solid rgba(var(--center-channel-color-rgb), 0.16)',
         }),
+        menuPortal: (base) => ({
+            ...base,
+            zIndex: 10000,
+        }),
         option: (base, state) => {
             let backgroundColor = 'transparent';
             if (state.isSelected) {
@@ -217,6 +231,8 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                     styles={selectStyles}
                     isClearable={props.isClearable ?? true}
                     formatCreateLabel={(inputValue: string) => `Use custom model: ${inputValue}`}
+                    menuPortalTarget={comboboxMenuPortalTarget()}
+                    menuPosition='fixed'
                 />
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
