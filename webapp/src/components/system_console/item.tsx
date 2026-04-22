@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import styled from 'styled-components';
+import styled, {createGlobalStyle} from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 import CreatableSelect from 'react-select/creatable';
 import {StylesConfig, SingleValue} from 'react-select';
@@ -16,6 +16,15 @@ function comboboxMenuPortalTarget(): HTMLElement | null {
     }
     return document.getElementById('root') ?? document.body;
 }
+
+// Portaled Combobox menus need to stack above the agent config modal overlay
+// (z-index 2000). Targets react-select's classNamePrefix='SystemConsoleCombobox'
+// so the z-index lives in styled-components rather than inline style props.
+const ComboboxPortalStyles = createGlobalStyle`
+    .SystemConsoleCombobox__menu-portal {
+        z-index: 10000;
+    }
+`;
 
 export const ItemList = styled.div`
 	display: grid;
@@ -200,10 +209,6 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
             backgroundColor: 'var(--center-channel-bg)',
             border: '1px solid rgba(var(--center-channel-color-rgb), 0.16)',
         }),
-        menuPortal: (base) => ({
-            ...base,
-            zIndex: 10000,
-        }),
         option: (base, state) => {
             let backgroundColor = 'transparent';
             if (state.isSelected) {
@@ -221,9 +226,11 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
 
     return (
         <>
+            <ComboboxPortalStyles/>
             <ItemLabel>{props.label}</ItemLabel>
             <TextFieldContainer>
                 <CreatableSelect<SelectOption, false>
+                    classNamePrefix='SystemConsoleCombobox'
                     value={currentValue}
                     onChange={handleChange}
                     options={selectOptions}
