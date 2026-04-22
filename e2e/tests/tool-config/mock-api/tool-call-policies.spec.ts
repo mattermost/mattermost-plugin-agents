@@ -293,12 +293,26 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         const adminClient = await mattermost.getAdminClient();
         const imageTrap = await startImageTrapServer(`tool-result-image-${Date.now()}.svg`);
         const seedMessage = `Tool result markdown image seed ${Date.now()}`;
-        const seededPost = await adminClient.createPost({
-            channel_id: townSquareChannelID,
-            message: `${seedMessage}\n\`\`\`\n![blocked-image](${imageTrap.url})`,
-        });
-
         try {
+            const mmPage = new MattermostPage(page);
+            await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+            await mmPage.createAndNavigateToDMWithBot(
+                mattermost,
+                adminUsername,
+                adminPassword,
+                'toolbot',
+            );
+
+            const seededPost = await adminClient.createPost({
+                channel_id: townSquareChannelID,
+                message: `${seedMessage}\n\`\`\`\n![blocked-image](${imageTrap.url})`,
+            });
+
+            // Seed after the browser has left Town Square so the assertion only measures
+            // requests caused by the tool result card flow, not by the source post itself.
+            await page.waitForTimeout(500);
+            const baselineRequestCount = imageTrap.getRequestCount();
+
             await openAIMock.addMocks([
                 {
                     request: {
@@ -306,7 +320,28 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                         path: '/v1/chat/completions',
                         body: {
                             matcher: 'ShouldContainSubstring',
-                            value: seededPost.id,
+                            value:
+                                'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
+                        },
+                    },
+                    context: {
+                        times: 1,
+                    },
+                    response: {
+                        status: 200,
+                        headers: {
+                            'Content-Type': 'text/event-stream',
+                        },
+                        body: buildTextResponse('Unsafe post read'),
+                    },
+                },
+                {
+                    request: {
+                        method: 'POST',
+                        path: '/v1/chat/completions',
+                        body: {
+                            matcher: 'ShouldContainSubstring',
+                            value: 'You are called Tool Test Bot with the username toolbot',
                         },
                     },
                     context: {
@@ -346,21 +381,16 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                 },
             ]);
 
-            const mmPage = new MattermostPage(page);
+            const promptMessage = `Please read the Mattermost post with ID ${seededPost.id}.`;
+            await mmPage.sendChannelMessage(promptMessage);
 
-            await mmPage.login(mattermost.url(), adminUsername, adminPassword);
-            await mmPage.createAndNavigateToDMWithBot(
-                mattermost,
-                adminUsername,
-                adminPassword,
-                'toolbot',
-            );
+            const sentPost = await waitForSentPost(page, promptMessage);
+            await openThreadForPost(sentPost);
 
-            await mmPage.sendChannelMessage(`Please read the Mattermost post with ID ${seededPost.id}.`);
-
-            const latestBotPost = page.locator('[data-testid="llm-bot-post"]').last();
+            const rhs = page.locator('#rhsContainer');
+            const latestBotPost = rhs.locator('[data-testid="llm-bot-post"]').last();
             await expect(latestBotPost.getByText('Read Post', {exact: true})).toBeVisible({timeout: 30000});
-            await expect(page.getByText('Finished reading the unsafe post.')).toBeVisible({timeout: 45000});
+            await expect(rhs.getByText('Finished reading the unsafe post.')).toBeVisible({timeout: 45000});
 
             await latestBotPost.getByText('Read Post', {exact: true}).click();
             await expect(latestBotPost.getByText(seedMessage, {exact: false})).toBeVisible({timeout: 30000});
@@ -368,7 +398,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
             await expect(latestBotPost.locator('img[src*="tool-result-image-"]')).toHaveCount(0);
 
             await page.waitForTimeout(1000);
-            expect(imageTrap.getRequestCount()).toBe(0);
+            expect(imageTrap.getRequestCount() - baselineRequestCount).toBe(0);
         } finally {
             await imageTrap.close();
         }
