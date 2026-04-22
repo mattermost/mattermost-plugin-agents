@@ -311,6 +311,7 @@ const ResultContainer = styled.div`
 `;
 
 interface ToolCardProps {
+    postID: string;
     tool: ToolCall;
     isCollapsed: boolean;
     isProcessing: boolean;
@@ -326,6 +327,7 @@ interface ToolCardProps {
 }
 
 const ToolCard: React.FC<ToolCardProps> = ({
+    postID,
     tool,
     isCollapsed,
     isProcessing,
@@ -380,6 +382,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
         hasPluginTooltips: false,
         latex: false,
         inlinelatex: false,
+        postId: postID,
     };
 
     const renderedArguments = useMemo(() => {
