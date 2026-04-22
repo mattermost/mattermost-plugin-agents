@@ -56,6 +56,10 @@ const McpsTab = (props: Props) => {
     // Fetch available MCP tools on mount and whenever an MCP OAuth connection
     // change websocket event fires (e.g. after the user completes the Connect
     // flow in a popup).
+    //
+    // Only the initial load surfaces errors into the modal body — a transient
+    // failure from a websocket-triggered background refresh must not clobber
+    // the user's in-progress edits by swapping the list for an error panel.
     const loadServers = useCallback(async (opts: {showLoading?: boolean} = {}) => {
         try {
             if (opts.showLoading) {
@@ -64,8 +68,17 @@ const McpsTab = (props: Props) => {
             const response = await getUserMCPTools();
             setServers(response.servers || []);
             setError(null);
-        } catch {
-            setError(intl.formatMessage({defaultMessage: 'Failed to load MCP tools.'}));
+        } catch (err) {
+            if (opts.showLoading) {
+                setError(intl.formatMessage({defaultMessage: 'Failed to load MCP tools.'}));
+            } else {
+                // Background refresh — keep prior servers + clear any stale
+                // error state so the UI does not get stuck on a failure from
+                // a previous attempt. Log so the failure is visible in
+                // diagnostic output rather than silently dropped.
+                // eslint-disable-next-line no-console
+                console.error('Background refresh of MCP tools failed:', err);
+            }
         } finally {
             if (opts.showLoading) {
                 setLoading(false);

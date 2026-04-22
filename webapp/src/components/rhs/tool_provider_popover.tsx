@@ -69,11 +69,16 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
         try {
             const response = await getUserMCPTools();
             setAllServers(response.servers);
-        } catch {
-            // Silently fail - servers stay empty
-        }
-        if (opts.showLoading) {
-            setLoading(false);
+        } catch (error) {
+            // Popover has no dedicated error surface; keep the prior server
+            // list and log so the failure is visible in diagnostic output
+            // rather than silently dropped.
+            // eslint-disable-next-line no-console
+            console.error('Failed to fetch MCP tools for RHS popover:', error);
+        } finally {
+            if (opts.showLoading) {
+                setLoading(false);
+            }
         }
     }, []);
 
