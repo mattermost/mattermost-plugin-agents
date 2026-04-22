@@ -122,8 +122,8 @@ Some capabilities depend on the selected Service type and, for OpenAI Compatible
 
 | Setting | Description |
 |---------|-------------|
-| **Enable Web Search** | Available for Anthropic and OpenAI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Allows the Agent to leverage the provider's native web search tool to respond with recent information. |
-| **Reasoning Enabled** | Available for Anthropic and OpenAI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Enables extended thinking or reasoning capabilities for complex tasks. |
+| **Enable Web Search** | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Gemini and Vertex map this to Google Search grounding via the provider's Responses API. Allows the Agent to leverage the provider's native web search tool to respond with recent information. |
+| **Reasoning Enabled** | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Enables extended thinking or reasoning capabilities for complex tasks. For Gemini / Vertex, Bifrost maps a token budget to `thinkingConfig.thinkingBudget` and an effort level to `thinkingConfig.thinkingLevel` on Gemini 3.0+. |
 | **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure. When enabled and a JSON schema is provided in the request, the model returns structured JSON matching that schema. Compatible model support is still required. |
 
 New bots enable native web search and structured output by default where the selected provider supports those features. For providers that don't support native tools, native tool selections are ignored.
@@ -144,7 +144,7 @@ The built-in web search tool lets agents retrieve current information from the i
 
 #### When to use built-in web search
 
-Built-in web search is intended for LLM models that lack native web search functionality. If your chosen model already provides native web search (such as OpenAI, Anthropic, or an OpenAI Compatible/Azure service with **Use Responses API** enabled), it's strongly recommended to use the provider's native implementation instead. Native web search tools typically offer:
+Built-in web search is intended for LLM models that lack native web search functionality. If your chosen model already provides native web search (such as OpenAI, Anthropic, Google Gemini, Google Vertex AI, or an OpenAI Compatible/Azure service with **Use Responses API** enabled), it's strongly recommended to use the provider's native implementation instead. Native web search tools typically offer:
 
 - Better integration with the model
 - More reliable search results

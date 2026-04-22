@@ -480,6 +480,17 @@ func TestIsValidService(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "Vertex service with invalid service account JSON",
+			service: ServiceConfig{
+				ID:                    "service-11",
+				Type:                  ServiceTypeVertex,
+				VertexProjectID:       "my-project",
+				Region:                "us-central1",
+				VertexAuthCredentials: `{not-json`, // bad
+			},
+			want: false,
+		},
+		{
 			name: "Service with empty ID",
 			service: ServiceConfig{
 				ID:     "", // bad

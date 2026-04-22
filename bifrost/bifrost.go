@@ -771,13 +771,27 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 	}
 	reasoning := &schemas.ChatReasoning{}
 
-	if b.provider == schemas.Anthropic {
+	switch b.provider {
+	case schemas.Anthropic:
 		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
 		reasoning.MaxTokens = Ptr(budget)
-	} else {
+	case schemas.Gemini, schemas.Vertex:
+		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
+		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
+		// When an explicit budget is set use it; otherwise fall back to effort.
+		if b.thinkingBudget > 0 {
+			reasoning.MaxTokens = Ptr(b.thinkingBudget)
+		} else {
+			effort := b.reasoningEffort
+			if effort == "" {
+				effort = "medium"
+			}
+			reasoning.Effort = Ptr(effort)
+		}
+	default:
 		effort := b.reasoningEffort
 		if effort == "" {
 			effort = "medium"
@@ -1184,7 +1198,20 @@ func Ptr[T any](v T) *T {
 
 func (b *LLM) providerSupportsNativeTools() bool {
 	switch b.provider {
-	case schemas.OpenAI, schemas.Azure, schemas.Anthropic:
+	case schemas.OpenAI, schemas.Azure, schemas.Anthropic, schemas.Gemini, schemas.Vertex:
+		return true
+	default:
+		return false
+	}
+}
+
+// providerUsesThinkingBudget reports whether the provider prefers a token-budget
+// style reasoning configuration (thinkingBudget / budget_tokens) over an
+// effort-based one. Anthropic requires a token budget; Gemini/Vertex accept
+// either but map max_tokens to Gemini's native thinkingBudget first.
+func (b *LLM) providerUsesThinkingBudget() bool {
+	switch b.provider {
+	case schemas.Anthropic, schemas.Gemini, schemas.Vertex:
 		return true
 	default:
 		return false
@@ -1419,13 +1446,29 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 	}
 	reasoning := &schemas.ResponsesParametersReasoning{}
 
-	if b.provider == schemas.Anthropic {
+	switch b.provider {
+	case schemas.Anthropic:
 		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
 		reasoning.MaxTokens = Ptr(budget)
-	} else {
+	case schemas.Gemini, schemas.Vertex:
+		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
+		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
+		// Prefer an explicit budget; otherwise fall back to effort. Enable summary
+		// so the provider returns reasoning text in the stream.
+		if b.thinkingBudget > 0 {
+			reasoning.MaxTokens = Ptr(b.thinkingBudget)
+		} else {
+			effort := b.reasoningEffort
+			if effort == "" {
+				effort = "medium"
+			}
+			reasoning.Effort = Ptr(effort)
+		}
+		reasoning.Summary = Ptr("auto")
+	default:
 		effort := b.reasoningEffort
 		if effort == "" {
 			effort = "medium"

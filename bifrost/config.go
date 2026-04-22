@@ -39,16 +39,26 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 	}
 }
 
-func supportsNativeTools(serviceType string) bool {
+// SupportsNativeTools reports whether the given service type can use provider
+// native tools (currently, web search). This gates both request-time filtering
+// and the effective-behavior checks used by built-in Mattermost tools so that
+// built-in fallbacks do not get suppressed when native tools would be stripped.
+func SupportsNativeTools(serviceType string) bool {
 	switch serviceType {
 	case llm.ServiceTypeOpenAI,
 		llm.ServiceTypeOpenAICompatible,
 		llm.ServiceTypeAzure,
-		llm.ServiceTypeAnthropic:
+		llm.ServiceTypeAnthropic,
+		llm.ServiceTypeGemini,
+		llm.ServiceTypeVertex:
 		return true
 	default:
 		return false
 	}
+}
+
+func supportsNativeTools(serviceType string) bool {
+	return SupportsNativeTools(serviceType)
 }
 
 func filterNativeToolsForServiceType(serviceType string, tools []string) []string {

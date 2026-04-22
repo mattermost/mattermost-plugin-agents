@@ -21,17 +21,18 @@ func TestSupportsNativeTools(t *testing.T) {
 		{llm.ServiceTypeOpenAICompatible, true},
 		{llm.ServiceTypeAzure, true},
 		{llm.ServiceTypeAnthropic, true},
+		{llm.ServiceTypeGemini, true},
+		{llm.ServiceTypeVertex, true},
 		{llm.ServiceTypeBedrock, false},
 		{llm.ServiceTypeCohere, false},
 		{llm.ServiceTypeMistral, false},
 		{llm.ServiceTypeScale, false},
-		{llm.ServiceTypeGemini, false},
-		{llm.ServiceTypeVertex, false},
 		{"unknown", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.serviceType, func(t *testing.T) {
 			assert.Equal(t, tt.want, supportsNativeTools(tt.serviceType))
+			assert.Equal(t, tt.want, SupportsNativeTools(tt.serviceType))
 		})
 	}
 }
@@ -47,11 +48,11 @@ func TestFilterNativeToolsForServiceType(t *testing.T) {
 	}{
 		{"OpenAI keeps tools", llm.ServiceTypeOpenAI, tools, tools},
 		{"Anthropic keeps tools", llm.ServiceTypeAnthropic, tools, tools},
+		{"Gemini keeps tools", llm.ServiceTypeGemini, tools, tools},
+		{"Vertex keeps tools", llm.ServiceTypeVertex, tools, tools},
 		{"Bedrock drops tools", llm.ServiceTypeBedrock, tools, []string{}},
 		{"Cohere drops tools", llm.ServiceTypeCohere, tools, []string{}},
 		{"Mistral drops tools", llm.ServiceTypeMistral, tools, []string{}},
-		{"Gemini drops tools", llm.ServiceTypeGemini, tools, []string{}},
-		{"Vertex drops tools", llm.ServiceTypeVertex, tools, []string{}},
 		{"nil tools stay nil", llm.ServiceTypeOpenAI, nil, nil},
 		{"empty tools stay empty", llm.ServiceTypeOpenAI, []string{}, []string{}},
 	}
@@ -104,11 +105,11 @@ func TestNewFromServiceConfigFiltersNativeTools(t *testing.T) {
 	}{
 		{"OpenAI keeps native tools", llm.ServiceTypeOpenAI, true},
 		{"Anthropic keeps native tools", llm.ServiceTypeAnthropic, true},
+		{"Gemini keeps native tools", llm.ServiceTypeGemini, true},
+		{"Vertex keeps native tools", llm.ServiceTypeVertex, true},
 		{"Bedrock drops native tools", llm.ServiceTypeBedrock, false},
 		{"Cohere drops native tools", llm.ServiceTypeCohere, false},
 		{"Mistral drops native tools", llm.ServiceTypeMistral, false},
-		{"Gemini drops native tools", llm.ServiceTypeGemini, false},
-		{"Vertex drops native tools", llm.ServiceTypeVertex, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

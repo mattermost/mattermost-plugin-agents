@@ -83,7 +83,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
 
-    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini';
+    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini' || type === 'vertex';
 
     useEffect(() => {
         if (type === 'openai' && !props.service.useResponsesAPI) {
@@ -92,8 +92,21 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     }, [type, props.onChange, props.service]);
 
     useEffect(() => {
-        // For openaicompatible, API key is optional if there's an API URL
-        const hasRequiredCredentials = type === 'openaicompatible' ? (props.service.apiKey || props.service.apiURL) : props.service.apiKey;
+        // Providers have different credential shapes for model listing:
+        // - openaicompatible: API key OR API URL
+        // - vertex: GCP project ID + region (service-account JSON optional)
+        // - others: API key
+        let hasRequiredCredentials = false;
+        switch (type) {
+        case 'openaicompatible':
+            hasRequiredCredentials = Boolean(props.service.apiKey || props.service.apiURL);
+            break;
+        case 'vertex':
+            hasRequiredCredentials = Boolean(props.service.vertexProjectID && props.service.region);
+            break;
+        default:
+            hasRequiredCredentials = Boolean(props.service.apiKey);
+        }
 
         if (!supportsModelFetching || !hasRequiredCredentials) {
             setAvailableModels([]);
@@ -111,6 +124,12 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     props.service.apiKey,
                     props.service.apiURL || '',
                     props.service.orgId || '',
+                    {
+                        region: props.service.region || '',
+                        vertexProjectID: props.service.vertexProjectID || '',
+                        vertexProjectNumber: props.service.vertexProjectNumber || '',
+                        vertexAuthCredentials: props.service.vertexAuthCredentials || '',
+                    },
                 );
                 setAvailableModels(data);
             } catch (error) {
@@ -122,7 +141,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
         };
 
         loadModels();
-    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, supportsModelFetching, intl]);
+    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, supportsModelFetching, intl]);
 
     const getDefaultOutputTokenLimit = () => {
         switch (type) {
@@ -159,6 +178,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     props.onChange({
                         ...props.service,
                         type: nextType,
+                        apiKey: nextType === 'vertex' ? '' : props.service.apiKey,
                         useResponsesAPI: nextType === 'openai' ? true : props.service.useResponsesAPI,
                     });
                 }}

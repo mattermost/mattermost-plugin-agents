@@ -189,6 +189,19 @@ Obtain a [Gemini API key](https://aistudio.google.com/apikey), then select **Goo
 | **API Key** | Yes | Your Gemini API key from AI Studio |
 | **Default Model** | Yes | The model to use by default (see [Gemini model documentation](https://ai.google.dev/gemini-api/docs/models)) |
 
+### Reasoning and native web search
+
+Gemini supports provider-native capabilities through Bifrost:
+
+- **Reasoning / thinking** — enable **Reasoning** on the agent. Bifrost maps the
+  **Thinking Budget** to `thinkingConfig.thinkingBudget`, and the **Reasoning
+  Effort** selector to `thinkingConfig.thinkingLevel` on Gemini 3.0+ (or an
+  estimated budget on Gemini 2.5). If both are provided, the explicit thinking
+  budget wins.
+- **Native web search** — enable **Web Search** under **Native Google Tools**.
+  This is routed through Bifrost's Responses API and grounded with Google
+  Search, so Gemini can answer with up-to-date information and citations.
+
 ## Google Vertex AI
 
 Vertex AI provides access to Gemini and other Google models through Google Cloud's enterprise AI platform, with project-scoped billing, regional deployment, and IAM-based access control.
@@ -209,3 +222,17 @@ The plugin supports two authentication modes:
 | **GCP Region** | Yes | Vertex AI region (e.g., `us-central1`, `europe-west4`) |
 | **Service Account JSON** | No | Full service account JSON. Leave blank to use ADC or an attached IAM role. |
 | **Default Model** | Yes | The Vertex model ID to use (see [Vertex AI model documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models)) |
+
+### Reasoning and native web search
+
+For Gemini models running on Vertex AI, Bifrost exposes the same reasoning and
+native web-search capabilities as direct Gemini:
+
+- **Reasoning / thinking** — enable **Reasoning** on the agent. The optional
+  **Thinking Budget** maps to `thinkingConfig.thinkingBudget`, and the
+  **Reasoning Effort** selector maps to `thinkingConfig.thinkingLevel` (3.0+).
+- **Native web search** — enable **Web Search** under **Native Google Tools**
+  to ground responses with Google Search via the Vertex Responses API.
+
+Anthropic models served through Vertex AI continue to use Anthropic-style
+extended thinking.
