@@ -318,6 +318,35 @@ func TestConvertMessagesReasoning(t *testing.T) {
 	}
 }
 
+// TestConvertMessagesEmptyToolResult verifies that a tool with an empty
+// Result is substituted with a placeholder so the Anthropic API does not
+// reject the message with "text content blocks must be non-empty".
+func TestConvertMessagesEmptyToolResult(t *testing.T) {
+	b := &LLM{provider: schemas.OpenAI}
+	posts := []llm.Post{{
+		Role:    llm.PostRoleBot,
+		Message: "",
+		ToolUse: []llm.ToolCall{{
+			ID:        "call1",
+			Name:      "search",
+			Arguments: []byte(`{}`),
+			Result:    "",
+		}},
+	}}
+	messages := b.convertMessages(posts)
+	var toolMsg *schemas.ChatMessage
+	for i := range messages {
+		if messages[i].Role == schemas.ChatMessageRoleTool {
+			toolMsg = &messages[i]
+			break
+		}
+	}
+	require.NotNil(t, toolMsg, "expected a tool-role message for the tool result")
+	require.NotNil(t, toolMsg.Content)
+	require.NotNil(t, toolMsg.Content.ContentStr)
+	assert.NotEmpty(t, *toolMsg.Content.ContentStr, "empty tool result must be replaced so providers do not reject the message")
+}
+
 func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
@@ -29,6 +31,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/metrics"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/search"
+	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -88,6 +91,15 @@ type ClusterNotifier interface {
 	PublishConfigUpdate() error
 }
 
+// ConversationStore provides read/write access to conversation and turn data.
+type ConversationStore interface {
+	GetConversation(id string) (*store.Conversation, error)
+	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
+	GetTurnByPostID(postID string) (*store.Turn, error)
+	UpdateTurnContent(id string, content json.RawMessage) error
+	GetConversationSummariesForUser(userID string, limit, offset int) ([]store.ConversationSummary, error)
+}
+
 // ClusterAgentNotifier broadcasts agent update events to other cluster nodes.
 type ClusterAgentNotifier interface {
 	PublishAgentUpdate() error
@@ -119,6 +131,8 @@ type API struct {
 	configUpdater         ConfigUpdater
 	clusterNotifier       ClusterNotifier
 	clusterAgentNotifier  ClusterAgentNotifier
+	conversationStore     ConversationStore
+	convService           *conversation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
 }
@@ -148,6 +162,7 @@ func New(
 	configUpdater ConfigUpdater,
 	clusterNotifier ClusterNotifier,
 	clusterAgentNotifier ClusterAgentNotifier,
+	conversationStore ConversationStore,
 	getSearchInitError func() string,
 	customPromptsStore *customprompts.Store,
 ) *API {
@@ -176,9 +191,15 @@ func New(
 		configUpdater:         configUpdater,
 		clusterNotifier:       clusterNotifier,
 		clusterAgentNotifier:  clusterAgentNotifier,
+		conversationStore:     conversationStore,
 		getSearchInitError:    getSearchInitError,
 		customPromptsStore:    customPromptsStore,
 	}
+}
+
+// SetConversationService sets the conversation entity service for channel analysis.
+func (a *API) SetConversationService(svc *conversation.Service) {
+	a.convService = svc
 }
 
 // ServeHTTP handles HTTP requests to the plugin
@@ -224,6 +245,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	}
 
 	router.Use(a.MattermostAuthorizationRequired)
+
+	router.GET("/conversations/:conversationid", a.handleGetConversation)
 
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
@@ -276,8 +299,6 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	postRouter.POST("/stop", a.handleStop)
 	postRouter.POST("/regenerate", a.handleRegenerate)
 	postRouter.POST("/tool_call", a.handleToolCall)
-	postRouter.GET("/tool_call_private", a.handleToolCallPrivate)
-	postRouter.GET("/tool_result_private", a.handleToolResultPrivate)
 	postRouter.POST("/tool_result", a.handleToolResult)
 	postRouter.POST("/postback_summary", a.handlePostbackSummary)
 
@@ -379,13 +400,40 @@ func (a *API) enforceEmptyBody(c *gin.Context) error {
 	return nil
 }
 
+// aiThreadResponse is the JSON shape for items in the GET /ai_threads response.
+// This is a history DTO — only navigable, summary-level fields. No message
+// preview is included because the 2.0 conversation model stores assistant
+// content in typed blocks rather than a single message string.
+type aiThreadResponse struct {
+	ID         string  `json:"id"`
+	Title      string  `json:"title"`
+	ChannelID  *string `json:"channel_id"`
+	BotID      string  `json:"bot_id"`
+	RootPostID *string `json:"root_post_id"`
+	TurnCount  int     `json:"turn_count"`
+	UpdateAt   int64   `json:"update_at"`
+}
+
 func (a *API) handleGetAIThreads(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
-	threads, err := a.conversationsService.GetAIThreads(userID)
+	summaries, err := a.conversationStore.GetConversationSummariesForUser(userID, 60, 0)
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get posts for bot DM: %w", err))
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get conversation summaries: %w", err))
 		return
+	}
+
+	threads := make([]aiThreadResponse, len(summaries))
+	for i, s := range summaries {
+		threads[i] = aiThreadResponse{
+			ID:         s.ID,
+			Title:      s.Title,
+			ChannelID:  s.ChannelID,
+			BotID:      s.BotID,
+			RootPostID: s.RootPostID,
+			TurnCount:  s.TurnCount,
+			UpdateAt:   s.UpdatedAt,
+		}
 	}
 
 	c.JSON(http.StatusOK, threads)

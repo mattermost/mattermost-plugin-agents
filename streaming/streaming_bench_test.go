@@ -31,7 +31,7 @@ func BenchmarkStreamToPost(b *testing.B) {
 					Message:   "",
 				}
 
-				service.StreamToPost(ctx, stream, post, "en")
+				service.StreamToPost(ctx, stream, post, "en", "bench-user-id")
 			}
 		})
 	}

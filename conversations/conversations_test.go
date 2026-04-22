@@ -118,7 +118,7 @@ func TestConversationMentionHandling(t *testing.T) {
 				configProvider,
 			)
 
-			conv := conversations.New(
+			_ = conversations.New(
 				prompts,
 				mmClient,
 				nil,
@@ -151,10 +151,27 @@ func TestConversationMentionHandling(t *testing.T) {
 			}
 			llmInstance := llm.NewLanguageModelTestLogWrapper(t.T, t.LLM)
 
-			bot := bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
+			_ = bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
 
-			textStream, err := conv.ProcessUserRequest(bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), true, false)
-			require.NoError(t, err, "Failed to process user request")
+			// Build completion request directly (ProcessUserRequest was removed in Step L)
+			llmContext := contextBuilder.BuildLLMContextUserRequest(
+				bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance),
+				threadData.RequestingUser(),
+				threadData.Channel,
+			)
+			systemPrompt, err := prompts.Format("direct_message_question_system", llmContext)
+			require.NoError(t, err, "Failed to format system prompt")
+
+			posts := []llm.Post{
+				{Role: llm.PostRoleSystem, Message: systemPrompt},
+				{Role: llm.PostRoleUser, Message: threadData.LatestPost().Message},
+			}
+			textStream, err := llmInstance.ChatCompletion(llm.CompletionRequest{
+				Posts:     posts,
+				Context:   llmContext,
+				Operation: llm.OperationConversation,
+			})
+			require.NoError(t, err, "Failed to get chat completion")
 			require.NotNil(t, textStream, "Expected a non-nil text stream")
 
 			// Read the response from the text stream

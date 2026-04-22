@@ -83,7 +83,7 @@ test.describe('Tools Tab Display', () => {
         // Verify read_post (a vetted READ tool) shows the DM-scoped auto-run policy
         await expect(page.getByText('read_post')).toBeVisible({ timeout: 5000 });
         const readPostPolicy = toolConfig.getToolPolicyDropdown('read_post');
-        await expect(readPostPolicy).toHaveValue('auto_run');
+        await expect(readPostPolicy).toHaveValue('auto_run_in_dm');
 
         // Verify the toggle is checked (enabled) for read_post
         const readPostToggle = toolConfig.getToolToggle('read_post');
