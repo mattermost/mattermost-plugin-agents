@@ -251,6 +251,26 @@ Run the initial indexing process after configuration.
 
 Configure who can access AI features by setting team-level, channel-level, and user-level permissions for each agent.
 
+### Conversation storage and API
+
+Conversation-backed Agents interactions are now stored in the Mattermost database. For supported flows, `LLM_Conversations` stores conversation metadata such as the requester, bot, optional channel or thread reference, operation type, and title, while `LLM_Turns` stores the ordered turns and typed JSON content blocks for text, reasoning, tool calls, tool results, files, images, and annotations.
+
+Posts remain the visible UI artifact, but the stored conversation is the source of truth. Conversation-backed bot posts include a `conversation_id` post prop that links the post to its conversation record.
+
+During upgrade, the plugin removes the legacy `LLM_PostMeta` table and backfills conversation titles where possible. Older bot posts created before conversation storage remain readable, but only their message text is available; historical tool calls, reasoning blocks, and annotations are not reconstructed.
+
+The conversation model currently covers direct-message chats, channel @mentions, thread and channel analysis flows, and AI search. Meeting summarization continues to use its existing compatibility path and may not expose a conversation record.
+
+#### Conversation API
+
+Mattermost Agents exposes an authenticated conversation read endpoint at `/plugins/mattermost-ai/conversations/{conversation_id}`. The response includes conversation metadata plus ordered turns, token counts, and the server-computed approval state for post-anchored assistant turns.
+
+Access to this endpoint is privacy-aware:
+
+- Conversations with a `ChannelID` require `ReadChannel` permission in that channel.
+- Conversations without a `ChannelID` are owner-only. This includes requester-only analysis flows that are delivered privately.
+- Non-owners can retrieve channel conversations they can read, but unshared tool arguments and tool results are redacted before the response is returned.
+
 ## Management tasks
 
 ### Plugin metrics
@@ -311,7 +331,7 @@ The plugin configuration is stored in the Mattermost database. To backup:
 
 1. Ensure your regular Mattermost backup includes plugin configurations
 2. For larger deployments, consider backing up indexed vector data separately
-3. User-created custom prompt templates and prompt pins are stored in the `LLM_CustomPrompts` and `LLM_CustomPromptPins` tables, so include plugin database tables in your normal backup and restore process.
+3. Conversation-backed AI history is stored in the `LLM_Conversations` and `LLM_Turns` tables, and user-created custom prompt templates and prompt pins are stored in the `LLM_CustomPrompts` and `LLM_CustomPromptPins` tables. Include these plugin database tables in your normal backup and restore process.
 
 ### Configuration format
 
@@ -374,6 +394,8 @@ When users report repeated tool failures, use **LLM Trace** and debug logging to
 ## Integrations
 
 Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**.
+
+When tool approval is required in a channel, the workflow can involve two requester-only decisions: approving the tool call itself, then deciding whether the resulting tool data is shared with the channel. Choosing **Keep Private** keeps the tool arguments and results out of the channel-visible follow-up response. In direct messages with an agent, approved tool results are shared automatically because only the requester can view the conversation.
 
 ## Model Context Protocol (MCP) Integration
 
