@@ -1198,7 +1198,7 @@ func Ptr[T any](v T) *T {
 
 func (b *LLM) providerSupportsNativeTools() bool {
 	switch b.provider {
-	case schemas.OpenAI, schemas.Azure, schemas.Anthropic, schemas.Gemini, schemas.Vertex:
+	case schemas.OpenAI, schemas.Azure, schemas.Anthropic:
 		return true
 	default:
 		return false

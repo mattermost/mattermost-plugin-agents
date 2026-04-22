@@ -231,18 +231,18 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 			expected:           false,
 		},
 		{
-			name:               "Gemini with native tools switches to Responses API",
+			name:               "Gemini with native tools does not auto-enable Responses API",
 			provider:           schemas.Gemini,
 			enabledNativeTools: []string{"web_search"},
 			cfg:                llm.LanguageModelConfig{},
-			expected:           true,
+			expected:           false,
 		},
 		{
-			name:               "Vertex with native web search allowed switches to Responses API",
+			name:               "Vertex with native web search allowed does not auto-enable Responses API",
 			provider:           schemas.Vertex,
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
-			expected:           true,
+			expected:           false,
 		},
 		{
 			name:               "nothing configured returns false",

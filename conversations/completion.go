@@ -21,6 +21,7 @@ func BuildNewConversationPosts(
 	if err != nil {
 		return nil, fmt.Errorf("failed to format prompt: %w", err)
 	}
+
 	return []llm.Post{
 		{Role: llm.PostRoleSystem, Message: prompt},
 		userMessage,
