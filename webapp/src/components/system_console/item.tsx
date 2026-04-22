@@ -7,15 +7,7 @@ import {FormattedMessage} from 'react-intl';
 import CreatableSelect from 'react-select/creatable';
 import {StylesConfig, SingleValue} from 'react-select';
 
-// Portal Combobox menus so they are not clipped by ancestor scroll containers
-// (e.g. the Agent config modal body). Prefer #root so menu CSS variables match
-// the rest of the app.
-function comboboxMenuPortalTarget(): HTMLElement | null {
-    if (typeof document === 'undefined') {
-        return null;
-    }
-    return document.getElementById('root') ?? document.body;
-}
+import {getPortalTarget} from '../../utils/dom';
 
 // Portaled Combobox menus need to stack above the agent config modal overlay
 // (z-index 2000). Targets react-select's classNamePrefix='SystemConsoleCombobox'
@@ -242,7 +234,7 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                     styles={selectStyles}
                     isClearable={props.isClearable ?? true}
                     formatCreateLabel={(inputValue: string) => `Use custom model: ${inputValue}`}
-                    menuPortalTarget={comboboxMenuPortalTarget()}
+                    menuPortalTarget={getPortalTarget()}
                     menuPosition='fixed'
                 />
                 {props.helptext &&
