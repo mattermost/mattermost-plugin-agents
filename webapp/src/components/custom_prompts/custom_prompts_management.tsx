@@ -32,6 +32,8 @@ const ModalOverlay = styled.div`
 const ModalContainer = styled.div`
     background-color: var(--center-channel-bg);
     border-radius: 12px;
+    overflow: hidden;
+    clip-path: inset(0 round 12px);
     width: 768px;
     max-height: 80vh;
     display: flex;
@@ -76,6 +78,8 @@ const ModalBody = styled.div`
     flex-direction: column;
     overflow-y: auto;
     flex: 1;
+    background-color: var(--center-channel-bg);
+    border-radius: 0 0 12px 12px;
 `;
 
 const TabBar = styled.div`
