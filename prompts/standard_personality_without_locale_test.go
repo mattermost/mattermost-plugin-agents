@@ -118,7 +118,7 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 	}
 }
 
-func TestStandardPersonalityWithoutLocaleListsAvailableToolsForGeminiOnly(t *testing.T) {
+func TestStandardPersonalityWithoutLocaleListsAvailableToolsForGeminiAndVertexOnly(t *testing.T) {
 	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err)
 
@@ -158,6 +158,13 @@ func TestStandardPersonalityWithoutLocaleListsAvailableToolsForGeminiOnly(t *tes
 	assert.Contains(t, geminiOutput, "- search_users: Look up users by name")
 	assert.Contains(t, geminiOutput, "- read_channel: Read channel history")
 	assert.Contains(t, geminiOutput, "When asked about capabilities or tool access, agent may mention the tools listed above.")
+
+	vertexOutput, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, buildContext("vertex"))
+	require.NoError(t, err)
+	assert.Contains(t, vertexOutput, "The tools currently available to agent in this conversation are:")
+	assert.Contains(t, vertexOutput, "- search_users: Look up users by name")
+	assert.Contains(t, vertexOutput, "- read_channel: Read channel history")
+	assert.Contains(t, vertexOutput, "When asked about capabilities or tool access, agent may mention the tools listed above.")
 
 	openAIOutput, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, buildContext("openai"))
 	require.NoError(t, err)
