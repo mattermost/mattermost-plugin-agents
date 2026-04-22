@@ -5,10 +5,11 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,75 +27,104 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var legacyMigrationTestConnStr string
+var (
+	legacyMigrationTestConnStr string
+	legacyMigrationTestBaseDir string
+	legacyMigrationTestDB      *embeddedpostgres.EmbeddedPostgres
+	legacyMigrationSetupOnce   sync.Once
+	legacyMigrationSetupErr    error
+)
 
 func TestMain(m *testing.M) {
 	os.Exit(runLegacyBotMigrationTestMain(m))
 }
 
 func runLegacyBotMigrationTestMain(m *testing.M) int {
-	baseDir, err := os.MkdirTemp("", "legacy-bot-migration-testdb-*")
-	if err != nil {
-		fmt.Printf("Failed to create temp dir: %v\n", err)
-		return 1
-	}
-	defer os.RemoveAll(baseDir)
-
-	port, err := getFreePort()
-	if err != nil {
-		fmt.Printf("Failed to allocate postgres port: %v\n", err)
-		return 1
-	}
-
-	dbConfig := embeddedpostgres.DefaultConfig().
-		Port(port).
-		Database("testdb").
-		Username("testuser").
-		Password("testpass").
-		StartTimeout(2 * time.Minute).
-		RuntimePath(filepath.Join(baseDir, "runtime")).
-		DataPath(filepath.Join(baseDir, "data")).
-		BinariesPath(filepath.Join(baseDir, "binaries")).
-		CachePath(filepath.Join(baseDir, "cache"))
-
-	postgres := embeddedpostgres.NewDatabase(dbConfig)
-	if err := postgres.Start(); err != nil {
-		fmt.Printf("Failed to start embedded postgres: %v\n", err)
-		return 1
-	}
-
-	legacyMigrationTestConnStr = dbConfig.GetConnectionURL()
 	code := m.Run()
 
-	if err := postgres.Stop(); err != nil {
-		fmt.Printf("Failed to stop embedded postgres: %v\n", err)
-		return 1
+	if legacyMigrationTestDB != nil {
+		if err := legacyMigrationTestDB.Stop(); err != nil {
+			fmt.Printf("Failed to stop embedded postgres: %v\n", err)
+			return 1
+		}
+	}
+
+	if legacyMigrationTestBaseDir != "" {
+		if err := os.RemoveAll(legacyMigrationTestBaseDir); err != nil {
+			fmt.Printf("Failed to remove temp dir: %v\n", err)
+			return 1
+		}
 	}
 
 	return code
 }
 
-func getFreePort() (uint32, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+func ensureLegacyMigrationPostgres(t *testing.T) {
+	t.Helper()
+
+	legacyMigrationSetupOnce.Do(func() {
+		legacyMigrationSetupErr = startLegacyMigrationPostgres()
+	})
+
+	require.NoError(t, legacyMigrationSetupErr)
+	require.NotEmpty(t, legacyMigrationTestConnStr)
+}
+
+func startLegacyMigrationPostgres() error {
+	baseDir, err := os.MkdirTemp("", "legacy-bot-migration-testdb-*")
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer listener.Close()
+	legacyMigrationTestBaseDir = baseDir
 
-	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok {
-		return 0, fmt.Errorf("unexpected listener address type %T", listener.Addr())
+	for attempt := 0; attempt < 10; attempt++ {
+		port := legacyMigrationPortForAttempt(attempt)
+
+		dbConfig := embeddedpostgres.DefaultConfig().
+			Port(port).
+			Database("testdb").
+			Username("testuser").
+			Password("testpass").
+			StartTimeout(2 * time.Minute).
+			RuntimePath(filepath.Join(baseDir, "runtime")).
+			DataPath(filepath.Join(baseDir, "data")).
+			BinariesPath(filepath.Join(baseDir, "binaries")).
+			CachePath(filepath.Join(baseDir, "cache"))
+
+		postgres := embeddedpostgres.NewDatabase(dbConfig)
+		if err := postgres.Start(); err != nil {
+			_ = postgres.Stop()
+			if isPortInUseError(err) {
+				continue
+			}
+			return fmt.Errorf("failed to start embedded postgres: %w", err)
+		}
+
+		legacyMigrationTestDB = postgres
+		legacyMigrationTestConnStr = dbConfig.GetConnectionURL()
+		return nil
 	}
 
-	if tcpAddr.Port < 0 || tcpAddr.Port > 65535 {
-		return 0, fmt.Errorf("unexpected TCP port %d", tcpAddr.Port)
+	return fmt.Errorf("failed to start embedded postgres after multiple port attempts")
+}
+
+func legacyMigrationPortForAttempt(attempt int) uint32 {
+	offset := (time.Now().UnixNano() + int64(attempt*7919)) % 30000
+	if offset < 0 {
+		offset = -offset
 	}
 
-	return uint32(tcpAddr.Port), nil
+	return uint32(20000 + offset)
+}
+
+func isPortInUseError(err error) bool {
+	return strings.Contains(err.Error(), "already listening on port") ||
+		strings.Contains(err.Error(), "address already in use")
 }
 
 func setupLegacyMigrationStore(t *testing.T) *store.Store {
 	t.Helper()
+	ensureLegacyMigrationPostgres(t)
 
 	setupDB, err := sqlx.Connect("postgres", legacyMigrationTestConnStr)
 	require.NoError(t, err)
