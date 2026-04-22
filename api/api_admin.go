@@ -242,28 +242,26 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		Servers: make([]MCPServerInfo, 0, len(mcpConfig.Servers)+1),
 	}
 
-	// Discover tools from embedded server
-	{
-		embeddedServer := a.mcpClientManager.GetEmbeddedServer()
-		if embeddedServer != nil {
-			serverInfo := MCPServerInfo{
-				Name:  mcp.EmbeddedServerName,
-				URL:   mcp.EmbeddedClientKey,
-				Tools: []MCPToolInfo{},
-				Error: nil,
-			}
-
-			// Try to discover tools from embedded server
-			tools, err := a.discoverEmbeddedServerTools(c.Request.Context(), userID, mcpConfig.EmbeddedServer, embeddedServer)
-			if err != nil {
-				errMsg := err.Error()
-				serverInfo.Error = &errMsg
-			} else {
-				serverInfo.Tools = tools
-			}
-
-			response.Servers = append(response.Servers, serverInfo)
+	embeddedServer := a.mcpClientManager.GetEmbeddedServer()
+	if embeddedServer != nil {
+		serverInfo := MCPServerInfo{
+			Name:  mcp.EmbeddedServerName,
+			URL:   mcp.EmbeddedClientKey,
+			Tools: []MCPToolInfo{},
+			Error: nil,
 		}
+
+		// Embedded MCP is always available after PR #617, even if older configs still
+		// have the legacy toggle stored as false.
+		tools, err := a.discoverEmbeddedServerTools(c.Request.Context(), userID, mcpConfig.EmbeddedServer, embeddedServer)
+		if err != nil {
+			errMsg := err.Error()
+			serverInfo.Error = &errMsg
+		} else {
+			serverInfo.Tools = tools
+		}
+
+		response.Servers = append(response.Servers, serverInfo)
 	}
 
 	// Discover tools from each configured remote server

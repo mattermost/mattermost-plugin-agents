@@ -21,7 +21,8 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
-test.describe.serial('Bot Native Tools', () => {
+// Legacy System Console bot editor removed (MM-65671). Covered by tests/agents/provider-config.spec.ts.
+test.describe.skip('Bot Native Tools', () => {
     test('should show Native Claude Tools for Anthropic service', async ({ page }) => {
         test.setTimeout(60000);
 

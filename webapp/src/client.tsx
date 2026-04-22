@@ -8,6 +8,7 @@ import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ConversationResponse} from '@/types/conversation';
+import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
 
 import manifest from './manifest';
 
@@ -32,6 +33,10 @@ function postRoute(postid: string): string {
 
 function channelRoute(channelid: string): string {
     return `${baseRoute()}/channel/${channelid}`;
+}
+
+function agentRoute(agentId: string): string {
+    return `${baseRoute()}/agents/${agentId}`;
 }
 
 export async function doReaction(postid: string) {
@@ -701,6 +706,147 @@ export async function savePluginConfig(config: PluginConfig): Promise<void> {
 
     if (response.ok) {
         return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+// --- Agent CRUD ---
+
+export async function getAgents(): Promise<UserAgent[]> {
+    const url = `${baseRoute()}/agents`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function createAgent(agent: CreateAgentRequest): Promise<UserAgent> {
+    const url = `${baseRoute()}/agents`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify(agent),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function updateAgent(id: string, agent: UpdateAgentRequest): Promise<UserAgent> {
+    const url = agentRoute(id);
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify(agent),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function deleteAgent(id: string): Promise<void> {
+    const url = agentRoute(id);
+    const response = await fetch(url, Client4.getOptions({
+        method: 'DELETE',
+    }));
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function uploadAgentAvatar(agentId: string, file: File): Promise<void> {
+    const url = `${agentRoute(agentId)}/avatar`;
+    const formData = new FormData();
+    formData.append('image', file);
+
+    const headers = {...(Client4.getOptions({method: 'POST'}).headers as Record<string, string>)};
+    delete headers['Content-Type'];
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: formData,
+    });
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getServices(): Promise<ServiceInfo[]> {
+    const url = `${baseRoute()}/services`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export type ModelListItem = {
+    id: string;
+    displayName: string;
+}
+
+/** Fetches models for a configured service using server-stored credentials (POST /agents/models/fetch). */
+export async function fetchModelsForAgentService(serviceId: string, signal?: AbortSignal): Promise<ModelListItem[]> {
+    const url = `${baseRoute()}/agents/models/fetch`;
+    const response = await fetch(url, {
+        ...Client4.getOptions({
+            method: 'POST',
+            body: JSON.stringify({serviceID: serviceId}),
+        }),
+        signal,
+    });
+
+    if (response.ok) {
+        return response.json();
     }
 
     throw new ClientError(Client4.url, {

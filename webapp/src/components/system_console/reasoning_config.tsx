@@ -29,7 +29,9 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
     // Determine if this service supports reasoning
     // OpenAI direct always uses the Responses API
     const isAnthropic = props.service.type === 'anthropic';
-    const isOpenAIWithResponses = props.service.type === 'openai' || (['openaicompatible', 'azure'].includes(props.service.type) && props.service.useResponsesAPI);
+    const isOpenAIWithResponses =
+        props.service.type === 'openai' ||
+        (['openaicompatible', 'azure'].includes(props.service.type) && props.service.useResponsesAPI);
 
     if (!isAnthropic && !isOpenAIWithResponses) {
         return null;
@@ -201,16 +203,21 @@ const FieldInput = styled.input`
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
     box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.075) inset;
     height: 35px;
-    background: white;
+    background: var(--center-channel-bg);
+    color: var(--center-channel-color);
     font-size: 14px;
     font-weight: 400;
     line-height: 20px;
     max-width: 200px;
 
+    &::placeholder {
+        color: rgba(var(--center-channel-color-rgb), 0.48);
+    }
+
     &:focus {
-        border-color: #66afe9;
-        box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075), 0 0 8px rgba(102, 175, 233, 0.75);
-        outline: 0;
+        border-color: var(--button-bg);
+        outline: none;
+        box-shadow: none;
     }
 `;
 
@@ -221,7 +228,8 @@ const FieldSelect = styled.select`
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
     box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.075) inset;
     height: 35px;
-    background: white;
+    background: var(--center-channel-bg);
+    color: var(--center-channel-color);
     font-size: 14px;
     font-weight: 400;
     line-height: 20px;
@@ -229,9 +237,9 @@ const FieldSelect = styled.select`
     cursor: pointer;
 
     &:focus {
-        border-color: #66afe9;
-        box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075), 0 0 8px rgba(102, 175, 233, 0.75);
-        outline: 0;
+        border-color: var(--button-bg);
+        outline: none;
+        box-shadow: none;
     }
 `;
 

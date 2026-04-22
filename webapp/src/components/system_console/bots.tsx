@@ -32,7 +32,7 @@ const defaultNewBot: LLMBotConfig = {
     reasoningEnabled: true,
     reasoningEffort: 'medium',
     thinkingBudget: 0,
-    structuredOutputEnabled: true,
+    structuredOutputEnabled: false,
 };
 
 export const firstNewBot = {

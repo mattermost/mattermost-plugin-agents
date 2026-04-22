@@ -35,6 +35,12 @@ type Config interface {
 	GetTranscriptGenerator() string
 }
 
+// AgentStore provides read access to user-created agents from the database.
+// This is a subset of the full store.AgentStore — only read methods needed here.
+type AgentStore interface {
+	ListAgents() ([]*llm.BotConfig, error)
+}
+
 // Transcriber interface defines the contract for transcription services
 type Transcriber interface {
 	Transcribe(file io.Reader) (*subtitles.Subtitles, error)
@@ -45,6 +51,7 @@ type MMBots struct {
 	pluginAPI              *pluginapi.Client
 	licenseChecker         *enterprise.LicenseChecker
 	config                 Config
+	agentStore             AgentStore
 	llmUpstreamHTTPClient  *http.Client
 	tokenUsageSinks        *llm.TokenUsageSinks
 	metrics                llm.MetricsObserver
@@ -59,9 +66,13 @@ type MMBots struct {
 	// lastEnsuredServiceCfgs stores the resolved service configs keyed by service ID
 	// that were last successfully ensured, for optimistic change detection.
 	lastEnsuredServiceCfgs map[string]llm.ServiceConfig
+
+	// forceRefresh bypasses the optimistic config-equality check in EnsureBots.
+	// Set to true by the cluster event handler or API handlers after agent CRUD.
+	forceRefresh bool
 }
 
-func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
+func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, agentStore AgentStore, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
 	var pluginTokenLogger llm.TokenUsagePluginLogger
 	if pluginAPI != nil {
 		pluginTokenLogger = &pluginAPI.Log
@@ -72,6 +83,7 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 		pluginAPI:              pluginAPI,
 		licenseChecker:         licenseChecker,
 		config:                 config,
+		agentStore:             agentStore,
 		llmUpstreamHTTPClient:  llmUpstreamHTTPClient,
 		tokenUsageSinks:        llm.NewTokenUsageSinks(pluginTokenLogger),
 		metrics:                metrics,
@@ -90,6 +102,17 @@ func (b *MMBots) resolveServiceCfgs(botCfgs []llm.BotConfig) map[string]llm.Serv
 		}
 	}
 	return result
+}
+
+// ForceRefreshOnNextEnsure clears the optimistic ensure snapshot and sets forceRefresh so the
+// next EnsureBots() cannot take the fast path. DB-backed agents are not part of the
+// config-file bot slice used for botConfigsEqual, so we must invalidate when agents change.
+func (b *MMBots) ForceRefreshOnNextEnsure() {
+	b.botsLock.Lock()
+	defer b.botsLock.Unlock()
+	b.lastEnsuredBotCfgs = nil
+	b.lastEnsuredServiceCfgs = nil
+	b.forceRefresh = true
 }
 
 // botConfigsEqual compares two bot config slices for equality.
@@ -176,6 +199,10 @@ func (b *MMBots) reconcileTokenUsageSinks() {
 }
 
 func (b *MMBots) EnsureBots() error {
+	if b.config == nil {
+		return nil
+	}
+
 	// Optimistic check: if bot and service configuration hasn't changed since last ensure,
 	// skip the expensive cluster mutex acquisition. This prevents HA timeout issues
 	// when multiple nodes all try to acquire the mutex simultaneously on config changes.
@@ -187,9 +214,10 @@ func (b *MMBots) EnsureBots() error {
 	botsAlreadyInitialized := len(b.bots) > 0
 	lastBotCfgs := b.lastEnsuredBotCfgs
 	lastServiceCfgs := b.lastEnsuredServiceCfgs
+	forceRefresh := b.forceRefresh
 	b.botsLock.RUnlock()
 
-	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
+	if botsAlreadyInitialized && !forceRefresh && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
 		b.pluginAPI.Log.Debug("EnsureBots: skipping - bot/service configuration unchanged")
 		return nil
 	}
@@ -210,9 +238,10 @@ func (b *MMBots) EnsureBots() error {
 	botsAlreadyInitialized = len(b.bots) > 0
 	lastBotCfgs = b.lastEnsuredBotCfgs
 	lastServiceCfgs = b.lastEnsuredServiceCfgs
+	forceRefresh = b.forceRefresh
 	b.botsLock.RUnlock()
 
-	if botsAlreadyInitialized && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
+	if botsAlreadyInitialized && !forceRefresh && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
 		b.pluginAPI.Log.Debug("EnsureBots: skipping after lock - bot/service configuration unchanged")
 		return nil
 	}
@@ -227,6 +256,24 @@ func (b *MMBots) EnsureBots() error {
 	if len(botCfgs) > 1 && !b.licenseChecker.IsMultiLLMLicensed() {
 		b.pluginAPI.Log.Error("Only one bot allowed with current license.")
 		botCfgs = botCfgs[:1]
+	}
+
+	// Load DB-backed user agents and merge into the bot config list.
+	// These bypass the license multi-LLM check — they are gated by
+	// PermissionManageOwnAgent at the API layer.
+	activeDBBotUsernames := make(map[string]struct{})
+	if b.agentStore != nil {
+		dbAgents, err := b.agentStore.ListAgents()
+		if err != nil {
+			return fmt.Errorf("failed to list user agents: %w", err)
+		}
+		for _, cfg := range dbAgents {
+			if cfg == nil {
+				continue
+			}
+			activeDBBotUsernames[cfg.Name] = struct{}{}
+			botCfgs = append(botCfgs, *cfg)
+		}
 	}
 
 	var bots []*Bot
@@ -273,6 +320,10 @@ func (b *MMBots) EnsureBots() error {
 	// For each of the bots we found, if it's not in the configuration, delete it.
 	for _, bot := range previousMMBots {
 		if _, ok := aiBotsByUsername[bot.Username]; !ok {
+			if _, dbActive := activeDBBotUsernames[bot.Username]; dbActive {
+				b.pluginAPI.Log.Debug("EnsureBots: skipping deactivation for active DB agent not in ensure set (missing or invalid service)", "bot_name", bot.Username)
+				continue
+			}
 			if _, err := b.pluginAPI.Bot.UpdateActive(bot.UserId, false); err != nil {
 				b.pluginAPI.Log.Error("Failed to delete bot", "bot_name", bot.Username, "error", err.Error())
 				continue
@@ -334,6 +385,7 @@ func (b *MMBots) EnsureBots() error {
 	}
 	b.lastEnsuredBotCfgs = copiedBotCfgs
 	b.lastEnsuredServiceCfgs = currentServiceCfgs
+	b.forceRefresh = false
 	b.botsLock.Unlock()
 
 	return nil

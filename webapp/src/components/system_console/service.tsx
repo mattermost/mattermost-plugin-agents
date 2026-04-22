@@ -69,6 +69,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     const type = props.service.type;
     const intl = useIntl();
     const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale';
+    const supportsResponsesAPIToggle = type === 'openaicompatible' || type === 'azure';
     const isCohere = type === 'cohere';
     const isMistral = type === 'mistral';
     const isScale = type === 'scale';
@@ -78,6 +79,12 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
 
     const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible';
+
+    useEffect(() => {
+        if (type === 'openai' && !props.service.useResponsesAPI) {
+            props.onChange({...props.service, useResponsesAPI: true});
+        }
+    }, [type, props.onChange, props.service]);
 
     useEffect(() => {
         // For openaicompatible, API key is optional if there's an API URL
@@ -142,7 +149,14 @@ const ServiceFields = (props: ServiceFieldsProps) => {
             <SelectionItem
                 label={intl.formatMessage({defaultMessage: 'Service type'})}
                 value={props.service.type}
-                onChange={(e) => props.onChange({...props.service, type: e.target.value})}
+                onChange={(e) => {
+                    const nextType = e.target.value;
+                    props.onChange({
+                        ...props.service,
+                        type: nextType,
+                        useResponsesAPI: nextType === 'openai' ? true : props.service.useResponsesAPI,
+                    });
+                }}
             >
                 <SelectionItemOption value='openai'>{'OpenAI'}</SelectionItemOption>
                 <SelectionItemOption value='anthropic'>{'Anthropic'}</SelectionItemOption>
@@ -217,7 +231,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                             helpText={intl.formatMessage({defaultMessage: 'Sends the Mattermost user ID to the upstream LLM.'})}
                         />
                     )}
-                    {(type === 'openaicompatible' || type === 'azure') && (
+                    {supportsResponsesAPIToggle && (
                         <BooleanItem
                             label={intl.formatMessage({defaultMessage: 'Use Responses API'})}
                             value={props.service.useResponsesAPI ?? false}

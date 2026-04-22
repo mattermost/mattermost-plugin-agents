@@ -168,6 +168,7 @@ export const DestructiveButton = styled.button`
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    height: 40px;
 
     font-weight: 600;
     font-size: 14px;

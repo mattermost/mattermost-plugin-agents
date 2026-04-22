@@ -5,24 +5,28 @@ import React, {useCallback, useEffect, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {getPluginConfig, savePluginConfig, setUserProfilePictureByUsername} from '@/client';
+import {getPluginConfig, getAIBots, savePluginConfig} from '@/client';
 
 import {Pill} from '../pill';
 
 import Panel, {PanelFooterText} from './panel';
-import Bots, {firstNewBot} from './bots';
-import {LLMBotConfig} from './bot';
 import Services, {firstNewService} from './services';
 import {LLMService} from './service';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from './item';
-import NoBotsPage from './no_bots_page';
 import NoServicesPage from './no_services_page';
+import BotsMovedNotice from './bots_moved_notice';
 import EmbeddingSearchPanel from './embedding_search/embedding_search_panel';
 import MCPServers from './mcp_servers';
 import {PluginConfig} from './plugin_config_types';
 import WebSearchPanel from './web_search/web_search_panel';
 
 type Config = PluginConfig;
+
+/** Minimal fields from GET /ai_bots used for the default-bot dropdown. */
+type RuntimeBotOption = {
+    username: string;
+    displayName: string;
+};
 
 type Props = {
     id: string
@@ -79,6 +83,17 @@ const ErrorContainer = styled.div`
     border-radius: 4px;
     border: 1px solid rgba(210, 75, 78, 0.3);
     color: #D24B4E;
+`;
+
+const RuntimeBotsErrorBanner = styled.div`
+    grid-column: 1 / -1;
+    padding: 10px 12px;
+    margin-bottom: 4px;
+    background: rgba(var(--away-indicator-rgb, 255, 188, 66), 0.12);
+    border-radius: 4px;
+    border: 1px solid rgba(var(--away-indicator-rgb, 255, 188, 66), 0.35);
+    color: rgba(var(--center-channel-color-rgb), 0.88);
+    font-size: 14px;
 `;
 
 const defaultConfig: Config = {
@@ -164,7 +179,8 @@ const Config = (props: Props) => {
     const [localConfig, setLocalConfig] = useState<Config>(defaultConfig);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
-    const [avatarUpdates, setAvatarUpdates] = useState<{ [key: string]: File }>({});
+    const [runtimeBots, setRuntimeBots] = useState<RuntimeBotOption[]>([]);
+    const [runtimeBotsError, setRuntimeBotsError] = useState<string | null>(null);
     const intl = useIntl();
 
     // Load config from plugin API on mount
@@ -183,12 +199,27 @@ const Config = (props: Props) => {
         loadConfig();
     }, [intl]);
 
+    useEffect(() => {
+        if (loading || loadError) {
+            return;
+        }
+        const loadRuntimeBots = async () => {
+            try {
+                const res = await getAIBots();
+                setRuntimeBots(res.bots ?? []);
+                setRuntimeBotsError(null);
+            } catch {
+                setRuntimeBotsError(intl.formatMessage({defaultMessage: 'Failed to load the runtime bot list. The previous list is kept.'}));
+            }
+        };
+        loadRuntimeBots();
+    }, [loading, loadError]);
+
     // Register save action that PUTs config to plugin API
     useEffect(() => {
         const save = async () => {
             try {
                 await savePluginConfig(localConfig);
-                Object.keys(avatarUpdates).forEach((username: string) => setUserProfilePictureByUsername(username, avatarUpdates[username]));
                 return {};
             } catch (e: any) {
                 return {error: {message: intl.formatMessage({defaultMessage: 'Failed to save configuration.'})}};
@@ -198,33 +229,18 @@ const Config = (props: Props) => {
         return () => {
             props.unRegisterSaveAction(save);
         };
-    }, [localConfig, avatarUpdates, intl, props.registerSaveAction, props.unRegisterSaveAction]);
+    }, [localConfig, intl, props.registerSaveAction, props.unRegisterSaveAction]);
 
     const updateConfig = useCallback((updates: Partial<Config>) => {
         setLocalConfig((prev) => ({...prev, ...updates}));
         props.setSaveNeeded();
     }, [props.setSaveNeeded]);
 
-    const botChangedAvatar = (bot: LLMBotConfig, image: File) => {
-        setAvatarUpdates((prev: { [key: string]: File }) => ({...prev, [bot.name]: image}));
-        props.setSaveNeeded();
-    };
-
     const addFirstService = () => {
         const id = crypto.randomUUID();
         updateConfig({
             services: [{
                 ...firstNewService,
-                id,
-            }],
-        });
-    };
-
-    const addFirstBot = () => {
-        const id = crypto.randomUUID();
-        updateConfig({
-            bots: [{
-                ...firstNewBot,
                 id,
             }],
         });
@@ -251,39 +267,12 @@ const Config = (props: Props) => {
     const value = localConfig;
 
     const hasServiceConfigured = value.services && value.services.length > 0;
-    const hasBotConfigured = value.bots && value.bots.length > 0;
 
     if (!hasServiceConfigured) {
         return (
             <ConfigContainer>
                 <BetaMessage/>
                 <NoServicesPage onAddServicePressed={addFirstService}/>
-            </ConfigContainer>
-        );
-    }
-
-    if (!hasBotConfigured) {
-        return (
-            <ConfigContainer>
-                <BetaMessage/>
-                <Panel
-                    title={intl.formatMessage({defaultMessage: 'AI Services'})}
-                    subtitle={intl.formatMessage({defaultMessage: 'Configure AI services to power your bots.'})}
-                >
-                    <Services
-                        services={value.services ?? []}
-                        bots={value.bots ?? []}
-                        onChange={(services: LLMService[]) => {
-                            updateConfig({services});
-                        }}
-                    />
-                </Panel>
-                <Panel
-                    title={intl.formatMessage({defaultMessage: 'AI Bots'})}
-                    subtitle={intl.formatMessage({defaultMessage: 'Add your first AI bot to get started.'})}
-                >
-                    <NoBotsPage onAddBotPressed={addFirstBot}/>
-                </Panel>
             </ConfigContainer>
         );
     }
@@ -311,27 +300,18 @@ const Config = (props: Props) => {
             </Panel>
             <Panel
                 title={intl.formatMessage({defaultMessage: 'AI Bots'})}
-                subtitle={intl.formatMessage({defaultMessage: 'Configure multiple AI bots with different personalities and capabilities.'})}
+                subtitle={intl.formatMessage({defaultMessage: 'AI agents are managed from the Agents product page.'})}
             >
-                <Bots
-                    bots={value.bots ?? []}
-                    services={value.services ?? []}
-                    onChange={(bots: LLMBotConfig[]) => {
-                        if (value.bots.findIndex((bot) => bot.name === value.defaultBotName) === -1) {
-                            const newDefaultBotName = bots.length > 0 ? bots[0].name : '';
-                            updateConfig({bots, defaultBotName: newDefaultBotName});
-                        } else {
-                            updateConfig({bots});
-                        }
-                    }}
-                    botChangedAvatar={botChangedAvatar}
-                />
+                <BotsMovedNotice/>
             </Panel>
             <Panel
                 title={intl.formatMessage({defaultMessage: 'AI Functions'})}
                 subtitle={intl.formatMessage({defaultMessage: 'Choose a default bot.'})}
             >
                 <ItemList>
+                    {runtimeBotsError && (
+                        <RuntimeBotsErrorBanner>{runtimeBotsError}</RuntimeBotsErrorBanner>
+                    )}
                     <SelectionItem
                         label={intl.formatMessage({defaultMessage: 'Default bot'})}
                         value={value.defaultBotName}
@@ -339,10 +319,10 @@ const Config = (props: Props) => {
                             updateConfig({defaultBotName: e.target.value});
                         }}
                     >
-                        {value.bots.map((bot: LLMBotConfig) => (
+                        {runtimeBots.map((bot) => (
                             <SelectionItemOption
-                                key={bot.name}
-                                value={bot.name}
+                                key={bot.username}
+                                value={bot.username}
                             >
                                 {bot.displayName}
                             </SelectionItemOption>

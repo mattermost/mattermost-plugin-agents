@@ -45,9 +45,9 @@ func TestFilterNativeToolsForServiceType(t *testing.T) {
 	}{
 		{"OpenAI keeps tools", llm.ServiceTypeOpenAI, tools, tools},
 		{"Anthropic keeps tools", llm.ServiceTypeAnthropic, tools, tools},
-		{"Bedrock drops tools", llm.ServiceTypeBedrock, tools, nil},
-		{"Cohere drops tools", llm.ServiceTypeCohere, tools, nil},
-		{"Mistral drops tools", llm.ServiceTypeMistral, tools, nil},
+		{"Bedrock drops tools", llm.ServiceTypeBedrock, tools, []string{}},
+		{"Cohere drops tools", llm.ServiceTypeCohere, tools, []string{}},
+		{"Mistral drops tools", llm.ServiceTypeMistral, tools, []string{}},
 		{"nil tools stay nil", llm.ServiceTypeOpenAI, nil, nil},
 		{"empty tools stay empty", llm.ServiceTypeOpenAI, []string{}, []string{}},
 	}
@@ -121,7 +121,7 @@ func TestNewFromServiceConfigFiltersNativeTools(t *testing.T) {
 			if tt.wantTools {
 				assert.Equal(t, []string{"web_search"}, llmInstance.enabledNativeTools)
 			} else {
-				assert.Nil(t, llmInstance.enabledNativeTools)
+				assert.Equal(t, []string{}, llmInstance.enabledNativeTools)
 			}
 		})
 	}

@@ -228,6 +228,23 @@ func (c *Container) Update(newConfig *Config) {
 	}
 }
 
+// StorePersistedConfigWithoutNotify updates in-memory configuration from a value read back from
+// persistent storage without notifying update listeners. Use when the current call stack may
+// already be servicing a listener (for example after SaveConfig during legacy migration) to
+// avoid re-entrant listener invocation and deadlocks.
+func (c *Container) StorePersistedConfigWithoutNotify(newConfig *Config) error {
+	if newConfig == nil {
+		c.cfg.Store(nil)
+		return nil
+	}
+	clone, err := DeepCopyJSON(*newConfig)
+	if err != nil {
+		return fmt.Errorf("failed to deep copy configuration: %w", err)
+	}
+	c.cfg.Store(&clone)
+	return nil
+}
+
 // DeepCopyJSON creates a deep copy of JSON-serializable structs
 func DeepCopyJSON[T any](src T) (T, error) {
 	var dst T

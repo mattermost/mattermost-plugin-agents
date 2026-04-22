@@ -1,4 +1,21 @@
 import { Page, Locator, expect } from '@playwright/test';
+import type { Client4 } from '@mattermost/client';
+import type { Post } from '@mattermost/types/posts';
+import MattermostContainer from './mmcontainer';
+
+function getPostsArray(postsResponse: {posts?: Record<string, Post>}): Post[] {
+    return Object.values(postsResponse.posts || {});
+}
+
+async function fetchPostsForChannel(client: Client4, channelId: string): Promise<Post[]> {
+    const getPosts = (client as unknown as { getPostsForChannel?: typeof client.getPosts }).getPostsForChannel
+        || client.getPosts;
+    if (typeof getPosts !== 'function') {
+        throw new Error('Mattermost client does not expose getPostsForChannel or getPosts');
+    }
+    const postsResponse = await getPosts.call(client, channelId, 0, 200);
+    return getPostsArray(postsResponse);
+}
 
 export class MattermostPage {
     readonly page: Page;
@@ -82,8 +99,85 @@ export class MattermostPage {
         await expect(this.page.getByText('1 reply')).toBeVisible();
     }
 
+    /**
+     * Legacy heuristic: thread UI "reply" copy. Prefer {@link expectBotDmReplyFromApi} /
+     * {@link expectNoBotDmReplyFromApi} for agent access tests — they assert on bot posts via API.
+     */
     async expectNoReply() {
         await expect(this.page.getByText('reply')).not.toBeVisible();
+    }
+
+    /**
+     * Resolve DM channel and bot user id for assertions (same channel as createAndNavigateToDMWithBot).
+     */
+    async getClientAndDmChannelForBot(
+        mattermost: MattermostContainer,
+        username: string,
+        password: string,
+        botUsername: string,
+    ): Promise<{ client: Client4; channelId: string; botUserId: string }> {
+        const userClient = await mattermost.getClient(username, password);
+        const me = await userClient.getMe();
+        const botUser = await userClient.getUserByUsername(botUsername);
+        const channel = await userClient.createDirectChannel([me.id, botUser.id]);
+        return { client: userClient, channelId: channel.id, botUserId: botUser.id };
+    }
+
+    /**
+     * After the user sends a message in the DM (call with sinceMs from just before send), assert the
+     * bot never creates a new post for the **entire** observation window. Polls the channel via API
+     * until `observeDurationMs` elapses (default matches {@link expectBotDmReplyFromApi} timeout so
+     * slow-reply false negatives are unlikely). Fails immediately if a bot post appears.
+     */
+    async expectNoBotDmReplyFromApi(
+        client: Client4,
+        channelId: string,
+        botUserId: string,
+        sinceMs: number,
+        options?: { observeDurationMs?: number; pollIntervalMs?: number },
+    ): Promise<void> {
+        const observeDuration = options?.observeDurationMs ?? 45000;
+        const pollInterval = options?.pollIntervalMs ?? 500;
+        const skewMs = 5000;
+        const deadline = Date.now() + observeDuration;
+
+        while (Date.now() < deadline) {
+            const posts = await fetchPostsForChannel(client, channelId);
+            const botPosts = posts.filter(
+                (p) => p.user_id === botUserId && p.create_at >= sinceMs - skewMs,
+            );
+            if (botPosts.length > 0) {
+                throw new Error(
+                    `Expected no bot reply post, but found ${botPosts.length} bot post(s) after user message (sinceMs=${sinceMs}).`,
+                );
+            }
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) {
+                break;
+            }
+            await this.page.waitForTimeout(Math.min(pollInterval, remaining));
+        }
+    }
+
+    /**
+     * After the user sends a message, assert the bot user posts at least one reply in the DM channel.
+     */
+    async expectBotDmReplyFromApi(
+        client: Client4,
+        channelId: string,
+        botUserId: string,
+        sinceMs: number,
+        options?: { timeoutMs?: number },
+    ): Promise<void> {
+        const timeout = options?.timeoutMs ?? 45000;
+        const skewMs = 5000;
+
+        await expect.poll(async () => {
+            const posts = await fetchPostsForChannel(client, channelId);
+            return posts.filter(
+                (p) => p.user_id === botUserId && p.create_at >= sinceMs - skewMs,
+            ).length;
+        }, { timeout, intervals: [500, 1000, 2000] }).toBeGreaterThan(0);
     }
 
     async sendMessageAsUser(mattermost: any, username: string, password: string, message: string, channelId?: string) {

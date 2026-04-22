@@ -73,6 +73,8 @@ const RHSHeader = (props: Props) => {
                         disabledServers={props.disabledServers}
                         onDisabledServersChange={props.onDisabledServersChange}
                         preloadedServers={props.preloadedServers}
+                        enabledMCPTools={props.activeBot?.enabledMCPTools}
+                        autoEnableNewMCPTools={props.activeBot?.autoEnableNewMCPTools}
                     />
                     {props.bots && (
                         <BotDropdown

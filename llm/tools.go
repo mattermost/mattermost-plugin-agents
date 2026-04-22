@@ -403,6 +403,36 @@ func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
 	}
 }
 
+// RetainOnlyMCPTools filters the tool store to only retain MCP tools whose
+// (ServerOrigin, Name) pair appears in the allowlist. Built-in tools (those
+// with empty ServerOrigin) are never removed by this method.
+//
+// An empty or nil allowlist removes all MCP tools. Callers that want to keep
+// every MCP tool (e.g. agents with AutoEnableNewMCPTools=true) should skip
+// calling this method entirely.
+func (s *ToolStore) RetainOnlyMCPTools(allowlist []EnabledMCPTool) {
+	if s == nil {
+		return
+	}
+
+	// Build a set for O(1) lookup. Key: "serverOrigin\x00toolName"
+	allowed := make(map[string]bool, len(allowlist))
+	for _, t := range allowlist {
+		allowed[t.ServerOrigin+"\x00"+t.ToolName] = true
+	}
+
+	for name, tool := range s.tools {
+		// Never filter built-in tools (empty ServerOrigin)
+		if tool.ServerOrigin == "" {
+			continue
+		}
+		// Remove MCP tools not in the allowlist
+		if !allowed[tool.ServerOrigin+"\x00"+tool.Name] {
+			delete(s.tools, name)
+		}
+	}
+}
+
 // GetToolsInfo returns basic information (name and description) about all tools in the store.
 // This is useful for informing LLMs about tools that are available in other contexts
 // (e.g., DM-only tools when in a channel).

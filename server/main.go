@@ -93,6 +93,7 @@ func (l *pluginLogger) Error(message string, keyValuePairs ...any) {
 
 func (p *Plugin) OnActivate() error {
 	pluginAPI := pluginapi.NewClient(p.API, p.Driver)
+	p.pluginAPI = pluginAPI
 	mmClient := mmapi.NewClient(pluginAPI)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
 	dbClient := mmapi.NewDBClient(pluginAPI)
@@ -190,12 +191,30 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.configMigrated = true
 
-	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient, metricsService)
+	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService)
+
+	// migrateAndRefresh runs the one-time legacy bot migration, then forces
+	// a bot refresh only if the migration actually created new agents.
+	migrateAndRefresh := func(context string) {
+		migrated, migErr := migrateLegacyConfigBotsToUserAgents(p.API, pluginAPI, p.store, &p.configuration)
+		if migErr != nil {
+			pluginAPI.Log.Error("failed to migrate legacy config bots to user agents", "context", context, "error", migErr)
+		}
+		if migrated {
+			bots.ForceRefreshOnNextEnsure()
+			if ensureErr := bots.EnsureBots(); ensureErr != nil {
+				pluginAPI.Log.Error("failed to ensure bots after legacy bot migration", "context", context, "error", ensureErr)
+			} else if pubErr := p.PublishAgentUpdate(); pubErr != nil {
+				pluginAPI.Log.Error("Failed to publish agent update cluster event", "error", pubErr.Error())
+			}
+		}
+	}
+
 	p.configuration.RegisterUpdateListener(func() {
 		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
-			return
 		}
+		migrateAndRefresh("config_update")
 	})
 
 	if ensureBotsErr := bots.EnsureBots(); ensureBotsErr != nil {
@@ -203,6 +222,7 @@ func (p *Plugin) OnActivate() error {
 		// as it would leave the plugin in a state where it can't be configured from the system console.
 		pluginAPI.Log.Error("failed to ensure bots", "error", ensureBotsErr)
 	}
+	migrateAndRefresh("activation")
 
 	prompts, promptManagerErr := llm.NewPrompts(prompts.PromptsFolder)
 	if promptManagerErr != nil {
@@ -353,11 +373,13 @@ func (p *Plugin) OnActivate() error {
 	manifestID := manifest.Id
 	oauthCallbackURL := fmt.Sprintf("%s/plugins/%s/oauth/callback", *siteURL, manifestID)
 
-	// Create embedded MCP server
+	// Embedded MCP is always available after PR #617, even if older configs still
+	// have the legacy toggle stored as false.
 	var embeddedMCPServer mcp.EmbeddedMCPServer
 	embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
 	if err != nil {
 		pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
+		// Continue without embedded server
 	} else {
 		pluginAPI.Log.Info("Embedded MCP server created successfully")
 	}
@@ -476,7 +498,9 @@ func (p *Plugin) OnActivate() error {
 		mcpHandlers,
 		llmUpstreamHTTPClient,
 		p.store,
+		p.store,
 		&p.configuration,
+		p,
 		p,
 		p.store,
 		getSearchInitError,
@@ -486,7 +510,6 @@ func (p *Plugin) OnActivate() error {
 	apiService.SetConversationService(convService)
 
 	// Keep only what we need
-	p.pluginAPI = pluginAPI
 	p.apiService = apiService
 	p.bots = bots
 	p.indexerService = indexerService

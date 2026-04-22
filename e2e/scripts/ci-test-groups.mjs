@@ -26,7 +26,7 @@ const realAPISpecs = new Set([
 
 const groups = {
     'e2e-shard-1': [
-        'tests/system-console/bot-reasoning-config.spec.ts',
+        'tests/agents/provider-config.spec.ts',
         'tests/channel-analysis/integration/integration.spec.ts',
         'tests/bot-configuration/service-changes.spec.ts',
         'tests/long-conversation-handling/pagination.spec.ts',
@@ -64,6 +64,9 @@ const groups = {
         'tests/action-item-extraction/basic-action-items.spec.ts',
         'tests/action-item-extraction/edge-cases.spec.ts',
         'tests/agents-tour/edge-cases.spec.ts',
+        'tests/agents/access-control.spec.ts',
+        'tests/agents/crud.spec.ts',
+        'tests/agents/mcp-tools.spec.ts',
         'tests/tool-config/tool-toggle.spec.ts',
         'tests/tool-config/vetted-seed.spec.ts',
     ],

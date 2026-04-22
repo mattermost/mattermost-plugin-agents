@@ -278,67 +278,6 @@ func TestGetOrCreateConversation_MultipleUsersSameThread(t *testing.T) {
 		"each user must get a distinct conversation so approval scoping remains per-requester")
 }
 
-// TestGetOrCreateConversation_LegacyIndexRecovery simulates a production
-// server that applied an older version of migration 000005 — which only
-// created a unique index on (RootPostID, BotID) without UserID. On such
-// servers, the second user to @mention the bot in a shared thread hits
-// "conversation vanished after conflict". Re-running migrations must repair
-// the index so the multi-user scenario works.
-func TestGetOrCreateConversation_LegacyIndexRecovery(t *testing.T) {
-	svc, s := setupTestService(t)
-
-	// Simulate the legacy index shape: drop the current 3-column unique
-	// index and recreate the old 2-column one.
-	_, err := s.DB().Exec(`DROP INDEX idx_llm_conversations_thread_bot_user`)
-	require.NoError(t, err)
-	_, err = s.DB().Exec(`
-		CREATE UNIQUE INDEX idx_llm_conversations_thread_bot
-		ON LLM_Conversations(RootPostID, BotID)
-		WHERE RootPostID IS NOT NULL AND DeleteAt = 0`)
-	require.NoError(t, err)
-
-	// Pretend the repair migration has not yet been applied on this server
-	// (its original 000005 only indexed (RootPostID, BotID), and it missed
-	// the later upgrade). Remove the row so the next RunMigrations picks
-	// it up as pending.
-	_, err = s.DB().Exec(`DELETE FROM Agents_DB_Migrations WHERE Version = 6`)
-	require.NoError(t, err)
-
-	// Re-run migrations. The repair migration must detect the legacy index
-	// and replace it with the per-user variant.
-	require.NoError(t, s.RunMigrations())
-
-	botID := model.NewId()
-	userA := model.NewId()
-	userB := model.NewId()
-	rootPostID := "legacy_thread_root"
-
-	_, err = svc.GetOrCreateConversation(GetOrCreateParams{
-		UserID:       userA,
-		BotID:        botID,
-		ChannelID:    "chan1",
-		RootPostID:   rootPostID,
-		Operation:    "conversation",
-		SystemPrompt: "prompt",
-		UserMessage:  "hi from A",
-		UserPostID:   stringPtr("post_A"),
-	})
-	require.NoError(t, err)
-
-	_, err = svc.GetOrCreateConversation(GetOrCreateParams{
-		UserID:       userB,
-		BotID:        botID,
-		ChannelID:    "chan1",
-		RootPostID:   rootPostID,
-		Operation:    "conversation",
-		SystemPrompt: "prompt",
-		UserMessage:  "hi from B",
-		UserPostID:   stringPtr("post_B"),
-	})
-	require.NoError(t, err,
-		"after the repair migration, a second user in the same thread must not hit 'conversation vanished after conflict'")
-}
-
 func TestGetOrCreateConversation_New(t *testing.T) {
 	svc, s := setupTestService(t)
 

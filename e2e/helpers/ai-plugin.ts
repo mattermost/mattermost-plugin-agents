@@ -19,6 +19,35 @@ export class AIPlugin {
     this.threadsListContainer = page.getByTestId('rhs-threads-list');
   }
 
+  /** Root of the Copilot / AI RHS panel (plugin UI). */
+  getRhsContainer(): Locator {
+    return this.page.getByTestId('mattermost-ai-rhs');
+  }
+
+  /** Triggers the per-session MCP tool provider popover (only on the New chat tab). */
+  getRhsToolsMenuButton(): Locator {
+    return this.getRhsContainer().getByRole('button', { name: /^Tools$/i });
+  }
+
+  /**
+   * Ensures the RHS is on the New chat tab so the Tools control is available.
+   * When another tab is active, the New chat button is visible and is clicked.
+   */
+  async ensureRhsNewChatTab(): Promise<void> {
+    const newChat = this.page.getByTestId('new-chat');
+    if (await newChat.isVisible().catch(() => false)) {
+      await newChat.click();
+    }
+  }
+
+  async openRhsToolProvidersMenu(): Promise<Locator> {
+    await this.ensureRhsNewChatTab();
+    await this.getRhsToolsMenuButton().click();
+    const menu = this.getRhsContainer().getByTestId('dropdownmenu');
+    await expect(menu).toBeVisible({ timeout: 10000 });
+    return menu;
+  }
+
   async openRHS() {
     // Wait for plugin to be fully initialized with a longer timeout for flaky scenarios
     // The longer timeout helps handle cases where plugin initialization is slow
@@ -77,6 +106,20 @@ export class AIPlugin {
   async switchBot(botName: string) {
     await this.page.getByTestId(`bot-selector-rhs`).click();
     await this.page.getByRole('button', { name: botName }).click();
+  }
+
+  /**
+   * Select a bot in the RHS selector, retrying until the bot appears (Agents list can lag behind API creates).
+   */
+  async switchBotWhenListed(botDisplayName: string): Promise<void> {
+    const selector = this.page.getByTestId('bot-selector-rhs');
+    const option = this.page.getByRole('button', { name: botDisplayName });
+    await expect(async () => {
+      await this.page.keyboard.press('Escape');
+      await selector.click();
+      await expect(option).toBeVisible({ timeout: 3000 });
+      await option.click();
+    }).toPass({ timeout: 45000, intervals: [500, 1000, 2000] });
   }
 
   async waitForBotResponse(expectedText: string) {

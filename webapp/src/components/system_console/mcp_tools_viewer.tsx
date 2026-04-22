@@ -21,7 +21,6 @@ export type MCPToolInfo = {
 };
 
 export type MCPServerInfo = {
-    id: string;
     name: string;
     url: string;
     tools: MCPToolInfo[];
@@ -167,7 +166,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
     // Find the matching ServerConfig for a discovered server
     const findServerConfig = (server: MCPServerInfo): MCPServerConfig | null => {
         // Handle the embedded server: construct a ServerConfig-like object from embeddedServer config
-        if (server.url === embeddedClientKey || server.id === embeddedClientKey) {
+        if (server.url === embeddedClientKey) {
             return {
                 name: server.name,
                 enabled: mcpConfig.embeddedServer.enabled,
@@ -287,7 +286,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                     <ServersList>
                         {toolsData.servers.map((server) => (
                             <MCPServerToolRow
-                                key={server.id}
+                                key={server.url}
                                 server={server}
                                 serverConfig={findServerConfig(server)}
                                 onServerConfigChange={(updatedConfig) =>

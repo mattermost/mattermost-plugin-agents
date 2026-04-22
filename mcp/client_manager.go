@@ -132,13 +132,14 @@ func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClients, *
 	client, exists := m.clients[userID]
 	if exists {
 		m.activity[userID] = time.Now()
-		return client, nil
+		return client, client.initialRemoteConnectErrors
 	}
 
 	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
 
 	// Let user client connect to remote servers only
 	mcpErrors := userClients.ConnectToRemoteServers(m.config.Servers)
+	userClients.initialRemoteConnectErrors = mcpErrors
 
 	// Store the client even if some servers failed to connect
 	// This allows partial success - user gets tools from working servers
@@ -154,9 +155,7 @@ func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) 
 	m.clientsMu.RUnlock()
 	if exists {
 		m.activity[userID] = time.Now()
-		// Connect-time errors are returned only from createAndStoreUserClient; a cached
-		// client does not re-report stale OAuth / connect failures on every lookup.
-		return client, nil
+		return client, client.initialRemoteConnectErrors
 	}
 
 	return m.createAndStoreUserClient(userID)
