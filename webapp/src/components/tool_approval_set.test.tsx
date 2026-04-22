@@ -15,13 +15,12 @@ type MockToolCardProps = {
     isAutoApproved?: boolean;
 };
 
-const mockToolCard = jest.fn(() => null);
+const mockToolCard = jest.fn((props: MockToolCardProps) => null);
 
 jest.mock('./tool_card', () => ({
     __esModule: true,
     default: (props: MockToolCardProps) => {
-        mockToolCard(props);
-        return null;
+        return mockToolCard(props);
     },
 }));
 
