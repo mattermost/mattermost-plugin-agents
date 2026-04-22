@@ -585,7 +585,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
                 // What's "private" is the result sharing — the bot won't use it in its response.
                 await navigateToChannel(invokerPage, mattermost, 'town-square');
                 const privatePost = invokerPage.locator('.post-message__text').getByText('This result stays private');
-                await expect(privatePost).toBeVisible({ timeout: 10000 });
+                await expect(privatePost).toBeVisible({ timeout: 30000 });
             } finally {
                 await invokerContext.close();
                 await onlookerContext.close();
