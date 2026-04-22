@@ -28,6 +28,9 @@ const defaultNewService: LLMService = {
     region: '',
     awsAccessKeyID: '',
     awsSecretAccessKey: '',
+    vertexProjectID: '',
+    vertexProjectNumber: '',
+    vertexAuthCredentials: '',
 };
 
 export const firstNewService = {

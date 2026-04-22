@@ -28,6 +28,13 @@ type ServiceConfig struct {
 	AWSAccessKeyID     string `json:"awsAccessKeyID"`
 	AWSSecretAccessKey string `json:"awsSecretAccessKey"`
 
+	// Vertex AI (GCP) configuration. Region is reused from the shared Region field.
+	// VertexAuthCredentials holds the service-account JSON; when empty, Bifrost
+	// falls back to Application Default Credentials / attached IAM role.
+	VertexProjectID       string `json:"vertexProjectID"`
+	VertexProjectNumber   string `json:"vertexProjectNumber"`
+	VertexAuthCredentials string `json:"vertexAuthCredentials"`
+
 	// Renaming the JSON field to inputTokenLimit would require a migration, leaving as is for now.
 	InputTokenLimit         int  `json:"tokenLimit"`
 	StreamingTimeoutSeconds int  `json:"streamingTimeoutSeconds"`
@@ -200,6 +207,11 @@ func IsValidService(service ServiceConfig) bool {
 		return service.APIKey != ""
 	case ServiceTypeScale:
 		return service.APIKey != "" && service.APIURL != ""
+	case ServiceTypeGemini:
+		return service.APIKey != ""
+	case ServiceTypeVertex:
+		// Auth credentials optional — empty means ADC / attached IAM role.
+		return service.VertexProjectID != "" && service.Region != ""
 	default:
 		return false
 	}

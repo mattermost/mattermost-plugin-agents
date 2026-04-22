@@ -30,6 +30,10 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 		return schemas.Cohere, nil
 	case llm.ServiceTypeMistral:
 		return schemas.Mistral, nil
+	case llm.ServiceTypeGemini:
+		return schemas.Gemini, nil
+	case llm.ServiceTypeVertex:
+		return schemas.Vertex, nil
 	default:
 		return "", fmt.Errorf("unsupported service type: %s", serviceType)
 	}
@@ -93,19 +97,22 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 	enabledNativeTools := filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools)
 
 	cfg := Config{
-		Provider:           provider,
-		APIKey:             serviceConfig.APIKey,
-		APIURL:             apiURL,
-		OrgID:              serviceConfig.OrgID,
-		Region:             serviceConfig.Region,
-		AWSAccessKeyID:     serviceConfig.AWSAccessKeyID,
-		AWSSecretAccessKey: serviceConfig.AWSSecretAccessKey,
-		DefaultModel:       serviceConfig.DefaultModel,
-		InputTokenLimit:    serviceConfig.InputTokenLimit,
-		OutputTokenLimit:   serviceConfig.OutputTokenLimit,
-		StreamingTimeout:   streamingTimeout,
-		SendUserID:         serviceConfig.SendUserID,
-		UseResponsesAPI:    llm.ServiceUsesResponsesAPI(serviceConfig),
+		Provider:              provider,
+		APIKey:                serviceConfig.APIKey,
+		APIURL:                apiURL,
+		OrgID:                 serviceConfig.OrgID,
+		Region:                serviceConfig.Region,
+		AWSAccessKeyID:        serviceConfig.AWSAccessKeyID,
+		AWSSecretAccessKey:    serviceConfig.AWSSecretAccessKey,
+		VertexProjectID:       serviceConfig.VertexProjectID,
+		VertexProjectNumber:   serviceConfig.VertexProjectNumber,
+		VertexAuthCredentials: serviceConfig.VertexAuthCredentials,
+		DefaultModel:          serviceConfig.DefaultModel,
+		InputTokenLimit:       serviceConfig.InputTokenLimit,
+		OutputTokenLimit:      serviceConfig.OutputTokenLimit,
+		StreamingTimeout:      streamingTimeout,
+		SendUserID:            serviceConfig.SendUserID,
+		UseResponsesAPI:       llm.ServiceUsesResponsesAPI(serviceConfig),
 
 		// Bot-specific configuration
 		EnabledNativeTools: enabledNativeTools,
@@ -144,7 +151,9 @@ func IsSupported(serviceType string) bool {
 		llm.ServiceTypeAnthropic,
 		llm.ServiceTypeBedrock,
 		llm.ServiceTypeCohere,
-		llm.ServiceTypeMistral:
+		llm.ServiceTypeMistral,
+		llm.ServiceTypeGemini,
+		llm.ServiceTypeVertex:
 		return true
 	default:
 		return false

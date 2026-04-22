@@ -25,6 +25,8 @@ func TestSupportsNativeTools(t *testing.T) {
 		{llm.ServiceTypeCohere, false},
 		{llm.ServiceTypeMistral, false},
 		{llm.ServiceTypeScale, false},
+		{llm.ServiceTypeGemini, false},
+		{llm.ServiceTypeVertex, false},
 		{"unknown", false},
 	}
 	for _, tt := range tests {
@@ -48,6 +50,8 @@ func TestFilterNativeToolsForServiceType(t *testing.T) {
 		{"Bedrock drops tools", llm.ServiceTypeBedrock, tools, []string{}},
 		{"Cohere drops tools", llm.ServiceTypeCohere, tools, []string{}},
 		{"Mistral drops tools", llm.ServiceTypeMistral, tools, []string{}},
+		{"Gemini drops tools", llm.ServiceTypeGemini, tools, []string{}},
+		{"Vertex drops tools", llm.ServiceTypeVertex, tools, []string{}},
 		{"nil tools stay nil", llm.ServiceTypeOpenAI, nil, nil},
 		{"empty tools stay empty", llm.ServiceTypeOpenAI, []string{}, []string{}},
 	}
@@ -103,15 +107,18 @@ func TestNewFromServiceConfigFiltersNativeTools(t *testing.T) {
 		{"Bedrock drops native tools", llm.ServiceTypeBedrock, false},
 		{"Cohere drops native tools", llm.ServiceTypeCohere, false},
 		{"Mistral drops native tools", llm.ServiceTypeMistral, false},
+		{"Gemini drops native tools", llm.ServiceTypeGemini, false},
+		{"Vertex drops native tools", llm.ServiceTypeVertex, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			service := llm.ServiceConfig{
-				ID:     "test",
-				Type:   tt.serviceType,
-				APIKey: "key",
-				APIURL: "http://localhost",
-				Region: "us-east-1",
+				ID:              "test",
+				Type:            tt.serviceType,
+				APIKey:          "key",
+				APIURL:          "http://localhost",
+				Region:          "us-east-1",
+				VertexProjectID: "my-project",
 			}
 			bot := llm.BotConfig{
 				EnabledNativeTools: []string{"web_search"},

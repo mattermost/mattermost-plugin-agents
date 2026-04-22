@@ -58,11 +58,18 @@ type Config struct {
 	Region             string // For AWS Bedrock
 	AWSAccessKeyID     string
 	AWSSecretAccessKey string
-	DefaultModel       string
-	InputTokenLimit    int
-	OutputTokenLimit   int
-	StreamingTimeout   time.Duration
-	SendUserID         bool
+
+	// Vertex AI (GCP). Region is reused from the shared Region field.
+	// VertexAuthCredentials holds the service-account JSON; empty falls back to ADC/IAM.
+	VertexProjectID       string
+	VertexProjectNumber   string
+	VertexAuthCredentials string
+
+	DefaultModel     string
+	InputTokenLimit  int
+	OutputTokenLimit int
+	StreamingTimeout time.Duration
+	SendUserID       bool
 
 	// Native tools and reasoning configuration
 	EnabledNativeTools []string
@@ -83,6 +90,9 @@ type providerAccount struct {
 	region                  string
 	awsKeyID                string
 	awsSecret               string
+	vertexProjectID         string
+	vertexProjectNumber     string
+	vertexAuthCredentials   string
 	streamingTimeoutSeconds int
 }
 
@@ -114,6 +124,16 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 			AccessKey: schemas.EnvVar{Val: a.awsKeyID},
 			SecretKey: schemas.EnvVar{Val: a.awsSecret},
 			Region:    &region,
+		}
+	}
+
+	// Handle Vertex config. Empty AuthCredentials signals ADC / attached IAM role.
+	if a.provider == schemas.Vertex {
+		key.VertexKeyConfig = &schemas.VertexKeyConfig{
+			ProjectID:       schemas.EnvVar{Val: a.vertexProjectID},
+			ProjectNumber:   schemas.EnvVar{Val: a.vertexProjectNumber},
+			Region:          schemas.EnvVar{Val: a.region},
+			AuthCredentials: schemas.EnvVar{Val: a.vertexAuthCredentials},
 		}
 	}
 
@@ -184,6 +204,9 @@ func New(cfg Config) (*LLM, error) {
 		region:                  cfg.Region,
 		awsKeyID:                cfg.AWSAccessKeyID,
 		awsSecret:               cfg.AWSSecretAccessKey,
+		vertexProjectID:         cfg.VertexProjectID,
+		vertexProjectNumber:     cfg.VertexProjectNumber,
+		vertexAuthCredentials:   cfg.VertexAuthCredentials,
 		streamingTimeoutSeconds: int(cfg.StreamingTimeout.Seconds()),
 	}
 

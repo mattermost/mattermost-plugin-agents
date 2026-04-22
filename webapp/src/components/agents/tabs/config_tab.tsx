@@ -109,6 +109,9 @@ const ConfigTab = (props: Props) => {
             region: '',
             awsAccessKeyID: '',
             awsSecretAccessKey: '',
+            vertexProjectID: '',
+            vertexProjectNumber: '',
+            vertexAuthCredentials: '',
         };
     }, [selectedService]);
 
