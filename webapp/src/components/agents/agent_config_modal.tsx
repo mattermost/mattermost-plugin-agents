@@ -328,6 +328,7 @@ const AgentConfigModal = (props: Props) => {
                             botUserId={agent?.botUserID}
                             services={services}
                             errors={errors}
+                            usernameLocked={mode === 'edit'}
                         />
                     )}
                     {activeTab === 'access' && (
