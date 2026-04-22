@@ -1205,19 +1205,6 @@ func (b *LLM) providerSupportsNativeTools() bool {
 	}
 }
 
-// providerUsesThinkingBudget reports whether the provider prefers a token-budget
-// style reasoning configuration (thinkingBudget / budget_tokens) over an
-// effort-based one. Anthropic requires a token budget; Gemini/Vertex accept
-// either but map max_tokens to Gemini's native thinkingBudget first.
-func (b *LLM) providerUsesThinkingBudget() bool {
-	switch b.provider {
-	case schemas.Anthropic, schemas.Gemini, schemas.Vertex:
-		return true
-	default:
-		return false
-	}
-}
-
 // shouldUseResponsesAPI determines if the Responses API should be used for this request.
 func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 	if b.useResponsesAPI {
