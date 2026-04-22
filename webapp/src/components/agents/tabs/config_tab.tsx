@@ -192,16 +192,6 @@ const ConfigTab = (props: Props) => {
 
     const maxTokens = selectedService?.outputTokenLimit || 4096;
 
-    const usernameHelpText = usernameLocked ?
-        intl.formatMessage({
-            defaultMessage:
-                'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores. The username cannot be changed after the agent is created.',
-        }) :
-        intl.formatMessage({
-            defaultMessage:
-                'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores.',
-        });
-
     const handleReasoningBotChange = (bot: LLMBotConfig) => {
         const re = bot.reasoningEnabled ?? true;
         let structured = bot.structuredOutputEnabled ?? false;
@@ -233,7 +223,10 @@ const ConfigTab = (props: Props) => {
                     maxLength={22}
                     disabled={usernameLocked}
                     onChange={(e) => onChange({username: e.target.value})}
-                    helptext={usernameHelpText}
+                    helptext={intl.formatMessage({
+                        defaultMessage:
+                            'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores. The username cannot be changed after the agent is created.',
+                    })}
                 />
                 {errors.username && <FieldError>{errors.username}</FieldError>}
                 <AvatarItem
