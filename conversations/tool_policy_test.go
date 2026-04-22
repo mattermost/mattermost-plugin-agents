@@ -8,6 +8,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -64,4 +65,30 @@ func TestShouldAutoExecuteTool_NilChecker(t *testing.T) {
 		got := c.shouldAutoExecuteTool(llmCtx, isDM)(llm.ToolCall{Name: "x", ServerOrigin: "y"})
 		assert.False(t, got, "isDM=%v", isDM)
 	}
+}
+
+// TestAllToolsAutoRunEverywhere_RespectsEnabledFlag pins the result-sharing
+// contract: a disabled tool must never drive results to shared=true, even if
+// its policy is auto_run_everywhere. The enabled flag is authoritative —
+// matching shouldAutoExecuteTool, which also refuses to auto-execute a
+// disabled tool.
+func TestAllToolsAutoRunEverywhere_RespectsEnabledFlag(t *testing.T) {
+	const origin = "https://mcp.example.com/mcp"
+	const toolName = "example_tool"
+
+	c := &Conversations{
+		toolPolicyChecker: mapPolicyChecker{
+			origin: {
+				toolName: {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: false},
+			},
+		},
+	}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{Name: toolName, ServerOrigin: origin}},
+	}}
+
+	assert.False(t, c.allToolsAutoRunEverywhere(turns, llmCtx),
+		"a disabled tool must not auto-share results even when the policy is auto_run_everywhere")
 }

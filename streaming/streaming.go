@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -445,9 +446,12 @@ func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.Text
 	var acc *turnAccumulator
 	if p.turnStore != nil {
 		if convID, ok := post.GetProp(ConversationIDProp).(string); ok && convID != "" {
+			// Match mmapi.IsDMWith across the codebase: only true 1-1 DMs between
+			// the requester and the bot count as DMs here. Group DMs follow the
+			// channel share-flow, so their tool_use blocks default to unshared.
 			isDM := false
 			if ch, chErr := p.mmClient.GetChannel(post.ChannelId); chErr == nil {
-				isDM = ch.Type == model.ChannelTypeDirect || ch.Type == model.ChannelTypeGroup
+				isDM = mmapi.IsDMWith(requesterUserID, ch)
 			}
 			acc = newTurnAccumulator(convID, post.Id, isDM)
 		}

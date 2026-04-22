@@ -255,8 +255,8 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 			if origin == "" && llmCtx.Tools != nil {
 				origin = llmCtx.Tools.GetServerOrigin(tc.Name)
 			}
-			policy, _ := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
-			if !mcp.IsToolPolicyAutoRunEverywhere(policy) {
+			policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
+			if !enabled || !mcp.IsToolPolicyAutoRunEverywhere(policy) {
 				return false
 			}
 		}

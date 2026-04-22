@@ -730,6 +730,54 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.True(t, hasToolUse, "expected tool_use block from channel tool call")
 	})
 
+	// Regression: group DMs follow the channel share-flow (the rest of the
+	// codebase treats them as non-DM via mmapi.IsDMWith). The final assistant
+	// turn's tool_use blocks must not be marked shared=true in a group DM,
+	// otherwise their inputs become visible to other members without the
+	// requester approving a Share.
+	t.Run("tool_use in group DM is not marked shared", func(t *testing.T) {
+		ts := &fakeTurnStore{}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeGroup, Name: "group-channel"},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		toolCalls := []llm.ToolCall{
+			{ID: "tc-1", Name: "read_file", ServerOrigin: "https://mcp.example.com", Arguments: json.RawMessage(`{"path":"a.txt"}`)},
+		}
+
+		streamChannel := make(chan llm.TextStreamEvent, 2)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
+
+		var toolUseBlock *conversation.ContentBlock
+		for i := range blocks {
+			if blocks[i].Type == conversation.BlockTypeToolUse {
+				toolUseBlock = &blocks[i]
+				break
+			}
+		}
+		require.NotNil(t, toolUseBlock, "expected a tool_use block")
+		require.NotNil(t, toolUseBlock.Shared, "Shared flag should be set on tool_use block")
+		require.False(t, *toolUseBlock.Shared,
+			"group-channel tool_use must not be marked shared — group DMs follow the channel share flow")
+	})
+
 	t.Run("conversation_id prop remains on post after streaming", func(t *testing.T) {
 		ts := &fakeTurnStore{}
 		client := &fakeStreamingClient{
