@@ -66,7 +66,6 @@ interface ToolApprovalSetProps {
     canExpand: boolean;
     showArguments: boolean;
     showResults: boolean;
-    isAutoApproved?: boolean;
 }
 
 // Define a type for tool decisions
@@ -90,8 +89,9 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     const isCallStage = props.approvalStage === 'call';
     const isResultStage = props.approvalStage === 'result';
 
-    // When auto-approved during call stage, suppress approval buttons
-    const effectiveCanApprove = props.isAutoApproved && isCallStage ? false : props.canApprove;
+    // Approval is per pending tool. Earlier auto-approved tools in the same
+    // response should not suppress controls for later manual ones.
+    const effectiveCanApprove = props.canApprove;
 
     const decisionToolCalls = useMemo(() => {
         if (!effectiveCanApprove) {
@@ -269,7 +269,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                         showArguments={props.showArguments}
                         showResults={props.showResults}
                         approvalStage={props.approvalStage}
-                        isAutoApproved={props.isAutoApproved || tool.status === ToolCallStatus.AutoApproved}
+                        isAutoApproved={tool.status === ToolCallStatus.AutoApproved}
                     />
                 );
             })}
