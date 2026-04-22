@@ -32,6 +32,7 @@ type Props = {
     botUserId?: string;
     services: ServiceInfo[];
     errors?: Record<string, string>;
+
     /** When true (e.g. edit mode), username cannot be changed; matches API behavior. */
     usernameLocked?: boolean;
 }
