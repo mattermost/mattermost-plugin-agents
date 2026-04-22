@@ -26,6 +26,13 @@ var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 // WebsocketEventBotsInvalidate is the event name for PublishWebSocketEvent (webapp: custom_mattermost-ai_<name>).
 const WebsocketEventBotsInvalidate = "bots_invalidate"
 
+// WebsocketEventMCPConnectionUpdated is published to a single user when their
+// MCP OAuth connection state changes (e.g. after completing the auth flow from
+// the system console or the New Agent modal). The webapp listens for it to
+// refresh its cached list of user-visible MCP servers/tools without requiring
+// a page reload.
+const WebsocketEventMCPConnectionUpdated = "mcp_connection_updated"
+
 // MaxAgentRequestBodyBytes caps the JSON body size for agent create/update requests
 // to protect against oversized payloads in the various ID slices and MCP tool lists.
 const MaxAgentRequestBodyBytes = 512 << 10 // 512 KiB

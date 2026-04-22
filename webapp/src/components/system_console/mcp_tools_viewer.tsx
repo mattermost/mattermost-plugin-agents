@@ -1,13 +1,14 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {RefreshIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage} from 'react-intl';
 
 import {TertiaryButton, SecondaryButton} from '../assets/buttons';
 import {getMCPTools, clearMCPToolsCache, getVettedToolSeed} from '../../client';
+import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
 
 import {MCPConfig, MCPServerConfig, MCPToolConfig} from './mcp_servers';
 import MCPServerToolRow from './mcp_server_tool_row';
@@ -88,6 +89,16 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             fetchTools();
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Refresh after the user finishes an MCP connect/disconnect flow in a
+    // popup window so the Tools tab reflects the new state without a manual
+    // refresh.
+    useMCPConnectionEvents(useCallback(() => {
+        fetchTools();
+
+    // fetchTools closes over setters only; it's stable for our purposes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []));
 
     // Retroactively seed vetted tool configs for existing servers.
     // This runs once after tools are first fetched, to fix servers configured before

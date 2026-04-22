@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // UserMCPToolsResponse is the top-level response for GET /mcp/tools.
@@ -240,7 +241,27 @@ func (a *API) handleDeleteUserMCPOAuth(c *gin.Context) {
 		return
 	}
 
+	a.publishMCPDisconnected(userID, serverName)
 	c.Status(http.StatusOK)
+}
+
+// publishMCPDisconnected broadcasts an MCP disconnection event so the webapp
+// can refresh its user-visible MCP server state after a manual disconnect.
+func (a *API) publishMCPDisconnected(userID, serverName string) {
+	if a.mmClient == nil || userID == "" {
+		return
+	}
+
+	payload := map[string]interface{}{
+		"status":     "disconnected",
+		"serverName": serverName,
+	}
+
+	a.mmClient.PublishWebSocketEvent(
+		WebsocketEventMCPConnectionUpdated,
+		payload,
+		&model.WebsocketBroadcast{UserId: userID},
+	)
 }
 
 // handleGetVettedToolSeed returns authoritative vetted default tool_configs for a base URL (admin).
