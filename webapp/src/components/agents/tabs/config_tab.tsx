@@ -109,6 +109,8 @@ const ConfigTab = (props: Props) => {
             region: '',
             awsAccessKeyID: '',
             awsSecretAccessKey: '',
+            bifrostKeyJSON: '',
+            bifrostProviderConfigJSON: '',
         };
     }, [selectedService]);
 
