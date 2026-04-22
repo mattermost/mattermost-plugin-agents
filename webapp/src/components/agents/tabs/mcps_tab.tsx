@@ -328,7 +328,7 @@ const McpsTab = (props: Props) => {
                                                     disabled={autoEnableNewMCPTools}
                                                     $enabled={toolOn}
                                                 >
-                                                    <ToggleKnob $enabled={toolOn}/>
+                                                    <ToolToggleKnob $enabled={toolOn}/>
                                                 </ToolToggle>
                                             </ToolRow>
                                         );
@@ -578,6 +578,11 @@ const ToolToggle = styled(ServerToggle)`
     width: 36px;
     height: 20px;
     border-radius: 10px;
+`;
+
+const ToolToggleKnob = styled(ToggleKnob)<{$enabled: boolean}>`
+    top: 1px;
+    left: ${(p) => (p.$enabled ? '17px' : '1px')};
 `;
 
 const OrphanedToolsWarning = styled.div`
