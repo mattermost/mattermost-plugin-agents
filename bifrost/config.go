@@ -44,21 +44,24 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 // and the effective-behavior checks used by built-in Mattermost tools so that
 // built-in fallbacks do not get suppressed when native tools would be stripped.
 func SupportsNativeTools(serviceType string) bool {
-	switch serviceType {
-	case llm.ServiceTypeOpenAI,
-		llm.ServiceTypeOpenAICompatible,
-		llm.ServiceTypeAzure,
-		llm.ServiceTypeAnthropic,
-		llm.ServiceTypeGemini,
-		llm.ServiceTypeVertex:
-		return true
-	default:
+	provider, err := MapServiceTypeToProvider(serviceType)
+	if err != nil {
 		return false
 	}
+	return supportsNativeToolsProvider(provider)
 }
 
 func supportsNativeTools(serviceType string) bool {
 	return SupportsNativeTools(serviceType)
+}
+
+func supportsNativeToolsProvider(provider schemas.ModelProvider) bool {
+	switch provider {
+	case schemas.OpenAI, schemas.Azure, schemas.Anthropic, schemas.Gemini, schemas.Vertex:
+		return true
+	default:
+		return false
+	}
 }
 
 func filterNativeToolsForServiceType(serviceType string, tools []string) []string {

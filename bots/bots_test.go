@@ -692,3 +692,13 @@ func TestHasNativeWebSearchEnabledUnsupportedServiceType(t *testing.T) {
 	)
 	require.False(t, b.HasNativeWebSearchEnabled())
 }
+
+func TestHasNativeWebSearchEnabledSupportedServiceType(t *testing.T) {
+	b := NewBot(
+		llm.BotConfig{EnabledNativeTools: []string{"web_search"}},
+		llm.ServiceConfig{Type: llm.ServiceTypeGemini},
+		&model.Bot{UserId: "b1"},
+		nil,
+	)
+	require.True(t, b.HasNativeWebSearchEnabled())
+}

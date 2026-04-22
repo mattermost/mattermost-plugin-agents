@@ -1197,12 +1197,7 @@ func Ptr[T any](v T) *T {
 }
 
 func (b *LLM) providerSupportsNativeTools() bool {
-	switch b.provider {
-	case schemas.OpenAI, schemas.Azure, schemas.Anthropic:
-		return true
-	default:
-		return false
-	}
+	return supportsNativeToolsProvider(b.provider)
 }
 
 // shouldUseResponsesAPI determines if the Responses API should be used for this request.
