@@ -20,9 +20,13 @@ function comboboxMenuPortalTarget(): HTMLElement | null {
 // Portaled Combobox menus need to stack above the agent config modal overlay
 // (z-index 2000). Targets react-select's classNamePrefix='SystemConsoleCombobox'
 // so the z-index lives in styled-components rather than inline style props.
+// react-select v5 emits its default menuPortalCSS (z-index: 1) via an
+// @emotion/react generated className, so whether that or our global rule wins
+// depends on CSS declaration order at runtime. Use !important to make the
+// override deterministic regardless of which stylesheet is parsed last.
 const ComboboxPortalStyles = createGlobalStyle`
     .SystemConsoleCombobox__menu-portal {
-        z-index: 10000;
+        z-index: 10000 !important;
     }
 `;
 
