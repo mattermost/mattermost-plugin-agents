@@ -114,7 +114,12 @@ func legacyMigrationPortForAttempt(attempt int) uint32 {
 		offset = -offset
 	}
 
-	return uint32(20000 + offset)
+	port := int64(20000) + offset
+	if port < 0 || port > 65535 {
+		panic(fmt.Sprintf("legacy migration test picked invalid port %d", port))
+	}
+
+	return uint32(port)
 }
 
 func isPortInUseError(err error) bool {
