@@ -8,6 +8,7 @@ import {ChevronDownIcon} from '@mattermost/compass-icons/components';
 
 import {disconnectMCPOAuth, getUserMCPTools, updateUserToolPreferences} from '@/client';
 import {EnabledMCPTool} from '@/bots';
+import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 
 import DotMenu, {DotMenuButton, DropdownMenu} from '../dot_menu';
 import {ToggleSwitch} from '../toggle_switch';
@@ -61,16 +62,28 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
 
     const servers = filterServersByEnabledTools(allServers, enabledMCPTools, autoEnableNewMCPTools);
 
-    const fetchServers = useCallback(async () => {
-        setLoading(true);
+    const fetchServers = useCallback(async (opts: {showLoading?: boolean} = {showLoading: true}) => {
+        if (opts.showLoading) {
+            setLoading(true);
+        }
         try {
             const response = await getUserMCPTools();
             setAllServers(response.servers);
         } catch {
             // Silently fail - servers stay empty
         }
-        setLoading(false);
+        if (opts.showLoading) {
+            setLoading(false);
+        }
     }, []);
+
+    // Refresh the cached server list whenever the user's MCP OAuth connection
+    // state changes (popup-driven Connect flow, cluster-forwarded disconnect,
+    // etc.) so the popover reflects the new state without manual refresh —
+    // both while the popover is open and next time it opens.
+    useMCPConnectionEvents(useCallback(() => {
+        fetchServers({showLoading: false});
+    }, [fetchServers]));
 
     const handleToggle = useCallback(async (serverOrigin: string, enabled: boolean) => {
         let updatedDisabled: string[];
