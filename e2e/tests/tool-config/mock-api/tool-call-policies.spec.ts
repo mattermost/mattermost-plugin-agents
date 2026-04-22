@@ -1,3 +1,5 @@
+import * as http from 'http';
+
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
@@ -28,6 +30,55 @@ type EmbeddedToolConfig = {
     policy: 'ask' | 'auto_run' | 'auto_run_everywhere';
     enabled: boolean;
 };
+
+type ImageTrapServer = {
+    close: () => Promise<void>;
+    getRequestCount: () => number;
+    url: string;
+};
+
+async function startImageTrapServer(assetName: string): Promise<ImageTrapServer> {
+    let requestCount = 0;
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><rect width="240" height="80" fill="#d24b4b"/><text x="20" y="48" font-size="24" fill="white">image loaded</text></svg>';
+
+    const server = http.createServer((req, res) => {
+        if (req.url === `/${assetName}`) {
+            requestCount++;
+            res.writeHead(200, {
+                'Cache-Control': 'no-store',
+                'Content-Type': 'image/svg+xml',
+            });
+            res.end(svg);
+            return;
+        }
+
+        res.writeHead(404);
+        res.end('not found');
+    });
+
+    await new Promise<void>((resolve) => {
+        server.listen(0, '127.0.0.1', () => resolve());
+    });
+
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+        throw new Error('failed to start image trap server');
+    }
+
+    return {
+        close: () => new Promise<void>((resolve, reject) => {
+            server.close((error) => {
+                if (error) {
+                    reject(error);
+                    return;
+                }
+                resolve();
+            });
+        }),
+        getRequestCount: () => requestCount,
+        url: `http://127.0.0.1:${address.port}/${assetName}`,
+    };
+}
 
 async function setEmbeddedToolPolicies(toolConfigs: EmbeddedToolConfig[]) {
     const helper = await createBotConfigHelper(mattermost);
@@ -233,6 +284,94 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         // Note: the exact behavior depends on whether the tool call mock
         // format is correctly handled by the plugin
         expect(isAcceptVisible).toBe(false);
+    });
+
+    test('read_post tool results do not render markdown images from unsafe posts', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const townSquareChannelID = await getTownSquareChannelID();
+        const adminClient = await mattermost.getAdminClient();
+        const imageTrap = await startImageTrapServer(`tool-result-image-${Date.now()}.svg`);
+        const seedMessage = `Tool result markdown image seed ${Date.now()}`;
+        const seededPost = await adminClient.createPost({
+            channel_id: townSquareChannelID,
+            message: `${seedMessage}\n\`\`\`\n![blocked-image](${imageTrap.url})`,
+        });
+
+        try {
+            await openAIMock.addMocks([
+                {
+                    request: {
+                        method: 'POST',
+                        path: '/v1/chat/completions',
+                        body: {
+                            matcher: 'ShouldContainSubstring',
+                            value: seededPost.id,
+                        },
+                    },
+                    context: {
+                        times: 1,
+                    },
+                    response: {
+                        status: 200,
+                        headers: {
+                            'Content-Type': 'text/event-stream',
+                        },
+                        body: buildToolCallResponse(
+                            'call_unsafe_read_post',
+                            'read_post',
+                            JSON.stringify({post_id: seededPost.id}),
+                        ),
+                    },
+                },
+                {
+                    request: {
+                        method: 'POST',
+                        path: '/v1/chat/completions',
+                        body: {
+                            matcher: 'ShouldContainSubstring',
+                            value: 'call_unsafe_read_post',
+                        },
+                    },
+                    context: {
+                        times: 1,
+                    },
+                    response: {
+                        status: 200,
+                        headers: {
+                            'Content-Type': 'text/event-stream',
+                        },
+                        body: buildTextResponse('Finished reading the unsafe post.'),
+                    },
+                },
+            ]);
+
+            const mmPage = new MattermostPage(page);
+
+            await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+            await mmPage.createAndNavigateToDMWithBot(
+                mattermost,
+                adminUsername,
+                adminPassword,
+                'toolbot',
+            );
+
+            await mmPage.sendChannelMessage(`Please read the Mattermost post with ID ${seededPost.id}.`);
+
+            const latestBotPost = page.locator('[data-testid="llm-bot-post"]').last();
+            await expect(latestBotPost.getByText('Read Post', {exact: true})).toBeVisible({timeout: 30000});
+            await expect(page.getByText('Finished reading the unsafe post.')).toBeVisible({timeout: 45000});
+
+            await latestBotPost.getByText('Read Post', {exact: true}).click();
+            await expect(latestBotPost.getByText(seedMessage, {exact: false})).toBeVisible({timeout: 30000});
+            await expect(latestBotPost.getByText('blocked-image')).toBeVisible({timeout: 30000});
+            await expect(latestBotPost.locator('img[src*="tool-result-image-"]')).toHaveCount(0);
+
+            await page.waitForTimeout(1000);
+            expect(imageTrap.getRequestCount()).toBe(0);
+        } finally {
+            await imageTrap.close();
+        }
     });
 
     test('manual DM approval can be followed by a completed auto_run tool', async ({ page }) => {
