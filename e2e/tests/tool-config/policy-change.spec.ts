@@ -42,10 +42,10 @@ test.describe.serial('Per-Tool Policy Change', () => {
         await serverHeader.click();
         await page.waitForTimeout(500);
 
-        // Find read_post tool (should be "auto_run" from vetted seed)
+        // Find read_post tool (should be "auto_run_in_dm" from vetted seed)
         await expect(page.getByText('read_post')).toBeVisible({ timeout: 5000 });
         const readPostPolicy = toolConfig.getToolPolicyDropdown('read_post');
-        await expect(readPostPolicy).toHaveValue('auto_run');
+        await expect(readPostPolicy).toHaveValue('auto_run_in_dm');
 
         // Change to "Ask Every Time"
         await toolConfig.setToolPolicy('read_post', 'Ask Every Time');
@@ -89,7 +89,7 @@ test.describe.serial('Per-Tool Policy Change', () => {
         // Change to "Auto Run (DM)"
         await toolConfig.setToolPolicy('read_post', 'Auto Run (DM)');
         const readPostPolicy = toolConfig.getToolPolicyDropdown('read_post');
-        await expect(readPostPolicy).toHaveValue('auto_run');
+        await expect(readPostPolicy).toHaveValue('auto_run_in_dm');
 
         // Save
         await toolConfig.clickSave();
@@ -102,10 +102,10 @@ test.describe.serial('Per-Tool Policy Change', () => {
         await serverHeader2.click();
         await page.waitForTimeout(500);
 
-        // Verify the tool now shows "auto_run"
+        // Verify the tool now shows "auto_run_in_dm"
         await expect(page.getByText('read_post')).toBeVisible({ timeout: 5000 });
         const readPostPolicyAfter = toolConfig.getToolPolicyDropdown('read_post');
-        await expect(readPostPolicyAfter).toHaveValue('auto_run');
+        await expect(readPostPolicyAfter).toHaveValue('auto_run_in_dm');
     });
 
     test('should change tool policy to Auto Run (Everywhere) and persist', async ({ page }) => {

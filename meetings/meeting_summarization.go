@@ -273,7 +273,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 		}
 		defer s.streamingService.FinishStreaming(transcriptPost.Id)
 
-		s.streamingService.StreamToPost(ctx, summaryStream, transcriptPost, requestingUser.Locale)
+		s.streamingService.StreamToPost(ctx, summaryStream, transcriptPost, requestingUser.Locale, requestingUser.Id)
 
 		return nil
 	}() //nolint:errcheck

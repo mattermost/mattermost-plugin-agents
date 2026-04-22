@@ -24,12 +24,12 @@ const (
 	EmbeddedClientKey  = "embedded://mattermost"
 
 	ToolPolicyAsk               = config.MCPToolPolicyAsk
-	ToolPolicyAutoRun           = config.MCPToolPolicyAutoRun
+	ToolPolicyAutoRunInDM       = config.MCPToolPolicyAutoRunInDM
 	ToolPolicyAutoRunEverywhere = config.MCPToolPolicyAutoRunEverywhere
 )
 
-func IsToolPolicyAutoRun(policy string) bool {
-	return config.IsToolPolicyAutoRun(policy)
+func IsToolPolicyAutoRunInDM(policy string) bool {
+	return config.IsToolPolicyAutoRunInDM(policy)
 }
 
 func IsToolPolicyAutoRunEverywhere(policy string) bool {

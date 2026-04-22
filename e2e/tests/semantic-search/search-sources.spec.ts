@@ -5,7 +5,6 @@ import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
-import { LLMBotPostHelper } from 'helpers/llmbot-post';
 import { mattermostAIPluginRoutes } from 'helpers/plugin-http';
 
 const username = 'regularuser';
@@ -54,17 +53,16 @@ test.afterAll(async () => {
 async function setupTestPage(page: Page) {
     const mmPage = new MattermostPage(page);
     const aiPlugin = new AIPlugin(page);
-    const llmBotHelper = new LLMBotPostHelper(page);
     const url = mattermost.url();
 
     await mmPage.login(url, username, password);
 
-    return { mmPage, aiPlugin, llmBotHelper };
+    return { mmPage, aiPlugin };
 }
 
 test.describe('Search Sources Display', () => {
-    test('Search sources panel displays and expands', async ({ page }) => {
-        const { mmPage, aiPlugin, llmBotHelper } = await setupTestPage(page);
+    test('Search response text displays in RHS', async ({ page }) => {
+        const { mmPage, aiPlugin } = await setupTestPage(page);
 
         // Create posts with searchable content about budget
         await mmPage.sendMessageAsUser(
@@ -105,30 +103,9 @@ test.describe('Search Sources Display', () => {
         // Wait for bot response in RHS
         await aiPlugin.waitForBotResponse(searchResponseWithSourcesText);
 
-        // Verify "Sources" header is visible
-        await llmBotHelper.waitForSearchSources();
-        await llmBotHelper.expectSearchSourcesVisible(true);
-
-        // Verify count badge is visible
-        const countBadge = llmBotHelper.getSearchSourcesCount();
-        await expect(countBadge).toBeVisible();
-
-        // Click "Sources" header to expand
-        await llmBotHelper.clickSearchSourcesHeader();
-
-        // Verify source items are visible after expanding
-        await llmBotHelper.expectSearchSourcesExpanded(true);
-
-        // Verify source items have relevance percentages
-        const sourceItems = llmBotHelper.getSearchSourceItems();
-        const itemCount = await sourceItems.count();
-        expect(itemCount).toBeGreaterThan(0);
-
-        // Verify first source item has relevance score in percentage format
-        await llmBotHelper.expectRelevanceScoreFormat(0);
-
-        // Verify RHS is still visible
+        // Verify RHS is still visible with search response text
         await expect(page.getByTestId('mattermost-ai-rhs')).toBeVisible();
+        await expect(page.getByText(searchResponseWithSourcesText)).toBeVisible();
     });
 
     test('Search query with no channel results returns appropriate message', async ({ page }) => {

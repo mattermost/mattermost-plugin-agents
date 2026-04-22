@@ -5,15 +5,18 @@ package channels_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"path/filepath"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/channels"
+	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/evals"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -59,12 +62,18 @@ func TestChannelSummarization(t *testing.T) {
 			// Setup mock expectations
 			setupChannelMocksFromThreadData(mmClient, threadData)
 
+			// Create a conversation service with in-memory store for eval tests
+			evalStore := newEvalInMemoryStore()
+			evalBots := &evalBotLookup{botUserIDs: map[string]bool{}}
+			convSvc := conversation.NewService(evalStore, nil, nil, evalBots)
+
 			// Create channel service
 			channelService := channels.New(
 				t.LLM,
 				promptsObj,
 				mmClient,
 				nil, // dbClient not needed for this test
+				convSvc,
 			)
 
 			// Create context
@@ -74,8 +83,14 @@ func TestChannelSummarization(t *testing.T) {
 			ctx.Team = threadData.Team
 
 			// Perform summarization based on type
-			textStream, err := channelService.Interval(ctx, threadData.Channel.Id, fixedStart, 0, prompts.PromptSummarizeChannelRangeSystem)
+			userID := "eval-user"
+			if threadData.RequestingUser() != nil {
+				userID = threadData.RequestingUser().Id
+			}
+			result, err := channelService.Interval(ctx, threadData.Channel.Id, userID, "eval-bot", fixedStart, 0, prompts.PromptSummarizeChannelRangeSystem)
 			require.NoError(t, err, "Failed to summarize channel")
+			require.NotNil(t, result, "Expected a non-nil result")
+			textStream := result.Stream
 			require.NotNil(t, textStream, "Expected a non-nil text stream")
 
 			// Read the response
@@ -89,6 +104,117 @@ func TestChannelSummarization(t *testing.T) {
 			}
 		})
 	}
+}
+
+// evalInMemoryStore implements conversation.Store for eval tests.
+type evalInMemoryStore struct {
+	conversations map[string]*evalConv
+	turns         map[string]*evalTurn
+	turnsByConv   map[string][]string
+}
+
+type evalConv struct {
+	store.Conversation
+}
+
+type evalTurn struct {
+	store.Turn
+}
+
+func newEvalInMemoryStore() *evalInMemoryStore {
+	return &evalInMemoryStore{
+		conversations: make(map[string]*evalConv),
+		turns:         make(map[string]*evalTurn),
+		turnsByConv:   make(map[string][]string),
+	}
+}
+
+func (s *evalInMemoryStore) CreateConversation(conv *store.Conversation) error {
+	s.conversations[conv.ID] = &evalConv{*conv}
+	return nil
+}
+
+func (s *evalInMemoryStore) GetConversation(id string) (*store.Conversation, error) {
+	c, ok := s.conversations[id]
+	if !ok {
+		return nil, store.ErrConversationNotFound
+	}
+	return &c.Conversation, nil
+}
+
+func (s *evalInMemoryStore) GetConversationByThreadBotUser(_, _, _ string) (*store.Conversation, error) {
+	return nil, store.ErrConversationNotFound
+}
+
+func (s *evalInMemoryStore) UpdateConversationTitle(id, title string) error {
+	if c, ok := s.conversations[id]; ok {
+		c.Title = title
+	}
+	return nil
+}
+
+func (s *evalInMemoryStore) UpdateConversationRootPostID(id string, rootPostID string) error {
+	if c, ok := s.conversations[id]; ok {
+		c.RootPostID = &rootPostID
+	}
+	return nil
+}
+
+func (s *evalInMemoryStore) CreateTurn(turn *store.Turn) error {
+	s.turns[turn.ID] = &evalTurn{*turn}
+	s.turnsByConv[turn.ConversationID] = append(s.turnsByConv[turn.ConversationID], turn.ID)
+	return nil
+}
+
+func (s *evalInMemoryStore) CreateTurnAutoSequence(turn *store.Turn) error {
+	maxSeq, _ := s.GetMaxSequenceForConversation(turn.ConversationID)
+	turn.Sequence = maxSeq + 1
+	return s.CreateTurn(turn)
+}
+
+func (s *evalInMemoryStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {
+	ids := s.turnsByConv[conversationID]
+	turns := make([]store.Turn, 0, len(ids))
+	for _, id := range ids {
+		if t, ok := s.turns[id]; ok {
+			turns = append(turns, t.Turn)
+		}
+	}
+	return turns, nil
+}
+
+func (s *evalInMemoryStore) UpdateTurnContent(id string, content json.RawMessage) error {
+	if t, ok := s.turns[id]; ok {
+		t.Content = content
+	}
+	return nil
+}
+
+func (s *evalInMemoryStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
+	if t, ok := s.turns[id]; ok {
+		t.TokensIn = tokensIn
+		t.TokensOut = tokensOut
+	}
+	return nil
+}
+
+func (s *evalInMemoryStore) GetMaxSequenceForConversation(conversationID string) (int, error) {
+	maxSeq := 0
+	for _, id := range s.turnsByConv[conversationID] {
+		if t, ok := s.turns[id]; ok && t.Sequence > maxSeq {
+			maxSeq = t.Sequence
+		}
+	}
+	return maxSeq, nil
+}
+
+// evalBotLookup implements conversation.BotLookup for eval tests.
+type evalBotLookup struct {
+	botUserIDs map[string]bool
+}
+
+func (b *evalBotLookup) IsAnyBot(userID string) bool {
+	return b.botUserIDs[userID]
 }
 
 func setupChannelMocksFromThreadData(mmClient *mocks.MockClient, threadData *evals.ThreadExport) {

@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/api"
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
@@ -307,6 +308,7 @@ func (p *Plugin) OnActivate() error {
 		prompts,
 		streamingService,
 		licenseChecker,
+		nil, // conversation service wired in a later step
 	)
 
 	// Register update listener for embedding search config changes
@@ -420,6 +422,10 @@ func (p *Plugin) OnActivate() error {
 		&p.configuration,
 	)
 
+	convService := conversation.NewService(p.store, prompts, mmClient, bots)
+	conversationsService.SetConversationService(convService)
+	searchService.SetConversationService(convService)
+
 	meetingsService := meetings.NewService(
 		pluginAPI,
 		streamingService,
@@ -437,7 +443,7 @@ func (p *Plugin) OnActivate() error {
 	conversationsService.SetMeetingsService(meetingsService)
 
 	// Wire per-tool policy checker for auto-approval in streaming and conversations
-	policyChecker := streaming.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
+	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
 		mcpCfg := p.configuration.MCP()
 		if serverBaseURL == mcp.EmbeddedClientKey {
 			toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
@@ -454,8 +460,7 @@ func (p *Plugin) OnActivate() error {
 		}
 		return "ask", false
 	})
-	streamingService.SetToolPolicyChecker(policyChecker)
-	streamingService.SetAutoExecuteCallback(conversationsService.AutoExecuteApprovedToolCalls)
+	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)
 
 	// Initialize embedded MCP server handlers for plugin endpoints
@@ -497,9 +502,12 @@ func (p *Plugin) OnActivate() error {
 		&p.configuration,
 		p,
 		p,
+		p.store,
 		getSearchInitError,
 		customPromptsStore,
 	)
+
+	apiService.SetConversationService(convService)
 
 	// Keep only what we need
 	p.apiService = apiService
@@ -566,8 +574,8 @@ func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
 		}
 	}
 	if p.conversationsService != nil {
-		if err := p.conversationsService.DeletePostMetaForDeletedPost(post); err != nil {
-			p.pluginAPI.Log.Error("Failed to delete LLM thread title for deleted post", "error", err, "post_id", post.Id)
+		if err := p.conversationsService.DeleteConversationsForDeletedPost(post); err != nil {
+			p.pluginAPI.Log.Error("Failed to soft-delete conversations for deleted post", "error", err, "post_id", post.Id)
 		}
 	}
 }

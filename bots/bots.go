@@ -416,8 +416,7 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 		return nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
 	}
 
-	// Auto-run tools support (before truncation so tool re-submissions are also truncated)
-	result = llm.NewAutoRunToolsWrapper(bifrostLLM)
+	result = bifrostLLM
 
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)

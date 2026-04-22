@@ -100,7 +100,7 @@ func TestRunMigrations(t *testing.T) {
 				require.NoError(t, err)
 				assert.True(t, exists, "Agents_System table should exist")
 
-				// Check LLM_PostMeta table exists
+				// Check LLM_PostMeta table does NOT exist (dropped by migration 7)
 				err = s.db.Get(&exists, `
 					SELECT EXISTS (
 						SELECT 1 FROM information_schema.tables
@@ -108,7 +108,7 @@ func TestRunMigrations(t *testing.T) {
 						AND table_schema = current_schema()
 					)`)
 				require.NoError(t, err)
-				assert.True(t, exists, "LLM_PostMeta table should exist")
+				assert.False(t, exists, "LLM_PostMeta table should not exist after migration")
 
 				// Check Agents_ConfigHistory table exists
 				err = s.db.Get(&exists, `
@@ -119,6 +119,26 @@ func TestRunMigrations(t *testing.T) {
 					)`)
 				require.NoError(t, err)
 				assert.True(t, exists, "Agents_ConfigHistory table should exist")
+
+				// Check LLM_Conversations table exists
+				err = s.db.Get(&exists, `
+					SELECT EXISTS (
+						SELECT 1 FROM information_schema.tables
+						WHERE table_name = 'llm_conversations'
+						AND table_schema = current_schema()
+					)`)
+				require.NoError(t, err)
+				assert.True(t, exists, "LLM_Conversations table should exist")
+
+				// Check LLM_Turns table exists
+				err = s.db.Get(&exists, `
+					SELECT EXISTS (
+						SELECT 1 FROM information_schema.tables
+						WHERE table_name = 'llm_turns'
+						AND table_schema = current_schema()
+					)`)
+				require.NoError(t, err)
+				assert.True(t, exists, "LLM_Turns table should exist")
 
 				// Check Agents_UserAgents table exists
 				err = s.db.Get(&exists, `
@@ -156,7 +176,7 @@ func TestRunMigrations(t *testing.T) {
 				err := s.db.Get(&count, `
 					SELECT COUNT(*) FROM Agents_DB_Migrations`)
 				require.NoError(t, err)
-				assert.Equal(t, 6, count, "Should have 6 migration records")
+				assert.Equal(t, 7, count, "Should have 7 migration records")
 			},
 		},
 	}

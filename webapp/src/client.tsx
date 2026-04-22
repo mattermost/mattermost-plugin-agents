@@ -7,16 +7,16 @@ import {ChannelWithTeamData} from '@mattermost/types/channels';
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
+import type {ConversationResponse} from '@/types/conversation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
 
 import manifest from './manifest';
 
-import {ToolCall} from './components/tool_types';
 import {CustomPrompt} from './types';
 
 const Client4 = new Client4Class();
 
-type MCPToolPolicy = 'auto_run' | 'auto_run_everywhere' | 'ask';
+type MCPToolPolicy = 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
 type VettedToolConfig = {name: string; policy: MCPToolPolicy; enabled: boolean};
 
 export function setSiteURL(siteURL: string) {
@@ -185,40 +185,6 @@ export async function doToolCall(postid: string, toolIDs: string[]) {
     });
 }
 
-export async function getToolCallPrivate(postid: string): Promise<ToolCall[]> {
-    const url = `${postRoute(postid)}/tool_call_private`;
-    const response = await fetch(url, Client4.getOptions({
-        method: 'GET',
-    }));
-
-    if (response.ok) {
-        return response.json() as Promise<ToolCall[]>;
-    }
-
-    throw new ClientError(Client4.url, {
-        message: '',
-        status_code: response.status,
-        url,
-    });
-}
-
-export async function getToolResultPrivate(postid: string): Promise<ToolCall[]> {
-    const url = `${postRoute(postid)}/tool_result_private`;
-    const response = await fetch(url, Client4.getOptions({
-        method: 'GET',
-    }));
-
-    if (response.ok) {
-        return response.json() as Promise<ToolCall[]>;
-    }
-
-    throw new ClientError(Client4.url, {
-        message: '',
-        status_code: response.status,
-        url,
-    });
-}
-
 export async function doToolResult(postid: string, toolIDs: string[]): Promise<void> {
     const url = `${postRoute(postid)}/tool_result`;
     const response = await fetch(url, Client4.getOptions({
@@ -279,6 +245,39 @@ export async function getAIThreads() {
 
     if (response.ok) {
         return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+// normalizeConversationResponse coerces every turn's content to a non-null
+// array. The backend may persist a turn whose content column is the JSON
+// literal `null` (e.g. when a stream finalizes before any blocks accumulate),
+// and downstream code iterates turn.content freely. Normalizing once here
+// keeps every consumer free of defensive null checks.
+export function normalizeConversationResponse(raw: ConversationResponse): ConversationResponse {
+    return {
+        ...raw,
+        turns: (raw.turns ?? []).map((turn) => ({
+            ...turn,
+            content: turn.content ?? [],
+        })),
+    };
+}
+
+export async function getConversation(conversationId: string): Promise<ConversationResponse> {
+    const url = `${baseRoute()}/conversations/${conversationId}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        const raw = await response.json() as ConversationResponse;
+        return normalizeConversationResponse(raw);
     }
 
     throw new ClientError(Client4.url, {
