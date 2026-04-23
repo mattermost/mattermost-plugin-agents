@@ -323,7 +323,7 @@ export default class Plugin {
                 component: CustomPromptsDropdown,
             });
             registry.registerAIActionMenuItemComponent({
-                icon: <IconAI/>,
+                icon: <IconAI size={18}/>,
                 text: <FormattedMessage defaultMessage='Agents'/>,
                 sortOrder: 20,
                 component: AgentsDropdown,
