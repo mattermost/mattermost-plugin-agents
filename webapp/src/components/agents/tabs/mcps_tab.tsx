@@ -605,20 +605,24 @@ const EmptyToolsNotice = styled.div`
 `;
 
 const ConnectButton = styled.button`
-    flex-shrink: 0;
-    height: 28px;
-    padding: 0 12px;
+    padding: 4px 10px;
     border-radius: 4px;
-    border: 1px solid var(--button-bg);
-    background: transparent;
-    color: var(--button-bg);
+    border: none;
     font-size: 12px;
     font-weight: 600;
+    white-space: nowrap;
     cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease;
+    flex-shrink: 0;
+    background: var(--button-bg);
+    color: var(--button-color);
 
-    &:hover {
-        background: rgba(var(--button-bg-rgb), 0.08);
+    &:hover:not(:disabled) {
+        background: rgba(var(--button-bg-rgb), 0.88);
+    }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: default;
     }
 
     &:focus-visible {
