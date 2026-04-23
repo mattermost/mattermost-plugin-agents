@@ -3,18 +3,13 @@
 
 import {useEffect} from 'react';
 
-// MCPConnectionEvent mirrors the payload of the backend websocket event
-// `custom_mattermost-ai_mcp_connection_updated` (see api.WebsocketEventMCPConnectionUpdated).
+// Payload for custom_mattermost-ai_mcp_connection_updated websocket events.
 export type MCPConnectionEvent = {
     status: 'connected' | 'disconnected';
     serverName?: string;
     serverOrigin?: string;
 }
 
-// Module-level subscriber list. The websocket registration itself lives in
-// index.tsx; all it does is call notifyMCPConnectionUpdated() so UI components
-// can refresh their cached view of the user's MCP connection state without
-// requiring a page reload.
 const subscribers = new Set<(event: MCPConnectionEvent) => void>();
 
 export function notifyMCPConnectionUpdated(event: MCPConnectionEvent) {
@@ -22,8 +17,7 @@ export function notifyMCPConnectionUpdated(event: MCPConnectionEvent) {
         try {
             cb(event);
         } catch {
-            // Swallow listener errors so one misbehaving subscriber does not
-            // prevent the others from seeing the event.
+            // Subscriber errors must not block other listeners.
         }
     });
 }

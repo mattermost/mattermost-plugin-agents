@@ -70,9 +70,6 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
             const response = await getUserMCPTools();
             setAllServers(response.servers);
         } catch (error) {
-            // Popover has no dedicated error surface; keep the prior server
-            // list and log so the failure is visible in diagnostic output
-            // rather than silently dropped.
             // eslint-disable-next-line no-console
             console.error('Failed to fetch MCP tools for RHS popover:', error);
         } finally {
@@ -82,10 +79,6 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
         }
     }, []);
 
-    // Refresh the cached server list whenever the user's MCP OAuth connection
-    // state changes (popup-driven Connect flow, cluster-forwarded disconnect,
-    // etc.) so the popover reflects the new state without manual refresh —
-    // both while the popover is open and next time it opens.
     useMCPConnectionEvents(useCallback(() => {
         fetchServers({showLoading: false});
     }, [fetchServers]));

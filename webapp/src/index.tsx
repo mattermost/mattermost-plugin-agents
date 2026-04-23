@@ -190,9 +190,7 @@ export default class Plugin {
             },
         );
 
-        // Fan out MCP connection updates so the New Agent modal and System
-        // Console tools viewer can refresh their cached tool lists after the
-        // user finishes an OAuth connect/disconnect flow in a popup window.
+        // MCP OAuth connect/disconnect: refresh cached tool lists in open UI.
         registry.registerWebSocketEventHandler(
             'custom_mattermost-ai_mcp_connection_updated',
             (msg: WebSocketMessage<MCPConnectionEvent>) => {

@@ -91,8 +91,7 @@ func (a *API) handleOAuthCallback(c *gin.Context) {
 	a.renderOAuthWindowClosePage(c, http.StatusOK, "Authorization Successful")
 }
 
-// publishMCPConnectionUpdated broadcasts an MCP connection change to the user so
-// open webapp tabs can refresh their tool list without a manual reload.
+// publishMCPConnectionUpdated notifies the webapp that the user connected an MCP server (OAuth callback).
 func (a *API) publishMCPConnectionUpdated(userID string, session *mcp.OAuthSession) {
 	if a.mmClient == nil || userID == "" {
 		return

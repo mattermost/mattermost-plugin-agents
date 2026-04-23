@@ -300,6 +300,13 @@ func TestHandleDeleteUserMCPOAuth(t *testing.T) {
 	mcpMock := &mockMCPClientManager{}
 	e.api.mcpClientManager = mcpMock
 
+	const testServerOrigin = "https://mcp.test/"
+	e.config.mcpConfig = mcp.Config{
+		Servers: []mcp.ServerConfig{
+			{Name: "TestServer", BaseURL: testServerOrigin, Enabled: true},
+		},
+	}
+
 	mmClient := mmapimocks.NewMockClient(t)
 	var gotEvent string
 	var gotPayload map[string]interface{}
@@ -323,6 +330,7 @@ func TestHandleDeleteUserMCPOAuth(t *testing.T) {
 	require.Equal(t, WebsocketEventMCPConnectionUpdated, gotEvent)
 	require.Equal(t, "disconnected", gotPayload["status"])
 	require.Equal(t, "TestServer", gotPayload["serverName"])
+	require.Equal(t, testServerOrigin, gotPayload["serverOrigin"])
 	require.NotNil(t, gotBroadcast)
 	require.Equal(t, testUserID, gotBroadcast.UserId)
 }
@@ -508,7 +516,6 @@ func TestPublishMCPConnectionUpdatedNoOpWhenMMClientMissing(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
-	// mmClient is nil — the helper should simply return without panicking.
 	e.api.publishMCPConnectionUpdated(testUserID, nil)
 }
 

@@ -10,10 +10,7 @@ import {getUserMCPTools} from '@/client';
 import {EnabledTool} from '@/types/agents';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 
-// MCPServerToolWildcard matches llm.MCPServerToolWildcard in Go: an EnabledTool
-// entry whose tool_name equals this sentinel grants the agent every tool from
-// that server, even tools the configuring admin cannot currently enumerate
-// (e.g. because they are not authenticated to the server yet).
+// Same sentinel as llm.MCPServerToolWildcard ('*' = all tools from that origin).
 const MCPServerToolWildcard = '*';
 
 // Types matching the getUserMCPTools() response shape (from api/api_mcp.go)
@@ -53,13 +50,6 @@ const McpsTab = (props: Props) => {
     const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
     const [searchQuery, setSearchQuery] = useState('');
 
-    // Fetch available MCP tools on mount and whenever an MCP OAuth connection
-    // change websocket event fires (e.g. after the user completes the Connect
-    // flow in a popup).
-    //
-    // Only the initial load surfaces errors into the modal body — a transient
-    // failure from a websocket-triggered background refresh must not clobber
-    // the user's in-progress edits by swapping the list for an error panel.
     const loadServers = useCallback(async (opts: {showLoading?: boolean} = {}) => {
         try {
             if (opts.showLoading) {
@@ -72,10 +62,6 @@ const McpsTab = (props: Props) => {
             if (opts.showLoading) {
                 setError(intl.formatMessage({defaultMessage: 'Failed to load MCP tools.'}));
             } else {
-                // Background refresh — keep prior servers + clear any stale
-                // error state so the UI does not get stuck on a failure from
-                // a previous attempt. Log so the failure is visible in
-                // diagnostic output rather than silently dropped.
                 // eslint-disable-next-line no-console
                 console.error('Background refresh of MCP tools failed:', err);
             }
@@ -94,10 +80,6 @@ const McpsTab = (props: Props) => {
         loadServers();
     }, [loadServers]));
 
-    // Does the allowlist contain a wildcard entry for this server? The
-    // wildcard entry (tool_name = '*') means the agent owner enabled the whole
-    // server without knowing its tool list, typically because the owner is not
-    // authenticated to the server themselves.
     const hasServerWildcard = useCallback((serverOrigin: string) => {
         return enabledTools.some(
             (t) => t.server_origin === serverOrigin && t.tool_name === MCPServerToolWildcard,
@@ -141,9 +123,6 @@ const McpsTab = (props: Props) => {
         });
     }, []);
 
-    // Toggling the per-server switch either enables all known tools, adds a
-    // wildcard marker (for servers with no enumerable tools yet), or clears
-    // every entry for that server origin.
     const toggleAllServerTools = useCallback((server: UserMCPServerInfo) => {
         const serverTools = server.tools.filter((t) => t.enabled);
         const hasWildcard = hasServerWildcard(server.serverOrigin);
@@ -173,9 +152,6 @@ const McpsTab = (props: Props) => {
         onChange({enabledTools: [...existing, ...newTools]});
     }, [enabledTools, hasServerWildcard, onChange]);
 
-    // Detect orphaned tools (enabled but no longer available). Wildcard
-    // entries are kept as long as the server is still configured, even if it
-    // is temporarily disconnected and advertising zero tools.
     const isEntryAvailable = useCallback((et: EnabledTool) => {
         return servers.some((s) => {
             if (s.serverOrigin !== et.server_origin) {
@@ -287,10 +263,6 @@ const McpsTab = (props: Props) => {
 
                     const toolsPanelId = serverToolsPanelId(server.serverOrigin);
 
-                    // Reflect the auto-enable checkbox on every per-server toggle so
-                    // the UI matches the semantic "every tool is on" when the box is
-                    // checked. Wildcard entries also display as on for disconnected
-                    // servers that have no enumerable tools yet.
                     const allKnownOn = totalCount > 0 && enabledCount === totalCount;
                     const allOn = autoEnableNewMCPTools || wildcardOn || allKnownOn;
                     const serverToggleLabel = allOn ? intl.formatMessage(

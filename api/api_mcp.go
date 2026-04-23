@@ -245,8 +245,7 @@ func (a *API) handleDeleteUserMCPOAuth(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// publishMCPDisconnected broadcasts an MCP disconnection event so the webapp
-// can refresh its user-visible MCP server state after a manual disconnect.
+// publishMCPDisconnected notifies the webapp that the user disconnected an MCP server.
 func (a *API) publishMCPDisconnected(userID, serverName string) {
 	if a.mmClient == nil || userID == "" {
 		return
@@ -255,6 +254,9 @@ func (a *API) publishMCPDisconnected(userID, serverName string) {
 	payload := map[string]interface{}{
 		"status":     "disconnected",
 		"serverName": serverName,
+	}
+	if sc, ok := a.getMCPServerConfig(serverName); ok && sc.BaseURL != "" {
+		payload["serverOrigin"] = sc.BaseURL
 	}
 
 	a.mmClient.PublishWebSocketEvent(

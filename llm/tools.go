@@ -403,19 +403,12 @@ func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
 	}
 }
 
-// MCPServerToolWildcard is a sentinel value for EnabledMCPTool.ToolName that
-// matches every tool exposed by the given ServerOrigin. Agents set this entry
-// when the admin enables a whole MCP server without knowing its tool list
-// ahead of time (e.g. because they are not personally authenticated to it).
+// MCPServerToolWildcard in EnabledMCPTool.ToolName means every tool from that ServerOrigin is allowed.
 const MCPServerToolWildcard = "*"
 
 // RetainOnlyMCPTools filters the tool store to only retain MCP tools whose
 // (ServerOrigin, Name) pair appears in the allowlist. Built-in tools (those
 // with empty ServerOrigin) are never removed by this method.
-//
-// An entry with ToolName == MCPServerToolWildcard matches every tool from its
-// ServerOrigin, used when the agent owner enables a whole MCP server without
-// enumerating its tools.
 //
 // An empty or nil allowlist removes all MCP tools. Callers that want to keep
 // every MCP tool (e.g. agents with AutoEnableNewMCPTools=true) should skip
