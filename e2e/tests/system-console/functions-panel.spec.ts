@@ -16,10 +16,13 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
+const systemConsoleTestTimeoutMs = 120000;
+const systemConsoleLoginTimeoutMs = 90000;
 
 test.describe.serial('AI Functions Panel', () => {
     test('should configure default bot dropdown', async ({ page }) => {
-        test.setTimeout(60000);
+        // Login + system-console navigation can exceed 60s on busy CI shards.
+        test.setTimeout(systemConsoleTestTimeoutMs);
 
         // Start container with two pre-configured services and three bots
         mattermost = await RunSystemConsoleContainer({
@@ -85,7 +88,9 @@ test.describe.serial('AI Functions Panel', () => {
         const systemConsole = new SystemConsoleHelper(page);
 
         // Login as sysadmin user
-        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword, {
+            channelViewTimeoutMs: systemConsoleLoginTimeoutMs,
+        });
 
         // Navigate to system console AI plugin configuration page
         await systemConsole.navigateToPluginConfig(mattermost.url());
@@ -127,7 +132,8 @@ test.describe.serial('AI Functions Panel', () => {
     });
 
     test('should configure allowed upstream hostnames', async ({ page }) => {
-        test.setTimeout(60000);
+        // Login + system-console navigation can exceed 60s on busy CI shards.
+        test.setTimeout(systemConsoleTestTimeoutMs);
 
         // Start container with one service and one bot
         mattermost = await RunSystemConsoleContainer({
@@ -166,7 +172,9 @@ test.describe.serial('AI Functions Panel', () => {
         const systemConsole = new SystemConsoleHelper(page);
 
         // Login as sysadmin user
-        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword, {
+            channelViewTimeoutMs: systemConsoleLoginTimeoutMs,
+        });
 
         // Navigate to system console AI plugin configuration page
         await systemConsole.navigateToPluginConfig(mattermost.url());
@@ -232,7 +240,8 @@ test.describe.serial('AI Functions Panel', () => {
     });
 
     test('should toggle render AI-generated links', async ({ page }) => {
-        test.setTimeout(60000);
+        // Login + system-console navigation can exceed 60s on busy CI shards.
+        test.setTimeout(systemConsoleTestTimeoutMs);
 
         // Start container with allowUnsafeLinks set to false
         mattermost = await RunSystemConsoleContainer({
@@ -271,7 +280,9 @@ test.describe.serial('AI Functions Panel', () => {
         const systemConsole = new SystemConsoleHelper(page);
 
         // Login as sysadmin user
-        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword, {
+            channelViewTimeoutMs: systemConsoleLoginTimeoutMs,
+        });
 
         // Navigate to system console AI plugin configuration page
         await systemConsole.navigateToPluginConfig(mattermost.url());
