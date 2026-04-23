@@ -12,6 +12,15 @@ import {ChannelType, ChannelWithTeamData} from '@mattermost/types/channels';
 
 import {getAutocompleteAllUsers, getChannelById, getProfilePictureUrl, getProfilesByIds, getTeamIconUrl, getTeamsByIds, searchAllChannels, searchTeams} from '../client';
 
+function selectMenuPortalTarget(): HTMLElement | null {
+    if (typeof document === 'undefined') {
+        return null;
+    }
+
+    // Prefer #root so portaled menus inherit Mattermost theme CSS variables (same as the main app).
+    return document.getElementById('root') ?? document.body;
+}
+
 type Option = {
     value: string;
     label: string;
@@ -80,10 +89,52 @@ function SelectComponent<T extends Option>(props: SelectProps<T>) {
     };
 
     const selectStyles: StylesConfig<T, true> = {
+        control: (base, state) => ({
+            ...base,
+            minHeight: '38px',
+            backgroundColor: 'var(--center-channel-bg)',
+            borderColor: state.isFocused ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.16)',
+            boxShadow: state.isFocused ? 'none' : '0px 1px 1px rgba(0, 0, 0, 0.075) inset',
+            '&:hover': {
+                borderColor: state.isFocused ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.16)',
+            },
+        }),
+        valueContainer: (base) => ({
+            ...base,
+            padding: '2px 8px',
+        }),
+        placeholder: (base) => ({
+            ...base,
+            color: 'rgba(var(--center-channel-color-rgb), 0.48)',
+        }),
+        input: (base) => ({
+            ...base,
+            margin: '0',
+            color: 'var(--center-channel-color)',
+        }),
+        indicatorSeparator: () => ({
+            display: 'none',
+        }),
+        dropdownIndicator: (base) => ({
+            ...base,
+            padding: '4px',
+            color: 'rgba(var(--center-channel-color-rgb), 0.56)',
+            '&:hover': {
+                color: 'rgba(var(--center-channel-color-rgb), 0.72)',
+            },
+        }),
+        loadingIndicator: (base) => ({
+            ...base,
+            color: 'rgba(var(--center-channel-color-rgb), 0.56)',
+        }),
         multiValue: (base) => ({
             ...base,
             backgroundColor: 'rgba(var(--center-channel-color-rgb), 0.08)',
             borderRadius: '16px',
+        }),
+        multiValueLabel: (base) => ({
+            ...base,
+            color: 'var(--center-channel-color)',
         }),
         multiValueRemove: (base) => ({
             ...base,
@@ -97,6 +148,34 @@ function SelectComponent<T extends Option>(props: SelectProps<T>) {
                 color: 'rgba(var(--center-channel-color-rgb), 0.72)',
             },
         }),
+        menu: (base) => ({
+            ...base,
+            backgroundColor: 'var(--center-channel-bg)',
+            border: '1px solid rgba(var(--center-channel-color-rgb), 0.16)',
+            borderRadius: '4px',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+        }),
+        menuList: (base) => ({
+            ...base,
+            backgroundColor: 'var(--center-channel-bg)',
+        }),
+        option: (base, state) => {
+            let backgroundColor = 'transparent';
+            if (state.isSelected) {
+                backgroundColor = 'rgba(var(--center-channel-color-rgb), 0.12)';
+            } else if (state.isFocused) {
+                backgroundColor = 'rgba(var(--center-channel-color-rgb), 0.08)';
+            }
+            return {
+                ...base,
+                backgroundColor,
+                color: 'var(--center-channel-color)',
+            };
+        },
+        menuPortal: (base) => ({
+            ...base,
+            zIndex: 10000,
+        }),
     };
 
     return (
@@ -108,6 +187,8 @@ function SelectComponent<T extends Option>(props: SelectProps<T>) {
             loadOptions={loadOptions}
             formatOptionLabel={props.formatOptionLabel}
             placeholder={props.placeholder}
+            menuPortalTarget={selectMenuPortalTarget()}
+            menuPosition='fixed'
             styles={selectStyles}
             defaultOptions={true}
         />

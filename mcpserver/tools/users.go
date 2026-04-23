@@ -26,7 +26,7 @@ type CreateUserArgs struct {
 
 // provideDevUserTools registers development user-related MCP tools.
 func (p *MattermostToolProvider) provideDevUserTools(s *mcp.Server) {
-	registerTool(s, p, "create_user",
+	registerTool[CreateUserArgs](s, p, "create_user",
 		"Create a new user account (dev mode only)",
 		NewJSONSchemaForAccessMode[CreateUserArgs](string(p.accessMode)),
 		p.toolCreateUser,

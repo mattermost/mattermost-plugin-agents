@@ -156,6 +156,19 @@ export class PluginRoutesApi {
         }
         return response.json();
     }
+
+    async deleteRequest(path: string, token: string): Promise<void> {
+        const response = await fetch(this.pluginUrl(path), {
+            method: 'DELETE',
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+        });
+        if (!response.ok) {
+            const text = await readErrorBody(response);
+            throw new Error(`${path} failed: ${response.status} ${text}`);
+        }
+    }
 }
 
 export function mattermostAIPluginRoutes(baseUrl: string): PluginRoutesApi {

@@ -27,17 +27,29 @@ const SIZES = {
 
 const ToggleSwitchContainer = styled.label<{$size: ToggleSwitchSize}>`
     position: relative;
-    display: inline-block;
+    display: block;
     width: ${(props) => SIZES[props.$size].width}px;
     height: ${(props) => SIZES[props.$size].height}px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    line-height: 0;
+    font-size: 0;
     cursor: pointer;
     flex-shrink: 0;
+    align-self: center;
 `;
 
 const ToggleSwitchInput = styled.input<{$size: ToggleSwitchSize}>`
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
     opacity: 0;
-    width: 0;
-    height: 0;
+    cursor: pointer;
+    z-index: 1;
 
     &:focus-visible + span {
         outline: 2px solid var(--button-bg);
@@ -51,6 +63,10 @@ const ToggleSwitchInput = styled.input<{$size: ToggleSwitchSize}>`
     &:checked + span::before {
         transform: translateX(${(props) => SIZES[props.$size].translate}px);
     }
+
+    &:disabled {
+        cursor: not-allowed;
+    }
 `;
 
 const ToggleSwitchSlider = styled.span<{$size: ToggleSwitchSize}>`
@@ -59,6 +75,7 @@ const ToggleSwitchSlider = styled.span<{$size: ToggleSwitchSize}>`
     left: 0;
     right: 0;
     bottom: 0;
+    pointer-events: none;
     background-color: rgba(var(--center-channel-color-rgb), 0.32);
     border-radius: ${(props) => SIZES[props.$size].borderRadius}px;
     transition: background-color 0.2s;

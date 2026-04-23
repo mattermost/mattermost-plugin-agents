@@ -45,13 +45,13 @@ type AddUserToTeamArgs struct {
 
 // provideTeamTools registers all team-related MCP tools.
 func (p *MattermostToolProvider) provideTeamTools(s *mcp.Server) {
-	registerTool(s, p, "get_team_info",
+	registerTool[GetTeamInfoArgs](s, p, "get_team_info",
 		"Get information about a team. Provide team_id (fastest) or team_name (matches against both display name and URL name, case-insensitive, supports partial matches). Returns team metadata including ID, names, type, description, and member count. Example: {\"team_name\": \"Engineering\"} or {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
 		NewJSONSchemaForAccessMode[GetTeamInfoArgs](string(p.accessMode)),
 		p.toolGetTeamInfo,
 		format.TeamInfoOutput,
 	)
-	registerTool(s, p, "get_team_members",
+	registerTool[GetTeamMembersArgs](s, p, "get_team_members",
 		"Get members of a team with pagination support. Parameters: team_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and roles. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"limit\": 10, \"page\": 0}",
 		NewJSONSchemaForAccessMode[GetTeamMembersArgs](string(p.accessMode)),
 		p.toolGetTeamMembers,
@@ -61,13 +61,13 @@ func (p *MattermostToolProvider) provideTeamTools(s *mcp.Server) {
 
 // provideDevTeamTools registers development team-related MCP tools.
 func (p *MattermostToolProvider) provideDevTeamTools(s *mcp.Server) {
-	registerTool(s, p, "create_team",
+	registerTool[CreateTeamArgs](s, p, "create_team",
 		"Create a new team (dev mode only)",
 		NewJSONSchemaForAccessMode[CreateTeamArgs](string(p.accessMode)),
 		p.toolCreateTeam,
 		format.CreateTeamOutput,
 	)
-	registerTool(s, p, "add_user_to_team",
+	registerTool[AddUserToTeamArgs](s, p, "add_user_to_team",
 		"Add a user to a team (dev mode only)",
 		NewJSONSchemaForAccessMode[AddUserToTeamArgs](string(p.accessMode)),
 		p.toolAddUserToTeam,

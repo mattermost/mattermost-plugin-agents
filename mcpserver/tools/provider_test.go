@@ -64,7 +64,7 @@ func TestRegisterTool_WithSchema(t *testing.T) {
 	}
 
 	schema := llm.NewJSONSchemaFromStruct[TestSchemaArgs]()
-	registerTool(mockServer, provider, "test_tool_with_schema", "A test tool for schema validation", schema,
+	registerTool[TestSchemaArgs](mockServer, provider, "test_tool_with_schema", "A test tool for schema validation", schema,
 		func(*MCPToolContext, llm.ToolArgumentGetter) (struct{}, error) { return struct{}{}, nil },
 		func(struct{}) (string, error) { return "ok", nil },
 	)
@@ -85,7 +85,7 @@ func TestRegisterTool_WithoutSchema(t *testing.T) {
 		logger: &testLogger{t: t},
 	}
 
-	registerTool(mockServer, provider, "test_tool_no_schema", "A test tool without schema", nil,
+	registerTool[struct{}](mockServer, provider, "test_tool_no_schema", "A test tool without schema", nil,
 		func(*MCPToolContext, llm.ToolArgumentGetter) (struct{}, error) { return struct{}{}, nil },
 		func(struct{}) (string, error) { return "ok", nil },
 	)

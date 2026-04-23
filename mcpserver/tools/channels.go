@@ -65,37 +65,37 @@ type GetUserChannelsArgs struct {
 
 // provideChannelTools registers all channel-related MCP tools.
 func (p *MattermostToolProvider) provideChannelTools(s *mcp.Server) {
-	registerTool(s, p, "read_channel",
+	registerTool[ReadChannelArgs](s, p, "read_channel",
 		"Read recent posts from a Mattermost channel. Parameters: channel_id (required), limit (1-100, default 20), since (ISO 8601 timestamp, optional). Returns post details including author, content, and timestamps. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 10, \"since\": \"2024-01-01T00:00:00Z\"}",
 		llm.NewJSONSchemaFromStruct[ReadChannelArgs](),
 		p.toolReadChannel,
 		format.ReadChannelOutput,
 	)
-	registerTool(s, p, "create_channel",
+	registerTool[CreateChannelArgs](s, p, "create_channel",
 		"Create a new channel in Mattermost. Parameters: name (URL-friendly), display_name (user-visible), type ('O' for public, 'P' for private), team_id (required), purpose (optional), header (optional). Returns created channel details. Example: {\"name\": \"dev-chat\", \"display_name\": \"Development Chat\", \"type\": \"O\", \"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
 		llm.NewJSONSchemaFromStruct[CreateChannelArgs](),
 		p.toolCreateChannel,
 		format.CreateChannelOutput,
 	)
-	registerTool(s, p, "get_channel_info",
+	registerTool[GetChannelInfoArgs](s, p, "get_channel_info",
 		"Get information about channel(s). Provide channel_id (fastest) or channel_name (matches against both display name and URL name, case-insensitive, supports partial matches). Optional: team_id to limit search scope. If multiple channels match (e.g., 'General' exists in multiple teams), returns ALL matches with team context for disambiguation. Returns channel metadata including ID, names, type, team, purpose, member count, and the requesting user's role in the channel (admin, member, guest, or not_member). Example: {\"channel_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}",
 		llm.NewJSONSchemaFromStruct[GetChannelInfoArgs](),
 		p.toolGetChannelInfo,
 		format.ChannelInfoOutput,
 	)
-	registerTool(s, p, "get_channel_members",
-		"Get members of a channel with pagination support. Parameters: channel_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and join date. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 25, \"page\": 0}",
+	registerTool[GetChannelMembersArgs](s, p, "get_channel_members",
+		"Get members of a channel with pagination support. Parameters: channel_id (required), limit (1-50, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and join date. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 25, \"page\": 0}",
 		llm.NewJSONSchemaFromStruct[GetChannelMembersArgs](),
 		p.toolGetChannelMembers,
 		format.ChannelMembersOutput,
 	)
-	registerTool(s, p, "add_user_to_channel",
+	registerTool[AddUserToChannelArgs](s, p, "add_user_to_channel",
 		"Add a user to a channel. Parameters: user_id (required), channel_id (required). Returns confirmation message.",
 		llm.NewJSONSchemaFromStruct[AddUserToChannelArgs](),
 		p.toolAddUserToChannel,
 		format.AddUserToChannelOutput,
 	)
-	registerTool(s, p, "get_user_channels",
+	registerTool[GetUserChannelsArgs](s, p, "get_user_channels",
 		"Get channels the current user is a member of, including DMs and GMs. Parameters: team_id (optional, filter by team), page (default 0), per_page (1-200, default 60). Returns channel details with team info and pagination. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"per_page\": 60}",
 		llm.NewJSONSchemaFromStruct[GetUserChannelsArgs](),
 		p.toolGetUserChannels,

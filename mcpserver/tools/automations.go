@@ -279,7 +279,7 @@ func IsAutomationTool(name string) bool {
 
 // provideAutomationTools registers all automation-related MCP tools.
 func (p *MattermostToolProvider) provideAutomationTools(s *mcp.Server) {
-	registerTool(s, p, "list_automations",
+	registerTool[ListAutomationsArgs](s, p, "list_automations",
 		`List or get channel automations (trigger-action workflows).
 Provide automation_id to get a specific automation, or use optional channel_id to filter by trigger channel.
 Returns automation details including trigger configuration and action pipeline.`,
@@ -287,19 +287,19 @@ Returns automation details including trigger configuration and action pipeline.`
 		p.toolListAutomations,
 		FormatListAutomationsOutput,
 	)
-	registerTool(s, p, "get_automation_instructions",
+	registerTool[struct{}](s, p, "get_automation_instructions",
 		"Returns detailed documentation for creating and updating channel automations: triggers, actions, template syntax, allowed_tools, and required user-confirmation workflow. Call this before create_automation or update_automation.",
 		nil,
 		p.toolGetAutomationInstructions,
 		FormatAutomationInstructionsOutput,
 	)
-	registerTool(s, p, "create_automation",
+	registerTool[CreateAutomationArgs](s, p, "create_automation",
 		createAutomationToolDescription,
 		llm.NewJSONSchemaFromStruct[CreateAutomationArgs](),
 		p.toolCreateAutomation,
 		FormatCreateAutomationOutput,
 	)
-	registerTool(s, p, "update_automation",
+	registerTool[UpdateAutomationArgs](s, p, "update_automation",
 		`Update an existing channel automation. Replaces the full definition — provide all fields.
 Call get_automation_instructions for trigger/action format details. Use list_automations first
 to get the current definition, then modify and pass the full updated flow.
@@ -308,7 +308,7 @@ IMPORTANT: Show the user what will change and get their confirmation first.`,
 		p.toolUpdateAutomation,
 		FormatUpdateAutomationOutput,
 	)
-	registerTool(s, p, "delete_automation",
+	registerTool[DeleteAutomationArgs](s, p, "delete_automation",
 		"Delete a channel automation by ID. This is permanent and cannot be undone.",
 		llm.NewJSONSchemaFromStruct[DeleteAutomationArgs](),
 		p.toolDeleteAutomation,
@@ -343,7 +343,7 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 	if mcpContext.Client == nil {
 		return ListAutomationsOutput{}, fmt.Errorf("client not available in context")
 	}
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	// If a specific automation ID was requested, fetch just that one.
 	if args.AutomationID != "" {
@@ -403,7 +403,7 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 	if mcpContext.Client == nil {
 		return CreateAutomationOutput{}, fmt.Errorf("client not available in context")
 	}
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	flow := AutomationFlow{
 		Name:    args.Name,
@@ -453,7 +453,7 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 	if mcpContext.Client == nil {
 		return UpdateAutomationOutput{}, fmt.Errorf("client not available in context")
 	}
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	flow := AutomationFlow{
 		ID:      args.AutomationID,
@@ -504,7 +504,7 @@ func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext
 	if mcpContext.Client == nil {
 		return DeleteAutomationOutput{}, fmt.Errorf("client not available in context")
 	}
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodDelete, p.automationAPIURL("/flows/"+args.AutomationID), "")
 	if err != nil {

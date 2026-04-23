@@ -191,9 +191,14 @@ func (p *MattermostToolProvider) newToolArgsGetter(req *mcp.CallToolRequest, mcp
 	}
 }
 
-// registerTool registers a typed resolver; the dispatcher runs before-hook, resolver,
-// after-hook (success and error paths), and the formatter.
-func registerTool[T any](
+// registerTool registers a typed resolver; the dispatcher decodes and access-validates
+// args, runs the before-hook, the resolver, the after-hook (success and error paths),
+// and finally the formatter.
+//
+// Generic parameter A is the resolver's argument struct (use struct{} for argless tools).
+// Decoding/validation happens before RunBeforeHook so hook callbacks never observe
+// fields that the current access mode would have rejected.
+func registerTool[A, T any](
 	server *mcp.Server,
 	p *MattermostToolProvider,
 	name, description string,
@@ -221,13 +226,22 @@ func registerTool[T any](
 			return mcpCallToolError(err.Error()), nil
 		}
 
+		argsGetter := p.newToolArgsGetter(req, mcpContext)
+
+		// Decode + access-validate args before the before-hook so hook callbacks
+		// never receive fields the current access mode would have rejected.
+		var args A
+		if err = argsGetter(&args); err != nil {
+			p.logger.Debug("MCP tool argument validation failed", "tool", name, "error", err.Error())
+			return mcpCallToolError(err.Error()), nil
+		}
+
 		rawArgs := mapFromMCPArguments(req.Params.Arguments)
 		if err = RunBeforeHook(mcpContext, name, rawArgs); err != nil {
 			p.logger.Debug("MCP tool before-hook rejected or failed", "tool", name, "error", err.Error())
 			return mcpCallToolError(err.Error()), nil
 		}
 
-		argsGetter := p.newToolArgsGetter(req, mcpContext)
 		out, err := resolver(mcpContext, argsGetter)
 		if err != nil {
 			p.logger.Debug("MCP tool failed", "tool", name, "error", err.Error())

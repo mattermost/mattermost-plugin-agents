@@ -7,12 +7,12 @@ import "github.com/mattermost/mattermost/server/public/model"
 
 // SearchPostResult is one row in search_posts semantic or keyword result lists.
 type SearchPostResult struct {
-	Post        *model.Post `json:"Post"`
-	ChannelName string      `json:"ChannelName"`
-	TeamName    string      `json:"TeamName"`
-	Username    string      `json:"Username"`
-	Score       float32     `json:"Score"`
-	Source      string      `json:"Source"` // "semantic" or "keyword"
+	Post        *model.Post `json:"post"`
+	ChannelName string      `json:"channel_name"`
+	TeamName    string      `json:"team_name"`
+	Username    string      `json:"username"`
+	Score       float32     `json:"score"`
+	Source      string      `json:"source"` // "semantic" or "keyword"
 }
 
 // SearchPostsOutput is the after-hook DTO for the search_posts tool.

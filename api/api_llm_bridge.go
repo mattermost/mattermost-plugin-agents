@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
+	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -256,34 +257,34 @@ func (a *API) prepareAgentBridgeCompletion(
 	req bridgeclient.CompletionRequest,
 	pluginID string,
 	operation, operationSubType string,
-) (*bots.Bot, llm.CompletionRequest, []llm.LanguageModelOption, int, error) {
+) (*bots.Bot, llm.CompletionRequest, []llm.LanguageModelOption, func(llm.ToolCall) bool, int, error) {
 	if statusCode, err := validateCompletionRequestIDs(req); err != nil {
-		return nil, llm.CompletionRequest{}, nil, statusCode, err
+		return nil, llm.CompletionRequest{}, nil, nil, statusCode, err
 	}
 
 	if len(req.ToolHooks) > 0 && strings.TrimSpace(pluginID) == "" {
-		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, errors.New("tool_hooks requires Mattermost-Plugin-ID header")
+		return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, errors.New("tool_hooks requires Mattermost-Plugin-ID header")
 	}
 
 	allowedToolNames, err := normalizeAllowedToolNames(req.AllowedTools)
 	if err != nil {
-		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid allowed_tools: %w", err)
+		return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, fmt.Errorf("invalid allowed_tools: %w", err)
 	}
 
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
-		return nil, llm.CompletionRequest{}, nil, http.StatusNotFound, err
+		return nil, llm.CompletionRequest{}, nil, nil, http.StatusNotFound, err
 	}
 
 	err = a.checkBridgePermissions(req.UserID, req.ChannelID, bot)
 	if err != nil {
-		return nil, llm.CompletionRequest{}, nil, http.StatusForbidden, fmt.Errorf("permission denied: %v", err)
+		return nil, llm.CompletionRequest{}, nil, nil, http.StatusForbidden, fmt.Errorf("permission denied: %v", err)
 	}
 
 	toolsRequested := allowedToolNames != nil
 	llmRequest, err := a.convertAgentBridgeRequestToInternal(bot, req, toolsRequested, operation, operationSubType)
 	if err != nil {
-		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid request: %v", err)
+		return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, fmt.Errorf("invalid request: %v", err)
 	}
 
 	if len(req.ToolHooks) > 0 {
@@ -300,44 +301,41 @@ func (a *API) prepareAgentBridgeCompletion(
 		})
 	}
 
-	var autoRunKeys []string
+	autoRunNames := make(map[string]struct{})
 	if toolsRequested {
 		if bot.GetConfig().DisableTools {
-			return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, errors.New("agent has tools disabled")
+			return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, errors.New("agent has tools disabled")
 		}
 
 		if llmRequest.Context.Tools == nil || len(llmRequest.Context.Tools.GetTools()) == 0 {
-			return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, errors.New("no eligible tools available for this agent")
+			return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, errors.New("no eligible tools available for this agent")
 		}
 
 		scopedTools := llm.NewToolStore(nil, false)
 		for _, name := range allowedToolNames {
 			tool := llmRequest.Context.Tools.GetTool(name)
 			if tool == nil {
-				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("tool %q is not eligible or not available for this agent", name)
+				return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, fmt.Errorf("tool %q is not eligible or not available for this agent", name)
 			}
 			if !bridgeAllowlistToolEligible(tool.ServerOrigin) {
-				return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf(
+				return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, fmt.Errorf(
 					"tool %q is not eligible for bridge allowed_tools (built-in tools cannot be allowlisted; use MCP or embedded tools from GET .../agents/{id}/tools only)",
 					name,
 				)
 			}
 			scopedTools.AddTools([]llm.Tool{*tool})
-			autoRunKeys = append(autoRunKeys, llm.ToolAutoRunKey(tool.ServerOrigin, tool.Name))
+			autoRunNames[tool.Name] = struct{}{}
 		}
 		llmRequest.Context.Tools = scopedTools
 	}
 
 	opts, err := a.convertRequestToLLMOptions(req)
 	if err != nil {
-		return nil, llm.CompletionRequest{}, nil, http.StatusBadRequest, fmt.Errorf("invalid options: %v", err)
+		return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, fmt.Errorf("invalid options: %v", err)
 	}
 
-	// Handle tool options
 	if !toolsRequested {
 		opts = append(opts, llm.WithToolsDisabled())
-	} else if len(autoRunKeys) > 0 {
-		opts = append(opts, llm.WithAutoRunTools(autoRunKeys))
 	}
 
 	// Enable native web search if the bot supports it.
@@ -347,7 +345,25 @@ func (a *API) prepareAgentBridgeCompletion(
 		opts = append(opts, llm.WithNativeWebSearchAllowed())
 	}
 
-	return bot, llmRequest, opts, 0, nil
+	// Build the auto-run predicate from the explicit allowlist. Returning nil
+	// when no tools are eligible keeps the response loop using the direct
+	// ChatCompletion path so the caller is responsible for tool execution.
+	//
+	// We key on tool name only because the underlying ToolStore is itself
+	// keyed by name (`map[string]Tool`), so the scoped store cannot hold two
+	// tools with the same name from different servers. If that ever changes,
+	// the bridge protocol must also grow a way for callers to qualify tools
+	// by origin, and this predicate becomes a composite-key check at the
+	// same time.
+	var shouldExecute func(llm.ToolCall) bool
+	if len(autoRunNames) > 0 {
+		shouldExecute = func(tc llm.ToolCall) bool {
+			_, ok := autoRunNames[tc.Name]
+			return ok
+		}
+	}
+
+	return bot, llmRequest, opts, shouldExecute, 0, nil
 }
 
 // convertRequestToLLMOptions converts the API request options to llm.LanguageModelOption
@@ -427,16 +443,27 @@ func (a *API) checkBridgePermissions(userID, channelID string, bot *bots.Bot) er
 	return a.bots.CheckUsageRestrictions(userID, bot, channel)
 }
 
-// streamLLMResponse handles streaming LLM responses as Server-Sent Events
-func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest, opts ...llm.LanguageModelOption) {
-	// Start streaming response
+// streamLLMResponse handles streaming LLM responses as Server-Sent Events.
+// When shouldExecute is non-nil, the stream is wrapped in a toolrunner so
+// allowlisted tool calls are auto-executed and their results fed back to the
+// LLM until the model produces a final text response.
+func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest, shouldExecute func(llm.ToolCall) bool, opts ...llm.LanguageModelOption) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Status(http.StatusOK)
 
-	// Make the streaming LLM call
-	streamResult, err := bot.LLM().ChatCompletion(llmRequest, opts...)
+	var streamResult *llm.TextStreamResult
+	var err error
+	if shouldExecute != nil {
+		var runResult *toolrunner.ToolRunResult
+		runResult, err = toolrunner.New(bot.LLM()).Run(llmRequest, shouldExecute, nil, opts...)
+		if runResult != nil {
+			streamResult = runResult.Stream
+		}
+	} else {
+		streamResult, err = bot.LLM().ChatCompletion(llmRequest, opts...)
+	}
 	if err != nil {
 		// If streaming hasn't started, we can still send a JSON error
 		errorEvent := llm.TextStreamEvent{
@@ -471,8 +498,26 @@ func (a *API) streamLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.Co
 }
 
 // handleNonStreamingLLMResponse handles non-streaming LLM responses.
-func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest, opts ...llm.LanguageModelOption) {
-	response, err := bot.LLM().ChatCompletionNoStream(llmRequest, opts...)
+// When shouldExecute is non-nil, the call is routed through a toolrunner so
+// allowlisted tool calls are auto-executed; the runner's text stream is
+// drained into a single concatenated string before responding, mirroring
+// what ChatCompletionNoStream would have produced.
+func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRequest llm.CompletionRequest, shouldExecute func(llm.ToolCall) bool, opts ...llm.LanguageModelOption) {
+	if shouldExecute == nil {
+		response, err := bot.LLM().ChatCompletionNoStream(llmRequest, opts...)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
+				Error: fmt.Sprintf("failed to complete LLM request: %v", err),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, bridgeclient.CompletionResponse{
+			Completion: response,
+		})
+		return
+	}
+
+	runResult, err := toolrunner.New(bot.LLM()).Run(llmRequest, shouldExecute, nil, opts...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("failed to complete LLM request: %v", err),
@@ -480,8 +525,31 @@ func (a *API) handleNonStreamingLLMResponse(c *gin.Context, bot *bots.Bot, llmRe
 		return
 	}
 
+	var text strings.Builder
+	var streamErr error
+	for event := range runResult.Stream.Stream {
+		switch event.Type {
+		case llm.EventTypeText:
+			if t, ok := event.Value.(string); ok {
+				text.WriteString(t)
+			}
+		case llm.EventTypeError:
+			if e, ok := event.Value.(error); ok {
+				streamErr = e
+			} else if s, ok := event.Value.(string); ok {
+				streamErr = errors.New(s)
+			}
+		}
+	}
+	if streamErr != nil {
+		c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
+			Error: fmt.Sprintf("failed to complete LLM request: %v", streamErr),
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, bridgeclient.CompletionResponse{
-		Completion: response,
+		Completion: text.String(),
 	})
 }
 
@@ -651,7 +719,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, c.GetHeader("Mattermost-Plugin-ID"), llm.OperationBridgeAgent, llm.SubTypeStreaming)
+	bot, llmRequest, opts, shouldExecute, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, c.GetHeader("Mattermost-Plugin-ID"), llm.OperationBridgeAgent, llm.SubTypeStreaming)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),
@@ -659,8 +727,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
-	// Stream the response
-	a.streamLLMResponse(c, bot, llmRequest, opts...)
+	a.streamLLMResponse(c, bot, llmRequest, shouldExecute, opts...)
 }
 
 // handleAgentCompletionNoStream handles non-streaming completion requests for a specific agent
@@ -682,7 +749,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, c.GetHeader("Mattermost-Plugin-ID"), llm.OperationBridgeAgent, llm.SubTypeNoStream)
+	bot, llmRequest, opts, shouldExecute, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, c.GetHeader("Mattermost-Plugin-ID"), llm.OperationBridgeAgent, llm.SubTypeNoStream)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),
@@ -690,8 +757,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		return
 	}
 
-	// Handle non-streaming response
-	a.handleNonStreamingLLMResponse(c, bot, llmRequest, opts...)
+	a.handleNonStreamingLLMResponse(c, bot, llmRequest, shouldExecute, opts...)
 }
 
 // handleServiceCompletionStreaming handles streaming completion requests for a specific service
@@ -770,8 +836,7 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	}
 	opts = append(opts, llm.WithToolsDisabled())
 
-	// Stream the response
-	a.streamLLMResponse(c, bot, llmRequest, opts...)
+	a.streamLLMResponse(c, bot, llmRequest, nil, opts...)
 }
 
 // handleServiceCompletionNoStream handles non-streaming completion requests for a specific service
@@ -850,6 +915,5 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	}
 	opts = append(opts, llm.WithToolsDisabled())
 
-	// Handle non-streaming response
-	a.handleNonStreamingLLMResponse(c, bot, llmRequest, opts...)
+	a.handleNonStreamingLLMResponse(c, bot, llmRequest, nil, opts...)
 }

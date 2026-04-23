@@ -34,7 +34,7 @@ type ListAgentsArgs struct{}
 
 // provideAgentTools registers agent discovery MCP tools.
 func (p *MattermostToolProvider) provideAgentTools(s *mcp.Server) {
-	registerTool(s, p, "list_agents",
+	registerTool[ListAgentsArgs](s, p, "list_agents",
 		`List all available AI agents (bots). Returns each agent's ID, display name, and username.`,
 		llm.NewJSONSchemaFromStruct[ListAgentsArgs](),
 		p.toolListAgents,

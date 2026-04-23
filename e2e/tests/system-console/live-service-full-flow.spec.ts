@@ -9,6 +9,8 @@ import {test, expect, Locator, Page} from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {SystemConsoleHelper} from 'helpers/system-console';
+import {AgentPageHelper} from 'helpers/agent-page';
+import {AgentAPIHelper} from 'helpers/agent-api';
 import {
     ProviderBundle,
     createCustomProvider,
@@ -319,18 +321,6 @@ async function ensureServiceCardExpanded(serviceCard: Locator): Promise<void> {
     await expect(serviceNameInput).toBeVisible({timeout: 30000});
 }
 
-async function ensureBotCardExpanded(botCard: Locator): Promise<void> {
-    const displayNameInput = botCard.getByPlaceholder(/display name/i);
-    for (let i = 0; i < 3; i++) {
-        if (await displayNameInput.isVisible().catch(() => false)) {
-            break;
-        }
-        await botCard.click();
-        await botCard.page().waitForTimeout(250);
-    }
-    await expect(displayNameInput).toBeVisible({timeout: 30000});
-}
-
 async function ensureLoggedOut(page: Page, baseURL: string): Promise<void> {
     await page.context().clearCookies();
     await page.goto(baseURL, {waitUntil: 'domcontentloaded'});
@@ -382,6 +372,7 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
 
         mattermost = await new MattermostContainer().start();
         await setupTestUsers(mattermost);
+        await mattermost.grantSelfServiceAgentPermissions();
         await installPlugin(mattermost);
     });
 
@@ -401,12 +392,15 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
 
         const systemConsole = new SystemConsoleHelper(page);
         const mmPage = new MattermostPage(page);
+        const agentApi = new AgentAPIHelper(mattermost.url());
         const serviceName = provider.service.name;
         const botDisplayName = provider.bot.displayName;
         const botUsername = provider.bot.name;
         const avoidModelTokens = selectedProviderType === 'anthropic' ? ['haiku'] : [];
         let selectedServiceModel = '';
         let selectedBotModel = '';
+        const adminClient = await mattermost.getAdminClient();
+        const adminToken = adminClient.getToken();
 
         // 1) Login as admin and configure service + bot in System Console.
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
@@ -436,30 +430,53 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
             if (await streamingTimeoutInput.isVisible().catch(() => false)) {
                 await streamingTimeoutInput.fill(String(provider.service.streamingTimeoutSeconds || 30));
             }
+
+            await systemConsole.clickSave();
+            await page.reload();
+            await page.waitForLoadState('domcontentloaded');
+            await systemConsole.navigateToPluginConfig(mattermost.url());
         }
 
         await systemConsole.waitForBotsPanel();
+
+        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents`);
+        await page.waitForLoadState('domcontentloaded');
+        const agentPage = new AgentPageHelper(page);
+        await agentPage.getCreateButton().waitFor({state: 'visible', timeout: 15000});
+
         const hasBotAlready = await page.getByText(botDisplayName).first().isVisible().catch(() => false);
         if (!hasBotAlready) {
-            await systemConsole.clickAddBot();
-
-            const botCard = page.locator('[class*="BotContainer"]').last();
-            await expect(botCard).toBeVisible();
-            await ensureBotCardExpanded(botCard);
-
-            await botCard.getByPlaceholder(/display name/i).fill(botDisplayName);
-            await botCard.getByPlaceholder(/(bot|agent) username/i).fill(botUsername);
-            await botCard.locator('select').first().selectOption({label: serviceName});
-            selectedBotModel = await selectModelFromDropdown(botCard, page, provider.service.defaultModel, avoidModelTokens);
-            await botCard.getByPlaceholder(/how would you like/i).fill(provider.bot.customInstructions);
+            await agentPage.getCreateButton().click();
+            await agentPage.waitForModal();
+            await agentPage.fillConfigTab({
+                displayName: botDisplayName,
+                username: botUsername,
+                serviceLabel: serviceName,
+                instructions: provider.bot.customInstructions,
+            });
+            const modelInput = page.locator('input[id^="react-select-"]').first();
+            if (await modelInput.isVisible({timeout: 15000}).catch(() => false)) {
+                selectedBotModel = await selectModelFromDropdown(page.locator('body'), page, provider.service.defaultModel, avoidModelTokens);
+            }
+            await agentPage.getModalSaveButton().click();
+            await agentPage.waitForModalClosed();
         }
 
-        await systemConsole.clickSave();
-        await page.reload();
+        await expect(page.getByText(botDisplayName).first()).toBeVisible();
+        const createdAgent = (await agentApi.getAgents(adminToken)).find((agent) => agent.name === botUsername);
+        expect(createdAgent).toBeTruthy();
+
+        await agentApi.updateAgent(adminToken, createdAgent!.id, {
+            enabledNativeTools: provider.bot.enabledNativeTools || [],
+            autoEnableNewMCPTools: false,
+            enabledMCPTools: [],
+            disableTools: provider.bot.disableTools,
+        });
+
+        await systemConsole.navigateToPluginConfig(mattermost.url());
         await page.waitForLoadState('domcontentloaded');
 
         await expect(page.getByText(serviceName).first()).toBeVisible();
-        await expect(page.getByText(botDisplayName).first()).toBeVisible();
         if (selectedServiceModel) {
             const reloadedServiceCard = page.locator('[class*="ServiceContainer"]').filter({hasText: serviceName}).first();
             await expect.poll(async () => {
@@ -469,12 +486,17 @@ test.describe.serial('System Console Real Live Service Full Flow', () => {
         }
 
         if (selectedBotModel) {
-            const reloadedBotCard = page.locator('[class*="BotContainer"]').filter({hasText: botDisplayName}).first();
-            await reloadedBotCard.click();
+            await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents`);
+            await page.waitForLoadState('domcontentloaded');
+            await agentPage.openAgentActions(botDisplayName);
+            await agentPage.clickEditAction(botDisplayName);
+            await agentPage.waitForModal();
             await expect.poll(async () => {
-                const cardText = (await reloadedBotCard.textContent()) || '';
+                const modalRoot = page.getByText('Configuration').first().locator('xpath=ancestor::div[contains(@class, "sc-")][1]');
+                const cardText = (await modalRoot.textContent()) || '';
                 return isPersistedModelMatch(cardText, selectedBotModel);
             }).toBe(true);
+            await agentPage.getModalCancelButton().click();
         }
 
         // 2) Validate bot account exists after saving.

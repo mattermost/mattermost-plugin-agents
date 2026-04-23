@@ -11,10 +11,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-agents/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/evals"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -28,20 +28,23 @@ func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.
 	promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(e.T, err, "Failed to load prompts")
 
-	posts, err := conversations.BuildNewConversationPosts(promptsObj, setup.llmContext, llm.Post{
-		Role:    llm.PostRoleUser,
-		Message: userMessage,
-	})
-	require.NoError(e.T, err, "Failed to build conversation posts")
+	systemPrompt, err := promptsObj.Format(prompts.PromptDirectMessageQuestionSystem, setup.llmContext)
+	require.NoError(e.T, err, "Failed to format system prompt")
 
-	result, err := setup.wrappedLLM.ChatCompletion(llm.CompletionRequest{
+	posts := []llm.Post{
+		{Role: llm.PostRoleSystem, Message: systemPrompt},
+		{Role: llm.PostRoleUser, Message: userMessage},
+	}
+
+	runner := toolrunner.New(setup.llm)
+	runResult, err := runner.Run(llm.CompletionRequest{
 		Posts:     posts,
 		Context:   setup.llmContext,
 		Operation: llm.OperationConversation,
-	}, llm.WithAutoRunTools(setup.allToolNames))
-	require.NoError(e.T, err, "ChatCompletion should succeed")
+	}, func(tc llm.ToolCall) bool { return true }, nil)
+	require.NoError(e.T, err, "ToolRunner should succeed")
 
-	response, err := result.ReadAll()
+	response, err := runResult.Stream.ReadAll()
 	require.NoError(e.T, err, "ReadAll should succeed")
 	require.NotEmpty(e.T, response, "Response should not be empty")
 

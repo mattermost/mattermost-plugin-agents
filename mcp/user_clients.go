@@ -29,6 +29,11 @@ type UserClients struct {
 	oauthManager *OAuthManager
 	httpClient   *http.Client
 	toolsCache   *ToolsCache
+	// initialRemoteConnectErrors holds OAuth / connect failures from the first
+	// ConnectToRemoteServers. It must be re-returned on every lookup while this
+	// user client is cached; otherwise callers only see those errors once (first
+	// GetToolsForUser) and lose stable auth-required state on subsequent requests.
+	initialRemoteConnectErrors *Errors
 }
 
 func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {

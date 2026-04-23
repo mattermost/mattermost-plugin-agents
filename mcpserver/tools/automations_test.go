@@ -211,7 +211,7 @@ func TestAutomationListFlows(t *testing.T) {
 
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client}
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 	t.Run("list all", func(t *testing.T) {
 		argsGetter := func(target any) error {
@@ -302,7 +302,7 @@ func TestAutomationCreateFlow(t *testing.T) {
 
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client}
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 	t.Run("create with message_posted trigger", func(t *testing.T) {
 		argsGetter := func(target any) error {
@@ -375,7 +375,7 @@ func TestAutomationUpdateFlow(t *testing.T) {
 
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client}
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 	t.Run("update success", func(t *testing.T) {
 		argsGetter := func(target any) error {
@@ -433,7 +433,7 @@ func TestAutomationDeleteFlow(t *testing.T) {
 
 	provider := newTestProvider(t, ts.URL)
 	client := newTestClient(ts.URL)
-	mcpCtx := &MCPToolContext{Client: client}
+	mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 	t.Run("delete success", func(t *testing.T) {
 		argsGetter := func(target any) error {
@@ -484,7 +484,7 @@ func TestAutomationErrorHandling(t *testing.T) {
 
 		provider := newTestProvider(t, ts.URL)
 		client := newTestClient(ts.URL)
-		mcpCtx := &MCPToolContext{Client: client}
+		mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 		argsGetter := func(target any) error {
 			return json.Unmarshal([]byte(`{}`), target)
@@ -499,7 +499,7 @@ func TestAutomationErrorHandling(t *testing.T) {
 		// Use an unreachable URL
 		provider := newTestProvider(t, "http://127.0.0.1:1")
 		client := newTestClient("http://127.0.0.1:1")
-		mcpCtx := &MCPToolContext{Client: client}
+		mcpCtx := &MCPToolContext{Ctx: context.Background(), Client: client}
 
 		argsGetter := func(target any) error {
 			return json.Unmarshal([]byte(`{}`), target)

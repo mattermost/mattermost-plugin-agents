@@ -68,23 +68,23 @@ func (p *MattermostToolProvider) providePostTools(s *mcp.Server) {
 
 	groupMessageDesc := fmt.Sprintf("Send a message to a shared group conversation with 2 or more other users. All participants can see each other's messages. ONLY use this when the user explicitly asks for a group message, group chat, or group conversation. If the user just asks to 'message' or 'send to' multiple people, use the dm tool once per person instead. Parameters: message (required), usernames (at least 2 required)%s. Returns confirmation with message ID. Example: {\"message\": \"Hey team!\", \"usernames\": [\"alice\", \"bob\"]}", attachmentsParam)
 
-	registerTool(s, p, "read_post",
+	registerTool[ReadPostArgs](s, p, "read_post",
 		"Read a specific post and its thread from Mattermost. Parameters: post_id (required), include_thread (boolean, default true). Returns post content, author info, and optionally all replies in the thread. Example: {\"post_id\": \"8xqzn3pfmtbyfkr9hqbw4hheoa\", \"include_thread\": true}",
 		NewJSONSchemaForAccessMode[ReadPostArgs](string(p.accessMode)),
 		p.toolReadPost,
 		format.ReadPostOutput,
 	)
-	registerTool(s, p, "create_post", createPostDesc,
+	registerTool[CreatePostArgs](s, p, "create_post", createPostDesc,
 		NewJSONSchemaForAccessMode[CreatePostArgs](string(p.accessMode)),
 		p.toolCreatePost,
 		format.CreatePostOutput,
 	)
-	registerTool(s, p, "dm", dmDesc,
+	registerTool[DMArgs](s, p, "dm", dmDesc,
 		NewJSONSchemaForAccessMode[DMArgs](string(p.accessMode)),
 		p.toolDM,
 		format.DMOutput,
 	)
-	registerTool(s, p, "group_message", groupMessageDesc,
+	registerTool[GroupMessageArgs](s, p, "group_message", groupMessageDesc,
 		NewJSONSchemaForAccessMode[GroupMessageArgs](string(p.accessMode)),
 		p.toolGroupMessage,
 		format.GroupMessageOutput,
@@ -93,7 +93,7 @@ func (p *MattermostToolProvider) providePostTools(s *mcp.Server) {
 
 // provideDevPostTools registers development post-related MCP tools.
 func (p *MattermostToolProvider) provideDevPostTools(s *mcp.Server) {
-	registerTool(s, p, "create_post_as_user",
+	registerTool[CreatePostAsUserArgs](s, p, "create_post_as_user",
 		"Create a post as a specific user using username/password login. Use this tool in dev mode for creating realistic multi-user scenarios. Simply provide the username and password of created users.",
 		NewJSONSchemaForAccessMode[CreatePostAsUserArgs](string(p.accessMode)),
 		p.toolCreatePostAsUser,

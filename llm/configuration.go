@@ -3,6 +3,17 @@
 
 package llm
 
+import (
+	"errors"
+	"fmt"
+	"slices"
+	"unicode/utf8"
+)
+
+// MaxCustomInstructionsRunes caps BotConfig.CustomInstructions at a length that keeps
+// the system prompt bounded on every conversation turn.
+const MaxCustomInstructionsRunes = 16384
+
 type ServiceConfig struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -30,6 +41,15 @@ type ServiceConfig struct {
 	UseResponsesAPI bool `json:"useResponsesAPI"`
 }
 
+// ServiceUsesResponsesAPI reports whether the Responses API path is used for this service.
+// Direct OpenAI always uses the Responses API (PR #617); other types follow UseResponsesAPI.
+func ServiceUsesResponsesAPI(cfg ServiceConfig) bool {
+	if cfg.Type == ServiceTypeOpenAI {
+		return true
+	}
+	return cfg.UseResponsesAPI
+}
+
 type ChannelAccessLevel int
 
 const (
@@ -47,6 +67,12 @@ const (
 	UserAccessLevelBlock
 	UserAccessLevelNone
 )
+
+// EnabledMCPTool identifies a single MCP tool on a specific server (config bots and persisted agents).
+type EnabledMCPTool struct {
+	ServerOrigin string `json:"server_origin"`
+	ToolName     string `json:"tool_name"`
+}
 
 type BotConfig struct {
 	ID                 string `json:"id"`
@@ -76,6 +102,16 @@ type BotConfig struct {
 	// For Anthropic: ["web_search"]
 	EnabledNativeTools []string `json:"enabledNativeTools"`
 
+	// EnabledMCPTools is the per-agent allowlist of MCP tools:
+	// only tools matching these (ServerOrigin, ToolName) pairs are kept.
+	// Ignored when AutoEnableNewMCPTools is true.
+	EnabledMCPTools []EnabledMCPTool `json:"enabledMCPTools"`
+
+	// AutoEnableNewMCPTools, when true, gives this agent access to every currently
+	// configured MCP tool and any MCP tool added later. EnabledMCPTools is ignored
+	// in that mode. When false, only tools listed in EnabledMCPTools are available.
+	AutoEnableNewMCPTools bool `json:"autoEnableNewMCPTools"`
+
 	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot
 	// Applicable to OpenAI (with ResponsesAPI) and Anthropic
 	ReasoningEnabled bool `json:"reasoningEnabled"`
@@ -97,23 +133,44 @@ type BotConfig struct {
 	// to constrain the model's output to valid JSON matching the schema.
 	// Only applicable to Anthropic (Claude 4.5/4.6+ models)
 	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
+
+	// Admin / lifecycle metadata.
+	BotUserID    string   `json:"botUserID,omitempty"`
+	CreatorID    string   `json:"creatorID,omitempty"`
+	AdminUserIDs []string `json:"adminUserIDs,omitempty"`
+	CreateAt     int64    `json:"createAt,omitempty"`
+	UpdateAt     int64    `json:"updateAt,omitempty"`
+	DeleteAt     int64    `json:"deleteAt,omitempty"`
 }
 
-func (c *BotConfig) IsValid() bool {
-	// Basic validation - service validation happens separately
-	if c.Name == "" || c.DisplayName == "" || c.ServiceID == "" {
-		return false
+// Validate returns a descriptive error when the bot config is not valid. Service
+// configuration is validated separately.
+func (c *BotConfig) Validate() error {
+	if c.Name == "" {
+		return errors.New("name is required")
 	}
-
-	// Validate access levels are within bounds
+	if c.DisplayName == "" {
+		return errors.New("displayName is required")
+	}
+	if c.ServiceID == "" {
+		return errors.New("serviceID is required")
+	}
 	if c.ChannelAccessLevel < ChannelAccessLevelAll || c.ChannelAccessLevel > ChannelAccessLevelNone {
-		return false
+		return errors.New("channelAccessLevel is out of range")
 	}
 	if c.UserAccessLevel < UserAccessLevelAll || c.UserAccessLevel > UserAccessLevelNone {
-		return false
+		return errors.New("userAccessLevel is out of range")
 	}
+	if utf8.RuneCountInString(c.CustomInstructions) > MaxCustomInstructionsRunes {
+		return fmt.Errorf("customInstructions exceeds maximum length of %d characters", MaxCustomInstructionsRunes)
+	}
+	return nil
+}
 
-	return true
+// IsValid reports whether the bot config is valid. Prefer Validate when a
+// descriptive error is useful.
+func (c *BotConfig) IsValid() bool {
+	return c.Validate() == nil
 }
 
 // IsValidService validates a service configuration
@@ -146,4 +203,22 @@ func IsValidService(service ServiceConfig) bool {
 	default:
 		return false
 	}
+}
+
+// IsCreator reports whether userID is the agent's creator.
+// Returns false for migrated/config bots whose CreatorID is empty.
+func (c *BotConfig) IsCreator(userID string) bool {
+	if userID == "" || c.CreatorID == "" {
+		return false
+	}
+	return c.CreatorID == userID
+}
+
+// IsAdmin reports whether userID is the agent's creator or in the admin list.
+// Returns false for the empty userID to avoid matching legacy bots (CreatorID == "").
+func (c *BotConfig) IsAdmin(userID string) bool {
+	if userID == "" {
+		return false
+	}
+	return c.IsCreator(userID) || slices.Contains(c.AdminUserIDs, userID)
 }

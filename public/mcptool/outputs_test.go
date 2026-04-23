@@ -26,8 +26,8 @@ func TestSearchPostsOutput_JSONStableKeys(t *testing.T) {
 	}
 	b, err := json.Marshal(o)
 	require.NoError(t, err)
-	require.Contains(t, string(b), `"Post"`)
-	require.Contains(t, string(b), `"ChannelName"`)
+	require.Contains(t, string(b), `"post"`)
+	require.Contains(t, string(b), `"channel_name"`)
 
 	var back SearchPostsOutput
 	require.NoError(t, json.Unmarshal(b, &back))

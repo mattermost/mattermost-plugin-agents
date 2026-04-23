@@ -4,6 +4,7 @@
 package bots
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -15,6 +16,12 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+type failingAgentStore struct{}
+
+func (failingAgentStore) ListAgents() ([]*llm.BotConfig, error) {
+	return nil, fmt.Errorf("list agents failed")
+}
 
 type mockConfig struct {
 	bots     []llm.BotConfig
@@ -625,7 +632,7 @@ func TestEnsureBots(t *testing.T) {
 				bots:     tc.cfgBots,
 				services: tc.cfgServices,
 			}
-			mmBots := New(mockAPI, client, licenseChecker, cfg, &http.Client{}, nil)
+			mmBots := New(mockAPI, client, licenseChecker, cfg, nil, &http.Client{}, nil)
 
 			defer mockAPI.AssertExpectations(t)
 
@@ -637,4 +644,39 @@ func TestEnsureBots(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnsureBotsFailsWhenListAgentsFails(t *testing.T) {
+	mockAPI := &plugintest.API{}
+	client := pluginapi.NewClient(mockAPI, nil)
+
+	config := &model.Config{}
+	license := &model.License{}
+	license.Features = &model.Features{}
+	license.Features.SetDefaults()
+	license.SkuShortName = model.LicenseShortSkuEnterprise
+	mockAPI.On("GetConfig").Return(config).Maybe()
+	mockAPI.On("GetLicense").Return(license).Maybe()
+
+	mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
+	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
+
+	licenseChecker := enterprise.NewLicenseChecker(client)
+	cfg := &mockConfig{
+		bots: []llm.BotConfig{
+			{ID: "b1", Name: "testbot1", DisplayName: "Test Bot 1", ServiceID: "service1"},
+		},
+		services: []llm.ServiceConfig{
+			{ID: "service1", Type: llm.ServiceTypeOpenAI, APIKey: "key"},
+		},
+	}
+	mmBots := New(mockAPI, client, licenseChecker, cfg, failingAgentStore{}, &http.Client{}, nil)
+
+	defer mockAPI.AssertExpectations(t)
+
+	err := mmBots.EnsureBots()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "list user agents")
 }

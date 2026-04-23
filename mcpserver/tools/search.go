@@ -80,8 +80,8 @@ func (p *MattermostToolProvider) searchPostsRegistration() (*jsonschema.Schema, 
 // provideSearchTools registers all search-related MCP tools.
 func (p *MattermostToolProvider) provideSearchTools(s *mcp.Server) {
 	schema, description := p.searchPostsRegistration()
-	registerTool(s, p, "search_posts", description, schema, p.toolCombinedSearch, format.SearchPostsOutput)
-	registerTool(s, p, "search_users",
+	registerTool[CombinedSearchArgs](s, p, "search_posts", description, schema, p.toolCombinedSearch, format.SearchPostsOutput)
+	registerTool[SearchUsersArgs](s, p, "search_users",
 		"Search for existing users by username, email, or name. Parameters: term (required search text), limit (1-100, default 20). Returns user details including username, email, display name, and position for matching users. Example: {\"term\": \"john\", \"limit\": 5}",
 		llm.NewJSONSchemaFromStruct[SearchUsersArgs](),
 		p.toolSearchUsers,
