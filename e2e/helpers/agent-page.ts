@@ -189,8 +189,16 @@ export class AgentPageHelper {
         return this.getDiscardChangesDialog().getByRole('button', { name: 'Discard changes' });
     }
 
+    getDiscardChangesConfirmButton(): Locator {
+        return this.getDiscardChangesButton();
+    }
+
     getKeepEditingButton(): Locator {
         return this.getDiscardChangesDialog().getByRole('button', { name: 'Keep editing' });
+    }
+
+    getDiscardChangesCancelButton(): Locator {
+        return this.getKeepEditingButton();
     }
 
     // --- MCPs Tab ---
