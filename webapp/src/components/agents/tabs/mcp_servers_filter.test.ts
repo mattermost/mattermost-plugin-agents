@@ -54,9 +54,6 @@ describe('filterMcpsServersBySearchQuery', () => {
     });
 
     test('2-char query matching only enabled tool description is ignored (no false positive)', () => {
-        // "za" appears in read_post description in our default servers mock?
-        // read_post: "Read a specific post and thread from Mattermost" - no za
-        // Add dedicated server: only match in description
         const withZap: McpsSearchServerRow[] = [
             {
                 name: 'Alpha',
