@@ -17,9 +17,11 @@ jest.mock('@mattermost/client', () => {
     >();
 
     return {
-        Client4: jest.fn().mockImplementation(() => ({
-            searchAllChannels: mockSearchAllChannels,
-        })),
+
+        // client.tsx constructs `new Client4()`; the mocked class exposes instance methods.
+        Client4: class Client4 {
+            searchAllChannels = mockSearchAllChannels;
+        },
         ClientError: class extends Error {},
         mockSearchAllChannels,
     };
