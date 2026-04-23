@@ -1,11 +1,15 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import type Client4 from '@mattermost/client';
+import type {ChannelSearchOpts, ChannelWithTeamData} from '@mattermost/types/channels';
+import type {OptsSignalExt} from '@mattermost/types/client4';
 
-type Client4SearchAllChannels = Client4['searchAllChannels'];
+type SearchAllChannelsOpts = Omit<ChannelSearchOpts, 'page' | 'per_page'> & OptsSignalExt;
 
-const mockSearchAllChannels = jest.fn() as jest.MockedFunction<Client4SearchAllChannels>;
+const mockSearchAllChannels = jest.fn<
+    Promise<ChannelWithTeamData[]>,
+    [string, SearchAllChannelsOpts | undefined]
+>();
 
 jest.mock('@mattermost/client', () => ({
     Client4: jest.fn().mockImplementation(() => ({
@@ -94,7 +98,7 @@ describe('searchAllChannels', () => {
     });
 
     test('uses the non-admin search path for channel scoping', async () => {
-        const channels = [{id: 'channel-id'}];
+        const channels = [{id: 'channel-id'} as ChannelWithTeamData];
         mockSearchAllChannels.mockResolvedValue(channels);
 
         await expect(searchAllChannels('town')).resolves.toEqual(channels);
