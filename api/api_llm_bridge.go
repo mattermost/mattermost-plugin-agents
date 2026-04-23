@@ -281,7 +281,7 @@ func (a *API) prepareAgentBridgeCompletion(
 		return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, fmt.Errorf("invalid request: %v", err)
 	}
 
-	autoRunSet := make(map[string]struct{})
+	autoRunNames := make(map[string]struct{})
 	if toolsRequested {
 		if bot.GetConfig().DisableTools {
 			return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, errors.New("agent has tools disabled")
@@ -304,7 +304,7 @@ func (a *API) prepareAgentBridgeCompletion(
 				)
 			}
 			scopedTools.AddTools([]llm.Tool{*tool})
-			autoRunSet[bridgeAutoRunKey(tool.ServerOrigin, tool.Name)] = struct{}{}
+			autoRunNames[tool.Name] = struct{}{}
 		}
 		llmRequest.Context.Tools = scopedTools
 	}
@@ -329,30 +329,21 @@ func (a *API) prepareAgentBridgeCompletion(
 	// when no tools are eligible keeps the response loop using the direct
 	// ChatCompletion path so the caller is responsible for tool execution.
 	//
-	// LLM providers emit tool calls with an empty ServerOrigin because the
-	// underlying APIs don't carry that field; we resolve it back from the
-	// scoped tool store so the lookup against autoRunSet matches.
+	// We key on tool name only because the underlying ToolStore is itself
+	// keyed by name (`map[string]Tool`), so the scoped store cannot hold two
+	// tools with the same name from different servers. If that ever changes,
+	// the bridge protocol must also grow a way for callers to qualify tools
+	// by origin, and this predicate becomes a composite-key check at the
+	// same time.
 	var shouldExecute func(llm.ToolCall) bool
-	if len(autoRunSet) > 0 {
-		toolStore := llmRequest.Context.Tools
+	if len(autoRunNames) > 0 {
 		shouldExecute = func(tc llm.ToolCall) bool {
-			origin := tc.ServerOrigin
-			if origin == "" && toolStore != nil {
-				origin = toolStore.GetServerOrigin(tc.Name)
-			}
-			_, ok := autoRunSet[bridgeAutoRunKey(origin, tc.Name)]
+			_, ok := autoRunNames[tc.Name]
 			return ok
 		}
 	}
 
 	return bot, llmRequest, opts, shouldExecute, 0, nil
-}
-
-// bridgeAutoRunKey builds a composite key for the bridge auto-run allowlist.
-// The NUL separator prevents cross-server collisions when a tool name is
-// shared between multiple servers.
-func bridgeAutoRunKey(serverOrigin, toolName string) string {
-	return serverOrigin + "\x00" + toolName
 }
 
 // convertRequestToLLMOptions converts the API request options to llm.LanguageModelOption
