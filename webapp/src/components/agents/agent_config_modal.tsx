@@ -493,8 +493,11 @@ const CloseButton = styled.button`
 
 const TabsContainer = styled.div`
     display: flex;
+    box-sizing: border-box;
+    width: 100%;
+    margin: 16px 0 0;
+    padding: 0 32px;
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    margin: 16px 32px 0;
 `;
 
 const TabButton = styled.button<{$active: boolean}>`
@@ -524,7 +527,7 @@ const TabButton = styled.button<{$active: boolean}>`
 `;
 
 const ModalBody = styled.div`
-    padding: 24px 32px;
+    padding: 32px;
     overflow-y: auto;
     flex: 1;
     min-height: 0;

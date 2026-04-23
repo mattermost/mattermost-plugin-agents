@@ -141,7 +141,8 @@ const ContextVariablesButton = styled.button`
 
 const ButtonRow = styled.div`
     display: flex;
-    justify-content: flex-start;
+    justify-content: flex-end;
+    align-items: center;
     gap: 8px;
     margin-top: 8px;
 `;
@@ -193,7 +194,7 @@ const DeleteButton = styled.button`
     font-size: 14px;
     cursor: pointer;
     font-family: 'Open Sans', sans-serif;
-    margin-left: auto;
+    margin-right: auto;
 
     &:hover {
         background: rgba(var(--error-text-color-rgb), 0.08);
@@ -431,15 +432,6 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly}: Custo
                 )}
             </FieldGroup>
             <ButtonRow>
-                <SaveButton
-                    onClick={handleSave}
-                    disabled={isSaving}
-                >
-                    <FormattedMessage defaultMessage='Save'/>
-                </SaveButton>
-                <DiscardButton onClick={onDiscard}>
-                    <FormattedMessage defaultMessage='Discard'/>
-                </DiscardButton>
                 {onDelete && (
                     <DeleteButton
                         onClick={onDelete}
@@ -448,6 +440,15 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly}: Custo
                         <FormattedMessage defaultMessage='Delete'/>
                     </DeleteButton>
                 )}
+                <DiscardButton onClick={onDiscard}>
+                    <FormattedMessage defaultMessage='Discard'/>
+                </DiscardButton>
+                <SaveButton
+                    onClick={handleSave}
+                    disabled={isSaving}
+                >
+                    <FormattedMessage defaultMessage='Save'/>
+                </SaveButton>
             </ButtonRow>
         </FormContainer>
     );
