@@ -24,6 +24,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type errorResponse struct {
+	Error string `json:"error"`
+}
+
 func setupAgentTestEnvironment(t *testing.T) *TestEnvironment {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -712,6 +716,10 @@ func TestUpdateAgentUsernameChangeForbidden(t *testing.T) {
 
 	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+
+	var resp errorResponse
+	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&resp))
+	assert.Equal(t, "The username cannot be changed after the agent is created.", resp.Error)
 }
 
 func TestUpdateAgentInvalidServiceID(t *testing.T) {
@@ -731,6 +739,10 @@ func TestUpdateAgentInvalidServiceID(t *testing.T) {
 
 	recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+
+	var resp errorResponse
+	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&resp))
+	assert.Equal(t, "The selected AI service is no longer available. Select another service and try again.", resp.Error)
 }
 
 func TestUpdateAgentFlipsAutoEnableOff(t *testing.T) {

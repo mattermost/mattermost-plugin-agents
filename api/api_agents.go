@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/bifrost"
@@ -119,6 +120,31 @@ type ServiceInfo struct {
 // the server does not have a multi-LLM (E20+) license.
 const FreeTierAgentLimit = 1
 
+func abortWithAgentUserError(c *gin.Context, status int, message string) {
+	_ = c.Error(errors.New(message))
+	c.AbortWithStatusJSON(status, gin.H{"error": message})
+}
+
+func publicAgentValidationError(err error) string {
+	if err == nil {
+		return "Some agent settings are invalid. Review your changes and try again."
+	}
+
+	lower := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(lower, "name is required"):
+		return "Username is required."
+	case strings.Contains(lower, "displayname is required"):
+		return "Display name is required."
+	case strings.Contains(lower, "serviceid is required"):
+		return "An AI service is required."
+	case strings.Contains(lower, "custominstructions exceeds maximum length"):
+		return "Custom instructions are too long. Shorten them and try again."
+	default:
+		return "Some agent settings are invalid. Review your changes and try again."
+	}
+}
+
 // checkAgentCreateQuota allows unlimited creation when multi-LLM licensed; otherwise
 // enforces FreeTierAgentLimit across all self-service agents on the server. It writes
 // the abort response and returns false when creation must be blocked.
@@ -132,7 +158,7 @@ func (a *API) checkAgentCreateQuota(c *gin.Context) bool {
 		return false
 	}
 	if count >= FreeTierAgentLimit {
-		c.AbortWithError(http.StatusForbidden, fmt.Errorf("creating more than %d self-service agent(s) requires an E20 or Enterprise license", FreeTierAgentLimit))
+		abortWithAgentUserError(c, http.StatusForbidden, "Creating additional agents requires an E20 or Enterprise license.")
 		return false
 	}
 	return true
@@ -204,7 +230,7 @@ func (a *API) validateAgentServiceID(c *gin.Context, serviceID string) (*config.
 		return nil, false
 	}
 	if !serviceIDExistsInConfig(cfg, serviceID) {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service %q not found in configuration", serviceID))
+		abortWithAgentUserError(c, http.StatusBadRequest, "The selected AI service is no longer available. Select another service and try again.")
 		return nil, false
 	}
 	return cfg, true
@@ -292,7 +318,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
 	if !canCreateAgent(a.pluginAPI, userID) {
-		c.AbortWithError(http.StatusForbidden, errors.New("user does not have permission to create agents"))
+		abortWithAgentUserError(c, http.StatusForbidden, "You do not have permission to perform this action.")
 		return
 	}
 
@@ -306,15 +332,15 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			c.AbortWithError(http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
+			abortWithAgentUserError(c, http.StatusRequestEntityTooLarge, "The agent configuration is too large to save. Reduce the amount of content and try again.")
 			return
 		}
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		abortWithAgentUserError(c, http.StatusBadRequest, "Some agent settings are invalid. Review your changes and try again.")
 		return
 	}
 
 	if !validUsernameRe.MatchString(req.Username) {
-		c.AbortWithError(http.StatusBadRequest, errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores"))
+		abortWithAgentUserError(c, http.StatusBadRequest, "Username must start with a letter and contain only lowercase letters, numbers, periods, hyphens, and underscores.")
 		return
 	}
 
@@ -325,7 +351,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	// Validate the built config before creating the Mattermost bot account so an
 	// invalid request does not leave an orphan bot user behind.
 	if err := buildAgentConfigForCreate(req, userID, "").Validate(); err != nil {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
+		abortWithAgentUserError(c, http.StatusBadRequest, publicAgentValidationError(err))
 		return
 	}
 
@@ -337,7 +363,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	if err := a.pluginAPI.Bot.Create(mmBot); err != nil {
 		var appErr *model.AppError
 		if errors.As(err, &appErr) && appErr.Id == "app.user.save.username_exists.app_error" {
-			c.AbortWithError(http.StatusConflict, fmt.Errorf("username %q is already taken", req.Username))
+			abortWithAgentUserError(c, http.StatusConflict, "This username is already taken.")
 			return
 		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to create bot account: %w", err))
@@ -417,7 +443,7 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	}
 
 	if !canManageAgent(a.pluginAPI, cfg, userID) {
-		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to modify this agent"))
+		abortWithAgentUserError(c, http.StatusForbidden, "You do not have permission to perform this action.")
 		return
 	}
 
@@ -427,15 +453,15 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			c.AbortWithError(http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
+			abortWithAgentUserError(c, http.StatusRequestEntityTooLarge, "The agent configuration is too large to save. Reduce the amount of content and try again.")
 			return
 		}
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		abortWithAgentUserError(c, http.StatusBadRequest, "Some agent settings are invalid. Review your changes and try again.")
 		return
 	}
 
 	if req.usernameProvided && req.Username != cfg.Name {
-		c.AbortWithError(http.StatusBadRequest, errors.New("username cannot be changed after the agent is created"))
+		abortWithAgentUserError(c, http.StatusBadRequest, "The username cannot be changed after the agent is created.")
 		return
 	}
 	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
@@ -444,7 +470,7 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	displayNameChanged := applyAgentUpdateRequest(cfg, req)
 
 	if err := cfg.Validate(); err != nil {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
+		abortWithAgentUserError(c, http.StatusBadRequest, publicAgentValidationError(err))
 		return
 	}
 

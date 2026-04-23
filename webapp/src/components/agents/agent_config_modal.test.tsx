@@ -31,6 +31,16 @@ describe('getAgentSaveErrorState', () => {
         expect(state.errors.customInstructions).toBe('Custom instructions are too long. Shorten them and try again.');
     });
 
+    test('maps curated custom instruction validation messages to the field', () => {
+        const state = getAgentSaveErrorState({
+            status_code: 400,
+            message: 'Custom instructions are too long. Shorten them and try again.',
+        }, intl);
+
+        expect(state.activeTab).toBe('config');
+        expect(state.errors.customInstructions).toBe('Custom instructions are too long. Shorten them and try again.');
+    });
+
     test('keeps internal server errors generic to avoid leaking details', () => {
         const state = getAgentSaveErrorState({
             status_code: 500,

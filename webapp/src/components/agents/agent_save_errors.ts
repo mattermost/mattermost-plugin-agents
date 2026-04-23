@@ -72,7 +72,10 @@ export function getAgentSaveErrorState(error: {status_code?: number; message?: s
             };
         }
 
-        if (lower.includes('not found in configuration') && lower.includes('service')) {
+        if (
+            (lower.includes('not found in configuration') && lower.includes('service')) ||
+            lower.includes('selected ai service is no longer available')
+        ) {
             return {
                 activeTab: 'config',
                 errors: {
@@ -81,7 +84,10 @@ export function getAgentSaveErrorState(error: {status_code?: number; message?: s
             };
         }
 
-        if (lower.includes('custominstructions exceeds maximum length')) {
+        if (
+            lower.includes('custominstructions exceeds maximum length') ||
+            lower.includes('custom instructions are too long')
+        ) {
             return {
                 activeTab: 'config',
                 errors: {
