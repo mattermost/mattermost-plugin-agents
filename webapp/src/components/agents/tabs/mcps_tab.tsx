@@ -13,6 +13,8 @@ import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 // Same sentinel as llm.MCPServerToolWildcard ('*' = all tools from that origin).
 const MCPServerToolWildcard = '*';
 
+import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
+
 // Types matching the getUserMCPTools() response shape (from api/api_mcp.go)
 type UserMCPToolInfo = {
     name: string;
@@ -181,15 +183,11 @@ const McpsTab = (props: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoEnableNewMCPTools, enabledTools, servers]);
 
-    // Filter servers/tools by search
-    const filteredServers = servers.filter((server) => {
-        if (!searchQuery) {
-            return true;
-        }
-        const q = searchQuery.toLowerCase();
-        return server.name.toLowerCase().includes(q) ||
-            server.tools.some((t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
-    });
+    // Search is implemented in mcp_servers_filter (see unit tests for query length rules).
+    const filteredServers = useMemo(
+        () => filterMcpsServersBySearchQuery(servers, searchQuery),
+        [servers, searchQuery],
+    );
 
     if (loading) {
         return (
