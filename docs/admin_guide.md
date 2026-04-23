@@ -107,7 +107,7 @@ Navigate to **System Console > Plugins > Agents** and select **Add an Agent**.
 | Setting | Description |
 |---------|-------------|
 | **Display Name** | User-facing name shown in Mattermost |
-| **Agent Username** | The mattermost username for the agent. @ mentions to the agent will use this name |
+| **Agent Username** | The mattermost username for the agent. @ mentions to the agent will use this name. Usernames must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores. The username cannot be changed after the agent is created, and this field is read-only when editing an existing agent. |
 | **Agent Avatar** | Custom image for the agent |
 | **Service** | Select a configured Service from the dropdown |
 | **Model** | (Optional) Override the service's default model for this agent |
