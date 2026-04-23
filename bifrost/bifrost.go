@@ -885,12 +885,19 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 				// Add the assistant message with tool calls
 				messages = append(messages, msg)
 
-				// Add tool result messages
+				// Add tool result messages. Anthropic rejects tool result
+				// messages with empty content ("text content blocks must be
+				// non-empty"), so substitute a placeholder if the tool
+				// returned an empty string.
 				for _, tc := range post.ToolUse {
+					result := tc.Result
+					if result == "" {
+						result = "(no output)"
+					}
 					toolResultMsg := schemas.ChatMessage{
 						Role: schemas.ChatMessageRoleTool,
 						Content: &schemas.ChatMessageContent{
-							ContentStr: Ptr(tc.Result),
+							ContentStr: Ptr(result),
 						},
 						ChatToolMessage: &schemas.ChatToolMessage{
 							ToolCallID: Ptr(tc.ID),
@@ -1159,15 +1166,24 @@ func Ptr[T any](v T) *T {
 	return &v
 }
 
+func (b *LLM) providerSupportsNativeTools() bool {
+	switch b.provider {
+	case schemas.OpenAI, schemas.Azure, schemas.Anthropic:
+		return true
+	default:
+		return false
+	}
+}
+
 // shouldUseResponsesAPI determines if the Responses API should be used for this request.
 func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 	if b.useResponsesAPI {
 		return true
 	}
-	if len(b.enabledNativeTools) > 0 {
+	if b.providerSupportsNativeTools() && len(b.enabledNativeTools) > 0 {
 		return true
 	}
-	if cfg.NativeWebSearchAllowed {
+	if b.providerSupportsNativeTools() && cfg.NativeWebSearchAllowed {
 		return true
 	}
 	return false

@@ -35,6 +35,32 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 	}
 }
 
+func supportsNativeTools(serviceType string) bool {
+	switch serviceType {
+	case llm.ServiceTypeOpenAI,
+		llm.ServiceTypeOpenAICompatible,
+		llm.ServiceTypeAzure,
+		llm.ServiceTypeAnthropic:
+		return true
+	default:
+		return false
+	}
+}
+
+func filterNativeToolsForServiceType(serviceType string, tools []string) []string {
+	if len(tools) == 0 {
+		return tools
+	}
+
+	filtered := make([]string, 0, len(tools))
+	if !supportsNativeTools(serviceType) {
+		return filtered
+	}
+
+	filtered = append(filtered, tools...)
+	return filtered
+}
+
 // NewFromServiceConfig creates a LLM instance from ServiceConfig and BotConfig.
 func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (*LLM, error) {
 	provider, err := MapServiceTypeToProvider(serviceConfig.Type)
@@ -64,6 +90,7 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 	}
 
 	apiURL = normalizeOpenAIBaseURL(provider, apiURL)
+	enabledNativeTools := filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools)
 
 	cfg := Config{
 		Provider:           provider,
@@ -78,10 +105,10 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		OutputTokenLimit:   serviceConfig.OutputTokenLimit,
 		StreamingTimeout:   streamingTimeout,
 		SendUserID:         serviceConfig.SendUserID,
-		UseResponsesAPI:    serviceConfig.UseResponsesAPI,
+		UseResponsesAPI:    llm.ServiceUsesResponsesAPI(serviceConfig),
 
 		// Bot-specific configuration
-		EnabledNativeTools: botConfig.EnabledNativeTools,
+		EnabledNativeTools: enabledNativeTools,
 		ReasoningEnabled:   botConfig.ReasoningEnabled,
 		ReasoningEffort:    botConfig.ReasoningEffort,
 		ThinkingBudget:     botConfig.ThinkingBudget,

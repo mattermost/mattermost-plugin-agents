@@ -4,126 +4,18 @@
 package threads_test
 
 import (
-	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/evals"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/llm/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/threads"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
-
-func TestThreadsAnalyze(t *testing.T) {
-	tests := []struct {
-		name             string
-		postID           string
-		promptName       string
-		threadData       *mmapi.ThreadData
-		threadDataErr    error
-		expectedLLMCalls int
-		llmError         error
-		expectedError    bool
-		errorContains    string
-	}{
-		{
-			name:             "success",
-			postID:           "post123",
-			promptName:       prompts.PromptSummarizeThreadSystem,
-			threadData:       &mmapi.ThreadData{Posts: []*model.Post{{Id: "post123", Message: "Test message", UserId: "user123"}}},
-			threadDataErr:    nil,
-			expectedLLMCalls: 1,
-			llmError:         nil,
-			expectedError:    false,
-		},
-		{
-			name:             "thread data error",
-			postID:           "post123",
-			promptName:       prompts.PromptSummarizeThreadSystem,
-			threadData:       nil,
-			threadDataErr:    errors.New("failed to get thread data"),
-			expectedLLMCalls: 0,
-			llmError:         nil,
-			expectedError:    true,
-			errorContains:    "failed to create initial posts",
-		},
-		{
-			name:             "llm error",
-			postID:           "post123",
-			promptName:       prompts.PromptSummarizeThreadSystem,
-			threadData:       &mmapi.ThreadData{Posts: []*model.Post{{Id: "post123", Message: "Test message", UserId: "user123"}}},
-			threadDataErr:    nil,
-			expectedLLMCalls: 1,
-			llmError:         errors.New("llm error"),
-			expectedError:    true,
-			errorContains:    "llm error",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			// Setup
-			mockLLM := mocks.NewMockLanguageModel(t)
-			mockClient := mmapimocks.NewMockClient(t)
-			prompts, err := llm.NewPrompts(prompts.PromptsFolder)
-			require.NoError(t, err)
-
-			// Create context with requesting user
-			ctx := llm.NewContext()
-			requestingUser := &model.User{
-				Id:       "requester123",
-				Username: "testuser",
-				Locale:   "en",
-			}
-			ctx.RequestingUser = requestingUser
-
-			// Set up mock for GetPostThread
-			if tc.threadDataErr == nil {
-				postList := &model.PostList{
-					Order: []string{tc.postID},
-					Posts: map[string]*model.Post{
-						tc.postID: tc.threadData.Posts[0],
-					},
-				}
-				mockClient.EXPECT().GetPostThread(tc.postID).Return(postList, nil)
-				mockClient.EXPECT().GetUser(tc.threadData.Posts[0].UserId).Return(&model.User{
-					Id:       tc.threadData.Posts[0].UserId,
-					Username: "testuser123",
-				}, nil)
-			} else {
-				mockClient.EXPECT().GetPostThread(tc.postID).Return(nil, tc.threadDataErr)
-			}
-
-			if tc.expectedLLMCalls > 0 {
-				mockLLM.EXPECT().ChatCompletion(mock.Anything, mock.Anything).Return(&llm.TextStreamResult{}, tc.llmError)
-			}
-
-			threadService := threads.New(mockLLM, prompts, mockClient)
-
-			// Execute
-			result, err := threadService.Analyze(tc.postID, ctx, tc.promptName)
-
-			// Assert
-			if tc.expectedError {
-				assert.Error(t, err)
-				if tc.errorContains != "" {
-					assert.Contains(t, err.Error(), tc.errorContains)
-				}
-				assert.Nil(t, result)
-			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, result)
-			}
-		})
-	}
-}
 
 // runThreadAnalysisEval is a helper function for running thread analysis eval tests
 func runThreadAnalysisEval(t *evals.EvalT, threadData *evals.ThreadExport, promptName string) string {
@@ -140,12 +32,15 @@ func runThreadAnalysisEval(t *evals.EvalT, threadData *evals.ThreadExport, promp
 	llmContext.Channel = threadData.Channel
 	llmContext.Team = threadData.Team
 
+	// Set up conversation service for the eval
+	ts := setupTest(t.T)
+
 	// Do the thread analysis
-	threadService := threads.New(t.LLM, t.Prompts, mockClient)
-	result, err := threadService.Analyze(threadData.RootPost.Id, llmContext, promptName)
+	threadService := threads.New(t.LLM, ts.prompts, mockClient, ts.convService)
+	result, err := threadService.Analyze(threadData.RootPost.Id, llmContext, promptName, model.NewId(), model.NewId())
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	output, err := result.ReadAll()
+	output, err := result.Stream.ReadAll()
 	require.NoError(t, err)
 	assert.NotEmpty(t, output, "Expected a non-empty output")
 

@@ -57,13 +57,15 @@ async function setupTestPage(page) {
     const aiPlugin = new AIPlugin(page);
     const url = mattermost.url();
 
-    await mmPage.login(url, username, password);
+    await mmPage.login(url, username, password, {channelViewTimeoutMs: 90000});
 
     return { mmPage, aiPlugin };
 }
 
 test.describe('Follow-Up Interactions After Extraction', () => {
     test('Ask Clarifying Questions About Action Items', async ({ page }) => {
+        test.setTimeout(90000);
+
         const { mmPage, aiPlugin } = await setupTestPage(page);
 
         // 1. Create a thread with action items

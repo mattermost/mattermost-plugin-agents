@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -1563,6 +1564,93 @@ func TestBridgeGetAgentToolsReturnsSortedToolsForAllowedUser(t *testing.T) {
 	require.Equal(t, "z_tool", tools[1].Name)
 }
 
+// fakeLLMAutoRunSequence builds a two-call StreamEventSequence for FakeLLM:
+// the first call emits a single tool_use for the named tool, and the second
+// call emits the given final text. Together with toolrunner this exercises
+// the auto-execute / re-call loop end-to-end.
+func fakeLLMAutoRunSequence(toolCallID, toolName, serverOrigin, finalText string) [][]llm.TextStreamEvent {
+	return [][]llm.TextStreamEvent{
+		{
+			{
+				Type: llm.EventTypeToolCalls,
+				Value: []llm.ToolCall{
+					{
+						ID:           toolCallID,
+						Name:         toolName,
+						ServerOrigin: serverOrigin,
+						Arguments:    json.RawMessage(`{}`),
+					},
+				},
+			},
+			{Type: llm.EventTypeEnd},
+		},
+		{
+			{Type: llm.EventTypeText, Value: finalText},
+			{Type: llm.EventTypeEnd},
+		},
+	}
+}
+
+// TestBridgeClientAgentCompletionAutoRunMatchesUnenrichedToolCalls asserts that
+// the bridge auto-run predicate still matches when the LLM emits a tool call
+// with an empty ServerOrigin (the shape real provider streams produce). The
+// predicate must resolve the origin from the request's tool store before
+// looking the call up in the allowlist; otherwise the runner stops at the
+// first tool round and the caller gets an empty completion.
+func TestBridgeClientAgentCompletionAutoRunMatchesUnenrichedToolCalls(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
+	defer server.Close()
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	fakeLLM := NewFakeLLM("done")
+	// Empty ServerOrigin mirrors what real LLM providers emit. The bridge must
+	// recover the origin from the scoped tool store to match the allowlist.
+	fakeLLM.StreamEventSequence = fakeLLMAutoRunSequence("tc1", "eligible_tool", "", "done")
+	for _, bot := range e.bots.GetAllBots() {
+		bot.SetLLMForTest(fakeLLM)
+	}
+
+	client := e.CreateBridgeClient()
+	result, err := client.AgentCompletion(testBotUserID, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{
+			{Role: "user", Message: "Use the tool"},
+		},
+		AllowedTools: []string{"eligible_tool"},
+		UserID:       testUserID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "done", result)
+	require.Len(t, fakeLLM.AllRequests, 2)
+	require.Equal(t, 1, findAutoApprovedToolUse(fakeLLM.AllRequests[1], "eligible_tool"))
+}
+
+// findAutoApprovedToolUse scans request.Posts for a bot turn whose ToolUse
+// includes a call to the named tool with the AutoApproved status. Returns the
+// number of matching tool uses across all posts (used to assert dedup).
+func findAutoApprovedToolUse(req llm.CompletionRequest, toolName string) int {
+	var count int
+	for _, post := range req.Posts {
+		for _, tc := range post.ToolUse {
+			if tc.Name == toolName && tc.Status == llm.ToolCallStatusAutoApproved {
+				count++
+			}
+		}
+	}
+	return count
+}
+
 func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -1581,6 +1669,7 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	e.setupTestBot(botConfig)
 
 	fakeLLM := NewFakeLLM("auto run enabled")
+	fakeLLM.StreamEventSequence = fakeLLMAutoRunSequence("tc1", "eligible_tool", server.URL, "auto run enabled")
 	for _, bot := range e.bots.GetAllBots() {
 		bot.SetLLMForTest(fakeLLM)
 	}
@@ -1596,7 +1685,15 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "auto run enabled", result)
 	require.False(t, fakeLLM.LastConfig.ToolsDisabled)
-	require.Equal(t, []string{llm.ToolAutoRunKey(server.URL, "eligible_tool")}, fakeLLM.LastConfig.AutoRunTools)
+
+	// The runner must have looped: one call to receive the tool use, a second
+	// call after executing it to produce the final text response.
+	require.Len(t, fakeLLM.AllRequests, 2)
+
+	// The second call must include the executed tool result attached to a bot
+	// post, with the resolved status set to AutoApproved.
+	require.Equal(t, 1, findAutoApprovedToolUse(fakeLLM.AllRequests[1], "eligible_tool"))
+
 	require.NotNil(t, fakeLLM.LastConversation.Context)
 	require.NotNil(t, fakeLLM.LastConversation.Context.Tools)
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
@@ -1620,6 +1717,7 @@ func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {
 	e.setupTestBot(botConfig)
 
 	fakeLLM := NewFakeLLM("deduped")
+	fakeLLM.StreamEventSequence = fakeLLMAutoRunSequence("tc1", "eligible_tool", server.URL, "deduped")
 	for _, bot := range e.bots.GetAllBots() {
 		bot.SetLLMForTest(fakeLLM)
 	}
@@ -1634,9 +1732,12 @@ func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "deduped", result)
-	require.Equal(t, []string{llm.ToolAutoRunKey(server.URL, "eligible_tool")}, fakeLLM.LastConfig.AutoRunTools)
+
+	// Despite being listed twice in AllowedTools, eligible_tool must be
+	// scoped and executed exactly once.
 	require.NotNil(t, fakeLLM.LastConversation.Context.Tools)
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
+	require.Equal(t, 1, findAutoApprovedToolUse(fakeLLM.AllRequests[1], "eligible_tool"))
 }
 
 func TestBridgeClientAgentCompletionRejectsIneligibleAllowedTool(t *testing.T) {

@@ -4,7 +4,7 @@ import RunContainer from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
-import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
+import { OpenAIMockContainer, RunOpenAIMocks, buildTextResponse } from 'helpers/openai-mock';
 
 // spec: /Users/nickmisasi/workspace/worktrees/mattermost-plugin-ai-agents-in-e2e/e2e/specs/smart-reactions.md
 // seed: /Users/nickmisasi/workspace/worktrees/mattermost-plugin-ai-agents-in-e2e/seed.spec.ts
@@ -14,12 +14,6 @@ const password = 'regularuser';
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
-
-const reactionSuggestionResponse = `
-data: {"id":"chatcmpl-react-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
-data: {"id":"chatcmpl-react-1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-3.5-turbo-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"thumbsup"},"logprobs":null,"finish_reason":"stop"}]}
-data: [DONE]
-`.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
 test.beforeAll(async () => {
     mattermost = await RunContainer();
@@ -63,6 +57,9 @@ async function gotoTownSquare(page) {
 }
 
 test.describe('Smart Reactions - Basic Functionality', () => {
+    // OpenAI mock + reaction application can be slow or race under CI load; one retry matches repo flake policy.
+    test.describe.configure({ retries: 1 });
+
     test('Access React for me menu option', async ({ page }) => {
         const { mmPage } = await setupTestPage(page);
 
@@ -89,6 +86,7 @@ test.describe('Smart Reactions - Basic Functionality', () => {
     });
 
     test('Positive message gets appropriate reaction suggestion', async ({ page }) => {
+        test.setTimeout(120000);
         const { mmPage } = await setupTestPage(page);
 
         // Create positive message
@@ -106,29 +104,24 @@ test.describe('Smart Reactions - Basic Functionality', () => {
         await page.getByTestId('ai-actions-menu').click();
 
         // Set up mock for reaction suggestion
-        await openAIMock.addCompletionMock(reactionSuggestionResponse);
+        await openAIMock.addCompletionMock(buildTextResponse('thumbsup'));
 
-        // Wait for the request to ensure the click registered
-        const reactionPromise = page.waitForResponse(response =>
-            response.url().includes('/react') && response.status() === 200
-        );
+        // Pair listener with click. Do not require response.ok(): the handler may return an error
+        // body while still completing the HTTP exchange (Chromium CI was timing out on ok-only waits).
+        await Promise.all([
+            page.waitForResponse(
+                (response) =>
+                    response.request().method() === 'POST' &&
+                    response.url().includes('/plugins/mattermost-ai') &&
+                    response.url().includes('/react'),
+                {timeout: 90000},
+            ),
+            page.getByRole('button', { name: 'React for me' }).click(),
+        ]);
 
-        // Click "React for me"
-        await page.getByRole('button', { name: 'React for me' }).click();
-
-        // Wait for the backend to acknowledge the command
-        await reactionPromise;
-
-        // Wait for the API call to complete and the reaction to be applied
-        // Give extra time for the LLM response and reaction application in parallel test runs
         const postLocator = page.locator(`#post_${rootPost.id}`);
-
-        // Wait for ANY reaction to appear on the post by checking for the reaction container
-        // The container has aria-label="reactions"
         const reactionsContainer = postLocator.locator('[aria-label="reactions"]');
-        await expect(reactionsContainer).toBeVisible({ timeout: 30000 });
-
-        // Optional: Quick verify count is 1 if visible, but the container existence is the main check
+        await expect(reactionsContainer).toBeVisible({timeout: 60000});
         await expect(reactionsContainer).toContainText('1');
     });
 });

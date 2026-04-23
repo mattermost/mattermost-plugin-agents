@@ -486,7 +486,7 @@ func (l *testTraceLog) Info(message string, keyValuePairs ...any) {
 }
 
 // evalStreamLogger wraps a LanguageModel to log intermediate LLM text and tool call
-// requests between tool loop iterations. It sits inside AutoRunToolsWrapper so it
+// requests between tool loop iterations. It wraps the LLM for eval logging so it
 // captures each re-invocation of the LLM.
 type evalStreamLogger struct {
 	inner       llm.LanguageModel
@@ -561,14 +561,14 @@ func (w *evalStreamLogger) InputTokenLimit() int {
 
 // agenticEvalSetup holds the components needed for agentic flow evals.
 type agenticEvalSetup struct {
-	wrappedLLM   llm.LanguageModel
+	llm          llm.LanguageModel
 	llmContext   *llm.Context
 	allToolNames []string
 	logger       *evalStreamLogger
 }
 
 // setupAgenticEval builds the common infrastructure for agentic flow evals:
-// MCP tools as llm.Tool, ToolStore, AutoRunToolsWrapper, and populated llm.Context.
+// MCP tools as llm.Tool, ToolStore, ToolRunner, and populated llm.Context.
 func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, requestingUser *model.User, team *model.Team) *agenticEvalSetup {
 	t.Helper()
 
@@ -595,10 +595,9 @@ func setupAgenticEval(t *testing.T, e *evals.EvalT, suite *TestSuite, requesting
 	llmContext.BotModel = "eval-model"
 
 	loggedLLM := &evalStreamLogger{inner: e.LLM, t: t}
-	wrappedLLM := llm.NewAutoRunToolsWrapper(loggedLLM)
 
 	return &agenticEvalSetup{
-		wrappedLLM:   wrappedLLM,
+		llm:          loggedLLM,
 		llmContext:   llmContext,
 		allToolNames: allToolNames,
 		logger:       loggedLLM,

@@ -133,13 +133,14 @@ func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClients, *
 	client, exists := m.clients[userID]
 	if exists {
 		m.activity[userID] = time.Now()
-		return client, nil
+		return client, client.initialRemoteConnectErrors
 	}
 
 	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
 
 	// Let user client connect to remote servers only
 	mcpErrors := userClients.ConnectToRemoteServers(m.config.Servers)
+	userClients.initialRemoteConnectErrors = mcpErrors
 
 	// Store the client even if some servers failed to connect
 	// This allows partial success - user gets tools from working servers
@@ -155,7 +156,7 @@ func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) 
 	m.clientsMu.RUnlock()
 	if exists {
 		m.activity[userID] = time.Now()
-		return client, nil
+		return client, client.initialRemoteConnectErrors
 	}
 
 	return m.createAndStoreUserClient(userID)
@@ -196,12 +197,33 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 		return nil, err
 	}
 
-	// Delete the client to force a re-creation
+	// Delete the client to force a re-creation (close first, like DisconnectUserOAuth).
 	m.clientsMu.Lock()
-	delete(m.clients, userID)
+	if uc, ok := m.clients[userID]; ok {
+		uc.Close()
+		delete(m.clients, userID)
+	}
 	m.clientsMu.Unlock()
 
 	return session, nil
+}
+
+// DisconnectUserOAuth removes the stored OAuth token for a user and server,
+// and invalidates the cached MCP client so a fresh connection is established
+// on the next request.
+func (m *ClientManager) DisconnectUserOAuth(userID, serverName string) error {
+	if err := m.oauthManager.DeleteUserToken(userID, serverName); err != nil {
+		return err
+	}
+
+	m.clientsMu.Lock()
+	if uc, ok := m.clients[userID]; ok {
+		uc.Close()
+		delete(m.clients, userID)
+	}
+	m.clientsMu.Unlock()
+
+	return nil
 }
 
 // GetOAuthManager returns the OAuth manager instance
@@ -255,7 +277,7 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 	}
 
 	// Handle embedded server
-	if embeddedClient != nil && cfg.EmbeddedServer.Enabled {
+	if embeddedClient != nil {
 		embeddedCfg := &ServerConfig{
 			Name:    EmbeddedServerName,
 			Enabled: true,
