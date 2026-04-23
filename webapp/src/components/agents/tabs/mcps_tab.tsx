@@ -9,6 +9,8 @@ import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/compo
 import {getUserMCPTools} from '@/client';
 import {EnabledTool} from '@/types/agents';
 
+import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
+
 // Types matching the getUserMCPTools() response shape (from api/api_mcp.go)
 type UserMCPToolInfo = {
     name: string;
@@ -141,27 +143,11 @@ const McpsTab = (props: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoEnableNewMCPTools, enabledTools, servers]);
 
-    // Filter servers by search. Short queries only match server and tool names — not tool
-    // descriptions — because descriptions are long and common 1–2 letter substrings (e.g. "za")
-    // would otherwise keep unrelated servers (notably the embedded Mattermost server) visible.
-    const filteredServers = useMemo(() => {
-        const trimmed = searchQuery.trim();
-        if (!trimmed) {
-            return servers;
-        }
-        const q = trimmed.toLowerCase();
-        const useDescriptions = q.length >= 3;
-        return servers.filter((server) => {
-            const nameMatches = server.name.toLowerCase().includes(q);
-            const toolNameMatches = server.tools.some((t) => t.name.toLowerCase().includes(q));
-            if (!useDescriptions) {
-                return nameMatches || toolNameMatches;
-            }
-            return nameMatches ||
-                toolNameMatches ||
-                server.tools.some((t) => t.description.toLowerCase().includes(q));
-        });
-    }, [servers, searchQuery]);
+    // Search is implemented in mcp_servers_filter (see unit tests for query length rules).
+    const filteredServers = useMemo(
+        () => filterMcpsServersBySearchQuery(servers, searchQuery),
+        [servers, searchQuery],
+    );
 
     if (loading) {
         return (
