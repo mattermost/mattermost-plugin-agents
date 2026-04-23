@@ -181,6 +181,19 @@ export class AgentPageHelper {
         return this.getDeleteDialog().getByRole('button', { name: 'Delete' });
     }
 
+    /** Unsaved-changes confirmation when closing the agent config modal (MM-68452). */
+    getDiscardChangesDialog(): Locator {
+        return this.page.getByRole('dialog', { name: 'Discard changes?' });
+    }
+
+    getDiscardChangesConfirmButton(): Locator {
+        return this.getDiscardChangesDialog().getByRole('button', { name: 'Discard' });
+    }
+
+    getDiscardChangesKeepEditingButton(): Locator {
+        return this.getDiscardChangesDialog().getByRole('button', { name: 'Keep editing' });
+    }
+
     // --- MCPs Tab ---
 
     getMCPSearchInput(): Locator {
