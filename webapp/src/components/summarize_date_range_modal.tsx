@@ -180,6 +180,8 @@ interface Props {
     channelName?: string;
 }
 
+const SUMMARIZE_CHANNEL_TITLE_ID = 'summarize-channel-title';
+
 // Helper to format Date to YYYY-MM-DD string
 const formatDateToString = (date: Date | null): string => {
     if (!date) {
@@ -317,10 +319,16 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
 
     return (
         <AnimatedModalShell show={show} onBackdropClick={onClose} zIndex={2000}>
-            <ModalContainer className={MODAL_SHEET_CLASS} onClick={handleModalClick}>
+            <ModalContainer
+                className={MODAL_SHEET_CLASS}
+                onClick={handleModalClick}
+                role='dialog'
+                aria-modal='true'
+                aria-labelledby={SUMMARIZE_CHANNEL_TITLE_ID}
+            >
                 <ModalHeader>
                     <HeaderContent>
-                        <ModalTitle>
+                        <ModalTitle id={SUMMARIZE_CHANNEL_TITLE_ID}>
                             <FormattedMessage defaultMessage='Summarize channel'/>
                         </ModalTitle>
                         {channelName && (

@@ -216,6 +216,11 @@ const DiscardButton = styled.button`
     &:hover {
         background: rgba(var(--button-bg-rgb), 0.08);
     }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
 `;
 
 const DeleteButton = styled.button`
@@ -374,7 +379,11 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                     <FormattedMessage defaultMessage='Delete'/>
                 </DeleteButton>
             )}
-            <DiscardButton type='button' onClick={onDiscard}>
+            <DiscardButton
+                type='button'
+                onClick={onDiscard}
+                disabled={isSaving}
+            >
                 <FormattedMessage defaultMessage='Discard'/>
             </DiscardButton>
             <SaveButton

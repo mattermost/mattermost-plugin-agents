@@ -177,6 +177,7 @@ type Props = {
 }
 
 const DISCARD_CHANGES_TITLE_ID = 'discard-agent-changes-title';
+const AGENT_CONFIG_TITLE_ID = 'agent-config-modal-title';
 
 const AgentConfigModal = (props: Props) => {
     const {show, mode, agent, services, onClose, onSaved} = props;
@@ -338,9 +339,15 @@ const AgentConfigModal = (props: Props) => {
     return (
         <>
         <AnimatedModalShell show={show} onBackdropClick={requestClose} zIndex={2000}>
-            <ModalContainer className={MODAL_SHEET_CLASS} onClick={(e) => e.stopPropagation()}>
+            <ModalContainer
+                className={MODAL_SHEET_CLASS}
+                onClick={(e) => e.stopPropagation()}
+                role='dialog'
+                aria-modal='true'
+                aria-labelledby={AGENT_CONFIG_TITLE_ID}
+            >
                 <ModalHeader>
-                    <ModalTitle>{title}</ModalTitle>
+                    <ModalTitle id={AGENT_CONFIG_TITLE_ID}>{title}</ModalTitle>
                     <CloseButton
                         type='button'
                         onClick={requestClose}

@@ -117,7 +117,8 @@ const AgentRow = (props: Props) => {
             >
                 <Avatar
                     src={avatarUrl}
-                    alt={agent.displayName || agent.name || 'agent avatar'}
+                    alt=''
+                    aria-hidden='true'
                 />
                 <NameColumn>
                     <DisplayName>{agent.displayName}</DisplayName>

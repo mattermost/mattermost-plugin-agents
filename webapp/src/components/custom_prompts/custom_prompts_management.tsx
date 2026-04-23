@@ -191,6 +191,11 @@ const PromptRowHeader = styled.div`
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
     }
+
+    &:focus-visible {
+        outline: none;
+        box-shadow: inset 0 0 0 2px var(--button-bg);
+    }
 `;
 
 const PromptInfo = styled.div`
@@ -481,13 +486,29 @@ const CustomPromptsManagement = () => {
                             <PromptList>
                                 {filteredPrompts.map((prompt) => {
                                     const isPinned = pinnedIds.includes(prompt.id);
+                                    const openPrompt = () => {
+                                        setEditingPromptId(prompt.id);
+                                        setShowCreateForm(false);
+                                    };
 
                                     return (
                                         <PromptRowContainer key={prompt.id}>
                                             <PromptRowHeader
-                                                onClick={() => {
-                                                    setEditingPromptId(prompt.id);
-                                                    setShowCreateForm(false);
+                                                role='button'
+                                                tabIndex={0}
+                                                aria-label={intl.formatMessage(
+                                                    {defaultMessage: 'Open prompt {name}'},
+                                                    {name: prompt.name},
+                                                )}
+                                                onClick={openPrompt}
+                                                onKeyDown={(e) => {
+                                                    if (e.target !== e.currentTarget) {
+                                                        return;
+                                                    }
+                                                    if (e.key === 'Enter' || e.key === ' ') {
+                                                        e.preventDefault();
+                                                        openPrompt();
+                                                    }
                                                 }}
                                             >
                                                 <PromptInfo>
