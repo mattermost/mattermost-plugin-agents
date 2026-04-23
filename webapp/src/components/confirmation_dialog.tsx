@@ -229,7 +229,7 @@ const DialogContent = styled.div`
 `;
 
 const DialogHeader = styled.div`
-    padding: 24px 24px 0;
+    padding: 24px 32px 0;
 `;
 
 const DialogTitle = styled.h2`
@@ -240,14 +240,14 @@ const DialogTitle = styled.h2`
 `;
 
 const DialogBody = styled.div`
-    padding: 24px;
+    padding: 24px 32px;
     color: rgba(var(--center-channel-color-rgb), 0.72);
     font-size: 14px;
     line-height: 20px;
 `;
 
 const DialogFooter = styled.div`
-    padding: 0 24px 24px;
+    padding: 0 32px 24px;
     display: flex;
     justify-content: flex-end;
     gap: 12px;

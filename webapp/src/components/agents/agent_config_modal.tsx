@@ -515,7 +515,7 @@ const TabButton = styled.button<{$active: boolean}>`
     }
 
     &:first-child {
-        padding-left: 0;
+        margin-left: -16px;
     }
 `;
 

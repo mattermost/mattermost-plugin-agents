@@ -14,7 +14,7 @@ const FormContainer = styled.div`
     display: flex;
     flex-direction: column;
     gap: 24px;
-    padding: 20px;
+    padding: 20px 32px;
     background-color: var(--center-channel-bg);
 `;
 

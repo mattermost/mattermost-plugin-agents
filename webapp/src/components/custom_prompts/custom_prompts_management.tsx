@@ -32,7 +32,16 @@ const ModalHeader = styled.div`
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
     padding: 24px 32px 16px;
+`;
+
+const ModalHeaderLeading = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
 `;
 
 const ModalTitle = styled.h2`
@@ -44,7 +53,7 @@ const ModalTitle = styled.h2`
     margin: 0;
 `;
 
-const CloseButton = styled.button`
+const ModalIconButton = styled.button`
     background: none;
     border: none;
     cursor: pointer;
@@ -54,10 +63,17 @@ const CloseButton = styled.button`
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.08);
     }
+`;
+
+const CloseButton = ModalIconButton;
+
+const BackButton = styled(ModalIconButton)`
+    margin-left: -12px;
 `;
 
 const ModalBody = styled.div`
@@ -70,7 +86,7 @@ const ModalBody = styled.div`
 const TabBar = styled.div`
     display: flex;
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    padding: 0 24px;
+    padding: 0 32px;
 `;
 
 const Tab = styled.button<{$active: boolean}>`
@@ -92,7 +108,7 @@ const ToolbarRow = styled.div`
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 16px 20px;
+    padding: 16px 32px;
 `;
 
 const SearchContainer = styled.div`
@@ -152,7 +168,7 @@ const PromptList = styled.div`
     display: flex;
     flex-direction: column;
     gap: 16px;
-    padding: 0 16px 16px;
+    padding: 0 32px 16px;
 `;
 
 const PromptRowContainer = styled.div`
@@ -250,29 +266,12 @@ const ErrorBanner = styled.div`
     display: flex;
     align-items: center;
     padding: 12px 20px;
-    margin: 8px 16px 0;
+    margin: 8px 32px 0;
     background: rgba(var(--error-text-color-rgb, 210, 75, 78), 0.08);
     color: var(--error-text);
     border-radius: 4px;
     font-size: 14px;
     line-height: 20px;
-`;
-
-const BackButton = styled.button`
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-right: 8px;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-    }
 `;
 
 const CustomPromptsManagement = () => {
@@ -388,22 +387,26 @@ const CustomPromptsManagement = () => {
                 aria-label={intl.formatMessage({defaultMessage: 'Custom Prompts'})}
             >
                 <ModalHeader>
-                    {showCreateForm && (
-                        <BackButton
-                            onClick={() => setShowCreateForm(false)}
-                            aria-label={intl.formatMessage({defaultMessage: 'Back to prompts'})}
-                        >
-                            <ArrowLeftIcon size={20}/>
-                        </BackButton>
-                    )}
-                    <ModalTitle>
-                        {showCreateForm ? (
-                            <FormattedMessage defaultMessage='New Prompt'/>
-                        ) : (
-                            <FormattedMessage defaultMessage='Custom Prompts'/>
+                    <ModalHeaderLeading>
+                        {showCreateForm && (
+                            <BackButton
+                                type='button'
+                                onClick={() => setShowCreateForm(false)}
+                                aria-label={intl.formatMessage({defaultMessage: 'Back to prompts'})}
+                            >
+                                <ArrowLeftIcon size={20}/>
+                            </BackButton>
                         )}
-                    </ModalTitle>
+                        <ModalTitle>
+                            {showCreateForm ? (
+                                <FormattedMessage defaultMessage='New Prompt'/>
+                            ) : (
+                                <FormattedMessage defaultMessage='Custom Prompts'/>
+                            )}
+                        </ModalTitle>
+                    </ModalHeaderLeading>
                     <CloseButton
+                        type='button'
                         onClick={handleClose}
                         aria-label={intl.formatMessage({defaultMessage: 'Close'})}
                     >
