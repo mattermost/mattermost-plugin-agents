@@ -68,6 +68,22 @@ const emptyDraft: AgentDraft = {
     structuredOutputEnabled: false,
 };
 
+function cloneDraft(draft: AgentDraft): AgentDraft {
+    return {
+        ...draft,
+        channelIds: [...draft.channelIds],
+        userIds: [...draft.userIds],
+        teamIds: [...draft.teamIds],
+        adminUserIds: [...draft.adminUserIds],
+        enabledTools: [...draft.enabledTools],
+        enabledNativeTools: [...draft.enabledNativeTools],
+    };
+}
+
+function draftsEqual(a: AgentDraft, b: AgentDraft): boolean {
+    return JSON.stringify(a) === JSON.stringify(b);
+}
+
 /**
  * Full-document create payload from the form draft. The backend uses the UI as the sole
  * source of truth for create-time defaults, so every field is sent explicitly.
@@ -126,10 +142,6 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
     };
 }
 
-function cloneDraft(d: AgentDraft): AgentDraft {
-    return JSON.parse(JSON.stringify(d)) as AgentDraft;
-}
-
 function agentToDraft(agent: UserAgent): AgentDraft {
     return {
         displayName: agent.displayName,
@@ -183,9 +195,9 @@ const AgentConfigModal = (props: Props) => {
     // Reset form when modal opens
     useEffect(() => {
         if (show) {
-            setActiveTab('config');
             const next = agent ? agentToDraft(agent) : cloneDraft(emptyDraft);
             const cloned = cloneDraft(next);
+            setActiveTab('config');
             setDraft(cloned);
             setBaselineDraft(cloneDraft(cloned));
             setAvatarFile(null);
@@ -201,12 +213,10 @@ const AgentConfigModal = (props: Props) => {
         }
     }, [draft.disableTools, activeTab]);
 
-    const isDirty = useMemo(() => {
-        if (avatarFile) {
-            return true;
-        }
-        return JSON.stringify(draft) !== JSON.stringify(baselineDraft);
-    }, [draft, baselineDraft, avatarFile]);
+    const isDirty = useMemo(
+        () => avatarFile !== null || !draftsEqual(draft, baselineDraft),
+        [draft, baselineDraft, avatarFile],
+    );
 
     const requestClose = useCallback(() => {
         if (saving) {
@@ -234,9 +244,7 @@ const AgentConfigModal = (props: Props) => {
     // Escape key: same as close — confirm when there are unsaved changes
     useEffect(() => {
         if (!show) {
-            return () => {
-                // No keydown listener registered while modal is hidden
-            };
+            return undefined;
         }
         const handler = (e: KeyboardEvent) => {
             if (e.key !== 'Escape') {
@@ -527,7 +535,7 @@ const TabButton = styled.button<{$active: boolean}>`
 `;
 
 const ModalBody = styled.div`
-    padding: 32px;
+    padding: 24px 32px;
     overflow-y: auto;
     flex: 1;
     min-height: 0;
