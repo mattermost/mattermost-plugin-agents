@@ -79,15 +79,15 @@ const AgentRow = (props: Props) => {
     }, [agent, onDelete]);
 
     const handleRowActivate = useCallback(() => {
-        if (!canManage) {
+        if (!canManage || menuOpen) {
             return;
         }
         onEdit(agent);
-    }, [canManage, agent, onEdit]);
+    }, [canManage, menuOpen, agent, onEdit]);
 
     const handleRowKeyDown = useCallback(
         (e: React.KeyboardEvent) => {
-            if (!canManage) {
+            if (!canManage || menuOpen) {
                 return;
             }
             if (e.key === 'Enter' || e.key === ' ') {
@@ -95,7 +95,7 @@ const AgentRow = (props: Props) => {
                 onEdit(agent);
             }
         },
-        [canManage, agent, onEdit],
+        [canManage, menuOpen, agent, onEdit],
     );
 
     return (

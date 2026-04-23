@@ -30,13 +30,11 @@ const FormBody = styled.div<{$stickyFooter?: boolean}>`
     padding: 20px 32px 0;
 
     ${({$stickyFooter}) =>
-        ($stickyFooter ? `
+        $stickyFooter && `
         flex: 1;
         min-height: 0;
         overflow-y: auto;
-    ` : `
-        padding-bottom: 0;
-    `)}
+    `}
 `;
 
 const FormFooter = styled.div`

@@ -197,10 +197,9 @@ const AgentConfigModal = (props: Props) => {
     useEffect(() => {
         if (show) {
             const next = agent ? agentToDraft(agent) : cloneDraft(emptyDraft);
-            const cloned = cloneDraft(next);
             setActiveTab('config');
-            setDraft(cloned);
-            setBaselineDraft(cloneDraft(cloned));
+            setDraft(next);
+            setBaselineDraft(cloneDraft(next));
             setAvatarFile(null);
             setErrors({});
             setShowDiscardDialog(false);
