@@ -141,15 +141,27 @@ const McpsTab = (props: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoEnableNewMCPTools, enabledTools, servers]);
 
-    // Filter servers/tools by search
-    const filteredServers = servers.filter((server) => {
-        if (!searchQuery) {
-            return true;
+    // Filter servers by search. Short queries only match server and tool names — not tool
+    // descriptions — because descriptions are long and common 1–2 letter substrings (e.g. "za")
+    // would otherwise keep unrelated servers (notably the embedded Mattermost server) visible.
+    const filteredServers = useMemo(() => {
+        const trimmed = searchQuery.trim();
+        if (!trimmed) {
+            return servers;
         }
-        const q = searchQuery.toLowerCase();
-        return server.name.toLowerCase().includes(q) ||
-            server.tools.some((t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
-    });
+        const q = trimmed.toLowerCase();
+        const useDescriptions = q.length >= 3;
+        return servers.filter((server) => {
+            const nameMatches = server.name.toLowerCase().includes(q);
+            const toolNameMatches = server.tools.some((t) => t.name.toLowerCase().includes(q));
+            if (!useDescriptions) {
+                return nameMatches || toolNameMatches;
+            }
+            return nameMatches ||
+                toolNameMatches ||
+                server.tools.some((t) => t.description.toLowerCase().includes(q));
+        });
+    }, [servers, searchQuery]);
 
     if (loading) {
         return (
