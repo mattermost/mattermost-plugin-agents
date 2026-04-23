@@ -1,9 +1,18 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+const mockSearchAllChannels = jest.fn();
+
+jest.mock('@mattermost/client', () => ({
+    Client4: jest.fn().mockImplementation(() => ({
+        searchAllChannels: mockSearchAllChannels,
+    })),
+    ClientError: class extends Error {},
+}));
+
 import type {ConversationResponse, Turn} from '@/types/conversation';
 
-import {normalizeConversationResponse} from './client';
+import {normalizeConversationResponse, searchAllChannels} from './client';
 
 function makeTurn(overrides: Partial<Turn> = {}): Turn {
     return {
@@ -33,6 +42,10 @@ function makeConv(overrides: Partial<ConversationResponse> = {}): ConversationRe
 }
 
 describe('normalizeConversationResponse', () => {
+    beforeEach(() => {
+        mockSearchAllChannels.mockReset();
+    });
+
     test('replaces null turn content with an empty array', () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const raw = makeConv({turns: [makeTurn({content: null as any})]});
@@ -68,5 +81,25 @@ describe('normalizeConversationResponse', () => {
         expect(normalized.turns[0].content).toHaveLength(1);
         expect(normalized.turns[1].content).toEqual([]);
         expect(normalized.turns[2].content).toEqual([]);
+    });
+});
+
+describe('searchAllChannels', () => {
+    beforeEach(() => {
+        mockSearchAllChannels.mockReset();
+    });
+
+    test('uses the non-admin search path for channel scoping', async () => {
+        const channels = [{id: 'channel-id'}];
+        mockSearchAllChannels.mockResolvedValue(channels);
+
+        await expect(searchAllChannels('town')).resolves.toEqual(channels);
+        expect(mockSearchAllChannels).toHaveBeenCalledWith('town', {
+            nonAdminSearch: true,
+            public: true,
+            private: true,
+            include_deleted: false,
+            deleted: false,
+        });
     });
 });
