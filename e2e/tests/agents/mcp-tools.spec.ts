@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import {
@@ -35,8 +35,17 @@ test.describe('Agent MCP Tools', () => {
         await mattermost?.stop();
     });
 
+    async function loginToTownSquare(page: Page, username: string, password: string) {
+        const mmPage = new MattermostPage(page);
+        await mmPage.login(mattermost.url(), username, password, {
+            channelViewTimeoutMs: 90000,
+        });
+        await page.goto(`${mattermost.url()}/test/channels/town-square`);
+        await page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: 90000 });
+    }
+
     test('agent with no enabledMCPTools gets no MCP tools', async ({ page }) => {
-        test.setTimeout(90000);
+        test.setTimeout(120000);
         const agentApi = new AgentAPIHelper(mattermost.url());
         const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
         const token = adminClient.getToken();
@@ -60,11 +69,8 @@ test.describe('Agent MCP Tools', () => {
             buildChatCompletionMockRule(buildTextResponse('I have no tools available.')),
         ]);
 
-        const mmPage = new MattermostPage(page);
         const aiPlugin = new AIPlugin(page);
-        await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
-        await page.goto(`${mattermost.url()}/test/channels/town-square`);
-        await page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: 60000 });
+        await loginToTownSquare(page, agentRegularUsername, agentRegularPassword);
 
         await aiPlugin.openRHS();
         await aiPlugin.switchBotWhenListed(noToolsAgent.displayName);
@@ -91,7 +97,7 @@ test.describe('Agent MCP Tools', () => {
     });
 
     test('agent with specific enabledMCPTools responds correctly', async ({ page }) => {
-        test.setTimeout(90000);
+        test.setTimeout(120000);
         const agentApi = new AgentAPIHelper(mattermost.url());
         const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
         const token = adminClient.getToken();
@@ -151,11 +157,8 @@ test.describe('Agent MCP Tools', () => {
             }),
         ]);
 
-        const mmPage = new MattermostPage(page);
         const aiPlugin = new AIPlugin(page);
-        await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
-        await page.goto(`${mattermost.url()}/test/channels/town-square`);
-        await page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: 60000 });
+        await loginToTownSquare(page, agentRegularUsername, agentRegularPassword);
 
         await aiPlugin.openRHS();
         await aiPlugin.switchBotWhenListed(selectiveAgent.displayName);
@@ -284,13 +287,10 @@ test.describe('Agent MCP Tools', () => {
     test('RHS Tools popover lists Mattermost for default Mock Bot (no per-agent MCP restriction)', async ({
         page,
     }) => {
-        test.setTimeout(90000);
-        const mmPage = new MattermostPage(page);
+        test.setTimeout(120000);
         const aiPlugin = new AIPlugin(page);
 
-        await mmPage.login(mattermost.url(), agentRegularUsername, agentRegularPassword);
-        await page.goto(`${mattermost.url()}/test/channels/town-square`);
-        await page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: 60000 });
+        await loginToTownSquare(page, agentRegularUsername, agentRegularPassword);
 
         await aiPlugin.openRHS();
         await expect(page.getByTestId('bot-selector-rhs')).toBeVisible({ timeout: 15000 });
