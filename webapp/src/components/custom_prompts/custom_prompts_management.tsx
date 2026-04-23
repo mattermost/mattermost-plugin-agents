@@ -1,12 +1,12 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useEffect, useCallback, useRef} from 'react';
+import React, {useState, useEffect, useCallback, useMemo} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector, useDispatch} from 'react-redux';
 
-import {CloseIcon, PinOutlineIcon, PinIcon, ChevronDownIcon, ChevronUpIcon, PlusIcon, MagnifyIcon, ArrowLeftIcon} from '@mattermost/compass-icons/components';
+import {CloseIcon, PinOutlineIcon, PinIcon, PlusIcon, MagnifyIcon, ArrowLeftIcon} from '@mattermost/compass-icons/components';
 
 import {getCustomPrompts, getPinnedPromptIds, getShowCustomPromptsModal} from '@/selectors';
 import {fetchCustomPrompts, fetchPinnedPromptIds, ShowCustomPromptsModalHandler} from '@/redux';
@@ -78,11 +78,12 @@ const BackButton = styled(ModalIconButton)`
     margin-left: -12px;
 `;
 
-const ModalBody = styled.div`
+const ModalBody = styled.div<{$stickyFormFooter?: boolean}>`
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
     flex: 1;
+    min-height: 0;
+    overflow-y: ${({$stickyFormFooter}) => ($stickyFormFooter ? 'hidden' : 'auto')};
     background-color: var(--center-channel-bg);
     border-radius: 0 0 12px 12px;
 `;
@@ -181,12 +182,11 @@ const PromptRowContainer = styled.div`
     background: var(--center-channel-bg);
 `;
 
-const PromptRowHeader = styled.div<{$expanded: boolean}>`
+const PromptRowHeader = styled.div`
     display: flex;
     align-items: center;
     padding: 12px 16px;
     cursor: pointer;
-    background: ${({$expanded}) => ($expanded ? 'rgba(var(--center-channel-color-rgb), 0.04)' : 'none')};
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
@@ -235,26 +235,6 @@ const PinButton = styled.button<{$pinned: boolean}>`
     }
 `;
 
-const ChevronButton = styled.button`
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-    }
-`;
-
-const ExpandedContent = styled.div`
-    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-`;
-
 const EmptyState = styled.div`
     display: flex;
     flex-direction: column;
@@ -269,6 +249,7 @@ const EmptyState = styled.div`
 const ErrorBanner = styled.div`
     display: flex;
     align-items: center;
+    flex-shrink: 0;
     padding: 12px 20px;
     margin: 8px 32px 0;
     background: rgba(var(--error-text-color-rgb, 210, 75, 78), 0.08);
@@ -288,19 +269,23 @@ const CustomPromptsManagement = () => {
 
     const [activeTab, setActiveTab] = useState<'all' | 'yours'>('all');
     const [searchQuery, setSearchQuery] = useState('');
-    const [expandedId, setExpandedId] = useState<string | null>(null);
+    const [editingPromptId, setEditingPromptId] = useState<string | null>(null);
     const [showCreateForm, setShowCreateForm] = useState(false);
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
     const [error, setError] = useState('');
-    const expandedRowRef = useRef<HTMLDivElement>(null);
+
+    const editingPrompt = useMemo(() => {
+        if (!editingPromptId || !prompts?.length) {
+            return undefined;
+        }
+        return prompts.find((p) => p.id === editingPromptId);
+    }, [editingPromptId, prompts]);
 
     useEffect(() => {
-        if (expandedId && expandedRowRef.current) {
-            setTimeout(() => {
-                expandedRowRef.current?.scrollIntoView({behavior: 'smooth', block: 'nearest'});
-            }, 0);
+        if (editingPromptId && prompts && !prompts.some((p) => p.id === editingPromptId)) {
+            setEditingPromptId(null);
         }
-    }, [expandedId]);
+    }, [editingPromptId, prompts]);
 
     useEffect(() => {
         if (show) {
@@ -313,7 +298,7 @@ const CustomPromptsManagement = () => {
     const handleClose = useCallback(() => {
         dispatch({type: ShowCustomPromptsModalHandler, show: false});
         setShowCreateForm(false);
-        setExpandedId(null);
+        setEditingPromptId(null);
         setSearchQuery('');
         setDeleteConfirmId(null);
     }, [dispatch]);
@@ -344,7 +329,7 @@ const CustomPromptsManagement = () => {
         try {
             await updateCustomPrompt(id, data);
             dispatch(fetchCustomPrompts() as any);
-            setExpandedId(null);
+            setEditingPromptId(null);
         } catch (e) {
             console.error('Failed to update prompt:', e); // eslint-disable-line no-console
             setError(intl.formatMessage({defaultMessage: 'Failed to update prompt. Please try again.'}));
@@ -356,7 +341,7 @@ const CustomPromptsManagement = () => {
             await deleteCustomPrompt(id);
             dispatch(fetchCustomPrompts() as any);
             dispatch(fetchPinnedPromptIds() as any);
-            setExpandedId(null);
+            setEditingPromptId(null);
             setDeleteConfirmId(null);
         } catch (e) {
             console.error('Failed to delete prompt:', e); // eslint-disable-line no-console
@@ -368,6 +353,11 @@ const CustomPromptsManagement = () => {
     const handleModalClick = (e: React.MouseEvent) => {
         e.stopPropagation();
     };
+
+    const handleFormBack = useCallback(() => {
+        setShowCreateForm(false);
+        setEditingPromptId(null);
+    }, []);
 
     const filteredPrompts = (prompts || []).filter((prompt) => {
         if (activeTab === 'yours' && prompt.creator_id !== currentUserId) {
@@ -392,10 +382,10 @@ const CustomPromptsManagement = () => {
             >
                 <ModalHeader>
                     <ModalHeaderLeading>
-                        {showCreateForm && (
+                        {(showCreateForm || editingPromptId) && (
                             <BackButton
                                 type='button'
-                                onClick={() => setShowCreateForm(false)}
+                                onClick={handleFormBack}
                                 aria-label={intl.formatMessage({defaultMessage: 'Back to prompts'})}
                             >
                                 <ArrowLeftIcon size={20}/>
@@ -404,6 +394,8 @@ const CustomPromptsManagement = () => {
                         <ModalTitle>
                             {showCreateForm ? (
                                 <FormattedMessage defaultMessage='New Prompt'/>
+                            ) : editingPrompt ? (
+                                editingPrompt.name
                             ) : (
                                 <FormattedMessage defaultMessage='Custom Prompts'/>
                             )}
@@ -417,13 +409,34 @@ const CustomPromptsManagement = () => {
                         <CloseIcon size={20}/>
                     </CloseButton>
                 </ModalHeader>
-                {showCreateForm ? (
-                    <ModalBody>
+                {showCreateForm || editingPrompt ? (
+                    <ModalBody
+                        $stickyFormFooter={
+                            showCreateForm ||
+                            (editingPrompt !== undefined && editingPrompt.creator_id === currentUserId)
+                        }
+                    >
                         {error && <ErrorBanner>{error}</ErrorBanner>}
-                        <CustomPromptForm
-                            onSave={handleCreate}
-                            onDiscard={() => setShowCreateForm(false)}
-                        />
+                        {showCreateForm ? (
+                            <CustomPromptForm
+                                stickyFooter={true}
+                                onSave={handleCreate}
+                                onDiscard={handleFormBack}
+                            />
+                        ) : (
+                            editingPrompt && (
+                                <CustomPromptForm
+                                    stickyFooter={editingPrompt.creator_id === currentUserId}
+                                    prompt={editingPrompt}
+                                    readOnly={editingPrompt.creator_id !== currentUserId}
+                                    onSave={(data) => handleUpdate(editingPrompt.id, data)}
+                                    onDiscard={handleFormBack}
+                                    {...(editingPrompt.creator_id === currentUserId ?
+                                        {onDelete: () => setDeleteConfirmId(editingPrompt.id)} :
+                                        {})}
+                                />
+                            )
+                        )}
                     </ModalBody>
                 ) : (
                     <>
@@ -456,7 +469,7 @@ const CustomPromptsManagement = () => {
                             <CreateNewButton
                                 onClick={() => {
                                     setShowCreateForm(true);
-                                    setExpandedId(null);
+                                    setEditingPromptId(null);
                                 }}
                             >
                                 <PlusIcon size={16}/>
@@ -468,25 +481,23 @@ const CustomPromptsManagement = () => {
                             <PromptList>
                                 {filteredPrompts.map((prompt) => {
                                     const isPinned = pinnedIds.includes(prompt.id);
-                                    const isExpanded = expandedId === prompt.id;
-                                    const isOwner = prompt.creator_id === currentUserId;
 
                                     return (
-                                        <PromptRowContainer
-                                            key={prompt.id}
-                                            ref={isExpanded ? expandedRowRef : null}
-                                        >
+                                        <PromptRowContainer key={prompt.id}>
                                             <PromptRowHeader
-                                                $expanded={isExpanded}
-                                                onClick={() => setExpandedId(isExpanded ? null : prompt.id)}
+                                                onClick={() => {
+                                                    setEditingPromptId(prompt.id);
+                                                    setShowCreateForm(false);
+                                                }}
                                             >
                                                 <PromptInfo>
                                                     <PromptName>{prompt.name}</PromptName>
-                                                    {!isExpanded && prompt.description && (
+                                                    {prompt.description && (
                                                         <PromptDescription>{prompt.description}</PromptDescription>
                                                     )}
                                                 </PromptInfo>
                                                 <PinButton
+                                                    type='button'
                                                     $pinned={isPinned}
                                                     onClick={(e) => {
                                                         e.stopPropagation();
@@ -499,26 +510,7 @@ const CustomPromptsManagement = () => {
                                                 >
                                                     {isPinned ? <PinIcon size={18}/> : <PinOutlineIcon size={18}/>}
                                                 </PinButton>
-                                                <ChevronButton
-                                                    aria-label={isExpanded ?
-                                                        intl.formatMessage({defaultMessage: 'Collapse prompt'}) :
-                                                        intl.formatMessage({defaultMessage: 'Expand prompt'})
-                                                    }
-                                                >
-                                                    {isExpanded ? <ChevronUpIcon size={18}/> : <ChevronDownIcon size={18}/>}
-                                                </ChevronButton>
                                             </PromptRowHeader>
-                                            {isExpanded && (
-                                                <ExpandedContent>
-                                                    <CustomPromptForm
-                                                        prompt={prompt}
-                                                        readOnly={!isOwner}
-                                                        onSave={(data) => handleUpdate(prompt.id, data)}
-                                                        onDiscard={() => setExpandedId(null)}
-                                                        {...(isOwner ? {onDelete: () => setDeleteConfirmId(prompt.id)} : {})}
-                                                    />
-                                                </ExpandedContent>
-                                            )}
                                         </PromptRowContainer>
                                     );
                                 })}
