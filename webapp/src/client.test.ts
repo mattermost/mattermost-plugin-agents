@@ -1,7 +1,11 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-const mockSearchAllChannels = jest.fn();
+import type Client4 from '@mattermost/client';
+
+type Client4SearchAllChannels = Client4['searchAllChannels'];
+
+const mockSearchAllChannels = jest.fn() as jest.MockedFunction<Client4SearchAllChannels>;
 
 jest.mock('@mattermost/client', () => ({
     Client4: jest.fn().mockImplementation(() => ({
