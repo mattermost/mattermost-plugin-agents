@@ -108,8 +108,9 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
         try {
             await disconnectMCPOAuth(serverName);
             await fetchServers();
-        } catch {
-            // Silently fail
+        } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error(`Failed to disconnect MCP OAuth for ${serverName}:`, error);
         }
     }, [fetchServers]);
 

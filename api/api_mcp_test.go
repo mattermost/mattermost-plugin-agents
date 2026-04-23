@@ -516,7 +516,13 @@ func TestPublishMCPConnectionUpdatedNoOpWhenMMClientMissing(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
-	e.api.publishMCPConnectionUpdated(testUserID, nil)
+	e.api.mmClient = nil
+	session := &mcp.OAuthSession{
+		UserID:    testUserID,
+		ServerID:  "TestServer",
+		ServerURL: "https://test.example.com",
+	}
+	e.api.publishMCPConnectionUpdated(testUserID, session)
 }
 
 func TestHandleOAuthStartAcceptsResourceMetadataMatchingOrigin(t *testing.T) {

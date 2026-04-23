@@ -60,6 +60,8 @@ const McpsTab = (props: Props) => {
             setError(null);
         } catch (err) {
             if (opts.showLoading) {
+                // eslint-disable-next-line no-console
+                console.error('Failed to load MCP tools:', err);
                 setError(intl.formatMessage({defaultMessage: 'Failed to load MCP tools.'}));
             } else {
                 // eslint-disable-next-line no-console
@@ -329,9 +331,7 @@ const McpsTab = (props: Props) => {
                                     <ConnectButton
                                         type='button'
                                         onClick={() => {
-                                            if (server.authURL) {
-                                                window.open(server.authURL, '_blank', 'noopener,noreferrer');
-                                            }
+                                            window.open(server.authURL!, '_blank', 'noopener,noreferrer');
                                         }}
                                     >
                                         <FormattedMessage defaultMessage='Connect'/>
