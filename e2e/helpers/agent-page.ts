@@ -81,7 +81,7 @@ export class AgentPageHelper {
         const rowScope = this.page.getByText(displayName, { exact: true }).locator(
             'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
         );
-        await rowScope.getByRole('button', { name: 'Edit' }).click();
+        await rowScope.getByRole('button', { name: 'Edit', exact: true }).click();
     }
 
     /**
@@ -92,7 +92,7 @@ export class AgentPageHelper {
         const rowScope = this.page.getByText(displayName, { exact: true }).locator(
             'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
         );
-        await rowScope.getByRole('button', { name: 'Delete' }).click();
+        await rowScope.getByRole('button', { name: 'Delete', exact: true }).click();
     }
 
     // --- Config Modal Locators ---
