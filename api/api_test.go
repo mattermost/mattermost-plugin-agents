@@ -6,11 +6,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/bots"
@@ -23,7 +25,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/metrics"
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-agents/search"
-	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -42,11 +44,13 @@ const (
 )
 
 type TestEnvironment struct {
-	api     *API
-	mockAPI *plugintest.API
-	bots    *bots.MMBots
-	config  *testConfigImpl
-	client  *pluginapi.Client
+	api               *API
+	mockAPI           *plugintest.API
+	bots              *bots.MMBots
+	config            *testConfigImpl
+	client            *pluginapi.Client
+	conversationStore *mockConversationStore
+	agentStore        *mockAgentStore
 }
 
 // testConfigImpl is a minimal implementation of Config for testing
@@ -76,13 +80,19 @@ func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 	return tc.enableChannelMentionToolCalling
 }
 
+type mcpDisconnectCall struct {
+	userID     string
+	serverName string
+}
+
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager   *mcp.OAuthManager
-	tools          []llm.Tool
-	mcpErrors      *mcp.Errors
-	config         mcp.Config
-	embeddedServer mcp.EmbeddedMCPServer
+	oauthManager    *mcp.OAuthManager
+	tools           []llm.Tool
+	mcpErrors       *mcp.Errors
+	config          mcp.Config
+	embeddedServer  mcp.EmbeddedMCPServer
+	disconnectCalls []mcpDisconnectCall
 }
 
 func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
@@ -95,6 +105,14 @@ func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
 
 func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error) {
 	return nil, nil
+}
+
+func (m *mockMCPClientManager) DisconnectUserOAuth(userID, serverName string) error {
+	m.disconnectCalls = append(m.disconnectCalls, mcpDisconnectCall{
+		userID:     userID,
+		serverName: serverName,
+	})
+	return nil
 }
 
 func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
@@ -115,6 +133,179 @@ func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.
 
 func (m *mockMCPClientManager) GetConfig() mcp.Config {
 	return m.config
+}
+
+// mockConversationStore is a simple in-memory implementation of ConversationStore for API-layer tests.
+type mockConversationStore struct {
+	conversations map[string]*store.Conversation
+	turns         map[string][]store.Turn // keyed by conversation ID
+	turnsByPost   map[string]*store.Turn  // keyed by post ID
+	err           error                   // if set, all methods return this error
+}
+
+func newMockConversationStore() *mockConversationStore {
+	return &mockConversationStore{
+		conversations: make(map[string]*store.Conversation),
+		turns:         make(map[string][]store.Turn),
+		turnsByPost:   make(map[string]*store.Turn),
+	}
+}
+
+func (m *mockConversationStore) GetConversation(id string) (*store.Conversation, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	conv, ok := m.conversations[id]
+	if !ok {
+		return nil, store.ErrConversationNotFound
+	}
+	return conv, nil
+}
+
+func (m *mockConversationStore) GetTurnsForConversation(conversationID string) ([]store.Turn, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	turns, ok := m.turns[conversationID]
+	if !ok {
+		return []store.Turn{}, nil
+	}
+	return turns, nil
+}
+
+func (m *mockConversationStore) GetTurnByPostID(postID string) (*store.Turn, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	turn, ok := m.turnsByPost[postID]
+	if !ok {
+		return nil, nil
+	}
+	return turn, nil
+}
+
+func (m *mockConversationStore) UpdateTurnContent(id string, content json.RawMessage) error {
+	if m.err != nil {
+		return m.err
+	}
+	for convID, turns := range m.turns {
+		for i, turn := range turns {
+			if turn.ID == id {
+				m.turns[convID][i].Content = content
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func (m *mockConversationStore) GetConversationSummariesForUser(_ string, _, _ int) ([]store.ConversationSummary, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return []store.ConversationSummary{}, nil
+}
+
+// mockAgentStore is a minimal in-memory implementation of AgentStore for testing.
+type mockAgentStore struct {
+	agents map[string]*llm.BotConfig
+}
+
+func newMockAgentStore() *mockAgentStore {
+	return &mockAgentStore{agents: make(map[string]*llm.BotConfig)}
+}
+
+// cloneBotConfig returns a deep copy so API callers cannot mutate mock store internals via returned pointers.
+func cloneBotConfig(src *llm.BotConfig) *llm.BotConfig {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	if len(src.ChannelIDs) > 0 {
+		dst.ChannelIDs = append([]string(nil), src.ChannelIDs...)
+	}
+	if len(src.UserIDs) > 0 {
+		dst.UserIDs = append([]string(nil), src.UserIDs...)
+	}
+	if len(src.TeamIDs) > 0 {
+		dst.TeamIDs = append([]string(nil), src.TeamIDs...)
+	}
+	if len(src.AdminUserIDs) > 0 {
+		dst.AdminUserIDs = append([]string(nil), src.AdminUserIDs...)
+	}
+	if len(src.EnabledMCPTools) > 0 {
+		dst.EnabledMCPTools = append([]llm.EnabledMCPTool(nil), src.EnabledMCPTools...)
+	}
+	if len(src.EnabledNativeTools) > 0 {
+		dst.EnabledNativeTools = append([]string(nil), src.EnabledNativeTools...)
+	}
+	return &dst
+}
+
+func (m *mockAgentStore) CreateAgent(cfg *llm.BotConfig) error {
+	cfg.ID = "agen" + fmt.Sprintf("%022d", len(m.agents)+1)
+	now := time.Now().UnixMilli()
+	cfg.CreateAt = now
+	cfg.UpdateAt = now
+	m.agents[cfg.ID] = cloneBotConfig(cfg)
+	return nil
+}
+
+func (m *mockAgentStore) GetAgent(id string) (*llm.BotConfig, error) {
+	cfg, ok := m.agents[id]
+	if !ok || cfg.DeleteAt != 0 {
+		return nil, nil
+	}
+	return cloneBotConfig(cfg), nil
+}
+
+func (m *mockAgentStore) ListAgents() ([]*llm.BotConfig, error) {
+	result := make([]*llm.BotConfig, 0, len(m.agents))
+	for _, cfg := range m.agents {
+		if cfg.DeleteAt == 0 {
+			result = append(result, cloneBotConfig(cfg))
+		}
+	}
+	return result, nil
+}
+
+func (m *mockAgentStore) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error) {
+	result := make([]*llm.BotConfig, 0)
+	for _, cfg := range m.agents {
+		if cfg.DeleteAt == 0 && cfg.CreatorID == creatorID {
+			result = append(result, cloneBotConfig(cfg))
+		}
+	}
+	return result, nil
+}
+
+func (m *mockAgentStore) CountActiveAgents() (int, error) {
+	count := 0
+	for _, cfg := range m.agents {
+		if cfg.DeleteAt == 0 {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig) error {
+	existing, ok := m.agents[cfg.ID]
+	if !ok || existing.DeleteAt != 0 {
+		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
+	}
+	cfg.UpdateAt = time.Now().UnixMilli()
+	m.agents[cfg.ID] = cloneBotConfig(cfg)
+	return nil
+}
+
+func (m *mockAgentStore) DeleteAgent(id string) error {
+	cfg, ok := m.agents[id]
+	if !ok || cfg.DeleteAt != 0 {
+		return fmt.Errorf("agent %q not found or already deleted", id)
+	}
+	cfg.DeleteAt = time.Now().UnixMilli()
+	return nil
 }
 
 func (e *TestEnvironment) Cleanup(t *testing.T) {
@@ -156,7 +347,7 @@ func (t *testPluginAPI) PluginHTTP(req *http.Request) *http.Response {
 // createTestBots creates a test MMBots instance for testing
 func createTestBots(mockAPI *plugintest.API, client *pluginapi.Client) *bots.MMBots {
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	testBots := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+	testBots := bots.New(mockAPI, client, licenseChecker, nil, nil, &http.Client{}, nil)
 	return testBots
 }
 
@@ -189,16 +380,52 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	conversationsService := &conversations.Conversations{}
 
 	cfg := &testConfigImpl{}
+	mockConvStore := newMockConversationStore()
+	agentStore := newMockAgentStore()
 
-	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil, nil, nil, nil, nil)
+	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil, agentStore, nil, nil, nil, mockConvStore, nil, nil)
 
 	return &TestEnvironment{
-		api:     api,
-		mockAPI: mockAPI,
-		bots:    testBots,
-		config:  cfg,
-		client:  client,
+		api:               api,
+		mockAPI:           mockAPI,
+		bots:              testBots,
+		config:            cfg,
+		client:            client,
+		conversationStore: mockConvStore,
+		agentStore:        agentStore,
 	}
+}
+
+func TestAIBotRequiredUsesConfiguredDefaultBot(t *testing.T) {
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	defaultBot := bots.NewBot(
+		llm.BotConfig{Name: "ai", DisplayName: "AI"},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: "defaultbotuserid1234567890", Username: "ai", DisplayName: "AI"},
+		nil,
+	)
+	otherBot := bots.NewBot(
+		llm.BotConfig{Name: "second", DisplayName: "Second"},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: "secondbotuserid123456789", Username: "second", DisplayName: "Second"},
+		nil,
+	)
+
+	// Put the non-default bot first to verify we prefer config over slice order.
+	e.bots.SetBotsForTesting([]*bots.Bot{otherBot, defaultBot})
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodPost, "/post/postid/react", nil)
+	ctx.Request = req
+
+	e.api.aiBotRequired(ctx)
+	require.False(t, ctx.IsAborted())
+
+	selectedBot := ctx.MustGet(ContextBotKey).(*bots.Bot)
+	require.Equal(t, "ai", selectedBot.GetMMBot().Username)
 }
 
 func TestPostRouter(t *testing.T) {
@@ -502,7 +729,7 @@ func TestHandleGetAIBots(t *testing.T) {
 			name: "search enabled - non-nil service with non-nil embedding search",
 			searchService: func() *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil, nil)
 			}(),
 			expectedSearchEnabled:    true,
 			expectedAllowUnsafeLinks: false,
@@ -513,7 +740,7 @@ func TestHandleGetAIBots(t *testing.T) {
 		},
 		{
 			name:                     "search disabled - non-nil service with nil embedding search",
-			searchService:            search.New(nil, nil, nil, nil, nil),
+			searchService:            search.New(nil, nil, nil, nil, nil, nil),
 			expectedSearchEnabled:    false,
 			expectedAllowUnsafeLinks: false,
 			expectedStatus:           http.StatusOK,
@@ -587,6 +814,54 @@ func TestHandleGetAIBots(t *testing.T) {
 	}
 }
 
+func TestHandleGetAIBotsDefaultBotAfterFilteredBot(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	filteredBot := bots.NewBot(
+		llm.BotConfig{
+			Name:            "hidden",
+			DisplayName:     "Hidden Agent",
+			UserAccessLevel: llm.UserAccessLevelBlock,
+			UserIDs:         []string{"userid"},
+		},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: "hiddenbotuserid1234567890", Username: "hidden", DisplayName: "Hidden Agent"},
+		nil,
+	)
+	defaultBot := bots.NewBot(
+		llm.BotConfig{
+			Name:        "ai",
+			DisplayName: "Default Agent",
+		},
+		llm.ServiceConfig{},
+		&model.Bot{UserId: "defaultbotuserid1234567890", Username: "ai", DisplayName: "Default Agent"},
+		nil,
+	)
+	e.bots.SetBotsForTesting([]*bots.Bot{filteredBot, defaultBot})
+
+	e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+	request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
+	request.Header.Add("Mattermost-User-ID", "userid")
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+
+	resp := recorder.Result()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response AIBotsResponse
+	err := json.NewDecoder(resp.Body).Decode(&response)
+	require.NoError(t, err)
+	require.Len(t, response.Bots, 1)
+	require.Equal(t, "ai", response.Bots[0].Username)
+}
+
 func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -605,16 +880,6 @@ func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
 			endpoint: "/post/postid/tool_call",
 			method:   http.MethodPost,
 			body:     `{"accepted_tool_ids": ["tool-1"]}`,
-		},
-		{
-			name:     "tool_call_private in DM is allowed",
-			endpoint: "/post/postid/tool_call_private",
-			method:   http.MethodGet,
-		},
-		{
-			name:     "tool_result_private in DM is allowed",
-			endpoint: "/post/postid/tool_result_private",
-			method:   http.MethodGet,
 		},
 		{
 			name:     "tool_result in DM is allowed",
@@ -646,7 +911,14 @@ func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
 				UserId:    botUserID,
 				ChannelId: "channelid",
 			}
-			post.AddProp(streaming.LLMRequesterUserID, userID)
+			post.AddProp("conversation_id", "conv-test-dm-toolcall")
+
+			// Seed mock conversation store so isConversationOwner returns true for the DM owner
+			e.conversationStore.conversations["conv-test-dm-toolcall"] = &store.Conversation{
+				ID:     "conv-test-dm-toolcall",
+				UserID: userID,
+				BotID:  botUserID,
+			}
 
 			// DM channel name contains both user IDs
 			dmChannelName := botUserID + "__" + userID
@@ -677,64 +949,6 @@ func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
 			// but it must not be blocked by the config guard.
 			require.NotEqual(t, http.StatusForbidden, resp.StatusCode,
 				"DM tool call should not be blocked by EnableChannelMentionToolCalling config")
-		})
-	}
-}
-
-func TestToolPrivateRequiresRequester(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	tests := []struct {
-		name     string
-		endpoint string
-	}{
-		{
-			name:     "tool call private endpoint rejects non-requester",
-			endpoint: "/post/postid/tool_call_private?botUsername=permtest",
-		},
-		{
-			name:     "tool result private endpoint rejects non-requester",
-			endpoint: "/post/postid/tool_result_private?botUsername=permtest",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			e := SetupTestEnvironment(t)
-			defer e.Cleanup(t)
-
-			// Enable channel tool calling so the config guard passes and
-			// the handler actually reaches the requester identity check.
-			e.config.enableChannelMentionToolCalling = true
-
-			e.setupTestBot(llm.BotConfig{Name: "permtest", DisplayName: "Permission Bot"})
-
-			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-			e.mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-			e.mockAPI.On("GetLicense").Return(&model.License{SkuShortName: "advanced"}).Maybe()
-
-			post := &model.Post{
-				Id:        "postid",
-				ChannelId: "channelid",
-			}
-			post.AddProp(streaming.LLMRequesterUserID, "requester")
-
-			e.mockAPI.On("GetPost", "postid").Return(post, nil)
-			e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{
-				Id:   "channelid",
-				Type: model.ChannelTypeOpen,
-			}, nil)
-			e.mockAPI.On("HasPermissionToChannel", "other-user", "channelid", model.PermissionReadChannel).Return(true)
-			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
-
-			request := httptest.NewRequest(http.MethodGet, test.endpoint, nil)
-			request.Header.Add("Mattermost-User-ID", "other-user")
-
-			recorder := httptest.NewRecorder()
-			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
-			resp := recorder.Result()
-			require.Equal(t, http.StatusForbidden, resp.StatusCode)
 		})
 	}
 }

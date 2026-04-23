@@ -34,7 +34,7 @@ func TestApplyBotChannelAutoEverywhereToolFilter(t *testing.T) {
 		toolPolicyChecker: mapPolicyChecker{
 			origin: {
 				"everywhere_tool": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
-				"auto_run_tool":   {policy: mcp.ToolPolicyAutoRun, enabled: true},
+				"auto_run_tool":   {policy: mcp.ToolPolicyAutoRunInDM, enabled: true},
 				"ask_tool":        {policy: mcp.ToolPolicyAsk, enabled: true},
 			},
 		},

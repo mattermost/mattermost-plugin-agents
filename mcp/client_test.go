@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"fmt"
+	"net/url"
 	"testing"
 	"time"
 
@@ -168,6 +169,48 @@ func TestExtractOAuthMetadataURL(t *testing.T) {
 	}
 }
 
+func TestClientOAuthNeededError(t *testing.T) {
+	client := &Client{
+		config: ServerConfig{
+			Name: "OAuth Server",
+		},
+		oauthManager: &OAuthManager{
+			callbackURL: "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback",
+		},
+	}
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "mcp unauthorized error",
+			err: &mcpUnauthorized{
+				metadataURL: "https://oauth.example.com/.well-known/oauth-protected-resource",
+			},
+		},
+		{
+			name: "string matched oauth error",
+			err:  fmt.Errorf("OAuth authentication needed for resource at https://oauth.example.com/.well-known/oauth-protected-resource"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := client.oauthNeededError(tt.err)
+			require.Error(t, err)
+
+			var oauthErr *OAuthNeededError
+			require.ErrorAs(t, err, &oauthErr)
+			authURL, parseErr := url.Parse(oauthErr.AuthURL())
+			require.NoError(t, parseErr)
+			require.Equal(t, "https://mattermost.example.com", authURL.Scheme+"://"+authURL.Host)
+			require.Equal(t, "/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start", authURL.EscapedPath())
+			require.Equal(t, "https://oauth.example.com/.well-known/oauth-protected-resource", authURL.Query().Get("resource_metadata"))
+		})
+	}
+}
+
 // TestNilCacheHandling verifies that nil cache is handled gracefully in the cache code
 func TestNilCacheHandling(t *testing.T) {
 	// This test documents that the cache code handles nil properly
@@ -182,4 +225,90 @@ func TestNilCacheHandling(t *testing.T) {
 	// Test that GetTools returns nil for non-existent server (not a panic)
 	tools := cache.GetTools("nonexistent")
 	require.Nil(t, tools)
+}
+
+func TestShouldUseSharedToolsCache(t *testing.T) {
+	tests := []struct {
+		name         string
+		serverConfig ServerConfig
+		expected     bool
+	}{
+		{
+			name: "server without static oauth creds uses shared cache",
+			serverConfig: ServerConfig{
+				Name:    "no-oauth",
+				BaseURL: "https://example.com",
+			},
+			expected: true,
+		},
+		{
+			name: "server with static oauth creds skips shared cache",
+			serverConfig: ServerConfig{
+				Name:         "static-oauth",
+				BaseURL:      "https://example.com",
+				ClientID:     "client-id",
+				ClientSecret: "client-secret",
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, shouldUseSharedToolsCache(tt.serverConfig))
+		})
+	}
+}
+
+func TestInvalidateSharedToolsCacheForOAuthDiscovery(t *testing.T) {
+	kvAPI := newMockKVService()
+	log := &mockLogService{}
+	cache := NewToolsCache(kvAPI, log)
+
+	serverID := "oauth-server"
+	tools := map[string]*mcp.Tool{
+		"search": {
+			Name:        "search",
+			Description: "Searches data",
+		},
+	}
+
+	err := cache.SetTools(serverID, "OAuth Server", "https://example.com", tools, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, cache.GetTools(serverID))
+
+	invalidateSharedToolsCacheForOAuthDiscovery(cache, log, "user-id", serverID, ServerConfig{
+		Name:         serverID,
+		BaseURL:      "https://example.com",
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+	}, false)
+
+	require.Nil(t, cache.GetTools(serverID))
+}
+
+func TestInvalidateSharedToolsCacheForOAuthDiscoveryKeepsCacheWithStoredToken(t *testing.T) {
+	kvAPI := newMockKVService()
+	log := &mockLogService{}
+	cache := NewToolsCache(kvAPI, log)
+
+	serverID := "oauth-server"
+	tools := map[string]*mcp.Tool{
+		"search": {
+			Name:        "search",
+			Description: "Searches data",
+		},
+	}
+
+	err := cache.SetTools(serverID, "OAuth Server", "https://example.com", tools, time.Now())
+	require.NoError(t, err)
+
+	invalidateSharedToolsCacheForOAuthDiscovery(cache, log, "user-id", serverID, ServerConfig{
+		Name:         serverID,
+		BaseURL:      "https://example.com",
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+	}, true)
+
+	require.NotNil(t, cache.GetTools(serverID))
 }

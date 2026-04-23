@@ -421,7 +421,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
                 // Verify the post was actually created in town-square
                 await navigateToChannel(invokerPage, mattermost, 'town-square');
-                const createdPost = invokerPage.locator('.post-message__text').getByText('Hello from the AI agent - happy path test');
+                const createdPost = invokerPage.locator('.post-message__text').getByText('Hello from the AI agent - happy path test').first();
                 await expect(createdPost).toBeVisible({ timeout: 10000 });
             } finally {
                 await invokerContext.close();

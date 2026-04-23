@@ -32,6 +32,16 @@ func setupTestOAuthManagerFull(t *testing.T, lookup ServerConfigLookup, httpClie
 	return manager, mockClient
 }
 
+func TestStartURL(t *testing.T) {
+	manager, _ := setupTestOAuthManagerFull(t, nil, nil)
+	manager.callbackURL = "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback"
+
+	require.Equal(t,
+		"https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start",
+		manager.StartURL("OAuth Server"),
+	)
+}
+
 func TestBuildClientCredentialsKey(t *testing.T) {
 	_, _ = setupTestOAuthManager(t)
 

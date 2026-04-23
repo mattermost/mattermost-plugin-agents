@@ -31,7 +31,9 @@ Install the plugin through the System Console by navigating to **System Console 
 
 ### Access plugin settings
 
-Navigate to **System Console > Plugins > Agents** to access the configuration interface.
+Navigate to **System Console > Plugins > Agents** to configure plugin-wide settings such as AI services, the default bot, web search, embedding search, and MCP settings.
+
+Create and manage agents from the top-level **Agents** product page. You can also open it from **AI Actions > Agents > Manage agents**. The **AI Bots** section in the System Console links to the Agents page instead of hosting the full agent editor.
 
 ### Enable the plugin
 
@@ -73,7 +75,7 @@ Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 | **Output Token Limit** | Maximum tokens allowed in output |
 | **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
 | **Send User ID** | Whether to send Mattermost user IDs to the LLM provider |
-| **Use Responses API** | (OpenAI/Compatible only) Enable OpenAI's Responses API for richer tool integration |
+| **Use Responses API** | (OpenAI Compatible and Azure OpenAI only) Use OpenAI's Responses API for native provider tools, reasoning controls, and structured output on those endpoints. OpenAI (direct) always uses the Responses API, so this control isn't shown for that service type. |
 
 #### Provider Specific Settings
 
@@ -81,7 +83,8 @@ Each provider has specific configuration requirements:
 
 | Provider | Required Settings | Optional Settings |
 |----------|-------------------|-------------------|
-| **OpenAI** | API Key | Organization ID, API URL (for compatible services) |
+| **OpenAI** | API Key | Organization ID |
+| **OpenAI Compatible** | API URL | API Key, Organization ID |
 | **Anthropic** | API Key | |
 | **AWS Bedrock** | AWS Region | API Key (can use IAM role), Access/Secret Keys |
 | **Cohere** | API Key | |
@@ -93,36 +96,68 @@ For AWS Bedrock, authentication can be configured using AWS credentials in the A
 
 **Important for Anthropic Claude models**: Before using Claude models via AWS Bedrock, you must submit a one-time First Time Use (FTU) form in the AWS Bedrock Model Catalog, and attach Bedrock API permissions to your Mattermost servers' IAM role. See the [AWS Bedrock setup guide](https://docs.mattermost.com/agents/docs/aws_bedrock_setup.html) for detailed instructions.
 
+OpenAI services always use the Responses API. OpenAI Compatible and Azure services keep the **Use Responses API** setting so you can disable it for endpoints that still require legacy Chat Completions compatibility.
+
 See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html) for detailed provider-specific configuration.
 
 ### Agent configuration
 
-Create an Agent (Bot) that uses a configured Service. Multiple Agents can use the same Service configuration. See [license requirements](#license-requirements) for details on features that require a license.
+Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry or from **AI Actions > Agents > Manage agents**. Agents use the service inventory configured in **System Console > Plugins > Agents**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
 
-Navigate to **System Console > Plugins > Agents** and select **Add an Agent**.
+When you create or edit an agent, use the three tabs in the agent configuration flow:
+
+- **Configuration** for identity, model selection, instructions, and core capabilities
+- **Access** for channel, team, and user restrictions, plus delegated agent admins
+- **MCPs** for the agent's allowed MCP tools
+
+#### Configuration tab
 
 | Setting | Description |
 |---------|-------------|
 | **Display Name** | User-facing name shown in Mattermost |
-| **Agent Username** | The mattermost username for the agent. @ mentions to the agent will use this name |
+| **Agent Username** | The Mattermost username for the agent. @mentions use this name. Set it when creating the agent; it can't be changed later. |
 | **Agent Avatar** | Custom image for the agent |
 | **Service** | Select a configured Service from the dropdown |
 | **Model** | (Optional) Override the service's default model for this agent |
 | **Custom Instructions** | Custom instructions that define the agent's personality and capabilities |
 | **Enable Vision** | Enable Vision to allow the agent to process images. Requires a compatible model and service. |
-| **Enable Tools** | By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools. |
-| **Access Control** | Set which teams, channels, and users can access this agent |
+| **Enable Tools** | Enables tool use for integrations and other tool-based capabilities. Disable this only for models or use cases where tool calling shouldn't be available. Some features won't work without tools. |
 
 #### LLM Specific Agent Settings
 
-Some capabilities are available depending on the selected Service and its configuration:
+Some capabilities depend on the selected Service type and, for OpenAI Compatible and Azure, whether **Use Responses API** is enabled on that service.
 
 | Setting | Description |
 |---------|-------------|
-| **Enable Web Search** | Available for OpenAI (with Responses API enabled on the Service) and Anthropic. Allows the Agent to leverage the provider's native web search tool to respond with recent information. |
-| **Reasoning Enabled** | Available for OpenAI (with Responses API) and Anthropic. Enables "thinking" or reasoning capabilities for complex tasks. |
+| **Enable Web Search** | Available for Anthropic and OpenAI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Allows the Agent to leverage the provider's native web search tool to respond with recent information. |
+| **Reasoning Enabled** | Available for Anthropic and OpenAI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Enables extended thinking or reasoning capabilities for complex tasks. |
+| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure. When enabled and a JSON schema is provided in the request, the model returns structured JSON matching that schema. Compatible model support is still required. |
 
-Select **Save** to create the agent.
+New agents enable native web search and structured output by default where the selected provider supports those features. For providers that don't support native tools, native tool selections are ignored.
+
+For Anthropic services, **Structured Output** and extended thinking can't be used at the same time.
+
+If you need an OpenAI-style endpoint without the Responses API path, use an **OpenAI Compatible** service and turn **Use Responses API** off for that service instead of using the **OpenAI** service type.
+
+#### Access tab
+
+Use this tab to control who can interact with and manage the agent:
+
+- **Channel access** controls which channels the agent can be mentioned in
+- **User access** controls which users can interact with the agent
+- **Agent admins** can edit and delete the agent; the agent creator is always an admin
+
+#### MCPs tab
+
+Use this tab to control which MCP tools the agent can use. This tab is available only when **Enable Tools** is turned on.
+
+- **Automatically enable all MCP tools** gives the agent access to every currently available MCP tool and any MCP tools added later.
+- When **Automatically enable all MCP tools** is off, select the specific MCP tools the agent may use.
+- If a previously selected MCP tool is no longer available, it is removed from the agent configuration when you save.
+
+Updating an agent's display name also updates the linked Mattermost bot display name. Deleting an agent deactivates the linked Mattermost bot account.
+
+Legacy bots previously stored in plugin configuration are migrated on startup into database-backed agents and then managed from the **Agents** page. Migrated agents don't have a creator and can be managed by system admins.
 
 ### Custom instructions
 
@@ -132,17 +167,17 @@ For example, you could list your organization's specific acronyms so the agent k
 
 ### Built-in web search configuration
 
-The built-in web search tool allows agents to retrieve current information from the internet when answering user questions. This feature is designed for deployments using LLM models that don't provide their own native web search capabilities.
+The built-in web search tool lets agents retrieve current information from the internet when the model or deployment doesn't use the provider's own search. Prefer native provider web search when your service supports it.
 
 #### When to use built-in web search
 
-Built-in web search is intended for LLM models that lack native web search functionality. If your chosen model already provides native web search (such as OpenAI with the Responses API or Anthropic's native search tool), it's strongly recommended to use the provider's native implementation instead. Native web search tools typically offer:
+Built-in web search is intended for LLM models that lack native web search functionality. If your chosen model already provides native web search (such as OpenAI, Anthropic, or an OpenAI Compatible/Azure service with **Use Responses API** enabled), it's strongly recommended to use the provider's native implementation instead. Native web search tools typically offer:
 
 - Better integration with the model
 - More reliable search results
 - Optimized performance
 
-For configuration details on native web search with supported providers, see the [LLM Specific Settings](#llm-specific-settings) section above.
+For configuration details on native web search with supported providers, see the [LLM Specific Agent Settings](#llm-specific-agent-settings) section above.
 
 #### Provider comparison
 
@@ -235,7 +270,6 @@ Configure chunking options based on your needs:
 | **Chunking Strategy** | Sentences, Paragraphs, or Fixed Size | Choose based on your content type |
 | **Chunk Size** | 512-1024 tokens | Varies by strategy |
 | **Chunk Overlap** | 20-50 tokens | For better context continuity |
-| **Minimum Size Ratio** | Default | Minimum ratio for chunk size validation |
 
 Run the initial indexing process after configuration.
 
@@ -299,20 +333,24 @@ Post indexing occurs automatically during initial setup and when changing embedd
 
 ### Backup and restore
 
-The plugin configuration is stored in the Mattermost database. To backup:
+The plugin stores agent data across both plugin configuration and plugin database tables. To backup:
 
-1. Ensure your regular Mattermost backup includes plugin configurations
-2. For larger deployments, consider backing up indexed vector data separately
-3. User-created custom prompt templates and prompt pins are stored in the `LLM_CustomPrompts` and `LLM_CustomPromptPins` tables, so include plugin database tables in your normal backup and restore process.
+1. Ensure your regular Mattermost backup includes plugin configuration data.
+2. Include plugin database tables in your normal backup and restore process. In particular:
+   - `Agents_UserAgents` for agents created or managed from the **Agents** page
+   - `LLM_CustomPrompts` and `LLM_CustomPromptPins` for custom prompt templates and prompt pins
+3. For larger deployments, consider backing up indexed vector data separately.
+
+Restoring only plugin configuration isn't sufficient to restore agents managed from the **Agents** page.
 
 ### Configuration format
 
-The plugin uses a service-based architecture stored in the Mattermost database at `PluginSettings.Plugins["mattermost-ai"]`:
+The plugin uses a service-based architecture:
 
-- **Services** define LLM provider configurations (API keys, models, endpoints)
-- **Bots** reference services by ID and define agent personalities and access controls
+- `PluginSettings.Plugins["mattermost-ai"]["config"]` stores plugin-wide settings and AI service configurations, including `defaultBotName`
+- Agents are stored separately in the `Agents_UserAgents` table
 
-This separation allows multiple bots to share the same LLM service configuration.
+This separation allows multiple agents to share the same LLM service configuration while keeping agent lifecycle and access data out of `config.bots`.
 
 **Configuration structure:**
 ```json
@@ -327,22 +365,14 @@ This separation allows multiple bots to share the same LLM service configuration
         "defaultModel": "gpt-4o"
       }
     ],
-    "bots": [
-      {
-        "id": "bot-001",
-        "name": "ai",
-        "displayName": "AI Assistant",
-        "serviceID": "550e8400-e29b-41d4-a716-446655440000",
-        "customInstructions": "You are a helpful assistant."
-      }
-    ]
+    "defaultBotName": "ai"
   }
 }
 ```
 
 **Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`, `scale`
 
-**Legacy format:** Older configurations with embedded service objects within bots are automatically migrated to the current format on plugin startup.
+**Legacy format:** Older configurations that stored bots in `config.bots`, or embedded service objects within bots, are migrated on plugin startup. After legacy bot migration completes, stored `config.bots` entries are removed to avoid duplicate bot registration.
 
 ## Troubleshooting
 
@@ -369,32 +399,42 @@ Integrations are available in direct messages by default. If you enable the expe
 
 ## Model Context Protocol (MCP) Integration
 
-The Model Context Protocol (MCP) integration allows Agents to connect to external tools and services through standardized MCP servers. This feature enables expanding AI capabilities with custom integrations.
+The Model Context Protocol (MCP) integration lets Agents use tools exposed by MCP servers, including the embedded Mattermost tools and optional remote servers.
+
+The MCP client and the embedded Mattermost MCP server are always enabled. Admins manage remote MCP servers, connection timeout, and per-tool enabled state and approval policies from the MCP UI in the System Console. Agent-level MCP access is configured separately on each agent's **MCPs** tab.
 
 ### Configuration
 
-1. Navigate to **System Console > Plugins > Agents > MCP Servers**.
-2. Enable MCP integration by setting **Enable MCP** to **True**.
-3. Configure connection settings:
+1. Navigate to **System Console > Plugins > Agents > Model Context Protocol (MCP)**.
+2. Use the **Configuration** tab for:
 
-   - **Idle Timeout**: Set timeout in minutes for inactive client connections (default: 30 minutes)
+   - **Enable Mattermost MCP Server (HTTP)**: Optional HTTP endpoint for external MCP clients. See [Mattermost MCP Server](#mattermost-mcp-server).
+   - **Connection Idle Timeout (minutes)**: Timeout for inactive user MCP connections (default: 30 minutes).
+   - Remote MCP servers, including URL, custom headers, OAuth client settings, and per-server enablement.
+
+3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy.
+4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools.
+
+You can't disable MCP entirely from the System Console. To limit access, disable individual tools or change their policy in the **Tools** tab, and/or restrict tool access per agent from the agent's **MCPs** tab.
 
 ### Add MCP servers
 
-1. Select **Add MCP Server** to configure a new server.
+1. On the **Configuration** tab, select **Add Remote MCP Server** to configure a new server.
 2. Configure server settings:
 
    - **Server URL**: The endpoint URL for your MCP server.
    - **Custom Headers**: Additional headers required by your MCP server (optional).
    - **Server Name**: Descriptive name for the server (auto-generated if not provided).
 
-4. Select **Save** to add the server.
+3. Select **Save** to add the server.
 
 ### Management
 
 - **Connection Management**: The system automatically manages user connections to MCP servers
 - **Idle Cleanup**: Inactive client connections are automatically closed after the configured timeout
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation
+- **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools
+- **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent. Tool use is still subject to admin tool policies and the user's Mattermost permissions
 
 ### Atlassian MCP server authorization
 
@@ -465,21 +505,17 @@ The MCP server provides the following tools to AI agents and external clients:
 
 ### Deployment
 
-![MCP Server Configuration](img/system-console-mcp.png)
-
 #### For AI Agents
 
-To set up an embedded MCP server providing Mattermost AI agents with direct access to Mattermost functionality:
+The embedded Mattermost MCP server is available automatically to configured AI agents. No System Console switch is required to enable embedded MCP for in-product agents.
 
-1. Go to **System Console > Plugins > Agents > MCP Servers**.
-2. Set **Enable Embedded Server** to **True**.
-3. When enabled, all configured agents can access Mattermost tools.
+Use **System Console > Plugins > Agents > Model Context Protocol (MCP)** to configure remote MCP servers, the idle timeout, the optional HTTP endpoint for external clients, and per-tool enablement and approval policies. Then use each agent's **MCPs** tab on the **Agents** page to either automatically enable all MCP tools or restrict that agent to specific tools.
 
-Agents will automatically use these tools when appropriate to complete user requests.
+Configured agents can use these tools subject to their own MCP settings, admin tool policies, user permissions, and any required approval flow.
 
 #### For External Clients
 
-You can enable external MCP clients, such as Claude web, Claude Code, or other MCP-compatible applications, to interact with your Mattermost instance.
+You can enable external MCP clients, such as Claude web, Claude Code, or other MCP-compatible applications, to interact with your Mattermost instance. This HTTP server is separate from the always-on embedded MCP server used by Mattermost Agents.
 
 **Requirements:**
 - Mattermost Server v11.2 or later
@@ -489,7 +525,7 @@ You can enable external MCP clients, such as Claude web, Claude Code, or other M
 
 To enable an external MCP client:
 
-1. Go to **System Console > Plugins > Agents > MCP Servers**
+1. Go to **System Console > Plugins > Agents > Model Context Protocol (MCP)**
 2. Set **Enable Mattermost MCP Server (HTTP)** to **True**.
 The MCP server will be available at: `https://your-mattermost-server/plugins/mattermost-ai/mcp-server/mcp`
 

@@ -98,6 +98,10 @@ func TestHandleGetConfig(t *testing.T) {
 
 				mcpConfig, ok := raw["mcp"].(map[string]any)
 				require.True(t, ok, "mcp should be present in response")
+				assert.Equal(t, true, mcpConfig["enabled"])
+				embeddedServer, ok := mcpConfig["embeddedServer"].(map[string]any)
+				require.True(t, ok, "mcp.embeddedServer should be present in response")
+				assert.Equal(t, true, embeddedServer["enabled"])
 				servers, ok := mcpConfig["servers"].([]any)
 				require.True(t, ok, "mcp.servers should marshal as an empty array")
 				assert.Empty(t, servers)
@@ -114,6 +118,8 @@ func TestHandleGetConfig(t *testing.T) {
 				assert.Empty(t, cfg.Services)
 				assert.Empty(t, cfg.Bots)
 				assert.Empty(t, cfg.DefaultBotName)
+				assert.True(t, cfg.MCP.Enabled)
+				assert.True(t, cfg.MCP.EmbeddedServer.Enabled)
 			},
 		},
 		{
@@ -172,6 +178,29 @@ func TestHandleGetConfig(t *testing.T) {
 	}
 }
 
+func TestHandleGetConfigDoesNotMutateStoredServices(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stored := &config.Config{
+		Services: []llm.ServiceConfig{
+			{ID: "svc-1", Type: llm.ServiceTypeOpenAI, UseResponsesAPI: false},
+		},
+	}
+	store := &testConfigStore{cfg: stored}
+	router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/config", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, store.cfg.Services[0].UseResponsesAPI, "GET must not mutate stored config backing array")
+
+	var out config.Config
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out.Services, 1)
+	assert.True(t, out.Services[0].UseResponsesAPI)
+}
+
 func TestHandleSaveConfig(t *testing.T) {
 	tests := []struct {
 		name                  string
@@ -198,6 +227,8 @@ func TestHandleSaveConfig(t *testing.T) {
 			validateStore: func(t *testing.T, store *testConfigStore) {
 				require.NotNil(t, store.cfg)
 				assert.Equal(t, "ai", store.cfg.DefaultBotName)
+				assert.True(t, store.cfg.MCP.Enabled)
+				assert.True(t, store.cfg.MCP.EmbeddedServer.Enabled)
 			},
 			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
 				assert.Equal(t, 1, updater.callCount)
@@ -231,13 +262,17 @@ func TestHandleSaveConfig(t *testing.T) {
 				assert.Equal(t, "ai", store.cfg.DefaultBotName)
 				require.Len(t, store.cfg.Services, 1)
 				assert.Equal(t, "svc-1", store.cfg.Services[0].ID)
+				assert.True(t, store.cfg.Services[0].UseResponsesAPI)
 				require.Len(t, store.cfg.Bots, 1)
 				assert.Equal(t, "bot-1", store.cfg.Bots[0].ID)
+				assert.True(t, store.cfg.MCP.Enabled)
+				assert.True(t, store.cfg.MCP.EmbeddedServer.Enabled)
 			},
 			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
 				assert.Equal(t, 1, updater.callCount)
 				require.NotNil(t, updater.lastUpdate)
 				assert.Equal(t, "ai", updater.lastUpdate.DefaultBotName)
+				assert.True(t, updater.lastUpdate.Services[0].UseResponsesAPI)
 			},
 			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
 				assert.Equal(t, 1, notifier.callCount)
@@ -252,6 +287,8 @@ func TestHandleSaveConfig(t *testing.T) {
 				assert.Empty(t, store.cfg.DefaultBotName)
 				assert.Empty(t, store.cfg.Services)
 				assert.Empty(t, store.cfg.Bots)
+				assert.True(t, store.cfg.MCP.Enabled)
+				assert.True(t, store.cfg.MCP.EmbeddedServer.Enabled)
 			},
 			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
 				assert.Equal(t, 1, updater.callCount)
@@ -362,8 +399,11 @@ func TestSaveAndGetConfigRoundTrip(t *testing.T) {
 	assert.Equal(t, "ai", loadedCfg.DefaultBotName)
 	require.Len(t, loadedCfg.Services, 1)
 	assert.Equal(t, "sk-test", loadedCfg.Services[0].APIKey)
+	assert.True(t, loadedCfg.Services[0].UseResponsesAPI)
 	require.Len(t, loadedCfg.Bots, 1)
 	assert.Equal(t, "bot-1", loadedCfg.Bots[0].ID)
+	assert.True(t, loadedCfg.MCP.Enabled)
+	assert.True(t, loadedCfg.MCP.EmbeddedServer.Enabled)
 
 	// Step 4: Verify side effects
 	assert.Equal(t, 1, updater.callCount)

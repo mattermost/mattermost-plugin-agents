@@ -157,6 +157,7 @@ func TestBuildChatReasoning(t *testing.T) {
 func TestShouldUseResponsesAPI(t *testing.T) {
 	tests := []struct {
 		name               string
+		provider           schemas.ModelProvider
 		enabledNativeTools []string
 		useResponsesAPI    bool
 		cfg                llm.LanguageModelConfig
@@ -164,23 +165,42 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 	}{
 		{
 			name:               "native tools configured returns true",
+			provider:           schemas.OpenAI,
 			enabledNativeTools: []string{"web_search"},
 			expected:           true,
 		},
 		{
 			name:               "NativeWebSearchAllowed with web_search enabled returns true",
+			provider:           schemas.OpenAI,
 			enabledNativeTools: []string{"web_search"},
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
 			expected:           true,
 		},
 		{
 			name:               "NativeWebSearchAllowed without web_search in tools returns true",
+			provider:           schemas.OpenAI,
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
 			expected:           true,
 		},
 		{
+			name:               "explicit responses API flag wins for direct OpenAI",
+			provider:           schemas.OpenAI,
+			useResponsesAPI:    true,
+			enabledNativeTools: nil,
+			cfg:                llm.LanguageModelConfig{},
+			expected:           true,
+		},
+		{
+			name:               "unsupported provider ignores native tools",
+			provider:           schemas.Bedrock,
+			enabledNativeTools: []string{"web_search"},
+			cfg:                llm.LanguageModelConfig{},
+			expected:           false,
+		},
+		{
 			name:               "nothing configured returns false",
+			provider:           schemas.OpenAI,
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{},
 			expected:           false,
@@ -190,6 +210,7 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &LLM{
+				provider:           tt.provider,
 				enabledNativeTools: tt.enabledNativeTools,
 				useResponsesAPI:    tt.useResponsesAPI,
 			}
@@ -295,6 +316,35 @@ func TestConvertMessagesReasoning(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConvertMessagesEmptyToolResult verifies that a tool with an empty
+// Result is substituted with a placeholder so the Anthropic API does not
+// reject the message with "text content blocks must be non-empty".
+func TestConvertMessagesEmptyToolResult(t *testing.T) {
+	b := &LLM{provider: schemas.OpenAI}
+	posts := []llm.Post{{
+		Role:    llm.PostRoleBot,
+		Message: "",
+		ToolUse: []llm.ToolCall{{
+			ID:        "call1",
+			Name:      "search",
+			Arguments: []byte(`{}`),
+			Result:    "",
+		}},
+	}}
+	messages := b.convertMessages(posts)
+	var toolMsg *schemas.ChatMessage
+	for i := range messages {
+		if messages[i].Role == schemas.ChatMessageRoleTool {
+			toolMsg = &messages[i]
+			break
+		}
+	}
+	require.NotNil(t, toolMsg, "expected a tool-role message for the tool result")
+	require.NotNil(t, toolMsg.Content)
+	require.NotNil(t, toolMsg.Content.ContentStr)
+	assert.NotEmpty(t, *toolMsg.Content.ContentStr, "empty tool result must be replaced so providers do not reject the message")
 }
 
 func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
