@@ -98,9 +98,11 @@ export class AgentPageHelper {
     // --- Config Modal Locators ---
 
     getModal(): Locator {
-        // Modal titles are 'New Agent' (create) or the agent display name (edit)
-        // Look for the modal overlay container
-        return this.page.locator('[class*="ModalOverlay"]')
+        // Agent config and confirmation dialogs now render in AnimatedModalShell and apply
+        // MODAL_SHEET_CLASS (`mmAiModal__sheet`) to the visible dialog panel.
+        // Keep legacy fallbacks for any remaining GenericModal-based surfaces.
+        return this.page.locator('.mmAiModal__sheet')
+            .or(this.page.locator('[class*="ModalOverlay"]'))
             .or(this.page.locator('[class*="modal-content"]'));
     }
 
