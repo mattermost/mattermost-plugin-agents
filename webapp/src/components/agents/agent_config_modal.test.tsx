@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen} from '@testing-library/react';
+import {fireEvent, render, screen, waitForElementToBeRemoved} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {ServiceInfo} from '@/types/agents';
@@ -87,7 +87,7 @@ function renderModal(onClose = jest.fn()) {
 }
 
 describe('AgentConfigModal', () => {
-    test('confirms before dismissing unsaved changes from backdrop click', () => {
+    test('confirms before dismissing unsaved changes from backdrop click', async () => {
         const {container, onClose} = renderModal();
 
         fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Unsaved Agent'}});
@@ -97,11 +97,11 @@ describe('AgentConfigModal', () => {
         expect(onClose).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole('button', {name: 'Keep editing'}));
-        expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+        await waitForElementToBeRemoved(() => screen.queryByRole('dialog', {name: 'Discard changes?'}));
         expect((screen.getByLabelText('Display Name') as HTMLInputElement).value).toBe('Unsaved Agent');
 
         fireEvent.click(container.firstChild as HTMLElement);
-        fireEvent.click(screen.getByRole('button', {name: 'Discard changes'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Discard'}));
 
         expect(onClose).toHaveBeenCalledTimes(1);
     });
