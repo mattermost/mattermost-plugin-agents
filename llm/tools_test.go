@@ -436,6 +436,33 @@ func TestRetainOnlyMCPTools(t *testing.T) {
 			wantToolNames: []string{},
 		},
 		{
+			name: "server wildcard entry retains every tool from that origin",
+			tools: []Tool{
+				{Name: "builtin_search", ServerOrigin: ""},
+				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "jira_create", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "slack_post", ServerOrigin: "https://mcp.slack.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://mcp.atlassian.com", ToolName: MCPServerToolWildcard},
+			},
+			wantToolNames: []string{"builtin_search", "jira_get", "jira_create"},
+		},
+		{
+			name: "server wildcard combines with explicit tool entries from other origins",
+			tools: []Tool{
+				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "jira_create", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "slack_post", ServerOrigin: "https://mcp.slack.com"},
+				{Name: "slack_edit", ServerOrigin: "https://mcp.slack.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://mcp.atlassian.com", ToolName: MCPServerToolWildcard},
+				{ServerOrigin: "https://mcp.slack.com", ToolName: "slack_post"},
+			},
+			wantToolNames: []string{"jira_get", "jira_create", "slack_post"},
+		},
+		{
 			name:  "nil ToolStore is safe",
 			tools: nil, // will test on nil *ToolStore
 			allowlist: []EnabledMCPTool{

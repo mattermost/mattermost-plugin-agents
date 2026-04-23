@@ -20,6 +20,8 @@ import CustomPromptForm from './custom_prompt_form';
 const ModalContainer = styled.div`
     background-color: var(--center-channel-bg);
     border-radius: 12px;
+    overflow: hidden;
+    clip-path: inset(0 round 12px);
     width: 768px;
     min-height: 80vh;
     max-height: 80vh;
@@ -81,6 +83,8 @@ const ModalBody = styled.div`
     flex-direction: column;
     overflow-y: auto;
     flex: 1;
+    background-color: var(--center-channel-bg);
+    border-radius: 0 0 12px 12px;
 `;
 
 const TabBar = styled.div`

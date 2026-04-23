@@ -5,7 +5,7 @@ import React from 'react';
 import {useIntl} from 'react-intl';
 
 import {SelectionItem, SelectionItemOption} from '../item';
-import {IntItem, FloatItem} from '../number_items';
+import {IntItem} from '../number_items';
 
 import {ChunkingOptions, EmbeddingSearchConfig} from './types';
 
@@ -21,7 +21,6 @@ export const ChunkingOptionsConfig = ({value, onChange}: ChunkingOptionsProps) =
     const defaultChunkingOptions = {
         chunkSize: 1000,
         chunkOverlap: 200,
-        minChunkSize: 0.75,
         chunkingStrategy: 'sentences',
     };
 
@@ -76,24 +75,6 @@ export const ChunkingOptionsConfig = ({value, onChange}: ChunkingOptionsProps) =
                 }}
                 min={0}
                 helptext={intl.formatMessage({defaultMessage: 'Number of characters to overlap between chunks.'})}
-            />
-
-            <FloatItem
-                label={intl.formatMessage({defaultMessage: 'Minimum Chunk Size Ratio'})}
-                placeholder={defaultChunkingOptions.minChunkSize.toString()}
-                value={value.chunkingOptions?.minChunkSize || defaultChunkingOptions.minChunkSize}
-                onChange={(minChunkSize) => {
-                    onChange({
-                        ...value,
-                        chunkingOptions: {
-                            ...(value.chunkingOptions || defaultChunkingOptions),
-                            minChunkSize,
-                        } as ChunkingOptions,
-                    });
-                }}
-                min={0}
-                max={1}
-                helptext={intl.formatMessage({defaultMessage: 'Minimum chunk size as a fraction of the maximum size (0.0-1.0). Used for sentence and paragraph chunking.'})}
             />
         </>
     );

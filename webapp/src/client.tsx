@@ -372,7 +372,10 @@ export async function getProfilesByIds(userIds: string[]) {
 
 export async function searchAllChannels(term: string): Promise<ChannelWithTeamData[]> {
     return Client4.searchAllChannels(term, {
-        nonAdminSearch: false,
+
+        // Use the non-admin search path so regular users can search visible channels
+        // without requiring system console permissions.
+        nonAdminSearch: true,
         public: true,
         private: true,
         include_deleted: false,

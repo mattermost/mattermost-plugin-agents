@@ -32,6 +32,9 @@ type Props = {
     botUserId?: string;
     services: ServiceInfo[];
     errors?: Record<string, string>;
+
+    /** When true (e.g. edit mode), username cannot be changed; matches API behavior. */
+    usernameLocked?: boolean;
 }
 
 // Keep in sync with legacy System Console bot form (webapp/src/components/system_console/bot.tsx).
@@ -39,7 +42,7 @@ const visionToolServiceTypes = ['openai', 'openaicompatible', 'azure', 'anthropi
 const openAIStructuredOutputServiceTypes = ['openai', 'openaicompatible', 'azure'];
 
 const ConfigTab = (props: Props) => {
-    const {draft, onChange, onAvatarChange, services, errors = {}} = props;
+    const {draft, onChange, onAvatarChange, services, errors = {}, usernameLocked = false} = props;
     const intl = useIntl();
     const [availableModels, setAvailableModels] = useState<{id: string; displayName: string}[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
@@ -219,8 +222,12 @@ const ConfigTab = (props: Props) => {
                     label={intl.formatMessage({defaultMessage: 'Agent username'})}
                     value={draft.username}
                     maxLength={22}
+                    disabled={usernameLocked}
                     onChange={(e) => onChange({username: e.target.value})}
-                    helptext={intl.formatMessage({defaultMessage: 'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores.'})}
+                    helptext={intl.formatMessage({
+                        defaultMessage:
+                            'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores. The username cannot be changed after the agent is created.',
+                    })}
                 />
                 {errors.username && <FieldError>{errors.username}</FieldError>}
                 <AvatarItem

@@ -9,7 +9,6 @@ export interface UpstreamConfig {
 export interface ChunkingOptions {
     chunkSize: number;
     chunkOverlap: number;
-    minChunkSize: number;
     chunkingStrategy: string;
 }
 
