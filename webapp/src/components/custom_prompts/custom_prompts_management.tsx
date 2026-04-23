@@ -23,8 +23,7 @@ const ModalContainer = styled.div`
     overflow: hidden;
     clip-path: inset(0 round 12px);
     width: 768px;
-    min-height: 80vh;
-    max-height: 80vh;
+    height: 80vh;
     display: flex;
     flex-direction: column;
     box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.12);
@@ -185,12 +184,18 @@ const PromptRowContainer = styled.div`
 const PromptRowHeader = styled.div`
     display: flex;
     align-items: center;
+    gap: 8px;
     padding: 12px 16px;
-    cursor: pointer;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
     }
+`;
+
+const PromptRowMain = styled.div`
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
 
     &:focus-visible {
         outline: none;
@@ -283,7 +288,7 @@ const CustomPromptsManagement = () => {
         if (!editingPromptId || !prompts?.length) {
             return null;
         }
-        return prompts.find((p) => p.id === editingPromptId);
+        return prompts.find((p) => p.id === editingPromptId) ?? null;
     }, [editingPromptId, prompts]);
 
     useEffect(() => {
@@ -401,7 +406,7 @@ const CustomPromptsManagement = () => {
                 >
                     <ModalHeader>
                         <ModalHeaderLeading>
-                            {(showCreateForm || editingPromptId) && (
+                            {(showCreateForm || editingPrompt) && (
                                 <BackButton
                                     type='button'
                                     onClick={handleFormBack}
@@ -497,30 +502,29 @@ const CustomPromptsManagement = () => {
 
                                         return (
                                             <PromptRowContainer key={prompt.id}>
-                                                <PromptRowHeader
-                                                    role='button'
-                                                    tabIndex={0}
-                                                    aria-label={intl.formatMessage(
-                                                        {defaultMessage: 'Open prompt {name}'},
-                                                        {name: prompt.name},
-                                                    )}
-                                                    onClick={openPrompt}
-                                                    onKeyDown={(e) => {
-                                                        if (e.target !== e.currentTarget) {
-                                                            return;
-                                                        }
-                                                        if (e.key === 'Enter' || e.key === ' ') {
-                                                            e.preventDefault();
-                                                            openPrompt();
-                                                        }
-                                                    }}
-                                                >
-                                                    <PromptInfo>
-                                                        <PromptName>{prompt.name}</PromptName>
-                                                        {prompt.description && (
-                                                            <PromptDescription>{prompt.description}</PromptDescription>
+                                                <PromptRowHeader>
+                                                    <PromptRowMain
+                                                        role='button'
+                                                        tabIndex={0}
+                                                        aria-label={intl.formatMessage(
+                                                            {defaultMessage: 'Open prompt {name}'},
+                                                            {name: prompt.name},
                                                         )}
-                                                    </PromptInfo>
+                                                        onClick={openPrompt}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                                e.preventDefault();
+                                                                openPrompt();
+                                                            }
+                                                        }}
+                                                    >
+                                                        <PromptInfo>
+                                                            <PromptName>{prompt.name}</PromptName>
+                                                            {prompt.description && (
+                                                                <PromptDescription>{prompt.description}</PromptDescription>
+                                                            )}
+                                                        </PromptInfo>
+                                                    </PromptRowMain>
                                                     <PinButton
                                                         type='button'
                                                         $pinned={isPinned}

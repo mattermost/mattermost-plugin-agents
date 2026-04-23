@@ -312,7 +312,7 @@ test.describe('Agent CRUD', () => {
         await agentPage.clickModalBackdrop();
         await expect(agentPage.getDiscardChangesDialog()).toBeVisible({timeout: 10000});
 
-        await agentPage.getDiscardChangesCancelButton().click();
+        await agentPage.getDiscardChangesKeepEditingButton().click();
         await expect(agentPage.getDiscardChangesDialog()).not.toBeVisible({timeout: 10000});
         await expect(agentPage.getDisplayNameInput()).toHaveValue('Unsaved Agent');
 
