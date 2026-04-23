@@ -13,21 +13,9 @@ import {fetchCustomPrompts, fetchPinnedPromptIds, ShowCustomPromptsModalHandler}
 import {createCustomPrompt, updateCustomPrompt, deleteCustomPrompt, setCustomPromptPin} from '@/client';
 
 import ConfirmationDialog from '../confirmation_dialog';
+import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
 
 import CustomPromptForm from './custom_prompt_form';
-
-const ModalOverlay = styled.div`
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 0, 0, 0.64);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2000;
-`;
 
 const ModalContainer = styled.div`
     background-color: var(--center-channel-bg);
@@ -286,15 +274,6 @@ const BackButton = styled.button`
     }
 `;
 
-const ConfirmationOverlay = styled.div`
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 3000;
-`;
-
 const CustomPromptsManagement = () => {
     const intl = useIntl();
     const dispatch = useDispatch();
@@ -386,10 +365,6 @@ const CustomPromptsManagement = () => {
         e.stopPropagation();
     };
 
-    if (!show) {
-        return null;
-    }
-
     const filteredPrompts = (prompts || []).filter((prompt) => {
         if (activeTab === 'yours' && prompt.creator_id !== currentUserId) {
             return false;
@@ -402,8 +377,10 @@ const CustomPromptsManagement = () => {
     });
 
     return (
-        <ModalOverlay onClick={handleClose}>
+        <>
+        <AnimatedModalShell show={show} onBackdropClick={handleClose} zIndex={2000}>
             <ModalContainer
+                className={MODAL_SHEET_CLASS}
                 onClick={handleModalClick}
                 role='dialog'
                 aria-modal='true'
@@ -547,19 +524,18 @@ const CustomPromptsManagement = () => {
                     </>
                 )}
             </ModalContainer>
-            {deleteConfirmId && (
-                <ConfirmationOverlay>
-                    <ConfirmationDialog
-                        title={<FormattedMessage defaultMessage='Delete prompt'/>}
-                        message={<FormattedMessage defaultMessage='Are you sure you want to delete this prompt? This action cannot be undone.'/>}
-                        confirmButtonText={<FormattedMessage defaultMessage='Delete'/>}
-                        onConfirm={() => handleDelete(deleteConfirmId)}
-                        onCancel={() => setDeleteConfirmId(null)}
-                        isDestructive={true}
-                    />
-                </ConfirmationOverlay>
-            )}
-        </ModalOverlay>
+        </AnimatedModalShell>
+        <ConfirmationDialog
+            show={deleteConfirmId !== null}
+            title={<FormattedMessage defaultMessage='Delete prompt'/>}
+            message={<FormattedMessage defaultMessage='Are you sure you want to delete this prompt? This action cannot be undone.'/>}
+            confirmButtonText={<FormattedMessage defaultMessage='Delete'/>}
+            onConfirm={() => deleteConfirmId && handleDelete(deleteConfirmId)}
+            onCancel={() => setDeleteConfirmId(null)}
+            isDestructive={true}
+            zIndex={3000}
+        />
+        </>
     );
 };
 

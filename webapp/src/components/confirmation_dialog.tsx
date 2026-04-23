@@ -2,10 +2,12 @@
 // See LICENSE.txt for license information.
 
 import React, {useEffect, useRef} from 'react';
+import {CSSTransition} from 'react-transition-group';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
 import {PrimaryButton, TertiaryButton, DestructiveButton} from './assets/buttons';
+import {MODAL_SHEET_CLASS, MODAL_TRANSITION_MS, modalTransitionPhases} from '@/components/animated_modal_shell';
 
 interface ConfirmationDialogProps {
     title: React.ReactNode;
@@ -28,6 +30,12 @@ interface ConfirmationDialogProps {
      * traps Tab within the dialog, closes on Escape, and on backdrop mousedown outside content.
      */
     managedAccessibility?: boolean;
+
+    /**
+     * When set, dialog mount/visibility is driven by CSSTransition (fade + sheet motion).
+     * Omit to keep legacy behavior (parent mounts/unmounts the component).
+     */
+    show?: boolean;
 }
 
 const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
@@ -42,7 +50,9 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
     confirmPending = false,
     zIndex = 1000,
     managedAccessibility = false,
+    show,
 }) => {
+    const transitionRef = useRef<HTMLDivElement>(null);
     const dialogRef = useRef<HTMLDivElement>(null);
     const confirmButtonRef = useRef<HTMLButtonElement>(null);
     const pendingRef = useRef(confirmPending);
@@ -50,10 +60,12 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
     pendingRef.current = confirmPending;
     onCancelRef.current = onCancel;
 
+    const dialogMounted = show === undefined || show;
+
     useEffect(() => {
-        if (!managedAccessibility) {
+        if (!managedAccessibility || !dialogMounted) {
             return () => {
-                // No focus management when using simple mode
+                // No focus management when using simple mode or while transition keeps dialog unmounted
             };
         }
         const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -64,10 +76,10 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
             window.cancelAnimationFrame(focusId);
             previousFocus?.focus?.({preventScroll: true});
         };
-    }, [managedAccessibility]);
+    }, [managedAccessibility, dialogMounted]);
 
     useEffect(() => {
-        if (!managedAccessibility) {
+        if (!managedAccessibility || !dialogMounted) {
             return () => {
                 // No keyboard trap
             };
@@ -105,10 +117,10 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
 
         document.addEventListener('keydown', onKeyDown);
         return () => document.removeEventListener('keydown', onKeyDown);
-    }, [managedAccessibility]);
+    }, [managedAccessibility, dialogMounted]);
 
     useEffect(() => {
-        if (!managedAccessibility || confirmPending) {
+        if (!managedAccessibility || confirmPending || !dialogMounted) {
             return () => {
                 // No outside click listener while pending or in simple mode
             };
@@ -120,19 +132,21 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
         };
         document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
-    }, [managedAccessibility, confirmPending, onCancel]);
+    }, [managedAccessibility, confirmPending, onCancel, dialogMounted]);
 
     const confirmDisabled = confirmPending;
     const cancelDisabled = confirmPending;
     const backdropProps = managedAccessibility ? {} : {onClick: onCancel};
 
-    return (
+    const dialogTree = (
         <DialogWrapper
+            {...(show !== undefined ? {ref: transitionRef} : {})}
             $zIndex={zIndex}
             {...backdropProps}
         >
             <DialogContent
                 ref={dialogRef}
+                className={MODAL_SHEET_CLASS}
                 onClick={(e) => e.stopPropagation()}
                 role='dialog'
                 aria-modal='true'
@@ -172,9 +186,28 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
             </DialogContent>
         </DialogWrapper>
     );
+
+    if (show !== undefined) {
+        return (
+            <CSSTransition
+                nodeRef={transitionRef}
+                in={show}
+                timeout={MODAL_TRANSITION_MS}
+                classNames='mm-ai-modal'
+                unmountOnExit
+                mountOnEnter
+                appear
+            >
+                {dialogTree}
+            </CSSTransition>
+        );
+    }
+
+    return dialogTree;
 };
 
 const DialogWrapper = styled.div<{$zIndex: number}>`
+    ${modalTransitionPhases}
     position: fixed;
     top: 0;
     left: 0;

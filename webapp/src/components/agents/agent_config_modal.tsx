@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {CloseIcon} from '@mattermost/compass-icons/components';
@@ -10,6 +10,8 @@ import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, EnabledTool, ServiceInfo} from '@/types/agents';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
+import ConfirmationDialog from '@/components/confirmation_dialog';
+import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
 
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
@@ -124,6 +126,10 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
     };
 }
 
+function cloneDraft(d: AgentDraft): AgentDraft {
+    return JSON.parse(JSON.stringify(d)) as AgentDraft;
+}
+
 function agentToDraft(agent: UserAgent): AgentDraft {
     return {
         displayName: agent.displayName,
@@ -158,23 +164,33 @@ type Props = {
     onSaved: (agent: UserAgent) => void; // called after successful create or update
 }
 
+const DISCARD_CHANGES_TITLE_ID = 'discard-agent-changes-title';
+
 const AgentConfigModal = (props: Props) => {
     const {show, mode, agent, services, onClose, onSaved} = props;
     const intl = useIntl();
 
     const [activeTab, setActiveTab] = useState<Tab>('config');
     const [draft, setDraft] = useState<AgentDraft>(emptyDraft);
+    const [baselineDraft, setBaselineDraft] = useState<AgentDraft>(emptyDraft);
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
+    const [showDiscardDialog, setShowDiscardDialog] = useState(false);
+    const showDiscardDialogRef = useRef(false);
+    showDiscardDialogRef.current = showDiscardDialog;
 
     // Reset form when modal opens
     useEffect(() => {
         if (show) {
             setActiveTab('config');
-            setDraft(agent ? agentToDraft(agent) : emptyDraft);
+            const next = agent ? agentToDraft(agent) : cloneDraft(emptyDraft);
+            const cloned = cloneDraft(next);
+            setDraft(cloned);
+            setBaselineDraft(cloneDraft(cloned));
             setAvatarFile(null);
             setErrors({});
+            setShowDiscardDialog(false);
         }
     }, [show, agent]);
 
@@ -185,7 +201,37 @@ const AgentConfigModal = (props: Props) => {
         }
     }, [draft.disableTools, activeTab]);
 
-    // Escape key to close
+    const isDirty = useMemo(() => {
+        if (avatarFile) {
+            return true;
+        }
+        return JSON.stringify(draft) !== JSON.stringify(baselineDraft);
+    }, [draft, baselineDraft, avatarFile]);
+
+    const requestClose = useCallback(() => {
+        if (saving) {
+            return;
+        }
+        if (showDiscardDialogRef.current) {
+            return;
+        }
+        if (isDirty) {
+            setShowDiscardDialog(true);
+            return;
+        }
+        onClose();
+    }, [isDirty, onClose, saving]);
+
+    const handleDiscardConfirm = useCallback(() => {
+        setShowDiscardDialog(false);
+        onClose();
+    }, [onClose]);
+
+    const handleDiscardCancel = useCallback(() => {
+        setShowDiscardDialog(false);
+    }, []);
+
+    // Escape key: same as close — confirm when there are unsaved changes
     useEffect(() => {
         if (!show) {
             return () => {
@@ -193,13 +239,18 @@ const AgentConfigModal = (props: Props) => {
             };
         }
         const handler = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                onClose();
+            if (e.key !== 'Escape') {
+                return;
             }
+            if (showDiscardDialogRef.current) {
+                return;
+            }
+            e.preventDefault();
+            requestClose();
         };
         document.addEventListener('keydown', handler);
         return () => document.removeEventListener('keydown', handler);
-    }, [show, onClose]);
+    }, [show, requestClose]);
 
     const updateDraft = useCallback((updates: Partial<AgentDraft>) => {
         setDraft((prev) => ({...prev, ...updates}));
@@ -272,20 +323,22 @@ const AgentConfigModal = (props: Props) => {
         }
     }, [mode, agent, draft, avatarFile, intl, onSaved, validate]);
 
-    if (!show) {
-        return null;
-    }
-
     const title = mode === 'create' ?
         intl.formatMessage({defaultMessage: 'New Agent'}) :
         draft.displayName || intl.formatMessage({defaultMessage: 'Edit Agent'});
 
     return (
-        <ModalOverlay onClick={onClose}>
-            <ModalContainer onClick={(e) => e.stopPropagation()}>
+        <>
+        <AnimatedModalShell show={show} onBackdropClick={requestClose} zIndex={2000}>
+            <ModalContainer className={MODAL_SHEET_CLASS} onClick={(e) => e.stopPropagation()}>
                 <ModalHeader>
                     <ModalTitle>{title}</ModalTitle>
-                    <CloseButton onClick={onClose}>
+                    <CloseButton
+                        type='button'
+                        onClick={requestClose}
+                        disabled={saving}
+                        aria-label={intl.formatMessage({defaultMessage: 'Close'})}
+                    >
                         <CloseIcon size={20}/>
                     </CloseButton>
                 </ModalHeader>
@@ -346,7 +399,11 @@ const AgentConfigModal = (props: Props) => {
                 </ModalBody>
 
                 <ModalFooter>
-                    <CancelButton onClick={onClose}>
+                    <CancelButton
+                        type='button'
+                        onClick={requestClose}
+                        disabled={saving}
+                    >
                         <FormattedMessage defaultMessage='Cancel'/>
                     </CancelButton>
                     <SaveButton
@@ -360,24 +417,27 @@ const AgentConfigModal = (props: Props) => {
                     </SaveButton>
                 </ModalFooter>
             </ModalContainer>
-        </ModalOverlay>
+        </AnimatedModalShell>
+        <ConfirmationDialog
+            show={showDiscardDialog}
+            titleId={DISCARD_CHANGES_TITLE_ID}
+            title={<FormattedMessage defaultMessage='Discard changes?'/>}
+            message={(
+                <FormattedMessage defaultMessage='You have unsaved changes. If you close now, those changes will be lost.'/>
+            )}
+            confirmButtonText={<FormattedMessage defaultMessage='Discard'/>}
+            cancelButtonText={<FormattedMessage defaultMessage='Keep editing'/>}
+            onConfirm={handleDiscardConfirm}
+            onCancel={handleDiscardCancel}
+            isDestructive={true}
+            managedAccessibility={true}
+            zIndex={2100}
+        />
+        </>
     );
 };
 
 // --- Styled Components ---
-
-const ModalOverlay = styled.div`
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 0, 0, 0.64);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2000;
-`;
 
 const ModalContainer = styled.div`
     background-color: var(--center-channel-bg);
@@ -417,8 +477,13 @@ const CloseButton = styled.button`
     align-items: center;
     justify-content: center;
 
-    &:hover {
+    &:hover:not(:disabled) {
         background: rgba(var(--center-channel-color-rgb), 0.08);
+    }
+
+    &:disabled {
+        cursor: not-allowed;
+        opacity: 0.4;
     }
 `;
 
