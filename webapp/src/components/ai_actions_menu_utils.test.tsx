@@ -3,10 +3,17 @@
 
 import React from 'react';
 import {fireEvent, render, screen} from '@testing-library/react';
-import {IntlProvider} from 'react-intl';
 
 import {dismissLegacyMenu, getHostMenuComponents} from './ai_actions_menu_utils';
 import AgentsDropdown from './agents/agents_dropdown';
+
+jest.mock('./agents/agents_page', () => ({
+    AGENTS_ROUTE: '/plugins/mattermost-ai/agents',
+}));
+
+jest.mock('react-intl', () => ({
+    FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+}));
 
 describe('ai_actions_menu_utils', () => {
     afterEach(() => {
@@ -72,11 +79,7 @@ describe('AgentsDropdown', () => {
             sendWebSocketMessage: jest.fn(),
         };
 
-        render(
-            <IntlProvider locale='en'>
-                <AgentsDropdown/>
-            </IntlProvider>,
-        );
+        render(<AgentsDropdown/>);
 
         fireEvent.click(screen.getByRole('button', {name: 'Manage agents'}));
 
@@ -85,7 +88,7 @@ describe('AgentsDropdown', () => {
     });
 
     test('falls back to dismissing the legacy menu when host menu items are unavailable', () => {
-        window.Components = undefined;
+        delete window.Components;
         window.WebappUtils = {
             browserHistory: {
                 push: jest.fn(),
@@ -98,11 +101,7 @@ describe('AgentsDropdown', () => {
         const clickSpy = jest.spyOn(backdrop, 'click');
         document.body.appendChild(backdrop);
 
-        render(
-            <IntlProvider locale='en'>
-                <AgentsDropdown/>
-            </IntlProvider>,
-        );
+        render(<AgentsDropdown/>);
 
         fireEvent.click(screen.getByRole('menuitem', {name: 'Manage agents'}));
 
