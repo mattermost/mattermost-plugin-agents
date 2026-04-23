@@ -128,7 +128,7 @@ const NewChatButton = styled(Button)`
 const Header = styled.div`
     display: flex;
     height: 38px;
-    padding: 0 12px 0 8px;
+    padding: 0 16px 0 12px;
 	justify-content: space-between;
 	align-items: center;
     box-sizing: border-box;
