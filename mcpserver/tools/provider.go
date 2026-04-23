@@ -236,8 +236,7 @@ func registerTool[A, T any](
 			return mcpCallToolError(err.Error()), nil
 		}
 
-		rawArgs := mapFromMCPArguments(req.Params.Arguments)
-		if err = RunBeforeHook(mcpContext, name, rawArgs); err != nil {
+		if err = RunBeforeHook(mcpContext, name, args); err != nil {
 			p.logger.Debug("MCP tool before-hook rejected or failed", "tool", name, "error", err.Error())
 			return mcpCallToolError(err.Error()), nil
 		}
@@ -314,25 +313,6 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	}
 
 	return mcpContext, nil
-}
-
-func mapFromMCPArguments(arguments any) map[string]any {
-	if arguments == nil {
-		return nil
-	}
-	m, ok := arguments.(map[string]any)
-	if ok {
-		return m
-	}
-	b, err := json.Marshal(arguments)
-	if err != nil {
-		return nil
-	}
-	var out map[string]any
-	if err := json.Unmarshal(b, &out); err != nil {
-		return nil
-	}
-	return out
 }
 
 func decodeToolHooksFromMetadata(metadata mcp.Meta) map[string]ToolHookConfig {

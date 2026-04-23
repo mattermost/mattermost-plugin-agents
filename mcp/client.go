@@ -131,6 +131,9 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 		if mmSession == nil {
 			return nil, fmt.Errorf("session not found")
 		}
+		if mmSession.UserId != userID {
+			return nil, fmt.Errorf("session user ID does not match: expected %s, got %s", userID, mmSession.UserId)
+		}
 	}
 
 	// Get the in-memory transport from the embedded server

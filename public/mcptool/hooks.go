@@ -6,10 +6,12 @@ package mcptool
 import "encoding/json"
 
 // BeforeHookRequest is the JSON body POSTed to a before-hook callback.
+// Args carries the validated, decoded tool arguments serialized as JSON — the
+// exact same payload the resolver will operate on.
 type BeforeHookRequest struct {
-	ToolName string         `json:"tool_name"`
-	Args     map[string]any `json:"args"`
-	UserID   string         `json:"user_id"`
+	ToolName string          `json:"tool_name"`
+	Args     json.RawMessage `json:"args"`
+	UserID   string          `json:"user_id"`
 }
 
 // BeforeHookResponse is the JSON body returned from a before-hook callback.

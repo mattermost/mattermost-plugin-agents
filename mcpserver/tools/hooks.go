@@ -68,7 +68,8 @@ func postHookJSON(ctx context.Context, url string, body []byte) ([]byte, error) 
 
 // RunBeforeHook is a no-op when no before-hook is registered for toolName.
 // Otherwise it POSTs to the calling plugin and returns an error if the hook rejects or fails (fail-closed).
-func RunBeforeHook(mcpCtx *MCPToolContext, toolName string, args map[string]any) error {
+// args is the validated, decoded resolver argument struct; the hook receives its JSON form.
+func RunBeforeHook(mcpCtx *MCPToolContext, toolName string, args any) error {
 	if mcpCtx == nil || mcpCtx.ToolHooks == nil {
 		return nil
 	}
@@ -82,10 +83,15 @@ func RunBeforeHook(mcpCtx *MCPToolContext, toolName string, args map[string]any)
 		return fmt.Errorf("tool %s: before-hook failed: %w", toolName, err)
 	}
 
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return fmt.Errorf("tool %s: before-hook failed: marshal args: %w", toolName, err)
+	}
+
 	userID, _ := mcpCtx.Ctx.Value(auth.UserIDContextKey).(string)
 	reqBody := mcptool.BeforeHookRequest{
 		ToolName: toolName,
-		Args:     args,
+		Args:     argsJSON,
 		UserID:   userID,
 	}
 	payload, err := json.Marshal(reqBody)
