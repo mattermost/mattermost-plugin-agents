@@ -86,7 +86,9 @@ Available tools in direct messages, and in channels when enabled by your system 
 
 - Server search (semantic search across your Mattermost instance)
 - User lookup (find information about Mattermost users)
-- MCP tools (additional tools from MCP servers your admin has connected for Agents). Tool availability depends on your user permissions and workspace configuration.
+- MCP tools (additional tools from MCP servers your admin has enabled for Agents). Tool availability depends on your user permissions, provider connection status, and workspace configuration.
+
+Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
 
 ## Analyze threads and channels
 
