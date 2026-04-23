@@ -1066,4 +1066,3 @@ func TestToolCallDMAllowedWhenChannelToolCallingDisabled(t *testing.T) {
 		})
 	}
 }
-
