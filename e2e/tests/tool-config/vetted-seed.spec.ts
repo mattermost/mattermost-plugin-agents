@@ -54,13 +54,13 @@ test.describe('Vetted Server Seed', () => {
         await serverHeader.click();
         await page.waitForTimeout(500);
 
-        // Check that at least some known vetted READ tools are visible and have "auto_run" policy
+        // Check that at least some known vetted READ tools are visible and have "auto_run_in_dm" policy
         for (const toolName of ['read_post', 'get_channel_info', 'search_posts']) {
             const toolText = page.getByText(toolName, { exact: true });
             // Only check tools that are visible (embedded server may not expose all)
             if (await toolText.isVisible().catch(() => false)) {
                 const dropdown = toolConfig.getToolPolicyDropdown(toolName);
-                await expect(dropdown).toHaveValue('auto_run');
+                await expect(dropdown).toHaveValue('auto_run_in_dm');
 
                 const toggle = toolConfig.getToolToggle(toolName);
                 await expect(toggle).toBeChecked();

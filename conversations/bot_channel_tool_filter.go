@@ -6,7 +6,6 @@ package conversations
 import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/streaming"
 )
 
 // applyBotChannelAutoEverywhereToolFilter keeps only MCP tools whose policy is
@@ -48,7 +47,23 @@ func (c *Conversations) applyBotChannelAutoEverywhereToolFilter(llmContext *llm.
 	}
 }
 
-func botChannelAutoEverywhereKeepTool(checker streaming.ToolPolicyChecker, tool llm.Tool) bool {
+// applyToolAvailability decides whether tools should be disabled for a context based on
+// whether the conversation is a DM or a channel mention with tools allowed. It returns
+// true when tools are disabled. When disabled, it populates DisabledToolsInfo so the
+// model can still reference the tool descriptions.
+func applyToolAvailability(context *llm.Context, isDM bool, allowToolsInChannel bool) bool {
+	toolsDisabled := !isDM && !allowToolsInChannel
+	if context != nil {
+		if toolsDisabled && context.Tools != nil {
+			context.DisabledToolsInfo = context.Tools.GetToolsInfo()
+		} else {
+			context.DisabledToolsInfo = nil
+		}
+	}
+	return toolsDisabled
+}
+
+func botChannelAutoEverywhereKeepTool(checker mcp.ToolPolicyChecker, tool llm.Tool) bool {
 	if checker == nil {
 		return false
 	}

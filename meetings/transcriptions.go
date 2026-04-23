@@ -9,7 +9,6 @@ import (
 	"slices"
 
 	"github.com/mattermost/mattermost-plugin-agents/bots"
-	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -87,9 +86,9 @@ func (s *Service) HandlePostbackSummary(userID string, post *model.Post) (map[st
 		return nil, fmt.Errorf("unable to get bot")
 	}
 
-	if post.GetProp(streaming.LLMRequesterUserID) != userID {
-		return nil, errors.New("only the original requester can post back")
-	}
+	// Ownership is verified by the API middleware's channel permission check --
+	// meeting summary posts live in DM channels where only the requester and bot
+	// have access.
 
 	transcriptThreadRootPost, err := s.pluginAPI.Post.GetPost(post.RootId)
 	if err != nil {

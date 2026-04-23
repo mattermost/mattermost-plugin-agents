@@ -181,6 +181,26 @@ export class AgentPageHelper {
         return this.getDeleteDialog().getByRole('button', { name: 'Delete' });
     }
 
+    getDiscardChangesDialog(): Locator {
+        return this.page.getByRole('dialog', { name: 'Discard changes?' });
+    }
+
+    getDiscardChangesButton(): Locator {
+        return this.getDiscardChangesDialog().getByRole('button', { name: 'Discard changes' });
+    }
+
+    getDiscardChangesConfirmButton(): Locator {
+        return this.getDiscardChangesButton();
+    }
+
+    getKeepEditingButton(): Locator {
+        return this.getDiscardChangesDialog().getByRole('button', { name: 'Keep editing' });
+    }
+
+    getDiscardChangesCancelButton(): Locator {
+        return this.getKeepEditingButton();
+    }
+
     // --- MCPs Tab ---
 
     getMCPSearchInput(): Locator {
@@ -221,5 +241,17 @@ export class AgentPageHelper {
     async waitForModalClosed(): Promise<void> {
         // Wait for the display name input to disappear (reliable signal)
         await this.getDisplayNameInput().waitFor({ state: 'hidden', timeout: 10000 });
+    }
+
+    async clickModalBackdrop(): Promise<void> {
+        const modal = this.getModal();
+        const box = await modal.boundingBox();
+        if (!box) {
+            throw new Error('Agent config modal is not visible');
+        }
+
+        const clickX = Math.max(5, box.x - 20);
+        const clickY = Math.max(5, box.y - 20);
+        await this.page.mouse.click(clickX, clickY);
     }
 }

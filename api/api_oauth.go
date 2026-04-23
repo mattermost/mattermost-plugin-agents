@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 func (a *API) handleOAuthStart(c *gin.Context) {
@@ -79,14 +80,40 @@ func (a *API) handleOAuthCallback(c *gin.Context) {
 		return
 	}
 
-	_, err := a.mcpClientManager.ProcessOAuthCallback(c.Request.Context(), userID, state, code)
+	session, err := a.mcpClientManager.ProcessOAuthCallback(c.Request.Context(), userID, state, code)
 	if err != nil {
 		a.pluginAPI.Log.Error("Failed to process OAuth callback", "error", err)
 		a.renderOAuthWindowClosePage(c, http.StatusInternalServerError, "Authorization Failed")
 		return
 	}
 
+	a.publishMCPConnectionUpdated(userID, session)
 	a.renderOAuthWindowClosePage(c, http.StatusOK, "Authorization Successful")
+}
+
+// publishMCPConnectionUpdated notifies the webapp that the user connected an MCP server (OAuth callback).
+func (a *API) publishMCPConnectionUpdated(userID string, session *mcp.OAuthSession) {
+	if a.mmClient == nil || userID == "" {
+		return
+	}
+
+	payload := map[string]interface{}{
+		"status": "connected",
+	}
+	if session != nil {
+		if session.ServerID != "" {
+			payload["serverName"] = session.ServerID
+		}
+		if session.ServerURL != "" {
+			payload["serverOrigin"] = session.ServerURL
+		}
+	}
+
+	a.mmClient.PublishWebSocketEvent(
+		WebsocketEventMCPConnectionUpdated,
+		payload,
+		&model.WebsocketBroadcast{UserId: userID},
+	)
 }
 
 func (a *API) getMCPServerConfig(serverName string) (mcp.ServerConfig, bool) {

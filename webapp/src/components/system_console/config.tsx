@@ -123,7 +123,6 @@ const defaultConfig: Config = {
         chunkingOptions: {
             chunkSize: 1000,
             chunkOverlap: 200,
-            minChunkSize: 0.75,
             chunkingStrategy: 'sentences',
         },
     },

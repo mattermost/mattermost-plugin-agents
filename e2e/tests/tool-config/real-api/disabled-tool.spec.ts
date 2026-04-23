@@ -52,7 +52,7 @@ function buildEmbeddedToolConfigs(disabledToolNames: string[] = []) {
 
     return VETTED_EMBEDDED_TOOLS.map((name) => ({
         name,
-        policy: 'auto_run',
+        policy: 'auto_run_in_dm',
         enabled: !disabledTools.has(name),
     }));
 }
