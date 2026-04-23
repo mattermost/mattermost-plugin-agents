@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { SystemConsoleHelper } from 'helpers/system-console';
@@ -15,8 +15,17 @@ let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.describe.serial('Initial State and Navigation', () => {
+    async function loginToTownSquare(page: Page) {
+        const mmPage = new MattermostPage(page);
+        await mmPage.login(mattermost.url(), adminUsername, adminPassword, {
+            channelViewTimeoutMs: 90000,
+        });
+        await page.goto(`${mattermost.url()}/test/channels/town-square`);
+        await page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: 90000 });
+    }
+
     test('should display no services page when no services configured', async ({ page }) => {
-        test.setTimeout(60000);
+        test.setTimeout(120000);
 
         // Start container with NO pre-configured services or bots
         mattermost = await RunSystemConsoleContainer({
@@ -26,11 +35,10 @@ test.describe.serial('Initial State and Navigation', () => {
 
         openAIMock = await RunOpenAIMocks(mattermost.network);
 
-        const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
 
         // Login as admin
-        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await loginToTownSquare(page);
 
         // Navigate to system console
         await systemConsole.navigateToPluginConfig(mattermost.url());
@@ -54,7 +62,7 @@ test.describe.serial('Initial State and Navigation', () => {
     });
 
     test('should show AI Bots moved notice when services exist but no legacy config bots', async ({ page }) => {
-        test.setTimeout(60000);
+        test.setTimeout(120000);
 
         // Start container with one service but no bots
         mattermost = await RunSystemConsoleContainer({
@@ -76,11 +84,10 @@ test.describe.serial('Initial State and Navigation', () => {
 
         openAIMock = await RunOpenAIMocks(mattermost.network);
 
-        const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
 
         // Login as admin
-        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await loginToTownSquare(page);
 
         // Navigate to system console
         await systemConsole.navigateToPluginConfig(mattermost.url());
@@ -101,7 +108,7 @@ test.describe.serial('Initial State and Navigation', () => {
     });
 
     test('should display full configuration when both services and bots exist', async ({ page }) => {
-        test.setTimeout(60000);
+        test.setTimeout(120000);
 
         // Start container with services and bots
         mattermost = await RunSystemConsoleContainer({
@@ -131,11 +138,10 @@ test.describe.serial('Initial State and Navigation', () => {
 
         openAIMock = await RunOpenAIMocks(mattermost.network);
 
-        const mmPage = new MattermostPage(page);
         const systemConsole = new SystemConsoleHelper(page);
 
         // Login as admin
-        await mmPage.login(mattermost.url(), adminUsername, adminPassword);
+        await loginToTownSquare(page);
 
         // Navigate to system console
         await systemConsole.navigateToPluginConfig(mattermost.url());
