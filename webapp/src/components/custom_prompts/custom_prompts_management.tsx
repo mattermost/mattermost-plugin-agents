@@ -21,6 +21,7 @@ const ModalContainer = styled.div`
     background-color: var(--center-channel-bg);
     border-radius: 12px;
     width: 768px;
+    min-height: 80vh;
     max-height: 80vh;
     display: flex;
     flex-direction: column;
