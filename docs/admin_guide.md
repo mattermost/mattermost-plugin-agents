@@ -153,6 +153,7 @@ Use this tab to control which MCP tools the agent can use. This tab is available
 
 - **Automatically enable all MCP tools** gives the agent access to every currently available MCP tool and any MCP tools added later.
 - When **Automatically enable all MCP tools** is off, select the specific MCP tools the agent may use.
+- Use the search field to narrow the server list. Search trims leading and trailing whitespace and only considers enabled tools. Queries shorter than three characters match server names and tool names, while queries of three or more characters also match tool descriptions.
 - If a previously selected MCP tool is no longer available, it is removed from the agent configuration when you save.
 
 Updating an agent's display name also updates the linked Mattermost bot display name. Deleting an agent deactivates the linked Mattermost bot account.
