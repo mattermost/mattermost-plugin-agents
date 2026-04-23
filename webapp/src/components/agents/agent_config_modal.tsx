@@ -11,6 +11,7 @@ import {UserAgent, CreateAgentRequest, UpdateAgentRequest, EnabledTool, ServiceI
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 
+import {buildUsernameValidationMessage, getAgentSaveErrorState} from './agent_save_errors';
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
 import McpsTab from './tabs/mcps_tab';
@@ -221,7 +222,7 @@ const AgentConfigModal = (props: Props) => {
         if (!draft.username.trim()) {
             errs.username = intl.formatMessage({defaultMessage: 'Username is required'});
         } else if (!(/^[a-z][a-z0-9.\-_]*$/).test(draft.username)) {
-            errs.username = intl.formatMessage({defaultMessage: 'Username must start with a letter and contain only lowercase letters, numbers, periods, hyphens, and underscores'});
+            errs.username = buildUsernameValidationMessage(intl);
         }
         if (!draft.serviceId) {
             errs.serviceId = intl.formatMessage({defaultMessage: 'AI Service is required'});
@@ -258,14 +259,10 @@ const AgentConfigModal = (props: Props) => {
 
             onSaved(savedAgent);
         } catch (e: any) {
-            const message = e?.message || '';
-            if (e?.status_code === 409 || (message.includes('username') && (message.includes('taken') || message.includes('conflict')))) {
-                setErrors({username: intl.formatMessage({defaultMessage: 'This username is already taken'})});
-                setActiveTab('config');
-            } else if (e?.status_code === 403) {
-                setErrors({general: intl.formatMessage({defaultMessage: 'You do not have permission to perform this action.'})});
-            } else {
-                setErrors({general: intl.formatMessage({defaultMessage: 'Failed to save agent. Please try again.'})});
+            const nextState = getAgentSaveErrorState(e, intl);
+            setErrors(nextState.errors);
+            if (nextState.activeTab) {
+                setActiveTab(nextState.activeTab);
             }
         } finally {
             setSaving(false);

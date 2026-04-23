@@ -39,6 +39,35 @@ function agentRoute(agentId: string): string {
     return `${baseRoute()}/agents/${agentId}`;
 }
 
+async function getErrorMessage(response: Response): Promise<string> {
+    const text = (await response.text()).trim();
+    if (!text) {
+        return '';
+    }
+
+    try {
+        const parsed = JSON.parse(text) as {error?: unknown; message?: unknown};
+        if (typeof parsed.error === 'string') {
+            return parsed.error;
+        }
+        if (typeof parsed.message === 'string') {
+            return parsed.message;
+        }
+    } catch {
+        // Some endpoints may still return plain text. Preserve that if present.
+    }
+
+    return text;
+}
+
+async function throwResponseError(response: Response, url: string): Promise<never> {
+    throw new ClientError(Client4.url, {
+        message: await getErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function doReaction(postid: string) {
     const url = `${postRoute(postid)}/react`;
     const response = await fetch(url, Client4.getOptions({
@@ -748,11 +777,7 @@ export async function createAgent(agent: CreateAgentRequest): Promise<UserAgent>
         return response.json();
     }
 
-    throw new ClientError(Client4.url, {
-        message: '',
-        status_code: response.status,
-        url,
-    });
+    return throwResponseError(response, url);
 }
 
 export async function updateAgent(id: string, agent: UpdateAgentRequest): Promise<UserAgent> {
@@ -766,11 +791,7 @@ export async function updateAgent(id: string, agent: UpdateAgentRequest): Promis
         return response.json();
     }
 
-    throw new ClientError(Client4.url, {
-        message: '',
-        status_code: response.status,
-        url,
-    });
+    return throwResponseError(response, url);
 }
 
 export async function deleteAgent(id: string): Promise<void> {

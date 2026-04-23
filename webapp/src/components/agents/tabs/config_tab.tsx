@@ -303,6 +303,7 @@ const ConfigTab = (props: Props) => {
                     value={draft.customInstructions}
                     onChange={(e) => onChange({customInstructions: e.target.value})}
                 />
+                {errors.customInstructions && <FieldError>{errors.customInstructions}</FieldError>}
 
                 {supportsVisionAndTools && (
                     <>

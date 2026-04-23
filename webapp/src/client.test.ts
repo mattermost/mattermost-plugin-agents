@@ -5,8 +5,9 @@ import type {ChannelSearchOpts, ChannelWithTeamData} from '@mattermost/types/cha
 import type {OptsSignalExt} from '@mattermost/types/client4';
 
 import type {ConversationResponse, Turn} from '@/types/conversation';
+import type {CreateAgentRequest, UpdateAgentRequest} from '@/types/agents';
 
-import {normalizeConversationResponse, searchAllChannels} from './client';
+import {createAgent, normalizeConversationResponse, searchAllChannels, setSiteURL, updateAgent} from './client';
 
 type SearchAllChannelsOpts = Omit<ChannelSearchOpts, 'page' | 'per_page'> & OptsSignalExt;
 
@@ -16,13 +17,28 @@ jest.mock('@mattermost/client', () => {
         [string, SearchAllChannelsOpts | undefined]
     >();
 
+    class MockClientError extends Error {
+        status_code?: number;
+        url?: string;
+
+        constructor(_baseUrl: string, details: {message?: string; status_code?: number; url?: string}) {
+            super(details.message || '');
+            this.name = 'ClientError';
+            this.status_code = details.status_code;
+            this.url = details.url;
+        }
+    }
+
     return {
 
         // client.tsx constructs `new Client4()`; the mocked class exposes instance methods.
         Client4: class Client4 {
+            setUrl = jest.fn();
             searchAllChannels = mockSearchAllChannels;
+            getOptions = (options: RequestInit) => options;
+            url = 'http://localhost';
         },
-        ClientError: class extends Error {},
+        ClientError: MockClientError,
         mockSearchAllChannels,
     };
 });
@@ -119,6 +135,55 @@ describe('searchAllChannels', () => {
             private: true,
             include_deleted: false,
             deleted: false,
+        });
+    });
+});
+
+describe('agent save errors', () => {
+    const mockFetch = jest.fn();
+    const createPayload: CreateAgentRequest = {
+        displayName: 'Agent',
+        username: 'agent',
+        serviceID: 'svc-1',
+        autoEnableNewMCPTools: true,
+    };
+    const updatePayload: UpdateAgentRequest = {
+        displayName: 'Agent',
+        username: 'agent',
+        serviceID: 'svc-1',
+        autoEnableNewMCPTools: true,
+    };
+
+    beforeEach(() => {
+        mockSearchAllChannels.mockReset();
+        mockFetch.mockReset();
+        global.fetch = mockFetch as unknown as typeof fetch;
+        setSiteURL('http://localhost');
+    });
+
+    test('createAgent preserves JSON error messages for actionable failures', async () => {
+        mockFetch.mockResolvedValue({
+            ok: false,
+            status: 400,
+            text: jest.fn().mockResolvedValue(JSON.stringify({error: 'service "deleted" not found in configuration'})),
+        });
+
+        await expect(createAgent(createPayload)).rejects.toMatchObject({
+            message: 'service "deleted" not found in configuration',
+            status_code: 400,
+        });
+    });
+
+    test('updateAgent preserves plain-text error messages when JSON is unavailable', async () => {
+        mockFetch.mockResolvedValue({
+            ok: false,
+            status: 403,
+            text: jest.fn().mockResolvedValue('creating more than 1 self-service agent(s) requires an E20 or Enterprise license'),
+        });
+
+        await expect(updateAgent('agent-id', updatePayload)).rejects.toMatchObject({
+            message: 'creating more than 1 self-service agent(s) requires an E20 or Enterprise license',
+            status_code: 403,
         });
     });
 });
