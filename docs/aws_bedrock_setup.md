@@ -207,13 +207,15 @@ Check [Amazon Bedrock model availability](https://docs.aws.amazon.com/bedrock/la
 
 | Field | Value |
 |-------|-------|
-| **Agent Name** | The username for the bot (e.g., `ai`) |
+| **Agent Name** | The username for the bot (e.g., `ai`). This username cannot be changed after the agent is created. |
 | **Display Name** | The display name shown in conversations (e.g., `AI Assistant`) |
 | **Service** | Select the Bedrock service you created in Step 3 |
 | **Custom Instructions** | Optional system prompt for the agent's behavior |
 | **Enable Vision** | Enable to allow the agent to process images |
 
 4. Select **Save**.
+
+> **Note:** When editing an existing agent, the **Agent Name** field is read-only.
 
 ## Step 5: Verify the setup
 
