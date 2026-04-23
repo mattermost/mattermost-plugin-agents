@@ -415,6 +415,8 @@ The MCP client and the embedded Mattermost MCP server are always enabled. Admins
 3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy.
 4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools.
 
+The **Tools** tab refreshes automatically after the current user connects or disconnects an OAuth-backed MCP server. Because MCP OAuth connections are per-user, this live refresh applies only to the user who completed the connect or disconnect action.
+
 You can't disable MCP entirely from the System Console. To limit access, disable individual tools or change their policy in the **Tools** tab, and/or restrict tool access per agent from the agent's **MCPs** tab.
 
 ### Add MCP servers
@@ -427,6 +429,16 @@ You can't disable MCP entirely from the System Console. To limit access, disable
    - **Server Name**: Descriptive name for the server (auto-generated if not provided).
 
 3. Select **Save** to add the server.
+
+### Configure OAuth-backed servers for agents
+
+When you create or edit an agent, the **MCPs** tab in the agent modal lists the MCP servers available to that agent. If an OAuth-backed server is not connected for your account yet, the row shows a **Connect** button so you can complete the provider sign-in flow without leaving the modal. The MCPs tab refreshes automatically after you connect or disconnect, so you don't need to reopen it to see updated server status.
+
+If a disconnected OAuth-backed server currently exposes no tools, you can still toggle that server on while configuring the agent. Saving the agent in this state grants the agent access to every tool that server exposes after a user connects to that provider.
+
+The **Automatically enable all MCP tools** option remains the broadest setting. When enabled, the agent can use every currently available MCP tool as well as MCP tools added later.
+
+Enabling a server or tool for an agent controls what the agent is allowed to use, but it does not bypass tool approval policies. Tool execution still follows the policy configured in the **Tools** tab and each user's Mattermost and provider permissions.
 
 ### Management
 
