@@ -97,12 +97,14 @@ const RHSHeader = (props: Props) => {
 };
 
 const HistoryButton = styled(Button)`
-	padding: 6px 12px;
+    height: 28px;
+    padding: 8px;
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
 const ButtonDisabled = styled(Button)`
-    padding: 6px 12px;
+    height: 28px;
+    padding: 8px;
 	&:hover {
 		background: transparent;
 		color: rgb(var(--center-channel-color));
@@ -125,9 +127,11 @@ const NewChatButton = styled(Button)`
 
 const Header = styled.div`
     display: flex;
-	padding: 6px 12px;
+    height: 38px;
+    padding: 0 12px 0 8px;
 	justify-content: space-between;
 	align-items: center;
+    box-sizing: border-box;
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
     flex-wrap: wrap;
 `;
