@@ -7,11 +7,9 @@ import {FormattedMessage} from 'react-intl';
 
 import {CogOutlineIcon} from '@mattermost/compass-icons/components';
 
-import {AGENTS_ROUTE} from './agents_page';
+import {dismissLegacyMenu, getHostMenuComponents} from '@/components/ai_actions_menu_utils';
 
-function dismissMenu() {
-    document.getElementById('backdropForMenuComponent')?.click();
-}
+import {AGENTS_ROUTE} from './agents_page';
 
 const StyledMenuItem = styled.li`
     display: flex;
@@ -30,9 +28,14 @@ const StyledMenuItem = styled.li`
     }
 `;
 
+const MenuLabel = styled.span`
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+`;
+
 const AgentsDropdown = () => {
     const handleManageAgents = useCallback(() => {
-        dismissMenu();
         if (window.WebappUtils?.browserHistory?.push) {
             window.WebappUtils.browserHistory.push(AGENTS_ROUTE);
             return;
@@ -40,10 +43,24 @@ const AgentsDropdown = () => {
         window.location.assign(AGENTS_ROUTE);
     }, []);
 
+    const HostMenuItem = getHostMenuComponents()?.Item;
+    if (HostMenuItem) {
+        return (
+            <HostMenuItem
+                labels={<MenuLabel><FormattedMessage defaultMessage='Manage agents'/></MenuLabel>}
+                leadingElement={<CogOutlineIcon size={16}/>}
+                onClick={handleManageAgents}
+            />
+        );
+    }
+
     return (
         <StyledMenuItem
             role='menuitem'
-            onClick={handleManageAgents}
+            onClick={() => {
+                dismissLegacyMenu();
+                handleManageAgents();
+            }}
         >
             <CogOutlineIcon size={16}/>
             <span><FormattedMessage defaultMessage='Manage agents'/></span>

@@ -15,12 +15,9 @@ import {CustomPrompt} from '@/types';
 import {LLMBot} from '@/bots';
 import manifest from '@/manifest';
 import {DropdownBotSelector} from '@/components/bot_selector';
+import {dismissLegacyMenu, getHostMenuComponents} from '@/components/ai_actions_menu_utils';
 
 const EMPTY_BOTS: LLMBot[] = [];
-
-function dismissMenu() {
-    document.getElementById('backdropForMenuComponent')?.click();
-}
 
 const AgentSelectorWrapper = styled.div`
     padding: 0 4px;
@@ -60,6 +57,12 @@ const StyledMenuSeparator = styled.li`
     list-style: none;
 `;
 
+const MenuLabel = styled.span`
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+`;
+
 interface Props {
     draft: any;
     getSelectedText: () => {start: number; end: number};
@@ -94,7 +97,6 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
     }, [dispatch]);
 
     const handlePromptClick = useCallback(async (prompt: CustomPrompt) => {
-        dismissMenu();
         try {
             const botUsername = selectedBot?.username;
             const result = await renderCustomPrompt(prompt.id, channelId, botUsername);
@@ -109,7 +111,6 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
     }, [channelId, updateText, selectedBot, isBotDMChannel]);
 
     const handleCreateClick = useCallback(() => {
-        dismissMenu();
         dispatch({type: ShowCustomPromptsModalHandler, show: true});
     }, [dispatch]);
 
@@ -126,34 +127,101 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
                     />
                 </AgentSelectorWrapper>
             )}
-            {prompts && prompts.length > 0 ? (
-                prompts.map((prompt) => (
-                    <StyledMenuItem
-                        key={prompt.id}
-                        role='menuitem'
-                        onClick={() => handlePromptClick(prompt)}
-                    >
-                        <span>{prompt.name}</span>
-                    </StyledMenuItem>
-                ))
-            ) : (
-                <StyledMenuItem
-                    role='menuitem'
-                    aria-disabled='true'
-                >
-                    <span><FormattedMessage defaultMessage='No custom prompts yet'/></span>
-                </StyledMenuItem>
-            )}
-            <StyledMenuSeparator role='separator'/>
-            <StyledMenuItem
-                role='menuitem'
-                onClick={handleCreateClick}
-            >
-                <CogOutlineIcon size={16}/>
-                <span><FormattedMessage defaultMessage='Manage prompts'/></span>
-            </StyledMenuItem>
+            {renderPromptItems(prompts, handlePromptClick)}
+            {renderSeparator()}
+            {renderManageItem(handleCreateClick)}
         </>
     );
 };
+
+function renderPromptItems(
+    prompts: CustomPrompt[] | null,
+    handlePromptClick: (prompt: CustomPrompt) => void,
+) {
+    const hostMenu = getHostMenuComponents();
+    const HostMenuItem = hostMenu?.Item;
+
+    if (prompts && prompts.length > 0) {
+        return prompts.map((prompt) => {
+            if (HostMenuItem) {
+                return (
+                    <HostMenuItem
+                        key={prompt.id}
+                        labels={<span>{prompt.name}</span>}
+                        onClick={() => handlePromptClick(prompt)}
+                    />
+                );
+            }
+
+            return (
+                <StyledMenuItem
+                    key={prompt.id}
+                    role='menuitem'
+                    onClick={() => {
+                        dismissLegacyMenu();
+                        handlePromptClick(prompt);
+                    }}
+                >
+                    <span>{prompt.name}</span>
+                </StyledMenuItem>
+            );
+        });
+    }
+
+    if (HostMenuItem) {
+        return (
+            <HostMenuItem
+                labels={<FormattedMessage defaultMessage='No custom prompts yet'/>}
+                disabled={true}
+            />
+        );
+    }
+
+    return (
+        <StyledMenuItem
+            role='menuitem'
+            aria-disabled='true'
+        >
+            <span><FormattedMessage defaultMessage='No custom prompts yet'/></span>
+        </StyledMenuItem>
+    );
+}
+
+function renderSeparator() {
+    const HostSeparator = getHostMenuComponents()?.Separator;
+
+    if (HostSeparator) {
+        return <HostSeparator/>;
+    }
+
+    return <StyledMenuSeparator role='separator'/>;
+}
+
+function renderManageItem(handleCreateClick: () => void) {
+    const HostMenuItem = getHostMenuComponents()?.Item;
+
+    if (HostMenuItem) {
+        return (
+            <HostMenuItem
+                labels={<MenuLabel><FormattedMessage defaultMessage='Manage prompts'/></MenuLabel>}
+                leadingElement={<CogOutlineIcon size={16}/>}
+                onClick={handleCreateClick}
+            />
+        );
+    }
+
+    return (
+        <StyledMenuItem
+            role='menuitem'
+            onClick={() => {
+                dismissLegacyMenu();
+                handleCreateClick();
+            }}
+        >
+            <CogOutlineIcon size={16}/>
+            <span><FormattedMessage defaultMessage='Manage prompts'/></span>
+        </StyledMenuItem>
+    );
+}
 
 export default CustomPromptsDropdown;

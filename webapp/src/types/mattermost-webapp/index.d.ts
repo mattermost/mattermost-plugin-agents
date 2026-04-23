@@ -7,9 +7,24 @@ export interface PluginRegistry {
     // Add more if needed from https://developers.mattermost.com/extend/plugins/webapp/reference
 }
 
+type HostMenuItemProps = {
+    labels: React.ReactElement;
+    leadingElement?: React.ReactNode;
+    onClick?: (event?: React.SyntheticEvent) => void;
+    disabled?: boolean;
+}
+
+type HostMenuComponents = {
+    Item?: React.ComponentType<HostMenuItemProps>;
+    Separator?: React.ComponentType<Record<string, never>>;
+}
+
 // Global type definitions
 declare global {
     interface Window {
+        Components?: {
+            Menu?: HostMenuComponents;
+        };
         WebappUtils?: {
             sendWebSocketMessage: (msg: {
                 action: string;
