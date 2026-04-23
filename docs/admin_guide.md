@@ -243,7 +243,6 @@ Configure chunking options based on your needs:
 | **Chunking Strategy** | Sentences, Paragraphs, or Fixed Size | Choose based on your content type |
 | **Chunk Size** | 512-1024 tokens | Varies by strategy |
 | **Chunk Overlap** | 20-50 tokens | For better context continuity |
-| **Minimum Size Ratio** | Default | Minimum ratio for chunk size validation |
 
 Run the initial indexing process after configuration.
 
