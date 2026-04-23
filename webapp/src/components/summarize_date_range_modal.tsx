@@ -318,7 +318,11 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
     };
 
     return (
-        <AnimatedModalShell show={show} onBackdropClick={onClose} zIndex={2000}>
+        <AnimatedModalShell
+            show={show}
+            onBackdropClick={onClose}
+            zIndex={2000}
+        >
             <ModalContainer
                 className={MODAL_SHEET_CLASS}
                 onClick={handleModalClick}

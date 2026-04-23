@@ -281,7 +281,7 @@ const CustomPromptsManagement = () => {
 
     const editingPrompt = useMemo(() => {
         if (!editingPromptId || !prompts?.length) {
-            return undefined;
+            return null;
         }
         return prompts.find((p) => p.id === editingPromptId);
     }, [editingPromptId, prompts]);
@@ -375,187 +375,189 @@ const CustomPromptsManagement = () => {
         return true;
     });
 
+    const title = (() => {
+        if (showCreateForm) {
+            return <FormattedMessage defaultMessage='New Prompt'/>;
+        }
+        if (editingPrompt) {
+            return editingPrompt.name;
+        }
+        return <FormattedMessage defaultMessage='Custom Prompts'/>;
+    })();
+
     return (
         <>
-        <AnimatedModalShell show={show} onBackdropClick={handleClose} zIndex={2000}>
-            <ModalContainer
-                className={MODAL_SHEET_CLASS}
-                onClick={handleModalClick}
-                role='dialog'
-                aria-modal='true'
-                aria-label={intl.formatMessage({defaultMessage: 'Custom Prompts'})}
+            <AnimatedModalShell
+                show={show}
+                onBackdropClick={handleClose}
+                zIndex={2000}
             >
-                <ModalHeader>
-                    <ModalHeaderLeading>
-                        {(showCreateForm || editingPromptId) && (
-                            <BackButton
-                                type='button'
-                                onClick={handleFormBack}
-                                aria-label={intl.formatMessage({defaultMessage: 'Back to prompts'})}
-                            >
-                                <ArrowLeftIcon size={20}/>
-                            </BackButton>
-                        )}
-                        <ModalTitle>
-                            {showCreateForm ? (
-                                <FormattedMessage defaultMessage='New Prompt'/>
-                            ) : editingPrompt ? (
-                                editingPrompt.name
-                            ) : (
-                                <FormattedMessage defaultMessage='Custom Prompts'/>
+                <ModalContainer
+                    className={MODAL_SHEET_CLASS}
+                    onClick={handleModalClick}
+                    role='dialog'
+                    aria-modal='true'
+                    aria-label={intl.formatMessage({defaultMessage: 'Custom Prompts'})}
+                >
+                    <ModalHeader>
+                        <ModalHeaderLeading>
+                            {(showCreateForm || editingPromptId) && (
+                                <BackButton
+                                    type='button'
+                                    onClick={handleFormBack}
+                                    aria-label={intl.formatMessage({defaultMessage: 'Back to prompts'})}
+                                >
+                                    <ArrowLeftIcon size={20}/>
+                                </BackButton>
                             )}
-                        </ModalTitle>
-                    </ModalHeaderLeading>
-                    <CloseButton
-                        type='button'
-                        onClick={handleClose}
-                        aria-label={intl.formatMessage({defaultMessage: 'Close'})}
-                    >
-                        <CloseIcon size={20}/>
-                    </CloseButton>
-                </ModalHeader>
-                {showCreateForm || editingPrompt ? (
-                    <ModalBody
-                        $stickyFormFooter={
-                            showCreateForm ||
-                            (editingPrompt !== undefined && editingPrompt.creator_id === currentUserId)
-                        }
-                    >
-                        {error && <ErrorBanner>{error}</ErrorBanner>}
-                        {showCreateForm ? (
-                            <CustomPromptForm
-                                stickyFooter={true}
-                                onSave={handleCreate}
-                                onDiscard={handleFormBack}
-                            />
-                        ) : (
-                            editingPrompt && (
-                                <CustomPromptForm
-                                    stickyFooter={editingPrompt.creator_id === currentUserId}
-                                    prompt={editingPrompt}
-                                    readOnly={editingPrompt.creator_id !== currentUserId}
-                                    onSave={(data) => handleUpdate(editingPrompt.id, data)}
-                                    onDiscard={handleFormBack}
-                                    {...(editingPrompt.creator_id === currentUserId ?
-                                        {onDelete: () => setDeleteConfirmId(editingPrompt.id)} :
-                                        {})}
-                                />
-                            )
-                        )}
-                    </ModalBody>
-                ) : (
-                    <>
-                        <TabBar>
-                            <Tab
-                                $active={activeTab === 'all'}
-                                onClick={() => setActiveTab('all')}
-                            >
-                                <FormattedMessage defaultMessage='All Prompts'/>
-                            </Tab>
-                            <Tab
-                                $active={activeTab === 'yours'}
-                                onClick={() => setActiveTab('yours')}
-                            >
-                                <FormattedMessage defaultMessage='Your Prompts'/>
-                            </Tab>
-                        </TabBar>
-                        <ToolbarRow>
-                            <SearchContainer>
-                                <SearchIconWrapper>
-                                    <MagnifyIcon size={16}/>
-                                </SearchIconWrapper>
-                                <SearchInput
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    placeholder={intl.formatMessage({defaultMessage: 'Search prompts'})}
-                                    aria-label={intl.formatMessage({defaultMessage: 'Search prompts'})}
-                                />
-                            </SearchContainer>
-                            <CreateNewButton
-                                onClick={() => {
-                                    setShowCreateForm(true);
-                                    setEditingPromptId(null);
-                                }}
-                            >
-                                <PlusIcon size={16}/>
-                                <FormattedMessage defaultMessage='Create new'/>
-                            </CreateNewButton>
-                        </ToolbarRow>
-                        <ModalBody>
+                            <ModalTitle>{title}</ModalTitle>
+                        </ModalHeaderLeading>
+                        <CloseButton
+                            type='button'
+                            onClick={handleClose}
+                            aria-label={intl.formatMessage({defaultMessage: 'Close'})}
+                        >
+                            <CloseIcon size={20}/>
+                        </CloseButton>
+                    </ModalHeader>
+                    {showCreateForm || editingPrompt ? (
+                        <ModalBody
+                            $stickyFormFooter={Boolean(
+                                showCreateForm ||
+                                (editingPrompt && editingPrompt.creator_id === currentUserId),
+                            )}
+                        >
                             {error && <ErrorBanner>{error}</ErrorBanner>}
-                            <PromptList>
-                                {filteredPrompts.map((prompt) => {
-                                    const isPinned = pinnedIds.includes(prompt.id);
-                                    const openPrompt = () => {
-                                        setEditingPromptId(prompt.id);
-                                        setShowCreateForm(false);
-                                    };
-
-                                    return (
-                                        <PromptRowContainer key={prompt.id}>
-                                            <PromptRowHeader
-                                                role='button'
-                                                tabIndex={0}
-                                                aria-label={intl.formatMessage(
-                                                    {defaultMessage: 'Open prompt {name}'},
-                                                    {name: prompt.name},
-                                                )}
-                                                onClick={openPrompt}
-                                                onKeyDown={(e) => {
-                                                    if (e.target !== e.currentTarget) {
-                                                        return;
-                                                    }
-                                                    if (e.key === 'Enter' || e.key === ' ') {
-                                                        e.preventDefault();
-                                                        openPrompt();
-                                                    }
-                                                }}
-                                            >
-                                                <PromptInfo>
-                                                    <PromptName>{prompt.name}</PromptName>
-                                                    {prompt.description && (
-                                                        <PromptDescription>{prompt.description}</PromptDescription>
-                                                    )}
-                                                </PromptInfo>
-                                                <PinButton
-                                                    type='button'
-                                                    $pinned={isPinned}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleTogglePin(prompt.id);
-                                                    }}
-                                                    aria-label={isPinned ?
-                                                        intl.formatMessage({defaultMessage: 'Unpin prompt'}) :
-                                                        intl.formatMessage({defaultMessage: 'Pin prompt'})
-                                                    }
-                                                >
-                                                    {isPinned ? <PinIcon size={18}/> : <PinOutlineIcon size={18}/>}
-                                                </PinButton>
-                                            </PromptRowHeader>
-                                        </PromptRowContainer>
-                                    );
-                                })}
-                                {filteredPrompts.length === 0 && (
-                                    <EmptyState>
-                                        <FormattedMessage defaultMessage='No prompts found'/>
-                                    </EmptyState>
-                                )}
-                            </PromptList>
+                            {showCreateForm ? (
+                                <CustomPromptForm
+                                    stickyFooter={true}
+                                    onSave={handleCreate}
+                                    onDiscard={handleFormBack}
+                                />
+                            ) : (
+                                editingPrompt && (
+                                    <CustomPromptForm
+                                        stickyFooter={editingPrompt.creator_id === currentUserId}
+                                        prompt={editingPrompt}
+                                        readOnly={editingPrompt.creator_id !== currentUserId}
+                                        onSave={(data) => handleUpdate(editingPrompt.id, data)}
+                                        onDiscard={handleFormBack}
+                                        {...(editingPrompt.creator_id === currentUserId ? {onDelete: () => setDeleteConfirmId(editingPrompt.id)} : {})}
+                                    />
+                                )
+                            )}
                         </ModalBody>
-                    </>
-                )}
-            </ModalContainer>
-        </AnimatedModalShell>
-        <ConfirmationDialog
-            show={deleteConfirmId !== null}
-            title={<FormattedMessage defaultMessage='Delete prompt'/>}
-            message={<FormattedMessage defaultMessage='Are you sure you want to delete this prompt? This action cannot be undone.'/>}
-            confirmButtonText={<FormattedMessage defaultMessage='Delete'/>}
-            onConfirm={() => deleteConfirmId && handleDelete(deleteConfirmId)}
-            onCancel={() => setDeleteConfirmId(null)}
-            isDestructive={true}
-            zIndex={3000}
-        />
+                    ) : (
+                        <>
+                            <TabBar>
+                                <Tab
+                                    $active={activeTab === 'all'}
+                                    onClick={() => setActiveTab('all')}
+                                >
+                                    <FormattedMessage defaultMessage='All Prompts'/>
+                                </Tab>
+                                <Tab
+                                    $active={activeTab === 'yours'}
+                                    onClick={() => setActiveTab('yours')}
+                                >
+                                    <FormattedMessage defaultMessage='Your Prompts'/>
+                                </Tab>
+                            </TabBar>
+                            <ToolbarRow>
+                                <SearchContainer>
+                                    <SearchIconWrapper>
+                                        <MagnifyIcon size={16}/>
+                                    </SearchIconWrapper>
+                                    <SearchInput
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        placeholder={intl.formatMessage({defaultMessage: 'Search prompts'})}
+                                        aria-label={intl.formatMessage({defaultMessage: 'Search prompts'})}
+                                    />
+                                </SearchContainer>
+                                <CreateNewButton
+                                    onClick={() => {
+                                        setShowCreateForm(true);
+                                        setEditingPromptId(null);
+                                    }}
+                                >
+                                    <PlusIcon size={16}/>
+                                    <FormattedMessage defaultMessage='Create new'/>
+                                </CreateNewButton>
+                            </ToolbarRow>
+                            <ModalBody>
+                                {error && <ErrorBanner>{error}</ErrorBanner>}
+                                <PromptList>
+                                    {filteredPrompts.map((prompt) => {
+                                        const isPinned = pinnedIds.includes(prompt.id);
+                                        const openPrompt = () => {
+                                            setEditingPromptId(prompt.id);
+                                            setShowCreateForm(false);
+                                        };
+
+                                        return (
+                                            <PromptRowContainer key={prompt.id}>
+                                                <PromptRowHeader
+                                                    role='button'
+                                                    tabIndex={0}
+                                                    aria-label={intl.formatMessage(
+                                                        {defaultMessage: 'Open prompt {name}'},
+                                                        {name: prompt.name},
+                                                    )}
+                                                    onClick={openPrompt}
+                                                    onKeyDown={(e) => {
+                                                        if (e.target !== e.currentTarget) {
+                                                            return;
+                                                        }
+                                                        if (e.key === 'Enter' || e.key === ' ') {
+                                                            e.preventDefault();
+                                                            openPrompt();
+                                                        }
+                                                    }}
+                                                >
+                                                    <PromptInfo>
+                                                        <PromptName>{prompt.name}</PromptName>
+                                                        {prompt.description && (
+                                                            <PromptDescription>{prompt.description}</PromptDescription>
+                                                        )}
+                                                    </PromptInfo>
+                                                    <PinButton
+                                                        type='button'
+                                                        $pinned={isPinned}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleTogglePin(prompt.id);
+                                                        }}
+                                                        aria-label={isPinned ? intl.formatMessage({defaultMessage: 'Unpin prompt'}) : intl.formatMessage({defaultMessage: 'Pin prompt'})
+                                                        }
+                                                    >
+                                                        {isPinned ? <PinIcon size={18}/> : <PinOutlineIcon size={18}/>}
+                                                    </PinButton>
+                                                </PromptRowHeader>
+                                            </PromptRowContainer>
+                                        );
+                                    })}
+                                    {filteredPrompts.length === 0 && (
+                                        <EmptyState>
+                                            <FormattedMessage defaultMessage='No prompts found'/>
+                                        </EmptyState>
+                                    )}
+                                </PromptList>
+                            </ModalBody>
+                        </>
+                    )}
+                </ModalContainer>
+            </AnimatedModalShell>
+            <ConfirmationDialog
+                show={deleteConfirmId !== null}
+                title={<FormattedMessage defaultMessage='Delete prompt'/>}
+                message={<FormattedMessage defaultMessage='Are you sure you want to delete this prompt? This action cannot be undone.'/>}
+                confirmButtonText={<FormattedMessage defaultMessage='Delete'/>}
+                onConfirm={() => deleteConfirmId && handleDelete(deleteConfirmId)}
+                onCancel={() => setDeleteConfirmId(null)}
+                isDestructive={true}
+                zIndex={3000}
+            />
         </>
     );
 };

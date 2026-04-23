@@ -102,18 +102,16 @@ const AgentRow = (props: Props) => {
         <RowContainer>
             <RowMain
                 $clickable={canManage}
-                onClick={canManage ? handleRowActivate : undefined}
-                onKeyDown={canManage ? handleRowKeyDown : undefined}
-                role={canManage ? 'button' : undefined}
-                tabIndex={canManage ? 0 : undefined}
-                aria-label={
-                    canManage ?
-                        intl.formatMessage(
-                            {defaultMessage: 'Edit agent {name}'},
-                            {name: agent.displayName || agent.name},
-                        ) :
-                        undefined
-                }
+                {...(canManage ? {
+                    onClick: handleRowActivate,
+                    onKeyDown: handleRowKeyDown,
+                    role: 'button',
+                    tabIndex: 0,
+                    'aria-label': intl.formatMessage(
+                        {defaultMessage: 'Edit agent {name}'},
+                        {name: agent.displayName || agent.name},
+                    ),
+                } : {})}
             >
                 <Avatar
                     src={avatarUrl}
@@ -144,11 +142,17 @@ const AgentRow = (props: Props) => {
                     </MenuButton>
                     {menuOpen && (
                         <DropdownMenu>
-                            <MenuItem type='button' onClick={handleEdit}>
+                            <MenuItem
+                                type='button'
+                                onClick={handleEdit}
+                            >
                                 <PencilOutlineIcon size={16}/>
                                 <FormattedMessage defaultMessage='Edit'/>
                             </MenuItem>
-                            <MenuItemDanger type='button' onClick={handleDelete}>
+                            <MenuItemDanger
+                                type='button'
+                                onClick={handleDelete}
+                            >
                                 <TrashCanOutlineIcon size={16}/>
                                 <FormattedMessage defaultMessage='Delete'/>
                             </MenuItemDanger>

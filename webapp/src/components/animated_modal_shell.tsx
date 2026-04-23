@@ -97,9 +97,9 @@ export const AnimatedModalShell = ({show, children, onBackdropClick, zIndex = 20
             in={show}
             timeout={MODAL_TRANSITION_MS}
             classNames='mm-ai-modal'
-            unmountOnExit
-            mountOnEnter
-            appear
+            unmountOnExit={true}
+            mountOnEnter={true}
+            appear={true}
         >
             <ShellRoot
                 ref={nodeRef}

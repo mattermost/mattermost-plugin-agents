@@ -6,8 +6,9 @@ import {CSSTransition} from 'react-transition-group';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
-import {PrimaryButton, TertiaryButton, DestructiveButton} from './assets/buttons';
 import {MODAL_SHEET_CLASS, MODAL_TRANSITION_MS, modalTransitionPhases} from '@/components/animated_modal_shell';
+
+import {PrimaryButton, TertiaryButton, DestructiveButton} from './assets/buttons';
 
 interface ConfirmationDialogProps {
     title: React.ReactNode;
@@ -60,7 +61,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
     pendingRef.current = confirmPending;
     onCancelRef.current = onCancel;
 
-    const dialogMounted = show === undefined || show;
+    const dialogMounted = typeof show === 'undefined' || show;
 
     useEffect(() => {
         if (!managedAccessibility || !dialogMounted) {
@@ -109,7 +110,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
                     e.preventDefault();
                     last.focus();
                 }
-            } else if (document.activeElement === last) {
+            } else if (document.activeElement !== first) {
                 e.preventDefault();
                 first.focus();
             }
@@ -138,9 +139,11 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
     const cancelDisabled = confirmPending;
     const backdropProps = managedAccessibility ? {} : {onClick: onCancel};
 
+    const transitionRefProps = typeof show === 'undefined' ? {} : {ref: transitionRef};
+
     const dialogTree = (
         <DialogWrapper
-            {...(show !== undefined ? {ref: transitionRef} : {})}
+            {...transitionRefProps}
             $zIndex={zIndex}
             {...backdropProps}
         >
@@ -187,23 +190,23 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
         </DialogWrapper>
     );
 
-    if (show !== undefined) {
-        return (
-            <CSSTransition
-                nodeRef={transitionRef}
-                in={show}
-                timeout={MODAL_TRANSITION_MS}
-                classNames='mm-ai-modal'
-                unmountOnExit
-                mountOnEnter
-                appear
-            >
-                {dialogTree}
-            </CSSTransition>
-        );
+    if (typeof show === 'undefined') {
+        return dialogTree;
     }
 
-    return dialogTree;
+    return (
+        <CSSTransition
+            nodeRef={transitionRef}
+            in={show}
+            timeout={MODAL_TRANSITION_MS}
+            classNames='mm-ai-modal'
+            unmountOnExit={true}
+            mountOnEnter={true}
+            appear={true}
+        >
+            {dialogTree}
+        </CSSTransition>
+    );
 };
 
 const DialogWrapper = styled.div<{$zIndex: number}>`
