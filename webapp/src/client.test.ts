@@ -4,23 +4,32 @@
 import type {ChannelSearchOpts, ChannelWithTeamData} from '@mattermost/types/channels';
 import type {OptsSignalExt} from '@mattermost/types/client4';
 
-type SearchAllChannelsOpts = Omit<ChannelSearchOpts, 'page' | 'per_page'> & OptsSignalExt;
-
-const mockSearchAllChannels = jest.fn<
-    Promise<ChannelWithTeamData[]>,
-    [string, SearchAllChannelsOpts | undefined]
->();
-
-jest.mock('@mattermost/client', () => ({
-    Client4: jest.fn().mockImplementation(() => ({
-        searchAllChannels: mockSearchAllChannels,
-    })),
-    ClientError: class extends Error {},
-}));
-
 import type {ConversationResponse, Turn} from '@/types/conversation';
 
 import {normalizeConversationResponse, searchAllChannels} from './client';
+
+type SearchAllChannelsOpts = Omit<ChannelSearchOpts, 'page' | 'per_page'> & OptsSignalExt;
+
+jest.mock('@mattermost/client', () => {
+    const mockSearchAllChannels = jest.fn<
+        Promise<ChannelWithTeamData[]>,
+        [string, SearchAllChannelsOpts | undefined]
+    >();
+
+    return {
+        Client4: jest.fn().mockImplementation(() => ({
+            searchAllChannels: mockSearchAllChannels,
+        })),
+        ClientError: class extends Error {},
+        mockSearchAllChannels,
+    };
+});
+
+const {mockSearchAllChannels} = jest.requireMock('@mattermost/client') as {
+    mockSearchAllChannels: jest.MockedFunction<
+        (term: string, opts?: SearchAllChannelsOpts) => Promise<ChannelWithTeamData[]>
+    >;
+};
 
 function makeTurn(overrides: Partial<Turn> = {}): Turn {
     return {
