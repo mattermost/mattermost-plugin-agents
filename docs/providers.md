@@ -210,8 +210,8 @@ Vertex AI provides access to Gemini and other Google models through Google Cloud
 
 The plugin supports two authentication modes:
 
-- **Application Default Credentials (ADC)** — recommended when the plugin runs on GCP (GKE, GCE) with an attached service account, or when `GOOGLE_APPLICATION_CREDENTIALS` points at a service account key file on the server. Leave the **Service Account JSON** field blank.
-- **Service Account JSON** — paste the full contents of a service account key JSON into the **Service Account JSON** field. The account needs the `roles/aiplatform.user` role (or a role with the `aiplatform.endpoints.predict` permission) in your project.
+- **Application Default Credentials (ADC)** — recommended when the plugin runs on GCP (GKE, GCE) with an attached service account, or when `GOOGLE_APPLICATION_CREDENTIALS` points at a service account key file on the server. Leaving the **Service Account JSON** field blank is intentional and tells the plugin to use ADC.
+- **Service Account JSON** — paste the full contents of a service account key JSON into the **Service Account JSON** field. If you provide a value, it must be valid JSON. The account needs the `roles/aiplatform.user` role (or a role with the `aiplatform.endpoints.predict` permission) in your project.
 
 ### Configuration Options
 
@@ -220,8 +220,8 @@ The plugin supports two authentication modes:
 | **GCP Project ID** | Yes | Your Google Cloud project ID (e.g., `my-project-123`) |
 | **GCP Project Number** | No | Numeric project number — required by some Vertex endpoints, leave blank otherwise |
 | **GCP Region** | Yes | Vertex AI region (e.g., `us-central1`, `europe-west4`) |
-| **Service Account JSON** | No | Full service account JSON. Leave blank to use ADC or an attached IAM role. |
-| **Default Model** | Yes | The Vertex model ID to use (see [Vertex AI model documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models)) |
+| **Service Account JSON** | No | Full service account JSON. Leave blank to use ADC or an attached service account. If set, it must be valid JSON. |
+| **Default Model** | Yes | The model to use by default. When **GCP Project ID**, **GCP Region**, and working Vertex authentication are configured, Mattermost can fetch available Vertex models for selection. You can also enter a model ID manually. See the [Vertex AI model documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models). |
 
 ### Reasoning and native web search
 
@@ -233,6 +233,3 @@ native web-search capabilities as direct Gemini:
   **Reasoning Effort** selector maps to `thinkingConfig.thinkingLevel` (3.0+).
 - **Native web search** — enable **Web Search** under **Native Google Tools**
   to ground responses with Google Search via the Vertex Responses API.
-
-Anthropic models served through Vertex AI continue to use Anthropic-style
-extended thinking.
