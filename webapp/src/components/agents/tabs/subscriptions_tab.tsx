@@ -141,7 +141,15 @@ const SubscriptionsTab = (props: Props) => {
                                 </FieldLabel>
                                 <PromptTextarea
                                     rows={5}
-                                    placeholder={intl.formatMessage({defaultMessage: 'You may reference {{.Username}}, {{.Message}}, {{.PostID}}, and {{.Now}}.'})}
+                                    placeholder={intl.formatMessage(
+                                        {defaultMessage: 'You may reference {username}, {message}, {postID}, and {now}.'},
+                                        {
+                                            username: '{{.Username}}',
+                                            message: '{{.Message}}',
+                                            postID: '{{.PostID}}',
+                                            now: '{{.Now}}',
+                                        },
+                                    )}
                                     value={sub.prompt}
                                     onChange={(e) => handlePatch(i, {prompt: e.target.value})}
                                 />

@@ -184,7 +184,10 @@ const SchedulesTab = (props: Props) => {
                                     </FieldLabel>
                                     <PromptTextarea
                                         rows={5}
-                                        placeholder={intl.formatMessage({defaultMessage: 'Describe what the agent should do at each run. {{.Now}} expands to the current UTC timestamp.'})}
+                                        placeholder={intl.formatMessage(
+                                            {defaultMessage: 'Describe what the agent should do at each run. {nowVar} expands to the current UTC timestamp.'},
+                                            {nowVar: '{{.Now}}'},
+                                        )}
                                         value={sched.prompt}
                                         onChange={(e) => handlePatch(i, {prompt: e.target.value})}
                                     />
