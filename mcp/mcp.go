@@ -21,8 +21,11 @@ import (
 	"fmt"
 	"net/http"
 
+	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/mattermost/mattermost-plugin-agents/config"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
@@ -67,6 +70,71 @@ func DiscoverRemoteServerTools(
 		})
 	}
 
+	return tools, nil
+}
+
+// DiscoverPluginServerTools creates an ephemeral connection to a plugin-registered
+// MCP server via PluginHTTP and returns its advertised tool list. Mirrors
+// DiscoverRemoteServerTools / DiscoverEmbeddedServerTools but uses the
+// PluginHTTPRoundTripper transport chain instead of the public HTTP client.
+//
+// Caller-supplied userID flows through as X-Mattermost-UserID on every request.
+// This is the "admin probe" path — no caching, no per-user client reuse; callers
+// in hot paths (GetToolsForUser) use UserClients.ConnectToPluginServer instead.
+func DiscoverPluginServerTools(
+	ctx context.Context,
+	userID string,
+	cfg PluginServerConfig,
+	sourcePluginAPI mmapi.Client,
+	log pluginapi.LogService,
+) ([]ToolInfo, error) {
+	if sourcePluginAPI == nil {
+		return nil, fmt.Errorf("sourcePluginAPI is nil; plugin MCP server %s cannot be reached", cfg.PluginID)
+	}
+
+	// Build the transport chain: PluginHTTPRoundTripper (URL rewrite) ->
+	// headerTransport (X-Mattermost-UserID injection) -> http.Client.
+	roundTripper := &PluginHTTPRoundTripper{
+		pluginID:  cfg.PluginID,
+		basePath:  cfg.Path,
+		pluginAPI: sourcePluginAPI,
+	}
+	httpClient := &http.Client{
+		Transport: &headerTransport{
+			base:    roundTripper,
+			headers: map[string]string{MMUserIDHeader: userID},
+		},
+	}
+
+	mcpClient := gosdkmcp.NewClient(
+		&gosdkmcp.Implementation{
+			Name:    "mattermost-agents-admin-probe",
+			Version: "1.0",
+		},
+		&gosdkmcp.ClientOptions{},
+	)
+	session, err := mcpClient.Connect(ctx, &gosdkmcp.StreamableClientTransport{
+		Endpoint:   "http://plugin" + cfg.Path,
+		HTTPClient: httpClient,
+	}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to plugin MCP server %s: %w", cfg.PluginID, err)
+	}
+	defer func() { _ = session.Close() }()
+
+	result, err := session.ListTools(ctx, &gosdkmcp.ListToolsParams{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list tools on plugin MCP server %s: %w", cfg.PluginID, err)
+	}
+
+	tools := make([]ToolInfo, 0, len(result.Tools))
+	for _, t := range result.Tools {
+		tools = append(tools, ToolInfo{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
+		})
+	}
 	return tools, nil
 }
 

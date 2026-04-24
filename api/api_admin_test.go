@@ -5,14 +5,17 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/indexer"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/metrics"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -218,4 +221,209 @@ func createMockIndexer(t *testing.T, mockService *mockIndexerService) *indexer.I
 	mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
 
 	return indexer.New(nil, nil, mockClient, nil, nil, mockMutexAPI)
+}
+
+// TestHandleGetMCPTools_PluginServer exercises the Phase 1F third-loop that
+// renders plugin-registered MCP servers alongside embedded and remote rows
+// on GET /admin/mcp/tools. It verifies:
+//   - enabled plugin entries are probed via DiscoverPluginServerTools;
+//   - disabled plugin entries are rendered with an empty tool list and NO probe;
+//   - probe errors surface through MCPServerInfo.Error;
+//   - ServerType and Enabled discriminator fields are populated.
+func TestHandleGetMCPTools_PluginServer(t *testing.T) {
+	tests := []struct {
+		name              string
+		pluginServers     []mcp.PluginServerConfig
+		discoverToolsResp []mcp.ToolInfo
+		discoverToolsErr  error
+		expectServerType  string
+		expectEnabled     bool
+		expectToolCount   int
+		expectErrorNotNil bool
+		expectProbeCalls  int
+	}{
+		{
+			name: "enabled plugin server returns tools",
+			pluginServers: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo",
+				Name:     "Demo",
+				Path:     "/mcp",
+				Enabled:  true,
+			}},
+			discoverToolsResp: []mcp.ToolInfo{
+				{Name: "echo", Description: "echoes input"},
+				{Name: "add", Description: "adds numbers"},
+			},
+			expectServerType: "plugin",
+			expectEnabled:    true,
+			expectToolCount:  2,
+			expectProbeCalls: 1,
+		},
+		{
+			name: "disabled plugin server renders row with no probe",
+			pluginServers: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo",
+				Name:     "Demo",
+				Path:     "/mcp",
+				Enabled:  false,
+			}},
+			expectServerType: "plugin",
+			expectEnabled:    false,
+			expectToolCount:  0,
+			expectProbeCalls: 0,
+		},
+		{
+			name: "unreachable plugin populates Error",
+			pluginServers: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo",
+				Name:     "Demo",
+				Path:     "/mcp",
+				Enabled:  true,
+			}},
+			discoverToolsErr:  errors.New("connection refused"),
+			expectServerType:  "plugin",
+			expectEnabled:     true,
+			expectErrorNotNil: true,
+			expectProbeCalls:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, mockAPI := setupAdminTestEnvironment(t)
+			defer mockAPI.AssertExpectations(t)
+
+			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+			mockAPI.On("LogError", mock.Anything).Return().Maybe()
+			mockAPI.On("LogDebug", mock.Anything).Return().Maybe()
+
+			mgr := api.mcpClientManager.(*mockMCPClientManager)
+			mgr.pluginServers = tt.pluginServers
+			mgr.discoverPluginToolsResponse = tt.discoverToolsResp
+			mgr.discoverPluginToolsErr = tt.discoverToolsErr
+
+			req := httptest.NewRequest(http.MethodGet, "/admin/mcp/tools", nil)
+			req.Header.Set("Mattermost-User-Id", "admin-user")
+
+			recorder := httptest.NewRecorder()
+			api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			resp := recorder.Result()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			var body MCPToolsResponse
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+			var pluginRow *MCPServerInfo
+			for i := range body.Servers {
+				if body.Servers[i].ServerType == "plugin" {
+					pluginRow = &body.Servers[i]
+					break
+				}
+			}
+			require.NotNil(t, pluginRow, "expected a plugin-type row in response.Servers")
+			require.Equal(t, tt.expectServerType, pluginRow.ServerType)
+			require.Equal(t, tt.expectEnabled, pluginRow.Enabled)
+			require.Equal(t, tt.expectToolCount, len(pluginRow.Tools))
+			if tt.expectErrorNotNil {
+				require.NotNil(t, pluginRow.Error)
+			} else {
+				require.Nil(t, pluginRow.Error)
+			}
+			require.Equal(t, tt.expectProbeCalls, mgr.discoverPluginToolsCallCount)
+		})
+	}
+}
+
+// TestHandleUpdatePluginServer exercises the admin-only enable/disable toggle
+// endpoint PUT /admin/mcp/plugin-servers/:pluginID introduced in Phase 1F.
+// It verifies:
+//   - happy path flips Enabled while preserving identity fields;
+//   - 404 when the pluginID has no registration;
+//   - 400 on malformed JSON body;
+//   - admin-auth gate: requests without PermissionManageSystem return 403.
+func TestHandleUpdatePluginServer(t *testing.T) {
+	tests := []struct {
+		name                string
+		pluginID            string
+		preRegistered       []mcp.PluginServerConfig
+		body                string
+		hasAdminPerm        bool
+		expectStatus        int
+		expectRegisterCalls int
+		expectEnabledAfter  bool
+	}{
+		{
+			name:     "happy path: flips Enabled true->false",
+			pluginID: "com.mattermost.demo",
+			preRegistered: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
+			}},
+			body:                `{"enabled": false}`,
+			hasAdminPerm:        true,
+			expectStatus:        http.StatusOK,
+			expectRegisterCalls: 1,
+			expectEnabledAfter:  false,
+		},
+		{
+			name:         "404 when pluginID not registered",
+			pluginID:     "com.missing",
+			body:         `{"enabled": true}`,
+			hasAdminPerm: true,
+			expectStatus: http.StatusNotFound,
+		},
+		{
+			name:     "400 on malformed body",
+			pluginID: "com.mattermost.demo",
+			preRegistered: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
+			}},
+			body:         `not json`,
+			hasAdminPerm: true,
+			expectStatus: http.StatusBadRequest,
+		},
+		{
+			name:     "403 when caller is not an admin",
+			pluginID: "com.mattermost.demo",
+			preRegistered: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
+			}},
+			body:                `{"enabled": false}`,
+			hasAdminPerm:        false,
+			expectStatus:        http.StatusForbidden,
+			expectRegisterCalls: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, mockAPI := setupAdminTestEnvironment(t)
+			defer mockAPI.AssertExpectations(t)
+
+			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(tt.hasAdminPerm).Maybe()
+			mockAPI.On("LogError", mock.Anything).Return().Maybe()
+
+			mgr := api.mcpClientManager.(*mockMCPClientManager)
+			mgr.pluginServers = tt.preRegistered
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/mcp/plugin-servers/"+tt.pluginID, strings.NewReader(tt.body))
+			req.Header.Set("Mattermost-User-Id", "admin-user")
+			req.Header.Set("Content-Type", "application/json")
+
+			recorder := httptest.NewRecorder()
+			api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			resp := recorder.Result()
+			require.Equal(t, tt.expectStatus, resp.StatusCode)
+
+			require.Len(t, mgr.registerCalls, tt.expectRegisterCalls)
+			if tt.expectStatus == http.StatusOK {
+				require.Equal(t, tt.expectEnabledAfter, mgr.registerCalls[0].Enabled)
+				// Identity fields must be preserved.
+				require.Equal(t, "Demo", mgr.registerCalls[0].Name)
+				require.Equal(t, "/mcp", mgr.registerCalls[0].Path)
+				require.Equal(t, "com.mattermost.demo", mgr.registerCalls[0].PluginID)
+			}
+		})
+	}
 }

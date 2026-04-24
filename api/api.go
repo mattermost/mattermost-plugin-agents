@@ -69,6 +69,10 @@ type MCPClientManager interface {
 	RegisterPluginServer(cfg mcp.PluginServerConfig)
 	UnregisterPluginServer(pluginID string)
 	ListPluginServers() []mcp.PluginServerConfig
+
+	// DiscoverPluginServerTools performs an ephemeral connect+ListTools against
+	// a registered plugin MCP server. Used by the admin Tools tab only.
+	DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error)
 }
 
 // ConfigStore provides read/write access to the plugin configuration in the database.
@@ -343,6 +347,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
+	adminRouter.PUT("/mcp/plugin-servers/:pluginID", a.handleUpdatePluginServer)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
 	adminRouter.GET("/config", a.handleGetConfig)
 	adminRouter.PUT("/config", a.handleSaveConfig)

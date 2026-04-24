@@ -343,6 +343,14 @@ func (m *ClientManager) ListPluginServers() []PluginServerConfig {
 	return out
 }
 
+// DiscoverPluginServerTools performs an ephemeral connect+ListTools against
+// the given plugin-registered MCP server and returns its tool list. Used by
+// the admin Tools tab (Phase 1F); not cached. For per-user cached tool access
+// see UserClients.ConnectToPluginServer.
+func (m *ClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg PluginServerConfig) ([]ToolInfo, error) {
+	return DiscoverPluginServerTools(ctx, userID, cfg, m.sourcePluginAPI, m.log)
+}
+
 // filterToolsByConfig filters raw discovered tools against the admin-configured
 // tool policies. Only tools that have a matching ServerConfig entry with a
 // ToolConfigs entry where enabled=true are returned. The result is ordered by

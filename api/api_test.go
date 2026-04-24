@@ -100,6 +100,12 @@ type mockMCPClientManager struct {
 	registerCalls   []mcp.PluginServerConfig
 	unregisterCalls []string
 	pluginServers   []mcp.PluginServerConfig // returned by ListPluginServers
+
+	// DiscoverPluginServerTools spy: tests set response/err and then read the
+	// call count to assert the admin Tools tab probed (or skipped) as expected.
+	discoverPluginToolsResponse  []mcp.ToolInfo
+	discoverPluginToolsErr       error
+	discoverPluginToolsCallCount int
 }
 
 func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
@@ -170,6 +176,11 @@ func (m *mockMCPClientManager) ListPluginServers() []mcp.PluginServerConfig {
 	out := make([]mcp.PluginServerConfig, len(m.pluginServers))
 	copy(out, m.pluginServers)
 	return out
+}
+
+func (m *mockMCPClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {
+	m.discoverPluginToolsCallCount++
+	return m.discoverPluginToolsResponse, m.discoverPluginToolsErr
 }
 
 // mockConversationStore is a simple in-memory implementation of ConversationStore for API-layer tests.

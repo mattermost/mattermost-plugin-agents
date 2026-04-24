@@ -220,6 +220,16 @@ type MCPServerInfo struct {
 	NeedsOAuth bool          `json:"needsOAuth"`
 	OAuthURL   string        `json:"oauthURL,omitempty"` // URL to redirect for OAuth if needed
 	Error      *string       `json:"error"`
+
+	// ServerType discriminates the row source: "embedded" | "remote" | "plugin".
+	// The webapp branches on this in findServerConfig (mcp_tools_viewer.tsx) to
+	// render the correct toggle/config surface for each category.
+	ServerType string `json:"serverType"`
+	// Enabled reflects the admin's on/off state for the server. Always true for
+	// embedded (which is non-toggleable). For remote it mirrors MCPServerConfig.Enabled.
+	// For plugin entries it mirrors PluginServerConfig.Enabled — plugin state lives
+	// server-side (not in mcpConfig), so the webapp reads it from here.
+	Enabled bool `json:"enabled"`
 }
 
 // MCPToolsResponse represents the response structure for MCP tools endpoint
@@ -245,10 +255,12 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 	embeddedServer := a.mcpClientManager.GetEmbeddedServer()
 	if embeddedServer != nil {
 		serverInfo := MCPServerInfo{
-			Name:  mcp.EmbeddedServerName,
-			URL:   mcp.EmbeddedClientKey,
-			Tools: []MCPToolInfo{},
-			Error: nil,
+			Name:       mcp.EmbeddedServerName,
+			URL:        mcp.EmbeddedClientKey,
+			Tools:      []MCPToolInfo{},
+			Error:      nil,
+			ServerType: "embedded",
+			Enabled:    true, // embedded is non-toggleable
 		}
 
 		// Embedded MCP is always available after PR #617, even if older configs still
@@ -270,10 +282,12 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 			continue
 		}
 		serverInfo := MCPServerInfo{
-			Name:  serverConfig.Name,
-			URL:   serverConfig.BaseURL,
-			Tools: []MCPToolInfo{},
-			Error: nil,
+			Name:       serverConfig.Name,
+			URL:        serverConfig.BaseURL,
+			Tools:      []MCPToolInfo{},
+			Error:      nil,
+			ServerType: "remote",
+			Enabled:    serverConfig.Enabled, // always true after the Enabled guard above; explicit for clarity
 		}
 
 		// Try to connect to the server and discover tools
@@ -289,6 +303,32 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 			}
 		} else {
 			serverInfo.Tools = tools
+		}
+
+		response.Servers = append(response.Servers, serverInfo)
+	}
+
+	// Discover tools from each plugin-registered MCP server.
+	// Unlike the remote branch, we render disabled plugin entries (with an empty
+	// tool list) so the admin UI can re-enable them via PUT /admin/mcp/plugin-servers/:pluginID.
+	for _, cfg := range a.mcpClientManager.ListPluginServers() {
+		serverInfo := MCPServerInfo{
+			Name:       cfg.Name,
+			URL:        fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
+			Tools:      []MCPToolInfo{},
+			Error:      nil,
+			ServerType: "plugin",
+			Enabled:    cfg.Enabled,
+		}
+
+		if cfg.Enabled {
+			tools, err := a.discoverPluginServerTools(c.Request.Context(), userID, cfg)
+			if err != nil {
+				errMsg := err.Error()
+				serverInfo.Error = &errMsg
+			} else {
+				serverInfo.Tools = tools
+			}
 		}
 
 		response.Servers = append(response.Servers, serverInfo)
@@ -367,4 +407,82 @@ func (a *API) handleClearMCPToolsCache(c *gin.Context) {
 		ClearedServers: clearedCount,
 		Message:        fmt.Sprintf("Successfully cleared cache for %d servers", clearedCount),
 	})
+}
+
+// discoverPluginServerTools performs an ephemeral probe of a plugin-registered
+// MCP server and normalizes its tool list into the admin-API shape. Mirrors
+// discoverRemoteServerTools; delegates all transport setup to the mcp package
+// (PluginHTTPRoundTripper chain). Fresh probe every call — no caching in Phase 1F.
+func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]MCPToolInfo, error) {
+	toolInfos, err := a.mcpClientManager.DiscoverPluginServerTools(ctx, userID, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	tools := make([]MCPToolInfo, 0, len(toolInfos))
+	for _, toolInfo := range toolInfos {
+		tools = append(tools, MCPToolInfo{
+			Name:        toolInfo.Name,
+			Description: toolInfo.Description,
+			InputSchema: toolInfo.InputSchema,
+		})
+	}
+
+	return tools, nil
+}
+
+// UpdatePluginServerRequest is the body shape for PUT /admin/mcp/plugin-servers/:pluginID.
+type UpdatePluginServerRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// handleUpdatePluginServer lets an admin flip the Enabled flag on a registered
+// plugin MCP server. Does NOT mutate PluginID/Name/Path/ExposeExternal — those
+// fields remain owned by the source plugin (set via the bridge register endpoint).
+func (a *API) handleUpdatePluginServer(c *gin.Context) {
+	pluginID := c.Param("pluginID")
+	if pluginID == "" {
+		c.AbortWithError(http.StatusBadRequest, errors.New("pluginID path parameter required"))
+		return
+	}
+
+	var req UpdatePluginServerRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	// Locate the existing registration. Plugin-registered servers register
+	// themselves; the admin cannot create a row from thin air here.
+	var found *mcp.PluginServerConfig
+	for _, cfg := range a.mcpClientManager.ListPluginServers() {
+		cfg := cfg // capture loop variable for pointer safety
+		if cfg.PluginID == pluginID {
+			found = &cfg
+			break
+		}
+	}
+	if found == nil {
+		c.AbortWithError(http.StatusNotFound, fmt.Errorf("plugin MCP server %q is not registered", pluginID))
+		return
+	}
+
+	// Mutate Enabled only. Preserve everything else.
+	updated := *found
+	updated.Enabled = req.Enabled
+	a.mcpClientManager.RegisterPluginServer(updated)
+
+	// If this plugin opted into external aggregation, rebuild the shared
+	// *mcp.Server so external clients see the Enabled state change. This
+	// reuses the Step 4 test-seam; if Step 5b's RebuildExternalServer method
+	// isn't landed yet, resolveExternalServerRebuilder returns nil and this
+	// is a no-op — external aggregation will reconcile on the next rebuild
+	// trigger. Safe either way.
+	if updated.ExposeExternal {
+		if rb := a.resolveExternalServerRebuilder(); rb != nil {
+			rb.RebuildExternalServer()
+		}
+	}
+
+	c.JSON(http.StatusOK, updated)
 }

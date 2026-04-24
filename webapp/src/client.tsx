@@ -533,6 +533,30 @@ export async function clearMCPToolsCache() {
     });
 }
 
+/**
+ * Flip the Enabled flag on a plugin-registered MCP server.
+ * PUT /admin/mcp/plugin-servers/:pluginID — body {enabled: boolean}.
+ * Returns the updated PluginServerConfig.
+ */
+export async function updatePluginServerEnabled(pluginID: string, enabled: boolean) {
+    const encoded = encodeURIComponent(pluginID);
+    const url = `${baseRoute()}/admin/mcp/plugin-servers/${encoded}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify({enabled}),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 /** Authoritative vetted default tool_configs for a base URL (matches mcp.SeedVettedToolConfigs). */
 export async function getVettedToolSeed(baseURL: string): Promise<VettedToolConfig[]> {
     const trimmed = baseURL.trim();

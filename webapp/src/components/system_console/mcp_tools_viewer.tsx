@@ -7,7 +7,7 @@ import {RefreshIcon, ExclamationThickIcon} from '@mattermost/compass-icons/compo
 import {FormattedMessage} from 'react-intl';
 
 import {TertiaryButton, SecondaryButton} from '../assets/buttons';
-import {getMCPTools, clearMCPToolsCache, getVettedToolSeed} from '../../client';
+import {getMCPTools, clearMCPToolsCache, getVettedToolSeed, updatePluginServerEnabled} from '../../client';
 
 import {MCPConfig, MCPServerConfig, MCPToolConfig} from './mcp_servers';
 import MCPServerToolRow from './mcp_server_tool_row';
@@ -27,6 +27,15 @@ export type MCPServerInfo = {
     needsOAuth: boolean;
     oauthURL?: string;
     error: string | null;
+
+    // Discriminator: "embedded" | "remote" | "plugin". Optional for back-compat
+    // with older server builds; post-Phase-1F the backend always sets it.
+    serverType?: string;
+
+    // Server-side Enabled state. Authoritative for plugin entries (whose config
+    // lives in the agents-plugin registry, not mcpConfig). For embedded always
+    // true; for remote mirrors mcpConfig.servers[i].enabled.
+    enabled?: boolean;
 };
 
 export type MCPToolsResponse = {
@@ -100,6 +109,10 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
         seededRef.current = true;
 
         (async () => {
+            // Plugin-registered MCP servers are intentionally NOT seeded here:
+            // their tool_configs aren't persisted in mcpConfig (Phase 1F scope;
+            // plugin tools default-allow via filterToolsByConfig's synthetic
+            // entry at mcp/client_manager.go).
             let updatedConfig = mcpConfig;
             let changed = false;
 
@@ -163,9 +176,21 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
     // The embedded server uses this key as its origin/URL
     const embeddedClientKey = EMBEDDED_MATTERMOST_BASE_URL;
 
-    // Find the matching ServerConfig for a discovered server
+    // Find the matching ServerConfig for a discovered server.
+    //
+    // Three branches:
+    //   - Embedded: synthesized from mcpConfig.embeddedServer.
+    //   - Plugin (serverType === 'plugin'): synthesized from the MCPServerInfo
+    //     payload itself. Plugin-server config lives server-side (registry, not
+    //     mcpConfig); the authoritative Enabled bit arrives via server.enabled.
+    //     tool_configs is intentionally left empty — Phase 1F default-allows
+    //     every plugin tool via filterToolsByConfig's synthetic-entry path.
+    //   - Remote: looked up in mcpConfig.servers by name or baseURL.
+    //
+    // Before the plugin branch existed, plugin entries returned null, hiding
+    // the toggle (mcp_server_tool_row.tsx:106) and silently dropping tool-config
+    // writes (mcp_server_tool_row.tsx:50-52).
     const findServerConfig = (server: MCPServerInfo): MCPServerConfig | null => {
-        // Handle the embedded server: construct a ServerConfig-like object from embeddedServer config
         if (server.url === embeddedClientKey) {
             return {
                 name: server.name,
@@ -176,12 +201,29 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             };
         }
 
+        if (server.serverType === 'plugin') {
+            return {
+                name: server.name,
+                enabled: server.enabled ?? false,
+                baseURL: server.url,
+                headers: {},
+                tool_configs: [],
+            };
+        }
+
         return mcpConfig.servers.find((sc) =>
             sc.name === server.name || sc.baseURL === server.url,
         ) || null;
     };
 
-    // Update a specific server's config
+    // Update a specific server's config.
+    //
+    // Plugin entries are special: their Enabled state lives in the agents-plugin
+    // registry, not in mcpConfig. Toggling them routes through the admin-only
+    // PUT /admin/mcp/plugin-servers/:pluginID endpoint (see api_admin.go).
+    // tool_configs mutations for plugin entries are NOT persisted in Phase 1F;
+    // plugin tools default-allow via filterToolsByConfig's synthetic entry, and
+    // per-plugin-tool config is deferred to a later phase.
     const handleServerConfigChange = (
         serverInfo: MCPServerInfo,
         updatedServerConfig: MCPServerConfig,
@@ -195,6 +237,23 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                     tool_configs: updatedServerConfig.tool_configs,
                 },
             });
+            return;
+        }
+
+        // Handle plugin-registered entries: only the Enabled bit is persistable
+        // in Phase 1F, and only via the admin endpoint.
+        if (serverInfo.serverType === 'plugin') {
+            // pluginID is the first segment after "plugin://". The backend
+            // generates the synthetic URL "plugin://<pluginID><path>" in
+            // handleGetMCPTools; keep parsing defensive.
+            const pluginID = serverInfo.url.replace(/^plugin:\/\//, '').split('/')[0];
+            if (pluginID) {
+                updatePluginServerEnabled(pluginID, updatedServerConfig.enabled).
+                    then(() => fetchTools()).
+                    catch((err) => {
+                        setError(err instanceof Error ? err.message : 'Failed to update plugin server');
+                    });
+            }
             return;
         }
 
