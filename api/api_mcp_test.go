@@ -273,6 +273,64 @@ func TestHandleGetUserMCPToolsIncludesEmbeddedZeroToolServer(t *testing.T) {
 	require.Empty(t, response.Servers[0].AuthURL)
 }
 
+func TestHandleGetUserMCPToolsIncludesPluginServers(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	// A plugin server registered in the mock, with one discovered tool.
+	pluginCfg := mcp.PluginServerConfig{
+		PluginID: "com.example.mcp-demo",
+		Name:     "MCP Demo",
+		Path:     "/mcp",
+		Enabled:  true,
+	}
+	disabledCfg := mcp.PluginServerConfig{
+		PluginID: "com.example.disabled",
+		Name:     "Disabled Plugin",
+		Path:     "/mcp",
+		Enabled:  false,
+	}
+
+	e.config.mcpConfig = mcp.Config{Enabled: true}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		pluginServers: []mcp.PluginServerConfig{pluginCfg, disabledCfg},
+		tools: []llm.Tool{
+			{
+				Name:         "echo",
+				Description:  "echo back input",
+				ServerOrigin: "plugin://" + pluginCfg.PluginID,
+			},
+			{
+				Name:         "add",
+				Description:  "add two numbers",
+				ServerOrigin: "plugin://" + pluginCfg.PluginID,
+			},
+		},
+	}
+
+	response := getUserMCPToolsResponse(t, e.api)
+
+	// Only the enabled plugin should appear; disabled is skipped.
+	require.Len(t, response.Servers, 1)
+	require.Equal(t, pluginCfg.Name, response.Servers[0].Name)
+	require.Equal(t, "plugin://"+pluginCfg.PluginID, response.Servers[0].ServerOrigin)
+	require.True(t, response.Servers[0].Authenticated) // has discovered tools
+	require.False(t, response.Servers[0].NeedsOAuth)
+	require.Len(t, response.Servers[0].Tools, 2)
+	// Alphabetical sort per buildUserMCPServerInfo.
+	require.Equal(t, "add", response.Servers[0].Tools[0].Name)
+	require.Equal(t, "echo", response.Servers[0].Tools[1].Name)
+	// Default-allow: every tool is enabled with "ask" policy — matches the
+	// synthetic-entry path in filterToolsByConfig at mcp/client_manager.go.
+	for _, tool := range response.Servers[0].Tools {
+		require.True(t, tool.Enabled, "tool %q should default to enabled", tool.Name)
+		require.Equal(t, "ask", tool.Policy, "tool %q should default to ask policy", tool.Name)
+	}
+}
+
 func getUserMCPToolsResponse(t *testing.T, api *API) UserMCPToolsResponse {
 	t.Helper()
 

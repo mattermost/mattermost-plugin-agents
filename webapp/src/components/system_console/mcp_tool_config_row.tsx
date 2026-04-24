@@ -16,9 +16,17 @@ type MCPToolConfigRowProps = {
     toolConfig: MCPToolConfig;
     onToolConfigChange: (config: MCPToolConfig) => void;
     serverDisabled?: boolean;
+
+    // When true, render the per-tool policy dropdown and enabled toggle as
+    // read-only with an explanatory tooltip. Used for plugin-registered
+    // servers, whose per-tool configs are NOT persisted in Phase 1F —
+    // plugin tools default-allow via filterToolsByConfig's synthetic entry
+    // at mcp/client_manager.go. Allowing edits here would silently drop
+    // writes (see handleServerConfigChange in mcp_tools_viewer.tsx).
+    policyReadOnly?: boolean;
 };
 
-const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled}: MCPToolConfigRowProps) => {
+const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled, policyReadOnly}: MCPToolConfigRowProps) => {
     const intl = useIntl();
     const [schemaExpanded, setSchemaExpanded] = useState(false);
 
@@ -36,6 +44,10 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled}
         });
     };
 
+    const readOnlyTooltip = intl.formatMessage({
+        defaultMessage: 'Per-tool policy is managed by the source plugin for plugin-registered MCP servers.',
+    });
+
     return (
         <ToolRowContainer $disabled={serverDisabled}>
             <ToolRowMain>
@@ -46,11 +58,11 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled}
                     )}
                 </ToolRowLeft>
                 <ToolRowRight>
-                    <PolicySelectWrapper>
+                    <PolicySelectWrapper title={policyReadOnly ? readOnlyTooltip : ''}>
                         <PolicySelect
                             value={toolConfig.policy}
                             onChange={handlePolicyChange}
-                            disabled={serverDisabled}
+                            disabled={serverDisabled || policyReadOnly}
                         >
                             <option value='auto_run_in_dm'>
                                 {intl.formatMessage({defaultMessage: 'Auto Run (DM)'})}
@@ -63,12 +75,14 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled}
                             </option>
                         </PolicySelect>
                     </PolicySelectWrapper>
-                    <ToggleSwitch
-                        checked={toolConfig.enabled}
-                        onChange={handleEnabledChange}
-                        disabled={serverDisabled}
-                        size='small'
-                    />
+                    <ToggleWrapper title={policyReadOnly ? readOnlyTooltip : ''}>
+                        <ToggleSwitch
+                            checked={toolConfig.enabled}
+                            onChange={handleEnabledChange}
+                            disabled={serverDisabled || policyReadOnly}
+                            size='small'
+                        />
+                    </ToggleWrapper>
                     <ExpandChevron onClick={() => setSchemaExpanded(!schemaExpanded)}>
                         <StyledChevron $expanded={schemaExpanded}>
                             <ChevronDownIcon size={16}/>
@@ -164,6 +178,11 @@ const PolicySelect = styled.select`
         opacity: 0.5;
         cursor: not-allowed;
     }
+`;
+
+const ToggleWrapper = styled.div`
+    display: flex;
+    align-items: center;
 `;
 
 const ExpandChevron = styled.div`

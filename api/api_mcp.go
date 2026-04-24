@@ -101,6 +101,35 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 		))
 	}
 
+	// Plugin-registered MCP servers. Mirrors the third loop in handleGetMCPTools
+	// (admin). Synthetic ServerConfig keyed by "plugin://<pluginID>" — matches
+	// the origin that filterToolsByConfig uses so tools from toolsByOrigin line
+	// up. Skip disabled entries (GetToolsForUser already drops their tools via
+	// snapshotEnabledPluginServers, so they'd always render empty). ToolConfigs
+	// is left empty — GetToolPolicy returns ("ask", true) for every tool,
+	// matching runtime default-allow semantics.
+	for _, cfg := range a.mcpClientManager.ListPluginServers() {
+		if !cfg.Enabled {
+			continue
+		}
+
+		origin := "plugin://" + cfg.PluginID
+		pluginConfig := &mcp.ServerConfig{
+			Name:    cfg.Name,
+			Enabled: true,
+			BaseURL: origin,
+		}
+
+		servers = append(servers, buildUserMCPServerInfo(
+			a,
+			userID,
+			oauthManager,
+			pluginConfig,
+			toolsByOrigin[origin],
+			authErrorsByOrigin,
+		))
+	}
+
 	c.JSON(http.StatusOK, UserMCPToolsResponse{Servers: servers})
 }
 

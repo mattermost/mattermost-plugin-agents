@@ -168,6 +168,12 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                                     handleToolConfigChange(tool.name, updatedConfig)
                                 }
                                 serverDisabled={!serverEnabled}
+
+                                // Per-tool configs are not persisted for plugin-registered
+                                // servers in Phase 1F (see mcp_tools_viewer.tsx handleServerConfigChange
+                                // and .planning/phase-5a/PLAN.md:1353). Render the controls as
+                                // read-only with a tooltip instead of silently dropping writes.
+                                policyReadOnly={server.serverType === 'plugin'}
                             />
                         ))
                     )}
