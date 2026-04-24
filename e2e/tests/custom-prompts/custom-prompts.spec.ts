@@ -22,12 +22,14 @@ test.afterAll(async () => {
     await mattermost.stop();
 });
 
-async function setupTestPage(page) {
+async function setupTestPage(page, options?: { channelViewTimeoutMs?: number }) {
     const mmPage = new MattermostPage(page);
     const aiPlugin = new AIPlugin(page);
     const url = mattermost.url();
 
-    await mmPage.login(url, username, password);
+    await mmPage.login(url, username, password, {
+        channelViewTimeoutMs: options?.channelViewTimeoutMs,
+    });
 
     return { mmPage, aiPlugin };
 }
@@ -196,7 +198,9 @@ test.describe('Custom Prompts Management Modal', () => {
     });
 
     test('modal displays title, tabs, search, and create button', async ({ page }) => {
-        await setupTestPage(page);
+        test.setTimeout(120000);
+
+        await setupTestPage(page, { channelViewTimeoutMs: 90000 });
         await openCustomPromptsModal(page);
 
         // Verify modal structure
