@@ -98,8 +98,10 @@ export class LLMBotPostHelper {
     }
 
     /**
-     * Get citation icon by index
-     * @param index - Citation index (1-based)
+     * Get citation icon by position.
+     * Real providers do not guarantee annotation indices are contiguous,
+     * so tests should target the visible citation order in the rendered post.
+     * @param index - Citation position (1-based)
      * @param postId - Optional post ID to scope the search
      */
     getCitationIcon(index: number, postId?: string): Locator {
@@ -125,13 +127,12 @@ export class LLMBotPostHelper {
     }
 
     /**
-     * Get citation wrapper (clickable container)
-     * @param index - Citation index (1-based)
+     * Get citation wrapper (clickable container) by visible position.
+     * @param index - Citation position (1-based)
      * @param postId - Optional post ID to scope the search
      */
     getCitationWrapper(index: number, postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        return baseLocator.locator(`[data-testid="llm-citation"][data-citation-index="${index}"]`);
+        return this.getAllCitationIcons(postId).nth(index - 1);
     }
 
     /**
