@@ -57,6 +57,12 @@ func (a *API) delegateToMCPHandler(c *gin.Context, handler http.Handler) {
 	ctx := c.Request.Context()
 	ctx = context.WithValue(ctx, auth.SessionIDContextKey, sessionID)
 	ctx = context.WithValue(ctx, auth.TokenResolverContextKey, auth.TokenResolver(tokenResolver))
+	// Propagate authenticated user ID so proxy MCP tool handlers (mcpserver/proxy_tools.go)
+	// can read it back and inject X-Mattermost-UserID on outbound PluginHTTP calls.
+	// userID came from mcpAuthMiddleware's read of the Mattermost-User-Id header,
+	// which the Mattermost server sets itself and strips from arbitrary external
+	// callers (server/channels/app/plugin_requests.go) — trustworthy.
+	ctx = context.WithValue(ctx, auth.UserIDContextKey, userID)
 	r := c.Request.WithContext(ctx)
 
 	// Delegate to the specified MCP handler
