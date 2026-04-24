@@ -35,6 +35,7 @@ import SearchButton from './components/search_button';
 import AskChannelButton from './components/ask_channel_button';
 import {doSelectPost} from './hooks';
 import {invalidateConversation} from './hooks/use_conversation';
+import {notifyMCPConnectionUpdated, MCPConnectionEvent} from './hooks/use_mcp_connection_events';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
 import {useBotlist} from './bots';
@@ -71,7 +72,8 @@ const IconAIContainer = styled.img`
     height: 24px;
 `;
 
-// Product switcher: primary blue like Channels; fixed slot width for label alignment, smaller glyph (~18px) to match core product icons (24px SVG looked oversized).
+// Product switcher: in the global header, inherit the same muted header text color as the Channels glyph
+// (see Mattermost ProductBranding). In the dropdown, match string product icons (ProductMenuItem uses --button-bg).
 const ProductSwitcherIconWrapper = styled.span`
     display: inline-flex;
     align-items: center;
@@ -80,7 +82,11 @@ const ProductSwitcherIconWrapper = styled.span`
     min-width: 24px;
     height: 24px;
     flex-shrink: 0;
-    color: var(--button-bg);
+    color: inherit;
+
+    .product-switcher-menu & {
+        color: var(--button-bg);
+    }
 
     svg {
         width: 18px;
@@ -186,6 +192,14 @@ export default class Plugin {
             'custom_mattermost-ai_conversation_updated',
             (msg: WebSocketMessage<{conversation_id: string}>) => {
                 invalidateConversation(msg.data.conversation_id);
+            },
+        );
+
+        // MCP OAuth connect/disconnect: refresh cached tool lists in open UI.
+        registry.registerWebSocketEventHandler(
+            'custom_mattermost-ai_mcp_connection_updated',
+            (msg: WebSocketMessage<MCPConnectionEvent>) => {
+                notifyMCPConnectionUpdated(msg.data);
             },
         );
 

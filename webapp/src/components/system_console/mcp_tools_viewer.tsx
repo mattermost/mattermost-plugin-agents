@@ -1,13 +1,14 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {RefreshIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage} from 'react-intl';
 
 import {TertiaryButton, SecondaryButton} from '../assets/buttons';
 import {getMCPTools, clearMCPToolsCache, getVettedToolSeed} from '../../client';
+import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
 
 import {MCPConfig, MCPServerConfig, MCPToolConfig} from './mcp_servers';
 import MCPServerToolRow from './mcp_server_tool_row';
@@ -48,20 +49,27 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
     const [clearSuccess, setClearSuccess] = useState<string | null>(null);
     const seededRef = useRef(false);
 
-    // Fetch tools data from the API
-    const fetchTools = async () => {
-        setLoading(true);
-        setError(null);
-
+    const fetchTools = useCallback(async (opts: {showLoading?: boolean} = {}) => {
         try {
+            if (opts.showLoading) {
+                setLoading(true);
+            }
             const response = await getMCPTools();
             setToolsData(response);
+            setError(null);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to fetch MCP tools');
+            if (opts.showLoading) {
+                setError(err instanceof Error ? err.message : 'Failed to fetch MCP tools');
+            } else {
+                // eslint-disable-next-line no-console
+                console.error('Background refresh of MCP tools failed:', err);
+            }
         } finally {
-            setLoading(false);
+            if (opts.showLoading) {
+                setLoading(false);
+            }
         }
-    };
+    }, []);
 
     // Clear the MCP tools cache
     const handleClearCache = async () => {
@@ -74,7 +82,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             setClearSuccess(response.message);
 
             // Automatically refresh tools after clearing cache
-            await fetchTools();
+            await fetchTools({showLoading: true});
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to clear cache');
         } finally {
@@ -82,12 +90,17 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
         }
     };
 
-    // Fetch tools on component mount (skip if pre-loaded data is available)
     useEffect(() => {
         if (!initialToolsData) {
-            fetchTools();
+            fetchTools({showLoading: true});
         }
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [initialToolsData, fetchTools]);
+
+    useMCPConnectionEvents(
+        useCallback(() => {
+            fetchTools();
+        }, [fetchTools]),
+    );
 
     // Retroactively seed vetted tool configs for existing servers.
     // This runs once after tools are first fetched, to fix servers configured before
@@ -242,7 +255,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                         <FormattedMessage defaultMessage='Clear Cache'/>
                     </SecondaryButton>
                     <RefreshButton
-                        onClick={fetchTools}
+                        onClick={() => fetchTools({showLoading: true})}
                         disabled={loading || clearing}
                     >
                         <RefreshIcon

@@ -178,7 +178,7 @@ async function waitForButtonInThread(page: Page, buttonName: string, timeout: nu
     const startTime = Date.now();
     const rhs = page.locator('#rhsContainer');
     while (Date.now() - startTime < timeout) {
-        const button = rhs.getByRole('button', { name: buttonName });
+        const button = rhs.getByRole('button', { name: buttonName, exact: true });
         const isVisible = await button.first().isVisible().catch(() => false);
         if (isVisible) {
             await page.waitForTimeout(500);
@@ -206,7 +206,7 @@ async function waitForAnyButtonInThread(
     const rhs = page.locator('#rhsContainer');
     while (Date.now() - startTime < timeout) {
         for (const buttonName of buttonNames) {
-            const button = rhs.getByRole('button', { name: buttonName });
+            const button = rhs.getByRole('button', { name: buttonName, exact: true });
             const isVisible = await button.first().isVisible().catch(() => false);
             if (isVisible) {
                 await page.waitForTimeout(500);
@@ -222,13 +222,32 @@ async function waitForAnyButtonInThread(
 }
 
 /**
+ * Click every currently visible button with the exact accessible name.
+ * Re-queries after each click so shrinking DOM lists cannot skip a tool.
+ */
+async function clickAllButtonsInThread(page: Page, buttonName: string): Promise<number> {
+    const rhs = page.locator('#rhsContainer');
+    let clicked = 0;
+
+    while (true) {
+        const button = rhs.getByRole('button', { name: buttonName, exact: true }).first();
+        const isVisible = await button.isVisible().catch(() => false);
+        if (!isVisible) {
+            return clicked;
+        }
+
+        await button.click();
+        clicked++;
+        await page.waitForTimeout(500);
+    }
+}
+
+/**
  * Complete one full tool call round: Accept all → Share all.
  * Returns true if a round was completed, false if no Accept button appeared
  * (meaning the LLM is done making tool calls).
  */
 async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'accept-keep-private' | 'reject'): Promise<boolean> {
-    const rhs = page.locator('#rhsContainer');
-
     // A round can begin in call stage (Accept/Reject) or directly in result stage
     // (Share/Keep private) when all tools in that round were auto-approved.
     const firstDecisionButton = await waitForAnyButtonInThread(
@@ -244,21 +263,13 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
     if (firstDecisionButton === 'Accept') {
         if (action === 'reject') {
             // Reject all tool calls in this round
-            const rejectButtons = rhs.getByRole('button', { name: 'Reject' });
-            const count = await rejectButtons.count();
-            for (let i = 0; i < count; i++) {
-                await rejectButtons.nth(i).click();
-            }
+            await clickAllButtonsInThread(page, 'Reject');
             await page.waitForTimeout(2000);
             return true;
         }
 
         // Accept all tool calls in this round
-        const acceptButtons = rhs.getByRole('button', { name: 'Accept' });
-        const acceptCount = await acceptButtons.count();
-        for (let i = 0; i < acceptCount; i++) {
-            await acceptButtons.nth(i).click();
-        }
+        await clickAllButtonsInThread(page, 'Accept');
 
         // Wait for Share/Keep private buttons (result stage)
         await waitForButtonInThread(page, 'Share', 120000);
@@ -268,18 +279,10 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
     // In reject mode, share auto-approved READ results so the LLM can continue to the
     // next round where non-auto-approved WRITE tools can still be rejected.
     if (action === 'accept-share' || action === 'reject') {
-        const shareButtons = rhs.getByRole('button', { name: 'Share' });
-        const shareCount = await shareButtons.count();
-        for (let i = 0; i < shareCount; i++) {
-            await shareButtons.nth(i).click();
-        }
+        await clickAllButtonsInThread(page, 'Share');
     } else {
         // accept-keep-private
-        const keepPrivateButtons = rhs.getByRole('button', { name: 'Keep private' });
-        const keepPrivateCount = await keepPrivateButtons.count();
-        for (let i = 0; i < keepPrivateCount; i++) {
-            await keepPrivateButtons.nth(i).click();
-        }
+        await clickAllButtonsInThread(page, 'Keep private');
     }
 
     await page.waitForTimeout(2000);
@@ -530,11 +533,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
                     if (firstDecisionButton === 'Accept') {
                         // Accept all tool calls in this round
-                        const acceptButtons = rhs.getByRole('button', { name: 'Accept' });
-                        const acceptCount = await acceptButtons.count();
-                        for (let i = 0; i < acceptCount; i++) {
-                            await acceptButtons.nth(i).click();
-                        }
+                        await clickAllButtonsInThread(invokerPage, 'Accept');
 
                         // Wait for Share/Keep private
                         await waitForButtonInThread(invokerPage, 'Share', 120000);
@@ -549,20 +548,12 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
                     if (isCreatePostResult) {
                         // This is the create_post result — Keep Private
-                        const keepPrivateButtons = rhs.getByRole('button', { name: 'Keep private' });
-                        const keepPrivateCount = await keepPrivateButtons.count();
-                        for (let i = 0; i < keepPrivateCount; i++) {
-                            await keepPrivateButtons.nth(i).click();
-                        }
+                        await clickAllButtonsInThread(invokerPage, 'Keep private');
                         await invokerPage.waitForTimeout(2000);
                         break;
                     } else {
                         // Intermediate round (e.g. get_channel_info) — Share so LLM can continue
-                        const shareButtons = rhs.getByRole('button', { name: 'Share' });
-                        const shareCount = await shareButtons.count();
-                        for (let i = 0; i < shareCount; i++) {
-                            await shareButtons.nth(i).click();
-                        }
+                        await clickAllButtonsInThread(invokerPage, 'Share');
                         await invokerPage.waitForTimeout(2000);
                     }
                 }

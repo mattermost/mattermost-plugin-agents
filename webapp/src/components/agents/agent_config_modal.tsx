@@ -10,6 +10,7 @@ import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, EnabledTool, ServiceInfo} from '@/types/agents';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
+import ConfirmationDialog from '@/components/confirmation_dialog';
 
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
@@ -65,6 +66,22 @@ const emptyDraft: AgentDraft = {
     thinkingBudget: 0,
     structuredOutputEnabled: false,
 };
+
+function cloneDraft(draft: AgentDraft): AgentDraft {
+    return {
+        ...draft,
+        channelIds: [...draft.channelIds],
+        userIds: [...draft.userIds],
+        teamIds: [...draft.teamIds],
+        adminUserIds: [...draft.adminUserIds],
+        enabledTools: [...draft.enabledTools],
+        enabledNativeTools: [...draft.enabledNativeTools],
+    };
+}
+
+function draftsEqual(a: AgentDraft, b: AgentDraft): boolean {
+    return JSON.stringify(a) === JSON.stringify(b);
+}
 
 /**
  * Full-document create payload from the form draft. The backend uses the UI as the sole
@@ -164,17 +181,22 @@ const AgentConfigModal = (props: Props) => {
 
     const [activeTab, setActiveTab] = useState<Tab>('config');
     const [draft, setDraft] = useState<AgentDraft>(emptyDraft);
+    const [initialDraft, setInitialDraft] = useState<AgentDraft>(emptyDraft);
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
+    const [showDiscardChangesDialog, setShowDiscardChangesDialog] = useState(false);
 
     // Reset form when modal opens
     useEffect(() => {
         if (show) {
+            const nextDraft = cloneDraft(agent ? agentToDraft(agent) : emptyDraft);
             setActiveTab('config');
-            setDraft(agent ? agentToDraft(agent) : emptyDraft);
+            setDraft(nextDraft);
+            setInitialDraft(cloneDraft(nextDraft));
             setAvatarFile(null);
             setErrors({});
+            setShowDiscardChangesDialog(false);
         }
     }, [show, agent]);
 
@@ -185,6 +207,21 @@ const AgentConfigModal = (props: Props) => {
         }
     }, [draft.disableTools, activeTab]);
 
+    const hasUnsavedChanges = avatarFile !== null || !draftsEqual(draft, initialDraft);
+
+    const requestClose = useCallback(() => {
+        if (saving || showDiscardChangesDialog) {
+            return;
+        }
+
+        if (hasUnsavedChanges) {
+            setShowDiscardChangesDialog(true);
+            return;
+        }
+
+        onClose();
+    }, [saving, showDiscardChangesDialog, hasUnsavedChanges, onClose]);
+
     // Escape key to close
     useEffect(() => {
         if (!show) {
@@ -194,12 +231,12 @@ const AgentConfigModal = (props: Props) => {
         }
         const handler = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
-                onClose();
+                requestClose();
             }
         };
         document.addEventListener('keydown', handler);
         return () => document.removeEventListener('keydown', handler);
-    }, [show, onClose]);
+    }, [show, requestClose]);
 
     const updateDraft = useCallback((updates: Partial<AgentDraft>) => {
         setDraft((prev) => ({...prev, ...updates}));
@@ -281,11 +318,11 @@ const AgentConfigModal = (props: Props) => {
         draft.displayName || intl.formatMessage({defaultMessage: 'Edit Agent'});
 
     return (
-        <ModalOverlay onClick={onClose}>
+        <ModalOverlay onClick={requestClose}>
             <ModalContainer onClick={(e) => e.stopPropagation()}>
                 <ModalHeader>
                     <ModalTitle>{title}</ModalTitle>
-                    <CloseButton onClick={onClose}>
+                    <CloseButton onClick={requestClose}>
                         <CloseIcon size={20}/>
                     </CloseButton>
                 </ModalHeader>
@@ -328,6 +365,7 @@ const AgentConfigModal = (props: Props) => {
                             botUserId={agent?.botUserID}
                             services={services}
                             errors={errors}
+                            usernameLocked={mode === 'edit'}
                         />
                     )}
                     {activeTab === 'access' && (
@@ -346,7 +384,7 @@ const AgentConfigModal = (props: Props) => {
                 </ModalBody>
 
                 <ModalFooter>
-                    <CancelButton onClick={onClose}>
+                    <CancelButton onClick={requestClose}>
                         <FormattedMessage defaultMessage='Cancel'/>
                     </CancelButton>
                     <SaveButton
@@ -360,6 +398,20 @@ const AgentConfigModal = (props: Props) => {
                     </SaveButton>
                 </ModalFooter>
             </ModalContainer>
+            {showDiscardChangesDialog && (
+                <ConfirmationDialog
+                    titleId='discard-agent-changes-dialog-title'
+                    title={<FormattedMessage defaultMessage='Discard changes?'/>}
+                    message={<FormattedMessage defaultMessage='You have unsaved changes. Do you want to keep editing or discard them?'/>}
+                    confirmButtonText={<FormattedMessage defaultMessage='Discard changes'/>}
+                    cancelButtonText={<FormattedMessage defaultMessage='Keep editing'/>}
+                    onConfirm={onClose}
+                    onCancel={() => setShowDiscardChangesDialog(false)}
+                    isDestructive={true}
+                    managedAccessibility={true}
+                    zIndex={2100}
+                />
+            )}
         </ModalOverlay>
     );
 };
@@ -379,11 +431,14 @@ const ModalOverlay = styled.div`
     z-index: 2000;
 `;
 
+// Fixed-height modal keeps the top edge anchored so it doesn't jump around when
+// the active tab or AI Service selection changes how tall the body content is.
+// The body scrolls internally (see ModalBody) when content exceeds the frame.
 const ModalContainer = styled.div`
     background-color: var(--center-channel-bg);
     border-radius: 12px;
     width: 700px;
-    max-height: 85vh;
+    height: min(720px, 85vh);
     min-height: 0;
     display: flex;
     flex-direction: column;

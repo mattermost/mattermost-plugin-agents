@@ -86,7 +86,6 @@ const RunContainer = async (): Promise<MattermostContainer> => {
 			  "chunkingOptions": {
 				  "chunkSize": 500,
 				  "chunkOverlap": 100,
-				  "minChunkSize": 0.75,
 				  "chunkingStrategy": "sentences"
 			  }
 		  }

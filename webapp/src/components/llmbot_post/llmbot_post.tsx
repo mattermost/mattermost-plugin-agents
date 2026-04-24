@@ -25,7 +25,6 @@ import {
     extractReasoningFromTurn,
     extractAnnotationsFromTurn,
     deriveApprovalStageForPost,
-    hasAutoApprovedToolsForPost,
 } from './turn_content_utils';
 import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
 import {ControlsBarComponent} from './controls_bar';
@@ -79,7 +78,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [generating, setGenerating] = useState(false);
     const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
     const [toolApprovalStage, setToolApprovalStage] = useState<ToolApprovalStage>('call');
-    const [isAutoApproved, setIsAutoApproved] = useState(false);
     const [annotations, setAnnotations] = useState<Annotation[]>([]);
     const [precontent, setPrecontent] = useState(props.post.message === '');
     const [error, setError] = useState('');
@@ -110,7 +108,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             const derived = extractToolCallsForPost(conversation, props.post.id);
             setToolCalls(derived);
             setToolApprovalStage(deriveApprovalStageForPost(conversation, props.post.id));
-            setIsAutoApproved(hasAutoApprovedToolsForPost(conversation, props.post.id));
         }
 
         // Reasoning
@@ -367,7 +364,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     canExpand={requesterIsCurrentUser}
                     showArguments={showToolArguments}
                     showResults={showToolResults}
-                    isAutoApproved={isAutoApproved}
                 />
             )}
             <PostText

@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/mock"
@@ -299,6 +300,25 @@ func TestHandleDeleteUserMCPOAuth(t *testing.T) {
 	mcpMock := &mockMCPClientManager{}
 	e.api.mcpClientManager = mcpMock
 
+	const testServerOrigin = "https://mcp.test/"
+	e.config.mcpConfig = mcp.Config{
+		Servers: []mcp.ServerConfig{
+			{Name: "TestServer", BaseURL: testServerOrigin, Enabled: true},
+		},
+	}
+
+	mmClient := mmapimocks.NewMockClient(t)
+	var gotEvent string
+	var gotPayload map[string]interface{}
+	var gotBroadcast *model.WebsocketBroadcast
+	mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
+		Run(func(args mock.Arguments) {
+			gotEvent = args.String(0)
+			gotPayload, _ = args.Get(1).(map[string]interface{})
+			gotBroadcast, _ = args.Get(2).(*model.WebsocketBroadcast)
+		}).Return()
+	e.api.mmClient = mmClient
+
 	request := httptest.NewRequest(http.MethodDelete, "/mcp/oauth/TestServer", nil)
 	request.Header.Add("Mattermost-User-Id", testUserID)
 
@@ -307,6 +327,12 @@ func TestHandleDeleteUserMCPOAuth(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	require.Equal(t, []mcpDisconnectCall{{userID: testUserID, serverName: "TestServer"}}, mcpMock.disconnectCalls)
+	require.Equal(t, WebsocketEventMCPConnectionUpdated, gotEvent)
+	require.Equal(t, "disconnected", gotPayload["status"])
+	require.Equal(t, "TestServer", gotPayload["serverName"])
+	require.Equal(t, testServerOrigin, gotPayload["serverOrigin"])
+	require.NotNil(t, gotBroadcast)
+	require.Equal(t, testUserID, gotBroadcast.UserId)
 }
 
 func TestHandleDeleteUserMCPOAuthMissingServerName(t *testing.T) {
@@ -453,6 +479,50 @@ func TestHandleOAuthStartRejectsResourceMetadataWrongOrigin(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 	require.Empty(t, recorder.Result().Header.Get("Location"))
+}
+
+func TestPublishMCPConnectionUpdatedEmitsUserScopedEvent(t *testing.T) {
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mmClient := mmapimocks.NewMockClient(t)
+	var gotEvent string
+	var gotPayload map[string]interface{}
+	var gotBroadcast *model.WebsocketBroadcast
+	mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
+		Run(func(args mock.Arguments) {
+			gotEvent = args.String(0)
+			gotPayload, _ = args.Get(1).(map[string]interface{})
+			gotBroadcast, _ = args.Get(2).(*model.WebsocketBroadcast)
+		}).Return()
+	e.api.mmClient = mmClient
+
+	session := &mcp.OAuthSession{
+		UserID:    testUserID,
+		ServerID:  "AtlassianMCP",
+		ServerURL: "https://mcp.atlassian.com/v1/sse",
+	}
+	e.api.publishMCPConnectionUpdated(testUserID, session)
+
+	require.Equal(t, WebsocketEventMCPConnectionUpdated, gotEvent)
+	require.Equal(t, "connected", gotPayload["status"])
+	require.Equal(t, "AtlassianMCP", gotPayload["serverName"])
+	require.Equal(t, "https://mcp.atlassian.com/v1/sse", gotPayload["serverOrigin"])
+	require.NotNil(t, gotBroadcast)
+	require.Equal(t, testUserID, gotBroadcast.UserId)
+}
+
+func TestPublishMCPConnectionUpdatedNoOpWhenMMClientMissing(t *testing.T) {
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.api.mmClient = nil
+	session := &mcp.OAuthSession{
+		UserID:    testUserID,
+		ServerID:  "TestServer",
+		ServerURL: "https://test.example.com",
+	}
+	e.api.publishMCPConnectionUpdated(testUserID, session)
 }
 
 func TestHandleOAuthStartAcceptsResourceMetadataMatchingOrigin(t *testing.T) {

@@ -391,12 +391,16 @@ const ToolCard: React.FC<ToolCardProps> = ({
         }
 
         const argumentsValue = tool.arguments ?? {};
-        const argumentsMarkdown = `\`\`\`json\n${JSON.stringify(argumentsValue, null, 2)}\n\`\`\``;
+        const isEmpty = typeof argumentsValue === 'object' && !Array.isArray(argumentsValue) && Object.keys(argumentsValue).length === 0;
+        const content = isEmpty ?
+            formatMessage({id: 'ai.tool_call.no_parameters_required', defaultMessage: 'No parameters required'}) :
+            JSON.stringify(argumentsValue, null, 2);
+        const argumentsMarkdown = `\`\`\`json\n${content}\n\`\`\``;
         return messageHtmlToComponent(
             formatText(argumentsMarkdown, markdownOptions),
             messageHtmlToComponentOptions,
         );
-    }, [showArguments, tool.arguments, formatText, markdownOptions, messageHtmlToComponent, messageHtmlToComponentOptions]);
+    }, [showArguments, tool.arguments, formatMessage, formatText, markdownOptions, messageHtmlToComponent, messageHtmlToComponentOptions]);
 
     const hasLocalDecision = localDecision != null;
 

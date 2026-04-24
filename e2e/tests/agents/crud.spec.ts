@@ -256,4 +256,35 @@ test.describe('Agent CRUD', () => {
         const mcpsTab = page.getByRole('button', { name: 'MCPs' });
         await expect(mcpsTab).toBeDisabled();
     });
+
+    test('warns before discarding unsaved agent modal changes', async ({ page }) => {
+        test.setTimeout(60000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+
+        await agentPage.getCreateButton().click();
+        await agentPage.waitForModal();
+
+        await agentPage.fillConfigTab({
+            displayName: 'Unsaved Agent',
+            username: 'unsavedagent',
+            serviceLabel: 'Mock Service',
+        });
+
+        await agentPage.clickModalBackdrop();
+        await expect(agentPage.getDiscardChangesDialog()).toBeVisible({timeout: 10000});
+
+        await agentPage.getDiscardChangesCancelButton().click();
+        await expect(agentPage.getDiscardChangesDialog()).not.toBeVisible({timeout: 10000});
+        await expect(agentPage.getDisplayNameInput()).toHaveValue('Unsaved Agent');
+
+        await agentPage.clickModalBackdrop();
+        await expect(agentPage.getDiscardChangesDialog()).toBeVisible({timeout: 10000});
+
+        await agentPage.getDiscardChangesConfirmButton().click();
+        await agentPage.waitForModalClosed();
+    });
 });
