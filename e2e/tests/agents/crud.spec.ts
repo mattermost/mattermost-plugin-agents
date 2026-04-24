@@ -292,7 +292,7 @@ test.describe('Agent CRUD', () => {
         await expect(mcpsTab).toBeDisabled();
     });
 
-    test('warns before discarding unsaved agent modal changes', async ({ page }) => {
+    test('warns before discarding unsaved agent view changes', async ({ page }) => {
         test.setTimeout(60000);
         const mmPage = new MattermostPage(page);
         const agentPage = new AgentPageHelper(page);
@@ -309,14 +309,14 @@ test.describe('Agent CRUD', () => {
             serviceLabel: 'Mock Service',
         });
 
-        await agentPage.clickModalBackdrop();
+        await agentPage.getBackButton().click();
         await expect(agentPage.getDiscardChangesDialog()).toBeVisible({timeout: 10000});
 
         await agentPage.getDiscardChangesKeepEditingButton().click();
         await expect(agentPage.getDiscardChangesDialog()).not.toBeVisible({timeout: 10000});
         await expect(agentPage.getDisplayNameInput()).toHaveValue('Unsaved Agent');
 
-        await agentPage.clickModalBackdrop();
+        await agentPage.getBackButton().click();
         await expect(agentPage.getDiscardChangesDialog()).toBeVisible({timeout: 10000});
 
         await agentPage.getDiscardChangesConfirmButton().click();
