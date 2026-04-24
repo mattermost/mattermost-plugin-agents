@@ -532,6 +532,58 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			expectRebuildCalls:  1,
 		},
 		{
+			// REGRESSION: sending only expose_external must NOT zero Enabled.
+			// Before pointer-valued Enabled, the omitted field JSON-decoded
+			// to false and clobbered the admin-set true value.
+			name:     "enabled omitted preserves existing true value",
+			pluginID: "com.mattermost.demo",
+			preRegistered: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
+				Enabled: true, ExposeExternal: false,
+			}},
+			body:                `{"expose_external": true}`,
+			hasAdminPerm:        true,
+			expectStatus:        http.StatusOK,
+			expectRegisterCalls: 1,
+			expectEnabledAfter:  true, // preserved — request omitted the field
+			expectExposeAfter:   true,
+			expectRebuildCalls:  1,
+		},
+		{
+			// REGRESSION mirror: omitted enabled with existing false preserved.
+			name:     "enabled omitted preserves existing false value",
+			pluginID: "com.mattermost.demo",
+			preRegistered: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
+				Enabled: false, ExposeExternal: false,
+			}},
+			body:                `{"expose_external": true}`,
+			hasAdminPerm:        true,
+			expectStatus:        http.StatusOK,
+			expectRegisterCalls: 1,
+			expectEnabledAfter:  false, // preserved
+			expectExposeAfter:   true,
+			expectRebuildCalls:  1,
+		},
+		{
+			// Empty body is a valid no-op that re-registers the existing
+			// config unchanged. Ensures neither pointer flip accidentally
+			// mutates state.
+			name:     "empty body preserves both fields",
+			pluginID: "com.mattermost.demo",
+			preRegistered: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
+				Enabled: true, ExposeExternal: true,
+			}},
+			body:                `{}`,
+			hasAdminPerm:        true,
+			expectStatus:        http.StatusOK,
+			expectRegisterCalls: 1,
+			expectEnabledAfter:  true,
+			expectExposeAfter:   true,
+			expectRebuildCalls:  1, // found.ExposeExternal=true still triggers rebuild
+		},
+		{
 			name:         "404 when pluginID not registered",
 			pluginID:     "com.missing",
 			body:         `{"enabled": true}`,
