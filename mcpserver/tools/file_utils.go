@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -49,25 +50,16 @@ func getMCPLocalURLHTTPClient() *http.Client {
 	return mcpLocalURLHTTPClientInstance
 }
 
-// errMCPURLFetchNotAllowed is returned for user-facing output when the HTTP client rejects a URL
-// (e.g. private or reserved address). Do not echo raw transport or Mattermost config hints to tools/channels.
-var errMCPURLFetchNotAllowed = errors.New("attachment URL could not be fetched: destination is not allowed")
+// errMCPFileUploadFailed is returned to tool output when an attachment URL fetch fails.
+// The underlying error is logged; do not wrap with %w from low-level clients to avoid leaking details to users.
+var errMCPFileUploadFailed = errors.New("file upload failed")
 
-func mcpUserFacingURLFetchError(err error) error {
+func mcpLogAttachmentURLFailureAndReturn(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, httpservice.ErrAddressForbidden) {
-		return errMCPURLFetchNotAllowed
-	}
-	// http.Client may not preserve unwrap chains with %w; match stable substrings without exposing config names.
-	s := err.Error()
-	if strings.Contains(s, "address forbidden, you may need to set") ||
-		strings.Contains(s, "is in a reserved range and not in") ||
-		strings.Contains(s, "is a self-assigned IP and not in") {
-		return errMCPURLFetchNotAllowed
-	}
-	return err
+	log.Printf("mattermost-mcp: attachment URL fetch: %v", err)
+	return errMCPFileUploadFailed
 }
 
 // readLimitedToMaxMCPBytes reads r with the same size cap for URL and data-directory file sources.
@@ -133,35 +125,31 @@ func fetchFileDataForLocal(ctx context.Context, filespec string, accessMode Acce
 		}
 		parsed, err := url.Parse(filespec)
 		if err != nil {
-			return nil, fmt.Errorf("invalid URL: %w", err)
+			return nil, mcpLogAttachmentURLFailureAndReturn(fmt.Errorf("parse URL: %w", err))
 		}
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return nil, fmt.Errorf("unsupported URL scheme: %q", parsed.Scheme)
+			return nil, mcpLogAttachmentURLFailureAndReturn(fmt.Errorf("unsupported URL scheme: %q", parsed.Scheme))
 		}
 		if parsed.Host == "" {
-			return nil, fmt.Errorf("URL missing host")
+			return nil, mcpLogAttachmentURLFailureAndReturn(fmt.Errorf("URL missing host"))
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 		if err != nil {
-			return nil, fmt.Errorf("failed to build request: %w", err)
+			return nil, mcpLogAttachmentURLFailureAndReturn(err)
 		}
 		resp, err := getMCPLocalURLHTTPClient().Do(req)
 		if err != nil {
-			ue := mcpUserFacingURLFetchError(err)
-			if errors.Is(ue, errMCPURLFetchNotAllowed) {
-				return nil, ue
-			}
-			return nil, fmt.Errorf("failed to fetch file from URL: %w", err)
+			return nil, mcpLogAttachmentURLFailureAndReturn(err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("failed to fetch file: HTTP %d", resp.StatusCode)
+			return nil, mcpLogAttachmentURLFailureAndReturn(fmt.Errorf("HTTP %d", resp.StatusCode))
 		}
 
 		data, err := readLimitedToMaxMCPBytes(resp.Body)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read file data: %w", err)
+			return nil, mcpLogAttachmentURLFailureAndReturn(err)
 		}
 		return data, nil
 	}
@@ -266,6 +254,9 @@ func uploadFilesForLocal(ctx context.Context, client *model.Client4, channelID s
 
 		fileData, err := fetchFileDataForLocal(ctx, filespec, accessMode)
 		if err != nil {
+			if errors.Is(err, errMCPFileUploadFailed) {
+				return nil, err
+			}
 			return nil, fmt.Errorf("failed to fetch file %s: %w", filespec, err)
 		}
 

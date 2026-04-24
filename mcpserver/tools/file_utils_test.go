@@ -19,19 +19,16 @@ func TestFetchFileDataForLocal_InvalidURLSpecs(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	testCases := []struct {
-		name        string
-		filespec    string
-		errContains string
+		name     string
+		filespec string
 	}{
 		{
-			name:        "loopback URL from httptest is rejected",
-			filespec:    server.URL,
-			errContains: errMCPURLFetchNotAllowed.Error(),
+			name:     "URL fetch failure returns file upload failed",
+			filespec: server.URL,
 		},
 		{
-			name:        "URL missing host",
-			filespec:    "https:///path",
-			errContains: "URL missing host",
+			name:     "empty host is handled like other URL errors",
+			filespec: "https:///path",
 		},
 	}
 
@@ -39,12 +36,10 @@ func TestFetchFileDataForLocal_InvalidURLSpecs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := fetchFileDataForLocal(t.Context(), tc.filespec, AccessModeLocal)
 			require.Error(t, err)
-			require.Contains(t, err.Error(), tc.errContains)
+			require.ErrorIs(t, err, errMCPFileUploadFailed)
+			// No raw transport or config detail in the returned value (logs hold the full error)
 			low := err.Error()
-			if tc.filespec == server.URL {
-				require.NotContains(t, low, "AllowedUntrusted", "user-facing error must not mention server config settings")
-				require.NotContains(t, low, "Get \"http", "user-facing error must not echo the raw request line")
-			}
+			require.Equal(t, errMCPFileUploadFailed.Error(), low)
 		})
 	}
 }
