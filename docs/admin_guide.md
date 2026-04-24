@@ -33,7 +33,7 @@ Install the plugin through the System Console by navigating to **System Console 
 
 Navigate to **System Console > Plugins > Agents** to configure plugin-wide settings such as AI services, the default bot, web search, embedding search, and MCP settings.
 
-Create and manage agents from the top-level **Agents** product page. You can also open it from **AI Actions > Agents > Manage agents**. The **AI Bots** section in the System Console links to the Agents page instead of hosting the full agent editor.
+Create and manage agents from the top-level **Agents** product page. You can also open it from **AI Actions > Manage agents**. The **AI Bots** section in the System Console links to the Agents page instead of hosting the full agent editor.
 
 ### Enable the plugin
 
@@ -102,13 +102,17 @@ See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html)
 
 ### Agent configuration
 
-Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry or from **AI Actions > Agents > Manage agents**. Agents use the service inventory configured in **System Console > Plugins > Agents**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
+Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry or from **AI Actions > Manage agents**. Agents use the service inventory configured in **System Console > Plugins > Agents**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
+
+If you can manage an agent, select its row in the Agents list to open the edit modal directly. The overflow menu remains available for **Edit** and **Delete**.
 
 When you create or edit an agent, use the three tabs in the agent configuration flow:
 
 - **Configuration** for identity, model selection, instructions, and core capabilities
 - **Access** for channel, team, and user restrictions, plus delegated agent admins
 - **MCPs** for the agent's allowed MCP tools
+
+If you have unsaved changes and try to close the agent configuration modal with the close button, by pressing Escape, or by selecting the backdrop, Mattermost shows a **Discard changes?** confirmation with **Discard** and **Keep editing**.
 
 #### Configuration tab
 
@@ -277,18 +281,6 @@ Run the initial indexing process after configuration.
 
 Configure who can access AI features by setting team-level, channel-level, and user-level permissions for each agent.
 
-### Conversation history and privacy
-
-For supported Agents workflows, Mattermost keeps conversation history so users can continue direct-message chats, channel @mentions, thread and channel analysis flows, and AI search with consistent context and privacy handling.
-
-Older bot posts created before this conversation model remain readable, but they may display only message text rather than historical tool activity, reasoning blocks, or annotations.
-
-Conversation access follows the visibility of the workflow:
-
-- Channel conversations are available to people who can already read that channel.
-- Private analysis workflows delivered only to the requester remain requester-only.
-- Tool data that a requester keeps private is redacted from channel-visible follow-up responses and from what other viewers can access.
-
 ## Management tasks
 
 ### Plugin metrics
@@ -350,7 +342,6 @@ The plugin stores agent data across both plugin configuration and plugin databas
 1. Ensure your regular Mattermost backup includes plugin configuration data.
 2. Include plugin database tables in your normal backup and restore process. In particular:
    - `Agents_UserAgents` for agents created or managed from the **Agents** page
-   - `LLM_Conversations` and `LLM_Turns` for conversation history
    - `LLM_CustomPrompts` and `LLM_CustomPromptPins` for custom prompt templates and prompt pins
 3. For larger deployments, consider backing up indexed vector data separately.
 
@@ -409,8 +400,6 @@ When users report repeated tool failures, use **LLM Trace** and debug logging to
 ## Integrations
 
 Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**.
-
-When tool approval is required in a channel, the workflow can involve two requester-only decisions: approving the tool call itself, then deciding whether the resulting tool data is shared with the channel. Choosing **Keep Private** keeps the tool arguments and results out of the channel-visible follow-up response. In direct messages with an agent, approved tool results are shared automatically because only the requester can view the conversation.
 
 ## Model Context Protocol (MCP) Integration
 
