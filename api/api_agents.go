@@ -626,10 +626,12 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 		return
 	}
 
-	supportsModelFetching := svc.Type == "anthropic" ||
-		svc.Type == "openai" ||
-		svc.Type == "azure" ||
-		svc.Type == "openaicompatible"
+	supportsModelFetching := svc.Type == llm.ServiceTypeAnthropic ||
+		svc.Type == llm.ServiceTypeOpenAI ||
+		svc.Type == llm.ServiceTypeAzure ||
+		svc.Type == llm.ServiceTypeOpenAICompatible ||
+		svc.Type == llm.ServiceTypeGemini ||
+		svc.Type == llm.ServiceTypeVertex
 	if !supportsModelFetching {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("model listing not supported for service type %q", svc.Type))
 		return
@@ -637,17 +639,20 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 
 	hasRequiredCredentials := svc.APIKey != ""
 	switch svc.Type {
-	case "openaicompatible":
+	case llm.ServiceTypeOpenAICompatible:
 		hasRequiredCredentials = svc.APIKey != "" || svc.APIURL != ""
-	case "azure":
+	case llm.ServiceTypeAzure:
 		hasRequiredCredentials = svc.APIKey != "" && svc.APIURL != ""
+	case llm.ServiceTypeVertex:
+		// Vertex uses GCP project + region; service-account JSON is optional (ADC).
+		hasRequiredCredentials = svc.VertexProjectID != "" && svc.Region != ""
 	}
 	if !hasRequiredCredentials {
 		c.AbortWithError(http.StatusBadRequest, errors.New("service is missing credentials required to list models"))
 		return
 	}
 
-	models, err := bifrost.FetchModelsForServiceType(svc.Type, svc.APIKey, svc.APIURL, svc.OrgID)
+	models, err := bifrost.FetchModelsForService(*svc)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
 		return

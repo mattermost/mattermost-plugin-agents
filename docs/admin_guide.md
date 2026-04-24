@@ -129,8 +129,8 @@ Some capabilities depend on the selected Service type and, for OpenAI Compatible
 
 | Setting | Description |
 |---------|-------------|
-| **Enable Web Search** | Available for Anthropic and OpenAI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Allows the Agent to leverage the provider's native web search tool to respond with recent information. |
-| **Reasoning Enabled** | Available for Anthropic and OpenAI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Enables extended thinking or reasoning capabilities for complex tasks. |
+| **Enable Web Search** | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Gemini and Vertex map this to Google Search grounding via the provider's Responses API. Allows the Agent to leverage the provider's native web search tool to respond with recent information. |
+| **Reasoning Enabled** | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Enables extended thinking or reasoning capabilities for complex tasks. For Gemini / Vertex, Bifrost maps a token budget to `thinkingConfig.thinkingBudget` and an effort level to `thinkingConfig.thinkingLevel` on Gemini 3.0+. |
 | **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure. When enabled and a JSON schema is provided in the request, the model returns structured JSON matching that schema. Compatible model support is still required. |
 
 New agents enable native web search and structured output by default where the selected provider supports those features. For providers that don't support native tools, native tool selections are ignored.
@@ -171,7 +171,7 @@ The built-in web search tool lets agents retrieve current information from the i
 
 #### When to use built-in web search
 
-Built-in web search is intended for LLM models that lack native web search functionality. If your chosen model already provides native web search (such as OpenAI, Anthropic, or an OpenAI Compatible/Azure service with **Use Responses API** enabled), it's strongly recommended to use the provider's native implementation instead. Native web search tools typically offer:
+Built-in web search is intended for LLM models that lack native web search functionality. If your chosen model already provides native web search (such as OpenAI, Anthropic, Google Gemini, Google Vertex AI, or an OpenAI Compatible/Azure service with **Use Responses API** enabled), it's strongly recommended to use the provider's native implementation instead. Native web search tools typically offer:
 
 - Better integration with the model
 - More reliable search results
@@ -415,7 +415,10 @@ The MCP client and the embedded Mattermost MCP server are always enabled. Admins
 3. Use the **Tools** tab to review discovered tools and set each tool's enabled state and approval policy.
 4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools.
 
-You can't disable MCP entirely from the System Console. To limit access, disable individual tools or change their policy in the **Tools** tab, and/or restrict tool access per agent from the agent's **MCPs** tab.
+The **Tools** tab refreshes automatically after the current user connects or disconnects an OAuth-backed MCP server. Because MCP OAuth connections are per-user, this live refresh applies only to the user who completed the connect or disconnect action.
+
+You can't disable MCP entirely from the System Console. To limit access, disable individual tools or change their policy in the **Tools** tab.
+
 
 ### Add MCP servers
 
@@ -428,6 +431,16 @@ You can't disable MCP entirely from the System Console. To limit access, disable
 
 3. Select **Save** to add the server.
 
+### Configure OAuth-backed servers for agents
+
+When you create or edit an agent, the **MCPs** tab in the agent modal lists the MCP servers available to that agent. If an OAuth-backed server is not connected for your account yet, the row shows a **Connect** button so you can complete the provider sign-in flow without leaving the modal. The MCPs tab refreshes automatically after you connect or disconnect, so you don't need to reopen it to see updated server status.
+
+If a disconnected OAuth-backed server currently exposes no tools, you can still toggle that server on while configuring the agent. Saving the agent in this state grants the agent access to every tool that server exposes after a user connects to that provider.
+
+The **Automatically enable all MCP tools** option remains the broadest setting. When enabled, the agent can use every currently available MCP tool as well as MCP tools added later.
+
+Enabling a server or tool for an agent controls what the agent is allowed to use, but it does not bypass tool approval policies. Tool execution still follows the policy configured in the **Tools** tab and each user's Mattermost and provider permissions.
+
 ### Management
 
 - **Connection Management**: The system automatically manages user connections to MCP servers
@@ -435,6 +448,20 @@ You can't disable MCP entirely from the System Console. To limit access, disable
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation
 - **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools
 - **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent. Tool use is still subject to admin tool policies and the user's Mattermost permissions
+
+### OAuth-backed MCP servers
+
+Some MCP servers require OAuth per Mattermost user. For those servers, the plugin exposes `needsOAuth` and `authURL` to the Agents webapp so the UI can show when authorization is required and where to begin the flow. The webapp starts OAuth through the plugin route `GET /plugins/mattermost-ai/mcp/oauth/<server name>/start` and can clear the current user's stored token with `DELETE /plugins/mattermost-ai/mcp/oauth/<server name>`.
+
+**Agents panel (web and desktop):** In the Agents right-hand sidebar, start a new chat and open **Tools**. OAuth-backed servers show **Connect** when the signed-in user is not authenticated, and **Disconnect** when an OAuth session applies.
+
+**System Console (admin tool configuration):** On **System Console > Plugins > Agents > MCP Servers**, expanding an OAuth-backed server shows that you must authenticate to fetch that server's tool list and configure per-tool approval policies. That sign-in only applies to your administrator account. Each end user must authenticate separately, even after an admin has connected in the System Console.
+
+**Conversations:** The plugin no longer posts ephemeral in-channel or in-thread messages to prompt MCP OAuth. Users should use the Agents webapp **Tools** menu to view connection state and run **Connect** or **Disconnect**.
+
+**Mobile and other clients:** MCP OAuth is not initiated from the mobile app or other clients that do not use the Agents webapp. Users need Mattermost web or desktop to connect OAuth-backed MCP servers.
+
+**Custom MCP OAuth setups:** If the OAuth start URL includes a `resource_metadata` query parameter, it is accepted only when its origin matches the origin of the configured MCP server **Server URL**. This prevents cross-origin metadata injection during discovery.
 
 ### Atlassian MCP server authorization
 

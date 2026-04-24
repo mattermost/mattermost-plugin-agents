@@ -26,14 +26,18 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
         return null;
     }
 
-    // Determine if this service supports reasoning
-    // OpenAI direct always uses the Responses API
+    // Determine if this service supports reasoning.
+    //   - OpenAI direct always uses the Responses API.
+    //   - Anthropic uses extended thinking with a token budget.
+    //   - Gemini / Vertex AI map reasoning to Google's thinkingConfig via Bifrost,
+    //     accepting both a thinking budget and an effort level.
     const isAnthropic = props.service.type === 'anthropic';
     const isOpenAIWithResponses =
         props.service.type === 'openai' ||
         (['openaicompatible', 'azure'].includes(props.service.type) && props.service.useResponsesAPI);
+    const isGoogle = props.service.type === 'gemini' || props.service.type === 'vertex';
 
-    if (!isAnthropic && !isOpenAIWithResponses) {
+    if (!isAnthropic && !isOpenAIWithResponses && !isGoogle) {
         return null;
     }
 
@@ -60,14 +64,15 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
         return defaultBudget;
     };
 
+    const headerLabel = isAnthropic ?
+        intl.formatMessage({defaultMessage: 'Extended Thinking'}) :
+        intl.formatMessage({defaultMessage: 'Reasoning'});
+
     return (
         <>
             <ItemLabel>
                 <Horizontal>
-                    {isAnthropic ?
-                        intl.formatMessage({defaultMessage: 'Extended Thinking'}) :
-                        intl.formatMessage({defaultMessage: 'Reasoning'})
-                    }
+                    {headerLabel}
                 </Horizontal>
             </ItemLabel>
             <ReasoningContainer>
@@ -118,6 +123,56 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     </ErrorText>
                                 )}
                             </ConfigField>
+                        )}
+
+                        {isGoogle && (
+                            <>
+                                <ConfigField>
+                                    <FieldLabel>
+                                        {intl.formatMessage({defaultMessage: 'Thinking Budget (tokens, optional)'})}
+                                    </FieldLabel>
+                                    <FieldInput
+                                        type='number'
+                                        min='0'
+                                        max={props.maxTokens}
+                                        value={thinkingBudgetValue}
+                                        onChange={handleThinkingBudgetChange}
+                                        placeholder={intl.formatMessage({defaultMessage: 'Use effort level'})}
+                                    />
+                                    <HelpText>
+                                        {intl.formatMessage({
+                                            defaultMessage: 'Optional token budget for Gemini thinking. When set this takes priority over the effort level and maps to thinkingConfig.thinkingBudget. Leave blank to use the effort level below.',
+                                        })}
+                                    </HelpText>
+                                </ConfigField>
+                                <ConfigField>
+                                    <FieldLabel>
+                                        {intl.formatMessage({defaultMessage: 'Reasoning Effort'})}
+                                    </FieldLabel>
+                                    <FieldSelect
+                                        value={reasoningEffort}
+                                        onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
+                                    >
+                                        <option value='minimal'>
+                                            {intl.formatMessage({defaultMessage: 'Minimal'})}
+                                        </option>
+                                        <option value='low'>
+                                            {intl.formatMessage({defaultMessage: 'Low'})}
+                                        </option>
+                                        <option value='medium'>
+                                            {intl.formatMessage({defaultMessage: 'Medium'})}
+                                        </option>
+                                        <option value='high'>
+                                            {intl.formatMessage({defaultMessage: 'High'})}
+                                        </option>
+                                    </FieldSelect>
+                                    <HelpText>
+                                        {intl.formatMessage({
+                                            defaultMessage: 'Effort level maps to Gemini 3.0+ thinkingLevel and is estimated as a budget for Gemini 2.5 models. Ignored when a thinking budget is set above.',
+                                        })}
+                                    </HelpText>
+                                </ConfigField>
+                            </>
                         )}
 
                         {isOpenAIWithResponses && (

@@ -560,7 +560,14 @@ export async function getVettedToolSeed(baseURL: string): Promise<VettedToolConf
     });
 }
 
-export async function fetchModels(serviceType: string, apiKey: string, apiURL: string, orgID: string) {
+export type FetchModelsOptions = {
+    region?: string;
+    vertexProjectID?: string;
+    vertexProjectNumber?: string;
+    vertexAuthCredentials?: string;
+}
+
+export async function fetchModels(serviceType: string, apiKey: string, apiURL: string, orgID: string, options: FetchModelsOptions = {}) {
     const url = `${baseRoute()}/admin/models/fetch`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
@@ -569,6 +576,10 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
             apiKey,
             apiURL,
             orgID,
+            region: options.region || '',
+            vertexProjectID: options.vertexProjectID || '',
+            vertexProjectNumber: options.vertexProjectNumber || '',
+            vertexAuthCredentials: options.vertexAuthCredentials || '',
         }),
     }));
 

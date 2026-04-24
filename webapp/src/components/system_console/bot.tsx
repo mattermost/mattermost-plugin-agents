@@ -55,12 +55,34 @@ export type LLMBotConfig = {
     structuredOutputEnabled?: boolean
 }
 
-// Component for configuring native tools (OpenAI/Anthropic)
+// Component for configuring native tools (OpenAI / Anthropic / Google).
 export type NativeToolsItemProps = {
     enabledTools: string[]
     onChange: (tools: string[]) => void
-    provider?: 'openai' | 'anthropic'
+    provider?: 'openai' | 'anthropic' | 'google'
 }
+
+const nativeToolsWebSearchHelpText = (provider: 'openai' | 'anthropic' | 'google', intl: ReturnType<typeof useIntl>): string => {
+    switch (provider) {
+    case 'anthropic':
+        return intl.formatMessage({defaultMessage: 'Enable Claude\'s built-in web search capability'});
+    case 'google':
+        return intl.formatMessage({defaultMessage: 'Enable Google Search grounding via the Gemini / Vertex AI provider'});
+    default:
+        return intl.formatMessage({defaultMessage: 'Enable OpenAI\'s built-in web search capability'});
+    }
+};
+
+const nativeToolsTitle = (provider: 'openai' | 'anthropic' | 'google', intl: ReturnType<typeof useIntl>): string => {
+    switch (provider) {
+    case 'anthropic':
+        return intl.formatMessage({defaultMessage: 'Native Claude Tools'});
+    case 'google':
+        return intl.formatMessage({defaultMessage: 'Native Google Tools'});
+    default:
+        return intl.formatMessage({defaultMessage: 'Native OpenAI Tools'});
+    }
+};
 
 export const NativeToolsItem = (props: NativeToolsItemProps) => {
     const intl = useIntl();
@@ -70,9 +92,7 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
         {
             id: 'web_search',
             label: intl.formatMessage({defaultMessage: 'Web Search'}),
-            helpText: provider === 'anthropic' ?
-                intl.formatMessage({defaultMessage: 'Enable Claude\'s built-in web search capability'}) :
-                intl.formatMessage({defaultMessage: 'Enable OpenAI\'s built-in web search capability'}),
+            helpText: nativeToolsWebSearchHelpText(provider, intl),
         },
 
     ];
@@ -86,9 +106,7 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
         }
     };
 
-    const titleMessage = provider === 'anthropic' ?
-        intl.formatMessage({defaultMessage: 'Native Claude Tools'}) :
-        intl.formatMessage({defaultMessage: 'Native OpenAI Tools'});
+    const titleMessage = nativeToolsTitle(provider, intl);
 
     return (
         <>
@@ -145,7 +163,9 @@ const Bot = (props: Props) => {
         (selectedService.type === 'anthropic' ||
          selectedService.type === 'openai' ||
          selectedService.type === 'azure' ||
-         selectedService.type === 'openaicompatible');
+         selectedService.type === 'openaicompatible' ||
+         selectedService.type === 'gemini' ||
+         selectedService.type === 'vertex');
 
     // Fetch models when the service changes
     useEffect(() => {
@@ -155,11 +175,21 @@ const Bot = (props: Props) => {
             return;
         }
 
-        // For openaicompatible, API key is optional if there's an API URL
-        // For other types, API key is required
-        const hasRequiredCredentials = selectedService.type === 'openaicompatible' ?
-            (selectedService.apiKey || selectedService.apiURL) :
-            selectedService.apiKey;
+        // Providers have different credential shapes for model listing:
+        // - openaicompatible: API key OR API URL
+        // - vertex: GCP project ID + region
+        // - others: API key
+        let hasRequiredCredentials: string | boolean = false;
+        switch (selectedService.type) {
+        case 'openaicompatible':
+            hasRequiredCredentials = selectedService.apiKey || selectedService.apiURL;
+            break;
+        case 'vertex':
+            hasRequiredCredentials = Boolean(selectedService.vertexProjectID && selectedService.region);
+            break;
+        default:
+            hasRequiredCredentials = selectedService.apiKey;
+        }
 
         if (!hasRequiredCredentials) {
             setAvailableModels([]);
@@ -177,6 +207,12 @@ const Bot = (props: Props) => {
                     selectedService.apiKey,
                     selectedService.apiURL || '',
                     selectedService.orgId || '',
+                    {
+                        region: selectedService.region || '',
+                        vertexProjectID: selectedService.vertexProjectID || '',
+                        vertexProjectNumber: selectedService.vertexProjectNumber || '',
+                        vertexAuthCredentials: selectedService.vertexAuthCredentials || '',
+                    },
                 );
                 setAvailableModels(data);
             } catch (error) {
@@ -188,7 +224,7 @@ const Bot = (props: Props) => {
         };
 
         loadModels();
-    }, [selectedService?.id, selectedService?.type, selectedService?.apiKey, selectedService?.apiURL, selectedService?.orgId, supportsModelFetching, intl]);
+    }, [selectedService?.id, selectedService?.type, selectedService?.apiKey, selectedService?.apiURL, selectedService?.orgId, selectedService?.region, selectedService?.vertexProjectID, selectedService?.vertexProjectNumber, selectedService?.vertexAuthCredentials, supportsModelFetching, intl]);
 
     return (
         <BotContainer>
@@ -297,7 +333,7 @@ const Bot = (props: Props) => {
                         {(() => {
                             const selectedService = props.services.find((s) => s.id === props.bot.serviceID);
                             const supportsVisionAndTools = selectedService &&
-                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral'].includes(selectedService.type);
+                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex'].includes(selectedService.type);
 
                             if (!supportsVisionAndTools) {
                                 return null;
@@ -321,6 +357,7 @@ const Bot = (props: Props) => {
                                         // Direct OpenAI always uses the Responses API. OpenAI-compatible
                                         // and Azure only expose native tools when their toggle is enabled.
                                         const isAnthropic = selectedService.type === 'anthropic';
+                                        const isGoogle = selectedService.type === 'gemini' || selectedService.type === 'vertex';
                                         const isOpenAIWithResponses =
                                             selectedService.type === 'openai' ||
                                             (['openaicompatible', 'azure'].includes(selectedService.type) && selectedService.useResponsesAPI);
@@ -331,6 +368,16 @@ const Bot = (props: Props) => {
                                                     enabledTools={props.bot.enabledNativeTools || []}
                                                     onChange={(tools: string[]) => props.onChange({...props.bot, enabledNativeTools: tools})}
                                                     provider='anthropic'
+                                                />
+                                            );
+                                        }
+
+                                        if (isGoogle) {
+                                            return (
+                                                <NativeToolsItem
+                                                    enabledTools={props.bot.enabledNativeTools || []}
+                                                    onChange={(tools: string[]) => props.onChange({...props.bot, enabledNativeTools: tools})}
+                                                    provider='google'
                                                 />
                                             );
                                         }

@@ -8,7 +8,7 @@ import {FormattedMessage, createIntl} from 'react-intl';
 
 import {WebSocketMessage} from '@mattermost/client';
 import {GlobalState} from '@mattermost/types/store';
-import {CodeTagsIcon} from '@mattermost/compass-icons/components';
+import {CodeTagsIcon, CogOutlineIcon} from '@mattermost/compass-icons/components';
 
 //@ts-ignore it exists
 import aiIcon from '../../assets/bot_icon.png';
@@ -40,7 +40,6 @@ import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands
 import SearchHints from './components/search_hints';
 import {useBotlist} from './bots';
 import AgentsTour from './components/tutorial/agents_tour';
-import AgentsDropdown from './components/agents/agents_dropdown';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
 import {isEnterpriseLicensedOrDevelopment} from './license';
@@ -337,10 +336,16 @@ export default class Plugin {
                 component: CustomPromptsDropdown,
             });
             registry.registerAIActionMenuItemComponent({
-                icon: <IconAI/>,
-                text: <FormattedMessage defaultMessage='Agents'/>,
+                icon: <CogOutlineIcon size={18}/>,
+                text: <FormattedMessage defaultMessage='Manage agents'/>,
                 sortOrder: 20,
-                component: AgentsDropdown,
+                action: () => {
+                    if (window.WebappUtils?.browserHistory?.push) {
+                        window.WebappUtils.browserHistory.push(AGENTS_ROUTE);
+                        return;
+                    }
+                    window.location.assign(AGENTS_ROUTE);
+                },
             });
         }
     }
