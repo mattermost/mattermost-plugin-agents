@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/mattermost/mattermost/server/public/shared/httpservice"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +26,7 @@ func TestFetchFileDataForLocal_InvalidURLSpecs(t *testing.T) {
 		{
 			name:        "loopback URL from httptest is rejected",
 			filespec:    server.URL,
-			errContains: httpservice.ErrAddressForbidden.Error(),
+			errContains: errMCPURLFetchNotAllowed.Error(),
 		},
 		{
 			name:        "URL missing host",
@@ -41,6 +40,11 @@ func TestFetchFileDataForLocal_InvalidURLSpecs(t *testing.T) {
 			_, err := fetchFileDataForLocal(t.Context(), tc.filespec, AccessModeLocal)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tc.errContains)
+			low := err.Error()
+			if tc.filespec == server.URL {
+				require.NotContains(t, low, "AllowedUntrusted", "user-facing error must not mention server config settings")
+				require.NotContains(t, low, "Get \"http", "user-facing error must not echo the raw request line")
+			}
 		})
 	}
 }

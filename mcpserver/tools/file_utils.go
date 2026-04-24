@@ -5,6 +5,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -46,6 +47,27 @@ func getMCPLocalURLHTTPClient() *http.Client {
 		mcpLocalURLHTTPClientInstance = httpservice.MakeHTTPService(staticMCPConfigService{}).MakeClient(false)
 	})
 	return mcpLocalURLHTTPClientInstance
+}
+
+// errMCPURLFetchNotAllowed is returned for user-facing output when the HTTP client rejects a URL
+// (e.g. private or reserved address). Do not echo raw transport or Mattermost config hints to tools/channels.
+var errMCPURLFetchNotAllowed = errors.New("attachment URL could not be fetched: destination is not allowed")
+
+func mcpUserFacingURLFetchError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, httpservice.ErrAddressForbidden) {
+		return errMCPURLFetchNotAllowed
+	}
+	// http.Client may not preserve unwrap chains with %w; match stable substrings without exposing config names.
+	s := err.Error()
+	if strings.Contains(s, "address forbidden, you may need to set") ||
+		strings.Contains(s, "is in a reserved range and not in") ||
+		strings.Contains(s, "is a self-assigned IP and not in") {
+		return errMCPURLFetchNotAllowed
+	}
+	return err
 }
 
 // readLimitedToMaxMCPBytes reads r with the same size cap for URL and data-directory file sources.
@@ -125,6 +147,10 @@ func fetchFileDataForLocal(ctx context.Context, filespec string, accessMode Acce
 		}
 		resp, err := getMCPLocalURLHTTPClient().Do(req)
 		if err != nil {
+			ue := mcpUserFacingURLFetchError(err)
+			if errors.Is(ue, errMCPURLFetchNotAllowed) {
+				return nil, ue
+			}
 			return nil, fmt.Errorf("failed to fetch file from URL: %w", err)
 		}
 		defer resp.Body.Close()
