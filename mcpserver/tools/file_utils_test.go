@@ -6,27 +6,41 @@ package tools
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/shared/httpservice"
 	"github.com/stretchr/testify/require"
 )
 
-func TestFetchFileDataForLocal_LoopbackURLRejected(t *testing.T) {
+func TestFetchFileDataForLocal_InvalidURLSpecs(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("x"))
 	}))
 	t.Cleanup(server.Close)
 
-	_, err := fetchFileDataForLocal(t.Context(), server.URL, AccessModeLocal)
-	require.Error(t, err)
-	require.True(t, strings.Contains(err.Error(), httpservice.ErrAddressForbidden.Error()),
-		"expected loopback URL to be rejected, got: %v", err)
-}
+	testCases := []struct {
+		name        string
+		filespec    string
+		errContains string
+	}{
+		{
+			name:        "loopback URL from httptest is rejected",
+			filespec:    server.URL,
+			errContains: httpservice.ErrAddressForbidden.Error(),
+		},
+		{
+			name:        "URL missing host",
+			filespec:    "https:///path",
+			errContains: "URL missing host",
+		},
+	}
 
-func TestFetchFileDataForLocal_URLEmptyHostRejected(t *testing.T) {
-	_, err := fetchFileDataForLocal(t.Context(), "https:///path", AccessModeLocal)
-	require.Error(t, err)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := fetchFileDataForLocal(t.Context(), tc.filespec, AccessModeLocal)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.errContains)
+		})
+	}
 }

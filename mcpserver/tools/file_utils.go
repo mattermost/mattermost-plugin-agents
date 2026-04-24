@@ -35,8 +35,8 @@ func (staticMCPConfigService) Config() *model.Config {
 	return staticMCPURLFetchConfig
 }
 
-// maxMCPURLFetchBytes matches the default model.FileSettings.MaxFileSize (100 MiB) for attachment reads.
-const maxMCPURLFetchBytes = 100 * 1024 * 1024
+// maxMCPFetchBytes matches the default model.FileSettings.MaxFileSize (100 MiB) for local attachment reads.
+const maxMCPFetchBytes = 100 * 1024 * 1024
 
 var mcpLocalURLHTTPClientInstance *http.Client
 var mcpLocalURLHTTPClientOnce sync.Once
@@ -46,6 +46,19 @@ func getMCPLocalURLHTTPClient() *http.Client {
 		mcpLocalURLHTTPClientInstance = httpservice.MakeHTTPService(staticMCPConfigService{}).MakeClient(false)
 	})
 	return mcpLocalURLHTTPClientInstance
+}
+
+// readLimitedToMaxMCPBytes reads r with the same size cap for URL and data-directory file sources.
+func readLimitedToMaxMCPBytes(r io.Reader) ([]byte, error) {
+	limited := io.LimitReader(r, maxMCPFetchBytes+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxMCPFetchBytes {
+		return nil, fmt.Errorf("content too large (max %d bytes)", maxMCPFetchBytes)
+	}
+	return data, nil
 }
 
 // GetDataDirectoryInternal is the internal function that can be overridden in tests
@@ -120,13 +133,9 @@ func fetchFileDataForLocal(ctx context.Context, filespec string, accessMode Acce
 			return nil, fmt.Errorf("failed to fetch file: HTTP %d", resp.StatusCode)
 		}
 
-		limited := io.LimitReader(resp.Body, maxMCPURLFetchBytes+1)
-		data, err := io.ReadAll(limited)
+		data, err := readLimitedToMaxMCPBytes(resp.Body)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read file data: %w", err)
-		}
-		if int64(len(data)) > maxMCPURLFetchBytes {
-			return nil, fmt.Errorf("response too large (max %d bytes)", maxMCPURLFetchBytes)
 		}
 		return data, nil
 	}
@@ -157,7 +166,7 @@ func fetchFileDataForLocal(ctx context.Context, filespec string, accessMode Acce
 	}
 	defer file.Close()
 
-	data, err := io.ReadAll(file)
+	data, err := readLimitedToMaxMCPBytes(file)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}

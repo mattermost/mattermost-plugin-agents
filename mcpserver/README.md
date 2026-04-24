@@ -8,7 +8,7 @@ A Model Context Protocol (MCP) server that provides AI agents and automation too
 
 - **MCP Protocol Support**: Implements the Model Context Protocol for standardized AI agent communication
 - **Authentication**: Personal Access Token (PAT) authentication
-- **Transport**: Configurable transport layer (stdio JSON-RPC for desktop clients, HTTP with SSE for web applications)
+- **Transport** (development use): Configurable transport layer (stdio JSON-RPC for desktop clients, HTTP with SSE for web applications). The standalone binary note at the top of this file also applies. For production, use the Agents plugin’s embedded MCP and the [admin guide](../docs/admin_guide.md#mattermost-mcp-server).
 - **Comprehensive Mattermost Integration**: Read posts, channels, search, create content
 - **Dual Mode Operation**: Runs standalone or embedded in the AI plugin
 
@@ -165,7 +165,7 @@ Create a post as a specific user using username/password login. Simply provide t
 - `--dev`: Enable development mode with additional tools for setting up test data
 - `--version`: Show version information
 
-**HTTP Transport Options (when --transport=http):**
+**HTTP Transport Options** (when `--transport=http` — development and local use only, not for production; see the intro):
 - `--http-port`: Port for HTTP server (default: 8080)
 - `--http-bind-addr`: Bind address for HTTP server (default: 127.0.0.1 for security, use specific IP for external access)
 - `--site-url`: Public URL where clients will access the MCP server (used for OAuth metadata and origin validation)
@@ -207,9 +207,9 @@ To use with Claude Desktop, add the server to your MCP configuration:
 }
 ```
 
-#### HTTP Transport Integration
+#### HTTP Transport Integration (development and local use)
 
-For HTTP-based MCP clients and web applications, the server supports HTTP transport with OAuth authentication:
+For HTTP-based MCP clients and web applications, the server supports HTTP transport with OAuth authentication. The standalone binary is for development; for production, use the Agents plugin’s embedded MCP and the [admin guide](../docs/admin_guide.md#mattermost-mcp-server) integration.
 
 **Basic HTTP server setup:**
 ```bash
