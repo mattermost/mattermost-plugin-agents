@@ -98,3 +98,13 @@ func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 	policy, enabled := s.GetToolPolicy(toolName)
 	return IsToolPolicyAutoRunInDM(policy) && enabled
 }
+
+// PluginServerConfig contains the configuration for an MCP server registered
+// by another Mattermost plugin via the AI Bridge register endpoint.
+type PluginServerConfig struct {
+	PluginID       string `json:"plugin_id"`
+	Name           string `json:"name"`
+	Path           string `json:"path"`
+	Enabled        bool   `json:"enabled"`
+	ExposeExternal bool   `json:"expose_external"`
+}

@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	aiPluginID         = "mattermost-ai"
+	AiPluginID         = "mattermost-ai"
 	mattermostServerID = "mattermost-server"
 )
 

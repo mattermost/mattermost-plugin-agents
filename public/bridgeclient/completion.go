@@ -22,7 +22,7 @@ func (c *Client) AgentCompletion(agent string, request CompletionRequest) (strin
 	if err := ValidateID(agent); err != nil {
 		return "", fmt.Errorf("invalid agent ID: %w", err)
 	}
-	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s/nostream", aiPluginID, agent)
+	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s/nostream", AiPluginID, agent)
 	return c.doCompletionRequest(url, request)
 }
 
@@ -32,7 +32,7 @@ func (c *Client) ServiceCompletion(service string, request CompletionRequest) (s
 	if service == "" {
 		return "", fmt.Errorf("service cannot be empty")
 	}
-	requestURL := fmt.Sprintf("/%s/bridge/v1/completion/service/%s/nostream", aiPluginID, url.PathEscape(service))
+	requestURL := fmt.Sprintf("/%s/bridge/v1/completion/service/%s/nostream", AiPluginID, url.PathEscape(service))
 	return c.doCompletionRequest(requestURL, request)
 }
 
@@ -43,7 +43,7 @@ func (c *Client) AgentCompletionStream(agent string, request CompletionRequest) 
 	if err := ValidateID(agent); err != nil {
 		return nil, fmt.Errorf("invalid agent ID: %w", err)
 	}
-	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", aiPluginID, agent)
+	url := fmt.Sprintf("/%s/bridge/v1/completion/agent/%s", AiPluginID, agent)
 	return c.doStreamingRequest(url, request)
 }
 
@@ -54,7 +54,7 @@ func (c *Client) ServiceCompletionStream(service string, request CompletionReque
 	if service == "" {
 		return nil, fmt.Errorf("service cannot be empty")
 	}
-	requestURL := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", aiPluginID, url.PathEscape(service))
+	requestURL := fmt.Sprintf("/%s/bridge/v1/completion/service/%s", AiPluginID, url.PathEscape(service))
 	return c.doStreamingRequest(requestURL, request)
 }
 
