@@ -291,7 +291,11 @@ func uploadFilesAndUrlsForLocal(ctx context.Context, client *model.Client4, chan
 
 		uploadedFileIDs, uploadErr := uploadFilesForLocal(ctx, client, channelID, attachments, accessMode)
 		if uploadErr != nil {
-			attachmentMessage = fmt.Sprintf(" (file upload failed: %v)", uploadErr)
+			if errors.Is(uploadErr, errMCPFileUploadFailed) {
+				attachmentMessage = " (file upload failed)"
+			} else {
+				attachmentMessage = fmt.Sprintf(" (file upload failed: %v)", uploadErr)
+			}
 		} else {
 			fileIDs = uploadedFileIDs
 			attachmentMessage = fmt.Sprintf(" (uploaded %d files)", len(fileIDs))
