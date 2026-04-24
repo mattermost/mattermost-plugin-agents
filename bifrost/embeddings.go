@@ -40,11 +40,7 @@ func NewEmbeddingProvider(cfg EmbeddingConfig) (*EmbeddingProvider, error) {
 		apiURL:   normalizeOpenAIBaseURL(cfg.Provider, cfg.APIURL),
 	}
 
-	bifrostConfig := schemas.BifrostConfig{
-		Account: account,
-	}
-
-	client, err := bifrostcore.Init(context.Background(), bifrostConfig)
+	client, err := newBifrostClient(account, cfg.APIKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Bifrost client for embeddings: %w", err)
 	}

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 
-	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
@@ -31,11 +30,7 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 		orgID:    cfg.OrgID,
 	}
 
-	bifrostConfig := schemas.BifrostConfig{
-		Account: account,
-	}
-
-	client, err := bifrostcore.Init(context.Background(), bifrostConfig)
+	client, err := newBifrostClient(account, cfg.APIKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Bifrost client for model listing: %w", err)
 	}

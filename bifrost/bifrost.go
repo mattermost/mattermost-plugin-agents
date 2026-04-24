@@ -188,11 +188,7 @@ func New(cfg Config) (*LLM, error) {
 		streamingTimeoutSeconds: int(cfg.StreamingTimeout.Seconds()),
 	}
 
-	bifrostConfig := schemas.BifrostConfig{
-		Account: account,
-	}
-
-	client, err := bifrostcore.Init(context.Background(), bifrostConfig)
+	client, err := newBifrostClient(account, cfg.APIKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Bifrost client: %w", err)
 	}
