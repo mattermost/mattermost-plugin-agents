@@ -7,7 +7,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {CloseIcon} from '@mattermost/compass-icons/components';
 
 import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
-import {UserAgent, CreateAgentRequest, UpdateAgentRequest, EnabledTool, ServiceInfo} from '@/types/agents';
+import {UserAgent, CreateAgentRequest, UpdateAgentRequest, EnabledTool, ServiceInfo, AgentSubscription, AgentSchedule} from '@/types/agents';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import ConfirmationDialog from '@/components/confirmation_dialog';
@@ -16,8 +16,10 @@ import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
 import McpsTab from './tabs/mcps_tab';
+import SubscriptionsTab from './tabs/subscriptions_tab';
+import SchedulesTab from './tabs/schedules_tab';
 
-type Tab = 'config' | 'access' | 'mcps';
+type Tab = 'config' | 'access' | 'mcps' | 'subscriptions' | 'schedules';
 
 type Mode = 'create' | 'edit';
 
@@ -43,6 +45,8 @@ export type AgentDraft = {
     reasoningEffort: string;
     thinkingBudget: number;
     structuredOutputEnabled: boolean;
+    subscriptions: AgentSubscription[];
+    schedules: AgentSchedule[];
 }
 
 const emptyDraft: AgentDraft = {
@@ -66,6 +70,8 @@ const emptyDraft: AgentDraft = {
     reasoningEffort: 'medium',
     thinkingBudget: 0,
     structuredOutputEnabled: false,
+    subscriptions: [],
+    schedules: [],
 };
 
 function cloneDraft(draft: AgentDraft): AgentDraft {
@@ -77,6 +83,8 @@ function cloneDraft(draft: AgentDraft): AgentDraft {
         adminUserIds: [...draft.adminUserIds],
         enabledTools: [...draft.enabledTools],
         enabledNativeTools: [...draft.enabledNativeTools],
+        subscriptions: draft.subscriptions.map((s) => ({...s, allowedTools: [...s.allowedTools]})),
+        schedules: draft.schedules.map((s) => ({...s, allowedTools: [...s.allowedTools]})),
     };
 }
 
@@ -110,6 +118,8 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
         structuredOutputEnabled: draft.structuredOutputEnabled,
+        subscriptions: draft.subscriptions,
+        schedules: draft.schedules,
     };
 }
 
@@ -139,6 +149,8 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
         structuredOutputEnabled: draft.structuredOutputEnabled,
+        subscriptions: draft.subscriptions,
+        schedules: draft.schedules,
     };
 }
 
@@ -164,6 +176,8 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         reasoningEffort: agent.reasoningEffort || 'medium',
         thinkingBudget: agent.thinkingBudget ?? 0,
         structuredOutputEnabled: agent.structuredOutputEnabled ?? false,
+        subscriptions: agent.subscriptions ?? [],
+        schedules: agent.schedules ?? [],
     };
 }
 
@@ -386,6 +400,18 @@ const AgentConfigModal = (props: Props) => {
                         >
                             <FormattedMessage defaultMessage='MCPs'/>
                         </TabButton>
+                        <TabButton
+                            $active={activeTab === 'subscriptions'}
+                            onClick={() => setActiveTab('subscriptions')}
+                        >
+                            <FormattedMessage defaultMessage='Subscriptions'/>
+                        </TabButton>
+                        <TabButton
+                            $active={activeTab === 'schedules'}
+                            onClick={() => setActiveTab('schedules')}
+                        >
+                            <FormattedMessage defaultMessage='Schedules'/>
+                        </TabButton>
                     </TabsContainer>
 
                     <ModalBody>
@@ -413,6 +439,18 @@ const AgentConfigModal = (props: Props) => {
                                 enabledTools={draft.enabledTools}
                                 autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
                                 onChange={(updates) => updateDraft(updates)}
+                            />
+                        )}
+                        {activeTab === 'subscriptions' && (
+                            <SubscriptionsTab
+                                subscriptions={draft.subscriptions}
+                                onChange={(subs) => updateDraft({subscriptions: subs})}
+                            />
+                        )}
+                        {activeTab === 'schedules' && (
+                            <SchedulesTab
+                                schedules={draft.schedules}
+                                onChange={(scheds) => updateDraft({schedules: scheds})}
                             />
                         )}
                     </ModalBody>

@@ -156,6 +156,12 @@ type BotConfig struct {
 	CreateAt     int64    `json:"createAt,omitempty"`
 	UpdateAt     int64    `json:"updateAt,omitempty"`
 	DeleteAt     int64    `json:"deleteAt,omitempty"`
+
+	// Scoped, stateless runs. Subscriptions fire on channel events;
+	// Schedules fire on a fixed interval. Both run with a reduced tool
+	// set (AllowedTools) whose arguments are pre-bound via BoundParams.
+	Subscriptions []AgentSubscription `json:"subscriptions,omitempty"`
+	Schedules     []AgentSchedule     `json:"schedules,omitempty"`
 }
 
 // Validate returns a descriptive error when the bot config is not valid. Service
@@ -178,6 +184,16 @@ func (c *BotConfig) Validate() error {
 	}
 	if utf8.RuneCountInString(c.CustomInstructions) > MaxCustomInstructionsRunes {
 		return fmt.Errorf("customInstructions exceeds maximum length of %d characters", MaxCustomInstructionsRunes)
+	}
+	for i := range c.Subscriptions {
+		if err := c.Subscriptions[i].Validate(); err != nil {
+			return fmt.Errorf("subscriptions[%d]: %w", i, err)
+		}
+	}
+	for i := range c.Schedules {
+		if err := c.Schedules[i].Validate(); err != nil {
+			return fmt.Errorf("schedules[%d]: %w", i, err)
+		}
 	}
 	return nil
 }

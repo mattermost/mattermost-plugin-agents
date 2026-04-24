@@ -105,6 +105,14 @@ type ClusterAgentNotifier interface {
 	PublishAgentUpdate() error
 }
 
+// TriggerReloader rebuilds in-memory subscription/schedule state after an
+// agent create/update/delete. The API layer invokes this from
+// refreshBotsAndNotify so fresh trigger config takes effect on the next event
+// or tick.
+type TriggerReloader interface {
+	Reload() error
+}
+
 // API represents the HTTP API functionality for the plugin
 type API struct {
 	bots                  *bots.MMBots
@@ -135,6 +143,7 @@ type API struct {
 	convService           *conversation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
+	triggerReloader       TriggerReloader
 }
 
 // New creates a new API instance
@@ -200,6 +209,13 @@ func New(
 // SetConversationService sets the conversation entity service for channel analysis.
 func (a *API) SetConversationService(svc *conversation.Service) {
 	a.convService = svc
+}
+
+// SetTriggerReloader wires the scope subscriptions reloader so
+// refreshBotsAndNotify can invalidate the in-memory trigger index after
+// agent CRUD. Optional — nil is a valid no-op.
+func (a *API) SetTriggerReloader(r TriggerReloader) {
+	a.triggerReloader = r
 }
 
 // ServeHTTP handles HTTP requests to the plugin

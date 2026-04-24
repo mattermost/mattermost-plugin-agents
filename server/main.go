@@ -30,6 +30,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/scope"
 	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
@@ -56,6 +57,8 @@ type Plugin struct {
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
 	store                *store.Store
+	subscriptionsService *scope.SubscriptionsService
+	scheduler            *scope.Scheduler
 	configMigrated       bool
 }
 
@@ -509,17 +512,48 @@ func (p *Plugin) OnActivate() error {
 
 	apiService.SetConversationService(convService)
 
+	// Scoped runs: dispatcher + subscriptions index + recurring scheduler.
+	// One dispatcher per plugin instance, shared by subs and scheduler.
+	dispatcher := scope.NewDispatcher(
+		p.store,
+		bots,
+		contextBuilder,
+		convService,
+		mmClient,
+		pluginAPI,
+		&pluginAPI.Log,
+	)
+	subscriptionsService := scope.NewSubscriptionsService(p.store, dispatcher, mmClient, &pluginAPI.Log)
+	if reloadErr := subscriptionsService.Reload(); reloadErr != nil {
+		pluginAPI.Log.Error("failed to load agent subscriptions on activate", "error", reloadErr.Error())
+	}
+	scheduler := scope.NewScheduler(p.API, p.store, dispatcher, &pluginAPI.Log)
+	if startErr := scheduler.Start(); startErr != nil {
+		pluginAPI.Log.Error("failed to start agent scheduler", "error", startErr.Error())
+	}
+	apiService.SetTriggerReloader(subscriptionsService)
+
 	// Keep only what we need
 	p.apiService = apiService
 	p.bots = bots
 	p.indexerService = indexerService
 	p.conversationsService = conversationsService
 	p.mcpClientManager = mcpClientManager
+	p.subscriptionsService = subscriptionsService
+	p.scheduler = scheduler
 
 	return nil
 }
 
 func (p *Plugin) OnDeactivate() error {
+	// Stop the recurring scheduler before tearing down the rest — it relies on
+	// the cluster mutex and should release its lock cleanly.
+	if p.scheduler != nil {
+		if err := p.scheduler.Close(); err != nil {
+			p.pluginAPI.Log.Error("failed to close scheduler", "error", err.Error())
+		}
+	}
+
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()
 
@@ -541,6 +575,10 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 	}
 
 	p.conversationsService.MessageHasBeenPosted(c, post)
+
+	if p.subscriptionsService != nil {
+		p.subscriptionsService.OnMessagePosted(context.Background(), post)
+	}
 }
 
 func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *model.Post) {

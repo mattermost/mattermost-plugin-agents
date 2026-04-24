@@ -56,6 +56,24 @@ jest.mock('./tabs/mcps_tab', () => ({
     default: () => null,
 }));
 
+jest.mock('./tabs/subscriptions_tab', () => ({
+    __esModule: true,
+    default: ({subscriptions, onChange}: {subscriptions: unknown[]; onChange: (next: unknown[]) => void}) => (
+        <button
+            type='button'
+            aria-label='mock-add-subscription'
+            onClick={() => onChange([...subscriptions, {event: 'message_posted', scopeChannelID: 's', targetChannelID: 't', prompt: 'p', allowedTools: ['create_post'], enabled: true}])}
+        >
+            {`subs:${subscriptions.length}`}
+        </button>
+    ),
+}));
+
+jest.mock('./tabs/schedules_tab', () => ({
+    __esModule: true,
+    default: ({schedules}: {schedules: unknown[]}) => <div>{`scheds:${schedules.length}`}</div>,
+}));
+
 const services: ServiceInfo[] = [
     {
         id: 'svc_1',
@@ -113,6 +131,19 @@ describe('AgentConfigModal', () => {
 
         expect(onClose).toHaveBeenCalledTimes(1);
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+    });
+
+    test('adding a subscription on the subscriptions tab marks the draft dirty', () => {
+        const {container, onClose} = renderModal();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Subscriptions'}));
+        fireEvent.click(screen.getByRole('button', {name: 'mock-add-subscription'}));
+
+        // Backdrop click should now prompt discard confirmation because
+        // the subscription list is no longer equal to the baseline (empty) draft.
+        fireEvent.click(container.firstChild as HTMLElement);
+        expect(screen.getByRole('dialog', {name: 'Discard changes?'})).not.toBeNull();
+        expect(onClose).not.toHaveBeenCalled();
     });
 
     test('loads edit mode without treating existing values as dirty', () => {

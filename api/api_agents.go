@@ -58,6 +58,11 @@ type CreateAgentRequest struct {
 	ReasoningEffort         string               `json:"reasoningEffort"`
 	ThinkingBudget          int                  `json:"thinkingBudget"`
 	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
+
+	// Scoped runs. Empty slices are fine. Triggers fire only after create;
+	// NextFireAt on schedules is initialized server-side.
+	Subscriptions []llm.AgentSubscription `json:"subscriptions"`
+	Schedules     []llm.AgentSchedule     `json:"schedules"`
 }
 
 // UpdateAgentRequest is the JSON body for PUT /agents/:agentid (full document replace, same shape as create).
@@ -83,6 +88,9 @@ type UpdateAgentRequest struct {
 	ReasoningEffort         string               `json:"reasoningEffort"`
 	ThinkingBudget          int                  `json:"thinkingBudget"`
 	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
+
+	Subscriptions []llm.AgentSubscription `json:"subscriptions"`
+	Schedules     []llm.AgentSchedule     `json:"schedules"`
 
 	usernameProvided bool
 }
@@ -235,6 +243,8 @@ func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string)
 		ReasoningEffort:         req.ReasoningEffort,
 		ThinkingBudget:          req.ThinkingBudget,
 		StructuredOutputEnabled: req.StructuredOutputEnabled,
+		Subscriptions:           prepareSubscriptions(req.Subscriptions),
+		Schedules:               prepareSchedules(req.Schedules),
 	}
 }
 
@@ -260,6 +270,8 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	cfg.ReasoningEffort = req.ReasoningEffort
 	cfg.ThinkingBudget = req.ThinkingBudget
 	cfg.StructuredOutputEnabled = req.StructuredOutputEnabled
+	cfg.Subscriptions = mergeSubscriptions(cfg.Subscriptions, req.Subscriptions)
+	cfg.Schedules = mergeSchedules(cfg.Schedules, req.Schedules)
 	return displayNameChanged
 }
 
@@ -283,6 +295,11 @@ func (a *API) refreshBotsAndNotify() error {
 	if a.mmClient != nil {
 		// PublishWebSocketEvent requires a non-nil broadcast (server dereferences it).
 		a.mmClient.PublishWebSocketEvent(WebsocketEventBotsInvalidate, map[string]interface{}{}, &model.WebsocketBroadcast{})
+	}
+	if a.triggerReloader != nil {
+		if err := a.triggerReloader.Reload(); err != nil {
+			a.pluginAPI.Log.Error("Failed to reload agent triggers", "error", err.Error())
+		}
 	}
 	return ensureErr
 }

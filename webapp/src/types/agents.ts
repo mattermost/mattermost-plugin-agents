@@ -11,6 +11,48 @@ export type EnabledTool = {
     tool_name: string; // tool identifier on that server
 }
 
+// Sentinel string recognized by the server-side scope applier: when it
+// appears as a BoundParams value, it's swapped for the trigger's
+// TargetChannelID at dispatch time.
+export const BoundParamTargetChannelSentinel = '{{TargetChannelID}}';
+
+// Subscription event names. V1 only supports message_posted.
+export const SubscriptionEventMessagePosted = 'message_posted';
+
+// Minimum schedule interval in seconds enforced by the backend.
+export const MinScheduleIntervalSeconds = 3600;
+
+// AgentSubscription mirrors llm.AgentSubscription. BoundParams are two-level
+// maps keyed by tool name then argument name, matching the Go shape.
+export type AgentSubscription = {
+    id?: string;
+    event: string;
+    scopeChannelID: string;
+    prompt: string;
+    targetChannelID: string;
+    allowedTools: string[];
+    boundParams?: Record<string, Record<string, unknown>>;
+    enabled: boolean;
+    lastFireAt?: number;
+    lastError?: string;
+    lastErrorAt?: number;
+}
+
+// AgentSchedule mirrors llm.AgentSchedule.
+export type AgentSchedule = {
+    id?: string;
+    intervalSeconds: number;
+    prompt: string;
+    targetChannelID: string;
+    allowedTools: string[];
+    boundParams?: Record<string, Record<string, unknown>>;
+    enabled: boolean;
+    nextFireAt?: number;
+    lastFireAt?: number;
+    lastError?: string;
+    lastErrorAt?: number;
+}
+
 // UserAgent matches the JSON serialization of *llm.BotConfig from the backend.
 // The backend API (GET /agents, GET /agents/:id, POST /agents, PUT /agents/:id)
 // returns this shape.
@@ -50,6 +92,10 @@ export type UserAgent = {
     reasoningEffort: string;
     thinkingBudget: number;
     structuredOutputEnabled: boolean;
+
+    // Scoped runs — V1 event-triggered and recurring agents.
+    subscriptions?: AgentSubscription[];
+    schedules?: AgentSchedule[];
 
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;
@@ -93,6 +139,8 @@ export type CreateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     structuredOutputEnabled?: boolean;
+    subscriptions?: AgentSubscription[];
+    schedules?: AgentSchedule[];
 }
 
 // UpdateAgentRequest matches api.UpdateAgentRequest in Go.
@@ -121,6 +169,8 @@ export type UpdateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     structuredOutputEnabled?: boolean;
+    subscriptions?: AgentSubscription[];
+    schedules?: AgentSchedule[];
 }
 
 // ServiceInfo matches api.ServiceInfo in Go (safe subset, no secrets).

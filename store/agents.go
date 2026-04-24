@@ -20,6 +20,7 @@ const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, Ser
 	EnabledTools, AutoEnableNewMCPTools,
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
+	Subscriptions, Schedules,
 	CreateAt, UpdateAt, DeleteAt`
 
 // mustMarshalSlice marshals a string slice to JSON, returning "[]" on nil/empty or error.
@@ -90,6 +91,48 @@ func unmarshalNativeTools(raw string, target *[]string) error {
 	return json.Unmarshal([]byte(raw), target)
 }
 
+// marshalSubscriptions serializes []AgentSubscription as a JSON array. Empty/nil → "[]".
+func marshalSubscriptions(subs []llm.AgentSubscription) string {
+	if len(subs) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(subs)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// unmarshalSubscriptions parses the Subscriptions TEXT column. "" or "[]" → nil.
+func unmarshalSubscriptions(raw string, target *[]llm.AgentSubscription) error {
+	if raw == "" || raw == "[]" {
+		*target = nil
+		return nil
+	}
+	return json.Unmarshal([]byte(raw), target)
+}
+
+// marshalSchedules serializes []AgentSchedule as a JSON array. Empty/nil → "[]".
+func marshalSchedules(scheds []llm.AgentSchedule) string {
+	if len(scheds) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(scheds)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// unmarshalSchedules parses the Schedules TEXT column. "" or "[]" → nil.
+func unmarshalSchedules(raw string, target *[]llm.AgentSchedule) error {
+	if raw == "" || raw == "[]" {
+		*target = nil
+		return nil
+	}
+	return json.Unmarshal([]byte(raw), target)
+}
+
 // agentRow is the DB-level representation of a UserAgent row.
 // All JSON slice fields are stored as TEXT and scanned as strings.
 // Note: db tags must be lowercase because PostgreSQL folds unquoted identifiers to lowercase.
@@ -117,6 +160,8 @@ type agentRow struct {
 	ReasoningEffort         string `db:"reasoningeffort"`
 	ThinkingBudget          int    `db:"thinkingbudget"`
 	StructuredOutputEnabled bool   `db:"structuredoutputenabled"`
+	Subscriptions           string `db:"subscriptions"`
+	Schedules               string `db:"schedules"`
 	CreateAt                int64  `db:"createat"`
 	UpdateAt                int64  `db:"updateat"`
 	DeleteAt                int64  `db:"deleteat"`
@@ -165,6 +210,12 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 	if err := unmarshalNativeTools(r.EnabledNativeTools, &cfg.EnabledNativeTools); err != nil {
 		return nil, fmt.Errorf("failed to parse EnabledNativeTools: %w", err)
 	}
+	if err := unmarshalSubscriptions(r.Subscriptions, &cfg.Subscriptions); err != nil {
+		return nil, fmt.Errorf("failed to parse Subscriptions: %w", err)
+	}
+	if err := unmarshalSchedules(r.Schedules, &cfg.Schedules); err != nil {
+		return nil, fmt.Errorf("failed to parse Schedules: %w", err)
+	}
 
 	return cfg, nil
 }
@@ -186,8 +237,9 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 			EnabledTools, AutoEnableNewMCPTools,
 			Model, EnableVision, DisableTools, EnabledNativeTools,
 			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
+			Subscriptions, Schedules,
 			CreateAt, UpdateAt, DeleteAt
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
 		cfg.ID,
 		cfg.BotUserID,
 		cfg.CreatorID,
@@ -211,6 +263,8 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 		cfg.ReasoningEffort,
 		cfg.ThinkingBudget,
 		cfg.StructuredOutputEnabled,
+		marshalSubscriptions(cfg.Subscriptions),
+		marshalSchedules(cfg.Schedules),
 		cfg.CreateAt,
 		cfg.UpdateAt,
 		cfg.DeleteAt,
@@ -335,8 +389,10 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 			ReasoningEffort = $18,
 			ThinkingBudget = $19,
 			StructuredOutputEnabled = $20,
-			UpdateAt = $21
-		WHERE ID = $22 AND DeleteAt = 0`,
+			Subscriptions = $21,
+			Schedules = $22,
+			UpdateAt = $23
+		WHERE ID = $24 AND DeleteAt = 0`,
 		cfg.DisplayName,
 		cfg.Name,
 		cfg.ServiceID,
@@ -357,6 +413,8 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 		cfg.ReasoningEffort,
 		cfg.ThinkingBudget,
 		cfg.StructuredOutputEnabled,
+		marshalSubscriptions(cfg.Subscriptions),
+		marshalSchedules(cfg.Schedules),
 		cfg.UpdateAt,
 		cfg.ID,
 	)
