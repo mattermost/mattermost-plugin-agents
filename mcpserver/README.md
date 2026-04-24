@@ -213,7 +213,7 @@ For HTTP-based MCP clients and web applications, the server supports HTTP transp
 
 **Basic HTTP server setup:**
 ```bash
-./bin/mattermost-mcp-server \
+./mcpserver/bin/mattermost-mcp-server \
   --transport http \
   --server-url https://your-mattermost.com \
   --http-port 8080 \
@@ -223,7 +223,7 @@ For HTTP-based MCP clients and web applications, the server supports HTTP transp
 **External access via specific network interface:**
 ```bash
 # Bind to specific network interface IP
-./bin/mattermost-mcp-server \
+./mcpserver/bin/mattermost-mcp-server \
   --transport http \
   --server-url https://your-mattermost.com \
   --http-bind-addr 192.168.1.100 \
@@ -235,7 +235,7 @@ For HTTP-based MCP clients and web applications, the server supports HTTP transp
 ```bash
 export MM_SERVER_URL=https://your-mattermost.com
 export MM_INTERNAL_SERVER_URL=http://localhost:8065  # optional for localhost optimization
-./bin/mattermost-mcp-server --transport http --http-port 8080 --site-url https://mcp.yourcompany.com
+./mcpserver/bin/mattermost-mcp-server --transport http --http-port 8080 --site-url https://mcp.yourcompany.com
 ```
 
 **Available endpoints:**
@@ -295,7 +295,7 @@ When the MCP server runs on the same machine as your Mattermost server, you can 
 
 ```bash
 # MCP server and Mattermost on the same machine
-./bin/mattermost-mcp-server \
+./mcpserver/bin/mattermost-mcp-server \
   --server-url https://mattermost.company.com \
   --internal-server-url http://localhost:8065 \
   --token your-pat-token
@@ -306,7 +306,7 @@ When the MCP server runs on the same machine as your Mattermost server, you can 
 export MM_SERVER_URL=https://mattermost.company.com
 export MM_INTERNAL_SERVER_URL=http://localhost:8065
 export MM_ACCESS_TOKEN=your-pat-token
-./bin/mattermost-mcp-server
+./mcpserver/bin/mattermost-mcp-server
 ```
 
 **When to use:**
