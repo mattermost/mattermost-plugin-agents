@@ -432,13 +432,25 @@ func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg 
 }
 
 // UpdatePluginServerRequest is the body shape for PUT /admin/mcp/plugin-servers/:pluginID.
+//
+// Enabled toggles runtime tool-listing inclusion. ExposeExternal toggles
+// inclusion on the aggregated external /plugins/mattermost-ai/mcp-server/mcp
+// endpoint. Both are independent admin controls; identity fields
+// (PluginID/Name/Path) remain owned by the source plugin and are set via the
+// bridge register endpoint.
+//
+// ExposeExternal uses a pointer so the admin can PATCH just Enabled without
+// accidentally flipping ExposeExternal to zero on omission. Nil means "no
+// change"; a non-nil value replaces the current flag.
 type UpdatePluginServerRequest struct {
-	Enabled bool `json:"enabled"`
+	Enabled        bool  `json:"enabled"`
+	ExposeExternal *bool `json:"expose_external,omitempty"`
 }
 
-// handleUpdatePluginServer lets an admin flip the Enabled flag on a registered
-// plugin MCP server. Does NOT mutate PluginID/Name/Path/ExposeExternal — those
-// fields remain owned by the source plugin (set via the bridge register endpoint).
+// handleUpdatePluginServer lets an admin flip the Enabled and/or ExposeExternal
+// flags on a registered plugin MCP server. Does NOT mutate PluginID/Name/Path —
+// those identity fields remain owned by the source plugin (set via the bridge
+// register endpoint).
 func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	pluginID := c.Param("pluginID")
 	if pluginID == "" {
@@ -467,18 +479,23 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	// Mutate Enabled only. Preserve everything else.
+	// Apply admin-owned fields. ExposeExternal is pointer-valued: nil means
+	// "leave unchanged" so a PATCH that only toggles Enabled doesn't clobber
+	// the external flag.
 	updated := *found
 	updated.Enabled = req.Enabled
+	if req.ExposeExternal != nil {
+		updated.ExposeExternal = *req.ExposeExternal
+	}
 	a.mcpClientManager.RegisterPluginServer(updated)
 
-	// If this plugin opted into external aggregation, rebuild the shared
-	// *mcp.Server so external clients see the Enabled state change. This
-	// reuses the Step 4 test-seam; if Step 5b's RebuildExternalServer method
-	// isn't landed yet, resolveExternalServerRebuilder returns nil and this
-	// is a no-op — external aggregation will reconcile on the next rebuild
-	// trigger. Safe either way.
-	if updated.ExposeExternal {
+	// Rebuild the shared external *mcp.Server if EITHER the new state says
+	// "expose" OR the previous state did — flipping from true -> false also
+	// needs a rebuild so the now-external tools are pulled out of the
+	// aggregated server. If Step 5b's RebuildExternalServer method isn't
+	// landed yet, resolveExternalServerRebuilder returns nil and this is a
+	// no-op.
+	if updated.ExposeExternal || found.ExposeExternal {
 		if rb := a.resolveExternalServerRebuilder(); rb != nil {
 			rb.RebuildExternalServer()
 		}

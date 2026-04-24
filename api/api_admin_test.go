@@ -352,6 +352,8 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 		expectStatus        int
 		expectRegisterCalls int
 		expectEnabledAfter  bool
+		expectExposeAfter   bool
+		expectRebuildCalls  int
 	}{
 		{
 			name:     "happy path: flips Enabled true->false",
@@ -364,6 +366,38 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			expectStatus:        http.StatusOK,
 			expectRegisterCalls: 1,
 			expectEnabledAfter:  false,
+			expectExposeAfter:   false,
+			expectRebuildCalls:  0,
+		},
+		{
+			name:     "expose_external toggle: false -> true triggers rebuild",
+			pluginID: "com.mattermost.demo",
+			preRegistered: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
+				Enabled: true, ExposeExternal: false,
+			}},
+			body:                `{"enabled": true, "expose_external": true}`,
+			hasAdminPerm:        true,
+			expectStatus:        http.StatusOK,
+			expectRegisterCalls: 1,
+			expectEnabledAfter:  true,
+			expectExposeAfter:   true,
+			expectRebuildCalls:  1,
+		},
+		{
+			name:     "expose_external omitted preserves existing value",
+			pluginID: "com.mattermost.demo",
+			preRegistered: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
+				Enabled: true, ExposeExternal: true,
+			}},
+			body:                `{"enabled": false}`,
+			hasAdminPerm:        true,
+			expectStatus:        http.StatusOK,
+			expectRegisterCalls: 1,
+			expectEnabledAfter:  false,
+			expectExposeAfter:   true, // unchanged because request omitted the field
+			expectRebuildCalls:  1,    // still rebuilds because FOUND had ExposeExternal=true
 		},
 		{
 			name:         "404 when pluginID not registered",
@@ -406,6 +440,13 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			mgr := api.mcpClientManager.(*mockMCPClientManager)
 			mgr.pluginServers = tt.preRegistered
 
+			// Inject a spy rebuilder so we can observe RebuildExternalServer
+			// invocations in the ExposeExternal-toggle cases. The production
+			// rebuilder lookup falls through to nil in tests that don't need
+			// it, so unconditionally wiring the spy is safe.
+			spy := &spyRebuilder{}
+			api.SetExternalRebuilderForTest(spy)
+
 			req := httptest.NewRequest(http.MethodPut, "/admin/mcp/plugin-servers/"+tt.pluginID, strings.NewReader(tt.body))
 			req.Header.Set("Mattermost-User-Id", "admin-user")
 			req.Header.Set("Content-Type", "application/json")
@@ -419,11 +460,13 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			require.Len(t, mgr.registerCalls, tt.expectRegisterCalls)
 			if tt.expectStatus == http.StatusOK {
 				require.Equal(t, tt.expectEnabledAfter, mgr.registerCalls[0].Enabled)
+				require.Equal(t, tt.expectExposeAfter, mgr.registerCalls[0].ExposeExternal)
 				// Identity fields must be preserved.
 				require.Equal(t, "Demo", mgr.registerCalls[0].Name)
 				require.Equal(t, "/mcp", mgr.registerCalls[0].Path)
 				require.Equal(t, "com.mattermost.demo", mgr.registerCalls[0].PluginID)
 			}
+			require.Equal(t, tt.expectRebuildCalls, spy.callCount)
 		})
 	}
 }
