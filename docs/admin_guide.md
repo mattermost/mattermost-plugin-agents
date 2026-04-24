@@ -65,16 +65,22 @@ Configure an LLM provider (Service) for your Agents integration. Services manage
 
 Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 
+Some settings appear only for specific service types.
+
 | Setting | Description |
 |---------|-------------|
 | **Name** | Internal name for this service configuration |
-| **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Scale AI, Azure OpenAI, OpenAI-compatible) |
-| **API Key** | Your provider's API key (requirements vary by provider) |
+| **Type** | LLM provider (OpenAI, Anthropic, Google Gemini, Google Vertex AI, AWS Bedrock, Cohere, Mistral, Scale AI, Azure OpenAI, OpenAI-compatible) |
+| **API Key** | Your provider's API key. Google Gemini uses an API key, while Google Vertex AI uses GCP project settings instead of an API key. |
+| **GCP Project ID** | (Google Vertex AI only) Your Google Cloud project ID |
+| **GCP Project Number** | (Google Vertex AI only, optional) Numeric project number. Required for some Vertex endpoints. |
+| **GCP Region** | (Google Vertex AI only) Vertex AI region |
+| **Service Account JSON** | (Google Vertex AI only, optional) Full service account JSON. Leave blank to use Application Default Credentials (ADC). If provided, the value must be valid JSON. |
 | **Default Model** | Default model to use for this service |
 | **Input Token Limit** | Maximum tokens allowed in input |
 | **Output Token Limit** | Maximum tokens allowed in output |
-| **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
-| **Send User ID** | Whether to send Mattermost user IDs to the LLM provider |
+| **Streaming Timeout Seconds** | (OpenAI, OpenAI Compatible, Azure OpenAI, Cohere, Mistral, and Scale AI) Timeout in seconds for streaming responses |
+| **Send User ID** | (OpenAI, OpenAI Compatible, Azure OpenAI, Cohere, and Mistral) Whether to send Mattermost user IDs to the LLM provider |
 | **Use Responses API** | (OpenAI Compatible and Azure OpenAI only) Use OpenAI's Responses API for native provider tools, reasoning controls, and structured output on those endpoints. OpenAI (direct) always uses the Responses API, so this control isn't shown for that service type. |
 
 #### Provider Specific Settings
@@ -86,11 +92,19 @@ Each provider has specific configuration requirements:
 | **OpenAI** | API Key | Organization ID |
 | **OpenAI Compatible** | API URL | API Key, Organization ID |
 | **Anthropic** | API Key | |
+| **Google Gemini** | API Key | |
+| **Google Vertex AI** | GCP Project ID, GCP Region | GCP Project Number, Service Account JSON |
 | **AWS Bedrock** | AWS Region | API Key (can use IAM role), Access/Secret Keys |
 | **Cohere** | API Key | |
 | **Mistral** | API Key | |
 | **Scale AI** | API Key, API URL | Account ID (required for ScaleGov) |
 | **Azure OpenAI** | API Key, API URL | |
+
+Use **Google Gemini** when you want direct Google AI Studio API-key authentication. Use **Google Vertex AI** when you need Google Cloud project and region scoping with enterprise GCP authentication.
+
+For Google Vertex AI, **Service Account JSON** is optional. Leave it blank to use Application Default Credentials (ADC). If you provide a value, it must be valid JSON.
+
+For OpenAI, OpenAI Compatible, Azure OpenAI, Anthropic, Google Gemini, and Google Vertex AI, the **Default Model** field can populate from the provider when the required credentials are configured. For Vertex AI, model suggestions require **GCP Project ID**, **GCP Region**, and working Vertex authentication through ADC or **Service Account JSON**. You can still enter a custom model name manually if needed.
 
 For AWS Bedrock, authentication can be configured using AWS credentials in the API Key/Secret fields, or by using IAM roles when running Mattermost on AWS infrastructure.
 
@@ -370,7 +384,7 @@ This separation allows multiple agents to share the same LLM service configurati
 }
 ```
 
-**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`, `scale`
+**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `bedrock`, `cohere`, `mistral`, `scale`, `gemini`, `vertex`
 
 **Legacy format:** Older configurations that stored bots in `config.bots`, or embedded service objects within bots, are migrated on plugin startup. After legacy bot migration completes, stored `config.bots` entries are removed to avoid duplicate bot registration.
 
