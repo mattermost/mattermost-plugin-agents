@@ -33,23 +33,34 @@ const ScheduleTickInterval = 60 * time.Second
 // latency for O(1) cluster-lock churn as agents come and go.
 type Scheduler struct {
 	pluginJobAPI cluster.JobPluginAPI
-	lister       AgentLister
-	dispatcher   *Dispatcher
+	store        ScheduleStore
+	dispatcher   ScheduleDispatcher
 	log          Logger
 
 	job *cluster.Job
 }
 
+// ScheduleStore lists active agents and records schedule fire state.
+type ScheduleStore interface {
+	AgentLister
+	UpdateAgentScheduleState(agentID, scheduleID string, nextFireAt, lastFireAt, expectedNextFireAt int64) error
+}
+
+// ScheduleDispatcher fires a due schedule.
+type ScheduleDispatcher interface {
+	DispatchSchedule(ctx context.Context, agentID string, sched llm.AgentSchedule, firedAt time.Time)
+}
+
 // NewScheduler wires up a Scheduler. Call Start to register the job.
 func NewScheduler(
 	pluginJobAPI cluster.JobPluginAPI,
-	lister AgentLister,
-	dispatcher *Dispatcher,
+	store ScheduleStore,
+	dispatcher ScheduleDispatcher,
 	log Logger,
 ) *Scheduler {
 	return &Scheduler{
 		pluginJobAPI: pluginJobAPI,
-		lister:       lister,
+		store:        store,
 		dispatcher:   dispatcher,
 		log:          log,
 	}
@@ -84,13 +95,14 @@ func (s *Scheduler) Close() error {
 	return err
 }
 
-// tick scans persisted agents for schedules that are due, dispatches them,
-// and updates each fired schedule's NextFireAt (best-effort, in-memory only;
-// NextFireAt persistence is the caller's responsibility once we add a
-// narrow store update method).
+// tick scans persisted agents for schedules that are due, advances each due
+// schedule's persisted fire state, then dispatches the scoped run.
 func (s *Scheduler) tick() {
-	now := time.Now()
-	agents, err := s.lister.ListAgents()
+	s.tickAt(time.Now())
+}
+
+func (s *Scheduler) tickAt(now time.Time) {
+	agents, err := s.store.ListAgents()
 	if err != nil {
 		s.log.Error("scheduler: failed to list agents", "error", err.Error())
 		return
@@ -112,6 +124,18 @@ func (s *Scheduler) tick() {
 			if !dueNow(sched, now) {
 				continue
 			}
+			if sched.ID == "" {
+				s.log.Error("scheduler: due schedule has no ID", "agent", cfg.ID)
+				continue
+			}
+			nextFireAt := NextFireBucket(sched.IntervalSeconds, now)
+			lastFireAt := now.Unix()
+			if err := s.store.UpdateAgentScheduleState(cfg.ID, sched.ID, nextFireAt, lastFireAt, sched.NextFireAt); err != nil {
+				s.log.Error("scheduler: failed to advance schedule", "agent", cfg.ID, "schedule", sched.ID, "error", err.Error())
+				continue
+			}
+			sched.LastFireAt = lastFireAt
+			sched.NextFireAt = nextFireAt
 			s.dispatcher.DispatchSchedule(ctx, cfg.ID, sched, now)
 		}
 	}

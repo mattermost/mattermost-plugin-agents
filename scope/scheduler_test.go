@@ -4,6 +4,8 @@
 package scope
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -128,5 +130,113 @@ func TestDueNow(t *testing.T) {
 				t.Fatalf("dueNow=%v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+type schedulerListerStub struct {
+	agents []*llm.BotConfig
+}
+
+func (s *schedulerListerStub) ListAgents() ([]*llm.BotConfig, error) {
+	return s.agents, nil
+}
+
+type schedulerStoreStub struct {
+	schedulerListerStub
+	err      error
+	agentID  string
+	schedID  string
+	last     int64
+	next     int64
+	expected int64
+	calls    int
+}
+
+func (s *schedulerStoreStub) UpdateAgentScheduleState(agentID, scheduleID string, nextFireAt, lastFireAt, expectedNextFireAt int64) error {
+	s.agentID = agentID
+	s.schedID = scheduleID
+	s.last = lastFireAt
+	s.next = nextFireAt
+	s.expected = expectedNextFireAt
+	s.calls++
+	return s.err
+}
+
+type schedulerDispatcherStub struct {
+	calls   int
+	agentID string
+	sched   llm.AgentSchedule
+	firedAt time.Time
+}
+
+func (s *schedulerDispatcherStub) DispatchSchedule(_ context.Context, agentID string, sched llm.AgentSchedule, firedAt time.Time) {
+	s.calls++
+	s.agentID = agentID
+	s.sched = sched
+	s.firedAt = firedAt
+}
+
+func TestSchedulerTickAdvancesScheduleBeforeDispatch(t *testing.T) {
+	now := time.Unix(7200, 0)
+	store := &schedulerStoreStub{schedulerListerStub: schedulerListerStub{agents: []*llm.BotConfig{{
+		ID: "agent-id",
+		Schedules: []llm.AgentSchedule{{
+			ID:              "schedule-id",
+			Enabled:         true,
+			IntervalSeconds: llm.MinScheduleIntervalSeconds,
+			NextFireAt:      7200,
+		}},
+	}}}}
+	dispatcher := &schedulerDispatcherStub{}
+	scheduler := NewScheduler(nil, store, dispatcher, &capturingLogger{})
+
+	scheduler.tickAt(now)
+
+	if store.calls != 1 {
+		t.Fatalf("UpdateAgentScheduleState calls=%d, want 1", store.calls)
+	}
+	if store.agentID != "agent-id" {
+		t.Fatalf("UpdateAgentScheduleState agentID=%q, want %q", store.agentID, "agent-id")
+	}
+	if store.schedID != "schedule-id" {
+		t.Fatalf("UpdateAgentScheduleState scheduleID=%q, want %q", store.schedID, "schedule-id")
+	}
+	if store.next != 10800 {
+		t.Fatalf("updated NextFireAt=%d, want 10800", store.next)
+	}
+	if store.last != now.Unix() {
+		t.Fatalf("updated LastFireAt=%d, want %d", store.last, now.Unix())
+	}
+	if store.expected != 7200 {
+		t.Fatalf("expected NextFireAt=%d, want 7200", store.expected)
+	}
+	if dispatcher.calls != 1 {
+		t.Fatalf("DispatchSchedule calls=%d, want 1", dispatcher.calls)
+	}
+	if dispatcher.sched.NextFireAt != 10800 {
+		t.Fatalf("dispatched NextFireAt=%d, want 10800", dispatcher.sched.NextFireAt)
+	}
+}
+
+func TestSchedulerTickSkipsDispatchWhenStateUpdateFails(t *testing.T) {
+	store := &schedulerStoreStub{schedulerListerStub: schedulerListerStub{agents: []*llm.BotConfig{{
+		ID: "agent-id",
+		Schedules: []llm.AgentSchedule{{
+			ID:              "schedule-id",
+			Enabled:         true,
+			IntervalSeconds: llm.MinScheduleIntervalSeconds,
+			NextFireAt:      7200,
+		}},
+	}}}, err: errors.New("db unavailable")}
+	dispatcher := &schedulerDispatcherStub{}
+	scheduler := NewScheduler(nil, store, dispatcher, &capturingLogger{})
+
+	scheduler.tickAt(time.Unix(7200, 0))
+
+	if store.calls != 1 {
+		t.Fatalf("UpdateAgentScheduleState calls=%d, want 1", store.calls)
+	}
+	if dispatcher.calls != 0 {
+		t.Fatalf("DispatchSchedule calls=%d, want 0", dispatcher.calls)
 	}
 }

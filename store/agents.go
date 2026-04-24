@@ -433,6 +433,60 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 	return nil
 }
 
+// UpdateAgentScheduleState records that a schedule fired and advances its next
+// fire when the stored NextFireAt still matches what the scheduler observed.
+func (s *Store) UpdateAgentScheduleState(agentID, scheduleID string, nextFireAt, lastFireAt, expectedNextFireAt int64) error {
+	cfg, err := s.GetAgent(agentID)
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return fmt.Errorf("agent %q not found or already deleted", agentID)
+	}
+
+	found := false
+	for i := range cfg.Schedules {
+		if cfg.Schedules[i].ID != scheduleID {
+			continue
+		}
+		if cfg.Schedules[i].NextFireAt != expectedNextFireAt {
+			return fmt.Errorf("stale schedule %q for agent %q: nextFireAt is %d, expected %d", scheduleID, agentID, cfg.Schedules[i].NextFireAt, expectedNextFireAt)
+		}
+		cfg.Schedules[i].NextFireAt = nextFireAt
+		cfg.Schedules[i].LastFireAt = lastFireAt
+		cfg.Schedules[i].LastError = ""
+		cfg.Schedules[i].LastErrorAt = 0
+		found = true
+		break
+	}
+	if !found {
+		return fmt.Errorf("schedule %q not found for agent %q", scheduleID, agentID)
+	}
+
+	result, err := s.db.Exec(
+		`UPDATE Agents_UserAgents SET
+			Schedules = $1,
+			UpdateAt = CASE WHEN UpdateAt >= $2 THEN UpdateAt + 1 ELSE $2 END
+		WHERE ID = $3 AND DeleteAt = 0`,
+		marshalSchedules(cfg.Schedules),
+		model.GetMillis(),
+		agentID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update schedule state for agent %q schedule %q: %w", agentID, scheduleID, err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check schedule state rows affected for agent %q schedule %q: %w", agentID, scheduleID, err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("agent %q not found or already deleted", agentID)
+	}
+
+	return nil
+}
+
 // DeleteAgent performs a soft delete by setting DeleteAt to the current timestamp.
 func (s *Store) DeleteAgent(id string) error {
 	result, err := s.db.Exec(
@@ -463,5 +517,6 @@ var _ interface {
 	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
 	CountActiveAgents() (int, error)
 	UpdateAgent(cfg *llm.BotConfig) error
+	UpdateAgentScheduleState(agentID, scheduleID string, nextFireAt, lastFireAt, expectedNextFireAt int64) error
 	DeleteAgent(id string) error
 } = (*Store)(nil)

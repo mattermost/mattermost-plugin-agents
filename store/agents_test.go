@@ -402,3 +402,71 @@ func TestAgentAdminLifecycleRoundTrip(t *testing.T) {
 	assert.Equal(t, []string{"admin-a"}, fetched.AdminUserIDs)
 	assert.GreaterOrEqual(t, fetched.UpdateAt, originalCreateAt)
 }
+
+func TestAgentUpdateScheduleState(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	cfg := testAgent("creator-1", "schedule-state", "Schedule State")
+	cfg.Schedules = []llm.AgentSchedule{
+		{
+			ID:              "schedule-1",
+			IntervalSeconds: 3600,
+			Prompt:          "Post a summary",
+			TargetChannelID: "channel-id",
+			AllowedTools:    []string{"create_post"},
+			Enabled:         true,
+			NextFireAt:      1000,
+		},
+		{
+			ID:              "schedule-2",
+			IntervalSeconds: 7200,
+			Prompt:          "Post a longer summary",
+			TargetChannelID: "channel-id",
+			AllowedTools:    []string{"create_post"},
+			Enabled:         true,
+			NextFireAt:      2000,
+		},
+	}
+	require.NoError(t, s.CreateAgent(cfg))
+
+	require.NoError(t, s.UpdateAgentScheduleState(cfg.ID, "schedule-1", 4600, 1000, 1000))
+
+	fetched, err := s.GetAgent(cfg.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	require.Len(t, fetched.Schedules, 2)
+	assert.Equal(t, int64(4600), fetched.Schedules[0].NextFireAt)
+	assert.Equal(t, int64(1000), fetched.Schedules[0].LastFireAt)
+	assert.Equal(t, int64(2000), fetched.Schedules[1].NextFireAt)
+}
+
+func TestAgentUpdateScheduleStateStaleExpectedNextFire(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+
+	cfg := testAgent("creator-1", "schedule-stale", "Schedule Stale")
+	cfg.Schedules = []llm.AgentSchedule{
+		{
+			ID:              "schedule-1",
+			IntervalSeconds: 3600,
+			Prompt:          "Post a summary",
+			TargetChannelID: "channel-id",
+			AllowedTools:    []string{"create_post"},
+			Enabled:         true,
+			NextFireAt:      1000,
+		},
+	}
+	require.NoError(t, s.CreateAgent(cfg))
+
+	err := s.UpdateAgentScheduleState(cfg.ID, "schedule-1", 4600, 1000, 999)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stale schedule")
+
+	fetched, getErr := s.GetAgent(cfg.ID)
+	require.NoError(t, getErr)
+	require.NotNil(t, fetched)
+	require.Len(t, fetched.Schedules, 1)
+	assert.Equal(t, int64(1000), fetched.Schedules[0].NextFireAt)
+	assert.Zero(t, fetched.Schedules[0].LastFireAt)
+}
