@@ -4,6 +4,7 @@
 package bots
 
 import (
+	"github.com/mattermost/mattermost-plugin-agents/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -42,7 +43,15 @@ func (b *Bot) GetService() llm.ServiceConfig {
 	return b.service
 }
 
+// HasNativeWebSearchEnabled reports whether the bot is configured to use the
+// provider's native web search AND the resolved service type actually supports
+// native tools through Bifrost. Callers use this to decide whether to suppress
+// Mattermost's built-in web search fallback, so we must consider the effective
+// provider capability rather than trusting the persisted bot config alone.
 func (b *Bot) HasNativeWebSearchEnabled() bool {
+	if !bifrost.SupportsNativeTools(b.service.Type) {
+		return false
+	}
 	for _, tool := range b.cfg.EnabledNativeTools {
 		if tool == "web_search" {
 			return true

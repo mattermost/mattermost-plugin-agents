@@ -91,6 +91,41 @@ test.describe('Agent CRUD', () => {
         await expect(agentPage.getAgentRowByName('Edit Me')).not.toBeVisible();
     });
 
+    test('should prompt before closing the agent modal with unsaved changes', async ({ page }) => {
+        test.setTimeout(60000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+
+        const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
+        const token = adminClient.getToken();
+        await agentApi.createTestAgent(token, {
+            displayName: 'Unsaved Prompt',
+            username: 'unsavedpromptagent',
+            serviceID: mockServiceId,
+        });
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+
+        await agentPage.openAgentActions('Unsaved Prompt');
+        await agentPage.clickEditAction('Unsaved Prompt');
+        await agentPage.waitForModal();
+
+        await agentPage.getDisplayNameInput().fill('Unsaved Prompt Changed');
+        await agentPage.getModalCancelButton().click();
+
+        await expect(agentPage.getDiscardChangesDialog()).toBeVisible();
+        await agentPage.getDiscardChangesKeepEditingButton().click();
+        await expect(agentPage.getDiscardChangesDialog()).not.toBeVisible();
+        await expect(agentPage.getDisplayNameInput()).toHaveValue('Unsaved Prompt Changed');
+
+        await agentPage.getModalCancelButton().click();
+        await expect(agentPage.getDiscardChangesDialog()).toBeVisible();
+        await agentPage.getDiscardChangesConfirmButton().click();
+        await agentPage.waitForModalClosed();
+    });
+
     test('should delete an agent with confirmation', async ({ page }) => {
         test.setTimeout(60000);
         const mmPage = new MattermostPage(page);
@@ -255,5 +290,36 @@ test.describe('Agent CRUD', () => {
 
         const mcpsTab = page.getByRole('button', { name: 'MCPs' });
         await expect(mcpsTab).toBeDisabled();
+    });
+
+    test('warns before discarding unsaved agent modal changes', async ({ page }) => {
+        test.setTimeout(60000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+
+        await agentPage.getCreateButton().click();
+        await agentPage.waitForModal();
+
+        await agentPage.fillConfigTab({
+            displayName: 'Unsaved Agent',
+            username: 'unsavedagent',
+            serviceLabel: 'Mock Service',
+        });
+
+        await agentPage.clickModalBackdrop();
+        await expect(agentPage.getDiscardChangesDialog()).toBeVisible({timeout: 10000});
+
+        await agentPage.getDiscardChangesKeepEditingButton().click();
+        await expect(agentPage.getDiscardChangesDialog()).not.toBeVisible({timeout: 10000});
+        await expect(agentPage.getDisplayNameInput()).toHaveValue('Unsaved Agent');
+
+        await agentPage.clickModalBackdrop();
+        await expect(agentPage.getDiscardChangesDialog()).toBeVisible({timeout: 10000});
+
+        await agentPage.getDiscardChangesConfirmButton().click();
+        await agentPage.waitForModalClosed();
     });
 });

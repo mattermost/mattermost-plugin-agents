@@ -113,7 +113,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await llmBotHelper.waitForStreamingComplete();
 
             await llmBotHelper.expectReasoningVisible(true);
-            await expect(page.getByText('Thinking')).toBeVisible();
+            await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
 
             const citations = llmBotHelper.getAllCitationIcons();
             const citationCount = await citations.count();
@@ -164,7 +164,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
             // Verify first response has reasoning
             await llmBotHelper.expectReasoningVisible(true);
-            await expect(page.getByText('Thinking')).toBeVisible();
+            await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
 
             // Verify first response has content
             const postTextBefore = llmBotHelper.getPostText();
@@ -194,7 +194,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
                 // Verify regenerated response ALSO has reasoning
                 await llmBotHelper.expectReasoningVisible(true);
-                await expect(page.getByText('Thinking')).toBeVisible();
+                await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
 
                 // Verify regenerated response has content
                 const postTextAfter = llmBotHelper.getPostText();

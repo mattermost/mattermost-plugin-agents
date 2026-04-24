@@ -81,7 +81,7 @@ export class AgentPageHelper {
         const rowScope = this.page.getByText(displayName, { exact: true }).locator(
             'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
         );
-        await rowScope.getByRole('button', { name: 'Edit' }).click();
+        await rowScope.getByRole('button', { name: 'Edit', exact: true }).click();
     }
 
     /**
@@ -92,15 +92,17 @@ export class AgentPageHelper {
         const rowScope = this.page.getByText(displayName, { exact: true }).locator(
             'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
         );
-        await rowScope.getByRole('button', { name: 'Delete' }).click();
+        await rowScope.getByRole('button', { name: 'Delete', exact: true }).click();
     }
 
     // --- Config Modal Locators ---
 
     getModal(): Locator {
-        // Modal titles are 'New Agent' (create) or the agent display name (edit)
-        // Look for the modal overlay container
-        return this.page.locator('[class*="ModalOverlay"]')
+        // Agent config and confirmation dialogs now render in AnimatedModalShell and apply
+        // MODAL_SHEET_CLASS (`mmAiModal__sheet`) to the visible dialog panel.
+        // Keep legacy fallbacks for any remaining GenericModal-based surfaces.
+        return this.page.locator('.mmAiModal__sheet')
+            .or(this.page.locator('[class*="ModalOverlay"]'))
             .or(this.page.locator('[class*="modal-content"]'));
     }
 
@@ -181,6 +183,19 @@ export class AgentPageHelper {
         return this.getDeleteDialog().getByRole('button', { name: 'Delete' });
     }
 
+    /** Unsaved-changes confirmation when closing the agent config modal (MM-68452). */
+    getDiscardChangesDialog(): Locator {
+        return this.page.getByRole('dialog', { name: 'Discard changes?' });
+    }
+
+    getDiscardChangesConfirmButton(): Locator {
+        return this.getDiscardChangesDialog().getByRole('button', { name: 'Discard' });
+    }
+
+    getDiscardChangesKeepEditingButton(): Locator {
+        return this.getDiscardChangesDialog().getByRole('button', { name: 'Keep editing' });
+    }
+
     // --- MCPs Tab ---
 
     getMCPSearchInput(): Locator {
@@ -221,5 +236,17 @@ export class AgentPageHelper {
     async waitForModalClosed(): Promise<void> {
         // Wait for the display name input to disappear (reliable signal)
         await this.getDisplayNameInput().waitFor({ state: 'hidden', timeout: 10000 });
+    }
+
+    async clickModalBackdrop(): Promise<void> {
+        const modal = this.getModal();
+        const box = await modal.boundingBox();
+        if (!box) {
+            throw new Error('Agent config modal is not visible');
+        }
+
+        const clickX = Math.max(5, box.x - 20);
+        const clickY = Math.max(5, box.y - 20);
+        await this.page.mouse.click(clickX, clickY);
     }
 }

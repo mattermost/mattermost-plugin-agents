@@ -78,42 +78,81 @@ const AgentRow = (props: Props) => {
         onDelete(agent);
     }, [agent, onDelete]);
 
+    const handleRowActivate = useCallback(() => {
+        if (!canManage || menuOpen) {
+            return;
+        }
+        onEdit(agent);
+    }, [canManage, menuOpen, agent, onEdit]);
+
+    const handleRowKeyDown = useCallback(
+        (e: React.KeyboardEvent) => {
+            if (!canManage || menuOpen) {
+                return;
+            }
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onEdit(agent);
+            }
+        },
+        [canManage, menuOpen, agent, onEdit],
+    );
+
     return (
         <RowContainer>
-            <Avatar
-                src={avatarUrl}
-                alt={agent.displayName || agent.name || 'agent avatar'}
-            />
-            <NameColumn>
-                <DisplayName>{agent.displayName}</DisplayName>
-                <Username>{'@'}{agent.name}</Username>
-            </NameColumn>
-            <BadgesColumn>
-                {serviceUnavailable && (
-                    <ServiceWarningBadge>
-                        <FormattedMessage defaultMessage='Service unavailable'/>
-                    </ServiceWarningBadge>
-                )}
-                {mcpBadge}
-            </BadgesColumn>
+            <RowMain
+                $clickable={canManage}
+                {...(canManage ? {
+                    onClick: handleRowActivate,
+                    onKeyDown: handleRowKeyDown,
+                    role: 'button',
+                    tabIndex: 0,
+                    'aria-label': intl.formatMessage(
+                        {defaultMessage: 'Edit agent {name}'},
+                        {name: agent.displayName || agent.name},
+                    ),
+                } : {})}
+            >
+                <Avatar
+                    src={avatarUrl}
+                    alt=''
+                    aria-hidden='true'
+                />
+                <NameColumn>
+                    <DisplayName>{agent.displayName}</DisplayName>
+                    <Username>{'@'}{agent.name}</Username>
+                </NameColumn>
+                <BadgesColumn>
+                    {serviceUnavailable && (
+                        <ServiceWarningBadge>
+                            <FormattedMessage defaultMessage='Service unavailable'/>
+                        </ServiceWarningBadge>
+                    )}
+                    {mcpBadge}
+                </BadgesColumn>
+            </RowMain>
             {canManage && (
                 <ActionsColumn ref={menuRef}>
                     <MenuButton
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setMenuOpen((prev) => !prev);
-                        }}
+                        type='button'
+                        onClick={() => setMenuOpen((prev) => !prev)}
                         aria-label={intl.formatMessage({defaultMessage: 'Agent actions'})}
                     >
                         <DotsHorizontalIcon size={18}/>
                     </MenuButton>
                     {menuOpen && (
                         <DropdownMenu>
-                            <MenuItem onClick={handleEdit}>
+                            <MenuItem
+                                type='button'
+                                onClick={handleEdit}
+                            >
                                 <PencilOutlineIcon size={16}/>
                                 <FormattedMessage defaultMessage='Edit'/>
                             </MenuItem>
-                            <MenuItemDanger onClick={handleDelete}>
+                            <MenuItemDanger
+                                type='button'
+                                onClick={handleDelete}
+                            >
                                 <TrashCanOutlineIcon size={16}/>
                                 <FormattedMessage defaultMessage='Delete'/>
                             </MenuItemDanger>
@@ -141,6 +180,33 @@ const RowContainer = styled.div`
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
     }
+`;
+
+const RowMain = styled.div<{$clickable: boolean}>`
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    cursor: ${({$clickable}) => ($clickable ? 'pointer' : 'default')};
+    outline: none;
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+
+    ${({$clickable}) =>
+        $clickable &&
+        `
+        &:focus-visible {
+            border-radius: 2px;
+            box-shadow: 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
+        }
+    `}
 `;
 
 const Avatar = styled.img`

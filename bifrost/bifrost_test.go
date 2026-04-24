@@ -4,6 +4,7 @@
 package bifrost
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -105,6 +106,38 @@ func TestBuildChatReasoning(t *testing.T) {
 			checkEffort:      Ptr("high"),
 		},
 		{
+			name:             "Gemini with effort only falls back to effort",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkEffort:      Ptr("high"),
+		},
+		{
+			name:             "Gemini with thinking budget prefers MaxTokens",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			thinkingBudget:   4096,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkMaxTokens:   Ptr(4096),
+		},
+		{
+			name:             "Gemini default effort when nothing set",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkEffort:      Ptr("medium"),
+		},
+		{
+			name:             "Vertex with thinking budget prefers MaxTokens",
+			provider:         schemas.Vertex,
+			reasoningEnabled: true,
+			thinkingBudget:   2000,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkMaxTokens:   Ptr(2000),
+		},
+		{
 			name:             "ReasoningDisabled returns nil",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
@@ -154,6 +187,144 @@ func TestBuildChatReasoning(t *testing.T) {
 	}
 }
 
+func TestBuildResponsesReasoning(t *testing.T) {
+	tests := []struct {
+		name             string
+		provider         schemas.ModelProvider
+		reasoningEnabled bool
+		thinkingBudget   int
+		reasoningEffort  string
+		cfg              llm.LanguageModelConfig
+		expectNil        bool
+		checkMaxTokens   *int
+		checkEffort      *string
+		checkSummary     *string
+	}{
+		{
+			name:             "Gemini with effort only sets effort and summary",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkEffort:      Ptr("high"),
+			checkSummary:     Ptr("auto"),
+		},
+		{
+			name:             "Gemini with thinking budget prefers max_tokens and summary",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			thinkingBudget:   4096,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkMaxTokens:   Ptr(4096),
+			checkSummary:     Ptr("auto"),
+		},
+		{
+			name:             "Gemini default effort when nothing set",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkEffort:      Ptr("medium"),
+			checkSummary:     Ptr("auto"),
+		},
+		{
+			name:             "Vertex with thinking budget",
+			provider:         schemas.Vertex,
+			reasoningEnabled: true,
+			thinkingBudget:   2000,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkMaxTokens:   Ptr(2000),
+			checkSummary:     Ptr("auto"),
+		},
+		{
+			name:             "ReasoningDisabled returns nil",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, ReasoningDisabled: true},
+			expectNil:        true,
+		},
+		{
+			name:             "reasoning not enabled returns nil",
+			provider:         schemas.Gemini,
+			reasoningEnabled: false,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			expectNil:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{
+				provider:         tt.provider,
+				reasoningEnabled: tt.reasoningEnabled,
+				thinkingBudget:   tt.thinkingBudget,
+				reasoningEffort:  tt.reasoningEffort,
+			}
+			result := b.buildResponsesReasoning(tt.cfg)
+			if tt.expectNil {
+				assert.Nil(t, result)
+				return
+			}
+			require.NotNil(t, result)
+			if tt.checkMaxTokens != nil {
+				require.NotNil(t, result.MaxTokens)
+				assert.Equal(t, *tt.checkMaxTokens, *result.MaxTokens)
+			} else {
+				assert.Nil(t, result.MaxTokens)
+			}
+			if tt.checkEffort != nil {
+				require.NotNil(t, result.Effort)
+				assert.Equal(t, *tt.checkEffort, *result.Effort)
+			} else {
+				assert.Nil(t, result.Effort)
+			}
+			if tt.checkSummary != nil {
+				require.NotNil(t, result.Summary)
+				assert.Equal(t, *tt.checkSummary, *result.Summary)
+			}
+		})
+	}
+}
+
+func TestGetKeysForProviderVertex(t *testing.T) {
+	saJSON := `{"type":"service_account","project_id":"x"}`
+	acc := &providerAccount{
+		provider:              schemas.Vertex,
+		region:                "us-west1",
+		vertexProjectID:       "my-gcp-project",
+		vertexProjectNumber:   "123456789012",
+		vertexAuthCredentials: saJSON,
+	}
+
+	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Vertex)
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	require.NotNil(t, keys[0].VertexKeyConfig)
+	vc := keys[0].VertexKeyConfig
+	assert.Equal(t, "my-gcp-project", vc.ProjectID.Val)
+	assert.Equal(t, "123456789012", vc.ProjectNumber.Val)
+	assert.Equal(t, "us-west1", vc.Region.Val)
+	assert.Equal(t, saJSON, vc.AuthCredentials.Val)
+
+	adc := &providerAccount{
+		provider:              schemas.Vertex,
+		region:                "europe-west1",
+		vertexProjectID:       "adc-project",
+		vertexProjectNumber:   "",
+		vertexAuthCredentials: "",
+	}
+	keysADC, err := adc.GetKeysForProvider(context.Background(), schemas.Vertex)
+	require.NoError(t, err)
+	require.Len(t, keysADC, 1)
+	require.NotNil(t, keysADC[0].VertexKeyConfig)
+	assert.Equal(t, "adc-project", keysADC[0].VertexKeyConfig.ProjectID.Val)
+	assert.Equal(t, "", keysADC[0].VertexKeyConfig.AuthCredentials.Val)
+
+	other := &providerAccount{provider: schemas.OpenAI}
+	_, err = other.GetKeysForProvider(context.Background(), schemas.Vertex)
+	require.Error(t, err)
+}
+
 func TestShouldUseResponsesAPI(t *testing.T) {
 	tests := []struct {
 		name               string
@@ -197,6 +368,20 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 			enabledNativeTools: []string{"web_search"},
 			cfg:                llm.LanguageModelConfig{},
 			expected:           false,
+		},
+		{
+			name:               "Gemini with native tools auto-enables Responses API",
+			provider:           schemas.Gemini,
+			enabledNativeTools: []string{"web_search"},
+			cfg:                llm.LanguageModelConfig{},
+			expected:           true,
+		},
+		{
+			name:               "Vertex with native web search allowed auto-enables Responses API",
+			provider:           schemas.Vertex,
+			enabledNativeTools: nil,
+			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
+			expected:           true,
 		},
 		{
 			name:               "nothing configured returns false",

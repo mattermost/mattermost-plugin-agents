@@ -31,6 +31,9 @@ export type LLMService = {
     region: string
     awsAccessKeyID: string
     awsSecretAccessKey: string
+    vertexProjectID: string
+    vertexProjectNumber: string
+    vertexAuthCredentials: string
 }
 
 const mapServiceTypeToDisplayName = new Map<string, string>([
@@ -42,6 +45,8 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['cohere', 'Cohere'],
     ['mistral', 'Mistral'],
     ['asage', 'asksage (Experimental)'],
+    ['gemini', 'Google Gemini'],
+    ['vertex', 'Google Vertex AI'],
 ]);
 
 function scaleAIToDisplayName(intl: IntlShape): string {
@@ -78,7 +83,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
 
-    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible';
+    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini' || type === 'vertex';
 
     useEffect(() => {
         if (type === 'openai' && !props.service.useResponsesAPI) {
@@ -87,8 +92,21 @@ const ServiceFields = (props: ServiceFieldsProps) => {
     }, [type, props.onChange, props.service]);
 
     useEffect(() => {
-        // For openaicompatible, API key is optional if there's an API URL
-        const hasRequiredCredentials = type === 'openaicompatible' ? (props.service.apiKey || props.service.apiURL) : props.service.apiKey;
+        // Providers have different credential shapes for model listing:
+        // - openaicompatible: API key OR API URL
+        // - vertex: GCP project ID + region (service-account JSON optional)
+        // - others: API key
+        let hasRequiredCredentials = false;
+        switch (type) {
+        case 'openaicompatible':
+            hasRequiredCredentials = Boolean(props.service.apiKey || props.service.apiURL);
+            break;
+        case 'vertex':
+            hasRequiredCredentials = Boolean(props.service.vertexProjectID && props.service.region);
+            break;
+        default:
+            hasRequiredCredentials = Boolean(props.service.apiKey);
+        }
 
         if (!supportsModelFetching || !hasRequiredCredentials) {
             setAvailableModels([]);
@@ -106,6 +124,12 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     props.service.apiKey,
                     props.service.apiURL || '',
                     props.service.orgId || '',
+                    {
+                        region: props.service.region || '',
+                        vertexProjectID: props.service.vertexProjectID || '',
+                        vertexProjectNumber: props.service.vertexProjectNumber || '',
+                        vertexAuthCredentials: props.service.vertexAuthCredentials || '',
+                    },
                 );
                 setAvailableModels(data);
             } catch (error) {
@@ -117,7 +141,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
         };
 
         loadModels();
-    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, supportsModelFetching, intl]);
+    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, supportsModelFetching, intl]);
 
     const getDefaultOutputTokenLimit = () => {
         switch (type) {
@@ -154,12 +178,15 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     props.onChange({
                         ...props.service,
                         type: nextType,
+                        apiKey: nextType === 'vertex' ? '' : props.service.apiKey,
                         useResponsesAPI: nextType === 'openai' ? true : props.service.useResponsesAPI,
                     });
                 }}
             >
                 <SelectionItemOption value='openai'>{'OpenAI'}</SelectionItemOption>
                 <SelectionItemOption value='anthropic'>{'Anthropic'}</SelectionItemOption>
+                <SelectionItemOption value='gemini'>{'Google Gemini'}</SelectionItemOption>
+                <SelectionItemOption value='vertex'>{'Google Vertex AI'}</SelectionItemOption>
                 <SelectionItemOption value='bedrock'>{'AWS Bedrock'}</SelectionItemOption>
                 <SelectionItemOption value='openaicompatible'>{'OpenAI Compatible'}</SelectionItemOption>
                 <SelectionItemOption value='azure'>{'Azure'}</SelectionItemOption>
@@ -205,14 +232,45 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     />
                 </>
             )}
-            <TextItem
-                label={intl.formatMessage({defaultMessage: 'API Key'})}
-                type='password'
-                value={props.service.apiKey}
-                onChange={(e) => props.onChange({...props.service, apiKey: e.target.value})}
-                // eslint-disable-next-line no-undefined
-                helptext={type === 'bedrock' ? intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'}) : undefined}
-            />
+            {type === 'vertex' && (
+                <>
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'GCP Project ID'})}
+                        value={props.service.vertexProjectID}
+                        onChange={(e) => props.onChange({...props.service, vertexProjectID: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'Your Google Cloud project ID (e.g., my-project-123)'})}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'GCP Project Number (Optional)'})}
+                        value={props.service.vertexProjectNumber}
+                        onChange={(e) => props.onChange({...props.service, vertexProjectNumber: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'Numeric project number. Required for some Vertex endpoints, leave blank otherwise.'})}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'GCP Region'})}
+                        value={props.service.region}
+                        onChange={(e) => props.onChange({...props.service, region: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'Vertex AI region (e.g., us-central1, europe-west4)'})}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'Service Account JSON (Optional)'})}
+                        type='password'
+                        value={props.service.vertexAuthCredentials}
+                        onChange={(e) => props.onChange({...props.service, vertexAuthCredentials: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'Paste the full service account JSON. Leave blank to use Application Default Credentials (ADC) or an attached IAM role.'})}
+                    />
+                </>
+            )}
+            {type !== 'vertex' && (
+                <TextItem
+                    label={intl.formatMessage({defaultMessage: 'API Key'})}
+                    type='password'
+                    value={props.service.apiKey}
+                    onChange={(e) => props.onChange({...props.service, apiKey: e.target.value})}
+                    // eslint-disable-next-line no-undefined
+                    helptext={type === 'bedrock' ? intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'}) : undefined}
+                />
+            )}
             {isOpenAIType && (
                 <>
                     {!isCohere && !isMistral && (

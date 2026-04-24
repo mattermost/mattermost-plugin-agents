@@ -403,6 +403,9 @@ func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
 	}
 }
 
+// MCPServerToolWildcard in EnabledMCPTool.ToolName means every tool from that ServerOrigin is allowed.
+const MCPServerToolWildcard = "*"
+
 // RetainOnlyMCPTools filters the tool store to only retain MCP tools whose
 // (ServerOrigin, Name) pair appears in the allowlist. Built-in tools (those
 // with empty ServerOrigin) are never removed by this method.
@@ -417,13 +420,21 @@ func (s *ToolStore) RetainOnlyMCPTools(allowlist []EnabledMCPTool) {
 
 	// Build a set for O(1) lookup. Key: "serverOrigin\x00toolName"
 	allowed := make(map[string]bool, len(allowlist))
+	wildcardOrigins := make(map[string]bool, len(allowlist))
 	for _, t := range allowlist {
+		if t.ToolName == MCPServerToolWildcard {
+			wildcardOrigins[t.ServerOrigin] = true
+			continue
+		}
 		allowed[t.ServerOrigin+"\x00"+t.ToolName] = true
 	}
 
 	for name, tool := range s.tools {
 		// Never filter built-in tools (empty ServerOrigin)
 		if tool.ServerOrigin == "" {
+			continue
+		}
+		if wildcardOrigins[tool.ServerOrigin] {
 			continue
 		}
 		// Remove MCP tools not in the allowlist

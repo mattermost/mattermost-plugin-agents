@@ -258,6 +258,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                 return (
                     <ToolCard
                         key={tool.id}
+                        postID={props.postID}
                         tool={tool}
                         isCollapsed={isToolCollapsed(tool)}
                         isProcessing={isDecisionCall && isSubmitting}

@@ -30,17 +30,34 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 		return schemas.Cohere, nil
 	case llm.ServiceTypeMistral:
 		return schemas.Mistral, nil
+	case llm.ServiceTypeGemini:
+		return schemas.Gemini, nil
+	case llm.ServiceTypeVertex:
+		return schemas.Vertex, nil
 	default:
 		return "", fmt.Errorf("unsupported service type: %s", serviceType)
 	}
 }
 
+// SupportsNativeTools reports whether the given service type can use provider
+// native tools (currently, web search). This gates both request-time filtering
+// and the effective-behavior checks used by built-in Mattermost tools so that
+// built-in fallbacks do not get suppressed when native tools would be stripped.
+func SupportsNativeTools(serviceType string) bool {
+	provider, err := MapServiceTypeToProvider(serviceType)
+	if err != nil {
+		return false
+	}
+	return supportsNativeToolsProvider(provider)
+}
+
 func supportsNativeTools(serviceType string) bool {
-	switch serviceType {
-	case llm.ServiceTypeOpenAI,
-		llm.ServiceTypeOpenAICompatible,
-		llm.ServiceTypeAzure,
-		llm.ServiceTypeAnthropic:
+	return SupportsNativeTools(serviceType)
+}
+
+func supportsNativeToolsProvider(provider schemas.ModelProvider) bool {
+	switch provider {
+	case schemas.OpenAI, schemas.Azure, schemas.Anthropic, schemas.Gemini, schemas.Vertex:
 		return true
 	default:
 		return false
@@ -93,19 +110,22 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 	enabledNativeTools := filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools)
 
 	cfg := Config{
-		Provider:           provider,
-		APIKey:             serviceConfig.APIKey,
-		APIURL:             apiURL,
-		OrgID:              serviceConfig.OrgID,
-		Region:             serviceConfig.Region,
-		AWSAccessKeyID:     serviceConfig.AWSAccessKeyID,
-		AWSSecretAccessKey: serviceConfig.AWSSecretAccessKey,
-		DefaultModel:       serviceConfig.DefaultModel,
-		InputTokenLimit:    serviceConfig.InputTokenLimit,
-		OutputTokenLimit:   serviceConfig.OutputTokenLimit,
-		StreamingTimeout:   streamingTimeout,
-		SendUserID:         serviceConfig.SendUserID,
-		UseResponsesAPI:    llm.ServiceUsesResponsesAPI(serviceConfig),
+		Provider:              provider,
+		APIKey:                serviceConfig.APIKey,
+		APIURL:                apiURL,
+		OrgID:                 serviceConfig.OrgID,
+		Region:                serviceConfig.Region,
+		AWSAccessKeyID:        serviceConfig.AWSAccessKeyID,
+		AWSSecretAccessKey:    serviceConfig.AWSSecretAccessKey,
+		VertexProjectID:       serviceConfig.VertexProjectID,
+		VertexProjectNumber:   serviceConfig.VertexProjectNumber,
+		VertexAuthCredentials: serviceConfig.VertexAuthCredentials,
+		DefaultModel:          serviceConfig.DefaultModel,
+		InputTokenLimit:       serviceConfig.InputTokenLimit,
+		OutputTokenLimit:      serviceConfig.OutputTokenLimit,
+		StreamingTimeout:      streamingTimeout,
+		SendUserID:            serviceConfig.SendUserID,
+		UseResponsesAPI:       llm.ServiceUsesResponsesAPI(serviceConfig),
 
 		// Bot-specific configuration
 		EnabledNativeTools: enabledNativeTools,
@@ -144,7 +164,9 @@ func IsSupported(serviceType string) bool {
 		llm.ServiceTypeAnthropic,
 		llm.ServiceTypeBedrock,
 		llm.ServiceTypeCohere,
-		llm.ServiceTypeMistral:
+		llm.ServiceTypeMistral,
+		llm.ServiceTypeGemini,
+		llm.ServiceTypeVertex:
 		return true
 	default:
 		return false
