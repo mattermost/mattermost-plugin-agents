@@ -33,7 +33,7 @@ Install the plugin through the System Console by navigating to **System Console 
 
 Navigate to **System Console > Plugins > Agents** to configure plugin-wide settings such as AI services, the default bot, web search, embedding search, and MCP settings.
 
-Create and manage agents from the top-level **Agents** product page. You can also open it from **AI Actions > Agents > Manage agents**. The **AI Bots** section in the System Console links to the Agents page instead of hosting the full agent editor.
+Create and manage agents from the top-level **Agents** product page. You can also open it from **AI Actions > Manage agents**. The **AI Bots** section in the System Console links to the Agents page instead of hosting the full agent editor.
 
 ### Enable the plugin
 
@@ -102,13 +102,17 @@ See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html)
 
 ### Agent configuration
 
-Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry or from **AI Actions > Agents > Manage agents**. Agents use the service inventory configured in **System Console > Plugins > Agents**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
+Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry or from **AI Actions > Manage agents**. Agents use the service inventory configured in **System Console > Plugins > Agents**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
+
+If you can manage an agent, select its row in the Agents list to open the edit modal directly. The overflow menu remains available for **Edit** and **Delete**.
 
 When you create or edit an agent, use the three tabs in the agent configuration flow:
 
 - **Configuration** for identity, model selection, instructions, and core capabilities
 - **Access** for channel, team, and user restrictions, plus delegated agent admins
 - **MCPs** for the agent's allowed MCP tools
+
+If you have unsaved changes and try to close the agent configuration modal with the close button, by pressing Escape, or by selecting the backdrop, Mattermost shows a **Discard changes?** confirmation with **Discard** and **Keep editing**.
 
 #### Configuration tab
 

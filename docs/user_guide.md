@@ -50,11 +50,11 @@ To manage custom prompts:
 1. Open the message composer in any channel or direct message.
 2. Select **AI Actions**.
 3. Open **Custom prompts**, then select **Manage prompts**.
-4. Select **Create new** to add a prompt with an **Action Title**, optional description, and template.
+4. Select **Create new** to open the prompt editor and add a prompt with an **Action Title**, optional description, and template.
 5. Choose **Public** to share the prompt with other users, or **Private** to keep it visible only to you.
-6. Pin prompts you use often so they appear as shortcuts in the Agents pane.
+6. Pin or unpin prompts directly from the prompt list. Pinned prompts appear as shortcuts in the Agents pane.
 
-The **All Prompts** tab shows prompts you created plus shared prompts from other users. The **Your Prompts** tab shows only prompts you created. Shared prompts from other users are read-only. Only the prompt creator can edit or delete a prompt. Prompt titles can be up to 64 characters, and every prompt requires a template.
+The **All Prompts** tab shows prompts you created plus shared prompts from other users. The **Your Prompts** tab shows only prompts you created. Selecting a prompt from either list opens a dedicated prompt view inside the modal, with a back arrow to return to the list and the prompt name as the title. Shared prompts from other users open read-only. Only the prompt creator can edit or delete a prompt. Prompt titles can be up to 64 characters, and every prompt requires a template.
 
 When you select a saved prompt from **Custom prompts**, Mattermost renders the template with the current context and inserts the result into your draft. If you use this menu outside a bot direct message, Mattermost adds the currently selected bot mention before the rendered text. Pinned prompts in the Agents pane render the current saved template and send it immediately as a message.
 
