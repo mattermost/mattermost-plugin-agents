@@ -51,6 +51,7 @@ type TestEnvironment struct {
 	client            *pluginapi.Client
 	conversationStore *mockConversationStore
 	agentStore        *mockAgentStore
+	mcp               *mockMCPClientManager
 }
 
 // testConfigImpl is a minimal implementation of Config for testing
@@ -93,6 +94,12 @@ type mockMCPClientManager struct {
 	config          mcp.Config
 	embeddedServer  mcp.EmbeddedMCPServer
 	disconnectCalls []mcpDisconnectCall
+
+	// Plugin-server registry spy. Tests read these slices to assert the
+	// bridge handlers dispatched correctly.
+	registerCalls   []mcp.PluginServerConfig
+	unregisterCalls []string
+	pluginServers   []mcp.PluginServerConfig // returned by ListPluginServers
 }
 
 func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
@@ -133,6 +140,36 @@ func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.
 
 func (m *mockMCPClientManager) GetConfig() mcp.Config {
 	return m.config
+}
+
+func (m *mockMCPClientManager) RegisterPluginServer(cfg mcp.PluginServerConfig) {
+	m.registerCalls = append(m.registerCalls, cfg)
+	// Mirror overwrite semantics of the real ClientManager: replace an
+	// existing entry with the same PluginID so ListPluginServers reflects
+	// the current registration.
+	for i, existing := range m.pluginServers {
+		if existing.PluginID == cfg.PluginID {
+			m.pluginServers[i] = cfg
+			return
+		}
+	}
+	m.pluginServers = append(m.pluginServers, cfg)
+}
+
+func (m *mockMCPClientManager) UnregisterPluginServer(pluginID string) {
+	m.unregisterCalls = append(m.unregisterCalls, pluginID)
+	for i, existing := range m.pluginServers {
+		if existing.PluginID == pluginID {
+			m.pluginServers = append(m.pluginServers[:i], m.pluginServers[i+1:]...)
+			return
+		}
+	}
+}
+
+func (m *mockMCPClientManager) ListPluginServers() []mcp.PluginServerConfig {
+	out := make([]mcp.PluginServerConfig, len(m.pluginServers))
+	copy(out, m.pluginServers)
+	return out
 }
 
 // mockConversationStore is a simple in-memory implementation of ConversationStore for API-layer tests.
@@ -382,8 +419,9 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	cfg := &testConfigImpl{}
 	mockConvStore := newMockConversationStore()
 	agentStore := newMockAgentStore()
+	mcpMgr := &mockMCPClientManager{}
 
-	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil, agentStore, nil, nil, nil, mockConvStore, nil, nil)
+	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, mcpMgr, nil, nil, nil, agentStore, nil, nil, nil, mockConvStore, nil, nil)
 
 	return &TestEnvironment{
 		api:               api,
@@ -393,6 +431,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		client:            client,
 		conversationStore: mockConvStore,
 		agentStore:        agentStore,
+		mcp:               mcpMgr,
 	}
 }
 

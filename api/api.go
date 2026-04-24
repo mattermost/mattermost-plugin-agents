@@ -62,6 +62,13 @@ type MCPClientManager interface {
 	EnsureMCPSessionID(userID string) (string, error)
 	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
 	GetConfig() mcp.Config
+
+	// Plugin-server registry (populated via /bridge/v1/mcp/register,
+	// consumed by GetToolsForUser, admin Tools tab, and external aggregation).
+	// See mcp/client_manager.go for the concrete implementation.
+	RegisterPluginServer(cfg mcp.PluginServerConfig)
+	UnregisterPluginServer(pluginID string)
+	ListPluginServers() []mcp.PluginServerConfig
 }
 
 // ConfigStore provides read/write access to the plugin configuration in the database.
@@ -135,6 +142,19 @@ type API struct {
 	convService           *conversation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
+
+	// externalRebuilderForTest lets tests inject a spy for the
+	// externalServerRebuilder interface (see api_bridge_mcp.go). Production
+	// code MUST leave this nil — resolveExternalServerRebuilder falls through
+	// to a nil-safe type-assertion on mcpHandlers. Exposed only via
+	// SetExternalRebuilderForTest so accidental production use is loud.
+	externalRebuilderForTest externalServerRebuilder
+}
+
+// SetExternalRebuilderForTest installs a test-only implementation of the
+// externalServerRebuilder interface. Production code must never call this.
+func (a *API) SetExternalRebuilderForTest(rb externalServerRebuilder) {
+	a.externalRebuilderForTest = rb
 }
 
 // New creates a new API instance
@@ -222,6 +242,12 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	completionRoute.POST("/agent/:agent/nostream", a.handleAgentCompletionNoStream)
 	completionRoute.POST("/service/:service", a.handleServiceCompletionStreaming)
 	completionRoute.POST("/service/:service/nostream", a.handleServiceCompletionNoStream)
+
+	// Plugin MCP registration endpoints — source plugins call these from
+	// mcphelper.Server.Register() / .Unregister() (see public/mcphelper).
+	// Inherits interPluginAuthorizationRequired via the group-level .Use above.
+	llmBridgeRoute.POST("/mcp/register", a.handleMCPRegister)
+	llmBridgeRoute.POST("/mcp/unregister", a.handleMCPUnregister)
 
 	// MCP server endpoints - grouped under /mcp-server/
 	if a.mcpHandlers != nil && a.config.MCP().EnablePluginServer {
