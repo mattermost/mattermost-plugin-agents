@@ -5,7 +5,7 @@ import React, {useCallback, useEffect, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
-import {PlusIcon} from '@mattermost/compass-icons/components';
+import {PlusIcon, MagnifyIcon} from '@mattermost/compass-icons/components';
 
 import {GlobalState} from '@mattermost/types/store';
 
@@ -16,7 +16,7 @@ import {UserAgent, ServiceInfo} from '@/types/agents';
 
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
-import AgentConfigModal from './agent_config_modal';
+import AgentConfigView from './agent_config_view';
 
 type Tab = 'all' | 'yours';
 
@@ -40,8 +40,8 @@ const AgentsList = () => {
     const [activeTab, setActiveTab] = useState<Tab>('all');
     const [deletingAgent, setDeletingAgent] = useState<UserAgent | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
-    const [modalOpen, setModalOpen] = useState(false);
-    const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
+    const [viewOpen, setViewOpen] = useState(false);
+    const [viewMode, setViewMode] = useState<'create' | 'edit'>('create');
     const [editingAgent, setEditingAgent] = useState<UserAgent | null>(null);
 
     const fetchAgents = useCallback(async () => {
@@ -70,8 +70,8 @@ const AgentsList = () => {
 
     const handleEdit = useCallback((agent: UserAgent) => {
         setEditingAgent(agent);
-        setModalMode('edit');
-        setModalOpen(true);
+        setViewMode('edit');
+        setViewOpen(true);
     }, []);
 
     const handleDeleteRequest = useCallback((agent: UserAgent) => {
@@ -100,17 +100,17 @@ const AgentsList = () => {
 
     const handleCreateAgent = useCallback(() => {
         setEditingAgent(null);
-        setModalMode('create');
-        setModalOpen(true);
+        setViewMode('create');
+        setViewOpen(true);
     }, []);
 
-    const handleModalClose = useCallback(() => {
-        setModalOpen(false);
+    const handleViewBack = useCallback(() => {
+        setViewOpen(false);
         setEditingAgent(null);
     }, []);
 
-    const handleModalSaved = useCallback(() => {
-        setModalOpen(false);
+    const handleViewSaved = useCallback(() => {
+        setViewOpen(false);
         setEditingAgent(null);
         fetchAgents();
     }, [fetchAgents]);
@@ -136,6 +136,18 @@ const AgentsList = () => {
         }
         return true;
     });
+
+    if (viewOpen) {
+        return (
+            <AgentConfigView
+                mode={viewMode}
+                {...(editingAgent ? {agent: editingAgent} : {})}
+                services={services}
+                onBack={handleViewBack}
+                onSaved={handleViewSaved}
+            />
+        );
+    }
 
     return (
         <Container>
@@ -172,12 +184,17 @@ const AgentsList = () => {
             </TabBar>
 
             <SearchContainer>
-                <SearchInput
-                    type='text'
-                    placeholder={intl.formatMessage({defaultMessage: 'Search agents...'})}
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                />
+                <SearchInputWrapper>
+                    <SearchIconWrapper>
+                        <MagnifyIcon size={18}/>
+                    </SearchIconWrapper>
+                    <SearchInput
+                        type='text'
+                        placeholder={intl.formatMessage({defaultMessage: 'Search agents...'})}
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                </SearchInputWrapper>
             </SearchContainer>
 
             {loading && (
@@ -240,15 +257,6 @@ const AgentsList = () => {
             <Footer>
                 <FormattedMessage defaultMessage='AI services are third party services. Mattermost is not responsible for output.'/>
             </Footer>
-
-            <AgentConfigModal
-                show={modalOpen}
-                mode={modalMode}
-                {...(editingAgent ? {agent: editingAgent} : {})}
-                services={services}
-                onClose={handleModalClose}
-                onSaved={handleModalSaved}
-            />
         </Container>
     );
 };
@@ -258,7 +266,10 @@ const AgentsList = () => {
 const Container = styled.div`
     display: flex;
     flex-direction: column;
+    flex: 1;
+    min-height: 0;
     gap: 0;
+    overflow-y: auto;
 `;
 
 const Header = styled.div`
@@ -266,7 +277,7 @@ const Header = styled.div`
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
-    padding: 24px 0;
+    padding: 48px 0 24px;
 `;
 
 const TitleRow = styled.div`
@@ -327,9 +338,28 @@ const SearchContainer = styled.div`
     padding: 0 0 16px 0;
 `;
 
+const SearchInputWrapper = styled.div`
+    position: relative;
+    width: 100%;
+    height: 40px;
+`;
+
+const SearchIconWrapper = styled.div`
+    position: absolute;
+    top: 50%;
+    left: 12px;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+    pointer-events: none;
+`;
+
 const SearchInput = styled.input`
     width: 100%;
-    padding: 8px 12px;
+    height: 40px;
+    padding: 0 12px 0 38px;
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
     border-radius: 4px;
     background: var(--center-channel-bg);
@@ -343,7 +373,7 @@ const SearchInput = styled.input`
     &:focus {
         outline: none;
         border-color: var(--button-bg);
-        box-shadow: 0 0 0 2px rgba(var(--button-bg-rgb), 0.16);
+        box-shadow: inset 0 0 0 1px var(--button-bg);
     }
 `;
 

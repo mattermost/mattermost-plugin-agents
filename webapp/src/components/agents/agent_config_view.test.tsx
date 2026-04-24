@@ -7,7 +7,7 @@ import {IntlProvider} from 'react-intl';
 
 import {ServiceInfo} from '@/types/agents';
 
-import AgentConfigModal, {AgentDraft} from './agent_config_modal';
+import AgentConfigView, {AgentDraft} from './agent_config_view';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -67,14 +67,13 @@ const services: ServiceInfo[] = [
     },
 ];
 
-function renderModal(onClose = jest.fn()) {
+function renderView(onBack = jest.fn()) {
     const result = render(
         <IntlProvider locale='en'>
-            <AgentConfigModal
-                show={true}
+            <AgentConfigView
                 mode='create'
                 services={services}
-                onClose={onClose}
+                onBack={onBack}
                 onSaved={jest.fn()}
             />
         </IntlProvider>,
@@ -82,46 +81,45 @@ function renderModal(onClose = jest.fn()) {
 
     return {
         ...result,
-        onClose,
+        onBack,
     };
 }
 
-describe('AgentConfigModal', () => {
-    test('confirms before dismissing unsaved changes from backdrop click', async () => {
-        const {container, onClose} = renderModal();
+describe('AgentConfigView', () => {
+    test('confirms before dismissing unsaved changes from back button', async () => {
+        const {onBack} = renderView();
 
         fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Unsaved Agent'}});
-        fireEvent.click(container.firstChild as HTMLElement);
+        fireEvent.click(screen.getByRole('button', {name: 'Back to agents'}));
 
         expect(screen.getByRole('dialog', {name: 'Discard changes?'})).not.toBeNull();
-        expect(onClose).not.toHaveBeenCalled();
+        expect(onBack).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole('button', {name: 'Keep editing'}));
         await waitForElementToBeRemoved(() => screen.queryByRole('dialog', {name: 'Discard changes?'}));
         expect((screen.getByLabelText('Display Name') as HTMLInputElement).value).toBe('Unsaved Agent');
 
-        fireEvent.click(container.firstChild as HTMLElement);
+        fireEvent.click(screen.getByRole('button', {name: 'Back to agents'}));
         fireEvent.click(screen.getByRole('button', {name: 'Discard'}));
 
-        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(onBack).toHaveBeenCalledTimes(1);
     });
 
-    test('closes immediately when there are no unsaved changes', () => {
-        const {container, onClose} = renderModal();
+    test('navigates back immediately when there are no unsaved changes', () => {
+        const {onBack} = renderView();
 
-        fireEvent.click(container.firstChild as HTMLElement);
+        fireEvent.click(screen.getByRole('button', {name: 'Back to agents'}));
 
-        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(onBack).toHaveBeenCalledTimes(1);
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
     });
 
     test('loads edit mode without treating existing values as dirty', () => {
-        const onClose = jest.fn();
+        const onBack = jest.fn();
 
         render(
             <IntlProvider locale='en'>
-                <AgentConfigModal
-                    show={true}
+                <AgentConfigView
                     mode='edit'
                     agent={{
                         id: 'agent_1',
@@ -146,7 +144,7 @@ describe('AgentConfigModal', () => {
                         structuredOutputEnabled: false,
                     }}
                     services={services}
-                    onClose={onClose}
+                    onBack={onBack}
                     onSaved={jest.fn()}
                 />
             </IntlProvider>,
@@ -154,7 +152,7 @@ describe('AgentConfigModal', () => {
 
         fireEvent.keyDown(document, {key: 'Escape'});
 
-        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(onBack).toHaveBeenCalledTimes(1);
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
     });
 });

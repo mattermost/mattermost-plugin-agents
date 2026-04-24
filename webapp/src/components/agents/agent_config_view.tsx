@@ -4,14 +4,13 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {CloseIcon} from '@mattermost/compass-icons/components';
+import {ArrowLeftIcon} from '@mattermost/compass-icons/components';
 
 import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, EnabledTool, ServiceInfo} from '@/types/agents';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import ConfirmationDialog from '@/components/confirmation_dialog';
-import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
 
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
@@ -168,43 +167,29 @@ function agentToDraft(agent: UserAgent): AgentDraft {
 }
 
 type Props = {
-    show: boolean;
     mode: Mode;
     agent?: UserAgent; // provided when mode === 'edit'
     services: ServiceInfo[]; // pre-fetched from parent
-    onClose: () => void;
+    onBack: () => void;
     onSaved: (agent: UserAgent) => void; // called after successful create or update
 }
 
 const DISCARD_CHANGES_TITLE_ID = 'discard-agent-changes-title';
-const AGENT_CONFIG_TITLE_ID = 'agent-config-modal-title';
 
-const AgentConfigModal = (props: Props) => {
-    const {show, mode, agent, services, onClose, onSaved} = props;
+const AgentConfigView = (props: Props) => {
+    const {mode, agent, services, onBack, onSaved} = props;
     const intl = useIntl();
 
     const [activeTab, setActiveTab] = useState<Tab>('config');
-    const [draft, setDraft] = useState<AgentDraft>(emptyDraft);
-    const [baselineDraft, setBaselineDraft] = useState<AgentDraft>(emptyDraft);
+    const initialDraft = useMemo(() => (agent ? agentToDraft(agent) : cloneDraft(emptyDraft)), [agent]);
+    const [draft, setDraft] = useState<AgentDraft>(initialDraft);
+    const [baselineDraft, setBaselineDraft] = useState<AgentDraft>(initialDraft);
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [showDiscardDialog, setShowDiscardDialog] = useState(false);
     const showDiscardDialogRef = useRef(false);
     showDiscardDialogRef.current = showDiscardDialog;
-
-    // Reset form when modal opens
-    useEffect(() => {
-        if (show) {
-            const next = agent ? agentToDraft(agent) : cloneDraft(emptyDraft);
-            setActiveTab('config');
-            setDraft(next);
-            setBaselineDraft(cloneDraft(next));
-            setAvatarFile(null);
-            setErrors({});
-            setShowDiscardDialog(false);
-        }
-    }, [show, agent]);
 
     // Leave MCPs tab if tools are disabled
     useEffect(() => {
@@ -218,7 +203,7 @@ const AgentConfigModal = (props: Props) => {
         [draft, baselineDraft, avatarFile],
     );
 
-    const requestClose = useCallback(() => {
+    const requestBack = useCallback(() => {
         if (saving) {
             return;
         }
@@ -229,25 +214,20 @@ const AgentConfigModal = (props: Props) => {
             setShowDiscardDialog(true);
             return;
         }
-        onClose();
-    }, [isDirty, onClose, saving]);
+        onBack();
+    }, [isDirty, onBack, saving]);
 
     const handleDiscardConfirm = useCallback(() => {
         setShowDiscardDialog(false);
-        onClose();
-    }, [onClose]);
+        onBack();
+    }, [onBack]);
 
     const handleDiscardCancel = useCallback(() => {
         setShowDiscardDialog(false);
     }, []);
 
-    // Escape key: same as close — confirm when there are unsaved changes
+    // Escape key: same as back — confirm when there are unsaved changes
     useEffect(() => {
-        if (!show) {
-            return () => {
-                // No escape listener while modal is hidden.
-            };
-        }
         const handler = (e: KeyboardEvent) => {
             if (e.key !== 'Escape') {
                 return;
@@ -256,11 +236,11 @@ const AgentConfigModal = (props: Props) => {
                 return;
             }
             e.preventDefault();
-            requestClose();
+            requestBack();
         };
         document.addEventListener('keydown', handler);
         return () => document.removeEventListener('keydown', handler);
-    }, [show, requestClose]);
+    }, [requestBack]);
 
     const updateDraft = useCallback((updates: Partial<AgentDraft>) => {
         setDraft((prev) => ({...prev, ...updates}));
@@ -317,6 +297,9 @@ const AgentConfigModal = (props: Props) => {
                 }
             }
 
+            // Clear dirty state so onSaved -> onBack flow doesn't trigger discard prompt
+            setBaselineDraft(cloneDraft(draft));
+            setAvatarFile(null);
             onSaved(savedAgent);
         } catch (e: any) {
             const message = e?.message || '';
@@ -337,104 +320,94 @@ const AgentConfigModal = (props: Props) => {
 
     return (
         <>
-            <AnimatedModalShell
-                show={show}
-                onBackdropClick={requestClose}
-                zIndex={2000}
-            >
-                <ModalContainer
-                    className={MODAL_SHEET_CLASS}
-                    onClick={(e) => e.stopPropagation()}
-                    role='dialog'
-                    aria-modal='true'
-                    aria-labelledby={AGENT_CONFIG_TITLE_ID}
-                >
-                    <ModalHeader>
-                        <ModalTitle id={AGENT_CONFIG_TITLE_ID}>{title}</ModalTitle>
-                        <CloseButton
+            <ViewContainer>
+                <ViewHeader>
+                    <HeaderLeading>
+                        <BackButton
                             type='button'
-                            onClick={requestClose}
+                            onClick={requestBack}
                             disabled={saving}
-                            aria-label={intl.formatMessage({defaultMessage: 'Close'})}
+                            aria-label={intl.formatMessage({defaultMessage: 'Back to agents'})}
                         >
-                            <CloseIcon size={20}/>
-                        </CloseButton>
-                    </ModalHeader>
+                            <ArrowLeftIcon size={20}/>
+                        </BackButton>
+                        <ViewTitle>{title}</ViewTitle>
+                    </HeaderLeading>
+                </ViewHeader>
 
-                    <TabsContainer>
-                        <TabButton
-                            $active={activeTab === 'config'}
-                            onClick={() => setActiveTab('config')}
-                        >
-                            <FormattedMessage defaultMessage='Configuration'/>
-                        </TabButton>
-                        <TabButton
-                            $active={activeTab === 'access'}
-                            onClick={() => setActiveTab('access')}
-                        >
-                            <FormattedMessage defaultMessage='Access'/>
-                        </TabButton>
-                        <TabButton
-                            $active={activeTab === 'mcps'}
-                            disabled={draft.disableTools}
-                            title={draft.disableTools ? intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}) : ''}
-                            onClick={() => {
-                                if (!draft.disableTools) {
-                                    setActiveTab('mcps');
-                                }
-                            }}
-                        >
-                            <FormattedMessage defaultMessage='MCPs'/>
-                        </TabButton>
-                    </TabsContainer>
-
-                    <ModalBody>
-                        {errors.general && <ErrorBanner>{errors.general}</ErrorBanner>}
-
-                        {activeTab === 'config' && (
-                            <ConfigTab
-                                draft={draft}
-                                onChange={updateDraft}
-                                onAvatarChange={setAvatarFile}
-                                botUserId={agent?.botUserID}
-                                services={services}
-                                errors={errors}
-                                usernameLocked={mode === 'edit'}
-                            />
-                        )}
-                        {activeTab === 'access' && (
-                            <AccessTab
-                                draft={draft}
-                                onChange={updateDraft}
-                            />
-                        )}
-                        {activeTab === 'mcps' && (
-                            <McpsTab
-                                enabledTools={draft.enabledTools}
-                                autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
-                                onChange={(updates) => updateDraft(updates)}
-                            />
-                        )}
-                    </ModalBody>
-
-                    <ModalFooter>
-                        <CancelButton
-                            type='button'
-                            onClick={requestClose}
-                            disabled={saving}
-                        >
-                            <FormattedMessage defaultMessage='Cancel'/>
-                        </CancelButton>
-                        <SaveButton
-                            onClick={handleSave}
-                            disabled={saving}
-                        >
-                            {saving ? <FormattedMessage defaultMessage='Saving...'/> : <FormattedMessage defaultMessage='Save'/>
+                <TabsContainer>
+                    <TabButton
+                        $active={activeTab === 'config'}
+                        onClick={() => setActiveTab('config')}
+                    >
+                        <FormattedMessage defaultMessage='Configuration'/>
+                    </TabButton>
+                    <TabButton
+                        $active={activeTab === 'access'}
+                        onClick={() => setActiveTab('access')}
+                    >
+                        <FormattedMessage defaultMessage='Access'/>
+                    </TabButton>
+                    <TabButton
+                        $active={activeTab === 'mcps'}
+                        disabled={draft.disableTools}
+                        title={draft.disableTools ? intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}) : ''}
+                        onClick={() => {
+                            if (!draft.disableTools) {
+                                setActiveTab('mcps');
                             }
-                        </SaveButton>
-                    </ModalFooter>
-                </ModalContainer>
-            </AnimatedModalShell>
+                        }}
+                    >
+                        <FormattedMessage defaultMessage='MCPs'/>
+                    </TabButton>
+                </TabsContainer>
+
+                <ViewBody>
+                    {errors.general && <ErrorBanner>{errors.general}</ErrorBanner>}
+
+                    {activeTab === 'config' && (
+                        <ConfigTab
+                            draft={draft}
+                            onChange={updateDraft}
+                            onAvatarChange={setAvatarFile}
+                            botUserId={agent?.botUserID}
+                            services={services}
+                            errors={errors}
+                            usernameLocked={mode === 'edit'}
+                        />
+                    )}
+                    {activeTab === 'access' && (
+                        <AccessTab
+                            draft={draft}
+                            onChange={updateDraft}
+                        />
+                    )}
+                    {activeTab === 'mcps' && (
+                        <McpsTab
+                            enabledTools={draft.enabledTools}
+                            autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
+                            onChange={(updates) => updateDraft(updates)}
+                        />
+                    )}
+                </ViewBody>
+
+                <ViewFooter>
+                    <CancelButton
+                        type='button'
+                        onClick={requestBack}
+                        disabled={saving}
+                    >
+                        <FormattedMessage defaultMessage='Cancel'/>
+                    </CancelButton>
+                    <SaveButton
+                        onClick={handleSave}
+                        disabled={saving}
+                    >
+                        {saving ? <FormattedMessage defaultMessage='Saving...'/> : <FormattedMessage defaultMessage='Save'/>
+                        }
+                    </SaveButton>
+                </ViewFooter>
+            </ViewContainer>
             <ConfirmationDialog
                 show={showDiscardDialog}
                 titleId={DISCARD_CHANGES_TITLE_ID}
@@ -456,41 +429,47 @@ const AgentConfigModal = (props: Props) => {
 
 // --- Styled Components ---
 
-// Fixed-height modal keeps the top edge anchored so it doesn't jump around when
-// the active tab or AI Service selection changes how tall the body content is.
-// The body scrolls internally (see ModalBody) when content exceeds the frame.
-const ModalContainer = styled.div`
-    background-color: var(--center-channel-bg);
-    border-radius: 12px;
-    width: 700px;
-    height: min(720px, 85vh);
-    min-height: 0;
+const ViewContainer = styled.div`
     display: flex;
     flex-direction: column;
-    overflow: hidden;
-    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.12);
+    flex: 1;
+    min-height: 0;
+    width: 100%;
 `;
 
-const ModalHeader = styled.div`
+const ViewHeader = styled.div`
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 24px 32px 0;
+    justify-content: space-between;
+    padding: 48px 0 16px 0;
+    flex-shrink: 0;
 `;
 
-const ModalTitle = styled.h2`
+const HeaderLeading = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+`;
+
+const ViewTitle = styled.h1`
+    font-family: 'Metropolis', sans-serif;
     font-weight: 600;
     font-size: 22px;
     line-height: 28px;
     color: var(--center-channel-color);
     margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 `;
 
-const CloseButton = styled.button`
+const BackButton = styled.button`
     background: none;
     border: none;
     cursor: pointer;
-    padding: 10px;
+    padding: 8px;
+    margin-left: -8px;
     border-radius: 4px;
     color: rgba(var(--center-channel-color-rgb), 0.64);
     display: flex;
@@ -499,6 +478,7 @@ const CloseButton = styled.button`
 
     &:hover:not(:disabled) {
         background: rgba(var(--center-channel-color-rgb), 0.08);
+        color: var(--center-channel-color);
     }
 
     &:disabled {
@@ -511,9 +491,8 @@ const TabsContainer = styled.div`
     display: flex;
     box-sizing: border-box;
     width: 100%;
-    margin: 16px 0 0;
-    padding: 0 32px;
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+    flex-shrink: 0;
 `;
 
 const TabButton = styled.button<{$active: boolean}>`
@@ -536,17 +515,13 @@ const TabButton = styled.button<{$active: boolean}>`
         opacity: 0.4;
         cursor: not-allowed;
     }
-
-    &:first-child {
-        margin-left: -16px;
-    }
 `;
 
-const ModalBody = styled.div`
-    padding: 24px 32px;
-    overflow-y: auto;
+const ViewBody = styled.div`
+    padding: 32px 16px;
     flex: 1;
     min-height: 0;
+    overflow-y: auto;
 `;
 
 const ErrorBanner = styled.div`
@@ -559,12 +534,14 @@ const ErrorBanner = styled.div`
     font-size: 14px;
 `;
 
-const ModalFooter = styled.div`
+const ViewFooter = styled.div`
     display: flex;
     justify-content: flex-end;
     align-items: center;
-    padding: 16px 32px 24px;
+    padding: 16px 0;
     gap: 8px;
+    flex-shrink: 0;
+    background: var(--center-channel-bg);
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
@@ -576,4 +553,4 @@ const SaveButton = styled(PrimaryButton)`
     height: 40px;
 `;
 
-export default AgentConfigModal;
+export default AgentConfigView;
