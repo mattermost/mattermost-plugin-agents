@@ -296,6 +296,7 @@ const ResultContainer = styled.div`
 `;
 
 interface ToolCardProps {
+    postID: string;
     tool: ToolCall;
     isCollapsed: boolean;
     isProcessing: boolean;
@@ -310,6 +311,7 @@ interface ToolCardProps {
 }
 
 const ToolCard: React.FC<ToolCardProps> = ({
+    postID,
     tool,
     isCollapsed,
     isProcessing,
@@ -349,7 +351,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
     // @ts-ignore
     const {formatText, messageHtmlToComponent} = window.PostUtils;
 
-    const markdownOptions = {
+    const markdownOptions = useMemo(() => ({
         singleline: false,
         mentionHighlight: false,
         atMentions: false,
@@ -357,13 +359,14 @@ const ToolCard: React.FC<ToolCardProps> = ({
         unsafeLinks: !allowUnsafeLinks,
         minimumHashtagLength: 1000000000,
         siteURL,
-    };
+    }), [allowUnsafeLinks, siteURL, team]);
 
-    const messageHtmlToComponentOptions = {
+    const messageHtmlToComponentOptions = useMemo(() => ({
         hasPluginTooltips: false,
         latex: false,
         inlinelatex: false,
-    };
+        postId: postID,
+    }), [postID]);
 
     const renderedArguments = useMemo(() => {
         if (!showArguments) {
@@ -376,7 +379,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
             formatText(argumentsMarkdown, markdownOptions),
             messageHtmlToComponentOptions,
         );
-    }, [showArguments, tool.arguments]);
+    }, [showArguments, tool.arguments, formatText, markdownOptions, messageHtmlToComponent, messageHtmlToComponentOptions]);
 
     const hasLocalDecision = localDecision != null;
 
@@ -501,7 +504,7 @@ const ToolCard: React.FC<ToolCardProps> = ({
             formatText(resultMarkdown, markdownOptions),
             messageHtmlToComponentOptions,
         );
-    }, [showResults, tool.result]);
+    }, [showResults, tool.result, formatText, markdownOptions, messageHtmlToComponent, messageHtmlToComponentOptions]);
 
     return (
         <ToolCallCard>

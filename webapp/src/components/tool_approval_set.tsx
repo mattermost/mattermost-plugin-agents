@@ -251,6 +251,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             {decisionToolCalls.map((tool) => (
                 <ToolCard
                     key={tool.id}
+                    postID={props.postID}
                     tool={tool}
                     isCollapsed={isToolCollapsed(tool)}
                     isProcessing={isSubmitting}
@@ -268,6 +269,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
             {nonDecisionToolCalls.map((tool) => (
                 <ToolCard
                     key={tool.id}
+                    postID={props.postID}
                     tool={tool}
                     isCollapsed={isToolCollapsed(tool)}
                     isProcessing={false}
