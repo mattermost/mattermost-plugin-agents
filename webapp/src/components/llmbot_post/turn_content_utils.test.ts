@@ -60,7 +60,6 @@ describe('statusStringToEnum', () => {
         expect(statusStringToEnum(undefined as any)).toBe(ToolCallStatus.Pending);
     });
 });
-
 describe('extractToolCallsForPost', () => {
     test('returns empty array when the anchor turn has no tool_use blocks and no follow-ups', () => {
         const turn = makeTurn({post_id: 'post_1', content: [{type: 'text', text: 'hello'}]});
@@ -297,7 +296,6 @@ describe('extractToolCallsForPost', () => {
         expect(result[0].id).toBe('tc_here');
     });
 });
-
 describe('extractReasoningFromTurn', () => {
     test('returns empty strings when no thinking blocks', () => {
         const turn = makeTurn({content: [{type: 'text', text: 'hello'}]});
@@ -490,4 +488,3 @@ describe('hasAutoApprovedToolsForPost', () => {
         expect(hasAutoApprovedToolsForPost(conv, 'post_missing')).toBe(false);
     });
 });
-

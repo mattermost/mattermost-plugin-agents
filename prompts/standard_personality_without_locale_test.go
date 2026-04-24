@@ -11,6 +11,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -115,4 +116,58 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestStandardPersonalityWithoutLocaleListsAvailableToolsForGeminiAndVertexOnly(t *testing.T) {
+	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+
+	store := llm.NewToolStore(nil, false)
+	store.AddTools([]llm.Tool{
+		{
+			Name:        "search_users",
+			Description: "Look up users by name",
+			Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				return "", nil
+			},
+		},
+		{
+			Name:        "read_channel",
+			Description: "Read channel history",
+			Resolver: func(_ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				return "", nil
+			},
+		},
+	})
+
+	buildContext := func(serviceType string) *llm.Context {
+		return &llm.Context{
+			Time:           "Fri, 20 Feb 2026 18:00:00 UTC",
+			ServerName:     "server",
+			BotName:        "agent",
+			BotUsername:    "agent",
+			BotModel:       "model-x",
+			BotServiceType: serviceType,
+			Tools:          store,
+		}
+	}
+
+	geminiOutput, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, buildContext("gemini"))
+	require.NoError(t, err)
+	assert.Contains(t, geminiOutput, "The tools currently available to agent in this conversation are:")
+	assert.Contains(t, geminiOutput, "- search_users: Look up users by name")
+	assert.Contains(t, geminiOutput, "- read_channel: Read channel history")
+	assert.Contains(t, geminiOutput, "When asked about capabilities or tool access, agent may mention the tools listed above.")
+
+	vertexOutput, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, buildContext("vertex"))
+	require.NoError(t, err)
+	assert.Contains(t, vertexOutput, "The tools currently available to agent in this conversation are:")
+	assert.Contains(t, vertexOutput, "- search_users: Look up users by name")
+	assert.Contains(t, vertexOutput, "- read_channel: Read channel history")
+	assert.Contains(t, vertexOutput, "When asked about capabilities or tool access, agent may mention the tools listed above.")
+
+	openAIOutput, err := promptsEngine.Format(prompts.PromptStandardPersonalityWithoutLocale, buildContext("openai"))
+	require.NoError(t, err)
+	assert.NotContains(t, openAIOutput, "The tools currently available to agent in this conversation are:")
+	assert.NotContains(t, openAIOutput, "When asked about capabilities or tool access, agent may mention the tools listed above.")
 }

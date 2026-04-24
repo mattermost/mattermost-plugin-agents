@@ -14,6 +14,8 @@ The Mattermost Agents plugin currently supports these LLM providers:
 - Mistral
 - Scale AI
 - Azure OpenAI
+- Google Gemini
+- Google Vertex AI
 
 ## General Configuration Concepts
 
@@ -171,3 +173,66 @@ For more details about integrating with Microsoft Azure's OpenAI services, see t
 | **Default Model** | Yes | The model to use by default (see [Azure OpenAI's model documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models)) |
 | **Send User ID** | No | Whether to send user IDs to Azure OpenAI |
 | **Use Responses API** | No | Defaults to enabled. Uses the OpenAI Responses API when your Azure deployment supports it. Turn off for legacy Chat Completions compatibility if your endpoint or deployment does not support the Responses API. |
+
+## Google Gemini
+
+Google Gemini uses the Generative Language API (AI Studio), which authenticates with a single API key. If you need enterprise GCP authentication, project/region scoping, or VPC-SC, use **Google Vertex AI** instead.
+
+### Authentication
+
+Obtain a [Gemini API key](https://aistudio.google.com/apikey), then select **Google Gemini** in the **Service** dropdown and enter your API key. Specify a model name in the **Default Model** field (e.g., `gemini-2.5-pro`, `gemini-2.0-flash`).
+
+### Configuration Options
+
+| Setting | Required | Description |
+|---------|----------|-------------|
+| **API Key** | Yes | Your Gemini API key from AI Studio |
+| **Default Model** | Yes | The model to use by default (see [Gemini model documentation](https://ai.google.dev/gemini-api/docs/models)) |
+
+### Reasoning and native web search
+
+Gemini supports provider-native capabilities through Bifrost:
+
+- **Reasoning / thinking** — enable **Reasoning** on the agent. Bifrost maps the
+  **Thinking Budget** to `thinkingConfig.thinkingBudget`, and the **Reasoning
+  Effort** selector to `thinkingConfig.thinkingLevel` on Gemini 3.0+ (or an
+  estimated budget on Gemini 2.5). If both are provided, the explicit thinking
+  budget wins.
+- **Native web search** — enable **Web Search** under **Native Google Tools**.
+  This is routed through Bifrost's Responses API and grounded with Google
+  Search, so Gemini can answer with up-to-date information and citations.
+
+## Google Vertex AI
+
+Vertex AI provides access to Gemini and other Google models through Google Cloud's enterprise AI platform, with project-scoped billing, regional deployment, and IAM-based access control.
+
+### Authentication
+
+The plugin supports two authentication modes:
+
+- **Application Default Credentials (ADC)** — recommended when the plugin runs on GCP (GKE, GCE) with an attached service account, or when `GOOGLE_APPLICATION_CREDENTIALS` points at a service account key file on the server. Leave the **Service Account JSON** field blank.
+- **Service Account JSON** — paste the full contents of a service account key JSON into the **Service Account JSON** field. The account needs the `roles/aiplatform.user` role (or a role with the `aiplatform.endpoints.predict` permission) in your project.
+
+### Configuration Options
+
+| Setting | Required | Description |
+|---------|----------|-------------|
+| **GCP Project ID** | Yes | Your Google Cloud project ID (e.g., `my-project-123`) |
+| **GCP Project Number** | No | Numeric project number — required by some Vertex endpoints, leave blank otherwise |
+| **GCP Region** | Yes | Vertex AI region (e.g., `us-central1`, `europe-west4`) |
+| **Service Account JSON** | No | Full service account JSON. Leave blank to use ADC or an attached IAM role. |
+| **Default Model** | Yes | The Vertex model ID to use (see [Vertex AI model documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models)) |
+
+### Reasoning and native web search
+
+For Gemini models running on Vertex AI, Bifrost exposes the same reasoning and
+native web-search capabilities as direct Gemini:
+
+- **Reasoning / thinking** — enable **Reasoning** on the agent. The optional
+  **Thinking Budget** maps to `thinkingConfig.thinkingBudget`, and the
+  **Reasoning Effort** selector maps to `thinkingConfig.thinkingLevel` (3.0+).
+- **Native web search** — enable **Web Search** under **Native Google Tools**
+  to ground responses with Google Search via the Vertex Responses API.
+
+Anthropic models served through Vertex AI continue to use Anthropic-style
+extended thinking.

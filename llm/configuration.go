@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -27,6 +28,13 @@ type ServiceConfig struct {
 	// AWS IAM credentials for Bedrock (optional, takes precedence over APIKey)
 	AWSAccessKeyID     string `json:"awsAccessKeyID"`
 	AWSSecretAccessKey string `json:"awsSecretAccessKey"`
+
+	// Vertex AI (GCP) configuration. Region is reused from the shared Region field.
+	// VertexAuthCredentials holds the service-account JSON; when empty, Bifrost
+	// falls back to Application Default Credentials / attached IAM role.
+	VertexProjectID       string `json:"vertexProjectID"`
+	VertexProjectNumber   string `json:"vertexProjectNumber"`
+	VertexAuthCredentials string `json:"vertexAuthCredentials"`
 
 	// Renaming the JSON field to inputTokenLimit would require a migration, leaving as is for now.
 	InputTokenLimit         int  `json:"tokenLimit"`
@@ -97,9 +105,14 @@ type BotConfig struct {
 	TeamIDs            []string           `json:"teamIDs"`
 	MaxFileSize        int64              `json:"maxFileSize"`
 
-	// EnabledNativeTools contains the list of enabled native tools for this bot
-	// For OpenAI: ["web_search", "file_search", "code_interpreter"] (only works when UseResponsesAPI is true)
-	// For Anthropic: ["web_search"]
+	// EnabledNativeTools contains the list of enabled native tools for this bot.
+	// Supported values by provider:
+	//   - OpenAI / Azure: ["web_search", "file_search", "code_interpreter"]
+	//     (only works when UseResponsesAPI is true for OpenAI-compatible and Azure)
+	//   - Anthropic: ["web_search"]
+	//   - Gemini / Vertex AI: ["web_search"] (mapped to Google Search / grounding
+	//     via Bifrost's Responses API)
+	// For other providers these values are filtered out at request time.
 	EnabledNativeTools []string `json:"enabledNativeTools"`
 
 	// EnabledMCPTools is the per-agent allowlist of MCP tools:
@@ -112,20 +125,22 @@ type BotConfig struct {
 	// in that mode. When false, only tools listed in EnabledMCPTools are available.
 	AutoEnableNewMCPTools bool `json:"autoEnableNewMCPTools"`
 
-	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot
-	// Applicable to OpenAI (with ResponsesAPI) and Anthropic
+	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot.
+	// Applicable to OpenAI (with ResponsesAPI), Anthropic, and Gemini / Vertex AI.
 	ReasoningEnabled bool `json:"reasoningEnabled"`
 
-	// ReasoningEffort determines the reasoning effort level for OpenAI models
-	// Valid values: "minimal", "low", "medium", "high"
-	// Only applicable to OpenAI with ResponsesAPI enabled
-	// Default: "medium"
+	// ReasoningEffort determines the reasoning effort level.
+	// Valid values: "minimal", "low", "medium", "high".
+	// Applicable to OpenAI (with ResponsesAPI) and Gemini / Vertex AI (maps to
+	// Gemini's thinkingLevel on 3.0+, and to a thinkingBudget estimate on 2.5).
+	// Default: "medium".
 	ReasoningEffort string `json:"reasoningEffort"`
 
-	// ThinkingBudget determines the token budget for Anthropic thinking
-	// Must be at least 1024 and cannot exceed the OutputTokenLimit
-	// Only applicable to Anthropic
-	// Default: 1/4 of OutputTokenLimit, capped at 8192
+	// ThinkingBudget determines the token budget for reasoning/thinking.
+	// - Anthropic: must be at least 1024 and cannot exceed the OutputTokenLimit.
+	//   Default: 1/4 of OutputTokenLimit, capped at 8192.
+	// - Gemini / Vertex AI: maps to thinkingConfig.thinkingBudget. When set, it
+	//   takes priority over ReasoningEffort.
 	ThinkingBudget int `json:"thinkingBudget"`
 
 	// StructuredOutputEnabled enables structured JSON output for providers that support it.
@@ -200,6 +215,17 @@ func IsValidService(service ServiceConfig) bool {
 		return service.APIKey != ""
 	case ServiceTypeScale:
 		return service.APIKey != "" && service.APIURL != ""
+	case ServiceTypeGemini:
+		return service.APIKey != ""
+	case ServiceTypeVertex:
+		// Auth credentials optional — empty means ADC / attached IAM role.
+		if service.VertexProjectID == "" || service.Region == "" {
+			return false
+		}
+		if service.VertexAuthCredentials == "" {
+			return true
+		}
+		return json.Valid([]byte(service.VertexAuthCredentials))
 	default:
 		return false
 	}

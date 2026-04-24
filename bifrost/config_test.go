@@ -21,6 +21,8 @@ func TestSupportsNativeTools(t *testing.T) {
 		{llm.ServiceTypeOpenAICompatible, true},
 		{llm.ServiceTypeAzure, true},
 		{llm.ServiceTypeAnthropic, true},
+		{llm.ServiceTypeGemini, true},
+		{llm.ServiceTypeVertex, true},
 		{llm.ServiceTypeBedrock, false},
 		{llm.ServiceTypeCohere, false},
 		{llm.ServiceTypeMistral, false},
@@ -30,6 +32,7 @@ func TestSupportsNativeTools(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.serviceType, func(t *testing.T) {
 			assert.Equal(t, tt.want, supportsNativeTools(tt.serviceType))
+			assert.Equal(t, tt.want, SupportsNativeTools(tt.serviceType))
 		})
 	}
 }
@@ -45,6 +48,8 @@ func TestFilterNativeToolsForServiceType(t *testing.T) {
 	}{
 		{"OpenAI keeps tools", llm.ServiceTypeOpenAI, tools, tools},
 		{"Anthropic keeps tools", llm.ServiceTypeAnthropic, tools, tools},
+		{"Gemini keeps tools", llm.ServiceTypeGemini, tools, tools},
+		{"Vertex keeps tools", llm.ServiceTypeVertex, tools, tools},
 		{"Bedrock drops tools", llm.ServiceTypeBedrock, tools, []string{}},
 		{"Cohere drops tools", llm.ServiceTypeCohere, tools, []string{}},
 		{"Mistral drops tools", llm.ServiceTypeMistral, tools, []string{}},
@@ -100,6 +105,8 @@ func TestNewFromServiceConfigFiltersNativeTools(t *testing.T) {
 	}{
 		{"OpenAI keeps native tools", llm.ServiceTypeOpenAI, true},
 		{"Anthropic keeps native tools", llm.ServiceTypeAnthropic, true},
+		{"Gemini keeps native tools", llm.ServiceTypeGemini, true},
+		{"Vertex keeps native tools", llm.ServiceTypeVertex, true},
 		{"Bedrock drops native tools", llm.ServiceTypeBedrock, false},
 		{"Cohere drops native tools", llm.ServiceTypeCohere, false},
 		{"Mistral drops native tools", llm.ServiceTypeMistral, false},
@@ -107,11 +114,12 @@ func TestNewFromServiceConfigFiltersNativeTools(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			service := llm.ServiceConfig{
-				ID:     "test",
-				Type:   tt.serviceType,
-				APIKey: "key",
-				APIURL: "http://localhost",
-				Region: "us-east-1",
+				ID:              "test",
+				Type:            tt.serviceType,
+				APIKey:          "key",
+				APIURL:          "http://localhost",
+				Region:          "us-east-1",
+				VertexProjectID: "my-project",
 			}
 			bot := llm.BotConfig{
 				EnabledNativeTools: []string{"web_search"},

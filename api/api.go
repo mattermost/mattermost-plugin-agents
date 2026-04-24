@@ -527,6 +527,14 @@ type FetchModelsRequest struct {
 	APIKey      string `json:"apiKey"`
 	APIURL      string `json:"apiURL"`
 	OrgID       string `json:"orgID"`
+
+	// Region applies to providers that require it for model listing (Vertex AI).
+	Region string `json:"region"`
+
+	// Vertex AI credentials. VertexAuthCredentials may be empty to signal ADC.
+	VertexProjectID       string `json:"vertexProjectID"`
+	VertexProjectNumber   string `json:"vertexProjectNumber"`
+	VertexAuthCredentials string `json:"vertexAuthCredentials"`
 }
 
 func (a *API) handleFetchModels(c *gin.Context) {
@@ -541,16 +549,24 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	// API key is required for most services, but optional for openaicompatible (some don't require auth).
-	if req.APIKey == "" && req.ServiceType != "openaicompatible" {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey is required"))
-		return
-	}
-
-	// For openaicompatible, require at least an API URL if no API key
-	if req.ServiceType == "openaicompatible" && req.APIKey == "" && req.APIURL == "" {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiURL is required for openaicompatible when apiKey is not provided"))
-		return
+	switch req.ServiceType {
+	case llm.ServiceTypeOpenAICompatible:
+		// openaicompatible accepts API key OR API URL (some endpoints don't require auth).
+		if req.APIKey == "" && req.APIURL == "" {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiURL is required for openaicompatible when apiKey is not provided"))
+			return
+		}
+	case llm.ServiceTypeVertex:
+		// Vertex AI authenticates via project + region; service-account JSON is optional (ADC).
+		if req.VertexProjectID == "" || req.Region == "" {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("vertexProjectID and region are required for Vertex AI"))
+			return
+		}
+	default:
+		if req.APIKey == "" {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey is required"))
+			return
+		}
 	}
 
 	if !bifrost.IsSupported(req.ServiceType) {
@@ -558,7 +574,16 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	models, err := bifrost.FetchModelsForServiceType(req.ServiceType, req.APIKey, req.APIURL, req.OrgID)
+	models, err := bifrost.FetchModelsForService(llm.ServiceConfig{
+		Type:                  req.ServiceType,
+		APIKey:                req.APIKey,
+		APIURL:                req.APIURL,
+		OrgID:                 req.OrgID,
+		Region:                req.Region,
+		VertexProjectID:       req.VertexProjectID,
+		VertexProjectNumber:   req.VertexProjectNumber,
+		VertexAuthCredentials: req.VertexAuthCredentials,
+	})
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
 		return

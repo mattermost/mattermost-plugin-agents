@@ -680,3 +680,25 @@ func TestEnsureBotsFailsWhenListAgentsFails(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "list user agents")
 }
+
+// HasNativeWebSearchEnabled must be false when the service does not support
+// native tools through Bifrost, even if the bot config lists web_search.
+func TestHasNativeWebSearchEnabledUnsupportedServiceType(t *testing.T) {
+	b := NewBot(
+		llm.BotConfig{EnabledNativeTools: []string{"web_search"}},
+		llm.ServiceConfig{Type: llm.ServiceTypeCohere},
+		&model.Bot{UserId: "b1"},
+		nil,
+	)
+	require.False(t, b.HasNativeWebSearchEnabled())
+}
+
+func TestHasNativeWebSearchEnabledSupportedServiceType(t *testing.T) {
+	b := NewBot(
+		llm.BotConfig{EnabledNativeTools: []string{"web_search"}},
+		llm.ServiceConfig{Type: llm.ServiceTypeGemini},
+		&model.Bot{UserId: "b1"},
+		nil,
+	)
+	require.True(t, b.HasNativeWebSearchEnabled())
+}
