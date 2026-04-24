@@ -325,11 +325,19 @@ func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServe
 		log:        c.log,
 		httpClient: httpClient,
 		// oauthManager intentionally nil: plugin servers don't use user OAuth.
+		// (See mcp/http_client.go:httpClientForMCP, which skips the
+		// authenticationTransport wrapper when oauthManager is nil to avoid
+		// dereferencing it during reconnect.)
+		//
 		// embeddedClient intentionally nil: reconnect-on-ErrConnectionClosed
-		// falls through to createSession (mcp/client.go:449-481) which will
-		// fail for "plugin://" URLs. Phase 3-3 adds a proper reconnect path;
-		// for now, the first reconnect attempt surfaces a clean error to the
-		// LLM rather than panicking.
+		// falls through to createSession (mcp/client.go:449-481), which
+		// reuses this client's cached httpClient. Because that httpClient
+		// already has a PluginHTTPRoundTripper baked in (see the chain built
+		// above), the "plugin://" BaseURL is transparently rewritten and
+		// routed via PluginHTTP — so the reconnect recovers successfully.
+		// Regression-tested by
+		// TestCallTool_PluginServerDisconnects_RecoversViaReconnect in
+		// mcp/plugin_disconnect_test.go.
 	}
 	for _, tool := range initResult.Tools {
 		client.tools[tool.Name] = tool

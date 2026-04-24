@@ -76,6 +76,11 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                     <ServerInfo>
                         <ServerName>{server.name}</ServerName>
                         <ServerMeta>
+                            {server.serverType === 'plugin' && (
+                                <PluginBadge>
+                                    <FormattedMessage defaultMessage='Plugin'/>
+                                </PluginBadge>
+                            )}
                             {server.error && (
                                 <ErrorIndicator>
                                     <ExclamationThickIcon size={16}/>
@@ -297,6 +302,18 @@ const OAuthIndicator = styled.div`
     font-size: 12px;
     font-weight: 600;
     color: var(--button-bg);
+`;
+
+const PluginBadge = styled.span`
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    margin-right: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--center-channel-bg);
+    background-color: rgba(var(--center-channel-color-rgb), 0.56);
+    border-radius: 10px;
 `;
 
 const ErrorMessage = styled.div`
