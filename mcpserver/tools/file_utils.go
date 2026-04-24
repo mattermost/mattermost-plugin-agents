@@ -12,9 +12,41 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/shared/httpservice"
 )
+
+// staticMCPURLFetchConfig provides defaults that mirror a locked-down Mattermost server
+// (no TLS verification bypass, no allowlist of internal hostnames) for the standalone
+// MCP binary's untrusted URL fetches.
+var staticMCPURLFetchConfig = &model.Config{
+	ServiceSettings: model.ServiceSettings{
+		EnableInsecureOutgoingConnections:   model.NewPointer(false),
+		AllowedUntrustedInternalConnections: model.NewPointer(""),
+	},
+}
+
+// staticMCPConfigService implements the getConfig type expected by httpservice.MakeHTTPService.
+type staticMCPConfigService struct{}
+
+func (staticMCPConfigService) Config() *model.Config {
+	return staticMCPURLFetchConfig
+}
+
+// maxMCPURLFetchBytes matches the default model.FileSettings.MaxFileSize (100 MiB) for attachment reads.
+const maxMCPURLFetchBytes = 100 * 1024 * 1024
+
+var mcpLocalURLHTTPClientInstance *http.Client
+var mcpLocalURLHTTPClientOnce sync.Once
+
+func getMCPLocalURLHTTPClient() *http.Client {
+	mcpLocalURLHTTPClientOnce.Do(func() {
+		mcpLocalURLHTTPClientInstance = httpservice.MakeHTTPService(staticMCPConfigService{}).MakeClient(false)
+	})
+	return mcpLocalURLHTTPClientInstance
+}
 
 // GetDataDirectoryInternal is the internal function that can be overridden in tests
 var GetDataDirectoryInternal = getDataDirectory
@@ -49,7 +81,7 @@ func EnsureDataDirectory() error {
 }
 
 // fetchFileDataForLocal fetches file data from a file path or URL (local access only)
-func fetchFileDataForLocal(filespec string, accessMode AccessMode) ([]byte, error) {
+func fetchFileDataForLocal(ctx context.Context, filespec string, accessMode AccessMode) ([]byte, error) {
 	if filespec == "" {
 		return nil, fmt.Errorf("empty filespec provided")
 	}
@@ -61,7 +93,24 @@ func fetchFileDataForLocal(filespec string, accessMode AccessMode) ([]byte, erro
 
 	// Check if it's a URL
 	if isURL(filespec) {
-		resp, err := http.Get(filespec) // #nosec G107 - filespec is validated to be URL
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		parsed, err := url.Parse(filespec)
+		if err != nil {
+			return nil, fmt.Errorf("invalid URL: %w", err)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return nil, fmt.Errorf("unsupported URL scheme: %q", parsed.Scheme)
+		}
+		if parsed.Host == "" {
+			return nil, fmt.Errorf("URL missing host")
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build request: %w", err)
+		}
+		resp, err := getMCPLocalURLHTTPClient().Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch file from URL: %w", err)
 		}
@@ -71,11 +120,14 @@ func fetchFileDataForLocal(filespec string, accessMode AccessMode) ([]byte, erro
 			return nil, fmt.Errorf("failed to fetch file: HTTP %d", resp.StatusCode)
 		}
 
-		data, err := io.ReadAll(resp.Body)
+		limited := io.LimitReader(resp.Body, maxMCPURLFetchBytes+1)
+		data, err := io.ReadAll(limited)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read file data: %w", err)
 		}
-
+		if int64(len(data)) > maxMCPURLFetchBytes {
+			return nil, fmt.Errorf("response too large (max %d bytes)", maxMCPURLFetchBytes)
+		}
 		return data, nil
 	}
 
@@ -177,7 +229,7 @@ func uploadFilesForLocal(ctx context.Context, client *model.Client4, channelID s
 			continue
 		}
 
-		fileData, err := fetchFileDataForLocal(filespec, accessMode)
+		fileData, err := fetchFileDataForLocal(ctx, filespec, accessMode)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch file %s: %w", filespec, err)
 		}

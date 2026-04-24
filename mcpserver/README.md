@@ -2,6 +2,8 @@
 
 A Model Context Protocol (MCP) server that provides AI agents and automation tools with secure access to Mattermost channels, users, and content.
 
+**Standalone binary:** The `mattermost-mcp-server` process (for example, stdio transport for local clients) is intended for **development and local tooling only** and is **not** supported for production deployments. For production, use the Agents plugin’s embedded MCP and the in-server integration described in the [admin guide](../docs/admin_guide.md#mattermost-mcp-server).
+
 ## Features
 
 - **MCP Protocol Support**: Implements the Model Context Protocol for standardized AI agent communication
