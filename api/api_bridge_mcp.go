@@ -112,6 +112,22 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 		return
 	}
 
+	// Preserve admin-managed fields across re-registration.
+	//
+	// Enabled and ExposeExternal are admin-owned after first registration;
+	// they are toggled via PUT /admin/mcp/plugin-servers/:pluginID. If a
+	// plugin re-registers (e.g. OnActivate after a crash or plugin upgrade),
+	// we must NOT let the plugin's self-declared defaults overwrite what the
+	// admin already set. Identity fields (PluginID/Name/Path) are owned by
+	// the plugin and ARE refreshed from the new request.
+	//
+	// On first registration (no existing entry): use the plugin's cfg as-is.
+	// This lets first-party plugins opt into ExposeExternal by default on
+	// install; subsequent admin edits take precedence.
+	if existing, found := a.mcpClientManager.GetPluginServer(cfg.PluginID); found {
+		cfg.Enabled = existing.Enabled
+		cfg.ExposeExternal = existing.ExposeExternal
+	}
 	a.mcpClientManager.RegisterPluginServer(cfg)
 
 	// Live-update external MCP aggregation if requested. Pre-1G this is a

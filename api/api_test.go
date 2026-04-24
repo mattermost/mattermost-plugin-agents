@@ -178,6 +178,15 @@ func (m *mockMCPClientManager) ListPluginServers() []mcp.PluginServerConfig {
 	return out
 }
 
+func (m *mockMCPClientManager) GetPluginServer(pluginID string) (mcp.PluginServerConfig, bool) {
+	for _, existing := range m.pluginServers {
+		if existing.PluginID == pluginID {
+			return existing, true
+		}
+	}
+	return mcp.PluginServerConfig{}, false
+}
+
 func (m *mockMCPClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {
 	m.discoverPluginToolsCallCount++
 	return m.discoverPluginToolsResponse, m.discoverPluginToolsErr

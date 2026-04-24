@@ -439,11 +439,12 @@ func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg 
 // (PluginID/Name/Path) remain owned by the source plugin and are set via the
 // bridge register endpoint.
 //
-// ExposeExternal uses a pointer so the admin can PATCH just Enabled without
-// accidentally flipping ExposeExternal to zero on omission. Nil means "no
-// change"; a non-nil value replaces the current flag.
+// BOTH fields are pointer-valued so the admin can PATCH one field in
+// isolation without accidentally zeroing the other. Nil means "no change";
+// a non-nil value replaces the current flag. An empty-body PUT is a valid
+// no-op.
 type UpdatePluginServerRequest struct {
-	Enabled        bool  `json:"enabled"`
+	Enabled        *bool `json:"enabled,omitempty"`
 	ExposeExternal *bool `json:"expose_external,omitempty"`
 }
 
@@ -479,11 +480,13 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	// Apply admin-owned fields. ExposeExternal is pointer-valued: nil means
-	// "leave unchanged" so a PATCH that only toggles Enabled doesn't clobber
-	// the external flag.
+	// Apply admin-owned fields. Both request fields are pointer-valued: nil
+	// means "leave unchanged" so a partial PATCH (just one field) never
+	// clobbers the other. An empty-body PUT is a valid no-op.
 	updated := *found
-	updated.Enabled = req.Enabled
+	if req.Enabled != nil {
+		updated.Enabled = *req.Enabled
+	}
 	if req.ExposeExternal != nil {
 		updated.ExposeExternal = *req.ExposeExternal
 	}

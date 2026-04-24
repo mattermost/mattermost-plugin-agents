@@ -102,6 +102,39 @@ func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T)
 	require.Len(t, m.ListPluginServers(), 1)
 }
 
+// TestClientManager_GetPluginServer covers the lookup used by the bridge
+// register handler to preserve admin-set fields across plugin re-registration
+// (see handleMCPRegister in api/api_bridge_mcp.go).
+func TestClientManager_GetPluginServer(t *testing.T) {
+	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}}
+	t.Cleanup(m.Close)
+
+	// Not-found case returns zero value + false.
+	cfg, ok := m.GetPluginServer("missing")
+	require.False(t, ok)
+	require.Equal(t, PluginServerConfig{}, cfg)
+
+	stored := PluginServerConfig{
+		PluginID:       "com.example.mcp",
+		Name:           "Example",
+		Path:           "/mcp",
+		Enabled:        true,
+		ExposeExternal: true,
+	}
+	m.RegisterPluginServer(stored)
+
+	got, ok := m.GetPluginServer("com.example.mcp")
+	require.True(t, ok)
+	require.Equal(t, stored, got)
+
+	// Mutating the returned value must not affect the stored entry (value copy).
+	got.Enabled = false
+	got.Name = "mutated"
+	again, ok := m.GetPluginServer("com.example.mcp")
+	require.True(t, ok)
+	require.Equal(t, stored, again, "GetPluginServer must return an independent value copy")
+}
+
 // Test A (release gate): plugin server Enabled=true with 2 tools → both flow through.
 func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	target := newFakePluginMCPServer(t, 2)

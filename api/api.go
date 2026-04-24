@@ -69,6 +69,10 @@ type MCPClientManager interface {
 	RegisterPluginServer(cfg mcp.PluginServerConfig)
 	UnregisterPluginServer(pluginID string)
 	ListPluginServers() []mcp.PluginServerConfig
+	// GetPluginServer returns the current config for a plugin-registered MCP
+	// server, plus a bool indicating whether it was found. Used by the bridge
+	// register handler to preserve admin-set flags across re-registration.
+	GetPluginServer(pluginID string) (mcp.PluginServerConfig, bool)
 
 	// DiscoverPluginServerTools performs an ephemeral connect+ListTools against
 	// a registered plugin MCP server. Used by the admin Tools tab only.

@@ -266,6 +266,119 @@ func TestHandleMCPUnregister_PluginIDMismatch_Returns403(t *testing.T) {
 	require.Empty(t, e.mcp.unregisterCalls, "UnregisterPluginServer must not be called on identity mismatch")
 }
 
+// TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister covers the bug where
+// a plugin's OnActivate auto-restart (post crash / kill -9) triggers a new
+// Register() that used to clobber admin-set Enabled / ExposeExternal values.
+//
+// Design: plugins own identity (PluginID/Name/Path); admins own Enabled /
+// ExposeExternal POST-registration. On a re-registration we must preserve the
+// admin-set flags and only refresh identity fields.
+func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name                 string
+		existing             *mcp.PluginServerConfig // nil => first registration
+		incoming             mcp.PluginServerConfig
+		wantEnabledAfter     bool
+		wantExposeAfter      bool
+		wantName             string
+		wantPath             string
+		wantRebuilderInvoked bool
+	}{
+		{
+			// First registration — plugin's self-declared state is honored
+			// verbatim (letting first-party plugins default ExposeExternal=true
+			// on install). Rebuilder fires because incoming ExposeExternal=true.
+			name:     "first registration: plugin state honored as-is",
+			existing: nil,
+			incoming: mcp.PluginServerConfig{
+				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+				Enabled: false, ExposeExternal: true,
+			},
+			wantEnabledAfter:     false,
+			wantExposeAfter:      true,
+			wantName:             "Playbooks MCP",
+			wantPath:             "/mcp",
+			wantRebuilderInvoked: true,
+		},
+		{
+			// Re-registration: admin previously set Enabled=true + Expose=true.
+			// Plugin defaults on restart are Enabled=false, Expose=false.
+			// Admin state MUST win.
+			name: "re-register: admin-set Enabled=true / Expose=true preserved",
+			existing: &mcp.PluginServerConfig{
+				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+				Enabled: true, ExposeExternal: true,
+			},
+			incoming: mcp.PluginServerConfig{
+				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+				Enabled: false, ExposeExternal: false,
+			},
+			wantEnabledAfter:     true,
+			wantExposeAfter:      true,
+			wantName:             "Playbooks MCP",
+			wantPath:             "/mcp",
+			wantRebuilderInvoked: true, // existing.ExposeExternal=true => persisted
+		},
+		{
+			// Re-registration where plugin upgraded Path/Name — identity
+			// refresh wins for those fields but admin flags still preserved.
+			name: "re-register: identity refreshed, admin flags preserved",
+			existing: &mcp.PluginServerConfig{
+				PluginID: testCallerPluginID, Name: "Old Name", Path: "/old",
+				Enabled: true, ExposeExternal: false,
+			},
+			incoming: mcp.PluginServerConfig{
+				PluginID: testCallerPluginID, Name: "New Name", Path: "/new",
+				Enabled: false, ExposeExternal: true, // plugin claims expose=true — ignored
+			},
+			wantEnabledAfter:     true,  // from existing admin state
+			wantExposeAfter:      false, // from existing admin state, NOT from plugin
+			wantName:             "New Name",
+			wantPath:             "/new",
+			wantRebuilderInvoked: false, // expose stays false => no rebuild
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			spy := &spyRebuilder{}
+			e.api.SetExternalRebuilderForTest(spy)
+
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+			if tc.existing != nil {
+				e.mcp.pluginServers = []mcp.PluginServerConfig{*tc.existing}
+			}
+
+			req := mcpRegisterRequest(t, tc.incoming)
+			req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+
+			resp := serveAndReturn(e, req)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Len(t, e.mcp.registerCalls, 1)
+
+			saved := e.mcp.registerCalls[0]
+			require.Equal(t, tc.wantEnabledAfter, saved.Enabled, "Enabled flag")
+			require.Equal(t, tc.wantExposeAfter, saved.ExposeExternal, "ExposeExternal flag")
+			require.Equal(t, tc.wantName, saved.Name, "Name (identity field)")
+			require.Equal(t, tc.wantPath, saved.Path, "Path (identity field)")
+
+			if tc.wantRebuilderInvoked {
+				require.Equal(t, 1, spy.callCount, "rebuilder must be invoked")
+			} else {
+				require.Equal(t, 0, spy.callCount, "rebuilder must NOT be invoked")
+			}
+		})
+	}
+}
+
 func TestHandleMCPRegister_ExposeExternal_TriggersRebuild(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard

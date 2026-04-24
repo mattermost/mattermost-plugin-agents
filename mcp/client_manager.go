@@ -343,6 +343,18 @@ func (m *ClientManager) ListPluginServers() []PluginServerConfig {
 	return out
 }
 
+// GetPluginServer returns a value-copy of the stored config for pluginID plus
+// a found flag. Used by the bridge /mcp/register handler so re-registrations
+// from a plugin (e.g. after an OnActivate following a crash) can preserve
+// admin-set fields (Enabled / ExposeExternal) rather than clobbering them
+// with the plugin's self-declared defaults.
+func (m *ClientManager) GetPluginServer(pluginID string) (PluginServerConfig, bool) {
+	m.pluginServersMu.RLock()
+	defer m.pluginServersMu.RUnlock()
+	cfg, ok := m.pluginServers[pluginID]
+	return cfg, ok
+}
+
 // DiscoverPluginServerTools performs an ephemeral connect+ListTools against
 // the given plugin-registered MCP server and returns its tool list. Used by
 // the admin Tools tab (Phase 1F); not cached. For per-user cached tool access
