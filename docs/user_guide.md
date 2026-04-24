@@ -50,11 +50,11 @@ To manage custom prompts:
 1. Open the message composer in any channel or direct message.
 2. Select **AI Actions**.
 3. Open **Custom prompts**, then select **Manage prompts**.
-4. Select **Create new** to add a prompt with an **Action Title**, optional description, and template.
+4. Select **Create new** to open the prompt editor and add a prompt with an **Action Title**, optional description, and template.
 5. Choose **Public** to share the prompt with other users, or **Private** to keep it visible only to you.
-6. Pin prompts you use often so they appear as shortcuts in the Agents pane.
+6. Pin or unpin prompts directly from the prompt list. Pinned prompts appear as shortcuts in the Agents pane.
 
-The **All Prompts** tab shows prompts you created plus shared prompts from other users. The **Your Prompts** tab shows only prompts you created. Shared prompts from other users are read-only. Only the prompt creator can edit or delete a prompt. Prompt titles can be up to 64 characters, and every prompt requires a template.
+The **All Prompts** tab shows prompts you created plus shared prompts from other users. The **Your Prompts** tab shows only prompts you created. Selecting a prompt from either list opens a dedicated prompt view inside the modal, with a back arrow to return to the list and the prompt name as the title. Shared prompts from other users open read-only. Only the prompt creator can edit or delete a prompt. Prompt titles can be up to 64 characters, and every prompt requires a template.
 
 When you select a saved prompt from **Custom prompts**, Mattermost renders the template with the current context and inserts the result into your draft. If you use this menu outside a bot direct message, Mattermost adds the currently selected bot mention before the rendered text. Pinned prompts in the Agents pane render the current saved template and send it immediately as a message.
 
@@ -76,9 +76,9 @@ If a value isn't available in the current context, the rendered prompt leaves it
 
 ### Use tools
 
-When Agents use external tools or integrations, Mattermost may prompt you to review tool usage based on the tool approval policy configured by your system admin. When review is required, only the person who requested the Agent interaction can approve or reject pending tools. For those pending tools, you'll see a card showing the tool name and description, arguments being passed to the tool, and **Approve/Reject** options.
+When Agents use external tools or integrations, Mattermost may prompt you to review tool usage based on the tool approval policy configured by your system admin. When review is required, only the person who requested the Agent interaction can accept or reject pending tools. For those pending tools, you'll see a card showing the tool name and description, arguments being passed to the tool, and **Accept** and **Reject** options. If multiple tools are waiting for a decision, Mattermost may also show **Accept all** and **Reject all** controls.
 
-By default, tool calls are available in direct messages. If your system admin enables the experimental **Enable Channel Mention Tool Calling** setting, some tools can also run in channels. Depending on the configured tool policy, each tool call may require approval before execution or run automatically. A single Agent response can include both auto-approved tools and tools still waiting for approval. In that case, the auto-approved badge applies only to the individual tool that ran automatically, while pending tools continue to show **Approve/Reject** options. Tool results are shown after execution.
+By default, tool calls are available in direct messages. If your system admin enables the experimental **Enable Channel Mention Tool Calling** setting, some tools can also run in channels. Depending on the configured tool policy, each tool call may require approval before execution or run automatically. A single Agent response can include both auto-approved tools and tools still waiting for approval. In that case, the auto-approved badge applies only to the individual tool that ran automatically, while pending tools continue to show **Accept** and **Reject** options. Tool results are shown after execution, and if a result needs a visibility decision, you'll see **Share** and **Keep private** options.
 
 Only the person who started the conversation can approve or reject tool calls. In direct messages with an agent, approved tool results are shared automatically because only you can view that conversation.
 
@@ -90,11 +90,12 @@ On web and desktop, start a new chat in the Agents right-hand pane and open the 
 
 > **Note:** The Mattermost mobile apps don't currently support starting MCP OAuth connections from the Agents experience. Use web or desktop to connect OAuth-backed MCP providers.
 
-Available tools in direct messages, and in channels when enabled by your system admin, include:
+Depending on your workspace configuration, available tools in direct messages, and in channels when enabled by your system admin, can include:
 
-- Server search (semantic search across your Mattermost instance)
-- User lookup (find information about Mattermost users)
-- MCP tools (additional tools from MCP servers your admin has enabled for Agents). Tool availability depends on your user permissions, provider connection status, and workspace configuration.
+- Mattermost MCP tools, including tools to search posts and find users in Mattermost, when your system admin has enabled the Mattermost MCP server for Agents
+- MCP tools provided by other configured MCP servers, if enabled
+
+Tool availability depends on your user permissions, provider connection status, and workspace configuration.
 
 Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
 
