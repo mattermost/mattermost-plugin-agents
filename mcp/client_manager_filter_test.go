@@ -14,6 +14,7 @@ func TestFilterToolsByConfig(t *testing.T) {
 	tests := []struct {
 		name          string
 		config        Config
+		pluginServers []PluginServerConfig
 		rawTools      []llm.Tool
 		wantToolNames []string
 	}{
@@ -152,6 +153,51 @@ func TestFilterToolsByConfig(t *testing.T) {
 			},
 			wantToolNames: []string{"create_post", "search_users"},
 		},
+		{
+			name:   "plugin server enabled, tools flow through default-allow",
+			config: Config{},
+			pluginServers: []PluginServerConfig{
+				{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true},
+			},
+			rawTools: []llm.Tool{
+				{Name: "tool_a", ServerOrigin: "plugin://com.example.mcp"},
+				{Name: "tool_b", ServerOrigin: "plugin://com.example.mcp"},
+			},
+			wantToolNames: []string{"tool_a", "tool_b"},
+		},
+		{
+			// RELEASE GATE — this case MUST PASS before merge.
+			name:   "plugin server disabled, tools filtered out",
+			config: Config{},
+			pluginServers: []PluginServerConfig{
+				{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: false},
+			},
+			rawTools: []llm.Tool{
+				{Name: "tool_a", ServerOrigin: "plugin://com.example.mcp"},
+			},
+			wantToolNames: nil,
+		},
+		{
+			name: "embedded + remote + plugin mix",
+			config: Config{
+				Servers: []ServerConfig{{
+					Name:        "Atlassian",
+					Enabled:     true,
+					BaseURL:     "https://mcp.atlassian.com",
+					ToolConfigs: []ToolConfig{{Name: "getJiraIssue", Policy: ToolPolicyAsk, Enabled: true}},
+				}},
+			},
+			pluginServers: []PluginServerConfig{
+				{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true},
+			},
+			rawTools: []llm.Tool{
+				{Name: "getJiraIssue", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "search_users", ServerOrigin: EmbeddedClientKey},
+				{Name: "plugin_tool", ServerOrigin: "plugin://com.example.mcp"},
+			},
+			// serverOrder: remote first (Atlassian), then embedded, then plugin.
+			wantToolNames: []string{"getJiraIssue", "search_users", "plugin_tool"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -161,7 +207,7 @@ func TestFilterToolsByConfig(t *testing.T) {
 			// are unaffected because no tools have the embedded origin.
 			embeddedClient := &EmbeddedServerClient{}
 
-			filtered := filterToolsByConfig(tt.rawTools, tt.config, embeddedClient)
+			filtered := filterToolsByConfig(tt.rawTools, tt.config, embeddedClient, tt.pluginServers)
 
 			var names []string
 			for _, tool := range filtered {
