@@ -11,6 +11,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/config"
 	"github.com/mattermost/mattermost-plugin-agents/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -230,6 +231,13 @@ type MCPServerInfo struct {
 	// For plugin entries it mirrors PluginServerConfig.Enabled — plugin state lives
 	// server-side (not in mcpConfig), so the webapp reads it from here.
 	Enabled bool `json:"enabled"`
+	// ToolConfigs carries per-tool admin policy for plugin-registered MCP
+	// servers so the webapp can render the policy dropdown at the correct
+	// selected value. Populated ONLY on plugin-type rows (the webapp sources
+	// remote-row policy from cfg.MCP.Servers directly; embedded-row policy
+	// falls back to the vetted seed). omitempty keeps remote/embedded rows'
+	// JSON shape unchanged.
+	ToolConfigs []mcp.ToolConfig `json:"toolConfigs,omitempty"`
 }
 
 // MCPToolsResponse represents the response structure for MCP tools endpoint
@@ -313,12 +321,13 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 	// tool list) so the admin UI can re-enable them via PUT /admin/mcp/plugin-servers/:pluginID.
 	for _, cfg := range a.mcpClientManager.ListPluginServers() {
 		serverInfo := MCPServerInfo{
-			Name:       cfg.Name,
-			URL:        fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
-			Tools:      []MCPToolInfo{},
-			Error:      nil,
-			ServerType: "plugin",
-			Enabled:    cfg.Enabled,
+			Name:        cfg.Name,
+			URL:         fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
+			Tools:       []MCPToolInfo{},
+			Error:       nil,
+			ServerType:  "plugin",
+			Enabled:     cfg.Enabled,
+			ToolConfigs: cfg.ToolConfigs,
 		}
 
 		if cfg.Enabled {
@@ -435,23 +444,41 @@ func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg 
 //
 // Enabled toggles runtime tool-listing inclusion. ExposeExternal toggles
 // inclusion on the aggregated external /plugins/mattermost-ai/mcp-server/mcp
-// endpoint. Both are independent admin controls; identity fields
-// (PluginID/Name/Path) remain owned by the source plugin and are set via the
-// bridge register endpoint.
+// endpoint. ToolConfigs sets per-tool policy (ask / auto_run_in_dm /
+// auto_run_everywhere, plus per-tool enabled). All three are independent
+// admin controls; identity fields (PluginID/Name/Path) remain owned by the
+// source plugin and are set via the bridge register endpoint.
 //
-// BOTH fields are pointer-valued so the admin can PATCH one field in
-// isolation without accidentally zeroing the other. Nil means "no change";
-// a non-nil value replaces the current flag. An empty-body PUT is a valid
-// no-op.
+// ALL fields are pointer-valued so the admin can PATCH one field in
+// isolation without accidentally zeroing the others. Nil means "no change";
+// a non-nil value replaces the current field. An empty-body PUT is a valid
+// no-op. For ToolConfigs, a non-nil empty slice (`{"tool_configs": []}`)
+// explicitly clears all per-tool policy — distinct from the nil case.
 type UpdatePluginServerRequest struct {
-	Enabled        *bool `json:"enabled,omitempty"`
-	ExposeExternal *bool `json:"expose_external,omitempty"`
+	Enabled        *bool             `json:"enabled,omitempty"`
+	ExposeExternal *bool             `json:"expose_external,omitempty"`
+	ToolConfigs    *[]mcp.ToolConfig `json:"tool_configs,omitempty"`
 }
 
-// handleUpdatePluginServer lets an admin flip the Enabled and/or ExposeExternal
-// flags on a registered plugin MCP server. Does NOT mutate PluginID/Name/Path —
-// those identity fields remain owned by the source plugin (set via the bridge
-// register endpoint).
+// handleUpdatePluginServer lets an admin flip admin-owned fields on a
+// registered plugin MCP server (Enabled, ExposeExternal, ToolConfigs). Does
+// NOT mutate PluginID/Name/Path — those identity fields remain owned by the
+// source plugin (set via the bridge register endpoint).
+//
+// Persistence: after mutating in-memory via RegisterPluginServer, this
+// handler performs the standard 3-step save (configStore.SaveConfig →
+// configUpdater.Update → clusterNotifier.PublishConfigUpdate) so admin
+// state survives agents-plugin restarts and propagates to cluster peers.
+// The save writes a FULL snapshot of the plugin-server registry (via
+// ListPluginServers), which flushes runtime registrations that arrived
+// between admin actions — this is what retroactively closes the M1 gap
+// where Enabled/ExposeExternal were in-memory-only.
+//
+// Locking: the snapshot is taken (and the lock released) BEFORE
+// configUpdater.Update fires the config-change listener, which would
+// otherwise deadlock against the re-entrant pluginServersMu acquisition
+// inside syncPluginServersFromConfig. See mcp/client_manager.go godoc
+// on syncPluginServersFromConfig for details.
 func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	pluginID := c.Param("pluginID")
 	if pluginID == "" {
@@ -480,9 +507,14 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	// Apply admin-owned fields. Both request fields are pointer-valued: nil
-	// means "leave unchanged" so a partial PATCH (just one field) never
-	// clobbers the other. An empty-body PUT is a valid no-op.
+	// Apply admin-owned fields. All request fields are pointer-valued: nil
+	// means "leave unchanged" so a partial PATCH (e.g. just tool_configs)
+	// never clobbers the others. An empty-body PUT is a valid no-op.
+	//
+	// ToolConfigs semantics: nil means "unchanged"; a non-nil pointer-to-
+	// empty-slice means "clear all per-tool policy" (default-allow every
+	// tool). This distinction is important for the webapp's "reset to
+	// defaults" affordance.
 	updated := *found
 	if req.Enabled != nil {
 		updated.Enabled = *req.Enabled
@@ -490,14 +522,63 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	if req.ExposeExternal != nil {
 		updated.ExposeExternal = *req.ExposeExternal
 	}
+	if req.ToolConfigs != nil {
+		updated.ToolConfigs = *req.ToolConfigs
+	}
 	a.mcpClientManager.RegisterPluginServer(updated)
+
+	// 3-step durable save. Pattern mirrors handleSaveConfig
+	// (api/api_config.go:64-88). The snapshot here writes EVERY registered
+	// plugin server to cfg.MCP.PluginServers, not just the single `updated`
+	// row — this flushes runtime registrations that arrived between admin
+	// actions.
+	//
+	// Error handling: on SaveConfig / PublishConfigUpdate failure we return
+	// 500 without rolling back the in-memory RegisterPluginServer above.
+	// Rationale: the next successful config update on any cluster node fires
+	// ReInit → syncPluginServersFromConfig, which reconciles in-memory state
+	// to whatever actually persisted. Rollback would require re-locking and
+	// would race against concurrent bridge register/unregister; the simpler
+	// model is "operator retries; next PUT flushes the pending in-memory
+	// snapshot including the previously-stuck change."
+	snapshot := a.mcpClientManager.ListPluginServers()
+
+	existing, getErr := a.configStore.GetConfig()
+	if getErr != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load config for plugin-server save: %w", getErr))
+		return
+	}
+	// Clone (or construct fresh) to avoid mutating the store's cached pointer.
+	var cfg *config.Config
+	if existing == nil {
+		cfg = &config.Config{}
+	} else {
+		cfg = existing.Clone()
+	}
+	cfg.MCP.PluginServers = snapshot
+
+	if err := a.configStore.SaveConfig(*cfg); err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save plugin-server config: %w", err))
+		return
+	}
+
+	// In-memory Container update. Fires the listener at server/main.go:396
+	// which calls mcpClientManager.ReInit → syncPluginServersFromConfig.
+	// Safe re-entry into pluginServersMu because no lock is currently held
+	// on this goroutine (see the locking comment in the godoc block).
+	a.configUpdater.Update(cfg)
+
+	if err := a.clusterNotifier.PublishConfigUpdate(); err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to notify cluster of plugin-server config update: %w", err))
+		return
+	}
 
 	// Rebuild the shared external *mcp.Server if EITHER the new state says
 	// "expose" OR the previous state did — flipping from true -> false also
 	// needs a rebuild so the now-external tools are pulled out of the
-	// aggregated server. If Step 5b's RebuildExternalServer method isn't
-	// landed yet, resolveExternalServerRebuilder returns nil and this is a
-	// no-op.
+	// aggregated server. If RebuildExternalServer isn't wired (tests that
+	// don't need it, or pre-1G code paths), resolveExternalServerRebuilder
+	// returns nil and this is a no-op.
 	if updated.ExposeExternal || found.ExposeExternal {
 		if rb := a.resolveExternalServerRebuilder(); rb != nil {
 			rb.RebuildExternalServer()
