@@ -40,18 +40,22 @@ func AddTool[In, Out any](s *Server, tool *mcp.Tool, handler mcp.ToolHandlerFor[
 	mcp.AddTool[In, Out](s.server, tool, handler)
 }
 
-// sanitizeForToolName returns pluginID with any rune outside the MCP
-// tool-name allowed charset [A-Za-z0-9_\-.] replaced with '_'. This is used
-// ONLY for the tool-name prefix emitted to go-sdk's validator; every other
-// use of PluginID (PluginHTTP routing path, Mattermost-Plugin-ID header,
-// registry keys, filterToolsByConfig origin keys, wire-serialized JSON)
-// keeps the RAW pluginID.
+// sanitizeForToolName returns pluginID with any rune outside the charset
+// [A-Za-z0-9_-] replaced with '_'. This is used ONLY for the tool-name prefix
+// emitted to go-sdk's validator and, downstream, to LLM-provider tool-name
+// validators; every other use of PluginID (PluginHTTP routing path,
+// Mattermost-Plugin-ID header, registry keys, filterToolsByConfig origin
+// keys, wire-serialized JSON) keeps the RAW pluginID.
 //
-// The charset matches validToolNameRune in
-// github.com/modelcontextprotocol/go-sdk@v1.4.1/mcp/tool.go:134-140. '.' IS
-// allowed, so real Mattermost plugin IDs like "com.mattermost.plugin-foo"
-// pass through unchanged. This function is defense-in-depth for future
-// plugin IDs that might include spaces, '@', ':', '/', or non-ASCII runes.
+// The charset is intentionally STRICTER than go-sdk's validToolNameRune
+// (github.com/modelcontextprotocol/go-sdk@v1.4.1/mcp/tool.go:134-140), which
+// also accepts '.'. Bifrost / the Anthropic API enforce
+// '^[a-zA-Z0-9_-]{1,128}$' on tool names and reject any tool that contains a
+// '.' (and the OpenAI API has the same restriction). Since real Mattermost
+// plugin IDs commonly contain dots (e.g. "com.mattermost.plugin-foo"), we
+// must strip them here so the prefix is downstream-safe. Tool names that
+// reach the LLM look like "com_mattermost_plugin-foo__<tool>" rather than
+// "com.mattermost.plugin-foo__<tool>".
 //
 // The function is idempotent: sanitizeForToolName(sanitizeForToolName(x)) ==
 // sanitizeForToolName(x) for all x.
@@ -62,7 +66,7 @@ func sanitizeForToolName(pluginID string) string {
 		if (r >= 'a' && r <= 'z') ||
 			(r >= 'A' && r <= 'Z') ||
 			(r >= '0' && r <= '9') ||
-			r == '_' || r == '-' || r == '.' {
+			r == '_' || r == '-' {
 			b.WriteRune(r)
 		} else {
 			b.WriteRune('_')

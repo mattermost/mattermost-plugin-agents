@@ -75,13 +75,14 @@ func registerEchoTool(s *Server, toolName string) {
 }
 
 // TestAddTool_PrependsNamespace verifies a vanilla tool-name gets the
-// "<PluginID>__" prefix inserted when the plugin ID is already valid under
-// the MCP validator (no sanitization occurs).
+// sanitized "<PluginID>__" prefix inserted. PluginIDs containing '.' have the
+// dots replaced with '_' so the resulting tool name is compliant with
+// Bifrost's regex (^[a-zA-Z0-9_-]{1,128}$).
 func TestAddTool_PrependsNamespace(t *testing.T) {
 	ctx := context.Background()
 
 	s := NewServer(nil, PluginMCPServer{
-		PluginID: "com.example.demo", // all runes in allowed charset — sanitizer is a no-op
+		PluginID: "com.example.demo", // dots get replaced for tool-name prefix
 		Name:     "Demo",
 		Path:     "/mcp",
 	})
@@ -93,11 +94,13 @@ func TestAddTool_PrependsNamespace(t *testing.T) {
 	got, err := session.ListTools(ctx, &mcp.ListToolsParams{})
 	require.NoError(t, err)
 	require.Len(t, got.Tools, 1)
-	assert.Equal(t, "com.example.demo__echo", got.Tools[0].Name)
+	assert.Equal(t, "com_example_demo__echo", got.Tools[0].Name)
 }
 
 // TestAddTool_NoDoublePrefix verifies AddTool is idempotent if the caller
-// happens to pass an already-prefixed tool name.
+// happens to pass an already-prefixed tool name. The check uses the SANITIZED
+// prefix (com_example_demo__), so a caller pre-prefixing with the sanitized
+// form gets the name through unchanged.
 func TestAddTool_NoDoublePrefix(t *testing.T) {
 	ctx := context.Background()
 
@@ -106,7 +109,7 @@ func TestAddTool_NoDoublePrefix(t *testing.T) {
 		Name:     "Demo",
 		Path:     "/mcp",
 	})
-	registerEchoTool(s, "com.example.demo__echo")
+	registerEchoTool(s, "com_example_demo__echo")
 
 	ts := newTestServerWithAuthInjection(t, s, nil)
 	session := connectClient(ctx, t, ts.URL)
@@ -114,7 +117,7 @@ func TestAddTool_NoDoublePrefix(t *testing.T) {
 	got, err := session.ListTools(ctx, &mcp.ListToolsParams{})
 	require.NoError(t, err)
 	require.Len(t, got.Tools, 1)
-	assert.Equal(t, "com.example.demo__echo", got.Tools[0].Name,
+	assert.Equal(t, "com_example_demo__echo", got.Tools[0].Name,
 		"no doubled prefix should be emitted when the caller already prefixed")
 }
 
@@ -292,7 +295,7 @@ func TestServeHTTP_CorrectPluginID_Delegates(t *testing.T) {
 	got, err := session.ListTools(ctx, &mcp.ListToolsParams{})
 	require.NoError(t, err)
 	require.Len(t, got.Tools, 1)
-	assert.Equal(t, "com.example.demo__echo", got.Tools[0].Name)
+	assert.Equal(t, "com_example_demo__echo", got.Tools[0].Name)
 }
 
 // TestServeHTTP_InjectsUserID confirms ServeHTTP copies the X-Mattermost-UserID
@@ -324,7 +327,7 @@ func TestServeHTTP_InjectsUserID(t *testing.T) {
 	session := connectClient(ctx, t, ts.URL)
 
 	_, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name:      "com.example.demo__echo",
+		Name:      "com_example_demo__echo",
 		Arguments: map[string]any{"message": "hi"},
 	})
 	require.NoError(t, err)
