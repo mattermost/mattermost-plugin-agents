@@ -523,6 +523,26 @@ func TestHandleDeleteUserMCPOAuthDoesNotNotifyOnDisconnectFailure(t *testing.T) 
 	require.Empty(t, clusterNotifier.calls)
 }
 
+func TestHandleDeleteUserMCPOAuthDisconnectError(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	mcpMock := &mockMCPClientManager{disconnectErr: errors.New("oauth store unavailable")}
+	e.api.mcpClientManager = mcpMock
+
+	request := httptest.NewRequest(http.MethodDelete, "/mcp/oauth/TestServer", nil)
+	request.Header.Add("Mattermost-User-Id", testUserID)
+
+	recorder := httptest.NewRecorder()
+	e.api.ServeHTTP(nil, recorder, request)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Result().StatusCode)
+	require.Equal(t, []mcpDisconnectCall{{userID: testUserID, serverName: "TestServer"}}, mcpMock.disconnectCalls)
+}
+
 func TestHandleDeleteUserMCPOAuthMissingServerName(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
