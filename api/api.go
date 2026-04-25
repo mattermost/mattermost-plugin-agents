@@ -152,10 +152,7 @@ type API struct {
 	customPromptsStore    *customprompts.Store
 
 	// externalRebuilderForTest lets tests inject a spy for the
-	// externalServerRebuilder interface (see api_bridge_mcp.go). Production
-	// code MUST leave this nil — resolveExternalServerRebuilder falls through
-	// to a nil-safe type-assertion on mcpHandlers. Exposed only via
-	// SetExternalRebuilderForTest so accidental production use is loud.
+	// externalServerRebuilder interface (see api_bridge_mcp.go).
 	externalRebuilderForTest externalServerRebuilder
 }
 

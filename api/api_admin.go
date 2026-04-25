@@ -268,7 +268,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 			Tools:      []MCPToolInfo{},
 			Error:      nil,
 			ServerType: "embedded",
-			Enabled:    true, // embedded is non-toggleable
+			Enabled:    true,
 		}
 
 		// Embedded MCP is always available after PR #617, even if older configs still
@@ -295,7 +295,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 			Tools:      []MCPToolInfo{},
 			Error:      nil,
 			ServerType: "remote",
-			Enabled:    serverConfig.Enabled, // always true after the Enabled guard above; explicit for clarity
+			Enabled:    serverConfig.Enabled,
 		}
 
 		// Try to connect to the server and discover tools
@@ -316,9 +316,6 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		response.Servers = append(response.Servers, serverInfo)
 	}
 
-	// Discover tools from each plugin-registered MCP server.
-	// Unlike the remote branch, we render disabled plugin entries (with an empty
-	// tool list) so the admin UI can re-enable them via PUT /admin/mcp/plugin-servers/:pluginID.
 	for _, cfg := range a.mcpClientManager.ListPluginServers() {
 		serverInfo := MCPServerInfo{
 			Name:        cfg.Name,
@@ -419,9 +416,7 @@ func (a *API) handleClearMCPToolsCache(c *gin.Context) {
 }
 
 // discoverPluginServerTools performs an ephemeral probe of a plugin-registered
-// MCP server and normalizes its tool list into the admin-API shape. Mirrors
-// discoverRemoteServerTools; delegates all transport setup to the mcp package
-// (PluginHTTPRoundTripper chain). Fresh probe every call — no caching in Phase 1F.
+// MCP server and normalizes its tool list into the admin-API shape.
 func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]MCPToolInfo, error) {
 	toolInfos, err := a.mcpClientManager.DiscoverPluginServerTools(ctx, userID, cfg)
 	if err != nil {
@@ -533,14 +528,6 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	// row — this flushes runtime registrations that arrived between admin
 	// actions.
 	//
-	// Error handling: on SaveConfig / PublishConfigUpdate failure we return
-	// 500 without rolling back the in-memory RegisterPluginServer above.
-	// Rationale: the next successful config update on any cluster node fires
-	// ReInit → syncPluginServersFromConfig, which reconciles in-memory state
-	// to whatever actually persisted. Rollback would require re-locking and
-	// would race against concurrent bridge register/unregister; the simpler
-	// model is "operator retries; next PUT flushes the pending in-memory
-	// snapshot including the previously-stuck change."
 	snapshot := a.mcpClientManager.ListPluginServers()
 
 	existing, getErr := a.configStore.GetConfig()
@@ -573,12 +560,7 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	// Rebuild the shared external *mcp.Server if EITHER the new state says
-	// "expose" OR the previous state did — flipping from true -> false also
-	// needs a rebuild so the now-external tools are pulled out of the
-	// aggregated server. If RebuildExternalServer isn't wired (tests that
-	// don't need it, or pre-1G code paths), resolveExternalServerRebuilder
-	// returns nil and this is a no-op.
+	// Rebuild if the server is entering or leaving the external MCP surface.
 	if updated.ExposeExternal || found.ExposeExternal {
 		if rb := a.resolveExternalServerRebuilder(); rb != nil {
 			rb.RebuildExternalServer()

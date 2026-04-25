@@ -29,6 +29,23 @@ type MCPToolConfig = {
     enabled: boolean;
 };
 
+type UserMCPToolInfo = {
+    name: string;
+    description: string;
+    enabled: boolean;
+    policy: string;
+};
+
+export type UserMCPServerInfo = {
+    name: string;
+    serverOrigin: string;
+    authenticated: boolean;
+    needsOAuth: boolean;
+    authEmail: string;
+    authURL?: string;
+    tools: UserMCPToolInfo[];
+};
+
 export function setSiteURL(siteURL: string) {
     Client4.setUrl(siteURL);
 }
@@ -626,7 +643,7 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
     });
 }
 
-export async function getUserMCPTools(): Promise<{servers: any[]}> {
+export async function getUserMCPTools(): Promise<{servers: UserMCPServerInfo[]}> {
     const url = `${baseRoute()}/mcp/tools`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',

@@ -87,7 +87,7 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
         expect(screen.queryByText('com_example_demo__echo')).toBeNull();
     });
 
-    test('plugin row renders policy dropdown enabled (Phase 4 re-enable)', () => {
+    test('plugin row renders policy dropdown enabled', () => {
         renderRow(makePluginServer(), makePluginServerConfig());
 
         // Expand the row to reveal per-tool dropdowns.
@@ -95,7 +95,6 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
 
         const select = screen.getByRole('combobox') as HTMLSelectElement;
 
-        // Pre-Phase-4 this would be `disabled`. Post-Phase-4 it must NOT be.
         expect(select.disabled).toBe(false);
 
         // The selected value reflects toolConfigs from the server.

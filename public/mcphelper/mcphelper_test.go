@@ -12,11 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// bifrostToolNameRe is the regex Bifrost / the Anthropic API apply to every
-// tool's `custom.name`. Tool names that fail this match cause an instant
-// "bifrost error: tools.X.custom.name: String should match pattern
-// '^[a-zA-Z0-9_-]{1,128}$'" before any LLM call is made — surfaced to users
-// as "Sorry! An error occurred while accessing the LLM".
+// bifrostToolNameRe is the tool-name regex enforced by downstream LLM providers.
 var bifrostToolNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 
 // TestGetUserID_RoundTrip verifies withUserID/GetUserID are inverses.
@@ -37,12 +33,6 @@ func TestGetUserID_EmptyValue(t *testing.T) {
 	require.Equal(t, "", GetUserID(ctx))
 }
 
-// TestSanitizeForToolName is a table-driven unit test on the helper. The
-// charset is intentionally stricter than go-sdk's validToolNameRune at
-// go-sdk@v1.4.1/mcp/tool.go:134-140 (which also allows '.') because Bifrost
-// and the Anthropic API enforce '^[a-zA-Z0-9_-]{1,128}$' on tool names. Real
-// Mattermost plugin IDs commonly contain dots, so we must strip them so the
-// final prefixed name is downstream-safe.
 func TestSanitizeForToolName(t *testing.T) {
 	cases := []struct {
 		name string
@@ -60,9 +50,6 @@ func TestSanitizeForToolName(t *testing.T) {
 		{"at_sign_replaced", "com@plugin", "com_plugin"},
 		{"mixed_invalid_runes", "com mattermost/@evil", "com_mattermost__evil"},
 		{"non_ascii_replaced", "café", "caf_"},
-		// Regression: pluginID like "com.mattermost.plugin-mcp-demo" produced a
-		// prefix that contained '.', which Bifrost / Anthropic reject with
-		// "tools.X.custom.name: String should match pattern '^[a-zA-Z0-9_-]{1,128}$'".
 		{"bifrost_regex_compliance", "com.mattermost.plugin-mcp-demo", "com_mattermost_plugin-mcp-demo"},
 	}
 	for _, tc := range cases {
@@ -75,9 +62,8 @@ func TestSanitizeForToolName(t *testing.T) {
 	}
 }
 
-// TestSanitizedPrefixIsBifrostCompliant is a regression guard for the
-// April 2026 outage: any sanitized prefix concatenated with "__" and a
-// realistic tool-name suffix MUST satisfy Bifrost's tool-name regex.
+// TestSanitizedPrefixIsBifrostCompliant verifies that prefixed tool names
+// satisfy downstream provider validation.
 // Empty pluginID is excluded because it produces "__<tool>" which is still
 // regex-valid; the real failure mode was '.' leaking through.
 func TestSanitizedPrefixIsBifrostCompliant(t *testing.T) {

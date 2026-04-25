@@ -13,11 +13,10 @@ import {MCPConfig, MCPServerConfig, MCPToolConfig} from './mcp_servers';
 import MCPServerToolRow from './mcp_server_tool_row';
 import {EMBEDDED_MATTERMOST_BASE_URL} from './vetted_tool_configs';
 
-// Type definitions matching the backend API response
 export type MCPToolInfo = {
     name: string;
     description: string;
-    inputSchema: {[key: string]: any} | null;
+    inputSchema: Record<string, unknown> | null;
 };
 
 export type MCPServerInfo = {
@@ -28,19 +27,10 @@ export type MCPServerInfo = {
     oauthURL?: string;
     error: string | null;
 
-    // Discriminator: "embedded" | "remote" | "plugin". Optional for back-compat
-    // with older server builds; post-Phase-1F the backend always sets it.
     serverType?: string;
 
-    // Server-side Enabled state. Authoritative for plugin entries (whose config
-    // lives in the agents-plugin registry, not mcpConfig). For embedded always
-    // true; for remote mirrors mcpConfig.servers[i].enabled.
     enabled?: boolean;
 
-    // Per-tool admin policy. M2 Phase 2 adds this on plugin rows only —
-    // remote rows source tool_configs from mcpConfig.servers, embedded rows
-    // from mcpConfig.embeddedServer. Optional + omitempty on the wire; read
-    // by findServerConfig's plugin branch (post-M2 Phase 4).
     toolConfigs?: MCPToolConfig[];
 };
 
@@ -54,7 +44,6 @@ type MCPToolsViewerProps = {
     initialToolsData?: MCPToolsResponse | null;
 };
 
-// Main component for MCP Tools viewer
 const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsViewerProps) => {
     const [toolsData, setToolsData] = useState<MCPToolsResponse | null>(initialToolsData || null);
     const [loading, setLoading] = useState(false);
@@ -63,7 +52,6 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
     const [clearSuccess, setClearSuccess] = useState<string | null>(null);
     const seededRef = useRef(false);
 
-    // Fetch tools data from the API
     const fetchTools = async () => {
         setLoading(true);
         setError(null);
@@ -78,7 +66,6 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
         }
     };
 
-    // Clear the MCP tools cache
     const handleClearCache = async () => {
         setClearing(true);
         setError(null);
@@ -88,7 +75,6 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             const response = await clearMCPToolsCache();
             setClearSuccess(response.message);
 
-            // Automatically refresh tools after clearing cache
             await fetchTools();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to clear cache');
@@ -97,17 +83,13 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
         }
     };
 
-    // Fetch tools on component mount (skip if pre-loaded data is available)
     useEffect(() => {
         if (!initialToolsData) {
             fetchTools();
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Retroactively seed vetted tool configs for existing servers.
-    // This runs once after tools are first fetched, to fix servers configured before
-    // the vetted-tools feature was added. It merges missing vetted configs into any
-    // existing tool_configs rather than skipping servers that already have partial configs.
+    // Seed missing vetted configs for existing remote/embedded servers.
     useEffect(() => {
         if (!toolsData || seededRef.current) {
             return;
@@ -115,11 +97,6 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
         seededRef.current = true;
 
         (async () => {
-            // Plugin-registered MCP servers are intentionally NOT seeded here.
-            // Their tool_configs ARE persisted post-M2 Phase 1 (via
-            // MCPConfig.PluginServers), but vetted seeding is keyed on remote
-            // baseURL / embedded constants — there is no "vetted" concept for
-            // plugin tools, so the seed walk skips them by construction.
             let updatedConfig = mcpConfig;
             let changed = false;
 
@@ -173,30 +150,14 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             if (changed) {
                 onConfigChange(updatedConfig);
             }
-        })().catch(() => null);
+        })();
     }, [toolsData]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Calculate total tools across all servers
     const totalTools = toolsData?.servers.reduce((sum, server) => sum + server.tools.length, 0) || 0;
     const serversWithErrors = toolsData?.servers.filter((server) => server.error).length || 0;
 
-    // The embedded server uses this key as its origin/URL
     const embeddedClientKey = EMBEDDED_MATTERMOST_BASE_URL;
 
-    // Find the matching ServerConfig for a discovered server.
-    //
-    // Three branches:
-    //   - Embedded: synthesized from mcpConfig.embeddedServer.
-    //   - Plugin (serverType === 'plugin'): synthesized from the MCPServerInfo
-    //     payload itself. Plugin-server config lives server-side (registry +
-    //     persisted to MCPConfig.PluginServers — see Phase 1 of M2). The
-    //     authoritative Enabled bit arrives via server.enabled; per-tool
-    //     policy arrives via server.toolConfigs (added by Phase 2 of M2).
-    //   - Remote: looked up in mcpConfig.servers by name or baseURL.
-    //
-    // Before the plugin branch existed, plugin entries returned null, hiding
-    // the toggle (mcp_server_tool_row.tsx:106) and silently dropping tool-config
-    // writes (mcp_server_tool_row.tsx:50-52).
     const findServerConfig = (server: MCPServerInfo): MCPServerConfig | null => {
         if (server.url === embeddedClientKey) {
             return {
@@ -223,19 +184,10 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
         ) || null;
     };
 
-    // Update a specific server's config.
-    //
-    // Plugin entries are special: their admin state lives in the agents-plugin
-    // registry (persisted via MCPConfig.PluginServers post-M2 Phase 1), not in
-    // mcpConfig.servers. Mutations route through the admin-only
-    // PUT /admin/mcp/plugin-servers/:pluginID endpoint (see api_admin.go) with
-    // pointer-field partial-update semantics — M2 Phase 4 sends only the
-    // fields the admin actually changed (enabled and/or tool_configs).
     const handleServerConfigChange = (
         serverInfo: MCPServerInfo,
         updatedServerConfig: MCPServerConfig,
     ) => {
-        // Handle the embedded server: write changes back to embeddedServer config
         if (updatedServerConfig.baseURL === embeddedClientKey) {
             onConfigChange({
                 ...mcpConfig,
@@ -247,22 +199,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             return;
         }
 
-        // Handle plugin-registered entries. M2 Phase 4: tool_configs and
-        // enabled both persist via the admin endpoint
-        // (PUT /admin/mcp/plugin-servers/:pluginID), with pointer-field
-        // partial-update semantics — fields omitted from the request body
-        // preserve existing state.
-        //
-        // We diff updatedServerConfig against the previous serverConfig
-        // (re-derived via findServerConfig) and send only the fields that
-        // actually changed. This matters: an empty tool_configs slice
-        // ({tool_configs: []}) is a load-bearing CLEAR on the server, not
-        // a no-op. Sending it unconditionally on every Enabled toggle
-        // would clobber whatever policy the admin previously set.
         if (serverInfo.serverType === 'plugin') {
-            // pluginID is the first segment after "plugin://". The backend
-            // generates the synthetic URL "plugin://<pluginID><path>" in
-            // handleGetMCPTools; keep parsing defensive.
             const pluginID = serverInfo.url.replace(/^plugin:\/\//, '').split('/')[0];
             if (!pluginID) {
                 return;
@@ -280,8 +217,6 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             }
 
             if (Object.keys(update).length === 0) {
-                // No-op call — UI fired onChange with no actual change.
-                // Skip the PUT to avoid a needless round trip.
                 return;
             }
 
@@ -396,7 +331,6 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
     );
 };
 
-// Styled components
 const Container = styled.div`
     display: flex;
     flex-direction: column;

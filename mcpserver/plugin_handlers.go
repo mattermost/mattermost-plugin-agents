@@ -32,27 +32,16 @@ type PluginServerRegistry interface {
 	ListPluginServers() []mcppkg.PluginServerConfig
 }
 
-// Structural compile-time check that *PluginMCPHandlers satisfies the
-// externalServerRebuilder interface declared (unexported) in
-// api/api_bridge_mcp.go. Referenced via `any(h).(externalServerRebuilder)`
-// at the bridge handler call site; if this assertion ever fails the rebuild
-// trigger silently becomes a no-op (not a compile error), so keep it.
+// Compile-time check for the API bridge rebuild contract.
 var _ interface{ RebuildExternalServer() } = (*PluginMCPHandlers)(nil)
 
 // PluginMCPHandlers contains the HTTP handlers for MCP endpoints
 // These handlers are designed to be embedded in a plugin's HTTP router.
-//
-// Phase 1G (cross-plugin MCP): the underlying *mcp.Server is rebuildable so
-// that registrations/unregistrations from first-party plugins (via the
-// /bridge/v1/mcp/register|unregister handlers) can alter the tool set served
-// at /plugins/mattermost-ai/mcp-server/mcp without restarting the plugin.
 type PluginMCPHandlers struct {
-	// OAuthMetadataHandler is unchanged — static, no rebuild required.
 	OAuthMetadataHandler http.HandlerFunc
 
 	// MCPHandler is the streamable HTTP handler wired to a factory that reads
 	// the currently active underlying *mcp.Server under RLock on every request.
-	// Callers (api/api.go) call MCPHandler.ServeHTTP — same surface as before.
 	MCPHandler http.Handler
 
 	siteURL     string
@@ -87,12 +76,9 @@ type PluginMCPHandlers struct {
 // NewPluginMCPHandlers creates MCP handlers for use within a Mattermost plugin.
 //
 // The handlers aggregate:
-//   - Tools provided by tools.NewMattermostToolProvider (native agents-plugin
-//     tools; unchanged from pre-Phase-1G behavior).
-//   - Proxy tools for every first-party plugin server in
-//     registry.ListPluginServers() with Enabled=true AND ExposeExternal=true
-//     (Phase 1G aggregation). See BuildProxyTools (mcpserver/proxy_tools.go)
-//     for the build semantics and unreachable-plugin behavior.
+//   - native agents-plugin tools from tools.NewMattermostToolProvider.
+//   - proxy tools for plugin servers with Enabled=true and ExposeExternal=true.
+//     See BuildProxyTools for the build semantics and unreachable-plugin behavior.
 //
 // registry may be nil to disable aggregation entirely (useful in tests).
 // sourcePluginAPI must be non-nil if registry is non-nil and any plugin server
@@ -189,18 +175,6 @@ func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 	)
 	toolProvider.ProvideTools(mcpServer)
 
-	// Phase 1G: aggregate first-party plugin tools.
-	// M2 Phase 3: per-tool admin policy is enforced here. Tools with
-	// ToolConfigs[i].Enabled == false are dropped before they reach
-	// mcpServer.AddTool, so they never appear in ListTools responses to
-	// external MCP clients.
-	//
-	// Scope: this is server-wide, not per-user. The aggregated *mcp.Server is
-	// built once (and rebuilt only on registry changes via
-	// RebuildExternalServer) and serves all authenticated callers. Per-user
-	// scoping would require per-request server rebuilds — out of scope for M2.
-	// Admin "deny" therefore means the tool is hidden from every external MCP
-	// caller.
 	if h.registry != nil {
 		for _, ps := range h.registry.ListPluginServers() {
 			if !ps.Enabled || !ps.ExposeExternal {
@@ -210,7 +184,7 @@ func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 			proxyTools, proxyHandlers, buildErr := BuildProxyTools(discoveryCtx, ps, h.sourcePluginAPI)
 			cancel()
 			if buildErr != nil {
-				if errors.Is(buildErr, context.DeadlineExceeded) || errors.Is(discoveryCtx.Err(), context.DeadlineExceeded) {
+				if errors.Is(buildErr, context.DeadlineExceeded) {
 					h.logger.Warn("timed out building proxy tools for plugin server; skipping",
 						"plugin_id", ps.PluginID, "timeout", h.proxyDiscoveryTimeout.String())
 					continue
@@ -219,18 +193,6 @@ func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 					"plugin_id", ps.PluginID, "error", buildErr.Error())
 				continue
 			}
-			// Per-tool policy filter. Construct a synthetic *ServerConfig
-			// whose ToolConfigs come from the registered PluginServerConfig,
-			// then call GetToolPolicy(toolName) per tool. Empty ToolConfigs
-			// → default-allow ("ask", true) for every tool, matching the
-			// pre-M2 behavior. Mirrors the internal-path pattern in
-			// mcp/client_manager.go:filterToolsByConfig (Phase 1, task 1.6).
-			//
-			// Enabled is hardcoded true on the synthetic config: server-level
-			// enable is already enforced above via ps.Enabled, and
-			// GetToolPolicy short-circuits to ("ask", false) when
-			// s.Enabled == false — propagating ps.Enabled here would falsely
-			// hide every tool of an enabled plugin.
 			policyConfig := &mcppkg.ServerConfig{
 				Name:        ps.Name,
 				Enabled:     true,
@@ -252,19 +214,7 @@ func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 // RebuildExternalServer reconstructs the underlying *mcp.Server, picking up
 // any changes to the plugin-server registry (new registrations, unregistrations,
 // Enabled / ExposeExternal flag changes). It is the implementation of the
-// `externalServerRebuilder` interface contract declared (unexported) in
-// api/api_bridge_mcp.go as
-//
-//	type externalServerRebuilder interface { RebuildExternalServer() }
-//
-// and activated by a nil-safe type assertion on *PluginMCPHandlers at the
-// bridge register/unregister handler call sites.
-//
-// StreamableHTTPOptions{Stateless: true} means no external client sessions are
-// disrupted by the swap — each HTTP request opens, serves, and closes.
-// Proxy discovery runs before the write lock is acquired and each plugin gets a
-// bounded Connect/ListTools context. Timed-out or unreachable plugin servers are
-// logged and skipped while healthy plugin servers continue to be aggregated.
+// API bridge rebuild contract.
 func (h *PluginMCPHandlers) RebuildExternalServer() {
 	h.rebuildMu.Lock()
 	defer h.rebuildMu.Unlock()

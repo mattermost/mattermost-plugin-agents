@@ -166,9 +166,6 @@ func TestFilterToolsByConfig(t *testing.T) {
 			wantToolNames: []string{"tool_a", "tool_b"},
 		},
 		{
-			// M2 release gate: per-tool policy enforces on plugin servers.
-			// One tool flagged Enabled=false → filtered out; the other has
-			// no entry → default-allow, returned.
 			name:   "plugin server with per-tool policy filters disabled tool",
 			config: Config{},
 			pluginServers: []PluginServerConfig{

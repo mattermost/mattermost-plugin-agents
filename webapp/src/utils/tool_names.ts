@@ -1,22 +1,10 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-// Helpers for converting between the wire-format MCP tool names emitted by
-// public/mcphelper (the source-plugin SDK in this repo) and the human-readable
-// names rendered in the UI.
-//
-// Wire format: "<sanitizedPluginID>__<rawToolName>"
-// e.g. "com_mattermost_plugin-mcp-demo__echo"
-//
-// The wire name is what reaches the LLM (and what tool-call results carry),
-// so it must NEVER be mutated except for display. UI components should call
-// stripPluginPrefix when they have the originating plugin's ID, or
-// stripWirePrefix as a heuristic when they do not.
+// Helpers for rendering mcphelper's wire-format names:
+// "<sanitizedPluginID>__<rawToolName>".
 
-// sanitizeForToolName mirrors public/mcphelper/tools.go:sanitizeForToolName
-// exactly (charset [a-zA-Z0-9_-]; everything else becomes '_'). Keeping the
-// two implementations in lockstep is what guarantees the UI strips the same
-// prefix the Go side prepends; if you change one, change the other.
+// sanitizeForToolName mirrors public/mcphelper/tools.go:sanitizeForToolName.
 export function sanitizeForToolName(pluginID: string): string {
     let out = '';
     for (const ch of pluginID) {
@@ -45,9 +33,7 @@ export function pluginIDFromServerOrigin(serverOrigin: string): string {
 }
 
 // stripPluginPrefix removes the "<sanitizedPluginID>__" prefix from toolName
-// when present. Use this when you have the explicit pluginID — it's the
-// authoritative form. Returns toolName unchanged if pluginID is empty or the
-// prefix doesn't match.
+// when present.
 export function stripPluginPrefix(toolName: string, pluginID: string): string {
     if (!pluginID) {
         return toolName;

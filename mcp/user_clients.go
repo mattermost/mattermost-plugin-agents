@@ -248,11 +248,8 @@ func pluginServerOriginKey(pluginID string) string {
 //   - On connect or list-tools failure: returns a wrapped error; caller
 //     (ClientManager.GetToolsForUser) appends to mcpErrors.Errors.
 //
-// OAuth-error triage is NOT performed — plugin-registered servers authenticate
-// via Mattermost's inter-plugin HTTP (X-Mattermost-UserID over PluginHTTP),
-// not user OAuth. If a future plugin chooses to wire OAuth behind its
-// mcphelper.Server, errors will surface as generic .Errors rather than
-// .ToolAuthErrors; Phase 3 can revisit.
+// OAuth-error triage is not performed: plugin-registered servers authenticate
+// via Mattermost's inter-plugin HTTP rather than user OAuth.
 func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServerConfig, sourcePluginAPI mmapi.Client) error {
 	if sourcePluginAPI == nil {
 		return fmt.Errorf("sourcePluginAPI is nil; plugin MCP server %s cannot be reached", cfg.PluginID)

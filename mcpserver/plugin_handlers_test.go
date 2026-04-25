@@ -104,8 +104,8 @@ func TestNewPluginMCPHandlers_IteratesRegistry(t *testing.T) {
 	require.Equal(t, 1, proxyCount, "only Enabled && ExposeExternal plugin tools should be aggregated")
 }
 
-// TestNewPluginMCPHandlers_FiltersToolsByPolicy is the M2 Phase 3 release-gate
-// test: per-tool admin policy is enforced on the external aggregated MCP
+// TestNewPluginMCPHandlers_FiltersToolsByPolicy verifies that per-tool admin
+// policy is enforced on the external aggregated MCP
 // endpoint. A plugin server's ToolConfigs entry with Enabled=false must drop
 // the corresponding tool from the external server's tool list, while tools
 // with no ToolConfigs entry default-allow through (matching the
@@ -114,7 +114,7 @@ func TestNewPluginMCPHandlers_IteratesRegistry(t *testing.T) {
 //
 // If this regresses, external MCP clients (Claude Desktop, scripts/e2e/main.go,
 // any caller of /plugins/mattermost-ai/mcp-server/mcp) would see tools the
-// admin explicitly denied — the exact failure mode Phase 3 exists to prevent.
+// admin explicitly denied.
 func TestNewPluginMCPHandlers_FiltersToolsByPolicy(t *testing.T) {
 	// Source plugin advertises 2 tools: test_tool_0 and test_tool_1.
 	target := newFakePluginMCPServer(t, 2, nil)
