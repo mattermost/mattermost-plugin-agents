@@ -442,23 +442,11 @@ func (p *Plugin) OnActivate() error {
 	// TODO: Refactor to avoid circular dependency
 	conversationsService.SetMeetingsService(meetingsService)
 
-	// Wire per-tool policy checker for auto-approval in streaming and conversations
+	// Wire per-tool policy checker for auto-approval in streaming and conversations.
+	// Decision logic lives in lookupToolPolicy (server/tool_policy.go) so it can
+	// be unit-tested without a live Plugin instance.
 	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
-		mcpCfg := p.configuration.MCP()
-		if serverBaseURL == mcp.EmbeddedClientKey {
-			toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
-			if len(toolConfigs) == 0 {
-				toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
-			}
-			embeddedCfg := &mcp.ServerConfig{Enabled: true, ToolConfigs: toolConfigs}
-			return embeddedCfg.GetToolPolicy(toolName)
-		}
-		for i := range mcpCfg.Servers {
-			if mcpCfg.Servers[i].BaseURL == serverBaseURL {
-				return mcpCfg.Servers[i].GetToolPolicy(toolName)
-			}
-		}
-		return "ask", false
+		return lookupToolPolicy(p.configuration.MCP(), serverBaseURL, toolName)
 	})
 	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)
