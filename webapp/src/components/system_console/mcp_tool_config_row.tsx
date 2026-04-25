@@ -24,9 +24,15 @@ type MCPToolConfigRowProps = {
     // at mcp/client_manager.go. Allowing edits here would silently drop
     // writes (see handleServerConfigChange in mcp_tools_viewer.tsx).
     policyReadOnly?: boolean;
+
+    // Human-readable label shown to the admin. Defaults to tool.name; the
+    // parent passes a stripped form for plugin-registered servers so the
+    // "<sanitizedPluginID>__" wire prefix doesn't leak into the UI. The
+    // wire-format tool.name is still used for tool_configs lookups.
+    displayName?: string;
 };
 
-const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled, policyReadOnly}: MCPToolConfigRowProps) => {
+const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled, policyReadOnly, displayName}: MCPToolConfigRowProps) => {
     const intl = useIntl();
     const [schemaExpanded, setSchemaExpanded] = useState(false);
 
@@ -52,7 +58,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
         <ToolRowContainer $disabled={serverDisabled}>
             <ToolRowMain>
                 <ToolRowLeft>
-                    <ToolName>{tool.name}</ToolName>
+                    <ToolName>{displayName ?? tool.name}</ToolName>
                     {tool.description && (
                         <ToolDescription>{tool.description}</ToolDescription>
                     )}

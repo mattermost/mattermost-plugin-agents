@@ -8,6 +8,7 @@ import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/compo
 
 import {getUserMCPTools} from '@/client';
 import {EnabledTool} from '@/types/agents';
+import {pluginIDFromServerOrigin, stripPluginPrefix} from '@/utils/tool_names';
 
 // Types matching the getUserMCPTools() response shape (from api/api_mcp.go)
 type UserMCPToolInfo = {
@@ -303,36 +304,45 @@ const McpsTab = (props: Props) => {
                                     role='region'
                                     aria-label={server.name}
                                 >
-                                    {server.tools.filter((t) => t.enabled).map((tool) => {
-                                        const toolOn = isToolEnabled(server.serverOrigin, tool.name);
-                                        return (
-                                            <ToolRow key={tool.name}>
-                                                <ToolInfo>
-                                                    <ToolName>{tool.name}</ToolName>
-                                                    {tool.description && (
-                                                        <ToolDescription>{tool.description}</ToolDescription>
-                                                    )}
-                                                </ToolInfo>
-                                                <ToolToggle
-                                                    type='button'
-                                                    aria-label={toolOn ?
-                                                        intl.formatMessage(
-                                                            {defaultMessage: 'Disable tool {toolName} on {serverName}'},
-                                                            {toolName: tool.name, serverName: server.name},
-                                                        ) :
-                                                        intl.formatMessage(
-                                                            {defaultMessage: 'Enable tool {toolName} on {serverName}'},
-                                                            {toolName: tool.name, serverName: server.name},
+                                    {(() => {
+                                        // Compute pluginID once per server. For plugin-registered
+                                        // servers, tool names carry a "<sanitizedPluginID>__"
+                                        // wire prefix (added by public/mcphelper); strip it for
+                                        // display + aria-labels. The wire-format tool.name is
+                                        // still used for enable/disable identity.
+                                        const pluginID = pluginIDFromServerOrigin(server.serverOrigin);
+                                        return server.tools.filter((t) => t.enabled).map((tool) => {
+                                            const toolOn = isToolEnabled(server.serverOrigin, tool.name);
+                                            const displayName = pluginID ? stripPluginPrefix(tool.name, pluginID) : tool.name;
+                                            return (
+                                                <ToolRow key={tool.name}>
+                                                    <ToolInfo>
+                                                        <ToolName>{displayName}</ToolName>
+                                                        {tool.description && (
+                                                            <ToolDescription>{tool.description}</ToolDescription>
                                                         )}
-                                                    onClick={() => !autoEnableNewMCPTools && toggleTool(server.serverOrigin, tool.name)}
-                                                    disabled={autoEnableNewMCPTools}
-                                                    $enabled={toolOn}
-                                                >
-                                                    <ToggleKnob $enabled={toolOn}/>
-                                                </ToolToggle>
-                                            </ToolRow>
-                                        );
-                                    })}
+                                                    </ToolInfo>
+                                                    <ToolToggle
+                                                        type='button'
+                                                        aria-label={toolOn ?
+                                                            intl.formatMessage(
+                                                                {defaultMessage: 'Disable tool {toolName} on {serverName}'},
+                                                                {toolName: displayName, serverName: server.name},
+                                                            ) :
+                                                            intl.formatMessage(
+                                                                {defaultMessage: 'Enable tool {toolName} on {serverName}'},
+                                                                {toolName: displayName, serverName: server.name},
+                                                            )}
+                                                        onClick={() => !autoEnableNewMCPTools && toggleTool(server.serverOrigin, tool.name)}
+                                                        disabled={autoEnableNewMCPTools}
+                                                        $enabled={toolOn}
+                                                    >
+                                                        <ToggleKnob $enabled={toolOn}/>
+                                                    </ToolToggle>
+                                                </ToolRow>
+                                            );
+                                        });
+                                    })()}
                                 </ToolList>
                             )}
                         </ServerBlock>

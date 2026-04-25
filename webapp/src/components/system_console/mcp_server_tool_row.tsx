@@ -8,6 +8,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton} from '../assets/buttons';
 import {ToggleSwitch} from '../toggle_switch';
+import {pluginIDFromServerOrigin, stripPluginPrefix} from '../../utils/tool_names';
 
 import {MCPServerConfig, MCPToolConfig} from './mcp_servers';
 import {MCPServerInfo} from './mcp_tools_viewer';
@@ -159,23 +160,35 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                         </EmptyTools>
                     )}
                     {!server.error && !server.needsOAuth && server.tools.length > 0 && (
-                        server.tools.map((tool) => (
-                            <MCPToolConfigRow
-                                key={tool.name}
-                                tool={tool}
-                                toolConfig={getToolConfig(tool.name)}
-                                onToolConfigChange={(updatedConfig) =>
-                                    handleToolConfigChange(tool.name, updatedConfig)
-                                }
-                                serverDisabled={!serverEnabled}
+                        server.tools.map((tool) => {
+                            // For plugin-registered servers the wire-format
+                            // tool.name carries a "<sanitizedPluginID>__"
+                            // prefix added by public/mcphelper. Strip it for
+                            // display only; tool.name is still used for
+                            // config lookup so the prefix has to round-trip.
+                            const isPlugin = server.serverType === 'plugin';
+                            const pluginID = isPlugin ? pluginIDFromServerOrigin(server.url) : '';
+                            const displayName = isPlugin ? stripPluginPrefix(tool.name, pluginID) : tool.name;
 
-                                // Per-tool configs are not persisted for plugin-registered
-                                // servers in Phase 1F (see mcp_tools_viewer.tsx handleServerConfigChange
-                                // and .planning/phase-5a/PLAN.md:1353). Render the controls as
-                                // read-only with a tooltip instead of silently dropping writes.
-                                policyReadOnly={server.serverType === 'plugin'}
-                            />
-                        ))
+                            return (
+                                <MCPToolConfigRow
+                                    key={tool.name}
+                                    tool={tool}
+                                    toolConfig={getToolConfig(tool.name)}
+                                    onToolConfigChange={(updatedConfig) =>
+                                        handleToolConfigChange(tool.name, updatedConfig)
+                                    }
+                                    serverDisabled={!serverEnabled}
+
+                                    // Per-tool configs are not persisted for plugin-registered
+                                    // servers in Phase 1F (see mcp_tools_viewer.tsx handleServerConfigChange
+                                    // and .planning/phase-5a/PLAN.md:1353). Render the controls as
+                                    // read-only with a tooltip instead of silently dropping writes.
+                                    policyReadOnly={isPlugin}
+                                    displayName={displayName}
+                                />
+                            );
+                        })
                     )}
                 </ToolsContainer>
             )}

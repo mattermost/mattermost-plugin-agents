@@ -13,6 +13,7 @@ import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 import {GlobalState} from '@mattermost/types/store';
 
 import manifest from '@/manifest';
+import {stripWirePrefix} from '@/utils/tool_names';
 
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
@@ -351,9 +352,14 @@ const ToolCard: React.FC<ToolCardProps> = ({
     const isResultApprovalStage = approvalStage === 'result';
     const showResultReviewCallout = !isCollapsed && showDecisionButtons && isResultApprovalStage;
 
-    // Convert underscores to spaces and capitalize first letter of each word
-    // (e.g., "create_post" -> "Create Post")
-    const displayName = tool.name.
+    // Strip the "<sanitizedPluginID>__" wire prefix that public/mcphelper adds
+    // for plugin-registered MCP tools so the user sees "Add Two Numbers"
+    // instead of "Com Mattermost Plugin-mcp-demo  Add Two Numbers". Tool-call
+    // cards don't carry server context, so we use the heuristic stripper —
+    // safe because the "__" separator is unique to mcphelper's prefix scheme.
+    // Then convert underscores to spaces and capitalize each word
+    // (e.g., "create_post" -> "Create Post").
+    const displayName = stripWirePrefix(tool.name).
         replace(/_/g, ' ').
         split(' ').
         map((word) => word.charAt(0).toUpperCase() + word.slice(1)).
