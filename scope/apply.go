@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/mattermost/mattermost/server/public/model"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 )
@@ -37,6 +38,21 @@ func ApplyToolScope(
 	targetChannelID string,
 	log llm.TraceLog,
 ) *llm.ToolStore {
+	return ApplyToolScopeWithTarget(source, allowedTools, boundParams, targetChannelID, nil, nil, log)
+}
+
+// ApplyToolScopeWithTarget is ApplyToolScope plus server-known channel/team
+// context. Scoped runs bind these verification fields so a trigger can allow
+// only create_post while still satisfying that tool's safety checks.
+func ApplyToolScopeWithTarget(
+	source *llm.ToolStore,
+	allowedTools []string,
+	boundParams map[string]map[string]interface{},
+	targetChannelID string,
+	targetChannel *model.Channel,
+	targetTeam *model.Team,
+	log llm.TraceLog,
+) *llm.ToolStore {
 	scoped := llm.NewToolStore(log, false)
 	if source == nil || len(allowedTools) == 0 {
 		return scoped
@@ -54,6 +70,7 @@ func ApplyToolScope(
 		}
 
 		params := resolveBoundParams(boundParams[tool.Name], targetChannelID)
+		params = addTargetContextBoundParams(tool.Name, params, targetChannelID, targetChannel, targetTeam)
 		if len(params) > 0 {
 			tool = tool.WithBoundParams(params)
 		}
@@ -78,6 +95,28 @@ func resolveBoundParams(in map[string]interface{}, targetChannelID string) map[s
 		out[k] = v
 	}
 	return out
+}
+
+func addTargetContextBoundParams(toolName string, params map[string]interface{}, targetChannelID string, targetChannel *model.Channel, targetTeam *model.Team) map[string]interface{} {
+	if toolName != "create_post" {
+		return params
+	}
+	if len(params) == 0 {
+		params = map[string]interface{}{}
+	}
+	if _, ok := params["channel_id"]; !ok && targetChannelID != "" {
+		params["channel_id"] = targetChannelID
+	}
+	if _, ok := params["channel_display_name"]; !ok && targetChannel != nil {
+		params["channel_display_name"] = targetChannel.DisplayName
+	}
+	if _, ok := params["team_display_name"]; !ok && targetTeam != nil {
+		params["team_display_name"] = targetTeam.DisplayName
+	}
+	if len(params) == 0 {
+		return nil
+	}
+	return params
 }
 
 // AssertBoundParams logs an ERROR for every (tool, param) in the triggers'

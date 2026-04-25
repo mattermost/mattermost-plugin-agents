@@ -236,6 +236,11 @@ func (d *Dispatcher) run(ctx context.Context, in runInput) {
 		d.log.Warn("scope: bot not loaded", "agent", in.agentID, "bot_user_id", cfg.BotUserID)
 		return
 	}
+	botUser, err := d.pluginAPI.User.Get(cfg.BotUserID)
+	if err != nil || botUser == nil {
+		d.log.Warn("scope: bot user not found", "agent", in.agentID, "bot_user_id", cfg.BotUserID, "error", errString(err))
+		return
+	}
 
 	// Dispatch-time permission check: bot must still be a member of target channel.
 	if _, err := d.pluginAPI.Channel.GetMember(in.targetChannelID, cfg.BotUserID); err != nil {
@@ -249,6 +254,11 @@ func (d *Dispatcher) run(ctx context.Context, in runInput) {
 		d.log.Error("scope: failed to fetch target channel", "agent", in.agentID, "target_channel", in.targetChannelID, "error", errString(err))
 		return
 	}
+	targetTeam, err := d.pluginAPI.Team.Get(targetChannel.TeamId)
+	if err != nil || targetTeam == nil {
+		d.log.Error("scope: failed to fetch target team", "agent", in.agentID, "target_channel", in.targetChannelID, "team_id", targetChannel.TeamId, "error", errString(err))
+		return
+	}
 
 	renderedPrompt, err := renderPrompt(in.prompt, in.vars)
 	if err != nil {
@@ -260,7 +270,7 @@ func (d *Dispatcher) run(ctx context.Context, in runInput) {
 	// references the channel the bot will post to.
 	llmCtx := d.contextBuilder.BuildLLMContextUserRequest(
 		bot,
-		nil, // no requesting user for scoped runs
+		botUser,
 		targetChannel,
 		d.contextBuilder.WithLLMContextTools(bot),
 	)
@@ -268,7 +278,7 @@ func (d *Dispatcher) run(ctx context.Context, in runInput) {
 		d.log.Error("scope: nil LLM context", "agent", in.agentID, "trigger", in.triggerLabel)
 		return
 	}
-	llmCtx.Tools = ApplyToolScope(llmCtx.Tools, in.allowedTools, in.boundParams, in.targetChannelID, nil)
+	llmCtx.Tools = ApplyToolScopeWithTarget(llmCtx.Tools, in.allowedTools, in.boundParams, in.targetChannelID, targetChannel, targetTeam, nil)
 
 	systemPrompt := PublishingContract + renderedPrompt
 

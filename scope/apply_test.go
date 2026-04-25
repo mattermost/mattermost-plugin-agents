@@ -15,8 +15,10 @@ import (
 // testArgs mirrors the shape of a post-writing tool's args. Used both for
 // schema generation and as the unmarshaled target inside the resolver.
 type testArgs struct {
-	ChannelID string `json:"channel_id"`
-	Message   string `json:"message"`
+	ChannelID          string `json:"channel_id"`
+	ChannelDisplayName string `json:"channel_display_name"`
+	TeamDisplayName    string `json:"team_display_name"`
+	Message            string `json:"message"`
 }
 
 // makeTool constructs a Tool whose resolver records whatever args it saw.
@@ -101,6 +103,43 @@ func TestApplyToolScope_BindsTargetChannelSentinel(t *testing.T) {
 	}
 	if seen.Message != "hi" {
 		t.Fatalf("message was not passed through; seen=%+v", *seen)
+	}
+}
+
+func TestApplyToolScope_BindsTargetChannelContext(t *testing.T) {
+	source := llm.NewToolStore(nil, false)
+	tool, seen := makeTool(t, "create_post")
+	source.AddTools([]llm.Tool{tool})
+
+	scoped := ApplyToolScope(
+		source,
+		[]string{"create_post"},
+		map[string]map[string]interface{}{
+			"create_post": {
+				"channel_id":           llm.BoundParamTargetChannelSentinel,
+				"channel_display_name": "Town Square",
+				"team_display_name":    "Dev Team",
+			},
+		},
+		"TARGET_CHAN_ID",
+		nil,
+	)
+
+	_, err := scoped.ResolveTool("create_post",
+		func(args any) error { return json.Unmarshal([]byte(`{"message":"hi"}`), args) },
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if seen.ChannelID != "TARGET_CHAN_ID" {
+		t.Fatalf("channel_id=%q, want TARGET_CHAN_ID", seen.ChannelID)
+	}
+	if seen.ChannelDisplayName != "Town Square" {
+		t.Fatalf("channel_display_name=%q, want Town Square", seen.ChannelDisplayName)
+	}
+	if seen.TeamDisplayName != "Dev Team" {
+		t.Fatalf("team_display_name=%q, want Dev Team", seen.TeamDisplayName)
 	}
 }
 
