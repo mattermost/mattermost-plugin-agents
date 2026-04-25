@@ -40,7 +40,9 @@ export type UserMCPServerInfo = {
     name: string;
     serverOrigin: string;
     authenticated: boolean;
+    needsOAuth: boolean;
     authEmail: string;
+    authURL?: string;
     tools: UserMCPToolInfo[];
 };
 
