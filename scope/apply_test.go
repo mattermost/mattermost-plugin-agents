@@ -5,6 +5,7 @@ package scope
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -140,6 +141,32 @@ func TestApplyToolScope_BindsTargetChannelContext(t *testing.T) {
 	}
 	if seen.TeamDisplayName != "Dev Team" {
 		t.Fatalf("team_display_name=%q, want Dev Team", seen.TeamDisplayName)
+	}
+}
+
+func TestApplyToolScope_BoundCreatePostDescriptionSkipsDiscovery(t *testing.T) {
+	source := llm.NewToolStore(nil, false)
+	tool, _ := makeTool(t, "create_post")
+	tool.Description = "MUST first call get_channel_info before create_post"
+	source.AddTools([]llm.Tool{tool})
+
+	scoped := ApplyToolScope(
+		source,
+		[]string{"create_post"},
+		map[string]map[string]interface{}{"create_post": {"channel_id": llm.BoundParamTargetChannelSentinel}},
+		"TARGET_CHAN",
+		nil,
+	)
+
+	scopedTool := scoped.GetTool("create_post")
+	if scopedTool == nil {
+		t.Fatal("expected scoped tool to exist")
+	}
+	if scopedTool.Description == tool.Description {
+		t.Fatal("create_post description should be replaced for scoped runs")
+	}
+	if strings.Contains(scopedTool.Description, "get_channel_info") {
+		t.Fatalf("scoped description should not mention get_channel_info: %q", scopedTool.Description)
 	}
 }
 

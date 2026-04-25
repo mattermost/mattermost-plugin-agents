@@ -27,7 +27,7 @@ import (
 // understands it must act via create_post (or another post-writing tool) to
 // produce any visible output. Channel-automation's ai_prompt does not
 // auto-post the model's reply; the contract makes that explicit.
-const PublishingContract = `You are running without a human in the conversation. Any plain-text reply you return is discarded and will not be seen by anyone. To publish anything, call the create_post tool. The channel_id parameter is fixed by the system; you cannot change it.
+const PublishingContract = `You are running without a human in the conversation. Any plain-text reply you return is discarded and will not be seen by anyone. To publish anything, call the create_post tool directly. The channel_id, channel_display_name, and team_display_name parameters are fixed by the system; you cannot change them and must not call get_channel_info first.
 
 `
 

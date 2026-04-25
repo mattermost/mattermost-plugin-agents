@@ -74,6 +74,9 @@ func ApplyToolScopeWithTarget(
 		if len(params) > 0 {
 			tool = tool.WithBoundParams(params)
 		}
+		if tool.Name == "create_post" {
+			tool.Description = "Create a new post in the configured target channel. The system has already fixed and verified channel_id, channel_display_name, and team_display_name; provide only the message content and optional root_id/attachments."
+		}
 		keep = append(keep, tool)
 	}
 	scoped.AddTools(keep)
