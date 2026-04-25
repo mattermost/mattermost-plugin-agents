@@ -175,6 +175,17 @@ func (h *PluginMCPHandlers) buildServerLocked() *mcp.Server {
 	toolProvider.ProvideTools(mcpServer)
 
 	// Phase 1G: aggregate first-party plugin tools.
+	// M2 Phase 3: per-tool admin policy is enforced here. Tools with
+	// ToolConfigs[i].Enabled == false are dropped before they reach
+	// mcpServer.AddTool, so they never appear in ListTools responses to
+	// external MCP clients.
+	//
+	// Scope: this is server-wide, not per-user. The aggregated *mcp.Server is
+	// built once (and rebuilt only on registry changes via
+	// RebuildExternalServer) and serves all authenticated callers. Per-user
+	// scoping would require per-request server rebuilds — out of scope for M2.
+	// Admin "deny" therefore means the tool is hidden from every external MCP
+	// caller.
 	if h.registry != nil {
 		for _, ps := range h.registry.ListPluginServers() {
 			if !ps.Enabled || !ps.ExposeExternal {
@@ -186,7 +197,28 @@ func (h *PluginMCPHandlers) buildServerLocked() *mcp.Server {
 					"plugin_id", ps.PluginID, "error", buildErr.Error())
 				continue
 			}
+			// Per-tool policy filter. Construct a synthetic *ServerConfig
+			// whose ToolConfigs come from the registered PluginServerConfig,
+			// then call GetToolPolicy(toolName) per tool. Empty ToolConfigs
+			// → default-allow ("ask", true) for every tool, matching the
+			// pre-M2 behavior. Mirrors the internal-path pattern in
+			// mcp/client_manager.go:filterToolsByConfig (Phase 1, task 1.6).
+			//
+			// Enabled is hardcoded true on the synthetic config: server-level
+			// enable is already enforced above via ps.Enabled, and
+			// GetToolPolicy short-circuits to ("ask", false) when
+			// s.Enabled == false — propagating ps.Enabled here would falsely
+			// hide every tool of an enabled plugin.
+			policyConfig := &mcppkg.ServerConfig{
+				Name:        ps.Name,
+				Enabled:     true,
+				BaseURL:     "plugin://" + ps.PluginID,
+				ToolConfigs: ps.ToolConfigs,
+			}
 			for i := range proxyTools {
+				if _, enabled := policyConfig.GetToolPolicy(proxyTools[i].Name); !enabled {
+					continue
+				}
 				mcpServer.AddTool(proxyTools[i], proxyHandlers[i])
 			}
 		}

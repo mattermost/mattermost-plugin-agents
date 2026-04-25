@@ -12,8 +12,10 @@ import (
 
 	mcppkg "github.com/mattermost/mattermost-plugin-agents/mcp"
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 
 	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -101,6 +103,113 @@ func TestNewPluginMCPHandlers_IteratesRegistry(t *testing.T) {
 	require.Equal(t, 1, proxyCount, "only Enabled && ExposeExternal plugin tools should be aggregated")
 }
 
+// TestNewPluginMCPHandlers_FiltersToolsByPolicy is the M2 Phase 3 release-gate
+// test: per-tool admin policy is enforced on the external aggregated MCP
+// endpoint. A plugin server's ToolConfigs entry with Enabled=false must drop
+// the corresponding tool from the external server's tool list, while tools
+// with no ToolConfigs entry default-allow through (matching the
+// MCPServerConfig.GetToolPolicy ("ask", true) fallback for unconfigured
+// tools).
+//
+// If this regresses, external MCP clients (Claude Desktop, scripts/e2e/main.go,
+// any caller of /plugins/mattermost-ai/mcp-server/mcp) would see tools the
+// admin explicitly denied — the exact failure mode Phase 3 exists to prevent.
+func TestNewPluginMCPHandlers_FiltersToolsByPolicy(t *testing.T) {
+	// Source plugin advertises 2 tools: test_tool_0 and test_tool_1.
+	target := newFakePluginMCPServer(t, 2, nil)
+	t.Cleanup(target.Close)
+	mockAPI := newPluginHTTPForwarder(t, target)
+
+	reg := &stubRegistry{servers: []mcppkg.PluginServerConfig{{
+		PluginID:       "com.example.policy",
+		Name:           "Policy",
+		Path:           "/mcp",
+		Enabled:        true,
+		ExposeExternal: true,
+		// Admin policy: deny test_tool_0, leave test_tool_1 unconfigured
+		// (default-allow).
+		ToolConfigs: []mcppkg.ToolConfig{
+			{Name: "test_tool_0", Policy: "ask", Enabled: false},
+		},
+	}}}
+
+	logger, err := loggerlib.CreateDefaultLogger()
+	require.NoError(t, err)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI)
+	require.NoError(t, err)
+
+	toolNames := listToolNames(t, h)
+
+	var sawDenied, sawAllowed bool
+	for _, n := range toolNames {
+		if n == "test_tool_0" {
+			sawDenied = true
+		}
+		if n == "test_tool_1" {
+			sawAllowed = true
+		}
+	}
+	require.False(t, sawDenied, "admin-denied tool must be hidden from the external endpoint")
+	require.True(t, sawAllowed, "tool with no policy entry must default-allow through (matches GetToolPolicy fallback)")
+}
+
+// TestNewPluginMCPHandlers_PolicyIsPerPluginServer asserts that ToolConfigs
+// from one plugin server do NOT bleed into another plugin server's policy
+// lookup. Two plugins both advertise a tool named test_tool_0; one plugin
+// denies it via ToolConfigs, the other does not. After aggregation the
+// allowed plugin's tool must remain.
+//
+// Note: external clients see the unqualified tool name. With two plugins each
+// advertising "test_tool_0", the go-sdk MCP server will see two AddTool calls
+// for the same name. The test asserts AT LEAST one survives — which proves
+// that policy lookup is correctly scoped per-plugin (the deny on plugin-A
+// dropped its AddTool, leaving plugin-B's AddTool to land). If policy were
+// global, both AddTool calls would be skipped and the tool would be missing.
+func TestNewPluginMCPHandlers_PolicyIsPerPluginServer(t *testing.T) {
+	// Two distinct fake plugin MCP servers, each advertising test_tool_0.
+	targetA := newFakePluginMCPServer(t, 1, nil)
+	t.Cleanup(targetA.Close)
+	targetB := newFakePluginMCPServer(t, 1, nil)
+	t.Cleanup(targetB.Close)
+
+	// Forwarder dispatches PluginHTTP based on the rewritten URL.Path
+	// prefix. Both targets are reachable; we use a custom forwarder so each
+	// plugin ID routes to its own httptest.Server.
+	mockAPI := newPerPluginForwarder(t, map[string]*httptest.Server{
+		"com.example.deny":  targetA,
+		"com.example.allow": targetB,
+	})
+
+	reg := &stubRegistry{servers: []mcppkg.PluginServerConfig{
+		{
+			PluginID: "com.example.deny", Name: "Deny", Path: "/mcp",
+			Enabled: true, ExposeExternal: true,
+			ToolConfigs: []mcppkg.ToolConfig{
+				{Name: "test_tool_0", Policy: "ask", Enabled: false},
+			},
+		},
+		{
+			PluginID: "com.example.allow", Name: "Allow", Path: "/mcp",
+			Enabled: true, ExposeExternal: true,
+			// No ToolConfigs → default-allow.
+		},
+	}}
+
+	logger, err := loggerlib.CreateDefaultLogger()
+	require.NoError(t, err)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI)
+	require.NoError(t, err)
+
+	toolNames := listToolNames(t, h)
+	count := 0
+	for _, n := range toolNames {
+		if n == "test_tool_0" {
+			count++
+		}
+	}
+	require.GreaterOrEqual(t, count, 1, "the allow-plugin's test_tool_0 must survive — policy scoping is per-plugin")
+}
+
 // TestRebuildExternalServer_PicksUpNewRegistrations asserts the rebuild
 // trigger chain works end-to-end: initially empty registry -> no proxy tools.
 // After registering a plugin server and calling RebuildExternalServer, the
@@ -170,4 +279,57 @@ func TestNewPluginMCPHandlers_NilRegistryIsNoOp(t *testing.T) {
 	require.NotNil(t, h.MCPHandler)
 	// Listing tools should not panic or error — it's just the native set.
 	_ = listToolNames(t, h)
+}
+
+// newPerPluginForwarder returns a mock mmapi.Client whose PluginHTTP routes by
+// the leading /{pluginID} path segment that proxyRoundTripper writes onto
+// every outbound request. Used by TestNewPluginMCPHandlers_PolicyIsPerPluginServer
+// to dispatch two simultaneously-active plugin MCP servers.
+//
+// Mirrors newPluginHTTPForwarder (proxy_tools_test.go:55) but with a routing
+// table keyed on plugin ID — that helper hardcodes a single target.
+func newPerPluginForwarder(t *testing.T, byPluginID map[string]*httptest.Server) *mocks.MockClient {
+	t.Helper()
+	m := mocks.NewMockClient(t)
+	m.EXPECT().PluginHTTP(mock.Anything).RunAndReturn(func(req *http.Request) *http.Response {
+		// proxyRoundTripper rewrote URL.Path to "/{pluginID}{basePath}".
+		// Trim the leading slash and split on the next slash to recover the ID.
+		p := req.URL.Path
+		if len(p) > 0 && p[0] == '/' {
+			p = p[1:]
+		}
+		var pluginID, rest string
+		if idx := indexByte(p, '/'); idx >= 0 {
+			pluginID = p[:idx]
+			rest = p[idx:]
+		} else {
+			pluginID = p
+		}
+
+		target, ok := byPluginID[pluginID]
+		if !ok {
+			rec := httptest.NewRecorder()
+			rec.WriteHeader(http.StatusNotFound)
+			return rec.Result()
+		}
+
+		// Forward to the target's handler with the basePath restored.
+		fwd := req.Clone(req.Context())
+		fwd.URL.Path = rest
+		rec := httptest.NewRecorder()
+		target.Config.Handler.ServeHTTP(rec, fwd)
+		return rec.Result()
+	}).Maybe()
+	return m
+}
+
+// indexByte is a tiny strings.IndexByte equivalent without importing strings
+// for one call site. Returns -1 if c is not present.
+func indexByte(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
 }
