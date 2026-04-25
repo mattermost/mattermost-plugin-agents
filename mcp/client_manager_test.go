@@ -135,6 +135,232 @@ func TestClientManager_GetPluginServer(t *testing.T) {
 	require.Equal(t, stored, again, "GetPluginServer must return an independent value copy")
 }
 
+// TestClientManager_HydratesPluginServersFromConfig is the M2 release-gate
+// regression test: NewClientManager must hydrate ClientManager.pluginServers
+// from cfg.PluginServers synchronously before returning, so that the bridge
+// /mcp/register handler observes admin-set state on the FIRST source-plugin
+// re-register after an agents-plugin restart.
+func TestClientManager_HydratesPluginServersFromConfig(t *testing.T) {
+	pluginTestAPI := &plugintest.API{}
+	setupTestLogger(pluginTestAPI)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+
+	persisted := []PluginServerConfig{
+		{
+			PluginID:       "com.example.a",
+			Name:           "A",
+			Path:           "/mcp",
+			Enabled:        true,
+			ExposeExternal: false,
+			ToolConfigs: []ToolConfig{
+				{Name: "tool_a1", Policy: ToolPolicyAsk, Enabled: true},
+				{Name: "tool_a2", Policy: ToolPolicyAsk, Enabled: false},
+			},
+		},
+		{
+			PluginID:       "com.example.b",
+			Name:           "B",
+			Path:           "/mcp",
+			Enabled:        false,
+			ExposeExternal: true,
+		},
+	}
+
+	m := NewClientManager(
+		Config{IdleTimeoutMinutes: 30, PluginServers: persisted},
+		client.Log,
+		client,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	t.Cleanup(m.Close)
+
+	got := m.ListPluginServers()
+	require.Len(t, got, 2, "both persisted entries must be hydrated synchronously")
+
+	byID := map[string]PluginServerConfig{}
+	for _, c := range got {
+		byID[c.PluginID] = c
+	}
+
+	a := byID["com.example.a"]
+	require.Equal(t, "A", a.Name)
+	require.Equal(t, "/mcp", a.Path)
+	require.True(t, a.Enabled)
+	require.False(t, a.ExposeExternal)
+	require.Len(t, a.ToolConfigs, 2)
+	require.Equal(t, "tool_a1", a.ToolConfigs[0].Name)
+	require.True(t, a.ToolConfigs[0].Enabled)
+	require.False(t, a.ToolConfigs[1].Enabled)
+
+	b := byID["com.example.b"]
+	require.Equal(t, "B", b.Name)
+	require.False(t, b.Enabled)
+	require.True(t, b.ExposeExternal)
+	require.Empty(t, b.ToolConfigs)
+}
+
+// TestClientManager_ReInitSyncsPluginServerAdminFields covers the
+// Container.Update → listener → ReInit path: a config broadcast must merge
+// admin-owned fields (Enabled, ExposeExternal, ToolConfigs) onto in-memory
+// entries, while preserving runtime identity fields (Name, Path) that the
+// source plugin most recently set.
+func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
+	pluginTestAPI := &plugintest.API{}
+	setupTestLogger(pluginTestAPI)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	t.Cleanup(m.Close)
+
+	// Source plugin registered at runtime with self-declared identity.
+	m.RegisterPluginServer(PluginServerConfig{
+		PluginID:       "com.example.mcp",
+		Name:           "Live Name",
+		Path:           "/live-mcp",
+		Enabled:        false, // pre-merge state
+		ExposeExternal: false,
+	})
+
+	// Cluster node receives a config broadcast that flips admin fields.
+	newCfg := Config{
+		IdleTimeoutMinutes: 30,
+		PluginServers: []PluginServerConfig{{
+			PluginID:       "com.example.mcp",
+			Name:           "Stale Name From Config", // identity field — must be ignored on merge
+			Path:           "/stale-from-config",     // identity field — must be ignored on merge
+			Enabled:        true,
+			ExposeExternal: true,
+			ToolConfigs: []ToolConfig{
+				{Name: "echo", Policy: ToolPolicyAsk, Enabled: false},
+			},
+		}},
+	}
+
+	m.ReInit(newCfg, nil)
+
+	got, ok := m.GetPluginServer("com.example.mcp")
+	require.True(t, ok)
+
+	// Admin-owned fields take config values.
+	require.True(t, got.Enabled, "Enabled merged from config")
+	require.True(t, got.ExposeExternal, "ExposeExternal merged from config")
+	require.Len(t, got.ToolConfigs, 1, "ToolConfigs merged from config")
+	require.Equal(t, "echo", got.ToolConfigs[0].Name)
+	require.False(t, got.ToolConfigs[0].Enabled)
+
+	// Identity fields preserved from the live registration — the source
+	// plugin is the source of truth for these.
+	require.Equal(t, "Live Name", got.Name)
+	require.Equal(t, "/live-mcp", got.Path)
+}
+
+// TestClientManager_ReInitInsertsConfigOnlyEntries covers the second arm of
+// syncPluginServersFromConfig: when a plugin server is in cfg.PluginServers
+// but not yet registered in-memory (typical post-restart shape, where the
+// source plugin's Register() hasn't fired yet), the entry is inserted
+// verbatim so the registry exposes admin policy until the source plugin
+// re-registers and refreshes Name/Path via the preserve block.
+func TestClientManager_ReInitInsertsConfigOnlyEntries(t *testing.T) {
+	pluginTestAPI := &plugintest.API{}
+	setupTestLogger(pluginTestAPI)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	t.Cleanup(m.Close)
+
+	require.Empty(t, m.ListPluginServers(), "precondition: empty registry")
+
+	cfg := Config{
+		IdleTimeoutMinutes: 30,
+		PluginServers: []PluginServerConfig{{
+			PluginID:       "com.example.mcp",
+			Name:           "From Config",
+			Path:           "/from-config",
+			Enabled:        true,
+			ExposeExternal: false,
+		}},
+	}
+
+	m.ReInit(cfg, nil)
+
+	got, ok := m.GetPluginServer("com.example.mcp")
+	require.True(t, ok)
+	require.Equal(t, "From Config", got.Name)
+	require.Equal(t, "/from-config", got.Path)
+	require.True(t, got.Enabled)
+}
+
+// TestClientManager_ReInitPreservesUnpersistedRuntimeEntries covers the
+// third arm: a runtime registration that the admin has not yet persisted
+// (e.g. between Register() and the first admin save) must survive a
+// config-update broadcast. We must NOT delete entries absent from the new
+// config — the source plugin's live registration is the only thing keeping
+// it on this node.
+func TestClientManager_ReInitPreservesUnpersistedRuntimeEntries(t *testing.T) {
+	pluginTestAPI := &plugintest.API{}
+	setupTestLogger(pluginTestAPI)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	t.Cleanup(m.Close)
+
+	live := PluginServerConfig{
+		PluginID: "com.example.live",
+		Name:     "Live",
+		Path:     "/live",
+		Enabled:  true,
+	}
+	m.RegisterPluginServer(live)
+
+	// Config broadcast carries a DIFFERENT plugin's persisted state — the
+	// live registration above is absent from cfg.PluginServers.
+	cfg := Config{
+		IdleTimeoutMinutes: 30,
+		PluginServers: []PluginServerConfig{{
+			PluginID: "com.example.other",
+			Name:     "Other",
+			Path:     "/other",
+			Enabled:  true,
+		}},
+	}
+	m.ReInit(cfg, nil)
+
+	// Both entries must be present.
+	require.Len(t, m.ListPluginServers(), 2)
+	stillLive, ok := m.GetPluginServer("com.example.live")
+	require.True(t, ok, "runtime registration must survive ReInit")
+	require.Equal(t, live, stillLive)
+}
+
+// TestClientManager_SyncPluginServersFromConfig_SkipsEmptyPluginID exercises
+// the defensive `if persisted.PluginID == ""` guard in
+// syncPluginServersFromConfig. A malformed config blob carrying an empty
+// PluginID must not poison the registry — the offending entry is silently
+// skipped while well-formed entries still hydrate.
+func TestClientManager_SyncPluginServersFromConfig_SkipsEmptyPluginID(t *testing.T) {
+	pluginTestAPI := &plugintest.API{}
+	setupTestLogger(pluginTestAPI)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+
+	cfg := Config{
+		IdleTimeoutMinutes: 30,
+		PluginServers: []PluginServerConfig{
+			{PluginID: "", Name: "Empty ID", Path: "/x", Enabled: true},
+			{PluginID: "com.example.valid", Name: "Valid", Path: "/mcp", Enabled: true},
+		},
+	}
+
+	m := NewClientManager(cfg, client.Log, client, nil, nil, nil, nil)
+	t.Cleanup(m.Close)
+
+	got := m.ListPluginServers()
+	require.Len(t, got, 1, "empty-PluginID entry must be skipped; only valid entry hydrated")
+	require.Equal(t, "com.example.valid", got[0].PluginID)
+}
+
 // Test A (release gate): plugin server Enabled=true with 2 tools → both flow through.
 func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	target := newFakePluginMCPServer(t, 2)

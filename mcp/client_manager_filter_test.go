@@ -166,6 +166,49 @@ func TestFilterToolsByConfig(t *testing.T) {
 			wantToolNames: []string{"tool_a", "tool_b"},
 		},
 		{
+			// M2 release gate: per-tool policy enforces on plugin servers.
+			// One tool flagged Enabled=false → filtered out; the other has
+			// no entry → default-allow, returned.
+			name:   "plugin server with per-tool policy filters disabled tool",
+			config: Config{},
+			pluginServers: []PluginServerConfig{
+				{
+					PluginID: "com.example.mcp",
+					Name:     "Example",
+					Path:     "/mcp",
+					Enabled:  true,
+					ToolConfigs: []ToolConfig{
+						{Name: "tool_a", Policy: ToolPolicyAsk, Enabled: false},
+					},
+				},
+			},
+			rawTools: []llm.Tool{
+				{Name: "tool_a", ServerOrigin: "plugin://com.example.mcp"},
+				{Name: "tool_b", ServerOrigin: "plugin://com.example.mcp"},
+			},
+			wantToolNames: []string{"tool_b"},
+		},
+		{
+			// Defense-in-depth: explicitly Enabled=true row also passes through.
+			name:   "plugin server with per-tool policy returns explicitly enabled tool",
+			config: Config{},
+			pluginServers: []PluginServerConfig{
+				{
+					PluginID: "com.example.mcp",
+					Name:     "Example",
+					Path:     "/mcp",
+					Enabled:  true,
+					ToolConfigs: []ToolConfig{
+						{Name: "tool_a", Policy: ToolPolicyAsk, Enabled: true},
+					},
+				},
+			},
+			rawTools: []llm.Tool{
+				{Name: "tool_a", ServerOrigin: "plugin://com.example.mcp"},
+			},
+			wantToolNames: []string{"tool_a"},
+		},
+		{
 			// RELEASE GATE — this case MUST PASS before merge.
 			name:   "plugin server disabled, tools filtered out",
 			config: Config{},

@@ -37,9 +37,14 @@ type MCPEmbeddedServerConfig struct {
 
 // MCPConfig contains the configuration for the MCP servers
 type MCPConfig struct {
-	Enabled            bool                    `json:"enabled"`
-	EnablePluginServer bool                    `json:"enablePluginServer"`
-	Servers            []MCPServerConfig       `json:"servers"`
+	Enabled            bool              `json:"enabled"`
+	EnablePluginServer bool              `json:"enablePluginServer"`
+	Servers            []MCPServerConfig `json:"servers"`
+	// PluginServers persists admin state for plugin-registered MCP servers.
+	// Hydrated into ClientManager.pluginServers on startup and on every
+	// config-update listener firing (see mcp/client_manager.go:
+	// syncPluginServersFromConfig). Slice (not map) for symmetry with Servers.
+	PluginServers      []PluginServerConfig    `json:"plugin_servers,omitempty"`
 	EmbeddedServer     MCPEmbeddedServerConfig `json:"embeddedServer"`
 	IdleTimeoutMinutes int                     `json:"idleTimeoutMinutes"`
 }
@@ -101,10 +106,18 @@ func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 
 // PluginServerConfig contains the configuration for an MCP server registered
 // by another Mattermost plugin via the AI Bridge register endpoint.
+//
+// Field ownership:
+//   - Identity (PluginID, Name, Path) is owned by the source plugin and
+//     refreshed on every Register() call.
+//   - Admin state (Enabled, ExposeExternal, ToolConfigs) is owned by the
+//     agents-plugin admin and survives source-plugin re-registration via the
+//     preserve block in api/api_bridge_mcp.go:handleMCPRegister.
 type PluginServerConfig struct {
-	PluginID       string `json:"plugin_id"`
-	Name           string `json:"name"`
-	Path           string `json:"path"`
-	Enabled        bool   `json:"enabled"`
-	ExposeExternal bool   `json:"expose_external"`
+	PluginID       string          `json:"plugin_id"`
+	Name           string          `json:"name"`
+	Path           string          `json:"path"`
+	Enabled        bool            `json:"enabled"`
+	ExposeExternal bool            `json:"expose_external"`
+	ToolConfigs    []MCPToolConfig `json:"tool_configs,omitempty"`
 }

@@ -125,8 +125,14 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 	// This lets first-party plugins opt into ExposeExternal by default on
 	// install; subsequent admin edits take precedence.
 	if existing, found := a.mcpClientManager.GetPluginServer(cfg.PluginID); found {
+		// Admin-owned fields survive source-plugin re-registration. The
+		// plugin's self-declared cfg may carry zero values for these (it
+		// doesn't know what the admin previously set); the existing entry —
+		// hydrated from MCPConfig.PluginServers on startup, or written by
+		// admin PUT post-startup — is the source of truth.
 		cfg.Enabled = existing.Enabled
 		cfg.ExposeExternal = existing.ExposeExternal
+		cfg.ToolConfigs = existing.ToolConfigs
 	}
 	a.mcpClientManager.RegisterPluginServer(cfg)
 

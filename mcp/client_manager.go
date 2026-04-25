@@ -93,7 +93,15 @@ func (m *ClientManager) cleanupInactiveClients(closeChan <-chan struct{}, ticker
 	}
 }
 
-// ReInit re-initializes the client manager with a new configuration and embedded server
+// ReInit re-initializes the client manager with a new configuration and embedded server.
+//
+// Hydration: at the end of ReInit we synchronize admin-owned plugin-server
+// state from cfg.PluginServers into m.pluginServers via
+// syncPluginServersFromConfig. This is what closes the M1 in-memory-only
+// gap on Enabled / ExposeExternal / ToolConfigs across plugin restarts and
+// across cluster nodes (the listener at server/main.go:396 fires ReInit on
+// every Container.Update — i.e. on every successful admin save and on every
+// cluster config-update broadcast).
 func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) {
 	m.Close()
 
@@ -120,6 +128,12 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 	// m.cleanupTicker later.
 	m.cleanupTicker = time.NewTicker(5 * time.Minute)
 	go m.cleanupInactiveClients(m.closeChan, m.cleanupTicker)
+
+	// Synchronize plugin-server admin state from the persisted config. Must
+	// happen AFTER m.config = config so that the persisted view drives the
+	// merge. Safe to call here: no caller of ReInit holds pluginServersMu
+	// (see Re-entrancy warning on syncPluginServersFromConfig).
+	m.syncPluginServersFromConfig(config)
 }
 
 // Close closes the client manager and all managed clients
@@ -355,6 +369,63 @@ func (m *ClientManager) GetPluginServer(pluginID string) (PluginServerConfig, bo
 	return cfg, ok
 }
 
+// syncPluginServersFromConfig merges admin-owned plugin-server state from
+// the persisted config into the in-memory pluginServers map. Called from
+// ReInit on plugin startup and on every config-update broadcast.
+//
+// Merge semantics (per PluginID):
+//
+//   - Both in-memory entry AND config entry exist:
+//     Update admin-owned fields (Enabled, ExposeExternal, ToolConfigs) on the
+//     in-memory entry. Preserve identity fields (Name, Path) — those belong
+//     to the source plugin and were refreshed on its last Register() call.
+//
+//   - Only config entry exists (no in-memory entry):
+//     Insert the config entry verbatim. The source plugin will re-register
+//     later; the preserve block in api/api_bridge_mcp.go:handleMCPRegister
+//     will then refresh Name/Path from the new request while keeping the
+//     admin fields we hydrated here.
+//
+//   - Only in-memory entry exists (not in config):
+//     Leave alone. This is a brand-new source-plugin registration that the
+//     admin has not yet persisted (e.g. before the first PUT to
+//     /admin/mcp/plugin-servers/:pluginID). Phase 2's admin-save path will
+//     persist it on the next admin action.
+//
+// Locking: acquires pluginServersMu.Lock for the duration of the merge. The
+// merge is a pure in-memory map operation, no I/O — safe to hold the write
+// lock across the loop.
+//
+// Re-entrancy warning: callers MUST NOT hold pluginServersMu when invoking
+// this method, and MUST NOT call it from a code path that has already
+// acquired the lock. The Phase 2 admin save handler must use the
+// snapshot-then-save pattern (build cfg.MCP.PluginServers from a
+// ListPluginServers() snapshot, release any local locks, THEN call
+// configUpdater.Update which synchronously fires the listener that lands
+// here) to avoid re-entrant deadlock.
+func (m *ClientManager) syncPluginServersFromConfig(cfg Config) {
+	m.pluginServersMu.Lock()
+	defer m.pluginServersMu.Unlock()
+
+	for _, persisted := range cfg.PluginServers {
+		if persisted.PluginID == "" {
+			// Defensive: skip malformed entries rather than poisoning the map.
+			continue
+		}
+		if existing, ok := m.pluginServers[persisted.PluginID]; ok {
+			// Merge admin fields onto the live entry; keep runtime identity.
+			existing.Enabled = persisted.Enabled
+			existing.ExposeExternal = persisted.ExposeExternal
+			existing.ToolConfigs = persisted.ToolConfigs
+			m.pluginServers[persisted.PluginID] = existing
+			continue
+		}
+		// No in-memory entry yet — insert config entry verbatim. Source
+		// plugin will re-register later; Name/Path will be refreshed then.
+		m.pluginServers[persisted.PluginID] = persisted
+	}
+}
+
 // DiscoverPluginServerTools performs an ephemeral connect+ListTools against
 // the given plugin-registered MCP server and returns its tool list. Used by
 // the admin Tools tab (Phase 1F); not cached. For per-user cached tool access
@@ -411,17 +482,20 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 		serverOrder = append(serverOrder, EmbeddedClientKey)
 	}
 
-	// Plugin-registered servers (default-allow via empty ToolConfigs).
+	// Plugin-registered servers. ToolConfigs flows through from the registered
+	// PluginServerConfig so admin per-tool policy enforces here. When
+	// ToolConfigs is empty (no admin policy set), GetToolPolicy returns
+	// ("ask", true) — every plugin tool defaults to enabled, matching M1.
 	for _, ps := range pluginServers {
 		if !ps.Enabled {
 			continue
 		}
 		origin := "plugin://" + ps.PluginID
 		serverByOrigin[origin] = &ServerConfig{
-			Name:    ps.Name,
-			Enabled: true,
-			BaseURL: origin,
-			// ToolConfigs intentionally empty -> GetToolPolicy returns ("ask", true).
+			Name:        ps.Name,
+			Enabled:     true,
+			BaseURL:     origin,
+			ToolConfigs: ps.ToolConfigs,
 		}
 		serverOrder = append(serverOrder, origin)
 	}
