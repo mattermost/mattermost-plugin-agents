@@ -32,8 +32,8 @@ type ClientManager struct {
 	toolsCache     *ToolsCache
 
 	// Plugin-server registry (see PluginServerConfig). Populated by the bridge
-	// /mcp/register endpoint (Phase 1E) and consumed by GetToolsForUser's
-	// third connect loop + filterToolsByConfig's synthetic-entry injection.
+	// /mcp/register endpoint and consumed by GetToolsForUser's third connect
+	// loop + filterToolsByConfig's synthetic-entry injection.
 	// Protected by pluginServersMu — never held across an HTTP round trip
 	// (use the snapshot+unlock pattern in GetToolsForUser).
 	pluginServersMu sync.RWMutex
@@ -324,7 +324,7 @@ func (m *ClientManager) GetConfig() Config {
 }
 
 // RegisterPluginServer stores (or overwrites) a plugin-server registration.
-// Called by the bridge /mcp/register handler in Phase 1E. Overwrite semantics
+// Called by the bridge /mcp/register handler. Overwrite semantics
 // match the intended "re-register on plugin OnActivate" behavior — a restarted
 // source plugin should reset the stored config without the admin having to
 // intervene. cfg.PluginID must be non-empty (callers validate).
@@ -336,7 +336,7 @@ func (m *ClientManager) RegisterPluginServer(cfg PluginServerConfig) {
 
 // UnregisterPluginServer removes a plugin-server registration. No-op if the
 // pluginID is not registered. Called by the bridge /mcp/unregister handler
-// (Phase 1E) when a source plugin deactivates.
+// when a source plugin deactivates.
 func (m *ClientManager) UnregisterPluginServer(pluginID string) {
 	m.pluginServersMu.Lock()
 	defer m.pluginServersMu.Unlock()
@@ -345,8 +345,7 @@ func (m *ClientManager) UnregisterPluginServer(pluginID string) {
 
 // ListPluginServers returns a snapshot (value copy) of every registered
 // plugin-server config. Safe to iterate without holding any lock.
-// Used by the admin Tools tab (Phase 1F) and external-aggregation rebuild
-// (Phase 1G).
+// Used by the admin Tools tab and external-aggregation rebuild.
 func (m *ClientManager) ListPluginServers() []PluginServerConfig {
 	m.pluginServersMu.RLock()
 	defer m.pluginServersMu.RUnlock()
@@ -389,8 +388,8 @@ func (m *ClientManager) GetPluginServer(pluginID string) (PluginServerConfig, bo
 //   - Only in-memory entry exists (not in config):
 //     Leave alone. This is a brand-new source-plugin registration that the
 //     admin has not yet persisted (e.g. before the first PUT to
-//     /admin/mcp/plugin-servers/:pluginID). Phase 2's admin-save path will
-//     persist it on the next admin action.
+//     /admin/mcp/plugin-servers/:pluginID). The admin-save path will persist
+//     it on the next admin action.
 //
 // Locking: acquires pluginServersMu.Lock for the duration of the merge. The
 // merge is a pure in-memory map operation, no I/O — safe to hold the write
@@ -398,8 +397,8 @@ func (m *ClientManager) GetPluginServer(pluginID string) (PluginServerConfig, bo
 //
 // Re-entrancy warning: callers MUST NOT hold pluginServersMu when invoking
 // this method, and MUST NOT call it from a code path that has already
-// acquired the lock. The Phase 2 admin save handler must use the
-// snapshot-then-save pattern (build cfg.MCP.PluginServers from a
+// acquired the lock. The admin save handler must use the snapshot-then-save
+// pattern (build cfg.MCP.PluginServers from a
 // ListPluginServers() snapshot, release any local locks, THEN call
 // configUpdater.Update which synchronously fires the listener that lands
 // here) to avoid re-entrant deadlock.
@@ -428,8 +427,8 @@ func (m *ClientManager) syncPluginServersFromConfig(cfg Config) {
 
 // DiscoverPluginServerTools performs an ephemeral connect+ListTools against
 // the given plugin-registered MCP server and returns its tool list. Used by
-// the admin Tools tab (Phase 1F); not cached. For per-user cached tool access
-// see UserClients.ConnectToPluginServer.
+// the admin Tools tab; not cached. For per-user cached tool access see
+// UserClients.ConnectToPluginServer.
 func (m *ClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg PluginServerConfig) ([]ToolInfo, error) {
 	return DiscoverPluginServerTools(ctx, userID, cfg, m.sourcePluginAPI, m.log)
 }

@@ -54,11 +54,18 @@ type ServerConfigChangeCb = (cfg: {
     tool_configs?: Array<{name: string; policy: string; enabled: boolean}>;
 }) => void;
 
+type MCPServerToolRowStubProps = {
+    onServerConfigChange: ServerConfigChangeCb;
+    server?: {
+        name?: string;
+    };
+};
+
 const capturedHandlers: Array<{cb: ServerConfigChangeCb; serverName: string}> = [];
 
 jest.mock('./mcp_server_tool_row', () => ({
     __esModule: true,
-    default: (props: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    default: (props: MCPServerToolRowStubProps) => {
         capturedHandlers.push({cb: props.onServerConfigChange, serverName: props.server?.name ?? ''});
         return React.createElement('div', {'data-testid': 'row-stub'}, null);
     },

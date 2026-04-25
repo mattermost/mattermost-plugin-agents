@@ -135,8 +135,8 @@ func TestClientManager_GetPluginServer(t *testing.T) {
 	require.Equal(t, stored, again, "GetPluginServer must return an independent value copy")
 }
 
-// TestClientManager_HydratesPluginServersFromConfig is the M2 release-gate
-// regression test: NewClientManager must hydrate ClientManager.pluginServers
+// TestClientManager_HydratesPluginServersFromConfig verifies that NewClientManager
+// hydrates ClientManager.pluginServers
 // from cfg.PluginServers synchronously before returning, so that the bridge
 // /mcp/register handler observes admin-set state on the FIRST source-plugin
 // re-register after an agents-plugin restart.
@@ -542,9 +542,7 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 //
 // Scope note: this test deliberately avoids concurrent GetToolsForUser calls
 // because that path writes to m.activity / m.clients under a separate lock
-// (clientsMu) whose pre-existing concurrency contract is out of scope for
-// Phase 1D. The registry + snapshot lane — which is what this phase adds —
-// is exercised directly.
+// (clientsMu). The registry + snapshot lane is exercised directly.
 //
 // Must be run with -race to verify data-race safety.
 func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {

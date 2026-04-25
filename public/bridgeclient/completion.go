@@ -60,35 +60,29 @@ func (c *Client) ServiceCompletionStream(service string, request CompletionReque
 
 // doCompletionRequest performs a non-streaming completion request
 func (c *Client) doCompletionRequest(url string, request CompletionRequest) (string, error) {
-	// Marshal the request body
 	body, err := json.Marshal(request)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Create the HTTP request
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 
-	// Make the request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Read the response body
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	// Check for error status codes
 	if resp.StatusCode != http.StatusOK {
 		var errResp ErrorResponse
 		if err := json.Unmarshal(respBody, &errResp); err != nil {
@@ -97,7 +91,6 @@ func (c *Client) doCompletionRequest(url string, request CompletionRequest) (str
 		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errResp.Error)
 	}
 
-	// Parse the success response
 	var completionResp CompletionResponse
 	if err := json.Unmarshal(respBody, &completionResp); err != nil {
 		return "", fmt.Errorf("failed to unmarshal response: %w", err)
@@ -108,29 +101,24 @@ func (c *Client) doCompletionRequest(url string, request CompletionRequest) (str
 
 // doStreamingRequest performs a streaming completion request and returns a TextStreamResult
 func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm.TextStreamResult, error) {
-	// Marshal the request body
 	body, err := json.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Create the HTTP request
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
-	// Make the request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
 
-	// Ensure body is closed in all paths
 	bodyClosed := false
 	defer func() {
 		if !bodyClosed {
@@ -138,7 +126,6 @@ func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm
 		}
 	}()
 
-	// Check for error status codes
 	if resp.StatusCode != http.StatusOK {
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -151,10 +138,8 @@ func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, errResp.Error)
 	}
 
-	// Create a channel for the stream
 	stream := make(chan llm.TextStreamEvent)
 
-	// Start a goroutine to read the SSE stream and populate the channel
 	go func() {
 		defer resp.Body.Close()
 		defer close(stream)
@@ -168,18 +153,14 @@ func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm
 				continue
 			}
 
-			// Extract the data portion
 			data := strings.TrimPrefix(line, "data: ")
 
-			// Check for empty data lines
 			if data == "" {
 				continue
 			}
 
-			// Parse the JSON event
 			var event llm.TextStreamEvent
 			if err := json.Unmarshal([]byte(data), &event); err != nil {
-				// Send an error event
 				stream <- llm.TextStreamEvent{
 					Type:  llm.EventTypeError,
 					Value: fmt.Errorf("error parsing stream event: %w", err),
@@ -187,10 +168,8 @@ func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm
 				return
 			}
 
-			// Send the event to the channel
 			stream <- event
 
-			// If this is an end or error event, stop reading
 			if event.Type == llm.EventTypeEnd || event.Type == llm.EventTypeError {
 				return
 			}
@@ -204,7 +183,6 @@ func (c *Client) doStreamingRequest(url string, request CompletionRequest) (*llm
 		}
 	}()
 
-	// Mark body as handled by goroutine so defer doesn't close it
 	bodyClosed = true
 
 	return &llm.TextStreamResult{

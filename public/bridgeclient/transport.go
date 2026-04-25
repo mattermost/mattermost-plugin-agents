@@ -32,29 +32,22 @@ type appAPIRoundTripper struct {
 
 func removeFirstPath(r *http.Request) {
 	path := r.URL.Path
-
-	// Find the position of the second slash (first slash after the leading one)
 	secondSlash := strings.Index(path[1:], "/")
 
 	if secondSlash == -1 {
-		// No second slash found, set to just "/"
 		r.URL.Path = "/"
 		return
 	}
 
-	// Update the path to everything from the second slash onwards
 	r.URL.Path = path[1+secondSlash:]
 }
 
 func (a *appAPIRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Create a response recorder to capture the response
 	recorder := httptest.NewRecorder()
 
 	removeFirstPath(req)
 
-	// Make the inter-plugin request from the server to the AI plugin
 	a.api.ServeInternalPluginRequest(a.userID, recorder, req, mattermostServerID, AiPluginID)
 
-	// Convert the recorder to an http.Response
 	return recorder.Result(), nil
 }

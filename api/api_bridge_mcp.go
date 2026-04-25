@@ -12,15 +12,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 )
 
-// externalServerRebuilder is the minimal contract the bridge-MCP handlers need
-// to live-update the external MCP aggregation when a plugin server registers
-// or unregisters with ExposeExternal=true.
-//
-// It is implemented by *mcpserver.PluginMCPHandlers once Phase 1G-3 lands.
-// Before 1G, the type assertion in resolveExternalServerRebuilder fails
-// gracefully and the rebuild is skipped — the register/unregister endpoints
-// still succeed, the registry is still updated, and 1G's first rebuild on
-// startup picks everything up.
+// externalServerRebuilder is the minimal contract for live-updating the
+// external MCP aggregation after plugin server registry changes.
 type externalServerRebuilder interface {
 	RebuildExternalServer()
 }
@@ -33,11 +26,6 @@ type unregisterRequest struct {
 	PluginID string `json:"plugin_id"`
 }
 
-// resolveExternalServerRebuilder returns the active rebuilder implementation,
-// or nil if none is available (production pre-1G, or EnablePluginServer=false
-// disables mcpHandlers entirely).
-//
-// Tests inject a spy via externalRebuilderForTest (see api_test.go helpers).
 func (a *API) resolveExternalServerRebuilder() externalServerRebuilder {
 	if a.externalRebuilderForTest != nil {
 		return a.externalRebuilderForTest
@@ -45,15 +33,12 @@ func (a *API) resolveExternalServerRebuilder() externalServerRebuilder {
 	if a.mcpHandlers == nil {
 		return nil
 	}
-	if rb, ok := any(a.mcpHandlers).(externalServerRebuilder); ok {
-		return rb
-	}
-	return nil
+	return a.mcpHandlers
 }
 
 // handleMCPRegister handles POST /bridge/v1/mcp/register.
 //
-// Called by source plugins via mcphelper.Server.Register() (Phase 1C-6). The
+// Called by source plugins via mcphelper.Server.Register(). The
 // request MUST originate from an inter-plugin HTTP call — the
 // interPluginAuthorizationRequired middleware on the parent group ensures
 // Mattermost-Plugin-ID is set and trustworthy (the Mattermost server strips
@@ -154,10 +139,6 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 	}
 	a.mcpClientManager.RegisterPluginServer(cfg)
 
-	// Live-update external MCP aggregation if requested. Pre-1G this is a
-	// no-op (resolveExternalServerRebuilder returns nil); post-1G it swaps
-	// the external *mcp.Server so external clients see the new tools without
-	// restarting the plugin.
 	if cfg.ExposeExternal {
 		if rb := a.resolveExternalServerRebuilder(); rb != nil {
 			rb.RebuildExternalServer()
@@ -169,8 +150,8 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 
 // handleMCPUnregister handles POST /bridge/v1/mcp/unregister.
 //
-// Called synchronously by source plugins from OnDeactivate (Phase 1C-6
-// mcphelper.Server.Unregister). Body is {"plugin_id": "..."}.
+// Called synchronously by source plugins from OnDeactivate via
+// mcphelper.Server.Unregister. Body is {"plugin_id": "..."}.
 //
 // Same security model as handleMCPRegister: middleware ensures header
 // presence; handler enforces body.plugin_id == header to prevent one plugin
@@ -200,12 +181,6 @@ func (a *API) handleMCPUnregister(c *gin.Context) {
 
 	a.mcpClientManager.UnregisterPluginServer(req.PluginID)
 
-	// Always trigger rebuild on unregister — the unregistered plugin's tools
-	// must disappear from the external surface regardless of what its
-	// ExposeExternal flag was. Pre-1G this is a no-op; post-1G it strips
-	// the stale proxy tools. Cheap operation (rebuild is O(enabled plugin
-	// servers) with no persistent external sessions to disrupt per
-	// StreamableHTTPOptions{Stateless: true} — see Phase 1G-3 plan).
 	if rb := a.resolveExternalServerRebuilder(); rb != nil {
 		rb.RebuildExternalServer()
 	}

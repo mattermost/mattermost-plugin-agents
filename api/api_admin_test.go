@@ -37,11 +37,9 @@ type adminTestStores struct {
 
 // setupAdminTestEnvironment creates a test environment for admin endpoint testing.
 //
-// After Phase 2, handleUpdatePluginServer performs a 3-step config save
-// (configStore / configUpdater / clusterNotifier). We wire non-nil test
-// implementations unconditionally so every admin test exercises the real
-// save path; tests that don't care about save side effects simply don't
-// assert on the returned stores.
+// handleUpdatePluginServer performs a configStore/configUpdater/clusterNotifier
+// save path. Tests that do not care about save side effects ignore the returned
+// stores.
 func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API, *adminTestStores) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -244,9 +242,8 @@ func createMockIndexer(t *testing.T, mockService *mockIndexerService) *indexer.I
 	return indexer.New(nil, nil, mockClient, nil, nil, mockMutexAPI)
 }
 
-// TestHandleGetMCPTools_PluginServer exercises the Phase 1F third-loop that
-// renders plugin-registered MCP servers alongside embedded and remote rows
-// on GET /admin/mcp/tools. It verifies:
+// TestHandleGetMCPTools_PluginServer verifies plugin-registered MCP servers
+// render alongside embedded and remote rows on GET /admin/mcp/tools:
 //   - enabled plugin entries are probed via DiscoverPluginServerTools;
 //   - disabled plugin entries are rendered with an empty tool list and NO probe;
 //   - probe errors surface through MCPServerInfo.Error;
@@ -309,8 +306,6 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 			expectProbeCalls:  1,
 		},
 		{
-			// M2: plugin-row ToolConfigs flows through to MCPServerInfo so the
-			// webapp can render the policy dropdown at the correct selected state.
 			name: "enabled plugin server with per-tool policy surfaces ToolConfigs",
 			pluginServers: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo",
@@ -387,9 +382,8 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 	}
 }
 
-// TestHandleUpdatePluginServer exercises the admin-only enable/disable toggle
-// endpoint PUT /admin/mcp/plugin-servers/:pluginID introduced in Phase 1F.
-// It verifies:
+// TestHandleUpdatePluginServer verifies the admin-only
+// PUT /admin/mcp/plugin-servers/:pluginID endpoint:
 //   - happy path flips Enabled while preserving identity fields;
 //   - 404 when the pluginID has no registration;
 //   - 400 on malformed JSON body;
@@ -533,7 +527,6 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			expectRegisterCalls: 0,
 		},
 		{
-			// M2 release gate: admin sets per-tool policy via PATCH.
 			name:     "tool_configs partial PUT sets policy, preserves enabled",
 			pluginID: "com.mattermost.demo",
 			preRegistered: []mcp.PluginServerConfig{{
@@ -639,8 +632,8 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 	}
 }
 
-// TestHandleUpdatePluginServer_PersistsToConfig covers the Phase 2 durable
-// persistence path: a successful PATCH MUST call configStore.SaveConfig →
+// TestHandleUpdatePluginServer_PersistsToConfig covers the durable persistence
+// path: a successful PATCH MUST call configStore.SaveConfig →
 // configUpdater.Update → clusterNotifier.PublishConfigUpdate, in that order,
 // carrying a cfg whose MCP.PluginServers slice contains the updated snapshot.
 //

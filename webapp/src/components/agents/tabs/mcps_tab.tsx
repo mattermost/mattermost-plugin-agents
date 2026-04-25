@@ -6,25 +6,9 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 
-import {getUserMCPTools} from '@/client';
+import {getUserMCPTools, UserMCPServerInfo} from '@/client';
 import {EnabledTool} from '@/types/agents';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '@/utils/tool_names';
-
-// Types matching the getUserMCPTools() response shape (from api/api_mcp.go)
-type UserMCPToolInfo = {
-    name: string;
-    description: string;
-    enabled: boolean; // admin-level enabled state
-    policy: string; // "auto_run" | "ask"
-}
-
-type UserMCPServerInfo = {
-    name: string;
-    serverOrigin: string;
-    authenticated: boolean;
-    authEmail: string;
-    tools: UserMCPToolInfo[];
-}
 
 type Props = {
     enabledTools: EnabledTool[];
@@ -115,7 +99,6 @@ const McpsTab = (props: Props) => {
         }
     }, [enabledTools, onChange]);
 
-    // Detect orphaned tools (enabled but no longer available)
     const orphanedTools = useMemo(() => {
         if (autoEnableNewMCPTools || servers.length === 0) {
             return [];
@@ -128,7 +111,6 @@ const McpsTab = (props: Props) => {
         );
     }, [autoEnableNewMCPTools, enabledTools, servers]);
 
-    // Auto-remove orphaned tools from enabledTools so they're cleaned on save
     useEffect(() => {
         if (!autoEnableNewMCPTools && orphanedTools.length > 0 && servers.length > 0) {
             const cleaned = enabledTools.filter((et) =>
@@ -142,7 +124,6 @@ const McpsTab = (props: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoEnableNewMCPTools, enabledTools, servers]);
 
-    // Filter servers/tools by search
     const filteredServers = servers.filter((server) => {
         if (!searchQuery) {
             return true;

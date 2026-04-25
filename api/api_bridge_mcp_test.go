@@ -343,9 +343,6 @@ func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
 			wantRebuilderInvoked: false, // expose stays false => no rebuild
 		},
 		{
-			// M2 release gate: ToolConfigs is admin-owned post-registration.
-			// Source plugin re-registers with no ToolConfigs in its payload;
-			// existing admin policy must survive verbatim.
 			name: "re-register: admin-set ToolConfigs preserved",
 			existing: &mcp.PluginServerConfig{
 				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
@@ -429,7 +426,7 @@ func TestHandleMCPRegister_ExposeExternal_TriggersRebuild(t *testing.T) {
 	}{
 		{"ExposeExternal=true, rebuilder present — triggers rebuild", true, true, 1},
 		{"ExposeExternal=false, rebuilder present — does NOT trigger", false, true, 0},
-		{"ExposeExternal=true, rebuilder absent — pre-1G no-op path", true, false, 0},
+		{"ExposeExternal=true, rebuilder absent", true, false, 0},
 	}
 
 	for _, tc := range tests {
@@ -581,14 +578,8 @@ func TestHandleMCPUnregister_TriggersRebuild(t *testing.T) {
 	require.Equal(t, 1, spy.callCount, "unregister must always trigger external rebuild")
 }
 
-// =============================================================================
-// Pre-1G sanity: nil rebuilder must not panic
-// =============================================================================
-
 // TestHandleMCPRegister_NilRebuilderSafe confirms that when no rebuilder is
-// available (pre-1G state: mcpHandlers is nil AND no test spy is injected),
-// the register handler does not panic and still returns 200. This captures
-// the behavior our "option (b)" design guarantees.
+// available, the register handler does not panic and still returns 200.
 func TestHandleMCPRegister_NilRebuilderSafe(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -619,7 +610,7 @@ func TestHandleMCPRegister_NilRebuilderSafe(t *testing.T) {
 // Unregister/Register cycle: admin fields recovered from persisted config
 // =============================================================================
 
-// TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister covers the M2 P1
+// TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister covers a
 // regression where a source plugin's OnDeactivate→OnActivate cycle (e.g.
 // plugin restart on upgrade or crash) drops admin-owned state.
 //
@@ -638,9 +629,9 @@ func TestHandleMCPRegister_NilRebuilderSafe(t *testing.T) {
 //     fields (mcphelper's wire payload only carries PluginID/Name/Path/Version
 //     — see public/mcphelper/mcphelper.go: PluginMCPServer).
 //
-//  4. The Phase 1 preserve block's GetPluginServer lookup MISSES (just wiped).
-//     Without the config-fallback, RegisterPluginServer would store zero-valued
-//     admin fields and tools would silently drop from the external endpoint.
+//  4. The in-memory lookup misses. Without the config-fallback,
+//     RegisterPluginServer would store zero-valued admin fields and tools would
+//     silently drop from the external endpoint.
 //
 //  5. The fix: handleMCPRegister falls back to configStore.GetConfig().MCP.
 //     PluginServers, finds the entry by PluginID, and recovers Enabled /
