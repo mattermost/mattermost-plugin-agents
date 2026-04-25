@@ -19,6 +19,16 @@ const Client4 = new Client4Class();
 type MCPToolPolicy = 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
 type VettedToolConfig = {name: string; policy: MCPToolPolicy; enabled: boolean};
 
+// Local shape mirror of the webapp's MCPToolConfig (see
+// components/system_console/mcp_servers.tsx). Duplicated here to avoid
+// inverting the layering (client.tsx should not depend on UI components).
+// Future refactor: consolidate into a shared types module.
+type MCPToolConfig = {
+    name: string;
+    policy: MCPToolPolicy;
+    enabled: boolean;
+};
+
 export function setSiteURL(siteURL: string) {
     Client4.setUrl(siteURL);
 }
@@ -534,16 +544,28 @@ export async function clearMCPToolsCache() {
 }
 
 /**
- * Flip the Enabled flag on a plugin-registered MCP server.
- * PUT /admin/mcp/plugin-servers/:pluginID — body {enabled: boolean}.
- * Returns the updated PluginServerConfig.
+ * Apply a partial update to a plugin-registered MCP server's admin state.
+ * PUT /admin/mcp/plugin-servers/:pluginID with pointer-field partial-update
+ * semantics on the server side (omitted fields preserve current state, present
+ * fields overwrite — including {tool_configs: []} which explicitly clears
+ * policy). Returns the updated PluginServerConfig.
+ *
+ * Caller is responsible for diffing — only send fields that actually changed.
+ * See mcp_tools_viewer.tsx handleServerConfigChange for the diff site.
  */
-export async function updatePluginServerEnabled(pluginID: string, enabled: boolean) {
+export async function updatePluginServer(
+    pluginID: string,
+    update: {
+        enabled?: boolean;
+        expose_external?: boolean;
+        tool_configs?: MCPToolConfig[];
+    },
+) {
     const encoded = encodeURIComponent(pluginID);
     const url = `${baseRoute()}/admin/mcp/plugin-servers/${encoded}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'PUT',
-        body: JSON.stringify({enabled}),
+        body: JSON.stringify(update),
     }));
 
     if (response.ok) {
