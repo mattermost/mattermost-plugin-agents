@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/config"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -612,4 +613,200 @@ func TestHandleMCPRegister_NilRebuilderSafe(t *testing.T) {
 	resp := serveAndReturn(e, req)
 	require.Equal(t, http.StatusOK, resp.StatusCode, "handler must succeed even when rebuilder is unavailable")
 	require.Len(t, e.mcp.registerCalls, 1, "registry mutation must still happen")
+}
+
+// =============================================================================
+// Unregister/Register cycle: admin fields recovered from persisted config
+// =============================================================================
+
+// TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister covers the M2 P1
+// regression where a source plugin's OnDeactivate→OnActivate cycle (e.g.
+// plugin restart on upgrade or crash) drops admin-owned state.
+//
+// Sequence under test:
+//
+//  1. Steady state: plugin previously registered + admin set Enabled=true,
+//     ExposeExternal=true, ToolConfigs=[...]. State lives in BOTH the
+//     in-memory mcpClientManager (refreshed on every Register +
+//     hydrated from config on ReInit) AND the persisted MCPConfig.PluginServers
+//     (admin-owned).
+//
+//  2. Plugin OnDeactivate → POST /bridge/v1/mcp/unregister → in-memory entry
+//     is DELETED. Persisted config is NOT touched (admin still owns it).
+//
+//  3. Plugin OnActivate → POST /bridge/v1/mcp/register with zero-valued admin
+//     fields (mcphelper's wire payload only carries PluginID/Name/Path/Version
+//     — see public/mcphelper/mcphelper.go: PluginMCPServer).
+//
+//  4. The Phase 1 preserve block's GetPluginServer lookup MISSES (just wiped).
+//     Without the config-fallback, RegisterPluginServer would store zero-valued
+//     admin fields and tools would silently drop from the external endpoint.
+//
+//  5. The fix: handleMCPRegister falls back to configStore.GetConfig().MCP.
+//     PluginServers, finds the entry by PluginID, and recovers Enabled /
+//     ExposeExternal / ToolConfigs.
+func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	persistedAdmin := mcp.PluginServerConfig{
+		PluginID:       testCallerPluginID,
+		Name:           "Playbooks MCP",
+		Path:           "/mcp",
+		Enabled:        true,
+		ExposeExternal: true,
+		ToolConfigs: []mcp.ToolConfig{
+			{Name: "echo", Policy: "ask", Enabled: false},
+			{Name: "sum", Policy: "auto_run_in_dm", Enabled: true},
+		},
+	}
+
+	t.Run("Unregister then Register: admin fields recovered from persisted config", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		spy := &spyRebuilder{}
+		e.api.SetExternalRebuilderForTest(spy)
+
+		// Wire a configStore with the persisted admin state. The default
+		// SetupTestEnvironment passes nil for configStore — install our test
+		// double explicitly so the fallback path has something to read.
+		e.api.configStore = &testConfigStore{
+			cfg: &config.Config{
+				MCP: config.MCPConfig{
+					PluginServers: []config.PluginServerConfig{persistedAdmin},
+				},
+			},
+		}
+
+		// Pre-populate in-memory entry to mirror steady state (post-startup
+		// hydration via syncPluginServersFromConfig).
+		e.mcp.pluginServers = []mcp.PluginServerConfig{persistedAdmin}
+
+		e.mockAPI.On("LogError", mock.Anything).Maybe()
+		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+		// Step 1: Unregister wipes in-memory entry. Persisted config untouched.
+		unregReq := mcpUnregisterRequest(t, map[string]string{"plugin_id": testCallerPluginID})
+		unregReq.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+		unregResp := serveAndReturn(e, unregReq)
+		require.Equal(t, http.StatusOK, unregResp.StatusCode)
+		require.Equal(t, []string{testCallerPluginID}, e.mcp.unregisterCalls, "unregister must dispatch")
+		require.Empty(t, e.mcp.pluginServers, "in-memory entry must be wiped after unregister")
+		// Unregister always fires the rebuild (per
+		// TestHandleMCPUnregister_TriggersRebuild). Reset the spy so the
+		// next assertion isolates the rebuild fired by the recovered-state
+		// Register call.
+		require.Equal(t, 1, spy.callCount, "unregister always triggers rebuild")
+		spy.callCount = 0
+
+		// Step 2: Register with the zero-valued admin payload that mcphelper's
+		// wire format produces (no Enabled/ExposeExternal/ToolConfigs on the
+		// wire).
+		incoming := mcp.PluginServerConfig{
+			PluginID:       testCallerPluginID,
+			Name:           "Playbooks MCP",
+			Path:           "/mcp",
+			Enabled:        false, // zero value — plugin payload doesn't carry admin state
+			ExposeExternal: false, // zero value
+			// ToolConfigs intentionally omitted
+		}
+		regReq := mcpRegisterRequest(t, incoming)
+		regReq.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+		regResp := serveAndReturn(e, regReq)
+		require.Equal(t, http.StatusOK, regResp.StatusCode)
+		require.Len(t, e.mcp.registerCalls, 1, "register must dispatch exactly once")
+
+		saved := e.mcp.registerCalls[0]
+		require.Equal(t, true, saved.Enabled, "Enabled recovered from persisted config")
+		require.Equal(t, true, saved.ExposeExternal, "ExposeExternal recovered from persisted config")
+		require.Equal(t, persistedAdmin.ToolConfigs, saved.ToolConfigs, "ToolConfigs recovered from persisted config")
+
+		// Identity fields come from the new request as before.
+		require.Equal(t, "Playbooks MCP", saved.Name)
+		require.Equal(t, "/mcp", saved.Path)
+
+		// Recovered ExposeExternal=true must trigger the external rebuild.
+		require.Equal(t, 1, spy.callCount, "rebuild must fire because recovered ExposeExternal=true")
+	})
+
+	t.Run("first register ever: no persisted entry — plugin payload wins (no regression)", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		spy := &spyRebuilder{}
+		e.api.SetExternalRebuilderForTest(spy)
+
+		// configStore wired but with NO entry for this pluginID. Helper must
+		// return (_, false) so the preserve+fallback skip and zero-value path
+		// runs (matches first-time-install behavior).
+		e.api.configStore = &testConfigStore{
+			cfg: &config.Config{
+				MCP: config.MCPConfig{
+					PluginServers: []config.PluginServerConfig{
+						{PluginID: testOtherPluginID, Name: "Other", Path: "/mcp", Enabled: true, ExposeExternal: true},
+					},
+				},
+			},
+		}
+
+		// Direct unit-test on the helper for this slice/PluginID combination —
+		// proves nil/miss paths work without depending on the outer flow.
+		_, ok := e.api.findPersistedPluginServer(testCallerPluginID)
+		require.False(t, ok, "findPersistedPluginServer must return false when pluginID is absent from persisted config")
+
+		e.mockAPI.On("LogError", mock.Anything).Maybe()
+		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+		// Plugin's first Register declares Enabled=false, ExposeExternal=true
+		// (e.g. first-party plugin opting into external aggregation by default).
+		incoming := mcp.PluginServerConfig{
+			PluginID:       testCallerPluginID,
+			Name:           "Playbooks MCP",
+			Path:           "/mcp",
+			Enabled:        false,
+			ExposeExternal: true,
+		}
+		regReq := mcpRegisterRequest(t, incoming)
+		regReq.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+		regResp := serveAndReturn(e, regReq)
+		require.Equal(t, http.StatusOK, regResp.StatusCode)
+		require.Len(t, e.mcp.registerCalls, 1)
+
+		saved := e.mcp.registerCalls[0]
+		require.Equal(t, false, saved.Enabled, "first register: plugin payload preserved (Enabled)")
+		require.Equal(t, true, saved.ExposeExternal, "first register: plugin payload preserved (ExposeExternal)")
+		require.Empty(t, saved.ToolConfigs, "first register: plugin payload preserved (no ToolConfigs)")
+	})
+
+	t.Run("nil configStore: helper returns false; in-memory miss falls through to plugin payload", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		// configStore stays nil (the SetupTestEnvironment default). Helper
+		// must short-circuit cleanly without panicking.
+		require.Nil(t, e.api.configStore, "precondition: configStore must be nil")
+
+		_, ok := e.api.findPersistedPluginServer(testCallerPluginID)
+		require.False(t, ok, "findPersistedPluginServer must return false when configStore is nil")
+
+		spy := &spyRebuilder{}
+		e.api.SetExternalRebuilderForTest(spy)
+		e.mockAPI.On("LogError", mock.Anything).Maybe()
+		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+		incoming := mcp.PluginServerConfig{
+			PluginID: testCallerPluginID, Name: "X", Path: "/mcp",
+			Enabled: true, ExposeExternal: false,
+		}
+		regReq := mcpRegisterRequest(t, incoming)
+		regReq.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+		regResp := serveAndReturn(e, regReq)
+		require.Equal(t, http.StatusOK, regResp.StatusCode)
+		require.Len(t, e.mcp.registerCalls, 1)
+
+		saved := e.mcp.registerCalls[0]
+		require.Equal(t, true, saved.Enabled, "nil configStore: plugin payload preserved")
+		require.Equal(t, false, saved.ExposeExternal, "nil configStore: plugin payload preserved")
+	})
 }

@@ -114,25 +114,43 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 
 	// Preserve admin-managed fields across re-registration.
 	//
-	// Enabled and ExposeExternal are admin-owned after first registration;
-	// they are toggled via PUT /admin/mcp/plugin-servers/:pluginID. If a
-	// plugin re-registers (e.g. OnActivate after a crash or plugin upgrade),
-	// we must NOT let the plugin's self-declared defaults overwrite what the
-	// admin already set. Identity fields (PluginID/Name/Path) are owned by
-	// the plugin and ARE refreshed from the new request.
+	// Enabled, ExposeExternal, and ToolConfigs are admin-owned after first
+	// registration; they are toggled via PUT /admin/mcp/plugin-servers/:pluginID.
+	// The source plugin's wire payload does NOT carry them (see
+	// public/mcphelper/mcphelper.go: PluginMCPServer is {PluginID, Name, Path,
+	// Version}), so they arrive as zero values — letting the plugin payload win
+	// would silently clobber admin state. Identity fields (PluginID/Name/Path)
+	// are owned by the plugin and ARE refreshed from the new request.
 	//
-	// On first registration (no existing entry): use the plugin's cfg as-is.
-	// This lets first-party plugins opt into ExposeExternal by default on
-	// install; subsequent admin edits take precedence.
+	// We consult two sources in priority order before falling through to the
+	// plugin's payload:
+	//
+	//  1. The in-memory entry (GetPluginServer): refreshed on every Register +
+	//     hydrated from config on ReInit. The steady-state source of truth.
+	//
+	//  2. The persisted config (configStore.GetConfig().MCP.PluginServers):
+	//     fallback used when the in-memory entry was just wiped by an
+	//     Unregister and ReInit hasn't re-hydrated yet. This is the
+	//     OnDeactivate→OnActivate (plugin restart) sequence: Unregister
+	//     deletes the in-memory entry, the immediately-following Register
+	//     would otherwise see the entry as missing and store zero-valued
+	//     admin fields. syncPluginServersFromConfig only runs on
+	//     Container.Update (admin save / cluster broadcast), NOT on plugin
+	//     restart, so without this fallback admin state drifts to zero until
+	//     the next admin action.
+	//
+	// First-time registration (no entry in either source) falls through to
+	// use the plugin's cfg as-is. This lets first-party plugins opt into
+	// ExposeExternal by default on install; subsequent admin edits take
+	// precedence.
 	if existing, found := a.mcpClientManager.GetPluginServer(cfg.PluginID); found {
-		// Admin-owned fields survive source-plugin re-registration. The
-		// plugin's self-declared cfg may carry zero values for these (it
-		// doesn't know what the admin previously set); the existing entry —
-		// hydrated from MCPConfig.PluginServers on startup, or written by
-		// admin PUT post-startup — is the source of truth.
 		cfg.Enabled = existing.Enabled
 		cfg.ExposeExternal = existing.ExposeExternal
 		cfg.ToolConfigs = existing.ToolConfigs
+	} else if persisted, ok := a.findPersistedPluginServer(cfg.PluginID); ok {
+		cfg.Enabled = persisted.Enabled
+		cfg.ExposeExternal = persisted.ExposeExternal
+		cfg.ToolConfigs = persisted.ToolConfigs
 	}
 	a.mcpClientManager.RegisterPluginServer(cfg)
 
@@ -193,4 +211,31 @@ func (a *API) handleMCPUnregister(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+// findPersistedPluginServer looks up admin-owned state for pluginID in the
+// persisted plugin config. Used by handleMCPRegister to recover admin fields
+// when the in-memory entry was wiped by a recent Unregister (typically a
+// source-plugin OnDeactivate→OnActivate cycle), before
+// syncPluginServersFromConfig has fired again on ReInit.
+//
+// Returns (PluginServerConfig{}, false) if configStore is nil, GetConfig
+// errors, the loaded config is nil, or no matching pluginID is found.
+//
+// Iteration uses index access (not range-with-value) to avoid copying each
+// PluginServerConfig (it carries a ToolConfigs slice header per element).
+func (a *API) findPersistedPluginServer(pluginID string) (mcp.PluginServerConfig, bool) {
+	if a.configStore == nil {
+		return mcp.PluginServerConfig{}, false
+	}
+	cfg, err := a.configStore.GetConfig()
+	if err != nil || cfg == nil {
+		return mcp.PluginServerConfig{}, false
+	}
+	for i := range cfg.MCP.PluginServers {
+		if cfg.MCP.PluginServers[i].PluginID == pluginID {
+			return cfg.MCP.PluginServers[i], true
+		}
+	}
+	return mcp.PluginServerConfig{}, false
 }
