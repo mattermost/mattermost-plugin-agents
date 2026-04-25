@@ -17,10 +17,7 @@ type MCPToolConfigRowProps = {
     onToolConfigChange: (config: MCPToolConfig) => void;
     serverDisabled?: boolean;
 
-    // Human-readable label shown to the admin. Defaults to tool.name; the
-    // parent passes a stripped form for plugin-registered servers so the
-    // "<sanitizedPluginID>__" wire prefix doesn't leak into the UI. The
-    // wire-format tool.name is still used for tool_configs lookups.
+    // Human-readable label shown to the admin. Defaults to tool.name.
     displayName?: string;
 };
 

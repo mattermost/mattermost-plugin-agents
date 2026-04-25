@@ -16,19 +16,11 @@ import (
 	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// mmUserIDHeader is the inter-plugin header used to propagate the calling
-// Mattermost user ID through PluginHTTP. Duplicated here (see also
-// mcp.MMUserIDHeader) to keep the mcpserver package free of mcp-internal
-// symbols; the string constant is part of the cross-plugin wire protocol.
+// mmUserIDHeader propagates the calling Mattermost user ID through PluginHTTP.
 const mmUserIDHeader = "X-Mattermost-UserID"
 
 // proxyRoundTripper rewrites an outbound request's URL.Path to
-// "/{pluginID}{basePath}" and delegates to PluginHTTP. It is a local, minimal
-// mirror of mcp.PluginHTTPRoundTripper (mcp/plugin_roundtripper.go). Duplicated
-// here to avoid an mcpserver → mcp import edge that would require exporting
-// that type's fields or adding a constructor; the logic is ~10 lines and the
-// wire contract (PluginHTTP dispatches on leading path segment) is frozen by
-// Mattermost core.
+// "/{pluginID}{basePath}" and delegates to PluginHTTP.
 type proxyRoundTripper struct {
 	pluginID  string
 	basePath  string
@@ -59,10 +51,7 @@ func (p *proxyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	return resp, nil
 }
 
-// headerInjector is a tiny RoundTripper that sets fixed headers on every
-// outbound request before delegating. Equivalent in spirit to an inter-plugin
-// header transport but local to mcpserver to avoid importing private types
-// from the mcp package.
+// headerInjector sets fixed headers on every outbound request before delegating.
 type headerInjector struct {
 	base    http.RoundTripper
 	headers map[string]string
@@ -76,31 +65,16 @@ func (h *headerInjector) RoundTrip(req *http.Request) (*http.Response, error) {
 	return h.base.RoundTrip(r)
 }
 
-// BuildProxyTools performs an ephemeral MCP connect to a source plugin's MCP
-// endpoint (registered via the /bridge/v1/mcp/register handler, served by
-// public/mcphelper.Server.ServeHTTP), lists its tools, and synthesizes proxy
-// *mcp.Tool + handler pairs that the caller registers on the agents plugin's
-// external MCP server at /plugins/mattermost-ai/mcp-server/mcp.
+// BuildProxyTools lists a source plugin's MCP tools and returns proxy tool
+// definitions plus handlers for the agents plugin's external MCP server.
 //
 // Names and input schemas are copied verbatim from the remote ListTools
 // response — the source plugin (via public/mcphelper) already namespaced names
 // as {pluginID}__{toolName} and the go-sdk Tool.InputSchema field is already a
 // JSON-Schema-compatible value (`any`, serialized as-is over the wire).
-// No re-generation of schemas is needed on our side.
-//
-// Handlers read the authenticated user ID from auth.UserIDContextKey (set by
-// delegateToMCPHandler in api/mcp_handlers.go) and inject X-Mattermost-UserID
-// on the outbound PluginHTTP call. On each tool invocation the handler opens a
-// fresh ephemeral MCP session against the source plugin and issues a single
-// CallTool, then closes the session — stateless, no per-user caching at this
-// layer. This keeps the proxy simple and matches the
-// StreamableHTTPOptions{Stateless: true} semantics of the external MCP endpoint.
-//
-// BuildProxyTools does NOT cache connections or per-plugin results across
-// invocations. RebuildExternalServer calls it fresh for every enabled plugin
-// server on every rebuild — the rebuild path is rare (only on
-// /bridge/v1/mcp/register and /unregister) and the extra simplicity beats the
-// coherency headache of a stale cache.
+// No re-generation of schemas is needed on our side. Tool handlers open a fresh
+// MCP session per invocation and inject X-Mattermost-UserID for the source
+// plugin.
 func BuildProxyTools(
 	ctx context.Context,
 	cfg mcppkg.PluginServerConfig,
@@ -110,9 +84,6 @@ func BuildProxyTools(
 		return nil, nil, fmt.Errorf("sourcePluginAPI is nil; plugin MCP server %s cannot be reached", cfg.PluginID)
 	}
 
-	// Ephemeral connect. No X-Mattermost-UserID header here — ListTools does
-	// not require user-scoped state in the source plugin's mcphelper. Tool
-	// *invocation* (in the handler closure below) injects the header per-call.
 	rt := &proxyRoundTripper{
 		pluginID:  cfg.PluginID,
 		basePath:  cfg.Path,
@@ -144,8 +115,6 @@ func BuildProxyTools(
 	handlers := make([]gosdkmcp.ToolHandler, 0, len(result.Tools))
 
 	for _, remote := range result.Tools {
-		// Defensive copy — do not share pointers with the remote session's
-		// internal bookkeeping after the session closes.
 		t := &gosdkmcp.Tool{
 			Name:        remote.Name,
 			Description: remote.Description,
@@ -154,8 +123,6 @@ func BuildProxyTools(
 		}
 		tools = append(tools, t)
 
-		// Bind the cfg + rt for this tool's handler. Intentional capture-by-value
-		// of cfg so future iterations cannot aliasing-mutate it.
 		pluginCfg := cfg
 		toolName := t.Name
 		handlers = append(handlers, func(hctx context.Context, req *gosdkmcp.CallToolRequest) (*gosdkmcp.CallToolResult, error) {
@@ -164,9 +131,6 @@ func BuildProxyTools(
 				return nil, fmt.Errorf("proxy tool %s: authenticated user ID not found in context", toolName)
 			}
 
-			// Fresh per-call session. Stateless, no retry. If PluginHTTP yields
-			// a transport error the go-sdk surfaces it here and the caller
-			// (external MCP client) sees it as a tool-call failure.
 			perCallRT := &proxyRoundTripper{
 				pluginID:  pluginCfg.PluginID,
 				basePath:  pluginCfg.Path,

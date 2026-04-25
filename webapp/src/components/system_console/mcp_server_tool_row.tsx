@@ -161,11 +161,6 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                     )}
                     {!server.error && !server.needsOAuth && server.tools.length > 0 && (
                         server.tools.map((tool) => {
-                            // For plugin-registered servers the wire-format
-                            // tool.name carries a "<sanitizedPluginID>__"
-                            // prefix added by public/mcphelper. Strip it for
-                            // display only; tool.name is still used for
-                            // config lookup so the prefix has to round-trip.
                             const isPlugin = server.serverType === 'plugin';
                             const pluginID = isPlugin ? pluginIDFromServerOrigin(server.url) : '';
                             const displayName = isPlugin ? stripPluginPrefix(tool.name, pluginID) : tool.name;
