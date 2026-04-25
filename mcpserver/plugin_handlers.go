@@ -5,10 +5,12 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	mcppkg "github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
@@ -18,6 +20,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+const externalProxyDiscoveryTimeout = 10 * time.Second
 
 // PluginServerRegistry is the minimal read-side contract NewPluginMCPHandlers
 // needs on the plugin-server registry. Declared here (not as a method set on
@@ -61,10 +65,20 @@ type PluginMCPHandlers struct {
 	logger          loggerlib.Logger
 	registry        PluginServerRegistry
 	sourcePluginAPI mmapi.Client
+	// proxyDiscoveryTimeout bounds each source plugin Connect/ListTools during
+	// external server rebuilds so one unhealthy plugin cannot block the swap.
+	proxyDiscoveryTimeout time.Duration
+
+	// rebuildMu serializes full rebuild operations while still allowing external
+	// MCP requests to use the current server. Without it, two overlapping
+	// rebuilds could finish out of order and swap an older registry snapshot over
+	// a newer one.
+	rebuildMu sync.Mutex
 
 	// mu guards the currently-active *mcp.Server. Write-locked only on
-	// RebuildExternalServer; read-locked on every factory invocation by the
-	// streamable HTTP handler. StreamableHTTPOptions{Stateless: true} means
+	// RebuildExternalServer's final swap; read-locked on every factory
+	// invocation by the streamable HTTP handler.
+	// StreamableHTTPOptions{Stateless: true} means
 	// there are no long-lived sessions to coordinate, so swaps are safe.
 	mu            sync.RWMutex
 	currentServer *mcp.Server
@@ -107,16 +121,17 @@ func NewPluginMCPHandlers(
 	}
 
 	h := &PluginMCPHandlers{
-		siteURL:         siteURL,
-		internalURL:     internalURL,
-		logger:          logger,
-		registry:        registry,
-		sourcePluginAPI: sourcePluginAPI,
+		siteURL:               siteURL,
+		internalURL:           internalURL,
+		logger:                logger,
+		registry:              registry,
+		sourcePluginAPI:       sourcePluginAPI,
+		proxyDiscoveryTimeout: externalProxyDiscoveryTimeout,
 	}
 
 	// Build the initial *mcp.Server synchronously. Rebuild path reuses the
 	// same private constructor.
-	h.currentServer = h.buildServerLocked()
+	h.currentServer = h.buildServer()
 
 	// Streamable HTTP handler reads the current server under RLock every
 	// request. Stateless transport means no session disruption on swap.
@@ -141,10 +156,10 @@ func NewPluginMCPHandlers(
 	return h, nil
 }
 
-// buildServerLocked constructs a fresh *mcp.Server with native + proxy tools.
-// Must be called either (a) during NewPluginMCPHandlers before any concurrent
-// use of h, or (b) under h.mu.Lock() from RebuildExternalServer.
-func (h *PluginMCPHandlers) buildServerLocked() *mcp.Server {
+// buildServer constructs a fresh *mcp.Server with native + proxy tools. It does
+// not read or mutate currentServer, so callers do not need to hold h.mu while
+// proxy discovery performs source-plugin Connect/ListTools calls.
+func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 	mcpServer := mcp.NewServer(
 		&mcp.Implementation{
 			Name:    "mattermost-mcp-server",
@@ -191,8 +206,15 @@ func (h *PluginMCPHandlers) buildServerLocked() *mcp.Server {
 			if !ps.Enabled || !ps.ExposeExternal {
 				continue
 			}
-			proxyTools, proxyHandlers, buildErr := BuildProxyTools(context.Background(), ps, h.sourcePluginAPI)
+			discoveryCtx, cancel := context.WithTimeout(context.Background(), h.proxyDiscoveryTimeout)
+			proxyTools, proxyHandlers, buildErr := BuildProxyTools(discoveryCtx, ps, h.sourcePluginAPI)
+			cancel()
 			if buildErr != nil {
+				if errors.Is(buildErr, context.DeadlineExceeded) || errors.Is(discoveryCtx.Err(), context.DeadlineExceeded) {
+					h.logger.Warn("timed out building proxy tools for plugin server; skipping",
+						"plugin_id", ps.PluginID, "timeout", h.proxyDiscoveryTimeout.String())
+					continue
+				}
 				h.logger.Error("failed to build proxy tools for plugin server; skipping",
 					"plugin_id", ps.PluginID, "error", buildErr.Error())
 				continue
@@ -240,11 +262,16 @@ func (h *PluginMCPHandlers) buildServerLocked() *mcp.Server {
 //
 // StreamableHTTPOptions{Stateless: true} means no external client sessions are
 // disrupted by the swap — each HTTP request opens, serves, and closes.
-// BuildProxyTools ephemeral connects run under the write lock; if a plugin MCP
-// server hangs on ListTools the rebuild hangs with it, surfacing the failure
-// to the admin who triggered the register/unregister.
+// Proxy discovery runs before the write lock is acquired and each plugin gets a
+// bounded Connect/ListTools context. Timed-out or unreachable plugin servers are
+// logged and skipped while healthy plugin servers continue to be aggregated.
 func (h *PluginMCPHandlers) RebuildExternalServer() {
+	h.rebuildMu.Lock()
+	defer h.rebuildMu.Unlock()
+
+	nextServer := h.buildServer()
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.currentServer = h.buildServerLocked()
+	h.currentServer = nextServer
 }

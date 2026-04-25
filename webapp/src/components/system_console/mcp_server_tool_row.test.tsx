@@ -77,6 +77,16 @@ function renderRow(server: MCPServerInfo, serverConfig: MCPServerConfig | null) 
 }
 
 describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
+    test('plugin wire tool name renders with short user-visible label', () => {
+        renderRow(makePluginServer(), makePluginServerConfig());
+
+        // Expand the row to reveal per-tool labels.
+        fireEvent.click(screen.getByText('Demo Plugin'));
+
+        expect(screen.getByText('echo')).not.toBeNull();
+        expect(screen.queryByText('com_example_demo__echo')).toBeNull();
+    });
+
     test('plugin row renders policy dropdown enabled (Phase 4 re-enable)', () => {
         renderRow(makePluginServer(), makePluginServerConfig());
 

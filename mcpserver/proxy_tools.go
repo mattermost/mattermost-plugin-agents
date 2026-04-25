@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	mcppkg "github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
@@ -40,7 +41,18 @@ func (p *proxyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	}
 	r := req.Clone(req.Context())
 	r.URL.Path = "/" + p.pluginID + p.basePath
-	resp := p.pluginAPI.PluginHTTP(r)
+
+	respCh := make(chan *http.Response, 1)
+	go func() {
+		respCh <- p.pluginAPI.PluginHTTP(r)
+	}()
+
+	var resp *http.Response
+	select {
+	case resp = <-respCh:
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	}
 	if resp == nil {
 		return nil, fmt.Errorf("PluginHTTP returned nil response for plugin %s", p.pluginID)
 	}
@@ -106,13 +118,17 @@ func BuildProxyTools(
 		basePath:  cfg.Path,
 		pluginAPI: sourcePluginAPI,
 	}
+	httpClient := &http.Client{Transport: rt}
+	if deadline, ok := ctx.Deadline(); ok {
+		httpClient.Timeout = time.Until(deadline)
+	}
 	listClient := gosdkmcp.NewClient(
 		&gosdkmcp.Implementation{Name: "mattermost-agents-plugin-aggregator", Version: "1.0"},
 		&gosdkmcp.ClientOptions{},
 	)
 	listSession, err := listClient.Connect(ctx, &gosdkmcp.StreamableClientTransport{
 		Endpoint:   "http://plugin" + cfg.Path,
-		HTTPClient: &http.Client{Transport: rt},
+		HTTPClient: httpClient,
 	}, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to plugin MCP server %s: %w", cfg.PluginID, err)

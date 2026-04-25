@@ -651,6 +651,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 		name                 string
 		preRegistered        []mcp.PluginServerConfig
 		body                 string
+		getErr               error
 		saveErr              error
 		publishErr           error
 		expectStatus         int
@@ -698,6 +699,18 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "GetConfig failure returns 500 and skips Save/Update/Publish",
+			preRegistered: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
+			}},
+			body:               `{"enabled": false}`,
+			getErr:             errors.New("config store unavailable"),
+			expectStatus:       http.StatusInternalServerError,
+			expectSaveCalls:    0,
+			expectUpdateCalls:  0,
+			expectPublishCalls: 0,
+		},
+		{
 			name: "SaveConfig failure returns 500 and skips Update/Publish",
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
@@ -737,10 +750,10 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 
 			// Inject failure modes via the spy stores.
 			var failingStore *failingConfigStore
-			if tt.saveErr != nil {
+			if tt.getErr != nil || tt.saveErr != nil {
 				// testConfigStore doesn't currently fail — swap in a failing
 				// store directly on the API instance for this test.
-				failingStore = &failingConfigStore{saveErr: tt.saveErr}
+				failingStore = &failingConfigStore{getErr: tt.getErr, saveErr: tt.saveErr}
 				api.configStore = failingStore
 			}
 			if tt.publishErr != nil {
@@ -760,7 +773,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			// Save-call count: on SaveConfig failure, we expect 1 save
 			// attempt and 0 update/publish. On PublishConfigUpdate failure,
 			// we expect 1 each of save+update+publish. Happy path: 1 each.
-			if tt.saveErr != nil {
+			if tt.getErr != nil || tt.saveErr != nil {
 				require.Equal(t, tt.expectSaveCalls, failingStore.saveCallCount)
 			}
 			require.Equal(t, tt.expectUpdateCalls, stores.configUpdater.callCount)
@@ -780,12 +793,13 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 // test-only store for the failure-path cases.
 type failingConfigStore struct {
 	cfg           *config.Config
+	getErr        error
 	saveErr       error
 	saveCallCount int
 }
 
 func (s *failingConfigStore) GetConfig() (*config.Config, error) {
-	return s.cfg, nil
+	return s.cfg, s.getErr
 }
 
 func (s *failingConfigStore) SaveConfig(cfg config.Config) error {

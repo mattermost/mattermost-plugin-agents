@@ -45,13 +45,15 @@ jest.mock('../../client', () => ({
 /* eslint-disable import/first, import/order */
 import {IntlProvider} from 'react-intl';
 
-import {getMCPTools, updatePluginServer} from '../../client';
+import {clearMCPToolsCache, getMCPTools, getVettedToolSeed, updatePluginServer} from '../../client';
 
 import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
 import {MCPConfig} from './mcp_servers';
 /* eslint-enable import/first, import/order */
 
 const mockGetMCPTools = getMCPTools as jest.Mock;
+const mockClearMCPToolsCache = clearMCPToolsCache as jest.Mock;
+const mockGetVettedToolSeed = getVettedToolSeed as jest.Mock;
 const mockUpdatePluginServer = updatePluginServer as jest.Mock;
 
 function makeMCPConfig(overrides: Partial<MCPConfig> = {}): MCPConfig {
@@ -86,7 +88,7 @@ function makePluginToolsResponse(): MCPToolsResponse {
     };
 }
 
-function renderViewer(toolsData: MCPToolsResponse, mcpConfig: MCPConfig = makeMCPConfig()) {
+function renderViewer(toolsData: MCPToolsResponse | null, mcpConfig: MCPConfig = makeMCPConfig()) {
     const onConfigChange = jest.fn();
     return {
         ...render(
@@ -105,6 +107,10 @@ function renderViewer(toolsData: MCPToolsResponse, mcpConfig: MCPConfig = makeMC
 beforeEach(() => {
     mockGetMCPTools.mockReset();
     mockGetMCPTools.mockResolvedValue({servers: []});
+    mockClearMCPToolsCache.mockReset();
+    mockClearMCPToolsCache.mockResolvedValue({message: 'cache cleared'});
+    mockGetVettedToolSeed.mockReset();
+    mockGetVettedToolSeed.mockResolvedValue([]);
     mockUpdatePluginServer.mockReset();
     mockUpdatePluginServer.mockResolvedValue({});
 });
@@ -207,6 +213,100 @@ describe('MCPToolsViewer — plugin branch', () => {
         // Remote rows route through onConfigChange (mcpConfig path), not the plugin endpoint.
         expect(onConfigChange).toHaveBeenCalled();
         expect(mockUpdatePluginServer).not.toHaveBeenCalled();
+    });
+
+    test('clear cache success refreshes tools and renders refreshed data', async () => {
+        mockClearMCPToolsCache.mockResolvedValue({message: 'cleared'});
+        mockGetMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'Refreshed Remote',
+                url: 'https://remote.example/mcp',
+                serverType: 'remote',
+                enabled: true,
+                tools: [{name: 'refreshed_tool', description: '', inputSchema: null}],
+                needsOAuth: false,
+                error: null,
+            }],
+        });
+
+        renderViewer({servers: []});
+
+        fireEvent.click(screen.getByText('Clear Cache'));
+
+        await waitFor(() => {
+            expect(mockClearMCPToolsCache).toHaveBeenCalledTimes(1);
+            expect(mockGetMCPTools).toHaveBeenCalledTimes(1);
+        });
+
+        expect(screen.getByText('Cache cleared successfully')).toBeTruthy();
+        expect(screen.getByText('Refreshed Remote')).toBeTruthy();
+    });
+
+    test('getMCPTools failure renders error UI', async () => {
+        mockGetMCPTools.mockRejectedValue(new Error('backend unavailable'));
+
+        renderViewer(null);
+
+        await waitFor(() => {
+            expect(screen.getByText('Failed to load MCP tools')).toBeTruthy();
+            expect(screen.getByText('backend unavailable')).toBeTruthy();
+        });
+    });
+
+    test('vetted tool seed merges missing configs without replacing existing entries', async () => {
+        mockGetVettedToolSeed.mockImplementation((baseURL: string) => {
+            if (baseURL === 'https://remote.example/mcp') {
+                return Promise.resolve([
+                    {name: 'existing_tool', policy: 'auto_run_everywhere', enabled: true},
+                    {name: 'seeded_tool', policy: 'auto_run_in_dm', enabled: true},
+                ]);
+            }
+            if (baseURL === 'embedded://mattermost') {
+                return Promise.resolve([
+                    {name: 'embedded_seeded_tool', policy: 'ask', enabled: true},
+                ]);
+            }
+            return Promise.resolve([]);
+        });
+        const cfg = makeMCPConfig({
+            servers: [{
+                name: 'Remote',
+                enabled: true,
+                baseURL: 'https://remote.example/mcp',
+                headers: {},
+                tool_configs: [{name: 'existing_tool', policy: 'ask', enabled: false}],
+            }],
+            embeddedServer: {
+                enabled: true,
+                tool_configs: [{name: 'embedded_existing_tool', policy: 'ask', enabled: true}],
+            },
+        });
+
+        const {onConfigChange} = renderViewer({
+            servers: [{
+                name: 'Remote',
+                url: 'https://remote.example/mcp',
+                serverType: 'remote',
+                enabled: true,
+                tools: [{name: 'remote_tool', description: '', inputSchema: null}],
+                needsOAuth: false,
+                error: null,
+            }],
+        }, cfg);
+
+        await waitFor(() => {
+            expect(onConfigChange).toHaveBeenCalledTimes(1);
+        });
+
+        const [updated] = onConfigChange.mock.calls[0];
+        expect(updated.servers[0].tool_configs).toEqual([
+            {name: 'existing_tool', policy: 'ask', enabled: false},
+            {name: 'seeded_tool', policy: 'auto_run_in_dm', enabled: true},
+        ]);
+        expect(updated.embeddedServer.tool_configs).toEqual([
+            {name: 'embedded_existing_tool', policy: 'ask', enabled: true},
+            {name: 'embedded_seeded_tool', policy: 'ask', enabled: true},
+        ]);
     });
 });
 

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	mcppkg "github.com/mattermost/mattermost-plugin-agents/mcp"
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
@@ -269,6 +270,80 @@ func TestRebuildExternalServer_RemovesUnregistered(t *testing.T) {
 	}
 }
 
+func TestRebuildExternalServer_SkipsTimedOutPluginAndKeepsHealthyPlugins(t *testing.T) {
+	healthy := newFakePluginMCPServer(t, 1, nil)
+	t.Cleanup(healthy.Close)
+
+	reg := &stubRegistry{servers: nil}
+	mockAPI := newHangingAndHealthyPluginForwarder(t, "com.example.hung", healthy, nil)
+	logger, err := loggerlib.CreateDefaultLogger()
+	require.NoError(t, err)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI)
+	require.NoError(t, err)
+	h.proxyDiscoveryTimeout = 25 * time.Millisecond
+
+	reg.set([]mcppkg.PluginServerConfig{
+		{PluginID: "com.example.hung", Name: "Hung", Path: "/mcp", Enabled: true, ExposeExternal: true},
+		{PluginID: "com.example.healthy", Name: "Healthy", Path: "/mcp", Enabled: true, ExposeExternal: true},
+	})
+	h.RebuildExternalServer()
+
+	after := listToolNames(t, h)
+	var sawHealthy bool
+	for _, n := range after {
+		if n == "test_tool_0" {
+			sawHealthy = true
+			break
+		}
+	}
+	require.True(t, sawHealthy, "healthy plugins should still be aggregated after another plugin times out")
+}
+
+func TestRebuildExternalServer_DoesNotBlockExternalRequestsWhileDiscovering(t *testing.T) {
+	startedHungRequest := make(chan struct{})
+	reg := &stubRegistry{servers: nil}
+	mockAPI := newHangingAndHealthyPluginForwarder(t, "com.example.hung", nil, startedHungRequest)
+	logger, err := loggerlib.CreateDefaultLogger()
+	require.NoError(t, err)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI)
+	require.NoError(t, err)
+	h.proxyDiscoveryTimeout = 100 * time.Millisecond
+
+	reg.set([]mcppkg.PluginServerConfig{
+		{PluginID: "com.example.hung", Name: "Hung", Path: "/mcp", Enabled: true, ExposeExternal: true},
+	})
+
+	rebuildDone := make(chan struct{})
+	go func() {
+		h.RebuildExternalServer()
+		close(rebuildDone)
+	}()
+
+	select {
+	case <-startedHungRequest:
+	case <-time.After(500 * time.Millisecond):
+		require.Fail(t, "timed out waiting for rebuild to start proxy discovery")
+	}
+
+	listDone := make(chan struct{})
+	go func() {
+		_ = listToolNames(t, h)
+		close(listDone)
+	}()
+
+	select {
+	case <-listDone:
+	case <-time.After(500 * time.Millisecond):
+		require.Fail(t, "external MCP requests should not wait for rebuild proxy discovery")
+	}
+
+	select {
+	case <-rebuildDone:
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "rebuild should finish after the bounded proxy discovery context expires")
+	}
+}
+
 // TestNewPluginMCPHandlers_NilRegistryIsNoOp lets callers pass nil registry
 // to disable aggregation entirely. Native tools should still register.
 func TestNewPluginMCPHandlers_NilRegistryIsNoOp(t *testing.T) {
@@ -321,6 +396,49 @@ func newPerPluginForwarder(t *testing.T, byPluginID map[string]*httptest.Server)
 		return rec.Result()
 	}).Maybe()
 	return m
+}
+
+func newHangingAndHealthyPluginForwarder(t *testing.T, hungPluginID string, healthy *httptest.Server, startedHungRequest chan<- struct{}) *mocks.MockClient {
+	t.Helper()
+	m := mocks.NewMockClient(t)
+	var once sync.Once
+	m.EXPECT().PluginHTTP(mock.Anything).RunAndReturn(func(req *http.Request) *http.Response {
+		pluginID, rest := splitPluginHTTPPath(req.URL.Path)
+		if pluginID == hungPluginID {
+			once.Do(func() {
+				if startedHungRequest != nil {
+					close(startedHungRequest)
+				}
+			})
+			<-req.Context().Done()
+			rec := httptest.NewRecorder()
+			rec.WriteHeader(http.StatusGatewayTimeout)
+			return rec.Result()
+		}
+
+		if healthy == nil {
+			rec := httptest.NewRecorder()
+			rec.WriteHeader(http.StatusNotFound)
+			return rec.Result()
+		}
+
+		fwd := req.Clone(req.Context())
+		fwd.URL.Path = rest
+		rec := httptest.NewRecorder()
+		healthy.Config.Handler.ServeHTTP(rec, fwd)
+		return rec.Result()
+	}).Maybe()
+	return m
+}
+
+func splitPluginHTTPPath(path string) (pluginID, rest string) {
+	if len(path) > 0 && path[0] == '/' {
+		path = path[1:]
+	}
+	if idx := indexByte(path, '/'); idx >= 0 {
+		return path[:idx], path[idx:]
+	}
+	return path, ""
 }
 
 // indexByte is a tiny strings.IndexByte equivalent without importing strings

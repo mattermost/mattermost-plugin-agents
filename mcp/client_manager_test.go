@@ -394,10 +394,11 @@ func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 // Test B (release gate — MUST PASS per orchestration plan):
 // plugin server Enabled=false → zero tools, and PluginHTTP is never called.
 func TestClientManager_GetToolsForUser_PluginDisabled_ZeroTools(t *testing.T) {
-	target := newFakePluginMCPServer(t, 2)
-	t.Cleanup(target.Close)
-
-	mockAPI := newPluginHTTPForwarder(t, target)
+	mockAPI := mocks.NewMockClient(t)
+	mockAPI.EXPECT().PluginHTTP(mock.Anything).RunAndReturn(func(req *http.Request) *http.Response {
+		t.Fatalf("PluginHTTP must not be called for disabled plugin server; got path %q", req.URL.Path)
+		return nil
+	}).Maybe()
 
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
@@ -421,6 +422,60 @@ func TestClientManager_GetToolsForUser_PluginDisabled_ZeroTools(t *testing.T) {
 	// PluginHTTP MUST NOT have been called — snapshotEnabledPluginServers filters
 	// disabled entries before any HTTP work is done.
 	mockAPI.AssertNotCalled(t, "PluginHTTP")
+}
+
+func TestClientManager_GetToolsForUser_PluginEnabled_HTTPFailure(t *testing.T) {
+	testCases := []struct {
+		name       string
+		pluginHTTP func(t *testing.T, req *http.Request) *http.Response
+	}{
+		{
+			name: "nil response",
+			pluginHTTP: func(t *testing.T, req *http.Request) *http.Response {
+				return nil
+			},
+		},
+		{
+			name: "server error",
+			pluginHTTP: func(t *testing.T, req *http.Request) *http.Response {
+				rec := httptest.NewRecorder()
+				rec.WriteHeader(http.StatusInternalServerError)
+				return rec.Result()
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockAPI := mocks.NewMockClient(t)
+			mockAPI.EXPECT().PluginHTTP(mock.Anything).RunAndReturn(func(req *http.Request) *http.Response {
+				return tc.pluginHTTP(t, req)
+			}).Maybe()
+
+			pluginTestAPI := &plugintest.API{}
+			setupTestLogger(pluginTestAPI)
+			client := pluginapi.NewClient(pluginTestAPI, nil)
+
+			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+			t.Cleanup(m.Close)
+
+			m.RegisterPluginServer(PluginServerConfig{
+				PluginID: "com.example.mcp",
+				Name:     "Example",
+				Path:     "/mcp",
+				Enabled:  true,
+			})
+
+			tools, mcpErrors := m.GetToolsForUser("alice")
+			require.NotNil(t, mcpErrors, "plugin connection failure must be surfaced")
+			require.NotEmpty(t, mcpErrors.Errors, "plugin connection failure must populate generic MCP errors")
+			require.Empty(t, mcpErrors.ToolAuthErrors, "plugin HTTP failures should not be treated as OAuth errors")
+			for _, tool := range tools {
+				require.NotEqual(t, "plugin://com.example.mcp", tool.ServerOrigin, "failed plugin server must not contribute bogus tools")
+			}
+			require.Empty(t, tools, "failed plugin server must not contribute tools")
+		})
+	}
 }
 
 // Test C (release gate): plugin + "remote-like" plugin bucketing through the

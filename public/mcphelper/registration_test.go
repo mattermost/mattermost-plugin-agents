@@ -332,3 +332,15 @@ func TestUnregister_PropagatesNon200(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "status 500")
 }
+
+// TestUnregister_NilResponse mirrors the register nil-response behavior:
+// PluginHTTP returns nil when the target plugin is not loaded, and Unregister
+// surfaces that failure to the caller.
+func TestUnregister_NilResponse(t *testing.T) {
+	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response { return nil }}
+	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+
+	err := s.Unregister()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PluginHTTP returned nil response")
+}

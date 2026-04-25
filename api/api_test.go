@@ -88,12 +88,14 @@ type mcpDisconnectCall struct {
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager    *mcp.OAuthManager
-	tools           []llm.Tool
-	mcpErrors       *mcp.Errors
-	config          mcp.Config
-	embeddedServer  mcp.EmbeddedMCPServer
-	disconnectCalls []mcpDisconnectCall
+	oauthManager     *mcp.OAuthManager
+	tools            []llm.Tool
+	mcpErrors        *mcp.Errors
+	config           mcp.Config
+	embeddedServer   mcp.EmbeddedMCPServer
+	disconnectCalls  []mcpDisconnectCall
+	disconnectErr    error
+	ensureSessionErr error
 
 	// Plugin-server registry spy. Tests read these slices to assert the
 	// bridge handlers dispatched correctly.
@@ -125,7 +127,7 @@ func (m *mockMCPClientManager) DisconnectUserOAuth(userID, serverName string) er
 		userID:     userID,
 		serverName: serverName,
 	})
-	return nil
+	return m.disconnectErr
 }
 
 func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
@@ -133,6 +135,9 @@ func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
 }
 
 func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error) {
+	if m.ensureSessionErr != nil {
+		return "", m.ensureSessionErr
+	}
 	return "mock-session-id", nil
 }
 
