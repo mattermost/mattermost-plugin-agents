@@ -436,6 +436,7 @@ func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
 		wantExposeAfter      bool
 		wantName             string
 		wantPath             string
+		wantToolConfigsAfter []mcp.ToolConfig
 		wantRebuilderInvoked bool
 	}{
 		{
@@ -491,6 +492,34 @@ func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
 			wantPath:             "/new",
 			wantRebuilderInvoked: false, // expose stays false => no rebuild
 		},
+		{
+			// M2 release gate: ToolConfigs is admin-owned post-registration.
+			// Source plugin re-registers with no ToolConfigs in its payload;
+			// existing admin policy must survive verbatim.
+			name: "re-register: admin-set ToolConfigs preserved",
+			existing: &mcp.PluginServerConfig{
+				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+				Enabled: true, ExposeExternal: false,
+				ToolConfigs: []mcp.ToolConfig{
+					{Name: "echo", Policy: "ask", Enabled: false},
+					{Name: "sum", Policy: "auto_run_in_dm", Enabled: true},
+				},
+			},
+			incoming: mcp.PluginServerConfig{
+				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+				Enabled: false, ExposeExternal: false,
+				// ToolConfigs intentionally omitted — plugin doesn't carry admin policy.
+			},
+			wantEnabledAfter: true,  // from existing admin state
+			wantExposeAfter:  false, // from existing admin state
+			wantName:         "Playbooks MCP",
+			wantPath:         "/mcp",
+			wantToolConfigsAfter: []mcp.ToolConfig{
+				{Name: "echo", Policy: "ask", Enabled: false},
+				{Name: "sum", Policy: "auto_run_in_dm", Enabled: true},
+			},
+			wantRebuilderInvoked: false,
+		},
 	}
 
 	for _, tc := range tests {
@@ -520,6 +549,12 @@ func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
 			require.Equal(t, tc.wantExposeAfter, saved.ExposeExternal, "ExposeExternal flag")
 			require.Equal(t, tc.wantName, saved.Name, "Name (identity field)")
 			require.Equal(t, tc.wantPath, saved.Path, "Path (identity field)")
+
+			if tc.wantToolConfigsAfter != nil {
+				require.Equal(t, tc.wantToolConfigsAfter, saved.ToolConfigs, "ToolConfigs (admin-owned) preserved on re-register")
+			} else {
+				require.Empty(t, saved.ToolConfigs, "no ToolConfigs expected for this case")
+			}
 
 			if tc.wantRebuilderInvoked {
 				require.Equal(t, 1, spy.callCount, "rebuilder must be invoked")
