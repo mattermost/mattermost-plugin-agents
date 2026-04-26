@@ -5,10 +5,11 @@ import React, {useCallback} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {SelectChannel} from '@/components/select';
-import {AgentSchedule, MinScheduleIntervalSeconds, BoundParamTargetChannelSentinel} from '@/types/agents';
+import {SelectChannel, SelectTeam} from '@/components/select';
+import {AgentSchedule, BoundParamTargetChannelSentinel, EnabledTool, MinScheduleIntervalSeconds, TriggerScopeBinding} from '@/types/agents';
 import {TertiaryButton} from '@/components/assets/buttons';
 
+import MCPToolsPicker from './mcp_tools_picker';
 import {
     AddTriggerButton,
     BottomActions,
@@ -19,9 +20,10 @@ import {
     SectionDescription,
     SectionTitle,
     SectionsContainer,
-    defaultBoundParamsForAllowedTools,
-    parseAllowedTools,
-    serializeAllowedTools,
+    boundParamsForToolsAndScope,
+    enabledToolsFromAllowedTools,
+    scopeFromBoundParams,
+    toolNamesFromEnabledTools,
 } from './triggers_shared';
 
 type IntervalUnit = 'hours' | 'days';
@@ -92,6 +94,21 @@ const SchedulesTab = (props: Props) => {
         const next = schedules.map((s, i) => (i === index ? {...s, ...patch} : s));
         onChange(next);
     }, [schedules, onChange]);
+
+    const handleToolsChange = useCallback((index: number, sched: AgentSchedule, tools: EnabledTool[]) => {
+        const allowedTools = toolNamesFromEnabledTools(tools);
+        handlePatch(index, {
+            allowedTools,
+            boundParams: boundParamsForToolsAndScope(allowedTools, scopeFromBoundParams(sched.boundParams)),
+        });
+    }, [handlePatch]);
+
+    const handleScopeChange = useCallback((index: number, sched: AgentSchedule, patch: {teamIDs?: string[]; channelIDs?: string[]}) => {
+        const scope: TriggerScopeBinding = {...scopeFromBoundParams(sched.boundParams), ...patch};
+        handlePatch(index, {
+            boundParams: boundParamsForToolsAndScope(sched.allowedTools, scope),
+        });
+    }, [handlePatch]);
 
     return (
         <SectionsContainer>
@@ -173,7 +190,7 @@ const SchedulesTab = (props: Props) => {
                                         channelIDs={sched.targetChannelID ? [sched.targetChannelID] : []}
                                         onChangeChannelIDs={(ids) => handlePatch(i, {
                                             targetChannelID: ids[ids.length - 1] ?? '',
-                                            boundParams: defaultBoundParamsForAllowedTools(sched.allowedTools),
+                                            boundParams: boundParamsForToolsAndScope(sched.allowedTools, scopeFromBoundParams(sched.boundParams)),
                                         })}
                                     />
                                 </Field>
@@ -195,19 +212,40 @@ const SchedulesTab = (props: Props) => {
 
                                 <Field>
                                     <FieldLabel>
-                                        <FormattedMessage defaultMessage='Allowed tools (comma-separated)'/>
+                                        <FormattedMessage defaultMessage='Allowed MCP tools'/>
                                     </FieldLabel>
-                                    <ToolsInput
-                                        placeholder='create_post, search_posts'
-                                        value={serializeAllowedTools(sched.allowedTools)}
-                                        onChange={(e) => {
-                                            const parsed = parseAllowedTools(e.target.value);
-                                            handlePatch(i, {
-                                                allowedTools: parsed,
-                                                boundParams: defaultBoundParamsForAllowedTools(parsed),
-                                            });
-                                        }}
+                                    <MCPToolsPicker
+                                        enabledTools={enabledToolsFromAllowedTools(sched.allowedTools)}
+                                        autoEnableNewMCPTools={false}
+                                        showAutoEnable={false}
+                                        onChange={({enabledTools}) => handleToolsChange(i, sched, enabledTools ?? [])}
                                     />
+                                </Field>
+
+                                <Field>
+                                    <FieldLabel>
+                                        <FormattedMessage defaultMessage='Allowed teams for scoped tools'/>
+                                    </FieldLabel>
+                                    <SelectTeam
+                                        teamIDs={scopeFromBoundParams(sched.boundParams).teamIDs}
+                                        onChangeTeamIDs={(teamIDs) => handleScopeChange(i, sched, {teamIDs})}
+                                    />
+                                    <FieldHint>
+                                        <FormattedMessage defaultMessage='Tools with a team_id parameter can only use one of these teams.'/>
+                                    </FieldHint>
+                                </Field>
+
+                                <Field>
+                                    <FieldLabel>
+                                        <FormattedMessage defaultMessage='Allowed channels for scoped tools'/>
+                                    </FieldLabel>
+                                    <SelectChannel
+                                        channelIDs={scopeFromBoundParams(sched.boundParams).channelIDs}
+                                        onChangeChannelIDs={(channelIDs) => handleScopeChange(i, sched, {channelIDs})}
+                                    />
+                                    <FieldHint>
+                                        <FormattedMessage defaultMessage='Tools with a channel_id parameter can only use one of these channels.'/>
+                                    </FieldHint>
                                 </Field>
 
                                 <Health>
@@ -295,6 +333,11 @@ const FieldLabel = styled.label`
     letter-spacing: 0.5px;
 `;
 
+const FieldHint = styled.div`
+    font-size: 12px;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+`;
+
 const IntervalRow = styled.div`
     display: flex;
     gap: 8px;
@@ -329,18 +372,6 @@ const PromptTextarea = styled.textarea`
     font-family: inherit;
     font-size: 14px;
     resize: vertical;
-    background: var(--center-channel-bg);
-    color: var(--center-channel-color);
-`;
-
-const ToolsInput = styled.input`
-    width: 100%;
-    box-sizing: border-box;
-    padding: 8px 12px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 14px;
     background: var(--center-channel-bg);
     color: var(--center-channel-color);
 `;

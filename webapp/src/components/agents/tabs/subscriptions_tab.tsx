@@ -5,10 +5,11 @@ import React, {useCallback} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {SelectChannel} from '@/components/select';
+import {SelectChannel, SelectTeam} from '@/components/select';
 import {
     AgentSubscription,
     BoundParamTargetChannelSentinel,
+    EnabledTool,
     SubscriptionEventMessagePosted,
 } from '@/types/agents';
 import {TertiaryButton} from '@/components/assets/buttons';
@@ -24,9 +25,11 @@ import {
     SectionTitle,
     SectionsContainer,
     defaultBoundParamsForAllowedTools,
-    parseAllowedTools,
-    serializeAllowedTools,
+    enabledToolsFromAllowedTools,
+    triggerScopeFromBoundParams,
+    toolNamesFromEnabledTools,
 } from './triggers_shared';
+import McpToolsPicker from './mcp_tools_picker';
 
 type Props = {
     subscriptions: AgentSubscription[];
@@ -66,6 +69,21 @@ const SubscriptionsTab = (props: Props) => {
         const next = subscriptions.map((s, i) => (i === index ? {...s, ...patch} : s));
         onChange(next);
     }, [subscriptions, onChange]);
+
+    const handleToolsChange = useCallback((index: number, sub: AgentSubscription, tools: EnabledTool[]) => {
+        const allowedTools = toolNamesFromEnabledTools(tools);
+        handlePatch(index, {
+            allowedTools,
+            boundParams: defaultBoundParamsForAllowedTools(allowedTools, triggerScopeFromBoundParams(sub.boundParams)),
+        });
+    }, [handlePatch]);
+
+    const handleScopeChange = useCallback((index: number, sub: AgentSubscription, patch: {teamIDs?: string[]; channelIDs?: string[]}) => {
+        const scope = {...triggerScopeFromBoundParams(sub.boundParams), ...patch};
+        handlePatch(index, {
+            boundParams: defaultBoundParamsForAllowedTools(sub.allowedTools, scope),
+        });
+    }, [handlePatch]);
 
     return (
         <SectionsContainer>
@@ -157,19 +175,38 @@ const SubscriptionsTab = (props: Props) => {
 
                             <Field>
                                 <FieldLabel>
-                                    <FormattedMessage defaultMessage='Allowed tools (comma-separated)'/>
+                                    <FormattedMessage defaultMessage='Allowed MCP tools'/>
                                 </FieldLabel>
-                                <ToolsInput
-                                    placeholder='create_post, search_posts'
-                                    value={serializeAllowedTools(sub.allowedTools)}
-                                    onChange={(e) => {
-                                        const parsed = parseAllowedTools(e.target.value);
-                                        handlePatch(i, {
-                                            allowedTools: parsed,
-                                            boundParams: defaultBoundParamsForAllowedTools(parsed),
-                                        });
-                                    }}
+                                <McpToolsPicker
+                                    enabledTools={enabledToolsFromAllowedTools(sub.allowedTools)}
+                                    autoEnableNewMCPTools={false}
+                                    showAutoEnable={false}
+                                    onChange={({enabledTools}) => handleToolsChange(i, sub, enabledTools ?? [])}
                                 />
+                            </Field>
+                            <Field>
+                                <FieldLabel>
+                                    <FormattedMessage defaultMessage='Allowed teams for scoped tools'/>
+                                </FieldLabel>
+                                <SelectTeam
+                                    teamIDs={triggerScopeFromBoundParams(sub.boundParams).teamIDs}
+                                    onChangeTeamIDs={(teamIDs) => handleScopeChange(i, sub, {teamIDs})}
+                                />
+                                <FieldHint>
+                                    <FormattedMessage defaultMessage='Tools with a team_id parameter can only use one of these teams.'/>
+                                </FieldHint>
+                            </Field>
+                            <Field>
+                                <FieldLabel>
+                                    <FormattedMessage defaultMessage='Allowed channels for scoped tools'/>
+                                </FieldLabel>
+                                <SelectChannel
+                                    channelIDs={triggerScopeFromBoundParams(sub.boundParams).channelIDs}
+                                    onChangeChannelIDs={(channelIDs) => handleScopeChange(i, sub, {channelIDs})}
+                                />
+                                <FieldHint>
+                                    <FormattedMessage defaultMessage='Tools with a channel_id parameter can only use one of these channels.'/>
+                                </FieldHint>
                             </Field>
                         </RowBody>
                     </Row>
@@ -246,16 +283,9 @@ const PromptTextarea = styled.textarea`
     color: var(--center-channel-color);
 `;
 
-const ToolsInput = styled.input`
-    width: 100%;
-    box-sizing: border-box;
-    padding: 8px 12px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 14px;
-    background: var(--center-channel-bg);
-    color: var(--center-channel-color);
+const FieldHint = styled.div`
+    font-size: 12px;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
 const ErrorChip = styled.span`

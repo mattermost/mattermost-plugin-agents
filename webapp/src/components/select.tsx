@@ -316,6 +316,75 @@ type SelectChannelProps = {
     onChangeChannelIDs: (channelIds: string[]) => void;
 };
 
+type SelectTeamProps = {
+    teamIDs: string[];
+    onChangeTeamIDs: (teamIds: string[]) => void;
+};
+
+export const SelectTeam = (props: SelectTeamProps) => {
+    const [selectedOptions, setSelectedOptions] = useState<TeamOption[]>([]);
+
+    useEffect(() => {
+        const loadSelectedOptions = async () => {
+            if (props.teamIDs.length === 0) {
+                setSelectedOptions([]);
+                return;
+            }
+
+            const teams = await getTeamsByIds(props.teamIDs).then((loadedTeams) => loadedTeams.filter(Boolean));
+            setSelectedOptions(teams.map((team) => ({
+                value: team.id,
+                label: team.name,
+                displayName: team.display_name,
+                icon: getTeamIconUrl(team.id, team.update_at),
+                isTeam: true as const,
+            })));
+        };
+        loadSelectedOptions();
+    }, [props.teamIDs]);
+
+    const loadOptions = async (inputValue: string) => {
+        const teams = await searchTeams(inputValue);
+        return teams.map((team) => ({
+            value: team.id,
+            label: team.name,
+            displayName: team.display_name,
+            icon: getTeamIconUrl(team.id, team.update_at),
+            isTeam: true as const,
+        }));
+    };
+
+    const TeamOptionLabel = ({option}: {option: TeamOption}) => {
+        const [showAvatar, setShowAvatar] = useState(true);
+
+        const handleImageError = useCallback(() => {
+            setShowAvatar(false);
+        }, []);
+
+        return (
+            <LabelContainer>
+                {showAvatar && option.icon && (
+                    <Avatar
+                        src={option.icon}
+                        onError={handleImageError}
+                    />
+                )}
+                <span>{option.displayName}</span>
+            </LabelContainer>
+        );
+    };
+
+    return (
+        <SelectComponent<TeamOption>
+            value={selectedOptions}
+            onChange={(newValue) => props.onChangeTeamIDs(newValue.map((option) => option.value))}
+            loadOptions={loadOptions}
+            formatOptionLabel={(option) => <TeamOptionLabel option={option}/>}
+            placeholder='Search for teams'
+        />
+    );
+};
+
 export const SelectChannel = (props: SelectChannelProps) => {
     const [selectedOptions, setSelectedOptions] = useState<ChannelOption[]>([]);
 

@@ -15,6 +15,12 @@ export type EnabledTool = {
 // appears as a BoundParams value, it's swapped for the trigger's
 // TargetChannelID at dispatch time.
 export const BoundParamTargetChannelSentinel = '{{TargetChannelID}}';
+export const BoundParamAllowedValuesKey = 'allowed_values';
+
+export type TriggerScopeBinding = {
+    teamIDs: string[];
+    channelIDs: string[];
+}
 
 // Subscription event names. V1 only supports message_posted.
 export const SubscriptionEventMessagePosted = 'message_posted';

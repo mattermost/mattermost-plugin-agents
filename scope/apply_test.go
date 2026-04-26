@@ -201,6 +201,91 @@ func TestApplyToolScope_BoundParamStripsChannelFromSchema(t *testing.T) {
 	}
 }
 
+func TestApplyToolScope_AllowedValuesRejectsOutOfScopeArg(t *testing.T) {
+	source := llm.NewToolStore(nil, false)
+	tool, _ := makeTool(t, "read_channel")
+	source.AddTools([]llm.Tool{tool})
+
+	scoped := ApplyToolScope(
+		source,
+		[]string{"read_channel"},
+		map[string]map[string]interface{}{
+			"read_channel": {"channel_id": map[string]interface{}{"allowed_values": []interface{}{"allowed-channel"}}},
+		},
+		"",
+		nil,
+	)
+
+	_, err := scoped.ResolveTool("read_channel",
+		func(args any) error {
+			return json.Unmarshal([]byte(`{"channel_id":"other-channel","message":"hi"}`), args)
+		},
+		nil,
+	)
+	if err == nil {
+		t.Fatal("expected out-of-scope channel_id to be rejected")
+	}
+	if !strings.Contains(err.Error(), "not allowed by the trigger scope") {
+		t.Fatalf("expected allowed-values error, got %v", err)
+	}
+}
+
+func TestApplyToolScope_AllowedValuesAllowsScopedArg(t *testing.T) {
+	source := llm.NewToolStore(nil, false)
+	tool, seen := makeTool(t, "read_channel")
+	source.AddTools([]llm.Tool{tool})
+
+	scoped := ApplyToolScope(
+		source,
+		[]string{"read_channel"},
+		map[string]map[string]interface{}{
+			"read_channel": {"channel_id": map[string]interface{}{"allowed_values": []interface{}{"allowed-channel"}}},
+		},
+		"",
+		nil,
+	)
+
+	_, err := scoped.ResolveTool("read_channel",
+		func(args any) error {
+			return json.Unmarshal([]byte(`{"channel_id":"allowed-channel","message":"hi"}`), args)
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if seen.ChannelID != "allowed-channel" {
+		t.Fatalf("channel_id=%q, want allowed-channel", seen.ChannelID)
+	}
+}
+
+func TestApplyToolScope_AllowedValuesRejectsMissingScopedArg(t *testing.T) {
+	source := llm.NewToolStore(nil, false)
+	tool, _ := makeTool(t, "search_posts")
+	source.AddTools([]llm.Tool{tool})
+
+	scoped := ApplyToolScope(
+		source,
+		[]string{"search_posts"},
+		map[string]map[string]interface{}{
+			"search_posts": {"channel_id": map[string]interface{}{"allowed_values": []interface{}{"allowed-channel"}}},
+		},
+		"",
+		nil,
+	)
+
+	_, err := scoped.ResolveTool("search_posts",
+		func(args any) error { return json.Unmarshal([]byte(`{"message":"hi"}`), args) },
+		nil,
+	)
+	if err == nil {
+		t.Fatal("expected missing scoped channel_id to be rejected")
+	}
+	if !strings.Contains(err.Error(), "scoped parameter is required") {
+		t.Fatalf("expected required scope error, got %v", err)
+	}
+}
+
 // capturingLogger is a tiny Logger that accumulates messages so AssertBoundParams tests can check output.
 type capturingLogger struct {
 	errors []string

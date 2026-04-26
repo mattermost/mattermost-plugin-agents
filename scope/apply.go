@@ -9,6 +9,9 @@ package scope
 
 import (
 	"fmt"
+	"reflect"
+	"slices"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -69,10 +72,13 @@ func ApplyToolScopeWithTarget(
 			continue
 		}
 
-		params := resolveBoundParams(boundParams[tool.Name], targetChannelID)
+		params, allowedParams := resolveBoundParams(boundParams[tool.Name], targetChannelID)
 		params = addTargetContextBoundParams(tool.Name, params, targetChannelID, targetChannel, targetTeam)
 		if len(params) > 0 {
 			tool = tool.WithBoundParams(params)
+		}
+		if len(allowedParams) > 0 {
+			tool = withAllowedParams(tool, allowedParams)
 		}
 		if tool.Name == "create_post" {
 			tool.Description = "Create a new post in the configured target channel. The system has already fixed and verified channel_id, channel_display_name, and team_display_name; provide only the message content and optional root_id/attachments."
@@ -85,19 +91,32 @@ func ApplyToolScopeWithTarget(
 
 // resolveBoundParams substitutes sentinel values in a bound-params map.
 // Callers receive a new map; the input is never mutated.
-func resolveBoundParams(in map[string]interface{}, targetChannelID string) map[string]interface{} {
+func resolveBoundParams(in map[string]interface{}, targetChannelID string) (map[string]interface{}, map[string][]string) {
 	if len(in) == 0 {
-		return nil
+		return nil, nil
 	}
-	out := make(map[string]interface{}, len(in))
+	fixed := make(map[string]interface{}, len(in))
+	allowed := make(map[string][]string)
 	for k, v := range in {
-		if s, ok := v.(string); ok && s == llm.BoundParamTargetChannelSentinel {
-			out[k] = targetChannelID
+		if values, ok := stringListValue(v); ok {
+			if len(values) > 0 {
+				allowed[k] = values
+			}
 			continue
 		}
-		out[k] = v
+		if s, ok := v.(string); ok && s == llm.BoundParamTargetChannelSentinel {
+			fixed[k] = targetChannelID
+			continue
+		}
+		fixed[k] = v
 	}
-	return out
+	if len(fixed) == 0 {
+		fixed = nil
+	}
+	if len(allowed) == 0 {
+		allowed = nil
+	}
+	return fixed, allowed
 }
 
 func addTargetContextBoundParams(toolName string, params map[string]interface{}, targetChannelID string, targetChannel *model.Channel, targetTeam *model.Team) map[string]interface{} {
@@ -120,6 +139,102 @@ func addTargetContextBoundParams(toolName string, params map[string]interface{},
 		return nil
 	}
 	return params
+}
+
+func stringListValue(v interface{}) ([]string, bool) {
+	switch typed := v.(type) {
+	case []string:
+		return slices.DeleteFunc(slices.Clone(typed), func(s string) bool { return s == "" }), true
+	case []interface{}:
+		values := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if s, ok := item.(string); ok && s != "" {
+				values = append(values, s)
+			}
+		}
+		return values, true
+	case map[string]interface{}:
+		values, ok := typed["allowed_values"]
+		if !ok {
+			return nil, false
+		}
+		return stringListValue(values)
+	default:
+		return nil, false
+	}
+}
+
+func withAllowedParams(tool llm.Tool, allowed map[string][]string) llm.Tool {
+	original := tool.Resolver
+	tool.Resolver = func(context *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+		wrappedGetter := func(args any) error {
+			if err := argsGetter(args); err != nil {
+				return err
+			}
+			return validateAllowedParams(args, allowed)
+		}
+		return original(context, wrappedGetter)
+	}
+	tool.Description = tool.Description + " This trigger restricts accessible teams/channels; when a scoped parameter is available, choose one of the configured IDs."
+	return tool
+}
+
+func validateAllowedParams(args any, allowed map[string][]string) error {
+	if len(allowed) == 0 {
+		return nil
+	}
+	usedScopedParam := false
+	for name, values := range allowed {
+		value := paramStringValue(args, name)
+		if value == "" {
+			continue
+		}
+		usedScopedParam = true
+		if !slices.Contains(values, value) {
+			return fmt.Errorf("%s %q is not allowed by the trigger scope", name, value)
+		}
+	}
+	if !usedScopedParam {
+		names := make([]string, 0, len(allowed))
+		for name := range allowed {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		return fmt.Errorf("one scoped parameter is required: %s", strings.Join(names, ", "))
+	}
+	return nil
+}
+
+func paramStringValue(args any, name string) string {
+	val := reflect.ValueOf(args)
+	if val.Kind() != reflect.Ptr || val.IsNil() {
+		return ""
+	}
+	elem := val.Elem()
+	if elem.Kind() == reflect.Map {
+		item := elem.MapIndex(reflect.ValueOf(name))
+		if item.IsValid() && item.Kind() == reflect.String {
+			return item.String()
+		}
+		return ""
+	}
+	if elem.Kind() != reflect.Struct {
+		return ""
+	}
+	typ := elem.Type()
+	for i := 0; i < elem.NumField(); i++ {
+		field := typ.Field(i)
+		tag := field.Tag.Get("json")
+		tagName := strings.Split(tag, ",")[0]
+		if tagName == name || field.Name == name {
+			value := elem.Field(i)
+			if value.Kind() == reflect.String {
+				return value.String()
+			}
+			return ""
+		}
+	}
+	return ""
 }
 
 // AssertBoundParams logs an ERROR for every (tool, param) in the triggers'
