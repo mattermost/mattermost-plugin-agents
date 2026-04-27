@@ -16,30 +16,15 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 )
 
-// registerPath / unregisterPath are the PluginHTTP paths for registering and
-// unregistering a plugin MCP server with the Agents plugin. PluginHTTP does
-// its own first-path-segment routing, so the full URL must be
-// "/<AiPluginID>/bridge/v1/mcp/register" — the bare
-// "/plugins/mattermost-ai/..." form is NOT correct (that's for browser-origin
-// requests, not inter-plugin RPC).
+// registerPath and unregisterPath are relative to the Agents plugin's
+// PluginHTTP route prefix.
 const (
 	registerPath   = "/bridge/v1/mcp/register"
 	unregisterPath = "/bridge/v1/mcp/unregister"
 )
 
-// Register asynchronously registers this server with the Agents plugin. It
-// returns nil immediately; registration happens on a background goroutine
-// with exponential-backoff retries (see retryPolicy).
-//
-// Register is safe to call from OnActivate: it does not block on the Agents
-// plugin being active, so the source plugin can start up even if Agents is
-// still loading. If registration never succeeds, a warning is logged via the
-// standard library's log package (the plugin API logger isn't available
-// through the PluginAPI interface).
-//
-// Calling Register more than once is permitted but starts a fresh retry loop;
-// the previous goroutine will typically have already exited. Callers who need
-// to re-register after a teardown should call Unregister first.
+// Register asynchronously registers this server with the Agents plugin and
+// returns immediately. Call Unregister before starting a replacement retry loop.
 func (s *Server) Register() error {
 	go s.registerWithBackoff(s.regCtx)
 	return nil
