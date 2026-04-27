@@ -13,6 +13,7 @@ import { getAPIErrorContext } from './log-scanner';
  */
 export class LLMBotPostHelper {
     readonly page: Page;
+    private readonly reasoningSelector = '[class*="MinimalReasoningContainer"], [class*="ExpandedReasoningHeader"]';
 
     constructor(page: Page) {
         this.page = page;
@@ -41,7 +42,22 @@ export class LLMBotPostHelper {
         // Scope to reasoning rows that actually render the Thinking label.
         // This avoids matching the precontent "Starting..." placeholder row,
         // which reuses the MinimalReasoningContainer styles.
-        return baseLocator.locator('[class*="MinimalReasoningContainer"], [class*="ExpandedReasoningHeader"]').filter({hasText: 'Thinking'}).first();
+        return baseLocator.locator(this.reasoningSelector).filter({hasText: 'Thinking'}).first();
+    }
+
+    /**
+     * Get all visible reasoning displays across LLMBot posts.
+     */
+    getAllReasoningDisplays(): Locator {
+        return this.page.locator('[data-testid="llm-bot-post"]').locator(this.reasoningSelector).filter({hasText: 'Thinking'});
+    }
+
+    /**
+     * Get the exact Thinking label within the reasoning display.
+     * @param postId - Optional post ID to scope the search
+     */
+    getReasoningLabel(postId?: string): Locator {
+        return this.getReasoningDisplay(postId).getByText('Thinking', { exact: true });
     }
 
     /**
@@ -217,6 +233,20 @@ export class LLMBotPostHelper {
             await expect(reasoning).toBeVisible();
         } else {
             await expect(reasoning).not.toBeVisible();
+        }
+    }
+
+    /**
+     * Assert the exact Thinking label visibility within the reasoning display.
+     * @param expected - Expected visibility state
+     * @param postId - Optional post ID to scope the assertion
+     */
+    async expectReasoningLabelVisible(expected: boolean, postId?: string): Promise<void> {
+        const label = this.getReasoningLabel(postId);
+        if (expected) {
+            await expect(label).toBeVisible();
+        } else {
+            await expect(label).not.toBeVisible();
         }
     }
 

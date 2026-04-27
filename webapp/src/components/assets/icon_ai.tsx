@@ -5,11 +5,16 @@ import React from 'react';
 
 import Svg from '../svg';
 
-const IconAI = (props: {className?: string}) => (
+type IconAIProps = {
+    className?: string;
+    size?: number;
+};
+
+const IconAI = ({className, size = 19}: IconAIProps) => (
     <Svg
-        className={props.className}
-        width='19'
-        height='19'
+        className={className}
+        width={size}
+        height={size}
         viewBox='0 0 19 19'
         fill='none'
     >

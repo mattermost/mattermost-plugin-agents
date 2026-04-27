@@ -420,6 +420,77 @@ func TestIsValidService(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "Valid Gemini service with API key",
+			service: ServiceConfig{
+				ID:     "service-10",
+				Type:   ServiceTypeGemini,
+				APIKey: "gemini-key",
+			},
+			want: true,
+		},
+		{
+			name: "Gemini service missing API key",
+			service: ServiceConfig{
+				ID:     "service-10",
+				Type:   ServiceTypeGemini,
+				APIKey: "", // bad
+			},
+			want: false,
+		},
+		{
+			name: "Valid Vertex service with ADC (no credentials)",
+			service: ServiceConfig{
+				ID:              "service-11",
+				Type:            ServiceTypeVertex,
+				VertexProjectID: "my-project",
+				Region:          "us-central1",
+				// VertexAuthCredentials empty — ADC / IAM role path
+			},
+			want: true,
+		},
+		{
+			name: "Valid Vertex service with service account JSON",
+			service: ServiceConfig{
+				ID:                    "service-11",
+				Type:                  ServiceTypeVertex,
+				VertexProjectID:       "my-project",
+				Region:                "europe-west4",
+				VertexAuthCredentials: `{"type":"service_account"}`,
+			},
+			want: true,
+		},
+		{
+			name: "Vertex service missing project ID",
+			service: ServiceConfig{
+				ID:              "service-11",
+				Type:            ServiceTypeVertex,
+				VertexProjectID: "", // bad
+				Region:          "us-central1",
+			},
+			want: false,
+		},
+		{
+			name: "Vertex service missing region",
+			service: ServiceConfig{
+				ID:              "service-11",
+				Type:            ServiceTypeVertex,
+				VertexProjectID: "my-project",
+				Region:          "", // bad
+			},
+			want: false,
+		},
+		{
+			name: "Vertex service with invalid service account JSON",
+			service: ServiceConfig{
+				ID:                    "service-11",
+				Type:                  ServiceTypeVertex,
+				VertexProjectID:       "my-project",
+				Region:                "us-central1",
+				VertexAuthCredentials: `{not-json`, // bad
+			},
+			want: false,
+		},
+		{
 			name: "Service with empty ID",
 			service: ServiceConfig{
 				ID:     "", // bad

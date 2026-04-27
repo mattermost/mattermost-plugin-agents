@@ -72,7 +72,7 @@ test.describe('Agent MCP Tools', () => {
         await aiPlugin.waitForBotResponse('I have no tools available.');
     });
 
-    test('MCPs tab shows embedded server and tool affordances in config modal', async ({ page }) => {
+    test('MCPs tab shows embedded server and tool affordances in config view', async ({ page }) => {
         test.setTimeout(60000);
         const mmPage = new MattermostPage(page);
         const agentPage = new AgentPageHelper(page);
@@ -87,7 +87,7 @@ test.describe('Agent MCP Tools', () => {
 
         await expect(agentPage.getMCPSearchInput()).toBeVisible({ timeout: 15000 });
         // Provider name from GET /mcp/tools (mcp.EmbeddedServerName)
-        await expect(agentPage.getModal().getByText('Mattermost')).toBeVisible({ timeout: 15000 });
+        await expect(page.getByText('Mattermost', {exact: true})).toBeVisible({ timeout: 15000 });
     });
 
     test('agent with specific enabledMCPTools responds correctly', async ({ page }) => {

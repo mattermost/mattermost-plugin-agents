@@ -74,7 +74,6 @@ export const BotDropdown = (props: BotDropdownProps) => {
             title={props.activeBot?.displayName}
             dotMenuButton={props.container}
             dropdownMenu={StyledDropdownMenu}
-            portal={false}
             testId={props.testId}
         >
             <MenuInfoMessage>

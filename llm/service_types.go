@@ -12,4 +12,6 @@ const (
 	ServiceTypeBedrock          = "bedrock"
 	ServiceTypeMistral          = "mistral"
 	ServiceTypeScale            = "scale"
+	ServiceTypeGemini           = "gemini"
+	ServiceTypeVertex           = "vertex"
 )

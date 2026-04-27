@@ -23,7 +23,7 @@ import {
 import ReasoningConfigItem from '@/components/system_console/reasoning_config';
 import {LLMService} from '@/components/system_console/service';
 
-import {AgentDraft} from '../agent_config_modal';
+import {AgentDraft} from '../agent_config_view';
 
 type Props = {
     draft: AgentDraft;
@@ -32,14 +32,17 @@ type Props = {
     botUserId?: string;
     services: ServiceInfo[];
     errors?: Record<string, string>;
+
+    /** When true (e.g. edit mode), username cannot be changed; matches API behavior. */
+    usernameLocked?: boolean;
 }
 
 // Keep in sync with legacy System Console bot form (webapp/src/components/system_console/bot.tsx).
-const visionToolServiceTypes = ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral'];
+const visionToolServiceTypes = ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex'];
 const openAIStructuredOutputServiceTypes = ['openai', 'openaicompatible', 'azure'];
 
 const ConfigTab = (props: Props) => {
-    const {draft, onChange, onAvatarChange, services, errors = {}} = props;
+    const {draft, onChange, onAvatarChange, services, errors = {}, usernameLocked = false} = props;
     const intl = useIntl();
     const [availableModels, setAvailableModels] = useState<{id: string; displayName: string}[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
@@ -87,7 +90,9 @@ const ConfigTab = (props: Props) => {
         (selectedService.type === 'anthropic' ||
          selectedService.type === 'openai' ||
          selectedService.type === 'azure' ||
-         selectedService.type === 'openaicompatible'));
+         selectedService.type === 'openaicompatible' ||
+         selectedService.type === 'gemini' ||
+         selectedService.type === 'vertex'));
 
     const selectedServiceAsLLM: LLMService | null = useMemo(() => {
         if (!selectedService) {
@@ -109,6 +114,9 @@ const ConfigTab = (props: Props) => {
             region: '',
             awsAccessKeyID: '',
             awsSecretAccessKey: '',
+            vertexProjectID: '',
+            vertexProjectNumber: '',
+            vertexAuthCredentials: '',
         };
     }, [selectedService]);
 
@@ -182,6 +190,7 @@ const ConfigTab = (props: Props) => {
         visionToolServiceTypes.includes(selectedService.type);
 
     const isAnthropic = selectedService?.type === 'anthropic';
+    const isGoogle = selectedService?.type === 'gemini' || selectedService?.type === 'vertex';
     const isOpenAIWithResponses = Boolean(selectedService &&
         (selectedService.type === 'openai' ||
          (['openaicompatible', 'azure'].includes(selectedService.type) && selectedService.useResponsesAPI)));
@@ -219,8 +228,12 @@ const ConfigTab = (props: Props) => {
                     label={intl.formatMessage({defaultMessage: 'Agent username'})}
                     value={draft.username}
                     maxLength={22}
+                    disabled={usernameLocked}
                     onChange={(e) => onChange({username: e.target.value})}
-                    helptext={intl.formatMessage({defaultMessage: 'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores.'})}
+                    helptext={intl.formatMessage({
+                        defaultMessage:
+                            'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores. The username cannot be changed after the agent is created.',
+                    })}
                 />
                 {errors.username && <FieldError>{errors.username}</FieldError>}
                 <AvatarItem
@@ -316,6 +329,13 @@ const ConfigTab = (props: Props) => {
                                 enabledTools={draft.enabledNativeTools}
                                 onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
                                 provider='anthropic'
+                            />
+                        )}
+                        {isGoogle && (
+                            <NativeToolsItem
+                                enabledTools={draft.enabledNativeTools}
+                                onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
+                                provider='google'
                             />
                         )}
                         {isOpenAIWithResponses && (

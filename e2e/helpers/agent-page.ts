@@ -1,7 +1,7 @@
 import { Page, Locator, expect } from '@playwright/test';
 
 /**
- * AgentPageHelper — Page object for the agent listing page and config modal.
+ * AgentPageHelper — Page object for the agent listing page and config view.
  * The listing page is a full-page overlay at /plug/mattermost-ai/agents.
  */
 export class AgentPageHelper {
@@ -81,7 +81,7 @@ export class AgentPageHelper {
         const rowScope = this.page.getByText(displayName, { exact: true }).locator(
             'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
         );
-        await rowScope.getByRole('button', { name: 'Edit' }).click();
+        await rowScope.getByRole('button', { name: 'Edit', exact: true }).click();
     }
 
     /**
@@ -92,16 +92,21 @@ export class AgentPageHelper {
         const rowScope = this.page.getByText(displayName, { exact: true }).locator(
             'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
         );
-        await rowScope.getByRole('button', { name: 'Delete' }).click();
+        await rowScope.getByRole('button', { name: 'Delete', exact: true }).click();
     }
 
-    // --- Config Modal Locators ---
+    // --- Config View Locators ---
 
     getModal(): Locator {
-        // Modal titles are 'New Agent' (create) or the agent display name (edit)
-        // Look for the modal overlay container
-        return this.page.locator('[class*="ModalOverlay"]')
+        // Keep the legacy name for existing tests. The agent editor is now a full-page view,
+        // but confirmation dialogs still render as dialogs.
+        return this.page.locator('.mmAiModal__sheet')
+            .or(this.page.locator('[class*="ModalOverlay"]'))
             .or(this.page.locator('[class*="modal-content"]'));
+    }
+
+    getBackButton(): Locator {
+        return this.page.getByRole('button', {name: 'Back to agents'});
     }
 
     getModalTab(tabName: 'Configuration' | 'Access' | 'MCPs'): Locator {
@@ -181,6 +186,19 @@ export class AgentPageHelper {
         return this.getDeleteDialog().getByRole('button', { name: 'Delete' });
     }
 
+    /** Unsaved-changes confirmation when leaving the agent config view (MM-68452). */
+    getDiscardChangesDialog(): Locator {
+        return this.page.getByRole('dialog', { name: 'Discard changes?' });
+    }
+
+    getDiscardChangesConfirmButton(): Locator {
+        return this.getDiscardChangesDialog().getByRole('button', { name: 'Discard' });
+    }
+
+    getDiscardChangesKeepEditingButton(): Locator {
+        return this.getDiscardChangesDialog().getByRole('button', { name: 'Keep editing' });
+    }
+
     // --- MCPs Tab ---
 
     getMCPSearchInput(): Locator {
@@ -211,13 +229,13 @@ export class AgentPageHelper {
         }
     }
 
-    /** Wait for the config modal to appear */
+    /** Wait for the config view to appear */
     async waitForModal(): Promise<void> {
-        // Wait for either "New Agent" title or "Configuration" tab to be visible
+        await this.getBackButton().waitFor({state: 'visible', timeout: 10000});
         await this.page.getByText('Configuration').first().waitFor({ state: 'visible', timeout: 10000 });
     }
 
-    /** Wait for the modal to disappear (after save/cancel) */
+    /** Wait for the config view to disappear (after save/cancel/back) */
     async waitForModalClosed(): Promise<void> {
         // Wait for the display name input to disappear (reliable signal)
         await this.getDisplayNameInput().waitFor({ state: 'hidden', timeout: 10000 });

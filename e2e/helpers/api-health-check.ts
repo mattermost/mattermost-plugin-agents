@@ -23,89 +23,145 @@ interface HealthCheckResult {
 // when multiple test suites use the same provider in a single process.
 const healthCheckCache = new Map<string, Promise<HealthCheckResult>>();
 
+function isTransientHealthCheckError(message: string): boolean {
+    const m = message.toLowerCase();
+    return m.includes('timeout') || m.includes('aborted') || m.includes('econnreset') ||
+        m.includes('fetch failed') || m.includes('network') || m.includes('socket');
+}
+
+async function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function checkAnthropicHealth(service: LLMService): Promise<HealthCheckResult> {
-    const start = Date.now();
-    try {
-        const response = await fetch(`${service.apiURL}/v1/messages`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': service.apiKey,
-                'anthropic-version': '2023-06-01',
-            },
-            body: JSON.stringify({
+    const maxAttempts = 3;
+    let lastError = '';
+    const overallStart = Date.now();
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const start = Date.now();
+        try {
+            const response = await fetch(`${service.apiURL}/v1/messages`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': service.apiKey,
+                    'anthropic-version': '2023-06-01',
+                },
+                body: JSON.stringify({
+                    model: service.defaultModel,
+                    max_tokens: 20,
+                    messages: [{ role: 'user', content: 'hi' }],
+                }),
+                signal: AbortSignal.timeout(30000),
+            });
+
+            const latencyMs = Date.now() - start;
+
+            if (response.ok) {
+                return { provider: 'Anthropic', model: service.defaultModel, healthy: true, latencyMs: Date.now() - overallStart };
+            }
+
+            const body = await response.text().catch(() => '');
+            lastError = `HTTP ${response.status}: ${body.substring(0, 200)}`;
+            return {
+                provider: 'Anthropic',
                 model: service.defaultModel,
-                max_tokens: 20,
-                messages: [{ role: 'user', content: 'hi' }],
-            }),
-            signal: AbortSignal.timeout(30000),
-        });
-
-        const latencyMs = Date.now() - start;
-
-        if (response.ok) {
-            return { provider: 'Anthropic', model: service.defaultModel, healthy: true, latencyMs };
+                healthy: false,
+                error: lastError,
+                latencyMs: Date.now() - overallStart,
+            };
+        } catch (err) {
+            lastError = `Connection failed: ${(err as Error).message}`;
+            if (attempt < maxAttempts && isTransientHealthCheckError(lastError)) {
+                console.warn(
+                    `API Health Check: Anthropic (${service.defaultModel}) attempt ${attempt}/${maxAttempts} failed (${lastError}); retrying…`,
+                );
+                await sleep(2000 * attempt);
+                continue;
+            }
+            return {
+                provider: 'Anthropic',
+                model: service.defaultModel,
+                healthy: false,
+                error: lastError,
+                latencyMs: Date.now() - overallStart,
+            };
         }
-
-        const body = await response.text().catch(() => '');
-        return {
-            provider: 'Anthropic',
-            model: service.defaultModel,
-            healthy: false,
-            error: `HTTP ${response.status}: ${body.substring(0, 200)}`,
-            latencyMs,
-        };
-    } catch (err) {
-        return {
-            provider: 'Anthropic',
-            model: service.defaultModel,
-            healthy: false,
-            error: `Connection failed: ${(err as Error).message}`,
-            latencyMs: Date.now() - start,
-        };
     }
+
+    return {
+        provider: 'Anthropic',
+        model: service.defaultModel,
+        healthy: false,
+        error: lastError,
+        latencyMs: Date.now() - overallStart,
+    };
 }
 
 async function checkOpenAIHealth(service: LLMService): Promise<HealthCheckResult> {
-    const start = Date.now();
-    try {
-        const response = await fetch(`${service.apiURL}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${service.apiKey}`,
-            },
-            body: JSON.stringify({
+    const maxAttempts = 3;
+    let lastError = '';
+    const overallStart = Date.now();
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const start = Date.now();
+        try {
+            const response = await fetch(`${service.apiURL}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${service.apiKey}`,
+                },
+                body: JSON.stringify({
+                    model: service.defaultModel,
+                    max_completion_tokens: 20,
+                    messages: [{ role: 'user', content: 'hi' }],
+                }),
+                signal: AbortSignal.timeout(30000),
+            });
+
+            const latencyMs = Date.now() - start;
+
+            if (response.ok) {
+                return { provider: 'OpenAI', model: service.defaultModel, healthy: true, latencyMs: Date.now() - overallStart };
+            }
+
+            const body = await response.text().catch(() => '');
+            lastError = `HTTP ${response.status}: ${body.substring(0, 200)}`;
+            return {
+                provider: 'OpenAI',
                 model: service.defaultModel,
-                max_completion_tokens: 20,
-                messages: [{ role: 'user', content: 'hi' }],
-            }),
-            signal: AbortSignal.timeout(30000),
-        });
-
-        const latencyMs = Date.now() - start;
-
-        if (response.ok) {
-            return { provider: 'OpenAI', model: service.defaultModel, healthy: true, latencyMs };
+                healthy: false,
+                error: lastError,
+                latencyMs: Date.now() - overallStart,
+            };
+        } catch (err) {
+            lastError = `Connection failed: ${(err as Error).message}`;
+            if (attempt < maxAttempts && isTransientHealthCheckError(lastError)) {
+                console.warn(
+                    `API Health Check: OpenAI (${service.defaultModel}) attempt ${attempt}/${maxAttempts} failed (${lastError}); retrying…`,
+                );
+                await sleep(2000 * attempt);
+                continue;
+            }
+            return {
+                provider: 'OpenAI',
+                model: service.defaultModel,
+                healthy: false,
+                error: lastError,
+                latencyMs: Date.now() - overallStart,
+            };
         }
-
-        const body = await response.text().catch(() => '');
-        return {
-            provider: 'OpenAI',
-            model: service.defaultModel,
-            healthy: false,
-            error: `HTTP ${response.status}: ${body.substring(0, 200)}`,
-            latencyMs,
-        };
-    } catch (err) {
-        return {
-            provider: 'OpenAI',
-            model: service.defaultModel,
-            healthy: false,
-            error: `Connection failed: ${(err as Error).message}`,
-            latencyMs: Date.now() - start,
-        };
     }
+
+    return {
+        provider: 'OpenAI',
+        model: service.defaultModel,
+        healthy: false,
+        error: lastError,
+        latencyMs: Date.now() - overallStart,
+    };
 }
 
 /**

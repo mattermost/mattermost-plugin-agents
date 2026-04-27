@@ -639,6 +639,53 @@ func TestFetchModelsForServiceUnknownService(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 }
 
+// TestFetchModelsForServiceVertexMissingProject validates that the model fetch
+// endpoint rejects a Vertex service config without the project/region fields
+// required to address GCP, even when the allowlist now includes Vertex.
+func TestFetchModelsForServiceVertexMissingProject(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.api.configStore = &mockConfigStore{
+		cfg: &config.Config{
+			Services: []llm.ServiceConfig{
+				{ID: "vertex-svc", Type: llm.ServiceTypeVertex},
+			},
+		},
+	}
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	body := map[string]string{"serviceID": "vertex-svc"}
+	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
+	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+}
+
+// TestFetchModelsForServiceGeminiMissingAPIKey validates that Gemini follows
+// the standard API-key credential gate after being added to the allowlist.
+func TestFetchModelsForServiceGeminiMissingAPIKey(t *testing.T) {
+	e := setupAgentTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.api.configStore = &mockConfigStore{
+		cfg: &config.Config{
+			Services: []llm.ServiceConfig{
+				{ID: "gemini-svc", Type: llm.ServiceTypeGemini},
+			},
+		},
+	}
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	body := map[string]string{"serviceID": "gemini-svc"}
+	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
+	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+}
+
 func TestListServicesForbiddenWithoutManageOwnPermission(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)

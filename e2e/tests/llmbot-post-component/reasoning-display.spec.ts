@@ -109,7 +109,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
             await llmBotHelper.waitForStreamingComplete();
 
             await llmBotHelper.expectReasoningVisible(true);
-            await expect(page.getByText('Thinking')).toBeVisible();
+            await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
             await llmBotHelper.expectReasoningExpanded(false);
         });
 
@@ -143,7 +143,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
             await llmBotHelper.clickReasoningToggle();
             await llmBotHelper.expectReasoningExpanded(false);
-            await expect(page.getByText('Thinking')).toBeVisible();
+            await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
         });
 
         test('Reasoning Persistence After Refresh', async ({ page }) => {
@@ -206,7 +206,7 @@ function createProviderTestSuite(provider: ProviderBundle) {
             // Wait for streaming to complete (smart wait, up to 5 min)
             await llmBotHelper.waitForStreamingComplete();
 
-            await expect(page.getByText('Thinking')).toBeVisible();
+            await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
 
             await llmBotHelper.clickReasoningToggle();
             await llmBotHelper.expectReasoningExpanded(true);
@@ -234,13 +234,13 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
             // Verify first reasoning is visible
             await llmBotHelper.expectReasoningVisible(true);
-            await expect(page.getByText('Thinking')).toBeVisible();
+            await expect(llmBotHelper.getReasoningLabel()).toBeVisible();
 
             // Second message with reasoning
             await aiPlugin.sendMessage('Evaluate JavaScript limitations when it comes to type safety and refactoring. How do these impact development?');
 
             // Smart poll for second reasoning display to appear
-            const allReasoningDisplays = page.locator('div:has-text("Thinking")');
+            const allReasoningDisplays = llmBotHelper.getAllReasoningDisplays();
             const startTime = Date.now();
             const maxTimeout = 300000; // 5 minutes
 
