@@ -544,14 +544,8 @@ export async function clearMCPToolsCache() {
 }
 
 /**
- * Apply a partial update to a plugin-registered MCP server's admin state.
- * PUT /admin/mcp/plugin-servers/:pluginID with pointer-field partial-update
- * semantics on the server side (omitted fields preserve current state, present
- * fields overwrite — including {tool_configs: []} which explicitly clears
- * policy). Returns the updated PluginServerConfig.
- *
- * Caller is responsible for diffing — only send fields that actually changed.
- * See mcp_tools_viewer.tsx handleServerConfigChange for the diff site.
+ * Apply a partial admin-state update to a plugin-registered MCP server.
+ * Omitted fields are preserved; tool_configs: [] explicitly clears policy.
  */
 export async function updatePluginServer(
     pluginID: string,

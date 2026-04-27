@@ -71,11 +71,8 @@ func listToolNames(t *testing.T, h *PluginMCPHandlers) []string {
 	return names
 }
 
-// TestNewPluginMCPHandlers_IteratesRegistry is a release-gate test. It asserts
-// that a plugin server with Enabled=true && ExposeExternal=true contributes
-// its tools to the factory server, and that plugins with either flag false
-// contribute ZERO tools. If this regressed, external MCP clients could see
-// tools that the admin explicitly disabled.
+// TestNewPluginMCPHandlers_IteratesRegistry verifies that only enabled and
+// externally exposed plugin servers contribute tools.
 func TestNewPluginMCPHandlers_IteratesRegistry(t *testing.T) {
 	target := newFakePluginMCPServer(t, 1, nil) // 1 tool named test_tool_0
 	t.Cleanup(target.Close)
@@ -104,17 +101,8 @@ func TestNewPluginMCPHandlers_IteratesRegistry(t *testing.T) {
 	require.Equal(t, 1, proxyCount, "only Enabled && ExposeExternal plugin tools should be aggregated")
 }
 
-// TestNewPluginMCPHandlers_FiltersToolsByPolicy is the M2 Phase 3 release-gate
-// test: per-tool admin policy is enforced on the external aggregated MCP
-// endpoint. A plugin server's ToolConfigs entry with Enabled=false must drop
-// the corresponding tool from the external server's tool list, while tools
-// with no ToolConfigs entry default-allow through (matching the
-// MCPServerConfig.GetToolPolicy ("ask", true) fallback for unconfigured
-// tools).
-//
-// If this regresses, external MCP clients (Claude Desktop, scripts/e2e/main.go,
-// any caller of /plugins/mattermost-ai/mcp-server/mcp) would see tools the
-// admin explicitly denied — the exact failure mode Phase 3 exists to prevent.
+// TestNewPluginMCPHandlers_FiltersToolsByPolicy verifies per-tool admin policy
+// on the external aggregated MCP endpoint.
 func TestNewPluginMCPHandlers_FiltersToolsByPolicy(t *testing.T) {
 	// Source plugin advertises 2 tools: test_tool_0 and test_tool_1.
 	target := newFakePluginMCPServer(t, 2, nil)
@@ -154,18 +142,9 @@ func TestNewPluginMCPHandlers_FiltersToolsByPolicy(t *testing.T) {
 	require.True(t, sawAllowed, "tool with no policy entry must default-allow through (matches GetToolPolicy fallback)")
 }
 
-// TestNewPluginMCPHandlers_PolicyIsPerPluginServer asserts that ToolConfigs
-// from one plugin server do NOT bleed into another plugin server's policy
-// lookup. Two plugins both advertise a tool named test_tool_0; one plugin
-// denies it via ToolConfigs, the other does not. After aggregation the
-// allowed plugin's tool must remain.
-//
-// Note: external clients see the unqualified tool name. With two plugins each
-// advertising "test_tool_0", the go-sdk MCP server will see two AddTool calls
-// for the same name. The test asserts AT LEAST one survives — which proves
-// that policy lookup is correctly scoped per-plugin (the deny on plugin-A
-// dropped its AddTool, leaving plugin-B's AddTool to land). If policy were
-// global, both AddTool calls would be skipped and the tool would be missing.
+// TestNewPluginMCPHandlers_PolicyIsPerPluginServer verifies that ToolConfigs
+// from one plugin server do not affect another plugin's tools with the same
+// advertised name.
 func TestNewPluginMCPHandlers_PolicyIsPerPluginServer(t *testing.T) {
 	// Two distinct fake plugin MCP servers, each advertising test_tool_0.
 	targetA := newFakePluginMCPServer(t, 1, nil)

@@ -352,13 +352,8 @@ const ToolCard: React.FC<ToolCardProps> = ({
     const isResultApprovalStage = approvalStage === 'result';
     const showResultReviewCallout = !isCollapsed && showDecisionButtons && isResultApprovalStage;
 
-    // Strip the "<sanitizedPluginID>__" wire prefix that public/mcphelper adds
-    // for plugin-registered MCP tools so the user sees "Add Two Numbers"
-    // instead of "Com Mattermost Plugin-mcp-demo  Add Two Numbers". Tool-call
-    // cards don't carry server context, so we use the heuristic stripper —
-    // safe because the "__" separator is unique to mcphelper's prefix scheme.
-    // Then convert underscores to spaces and capitalize each word
-    // (e.g., "create_post" -> "Create Post").
+    // Tool-call cards lack server context, so strip the mcphelper prefix
+    // heuristically before title-casing the display name.
     const displayName = stripWirePrefix(tool.name).
         replace(/_/g, ' ').
         split(' ').

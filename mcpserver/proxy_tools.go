@@ -66,15 +66,8 @@ func (h *headerInjector) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // BuildProxyTools lists a source plugin's MCP tools and returns proxy tool
-// definitions plus handlers for the agents plugin's external MCP server.
-//
-// Names and input schemas are copied verbatim from the remote ListTools
-// response — the source plugin (via public/mcphelper) already namespaced names
-// as {pluginID}__{toolName} and the go-sdk Tool.InputSchema field is already a
-// JSON-Schema-compatible value (`any`, serialized as-is over the wire).
-// No re-generation of schemas is needed on our side. Tool handlers open a fresh
-// MCP session per invocation and inject X-Mattermost-UserID for the source
-// plugin.
+// definitions plus handlers for the Agents plugin's external MCP server.
+// Names and input schemas are copied verbatim from the source plugin.
 func BuildProxyTools(
 	ctx context.Context,
 	cfg mcppkg.PluginServerConfig,

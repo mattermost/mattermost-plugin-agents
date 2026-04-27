@@ -104,15 +104,9 @@ func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 	return IsToolPolicyAutoRunInDM(policy) && enabled
 }
 
-// PluginServerConfig contains the configuration for an MCP server registered
-// by another Mattermost plugin via the AI Bridge register endpoint.
-//
-// Field ownership:
-//   - Identity (PluginID, Name, Path) is owned by the source plugin and
-//     refreshed on every Register() call.
-//   - Admin state (Enabled, ExposeExternal, ToolConfigs) is owned by the
-//     agents-plugin admin and survives source-plugin re-registration via the
-//     preserve block in api/api_bridge_mcp.go:handleMCPRegister.
+// PluginServerConfig describes an MCP server registered by another Mattermost
+// plugin. Identity fields are plugin-owned; admin state fields are owned by
+// the Agents plugin.
 type PluginServerConfig struct {
 	PluginID       string          `json:"plugin_id"`
 	Name           string          `json:"name"`

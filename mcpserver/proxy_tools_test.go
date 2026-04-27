@@ -80,10 +80,8 @@ func TestBuildProxyTools_HappyPath(t *testing.T) {
 	require.Equal(t, "test_tool_1", tools[1].Name)
 }
 
-// TestBuildProxyTools_HandlerPropagatesUserID is a release-gate test: it
-// verifies the end-to-end X-Mattermost-UserID plumbing from
-// auth.UserIDContextKey through the proxy handler, the headerInjector, the
-// proxyRoundTripper, and finally into the source plugin's inbound HTTP request.
+// TestBuildProxyTools_HandlerPropagatesUserID verifies end-to-end
+// X-Mattermost-UserID propagation into the source plugin request.
 func TestBuildProxyTools_HandlerPropagatesUserID(t *testing.T) {
 	var sawUserID string
 	target := newFakePluginMCPServer(t, 1, &sawUserID)

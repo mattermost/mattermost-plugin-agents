@@ -16,11 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDelegateToMCPHandler_PropagatesUserIDIntoContext is a release-gate test
-// for Task 1G-0. The proxy tool handlers built by mcpserver/proxy_tools.go
-// require auth.UserIDContextKey to be readable from the request context —
-// without this propagation they have no way to set X-Mattermost-UserID on
-// outbound PluginHTTP calls.
+// TestDelegateToMCPHandler_PropagatesUserIDIntoContext verifies that proxy
+// tool handlers can set X-Mattermost-UserID on outbound PluginHTTP calls.
 func TestDelegateToMCPHandler_PropagatesUserIDIntoContext(t *testing.T) {
 	e := SetupTestEnvironment(t)
 

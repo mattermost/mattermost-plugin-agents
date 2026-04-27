@@ -35,13 +35,8 @@ type adminTestStores struct {
 	clusterNotifier *testClusterNotifier
 }
 
-// setupAdminTestEnvironment creates a test environment for admin endpoint testing.
-//
-// After Phase 2, handleUpdatePluginServer performs a 3-step config save
-// (configStore / configUpdater / clusterNotifier). We wire non-nil test
-// implementations unconditionally so every admin test exercises the real
-// save path; tests that don't care about save side effects simply don't
-// assert on the returned stores.
+// setupAdminTestEnvironment creates a test environment with real config-save
+// spies wired by default.
 func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API, *adminTestStores) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -244,13 +239,8 @@ func createMockIndexer(t *testing.T, mockService *mockIndexerService) *indexer.I
 	return indexer.New(nil, nil, mockClient, nil, nil, mockMutexAPI)
 }
 
-// TestHandleGetMCPTools_PluginServer exercises the Phase 1F third-loop that
-// renders plugin-registered MCP servers alongside embedded and remote rows
-// on GET /admin/mcp/tools. It verifies:
-//   - enabled plugin entries are probed via DiscoverPluginServerTools;
-//   - disabled plugin entries are rendered with an empty tool list and NO probe;
-//   - probe errors surface through MCPServerInfo.Error;
-//   - ServerType and Enabled discriminator fields are populated.
+// TestHandleGetMCPTools_PluginServer verifies plugin rows in the admin MCP
+// tools response, including disabled rows and probe errors.
 func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -309,8 +299,7 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 			expectProbeCalls:  1,
 		},
 		{
-			// M2: plugin-row ToolConfigs flows through to MCPServerInfo so the
-			// webapp can render the policy dropdown at the correct selected state.
+			// Plugin-row ToolConfigs must flow through for the policy dropdown.
 			name: "enabled plugin server with per-tool policy surfaces ToolConfigs",
 			pluginServers: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo",
@@ -387,13 +376,7 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 	}
 }
 
-// TestHandleUpdatePluginServer exercises the admin-only enable/disable toggle
-// endpoint PUT /admin/mcp/plugin-servers/:pluginID introduced in Phase 1F.
-// It verifies:
-//   - happy path flips Enabled while preserving identity fields;
-//   - 404 when the pluginID has no registration;
-//   - 400 on malformed JSON body;
-//   - admin-auth gate: requests without PermissionManageSystem return 403.
+// TestHandleUpdatePluginServer covers the admin plugin-server update endpoint.
 func TestHandleUpdatePluginServer(t *testing.T) {
 	tests := []struct {
 		name                   string
@@ -533,7 +516,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			expectRegisterCalls: 0,
 		},
 		{
-			// M2 release gate: admin sets per-tool policy via PATCH.
+			// Admin can set per-tool policy without changing other fields.
 			name:     "tool_configs partial PUT sets policy, preserves enabled",
 			pluginID: "com.mattermost.demo",
 			preRegistered: []mcp.PluginServerConfig{{
@@ -605,10 +588,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			mgr := api.mcpClientManager.(*mockMCPClientManager)
 			mgr.pluginServers = tt.preRegistered
 
-			// Inject a spy rebuilder so we can observe RebuildExternalServer
-			// invocations in the ExposeExternal-toggle cases. The production
-			// rebuilder lookup falls through to nil in tests that don't need
-			// it, so unconditionally wiring the spy is safe.
+			// Observe rebuild calls in ExposeExternal toggle cases.
 			spy := &spyRebuilder{}
 			api.SetExternalRebuilderForTest(spy)
 
@@ -639,13 +619,8 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 	}
 }
 
-// TestHandleUpdatePluginServer_PersistsToConfig covers the Phase 2 durable
-// persistence path: a successful PATCH MUST call configStore.SaveConfig →
-// configUpdater.Update → clusterNotifier.PublishConfigUpdate, in that order,
-// carrying a cfg whose MCP.PluginServers slice contains the updated snapshot.
-//
-// Also covers the error paths: SaveConfig failure → 500 (no Update, no
-// Publish); PublishConfigUpdate failure → 500 (Save and Update both ran).
+// TestHandleUpdatePluginServer_PersistsToConfig verifies the save, update, and
+// cluster-notify path for plugin-server admin changes.
 func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 	tests := []struct {
 		name                 string

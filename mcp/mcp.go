@@ -73,14 +73,8 @@ func DiscoverRemoteServerTools(
 	return tools, nil
 }
 
-// DiscoverPluginServerTools creates an ephemeral connection to a plugin-registered
-// MCP server via PluginHTTP and returns its advertised tool list. Mirrors
-// DiscoverRemoteServerTools / DiscoverEmbeddedServerTools but uses the
-// PluginHTTPRoundTripper transport chain instead of the public HTTP client.
-//
-// Caller-supplied userID flows through as X-Mattermost-UserID on every request.
-// This is the "admin probe" path — no caching, no per-user client reuse; callers
-// in hot paths (GetToolsForUser) use UserClients.ConnectToPluginServer instead.
+// DiscoverPluginServerTools lists tools from a plugin-registered MCP server
+// over PluginHTTP. It does not use the per-user client cache.
 func DiscoverPluginServerTools(
 	ctx context.Context,
 	userID string,

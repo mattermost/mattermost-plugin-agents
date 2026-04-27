@@ -135,11 +135,8 @@ func TestClientManager_GetPluginServer(t *testing.T) {
 	require.Equal(t, stored, again, "GetPluginServer must return an independent value copy")
 }
 
-// TestClientManager_HydratesPluginServersFromConfig is the M2 release-gate
-// regression test: NewClientManager must hydrate ClientManager.pluginServers
-// from cfg.PluginServers synchronously before returning, so that the bridge
-// /mcp/register handler observes admin-set state on the FIRST source-plugin
-// re-register after an agents-plugin restart.
+// TestClientManager_HydratesPluginServersFromConfig verifies that persisted
+// plugin-server admin state is available before NewClientManager returns.
 func TestClientManager_HydratesPluginServersFromConfig(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
@@ -257,12 +254,8 @@ func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
 	require.Equal(t, "/live-mcp", got.Path)
 }
 
-// TestClientManager_ReInitInsertsConfigOnlyEntries covers the second arm of
-// syncPluginServersFromConfig: when a plugin server is in cfg.PluginServers
-// but not yet registered in-memory (typical post-restart shape, where the
-// source plugin's Register() hasn't fired yet), the entry is inserted
-// verbatim so the registry exposes admin policy until the source plugin
-// re-registers and refreshes Name/Path via the preserve block.
+// TestClientManager_ReInitInsertsConfigOnlyEntries verifies config-only plugin
+// entries remain available until the source plugin registers again.
 func TestClientManager_ReInitInsertsConfigOnlyEntries(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
@@ -293,12 +286,8 @@ func TestClientManager_ReInitInsertsConfigOnlyEntries(t *testing.T) {
 	require.True(t, got.Enabled)
 }
 
-// TestClientManager_ReInitPreservesUnpersistedRuntimeEntries covers the
-// third arm: a runtime registration that the admin has not yet persisted
-// (e.g. between Register() and the first admin save) must survive a
-// config-update broadcast. We must NOT delete entries absent from the new
-// config — the source plugin's live registration is the only thing keeping
-// it on this node.
+// TestClientManager_ReInitPreservesUnpersistedRuntimeEntries verifies that
+// live registrations absent from config survive config broadcasts.
 func TestClientManager_ReInitPreservesUnpersistedRuntimeEntries(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
@@ -361,7 +350,7 @@ func TestClientManager_SyncPluginServersFromConfig_SkipsEmptyPluginID(t *testing
 	require.Equal(t, "com.example.valid", got[0].PluginID)
 }
 
-// Test A (release gate): plugin server Enabled=true with 2 tools → both flow through.
+// Plugin server Enabled=true with 2 tools: both flow through.
 func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	target := newFakePluginMCPServer(t, 2)
 	t.Cleanup(target.Close)
@@ -391,8 +380,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	}
 }
 
-// Test B (release gate — MUST PASS per orchestration plan):
-// plugin server Enabled=false → zero tools, and PluginHTTP is never called.
+// Plugin server Enabled=false: zero tools, and PluginHTTP is never called.
 func TestClientManager_GetToolsForUser_PluginDisabled_ZeroTools(t *testing.T) {
 	mockAPI := mocks.NewMockClient(t)
 	mockAPI.EXPECT().PluginHTTP(mock.Anything).RunAndReturn(func(req *http.Request) *http.Response {
@@ -478,18 +466,8 @@ func TestClientManager_GetToolsForUser_PluginEnabled_HTTPFailure(t *testing.T) {
 	}
 }
 
-// Test C (release gate): plugin + "remote-like" plugin bucketing through the
-// GetToolsForUser → filterToolsByConfig pipeline.
-//
-// Deviation from planner-3 spec: embedded+remote+plugin in one unit test
-// requires standing up an EmbeddedMCPServer stub (with an InMemoryTransport
-// wrapper) + a real OAuthManager for remote. The function-level filter
-// bucketing is already asserted by the "embedded + remote + plugin mix" row
-// in client_manager_filter_test.go. This test therefore validates the
-// GetToolsForUser integration against TWO plugin servers with different
-// pluginIDs — proving the third-loop snapshot + per-plugin origin-key
-// construction + filter bucketing all line up. Full-stack embedded+remote
-// coverage remains under the `integration` build tag (see testhelpers_test.go).
+// TestClientManager_GetToolsForUser_MultiplePluginServers verifies per-plugin
+// origin bucketing through GetToolsForUser and filterToolsByConfig.
 func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 	targetA := newFakePluginMCPServerWithPrefix(t, "tool_a", 2)
 	t.Cleanup(targetA.Close)
@@ -539,12 +517,6 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 // Race test: concurrent Register/Unregister/List/snapshotEnabledPluginServers
 // must not deadlock or race. Validates that pluginServersMu correctly
 // serializes writes and allows concurrent readers.
-//
-// Scope note: this test deliberately avoids concurrent GetToolsForUser calls
-// because that path writes to m.activity / m.clients under a separate lock
-// (clientsMu) whose pre-existing concurrency contract is out of scope for
-// Phase 1D. The registry + snapshot lane — which is what this phase adds —
-// is exercised directly.
 //
 // Must be run with -race to verify data-race safety.
 func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {

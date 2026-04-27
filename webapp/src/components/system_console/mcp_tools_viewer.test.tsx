@@ -31,9 +31,7 @@ jest.mock('react-intl', () => {
     };
 });
 
-// Mock the client module — Phase 4 tests assert on PUT bodies via the
-// updatePluginServer mock. Other client functions are stubbed enough to
-// make the component render.
+// Mock the client module so tests can assert on PUT bodies.
 jest.mock('../../client', () => ({
     __esModule: true,
     getMCPTools: jest.fn(),
@@ -123,7 +121,7 @@ describe('MCPToolsViewer — plugin branch', () => {
         fireEvent.click(screen.getByText('Demo Plugin'));
 
         // The policy dropdowns are rendered for the plugin row's tools.
-        // None should be disabled — Phase 4 re-enabled the dropdown for plugin rows.
+        // None should be disabled.
         const selects = screen.getAllByRole('combobox');
         expect(selects.length).toBeGreaterThanOrEqual(1);
         for (const sel of selects) {

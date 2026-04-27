@@ -228,31 +228,9 @@ func pluginServerOriginKey(pluginID string) string {
 	return "plugin://" + pluginID
 }
 
-// ConnectToPluginServer establishes an MCP client session with a source
-// Mattermost plugin's MCP endpoint (registered via the bridge
-// /mcp/register endpoint, served by public/mcphelper.Server.ServeHTTP).
-// It mirrors the shape of ConnectToRemoteServers at mcp/user_clients.go:51-90
-// in the reverse direction:
-//
-//   - Uses PluginHTTPRoundTripper (mcp/plugin_roundtripper.go) instead of the
-//     MCP package's oauth-aware http client.
-//   - Layers headerTransport (mcp/http_client.go:9-24) to inject
-//     X-Mattermost-UserID on every outbound request.
-//   - Keys the resulting cached *Client by pluginServerOriginKey(cfg.PluginID)
-//     so tool lookups and filterToolsByConfig line up.
-//
-// Behavior:
-//   - Idempotent: if c.clients already has an entry for the origin key, returns nil.
-//   - On zero-tools response: closes the session and returns an error (matches
-//     mcp/client.go:244-247).
-//   - On connect or list-tools failure: returns a wrapped error; caller
-//     (ClientManager.GetToolsForUser) appends to mcpErrors.Errors.
-//
-// OAuth-error triage is NOT performed — plugin-registered servers authenticate
-// via Mattermost's inter-plugin HTTP (X-Mattermost-UserID over PluginHTTP),
-// not user OAuth. If a future plugin chooses to wire OAuth behind its
-// mcphelper.Server, errors will surface as generic .Errors rather than
-// .ToolAuthErrors; Phase 3 can revisit.
+// ConnectToPluginServer establishes a cached MCP client session with a source
+// plugin's MCP endpoint over PluginHTTP, injecting X-Mattermost-UserID on every
+// request. Plugin servers use inter-plugin auth, not user OAuth.
 func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServerConfig, sourcePluginAPI mmapi.Client) error {
 	if sourcePluginAPI == nil {
 		return fmt.Errorf("sourcePluginAPI is nil; plugin MCP server %s cannot be reached", cfg.PluginID)
@@ -324,20 +302,8 @@ func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServe
 		userID:     c.userID,
 		log:        c.log,
 		httpClient: httpClient,
-		// oauthManager intentionally nil: plugin servers don't use user OAuth.
-		// (See mcp/http_client.go:httpClientForMCP, which skips the
-		// authenticationTransport wrapper when oauthManager is nil to avoid
-		// dereferencing it during reconnect.)
-		//
-		// embeddedClient intentionally nil: reconnect-on-ErrConnectionClosed
-		// falls through to createSession (mcp/client.go:449-481), which
-		// reuses this client's cached httpClient. Because that httpClient
-		// already has a PluginHTTPRoundTripper baked in (see the chain built
-		// above), the "plugin://" BaseURL is transparently rewritten and
-		// routed via PluginHTTP — so the reconnect recovers successfully.
-		// Regression-tested by
-		// TestCallTool_PluginServerDisconnects_RecoversViaReconnect in
-		// mcp/plugin_disconnect_test.go.
+		// Leave oauthManager and embeddedClient nil: reconnect reuses this
+		// PluginHTTP-backed httpClient rather than the OAuth or embedded paths.
 	}
 	for _, tool := range initResult.Tools {
 		client.tools[tool.Name] = tool

@@ -11,12 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestLookupToolPolicy_PluginServer_AutoRunEverywhere is the regression-pin
-// for M2 Phase 5 task #15. Before the fix, plugin tool calls fell through to
-// ("ask", false) because the policyChecker closure had no plugin:// branch,
-// forcing every plugin tool to require manual approval regardless of admin
-// policy. This test asserts that an admin-set auto_run_everywhere policy on
-// a plugin tool is honored.
+// TestLookupToolPolicy_PluginServer_AutoRunEverywhere verifies admin-set
+// auto-run policy for plugin tools.
 func TestLookupToolPolicy_PluginServer_AutoRunEverywhere(t *testing.T) {
 	const pluginID = "com.mattermost.plugin-demo"
 	const toolName = "com_mattermost_plugin-demo__add_two_numbers"
@@ -37,9 +33,7 @@ func TestLookupToolPolicy_PluginServer_AutoRunEverywhere(t *testing.T) {
 	policy, enabled := lookupToolPolicy(cfg, "plugin://"+pluginID, toolName)
 
 	assert.Equal(t, config.MCPToolPolicyAutoRunEverywhere, policy,
-		"plugin tool with admin-set auto_run_everywhere must report that policy "+
-			"(regression: M2 Phase 1 added PluginServerConfig.ToolConfigs but did "+
-			"not extend the policyChecker closure)")
+		"plugin tool with admin-set auto_run_everywhere must report that policy")
 	assert.True(t, enabled, "plugin tool with admin Enabled=true must report enabled=true")
 }
 
@@ -111,7 +105,7 @@ func TestLookupToolPolicy(t *testing.T) {
 				PluginID: pluginID,
 				Name:     "Demo Plugin",
 				Enabled:  true,
-				// ToolConfigs intentionally empty — pre-M2 default-allow.
+				// ToolConfigs intentionally empty: plugin tools default to ask/enabled.
 			}},
 		}
 		policy, enabled := lookupToolPolicy(cfg, pluginOrigin, pluginToolName)
@@ -149,9 +143,7 @@ func TestLookupToolPolicy(t *testing.T) {
 		assert.False(t, enabled)
 	})
 
-	// --- Regression pins for the embedded and remote branches. These exist so
-	// future edits to lookupToolPolicy cannot silently regress the paths that
-	// already worked before the M2 Phase 5 fix.
+	// Keep embedded and remote behavior covered while adding plugin origins.
 
 	t.Run("remote server auto_run_everywhere -> propagates", func(t *testing.T) {
 		cfg := config.MCPConfig{

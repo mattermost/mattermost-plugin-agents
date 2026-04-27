@@ -10,21 +10,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 )
 
-// PluginHTTPRoundTripper routes HTTP requests to a source Mattermost plugin
-// via the Mattermost plugin-to-plugin HTTP transport (PluginHTTP). It is the
-// reverse-direction mirror of public/bridgeclient/transport.go's
-// pluginAPIRoundTripper: that RoundTripper lets source plugins call INTO the
-// agents plugin's bridge API; this one lets the agents plugin call OUT to a
-// source plugin's MCP endpoint (registered via mcphelper.Server).
-//
-// The caller MUST layer a header-setting RoundTripper (e.g. mcp.headerTransport)
-// ABOVE this one to inject X-Mattermost-UserID on every request — PluginHTTP
-// routing does NOT strip X-Mattermost-UserID (only Mattermost-Plugin-ID is
-// stripped on external requests), but the source plugin's mcphelper.ServeHTTP
-// extracts the header from the already-authenticated inter-plugin call.
-// This RoundTripper itself knows only pluginID + basePath + the source of
-// PluginHTTP; it is intentionally per-user-agnostic so one instance can be
-// reused across concurrent user sessions.
+// PluginHTTPRoundTripper routes requests from the Agents plugin to a source
+// plugin's MCP endpoint via PluginHTTP. Callers layer user headers above it.
 type PluginHTTPRoundTripper struct {
 	// pluginID is the target source plugin (e.g. "com.mattermost.plugin-mcp-demo").
 	pluginID string
