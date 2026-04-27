@@ -104,15 +104,15 @@ See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html)
 
 Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry or from **AI Actions > Manage agents**. Agents use the service inventory configured in **System Console > Plugins > Agents**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
 
-If you can manage an agent, select its row in the Agents list to open the edit modal directly. The overflow menu remains available for **Edit** and **Delete**.
+If you can manage an agent, select its row in the Agents list to open the full-page configuration view directly. The overflow menu remains available for **Edit** and **Delete**. Use **Back to agents** to return to the list.
 
-When you create or edit an agent, use the three tabs in the agent configuration flow:
+When you create or edit an agent, use the three tabs in the full-page agent configuration view:
 
 - **Configuration** for identity, model selection, instructions, and core capabilities
 - **Access** for channel, team, and user restrictions, plus delegated agent admins
 - **MCPs** for the agent's allowed MCP tools
 
-If you have unsaved changes and try to close the agent configuration modal with the close button, by pressing Escape, or by selecting the backdrop, Mattermost shows a **Discard changes?** confirmation with **Discard** and **Keep editing**.
+If you have unsaved changes and try to leave the agent configuration view by selecting **Back to agents**, **Cancel**, or by pressing Escape, Mattermost shows a **Discard changes?** confirmation with **Discard** and **Keep editing**.
 
 #### Configuration tab
 
@@ -437,7 +437,7 @@ You can't disable MCP entirely from the System Console. To limit access, disable
 
 ### Configure OAuth-backed servers for agents
 
-When you create or edit an agent, the **MCPs** tab in the agent modal lists the MCP servers available to that agent. If an OAuth-backed server is not connected for your account yet, the row shows a **Connect** button so you can complete the provider sign-in flow without leaving the modal. The MCPs tab refreshes automatically after you connect or disconnect, so you don't need to reopen it to see updated server status.
+When you create or edit an agent from the **Agents** page, the **MCPs** tab in the full-page agent editor lists the MCP servers available to that agent. If an OAuth-backed server is not connected for your account yet, the row shows a **Connect** button so you can complete the provider sign-in flow without leaving the editor. The MCPs tab refreshes automatically after you connect or disconnect, so you don't need to reopen it to see updated server status.
 
 If a disconnected OAuth-backed server currently exposes no tools, you can still toggle that server on while configuring the agent. Saving the agent in this state grants the agent access to every tool that server exposes after a user connects to that provider.
 
