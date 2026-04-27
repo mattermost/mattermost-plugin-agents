@@ -23,7 +23,7 @@ import {
 import ReasoningConfigItem from '@/components/system_console/reasoning_config';
 import {LLMService} from '@/components/system_console/service';
 
-import {AgentDraft} from '../agent_config_modal';
+import {AgentDraft} from '../agent_config_view';
 
 type Props = {
     draft: AgentDraft;

@@ -98,21 +98,36 @@ const AgentRow = (props: Props) => {
         [canManage, menuOpen, agent, onEdit],
     );
 
+    const handleMenuButtonClick = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        setMenuOpen((prev) => !prev);
+    }, []);
+
+    const handleMenuItemEdit = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        handleEdit();
+    }, [handleEdit]);
+
+    const handleMenuItemDelete = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        handleDelete();
+    }, [handleDelete]);
+
     return (
-        <RowContainer>
-            <RowMain
-                $clickable={canManage}
-                {...(canManage ? {
-                    onClick: handleRowActivate,
-                    onKeyDown: handleRowKeyDown,
-                    role: 'button',
-                    tabIndex: 0,
-                    'aria-label': intl.formatMessage(
-                        {defaultMessage: 'Edit agent {name}'},
-                        {name: agent.displayName || agent.name},
-                    ),
-                } : {})}
-            >
+        <RowContainer
+            $clickable={canManage}
+            {...(canManage ? {
+                onClick: handleRowActivate,
+                onKeyDown: handleRowKeyDown,
+                role: 'button',
+                tabIndex: 0,
+                'aria-label': intl.formatMessage(
+                    {defaultMessage: 'Edit agent {name}'},
+                    {name: agent.displayName || agent.name},
+                ),
+            } : {})}
+        >
+            <RowMain>
                 <Avatar
                     src={avatarUrl}
                     alt=''
@@ -135,7 +150,7 @@ const AgentRow = (props: Props) => {
                 <ActionsColumn ref={menuRef}>
                     <MenuButton
                         type='button'
-                        onClick={() => setMenuOpen((prev) => !prev)}
+                        onClick={handleMenuButtonClick}
                         aria-label={intl.formatMessage({defaultMessage: 'Agent actions'})}
                     >
                         <DotsHorizontalIcon size={18}/>
@@ -144,14 +159,14 @@ const AgentRow = (props: Props) => {
                         <DropdownMenu>
                             <MenuItem
                                 type='button'
-                                onClick={handleEdit}
+                                onClick={handleMenuItemEdit}
                             >
                                 <PencilOutlineIcon size={16}/>
                                 <FormattedMessage defaultMessage='Edit'/>
                             </MenuItem>
                             <MenuItemDanger
                                 type='button'
-                                onClick={handleDelete}
+                                onClick={handleMenuItemDelete}
                             >
                                 <TrashCanOutlineIcon size={16}/>
                                 <FormattedMessage defaultMessage='Delete'/>
@@ -166,7 +181,7 @@ const AgentRow = (props: Props) => {
 
 // --- Styled Components ---
 
-const RowContainer = styled.div`
+const RowContainer = styled.div<{$clickable: boolean}>`
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -176,37 +191,29 @@ const RowContainer = styled.div`
     border-radius: 4px;
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
     background: var(--center-channel-bg, #fff);
+    cursor: ${({$clickable}) => ($clickable ? 'pointer' : 'default')};
+    outline: none;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
     }
+
+    ${({$clickable}) =>
+        $clickable &&
+        `
+        &:focus-visible {
+            box-shadow: 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
+        }
+    `}
 `;
 
-const RowMain = styled.div<{$clickable: boolean}>`
+const RowMain = styled.div`
     display: flex;
     flex-direction: row;
     align-items: center;
     gap: 8px;
     flex: 1;
     min-width: 0;
-    cursor: ${({$clickable}) => ($clickable ? 'pointer' : 'default')};
-    outline: none;
-    border: none;
-    background: transparent;
-    padding: 0;
-    margin: 0;
-    text-align: left;
-    font: inherit;
-    color: inherit;
-
-    ${({$clickable}) =>
-        $clickable &&
-        `
-        &:focus-visible {
-            border-radius: 2px;
-            box-shadow: 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
-        }
-    `}
 `;
 
 const Avatar = styled.img`
