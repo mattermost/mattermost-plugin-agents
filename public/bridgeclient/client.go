@@ -29,11 +29,10 @@ type Client struct {
 	httpClient http.Client
 }
 
-// ToolHookConfig holds optional HTTP callback paths (plugin-relative) for a tool.
+// ToolHookConfig holds an optional HTTP callback path (plugin-relative) for a tool.
 // The calling plugin encodes run context in the path; the agents plugin does not inspect it.
 type ToolHookConfig struct {
 	BeforeCallback string `json:"before_callback,omitempty"`
-	AfterCallback  string `json:"after_callback,omitempty"`
 }
 
 // Post represents a single message in the conversation
@@ -65,7 +64,7 @@ type CompletionRequest struct {
 	// ChannelID is the optional Mattermost channel ID context for the request.
 	// If provided along with UserID, the bridge will check both user and channel permissions.
 	ChannelID string `json:"channel_id,omitempty"`
-	// ToolHooks maps tool names to optional before/after callback paths for that tool.
+	// ToolHooks maps tool names to optional before-callback paths for that tool.
 	// Requires Mattermost-Plugin-ID on the bridge request; callbacks hit that plugin's routes.
 	ToolHooks map[string]ToolHookConfig `json:"tool_hooks,omitempty"`
 }

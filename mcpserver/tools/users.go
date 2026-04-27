@@ -6,11 +6,8 @@ package tools
 import (
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-agents/format"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/public/mcptool"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // CreateUserArgs represents arguments for the create_user tool (dev mode only)
@@ -24,38 +21,40 @@ type CreateUserArgs struct {
 	ProfileImage string `json:"profile_image,omitempty" access:"local" jsonschema:"Optional file path or URL to profile image (supports .jpeg, .jpg, .png, .gif)"`
 }
 
-// provideDevUserTools registers development user-related MCP tools.
-func (p *MattermostToolProvider) provideDevUserTools(s *mcp.Server) {
-	registerTool[CreateUserArgs](s, p, "create_user",
-		"Create a new user account (dev mode only)",
-		NewJSONSchemaForAccessMode[CreateUserArgs](string(p.accessMode)),
-		p.toolCreateUser,
-		format.CreateUserOutput,
-	)
+// getDevUserTools returns development user-related tools for MCP
+func (p *MattermostToolProvider) getDevUserTools() []MCPTool {
+	return []MCPTool{
+		{
+			Name:        "create_user",
+			Description: "Create a new user account (dev mode only)",
+			Schema:      NewJSONSchemaForAccessMode[CreateUserArgs](string(p.accessMode)),
+			Resolver:    p.toolCreateUser,
+		},
+	}
 }
 
 // toolCreateUser implements the create_user tool using the context client
-func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.CreateUserOutput, error) {
+func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args CreateUserArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return mcptool.CreateUserOutput{}, fmt.Errorf("failed to get arguments for tool create_user: %w", err)
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool create_user: %w", err)
 	}
 
 	// Validate required fields
 	if args.Username == "" {
-		return mcptool.CreateUserOutput{}, fmt.Errorf("username cannot be empty")
+		return "username is required", fmt.Errorf("username cannot be empty")
 	}
 	if args.Email == "" {
-		return mcptool.CreateUserOutput{}, fmt.Errorf("email cannot be empty")
+		return "email is required", fmt.Errorf("email cannot be empty")
 	}
 	if args.Password == "" {
-		return mcptool.CreateUserOutput{}, fmt.Errorf("password cannot be empty")
+		return "password is required", fmt.Errorf("password cannot be empty")
 	}
 
 	// Get client from context
 	if mcpContext.Client == nil {
-		return mcptool.CreateUserOutput{}, fmt.Errorf("client not available in context")
+		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -72,7 +71,7 @@ func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, args
 
 	createdUser, _, err := client.CreateUser(ctx, user)
 	if err != nil {
-		return mcptool.CreateUserOutput{}, fmt.Errorf("error creating user: %w", err)
+		return "failed to create user", fmt.Errorf("error creating user: %w", err)
 	}
 
 	var profileImageMessage string
@@ -97,9 +96,5 @@ func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, args
 		}
 	}
 
-	out := mcptool.CreateUserOutput{
-		User:                createdUser,
-		ProfileImageMessage: profileImageMessage,
-	}
-	return out, nil
+	return fmt.Sprintf("Successfully created user '%s' with ID: %s%s", createdUser.Username, createdUser.Id, profileImageMessage), nil
 }

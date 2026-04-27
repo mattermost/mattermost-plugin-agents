@@ -8,10 +8,8 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/public/mcptool"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestThreadData(t *testing.T) {
@@ -512,34 +510,6 @@ func TestWriteChannel(t *testing.T) {
 			},
 			expected: "ID: ch1\nName: test\nDisplay Name: Test\nType: O\nTeam ID: team1\n\n",
 		},
-		{
-			name: "channel with role admin",
-			entry: ChannelEntry{
-				Channel: &model.Channel{
-					Id:          "ch1",
-					Name:        "test",
-					DisplayName: "Test",
-					Type:        model.ChannelTypeOpen,
-				},
-				MemberCount: -1,
-				Role:        "admin",
-			},
-			expected: "ID: ch1\nName: test\nDisplay Name: Test\nType: O\nYour role: admin\n\n",
-		},
-		{
-			name: "channel with role not_member",
-			entry: ChannelEntry{
-				Channel: &model.Channel{
-					Id:          "ch1",
-					Name:        "test",
-					DisplayName: "Test",
-					Type:        model.ChannelTypeOpen,
-				},
-				MemberCount: -1,
-				Role:        "not_member",
-			},
-			expected: "ID: ch1\nName: test\nDisplay Name: Test\nType: O\nYour role: not_member\n\n",
-		},
 	}
 
 	for _, tt := range tests {
@@ -596,24 +566,23 @@ func TestWriteTeam(t *testing.T) {
 	}
 }
 
-func TestListAgentsOutput(t *testing.T) {
+func TestAgentList(t *testing.T) {
 	testCases := []struct {
-		name     string
-		out      mcptool.ListAgentsOutput
-		expected string
+		name             string
+		agents           []AgentInfo
+		currentBotUserID string
+		expected         string
 	}{
 		{
 			name:     "empty",
-			out:      mcptool.ListAgentsOutput{},
-			expected: "No agents are currently configured.",
+			agents:   nil,
+			expected: "",
 		},
 		{
 			name: "two agents no current",
-			out: mcptool.ListAgentsOutput{
-				Agents: []mcptool.AgentInfo{
-					{ID: "bot1id12345678901234567", DisplayName: "Otto", Username: "otto"},
-					{ID: "bot2id12345678901234567", DisplayName: "Claude", Username: "claude"},
-				},
+			agents: []AgentInfo{
+				{ID: "bot1id12345678901234567", DisplayName: "Otto", Username: "otto"},
+				{ID: "bot2id12345678901234567", DisplayName: "Claude", Username: "claude"},
 			},
 			expected: `Found 2 agent(s):
 
@@ -629,12 +598,10 @@ func TestListAgentsOutput(t *testing.T) {
 		},
 		{
 			name: "marks current agent",
-			out: mcptool.ListAgentsOutput{
-				Agents: []mcptool.AgentInfo{
-					{ID: "bot1id12345678901234567", DisplayName: "Otto", Username: "otto"},
-				},
-				CurrentBotUserID: "bot1id12345678901234567",
+			agents: []AgentInfo{
+				{ID: "bot1id12345678901234567", DisplayName: "Otto", Username: "otto"},
 			},
+			currentBotUserID: "bot1id12345678901234567",
 			expected: `Found 1 agent(s):
 
 1. Otto
@@ -648,250 +615,8 @@ func TestListAgentsOutput(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := ListAgentsOutput(tc.out)
-			require.NoError(t, err)
+			result := AgentList(tc.agents, tc.currentBotUserID)
 			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-// TestFormatters_AlwaysAppendPluginAnnotations exercises every public *Output
-// formatter in this package with a DTO whose PluginAnnotations contain a unique
-// sentinel string, and asserts the sentinel appears in the rendered output.
-//
-// When you add a new format.XxxOutput function, add a case here so we catch
-// any return path that forgets to call AppendPluginAnnotations.
-func TestFormatters_AlwaysAppendPluginAnnotations(t *testing.T) {
-	const sentinel = "PLUGIN_ANNOTATION_SENTINEL_F8C2A3"
-	anns := []string{sentinel}
-
-	cases := map[string]func(t *testing.T) string{
-		"SearchUsersOutput": func(t *testing.T) string {
-			s, err := SearchUsersOutput(mcptool.SearchUsersOutput{
-				Term:              "alice",
-				Users:             []*model.User{{Id: "u1", Username: "alice"}},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"SearchPostsOutput": func(t *testing.T) string {
-			s, err := SearchPostsOutput(mcptool.SearchPostsOutput{
-				Query: "hello",
-				KeywordResults: []mcptool.SearchPostResult{
-					{Post: &model.Post{Id: "p1", ChannelId: "c1", Message: "hi"}, Username: "alice", Source: "keyword"},
-				},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"ReadChannelOutput": func(t *testing.T) string {
-			s, err := ReadChannelOutput(mcptool.ReadChannelOutput{
-				Channel:           &model.Channel{Id: "c1", DisplayName: "General"},
-				Posts:             []*model.Post{{Id: "p1", UserId: "u1", Message: "hi"}},
-				Users:             map[string]*model.User{"u1": {Id: "u1", Username: "alice"}},
-				TeamName:          "Eng",
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"ReadChannelOutput_RedactedEmpty": func(t *testing.T) string {
-			s, err := ReadChannelOutput(mcptool.ReadChannelOutput{
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"ReadPostOutput": func(t *testing.T) string {
-			s, err := ReadPostOutput(mcptool.ReadPostOutput{
-				Posts:             []*model.Post{{Id: "p1", ChannelId: "c1", UserId: "u1", Message: "hi"}},
-				Users:             map[string]*model.User{"u1": {Id: "u1", Username: "alice"}},
-				ChannelName:       "General",
-				TeamName:          "Eng",
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"ChannelInfoOutput": func(t *testing.T) string {
-			s, err := ChannelInfoOutput(mcptool.ChannelInfoOutput{
-				Channels:          []*model.Channel{{Id: "c1", DisplayName: "General", TeamId: "t1"}},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"ChannelInfoOutput_RedactedEmpty": func(t *testing.T) string {
-			s, err := ChannelInfoOutput(mcptool.ChannelInfoOutput{
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"ChannelInfoOutput_MultipleMatches": func(t *testing.T) string {
-			s, err := ChannelInfoOutput(mcptool.ChannelInfoOutput{
-				Channels: []*model.Channel{
-					{Id: "c1", DisplayName: "General", TeamId: "t1"},
-					{Id: "c2", DisplayName: "General", TeamId: "t2"},
-				},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"ChannelMembersOutput": func(t *testing.T) string {
-			s, err := ChannelMembersOutput(mcptool.ChannelMembersOutput{
-				Channel:           &model.Channel{Id: "c1", DisplayName: "General"},
-				Rows:              []mcptool.ChannelMemberRow{{User: &model.User{Id: "u1", Username: "alice"}, SchemeUser: true}},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"UserChannelsOutput": func(t *testing.T) string {
-			s, err := UserChannelsOutput(mcptool.UserChannelsOutput{
-				Channels:          []*model.Channel{{Id: "c1", DisplayName: "General", TeamId: "t1"}},
-				PageInfo:          mcptool.UserChannelsPageInfo{Page: 0, PerPage: 60, TotalCount: 1},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"CreateChannelOutput": func(t *testing.T) string {
-			s, err := CreateChannelOutput(mcptool.CreateChannelOutput{
-				Channel:           &model.Channel{Id: "c1", DisplayName: "General"},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"AddUserToChannelOutput": func(t *testing.T) string {
-			s, err := AddUserToChannelOutput(mcptool.AddUserToChannelOutput{
-				UserID:            "u1",
-				ChannelID:         "c1",
-				User:              &model.User{Id: "u1", Username: "alice"},
-				Channel:           &model.Channel{Id: "c1", DisplayName: "General"},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"CreatePostOutput": func(t *testing.T) string {
-			s, err := CreatePostOutput(mcptool.CreatePostOutput{
-				Post:              &model.Post{Id: "p1", ChannelId: "c1"},
-				Channel:           &model.Channel{Id: "c1", DisplayName: "General"},
-				Team:              &model.Team{Id: "t1", DisplayName: "Eng"},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"CreatePostAsUserOutput": func(t *testing.T) string {
-			s, err := CreatePostAsUserOutput(mcptool.CreatePostAsUserOutput{
-				Post:              &model.Post{Id: "p1", ChannelId: "c1"},
-				Username:          "alice",
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"DMOutput": func(t *testing.T) string {
-			s, err := DMOutput(mcptool.DMOutput{
-				Post:              &model.Post{Id: "p1", ChannelId: "c1"},
-				TargetUser:        &model.User{Id: "u1", Username: "bob"},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"GroupMessageOutput": func(t *testing.T) string {
-			s, err := GroupMessageOutput(mcptool.GroupMessageOutput{
-				Post:              &model.Post{Id: "p1", ChannelId: "c1"},
-				Usernames:         []string{"alice", "bob"},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"TeamInfoOutput": func(t *testing.T) string {
-			s, err := TeamInfoOutput(mcptool.TeamInfoOutput{
-				Teams:             []*model.Team{{Id: "t1", DisplayName: "Eng"}},
-				MemberCount:       3,
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"TeamInfoOutput_RedactedEmpty": func(t *testing.T) string {
-			s, err := TeamInfoOutput(mcptool.TeamInfoOutput{
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"TeamInfoOutput_MultipleMatches": func(t *testing.T) string {
-			s, err := TeamInfoOutput(mcptool.TeamInfoOutput{
-				Teams: []*model.Team{
-					{Id: "t1", DisplayName: "Engineering", Name: "engineering"},
-					{Id: "t2", DisplayName: "Eng Ops", Name: "eng-ops"},
-				},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"TeamMembersOutput": func(t *testing.T) string {
-			s, err := TeamMembersOutput(mcptool.TeamMembersOutput{
-				Rows:              []mcptool.TeamMemberRow{{User: &model.User{Id: "u1", Username: "alice"}, SchemeUser: true}},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"CreateTeamOutput": func(t *testing.T) string {
-			s, err := CreateTeamOutput(mcptool.CreateTeamOutput{
-				Team:              &model.Team{Id: "t1", DisplayName: "Eng"},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"AddUserToTeamOutput": func(t *testing.T) string {
-			s, err := AddUserToTeamOutput(mcptool.AddUserToTeamOutput{
-				UserID:            "u1",
-				TeamID:            "t1",
-				User:              &model.User{Id: "u1", Username: "alice"},
-				Team:              &model.Team{Id: "t1", DisplayName: "Eng"},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"CreateUserOutput": func(t *testing.T) string {
-			s, err := CreateUserOutput(mcptool.CreateUserOutput{
-				User:              &model.User{Id: "u1", Username: "alice"},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-		"ListAgentsOutput": func(t *testing.T) string {
-			s, err := ListAgentsOutput(mcptool.ListAgentsOutput{
-				Agents:            []mcptool.AgentInfo{{ID: "u1", DisplayName: "Otto", Username: "otto"}},
-				PluginAnnotations: anns,
-			})
-			require.NoError(t, err)
-			return s
-		},
-	}
-
-	for name, fn := range cases {
-		t.Run(name, func(t *testing.T) {
-			out := fn(t)
-			assert.Contains(t, out, sentinel,
-				"formatter %q must include plugin annotations in its output (call AppendPluginAnnotations on every return path)", name)
 		})
 	}
 }

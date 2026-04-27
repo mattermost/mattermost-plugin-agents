@@ -52,43 +52,64 @@ type TestAccessArgs struct {
 	RemoteOnlyField string   `json:"remote_only_field,omitempty" access:"remote" jsonschema:"Field only available in remote mode"`
 }
 
-// TestRegisterTool_WithSchema tests that tools are properly registered with schemas.
-func TestRegisterTool_WithSchema(t *testing.T) {
+// TestRegisterDynamicTool_WithSchema tests that tools are properly registered with schemas
+func TestRegisterDynamicTool_WithSchema(t *testing.T) {
+	// Create a mock server
 	mockServer := mcp.NewServer(&mcp.Implementation{
 		Name:    "test-server",
 		Version: "1.0.0",
 	}, nil)
 
+	// Create a provider
 	provider := &MattermostToolProvider{
 		logger: &testLogger{t: t},
 	}
 
-	schema := llm.NewJSONSchemaFromStruct[TestSchemaArgs]()
-	registerTool[TestSchemaArgs](mockServer, provider, "test_tool_with_schema", "A test tool for schema validation", schema,
-		func(*MCPToolContext, llm.ToolArgumentGetter) (struct{}, error) { return struct{}{}, nil },
-		func(struct{}) (string, error) { return "ok", nil },
-	)
+	// Create a test tool with schema
+	testTool := MCPTool{
+		Name:        "test_tool_with_schema",
+		Description: "A test tool for schema validation",
+		Schema:      llm.NewJSONSchemaFromStruct[TestSchemaArgs](),
+		Resolver:    nil, // Not needed for this test
+	}
 
-	require.NotNil(t, schema, "Schema should not be nil")
-	assert.Equal(t, "object", schema.Type, "Schema should be an object type")
-	assert.NotNil(t, schema.Properties, "Schema should have properties")
+	// Register the tool - should succeed without errors
+	provider.registerDynamicTool(mockServer, testTool)
+
+	// Verify the schema was properly assigned (type safety guarantees it's valid)
+	require.NotNil(t, testTool.Schema, "Schema should not be nil")
+	assert.Equal(t, "object", testTool.Schema.Type, "Schema should be an object type")
+	assert.NotNil(t, testTool.Schema.Properties, "Schema should have properties")
+
+	t.Log("Tool with schema registered successfully")
 }
 
-// TestRegisterTool_WithoutSchema tests that tools work without schemas (empty object schema).
-func TestRegisterTool_WithoutSchema(t *testing.T) {
+// TestRegisterDynamicTool_WithoutSchema tests that tools work without schemas
+func TestRegisterDynamicTool_WithoutSchema(t *testing.T) {
+	// Create a mock server
 	mockServer := mcp.NewServer(&mcp.Implementation{
 		Name:    "test-server",
 		Version: "1.0.0",
 	}, nil)
 
+	// Create a provider
 	provider := &MattermostToolProvider{
 		logger: &testLogger{t: t},
 	}
 
-	registerTool[struct{}](mockServer, provider, "test_tool_no_schema", "A test tool without schema", nil,
-		func(*MCPToolContext, llm.ToolArgumentGetter) (struct{}, error) { return struct{}{}, nil },
-		func(struct{}) (string, error) { return "ok", nil },
-	)
+	// Create a test tool without schema
+	testTool := MCPTool{
+		Name:        "test_tool_no_schema",
+		Description: "A test tool without schema",
+		Schema:      nil,
+		Resolver:    nil, // Not needed for this test
+	}
+
+	// Register the tool
+	provider.registerDynamicTool(mockServer, testTool)
+
+	// Verify the tool was registered
+	t.Log("Tool without schema registered successfully")
 }
 
 func TestValidateAccessRestrictions_ValidFields(t *testing.T) {

@@ -13,9 +13,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/format"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/public/mcptool"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // ReadChannelArgs represents arguments for the read_channel tool
@@ -45,7 +43,7 @@ type GetChannelInfoArgs struct {
 // GetChannelMembersArgs represents arguments for the get_channel_members tool
 type GetChannelMembersArgs struct {
 	ChannelID   string `json:"channel_id" jsonschema:"ID of the channel to get members for,minLength=26,maxLength=26"`
-	Limit       int    `json:"limit,omitempty" jsonschema:"Number of members to return (default: 50, max: 50),minimum=1,maximum=50"`
+	Limit       int    `json:"limit,omitempty" jsonschema:"Number of members to return (default: 50, max: 200),minimum=1,maximum=200"`
 	Page        int    `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
 	ExcludeBots *bool  `json:"exclude_bots,omitempty" jsonschema:"Exclude bot accounts from results (default: true)"`
 }
@@ -63,60 +61,62 @@ type GetUserChannelsArgs struct {
 	PerPage int    `json:"per_page,omitempty" jsonschema:"Number of channels per page (default: 60, max: 200),minimum=1,maximum=200"`
 }
 
-// provideChannelTools registers all channel-related MCP tools.
-func (p *MattermostToolProvider) provideChannelTools(s *mcp.Server) {
-	registerTool[ReadChannelArgs](s, p, "read_channel",
-		"Read recent posts from a Mattermost channel. Parameters: channel_id (required), limit (1-100, default 20), since (ISO 8601 timestamp, optional). Returns post details including author, content, and timestamps. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 10, \"since\": \"2024-01-01T00:00:00Z\"}",
-		llm.NewJSONSchemaFromStruct[ReadChannelArgs](),
-		p.toolReadChannel,
-		format.ReadChannelOutput,
-	)
-	registerTool[CreateChannelArgs](s, p, "create_channel",
-		"Create a new channel in Mattermost. Parameters: name (URL-friendly), display_name (user-visible), type ('O' for public, 'P' for private), team_id (required), purpose (optional), header (optional). Returns created channel details. Example: {\"name\": \"dev-chat\", \"display_name\": \"Development Chat\", \"type\": \"O\", \"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
-		llm.NewJSONSchemaFromStruct[CreateChannelArgs](),
-		p.toolCreateChannel,
-		format.CreateChannelOutput,
-	)
-	registerTool[GetChannelInfoArgs](s, p, "get_channel_info",
-		"Get information about channel(s). Provide channel_id (fastest) or channel_name (matches against both display name and URL name, case-insensitive, supports partial matches). Optional: team_id to limit search scope. If multiple channels match (e.g., 'General' exists in multiple teams), returns ALL matches with team context for disambiguation. Returns channel metadata including ID, names, type, team, purpose, member count, and the requesting user's role in the channel (admin, member, guest, or not_member). Example: {\"channel_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}",
-		llm.NewJSONSchemaFromStruct[GetChannelInfoArgs](),
-		p.toolGetChannelInfo,
-		format.ChannelInfoOutput,
-	)
-	registerTool[GetChannelMembersArgs](s, p, "get_channel_members",
-		"Get members of a channel with pagination support. Parameters: channel_id (required), limit (1-50, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and join date. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 25, \"page\": 0}",
-		llm.NewJSONSchemaFromStruct[GetChannelMembersArgs](),
-		p.toolGetChannelMembers,
-		format.ChannelMembersOutput,
-	)
-	registerTool[AddUserToChannelArgs](s, p, "add_user_to_channel",
-		"Add a user to a channel. Parameters: user_id (required), channel_id (required). Returns confirmation message.",
-		llm.NewJSONSchemaFromStruct[AddUserToChannelArgs](),
-		p.toolAddUserToChannel,
-		format.AddUserToChannelOutput,
-	)
-	registerTool[GetUserChannelsArgs](s, p, "get_user_channels",
-		"Get channels the current user is a member of, including DMs and GMs. Parameters: team_id (optional, filter by team), page (default 0), per_page (1-200, default 60). Returns channel details with team info and pagination. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"per_page\": 60}",
-		llm.NewJSONSchemaFromStruct[GetUserChannelsArgs](),
-		p.toolGetUserChannels,
-		format.UserChannelsOutput,
-	)
+// getChannelTools returns all channel-related tools
+func (p *MattermostToolProvider) getChannelTools() []MCPTool {
+	return []MCPTool{
+		{
+			Name:        "read_channel",
+			Description: "Read recent posts from a Mattermost channel. Parameters: channel_id (required), limit (1-100, default 20), since (ISO 8601 timestamp, optional). Returns post details including author, content, and timestamps. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 10, \"since\": \"2024-01-01T00:00:00Z\"}",
+			Schema:      llm.NewJSONSchemaFromStruct[ReadChannelArgs](),
+			Resolver:    p.toolReadChannel,
+		},
+		{
+			Name:        "create_channel",
+			Description: "Create a new channel in Mattermost. Parameters: name (URL-friendly), display_name (user-visible), type ('O' for public, 'P' for private), team_id (required), purpose (optional), header (optional). Returns created channel details. Example: {\"name\": \"dev-chat\", \"display_name\": \"Development Chat\", \"type\": \"O\", \"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\"}",
+			Schema:      llm.NewJSONSchemaFromStruct[CreateChannelArgs](),
+			Resolver:    p.toolCreateChannel,
+		},
+		{
+			Name:        "get_channel_info",
+			Description: "Get information about channel(s). Provide channel_id (fastest) or channel_name (matches against both display name and URL name, case-insensitive, supports partial matches). Optional: team_id to limit search scope. If multiple channels match (e.g., 'General' exists in multiple teams), returns ALL matches with team context for disambiguation. Returns channel metadata including ID, names, type, team, purpose, member count, and the requesting user's role in the channel (admin, member, guest, or not_member). Example: {\"channel_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}",
+			Schema:      llm.NewJSONSchemaFromStruct[GetChannelInfoArgs](),
+			Resolver:    p.toolGetChannelInfo,
+		},
+		{
+			Name:        "get_channel_members",
+			Description: "Get members of a channel with pagination support. Parameters: channel_id (required), limit (1-200, default 50), page (0+, default 0). Returns user details for each member including username, email, display name, and join date. Example: {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\", \"limit\": 25, \"page\": 0}",
+			Schema:      llm.NewJSONSchemaFromStruct[GetChannelMembersArgs](),
+			Resolver:    p.toolGetChannelMembers,
+		},
+		{
+			Name:        "add_user_to_channel",
+			Description: "Add a user to a channel. Parameters: user_id (required), channel_id (required). Returns confirmation message.",
+			Schema:      llm.NewJSONSchemaFromStruct[AddUserToChannelArgs](),
+			Resolver:    p.toolAddUserToChannel,
+		},
+		{
+			Name:        "get_user_channels",
+			Description: "Get channels the current user is a member of, including DMs and GMs. Parameters: team_id (optional, filter by team), page (default 0), per_page (1-200, default 60). Returns channel details with team info and pagination. Example: {\"team_id\": \"w1jkn9ebkiby7qezqfxk7o5ney\", \"per_page\": 60}",
+			Schema:      llm.NewJSONSchemaFromStruct[GetUserChannelsArgs](),
+			Resolver:    p.toolGetUserChannels,
+		},
+	}
 }
 
 // toolReadChannel implements the read_channel tool.
 // It reads recent posts from a channel and formats them with author usernames.
 // Uses GetUsersByIds to fetch all authors in a single API call.
 // Makes a single GetTeam call for the channel's team context (acceptable for one channel).
-func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.ReadChannelOutput, error) {
+func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args ReadChannelArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return mcptool.ReadChannelOutput{}, fmt.Errorf("failed to get arguments for tool read_channel: %w", err)
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool read_channel: %w", err)
 	}
 
 	// Validate channel ID
 	if !model.IsValidId(args.ChannelID) {
-		return mcptool.ReadChannelOutput{}, fmt.Errorf("channel_id must be a valid ID")
+		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 	}
 
 	// Set defaults and validate
@@ -129,7 +129,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 
 	// Get client and context
 	if mcpContext.Client == nil {
-		return mcptool.ReadChannelOutput{}, fmt.Errorf("client not available in context")
+		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -139,7 +139,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	if args.Since != "" {
 		parsedTime, parseErr := time.Parse(time.RFC3339, args.Since)
 		if parseErr != nil {
-			return mcptool.ReadChannelOutput{}, fmt.Errorf("invalid timestamp format: %w", parseErr)
+			return "invalid since timestamp format", fmt.Errorf("invalid timestamp format: %w", parseErr)
 		}
 		since = parsedTime.Unix() * 1000 // Convert to milliseconds
 	}
@@ -147,7 +147,20 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	// Get channel info for context
 	channel, _, err := client.GetChannel(ctx, args.ChannelID)
 	if err != nil {
-		return mcptool.ReadChannelOutput{}, fmt.Errorf("error fetching channel: %w", err)
+		return "failed to fetch channel info", fmt.Errorf("error fetching channel: %w", err)
+	}
+
+	// Determine team display name; DMs/Groups have no team
+	channelDisplayName := channel.DisplayName
+	if channelDisplayName == "" {
+		switch channel.Type {
+		case model.ChannelTypeDirect:
+			channelDisplayName = "Direct Message"
+		case model.ChannelTypeGroup:
+			channelDisplayName = "Group Message"
+		default:
+			channelDisplayName = channel.Name
+		}
 	}
 
 	teamDisplayName := ""
@@ -163,7 +176,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	} else {
 		team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
 		if teamErr != nil {
-			return mcptool.ReadChannelOutput{}, fmt.Errorf("error fetching team: %w", teamErr)
+			return "failed to fetch team info", fmt.Errorf("error fetching team: %w", teamErr)
 		}
 		teamDisplayName = team.DisplayName
 	}
@@ -171,7 +184,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	// Get posts from the channel
 	posts, _, err := client.GetPostsForChannel(ctx, args.ChannelID, 0, args.Limit, "", false, false)
 	if err != nil {
-		return mcptool.ReadChannelOutput{}, fmt.Errorf("error fetching posts: %w", err)
+		return "failed to fetch channel posts", fmt.Errorf("error fetching posts: %w", err)
 	}
 
 	// Filter by since timestamp if provided
@@ -182,73 +195,99 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 		}
 	}
 
+	if len(filteredPosts) == 0 {
+		return "no posts found in the specified timeframe", nil
+	}
+
 	// Sort chronologically (oldest first) for natural reading order
 	sort.Slice(filteredPosts, func(i, j int) bool {
 		return filteredPosts[i].CreateAt < filteredPosts[j].CreateAt
 	})
 
-	userMap := make(map[string]*model.User)
-	if len(filteredPosts) > 0 {
-		// Collect unique user IDs and fetch all at once
-		userIDs := make([]string, 0)
-		seen := make(map[string]bool)
-		for _, post := range filteredPosts {
-			if !seen[post.UserId] {
-				seen[post.UserId] = true
-				userIDs = append(userIDs, post.UserId)
-			}
+	// Collect unique user IDs and fetch all at once
+	userIDs := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, post := range filteredPosts {
+		if !seen[post.UserId] {
+			seen[post.UserId] = true
+			userIDs = append(userIDs, post.UserId)
 		}
+	}
 
-		users, _, usersErr := client.GetUsersByIds(ctx, userIDs)
-		if usersErr != nil {
-			p.logger.Warn("failed to fetch users by IDs", "error", usersErr)
-		} else {
-			for _, u := range users {
-				userMap[u.Id] = u
+	userCache := make(map[string]string)
+	users, _, err := client.GetUsersByIds(ctx, userIDs)
+	if err != nil {
+		p.logger.Warn("failed to fetch users by IDs", "error", err)
+		for _, id := range userIDs {
+			userCache[id] = "Unknown User"
+		}
+	} else {
+		for _, user := range users {
+			userCache[user.Id] = user.Username
+		}
+		// Mark any IDs not returned as unknown
+		for _, id := range userIDs {
+			if _, exists := userCache[id]; !exists {
+				userCache[id] = "Unknown User"
 			}
 		}
 	}
 
-	out := mcptool.ReadChannelOutput{
-		Channel:  channel,
-		Posts:    filteredPosts,
-		Users:    userMap,
-		TeamName: teamDisplayName,
+	// Format the response
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channelDisplayName, teamDisplayName))
+	result.WriteString(fmt.Sprintf("Found %d posts:\n\n", len(filteredPosts)))
+
+	postIndex := format.BuildPostIndex(filteredPosts)
+	for i, post := range filteredPosts {
+		var replyAnnotation string
+		if post.RootId != "" {
+			if parentNum, ok := postIndex[post.RootId]; ok {
+				replyAnnotation = fmt.Sprintf("(reply to Post %d)", parentNum)
+			}
+		}
+		format.WritePost(&result, format.PostEntry{
+			HeaderLabel:     fmt.Sprintf("Post %d", i+1),
+			Username:        userCache[post.UserId],
+			ReplyAnnotation: replyAnnotation,
+			Post:            post,
+		})
 	}
-	return out, nil
+
+	return result.String(), nil
 }
 
 // toolCreateChannel implements the create_channel tool.
 // Creates a new public or private channel in a specified team.
-func (p *MattermostToolProvider) toolCreateChannel(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.CreateChannelOutput, error) {
+func (p *MattermostToolProvider) toolCreateChannel(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args CreateChannelArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return mcptool.CreateChannelOutput{}, fmt.Errorf("failed to get arguments for tool create_channel: %w", err)
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool create_channel: %w", err)
 	}
 
 	// Validate required fields
 	if args.Name == "" {
-		return mcptool.CreateChannelOutput{}, fmt.Errorf("name cannot be empty")
+		return "name is required", fmt.Errorf("name cannot be empty")
 	}
 	if args.DisplayName == "" {
-		return mcptool.CreateChannelOutput{}, fmt.Errorf("display_name cannot be empty")
+		return "display_name is required", fmt.Errorf("display_name cannot be empty")
 	}
 	if args.Type == "" {
-		return mcptool.CreateChannelOutput{}, fmt.Errorf("type cannot be empty")
+		return "type is required", fmt.Errorf("type cannot be empty")
 	}
 	if !model.IsValidId(args.TeamID) {
-		return mcptool.CreateChannelOutput{}, fmt.Errorf("team_id must be a valid ID")
+		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
 
 	// Validate channel type
 	if args.Type != "O" && args.Type != "P" {
-		return mcptool.CreateChannelOutput{}, fmt.Errorf("invalid channel type: %s", args.Type)
+		return "type must be 'O' for public or 'P' for private", fmt.Errorf("invalid channel type: %s", args.Type)
 	}
 
 	// Get client and context
 	if mcpContext.Client == nil {
-		return mcptool.CreateChannelOutput{}, fmt.Errorf("client not available in context")
+		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -265,168 +304,240 @@ func (p *MattermostToolProvider) toolCreateChannel(mcpContext *MCPToolContext, a
 
 	createdChannel, _, err := client.CreateChannel(ctx, channel)
 	if err != nil {
-		return mcptool.CreateChannelOutput{}, fmt.Errorf("error creating channel: %w", err)
+		return "failed to create channel", fmt.Errorf("error creating channel: %w", err)
 	}
 
-	return mcptool.CreateChannelOutput{Channel: createdChannel}, nil
+	return fmt.Sprintf("Successfully created channel '%s' with ID: %s", createdChannel.DisplayName, createdChannel.Id), nil
 }
 
 // toolGetChannelInfo implements the get_channel_info tool.
-func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.ChannelInfoOutput, error) {
+func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args GetChannelInfoArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return mcptool.ChannelInfoOutput{}, fmt.Errorf("failed to get arguments for tool get_channel_info: %w", err)
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool get_channel_info: %w", err)
 	}
 
+	// Get client and context
 	if mcpContext.Client == nil {
-		return mcptool.ChannelInfoOutput{}, fmt.Errorf("client not available in context")
+		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
+	// Validate team ID if provided
 	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
-		return mcptool.ChannelInfoOutput{}, fmt.Errorf("invalid team_id format")
+		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
 
 	var channels []*model.Channel
 
+	var lastError error
+
+	// Try different lookup methods based on provided parameters
 	switch {
 	case args.ChannelID != "":
+		// Validate channel ID format
 		if !model.IsValidId(args.ChannelID) {
-			return mcptool.ChannelInfoOutput{}, fmt.Errorf("invalid channel_id format")
+			return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 		}
-		channel, resp, getErr := client.GetChannel(ctx, args.ChannelID)
-		if getErr != nil {
+		// Direct ID lookup - fastest method, always returns single result
+		var channel *model.Channel
+		var resp *model.Response
+		channel, resp, err = client.GetChannel(ctx, args.ChannelID)
+		if err != nil {
+			// Check if it's a 404 (not found) - return success with message
 			if resp != nil && resp.StatusCode == http.StatusNotFound {
-				return mcptool.ChannelInfoOutput{}, fmt.Errorf("no channel found with ID '%s'. The channel may have been deleted or you may not have access to it", args.ChannelID)
+				return fmt.Sprintf("No channel found with ID '%s'. The channel may have been deleted or you may not have access to it.", args.ChannelID), nil
 			}
-			return mcptool.ChannelInfoOutput{}, fmt.Errorf("error fetching channel by ID: %w", getErr)
+			// Real error (network, auth, etc.)
+			return "failed to fetch channel", fmt.Errorf("error fetching channel by ID: %w", err)
 		}
 		channels = []*model.Channel{channel}
-
 	case args.ChannelName != "":
-		channels, err = p.tryFindChannelByDisplayName(ctx, client, args.ChannelName, args.TeamID)
-		if err != nil {
-			return mcptool.ChannelInfoOutput{}, err
+		// Unified lookup: try display name match, then URL name match, then substring
+		channels, lastError = p.tryFindChannelByDisplayName(ctx, client, args.ChannelName, args.TeamID)
+		if lastError != nil {
+			return "failed to search for channels", lastError
 		}
+
+		// If no display name match, try URL name
 		if len(channels) == 0 {
 			channels, err = p.tryFindChannelByName(ctx, client, args.ChannelName, args.TeamID)
 			if err != nil {
-				return mcptool.ChannelInfoOutput{}, err
+				return "failed to search for channels", err
 			}
 		}
+
+		// If still nothing and we have a team scope, try substring match on display name
 		if len(channels) == 0 && args.TeamID != "" {
 			channels, err = p.tryFindChannelBySubstring(ctx, client, args.ChannelName, args.TeamID)
 			if err != nil {
-				return mcptool.ChannelInfoOutput{}, err
+				return "failed to search for channels", err
 			}
 		}
 
 		if len(channels) == 0 {
-			return mcptool.ChannelInfoOutput{}, channelNotFoundByNameError(ctx, client, args.ChannelName, args.TeamID)
-		}
+			var notFoundMsg strings.Builder
+			notFoundMsg.WriteString(fmt.Sprintf("No channels found matching '%s'.", args.ChannelName))
 
-	default:
-		return mcptool.ChannelInfoOutput{}, fmt.Errorf("either channel_id or channel_name must be provided")
-	}
-
-	teamByID := make(map[string]*model.Team)
-	memberCountByChannelID := make(map[string]int64)
-	channelRoleByID := make(map[string]string)
-	userID := mcpContext.UserID
-
-	for _, channel := range channels {
-		if channel.TeamId != "" {
-			if _, exists := teamByID[channel.TeamId]; !exists {
-				team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+			if args.TeamID != "" {
+				team, _, teamErr := client.GetTeam(ctx, args.TeamID, "")
 				if teamErr == nil {
-					teamByID[channel.TeamId] = team
+					notFoundMsg.WriteString(fmt.Sprintf(" (searched within team '%s', ID: %s)", team.DisplayName, args.TeamID))
+				} else {
+					notFoundMsg.WriteString(fmt.Sprintf(" (searched within team ID: %s)", args.TeamID))
 				}
+			} else {
+				notFoundMsg.WriteString(" (searched across all teams)")
 			}
-		}
-		if stats, _, statsErr := client.GetChannelStats(ctx, channel.Id, "", false); statsErr == nil {
-			memberCountByChannelID[channel.Id] = stats.MemberCount
-		}
 
-		if userID != "" {
-			member, resp, memberErr := client.GetChannelMember(ctx, channel.Id, userID, "")
-			switch {
-			case memberErr == nil:
-				switch {
-				case member.SchemeAdmin:
-					channelRoleByID[channel.Id] = "admin"
-				case member.SchemeGuest:
-					channelRoleByID[channel.Id] = "guest"
-				default:
-					channelRoleByID[channel.Id] = "member"
-				}
-			case resp != nil && resp.StatusCode == http.StatusNotFound:
-				channelRoleByID[channel.Id] = "not_member"
-			default:
-				p.logger.Warn("failed to get channel member for role lookup", "channel_id", channel.Id, "error", memberErr)
+			notFoundMsg.WriteString("\n\nACTION REQUIRED - Try these alternatives before asking the user:\n")
+			stepNum := 1
+			if args.TeamID == "" {
+				notFoundMsg.WriteString(fmt.Sprintf("%d. If you know the team, call get_channel_info with team_id parameter to narrow the search\n", stepNum))
+				stepNum++
 			}
+			notFoundMsg.WriteString(fmt.Sprintf("%d. Call get_user_channels to list all channels you have access to\n", stepNum))
+			notFoundMsg.WriteString("\nOnly ask the user for help after trying all alternatives above.")
+
+			return notFoundMsg.String(), nil
 		}
+	default:
+		return "either channel_id or channel_name must be provided", fmt.Errorf("insufficient parameters for channel lookup")
 	}
 
-	return mcptool.ChannelInfoOutput{
-		Channels:               channels,
-		TeamByID:               teamByID,
-		MemberCountByChannelID: memberCountByChannelID,
-		ChannelRoleByID:        channelRoleByID,
-	}, nil
+	// If multiple channels found, return all with disambiguation guidance
+	if len(channels) > 1 {
+		return p.formatMultipleChannels(ctx, client, channels, mcpContext.UserID)
+	}
+
+	// Single channel found - format as before (backward compatible)
+	channel := channels[0]
+
+	// Get team info
+	var teamName string
+	team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+	if teamErr == nil {
+		teamName = team.DisplayName
+	}
+
+	// Get member count
+	var memberCount int64 = -1
+	stats, _, err := client.GetChannelStats(ctx, channel.Id, "", false)
+	if err == nil {
+		memberCount = stats.MemberCount
+	}
+
+	role := p.lookupChannelRole(ctx, client, channel.Id, mcpContext.UserID)
+
+	var result strings.Builder
+	format.WriteChannel(&result, format.ChannelEntry{
+		HeaderLabel: "Channel Information:",
+		Channel:     channel,
+		TeamName:    teamName,
+		TeamID:      channel.TeamId,
+		MemberCount: memberCount,
+		Role:        role,
+	})
+
+	return result.String(), nil
 }
 
-// channelNotFoundByNameError builds the descriptive not-found error for a
-// channel-name lookup, including the team scope (if any) and prescriptive
-// next steps for the LLM to try before falling back to the user.
-func channelNotFoundByNameError(ctx context.Context, client *model.Client4, channelName, teamID string) error {
-	var b strings.Builder
-	fmt.Fprintf(&b, "no channels found matching '%s'", channelName)
+// lookupChannelRole resolves the requesting user's role in a channel for display.
+// Returns "admin", "guest", "member", "not_member", or "" if the role cannot be determined.
+func (p *MattermostToolProvider) lookupChannelRole(ctx context.Context, client *model.Client4, channelID, userID string) string {
+	if userID == "" {
+		return ""
+	}
+	member, resp, err := client.GetChannelMember(ctx, channelID, userID, "")
 	switch {
-	case teamID != "":
-		teamName := ""
-		if team, _, teamErr := client.GetTeam(ctx, teamID, ""); teamErr == nil {
+	case err == nil:
+		switch {
+		case member.SchemeAdmin:
+			return "admin"
+		case member.SchemeGuest:
+			return "guest"
+		default:
+			return "member"
+		}
+	case resp != nil && resp.StatusCode == http.StatusNotFound:
+		return "not_member"
+	default:
+		p.logger.Warn("failed to get channel member for role lookup", "channel_id", channelID, "error", err)
+		return ""
+	}
+}
+
+// formatMultipleChannels formats multiple channel results with team context for disambiguation.
+// It uses a local team cache to avoid redundant GetTeam calls within the same result set.
+func (p *MattermostToolProvider) formatMultipleChannels(ctx context.Context, client *model.Client4, channels []*model.Channel, userID string) (string, error) {
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Found %d channels with matching name:\n\n", len(channels)))
+
+	// Cache teams to avoid duplicate fetches
+	teamCache := make(map[string]*model.Team)
+
+	for i, channel := range channels {
+		// Get team info from cache or fetch
+		var teamName string
+		team, exists := teamCache[channel.TeamId]
+		if !exists {
+			fetchedTeam, _, err := client.GetTeam(ctx, channel.TeamId, "")
+			if err == nil {
+				team = fetchedTeam
+				teamCache[channel.TeamId] = team
+			}
+		}
+		if team != nil {
 			teamName = team.DisplayName
 		}
-		if teamName != "" {
-			fmt.Fprintf(&b, " (searched within team '%s', ID: %s)", teamName, teamID)
-		} else {
-			fmt.Fprintf(&b, " (searched within team ID: %s)", teamID)
+
+		// Get member count
+		var memberCount int64 = -1
+		stats, _, err := client.GetChannelStats(ctx, channel.Id, "", false)
+		if err == nil {
+			memberCount = stats.MemberCount
 		}
-	default:
-		b.WriteString(" (searched across all teams)")
+
+		format.WriteChannel(&result, format.ChannelEntry{
+			HeaderLabel: fmt.Sprintf("%d. %s", i+1, channel.DisplayName),
+			Channel:     channel,
+			TeamName:    teamName,
+			TeamID:      channel.TeamId,
+			MemberCount: memberCount,
+			Role:        p.lookupChannelRole(ctx, client, channel.Id, userID),
+		})
 	}
-	b.WriteString(". ACTION REQUIRED - try these alternatives before asking the user:")
-	stepNum := 1
-	if teamID == "" {
-		fmt.Fprintf(&b, " %d. if you know the team, call get_channel_info with team_id parameter to narrow the search;", stepNum)
-		stepNum++
-	}
-	fmt.Fprintf(&b, " %d. call get_user_channels to list all channels you have access to.", stepNum)
-	return fmt.Errorf("%s", b.String())
+
+	result.WriteString("Multiple channels found. To disambiguate, either:\n")
+	result.WriteString("- Specify which team's channel you need\n")
+	result.WriteString("- Call get_channel_info again with the team_id parameter\n")
+	result.WriteString("- Use the specific channel_id from above in create_post\n")
+
+	return result.String(), nil
 }
 
 // toolGetChannelMembers implements the get_channel_members tool.
 // Returns paginated member details for a channel, including username, email, and roles.
-func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.ChannelMembersOutput, error) {
+func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args GetChannelMembersArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return mcptool.ChannelMembersOutput{}, fmt.Errorf("failed to get arguments for tool get_channel_members: %w", err)
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool get_channel_members: %w", err)
 	}
 
 	// Validate required fields
 	if !model.IsValidId(args.ChannelID) {
-		return mcptool.ChannelMembersOutput{}, fmt.Errorf("channel_id must be a valid ID")
+		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 	}
 
 	// Set defaults and validate
 	if args.Limit == 0 {
 		args.Limit = 50
 	}
-	if args.Limit > 50 {
-		args.Limit = 50
+	if args.Limit > 200 {
+		args.Limit = 200
 	}
 	if args.Page < 0 {
 		args.Page = 0
@@ -434,7 +545,7 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 
 	// Get client and context
 	if mcpContext.Client == nil {
-		return mcptool.ChannelMembersOutput{}, fmt.Errorf("client not available in context")
+		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -442,97 +553,92 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	// Default exclude_bots to true
 	excludeBots := args.ExcludeBots == nil || *args.ExcludeBots
 
-	channel, _, chErr := client.GetChannel(ctx, args.ChannelID)
-	if chErr != nil {
-		return mcptool.ChannelMembersOutput{}, fmt.Errorf("error fetching channel: %w", chErr)
-	}
-
+	// Get channel members
 	members, _, err := client.GetChannelMembers(ctx, args.ChannelID, args.Page, args.Limit, "")
 	if err != nil {
-		return mcptool.ChannelMembersOutput{}, fmt.Errorf("error fetching channel members: %w", err)
+		return "failed to fetch channel members", fmt.Errorf("error fetching channel members: %w", err)
 	}
 
 	if len(members) == 0 {
-		return mcptool.ChannelMembersOutput{
-			Channel:     channel,
-			Rows:        nil,
-			Page:        args.Page,
-			ExcludeBots: excludeBots,
-		}, nil
+		return "no members found in this channel", nil
 	}
 
-	rows := make([]mcptool.ChannelMemberRow, 0, len(members))
+	// Get user details for each member, optionally filtering bots
+	var result strings.Builder
+	botsExcluded := 0
+	var written int
+
 	for _, member := range members {
-		user, _, userErr := client.GetUser(ctx, member.UserId, "")
-		if userErr != nil {
-			p.logger.Warn("failed to get user details for member", "user_id", member.UserId, "error", userErr)
-			rows = append(rows, mcptool.ChannelMemberRow{
-				User:        &model.User{Id: member.UserId, Username: "details unavailable"},
-				SchemeAdmin: member.SchemeAdmin,
-				SchemeGuest: member.SchemeGuest,
-				SchemeUser:  member.SchemeUser,
-			})
+		user, _, err := client.GetUser(ctx, member.UserId, "")
+		if err != nil {
+			p.logger.Warn("failed to get user details for member", "user_id", member.UserId, "error", err)
+			format.WriteUser(&result, format.UserEntry{User: &model.User{Id: member.UserId, Username: "details unavailable"}})
+			written++
 			continue
 		}
-		rows = append(rows, mcptool.ChannelMemberRow{
-			User:        user,
-			SchemeAdmin: member.SchemeAdmin,
-			SchemeGuest: member.SchemeGuest,
-			SchemeUser:  member.SchemeUser,
+
+		if excludeBots && user.IsBot {
+			botsExcluded++
+			continue
+		}
+
+		format.WriteUser(&result, format.UserEntry{
+			User: user,
+			Role: format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),
 		})
+		written++
 	}
 
-	out := mcptool.ChannelMembersOutput{
-		Channel:     channel,
-		Rows:        rows,
-		Page:        args.Page,
-		ExcludeBots: excludeBots,
+	// Build header and footer
+	var header strings.Builder
+	header.WriteString(fmt.Sprintf("Channel Members (page %d, showing %d members):\n", args.Page, written))
+
+	var footer string
+	if botsExcluded > 0 {
+		footer = fmt.Sprintf("\n(%d bot account(s) excluded — set exclude_bots=false to include them)\n", botsExcluded)
 	}
-	return out, nil
+
+	return header.String() + result.String() + footer, nil
 }
 
 // toolAddUserToChannel implements the add_user_to_channel tool using the context client
-func (p *MattermostToolProvider) toolAddUserToChannel(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.AddUserToChannelOutput, error) {
+func (p *MattermostToolProvider) toolAddUserToChannel(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args AddUserToChannelArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return mcptool.AddUserToChannelOutput{}, fmt.Errorf("failed to get arguments for tool add_user_to_channel: %w", err)
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool add_user_to_channel: %w", err)
 	}
 
 	// Validate required fields
 	if !model.IsValidId(args.UserID) {
-		return mcptool.AddUserToChannelOutput{}, fmt.Errorf("user_id must be a valid ID")
+		return "invalid user_id format", fmt.Errorf("user_id must be a valid ID")
 	}
 	if !model.IsValidId(args.ChannelID) {
-		return mcptool.AddUserToChannelOutput{}, fmt.Errorf("channel_id must be a valid ID")
+		return "invalid channel_id format", fmt.Errorf("channel_id must be a valid ID")
 	}
 
 	// Get client and context
 	if mcpContext.Client == nil {
-		return mcptool.AddUserToChannelOutput{}, fmt.Errorf("client not available in context")
+		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
 
+	// Add user to channel
 	_, _, err = client.AddChannelMember(ctx, args.ChannelID, args.UserID)
 	if err != nil {
-		return mcptool.AddUserToChannelOutput{}, fmt.Errorf("error adding user to channel: %w", err)
+		return "failed to add user to channel", fmt.Errorf("error adding user to channel: %w", err)
 	}
 
+	// Get user and channel info for confirmation
 	user, _, userErr := client.GetUser(ctx, args.UserID, "")
 	channel, _, channelErr := client.GetChannel(ctx, args.ChannelID)
 
-	out := mcptool.AddUserToChannelOutput{
-		UserID:    args.UserID,
-		ChannelID: args.ChannelID,
+	if userErr != nil || channelErr != nil {
+		return fmt.Sprintf("Successfully added user %s to channel %s", args.UserID, args.ChannelID), nil
 	}
-	if userErr == nil {
-		out.User = user
-	}
-	if channelErr == nil {
-		out.Channel = channel
-	}
-	return out, nil
+
+	return fmt.Sprintf("Successfully added user '%s' to channel '%s'", user.Username, channel.DisplayName), nil
 }
 
 // tryFindChannelByDisplayName attempts to find channels by display name
@@ -679,16 +785,16 @@ func (p *MattermostToolProvider) tryFindChannelBySubstring(ctx context.Context, 
 // It returns all channels the current user is a member of, including DMs, GMs, and team channels.
 // Team information is resolved in a single batch call via GetTeamsForUser to avoid N+1 queries.
 // The response is paginated and returned as plain text with team metadata for each channel.
-func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.UserChannelsOutput, error) {
+func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args GetUserChannelsArgs
 	err := argsGetter(&args)
 	if err != nil {
-		return mcptool.UserChannelsOutput{}, fmt.Errorf("failed to get arguments for tool get_user_channels: %w", err)
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool get_user_channels: %w", err)
 	}
 
 	// Validate team ID if provided
 	if args.TeamID != "" && !model.IsValidId(args.TeamID) {
-		return mcptool.UserChannelsOutput{}, fmt.Errorf("team_id must be a valid ID")
+		return "invalid team_id format", fmt.Errorf("team_id must be a valid ID")
 	}
 
 	// Set defaults and cap to match schema (consistent with get_channel_members and get_team_members).
@@ -705,12 +811,12 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 
 	maxInt := int(^uint(0) >> 1)
 	if args.Page > maxInt/args.PerPage {
-		return mcptool.UserChannelsOutput{}, fmt.Errorf("page * per_page overflows int")
+		return "page value too large", fmt.Errorf("page * per_page overflows int")
 	}
 
 	// Get client and context
 	if mcpContext.Client == nil {
-		return mcptool.UserChannelsOutput{}, fmt.Errorf("client not available in context")
+		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
@@ -718,7 +824,7 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	// Get current user
 	user, _, err := client.GetMe(ctx, "")
 	if err != nil {
-		return mcptool.UserChannelsOutput{}, fmt.Errorf("failed to get current user: %w", err)
+		return "failed to get current user", fmt.Errorf("failed to get current user: %w", err)
 	}
 	// Fetch all channels for the user (including DMs, GMs, and team channels).
 	// NOTE: GetChannelsForUserWithLastDeleteAt does not support server-side pagination,
@@ -726,7 +832,7 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	// Pass 0 for lastDeleteAt to get all channels without filtering.
 	allChannels, _, err := client.GetChannelsForUserWithLastDeleteAt(ctx, user.Id, 0)
 	if err != nil {
-		return mcptool.UserChannelsOutput{}, fmt.Errorf("failed to get channels for user: %w", err)
+		return "failed to get channels for user", fmt.Errorf("failed to get channels for user: %w", err)
 	}
 
 	// Filter by team if specified
@@ -748,16 +854,7 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	start := args.Page * args.PerPage
 	end := start + args.PerPage
 	if start >= len(channels) {
-		return mcptool.UserChannelsOutput{
-			Channels: nil,
-			PageInfo: mcptool.UserChannelsPageInfo{
-				Page:       args.Page,
-				PerPage:    args.PerPage,
-				TotalCount: totalCount,
-				HasMore:    false,
-			},
-			TeamInfoByID: nil,
-		}, nil
+		return fmt.Sprintf("No channels found (page %d, %d total channels).", args.Page, totalCount), nil
 	}
 	if end > len(channels) {
 		end = len(channels)
@@ -765,25 +862,64 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	hasMore := end < totalCount
 	channels = channels[start:end]
 
-	teamByID := make(map[string]*model.Team)
+	// Build a map of team IDs to team info for display.
+	type TeamInfo struct {
+		ID          string
+		Name        string
+		DisplayName string
+	}
+	teamInfoMap := make(map[string]*TeamInfo)
 	userTeams, _, teamsErr := client.GetTeamsForUser(ctx, user.Id, "")
 	if teamsErr != nil {
 		p.logger.Warn("failed to fetch user teams for team info lookup, team details will be omitted", "error", teamsErr)
 	} else {
 		for _, team := range userTeams {
-			teamByID[team.Id] = team
+			teamInfoMap[team.Id] = &TeamInfo{
+				ID:          team.Id,
+				Name:        team.Name,
+				DisplayName: team.DisplayName,
+			}
 		}
 	}
 
-	out := mcptool.UserChannelsOutput{
-		Channels: channels,
-		PageInfo: mcptool.UserChannelsPageInfo{
-			Page:       args.Page,
-			PerPage:    args.PerPage,
-			TotalCount: totalCount,
-			HasMore:    hasMore,
-		},
-		TeamInfoByID: teamByID,
+	// Build human-readable response (consistent with get_channel_members, read_channel, etc.)
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("User Channels (page %d, showing %d of %d channels):\n\n", args.Page, len(channels), totalCount))
+
+	for i, channel := range channels {
+		displayName := channel.DisplayName
+		if displayName == "" {
+			switch channel.Type {
+			case model.ChannelTypeDirect:
+				displayName = "Direct Message"
+			case model.ChannelTypeGroup:
+				displayName = "Group Message"
+			default:
+				displayName = channel.Name
+			}
+		}
+
+		var teamName string
+		var teamID string
+		if channel.TeamId != "" {
+			if teamInfo, ok := teamInfoMap[channel.TeamId]; ok && teamInfo.DisplayName != "" {
+				teamName = teamInfo.DisplayName
+			}
+			teamID = channel.TeamId
+		}
+
+		format.WriteChannel(&result, format.ChannelEntry{
+			HeaderLabel: fmt.Sprintf("%d. **%s**", i+1+start, displayName),
+			Channel:     channel,
+			TeamName:    teamName,
+			TeamID:      teamID,
+			MemberCount: -1,
+		})
 	}
-	return out, nil
+
+	if hasMore {
+		result.WriteString(fmt.Sprintf("Page %d of results shown. More channels available — use page=%d to see the next page.\n", args.Page, args.Page+1))
+	}
+
+	return result.String(), nil
 }

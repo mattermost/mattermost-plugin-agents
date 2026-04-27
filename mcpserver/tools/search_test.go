@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/format"
-	"github.com/mattermost/mattermost-plugin-agents/public/mcptool"
 	"github.com/mattermost/mattermost-plugin-agents/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
@@ -63,16 +61,28 @@ func TestGetSearchTools_SchemaReflectsCapabilities(t *testing.T) {
 				searchService: tc.searchService,
 			}
 
-			schema, description := provider.searchPostsRegistration()
-			require.NotNil(t, schema, "schema should not be nil")
+			tools := provider.getSearchTools()
+			require.NotEmpty(t, tools, "should return at least one tool")
 
-			assert.Contains(t, description, tc.descriptionContains,
+			var searchPostsTool *MCPTool
+			for i := range tools {
+				if tools[i].Name == "search_posts" {
+					searchPostsTool = &tools[i]
+					break
+				}
+			}
+			require.NotNil(t, searchPostsTool, "search_posts tool should exist")
+
+			// Verify description matches capability
+			assert.Contains(t, searchPostsTool.Description, tc.descriptionContains,
 				"description should indicate correct search type")
 
-			require.NotNil(t, schema.Properties, "schema should have properties")
+			// Verify schema properties match capability
+			require.NotNil(t, searchPostsTool.Schema, "schema should not be nil")
+			require.NotNil(t, searchPostsTool.Schema.Properties, "schema should have properties")
 
-			_, hasSemanticLimit := schema.Properties["semantic_limit"]
-			_, hasSemanticOffset := schema.Properties["semantic_offset"]
+			_, hasSemanticLimit := searchPostsTool.Schema.Properties["semantic_limit"]
+			_, hasSemanticOffset := searchPostsTool.Schema.Properties["semantic_offset"]
 
 			if tc.expectSemanticParams {
 				assert.True(t, hasSemanticLimit, "combined schema should have semantic_limit")
@@ -82,21 +92,27 @@ func TestGetSearchTools_SchemaReflectsCapabilities(t *testing.T) {
 				assert.False(t, hasSemanticOffset, "keyword-only schema should not have semantic_offset")
 			}
 
-			_, hasKeywordLimit := schema.Properties["keyword_limit"]
-			_, hasKeywordOffset := schema.Properties["keyword_offset"]
+			// Both schemas should have keyword params
+			_, hasKeywordLimit := searchPostsTool.Schema.Properties["keyword_limit"]
+			_, hasKeywordOffset := searchPostsTool.Schema.Properties["keyword_offset"]
 			assert.True(t, hasKeywordLimit, "schema should have keyword_limit")
 			assert.True(t, hasKeywordOffset, "schema should have keyword_offset")
 
-			_, hasQuery := schema.Properties["query"]
+			// Both schemas should have the required query param
+			_, hasQuery := searchPostsTool.Schema.Properties["query"]
 			assert.True(t, hasQuery, "schema should have query parameter")
 		})
 	}
 }
 
 func TestFormatCombinedResults_Deduplication(t *testing.T) {
+	provider := &MattermostToolProvider{
+		logger: &testLogger{t: t},
+	}
+
 	duplicatePostID := "post123"
 
-	semanticResults := []mcptool.SearchPostResult{
+	semanticResults := []searchPostResult{
 		{
 			Post:        &model.Post{Id: duplicatePostID, ChannelId: "ch1", Message: "semantic message"},
 			ChannelName: "General",
@@ -106,7 +122,7 @@ func TestFormatCombinedResults_Deduplication(t *testing.T) {
 		},
 	}
 
-	keywordResults := []mcptool.SearchPostResult{
+	keywordResults := []searchPostResult{
 		{
 			Post:        &model.Post{Id: duplicatePostID, ChannelId: "ch1", Message: "keyword message"},
 			ChannelName: "General",
@@ -121,9 +137,10 @@ func TestFormatCombinedResults_Deduplication(t *testing.T) {
 		},
 	}
 
-	result, err := format.SearchPostsOutput(buildSearchPostsOutput("test query", semanticResults, keywordResults, true, ""))
+	result, err := provider.formatCombinedResults("test query", semanticResults, keywordResults, true, "")
 	require.NoError(t, err)
 
+	// Count occurrences of the duplicate post ID - should appear exactly once
 	occurrences := strings.Count(result, duplicatePostID)
 	assert.Equal(t, 1, occurrences,
 		"duplicate post ID should appear exactly once after deduplication")
@@ -138,10 +155,14 @@ func TestFormatCombinedResults_Deduplication(t *testing.T) {
 }
 
 func TestFormatCombinedResults_DeduplicationPrefersSemantic(t *testing.T) {
+	provider := &MattermostToolProvider{
+		logger: &testLogger{t: t},
+	}
+
 	duplicatePostID := "post123"
 
 	// Semantic result has more detail
-	semanticResults := []mcptool.SearchPostResult{
+	semanticResults := []searchPostResult{
 		{
 			Post:        &model.Post{Id: duplicatePostID, ChannelId: "ch1", Message: "detailed message"},
 			ChannelName: "General",
@@ -153,7 +174,7 @@ func TestFormatCombinedResults_DeduplicationPrefersSemantic(t *testing.T) {
 	}
 
 	// Keyword result has less detail
-	keywordResults := []mcptool.SearchPostResult{
+	keywordResults := []searchPostResult{
 		{
 			Post:        &model.Post{Id: duplicatePostID, ChannelId: "ch1", Message: "brief"},
 			ChannelName: "",
@@ -162,15 +183,20 @@ func TestFormatCombinedResults_DeduplicationPrefersSemantic(t *testing.T) {
 		},
 	}
 
-	result, err := format.SearchPostsOutput(buildSearchPostsOutput("test query", semanticResults, keywordResults, true, ""))
+	result, err := provider.formatCombinedResults("test query", semanticResults, keywordResults, true, "")
 	require.NoError(t, err)
 
+	// Verify the semantic result's details are in the output (not keyword's sparse data)
 	assert.Contains(t, result, "detailed message", "should contain semantic result's message")
 	assert.Contains(t, result, "Score: 0.95", "should contain semantic result's score")
 	assert.Contains(t, result, "General", "should contain semantic result's channel name")
 }
 
 func TestFormatCombinedResults_ZeroResults(t *testing.T) {
+	provider := &MattermostToolProvider{
+		logger: &testLogger{t: t},
+	}
+
 	testCases := []struct {
 		name            string
 		semanticEnabled bool
@@ -187,7 +213,7 @@ func TestFormatCombinedResults_ZeroResults(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := format.SearchPostsOutput(buildSearchPostsOutput("test query", nil, nil, tc.semanticEnabled, ""))
+			result, err := provider.formatCombinedResults("test query", nil, nil, tc.semanticEnabled, "")
 			require.NoError(t, err)
 			assert.NotEmpty(t, result, "should return a user-friendly message, not empty string")
 			assert.Contains(t, result, "No posts found", "should indicate no results were found")
@@ -196,16 +222,20 @@ func TestFormatCombinedResults_ZeroResults(t *testing.T) {
 }
 
 func TestFormatCombinedResults_EdgeCases(t *testing.T) {
+	provider := &MattermostToolProvider{
+		logger: &testLogger{t: t},
+	}
+
 	testCases := []struct {
 		name            string
-		semanticResults []mcptool.SearchPostResult
-		keywordResults  []mcptool.SearchPostResult
+		semanticResults []searchPostResult
+		keywordResults  []searchPostResult
 		channelFilter   string
 		checkFn         func(t *testing.T, result string)
 	}{
 		{
 			name: "empty message field",
-			keywordResults: []mcptool.SearchPostResult{
+			keywordResults: []searchPostResult{
 				{
 					Post:     &model.Post{Id: "post1", ChannelId: "ch1", Message: ""},
 					Username: "user1",
@@ -218,7 +248,7 @@ func TestFormatCombinedResults_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "unicode and emoji in content",
-			keywordResults: []mcptool.SearchPostResult{
+			keywordResults: []searchPostResult{
 				{
 					Post:        &model.Post{Id: "post1", ChannelId: "ch1", Message: "Hello 世界 🚀 émojis"},
 					ChannelName: "日本語チャンネル",
@@ -234,7 +264,7 @@ func TestFormatCombinedResults_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "missing username shows Unknown User",
-			keywordResults: []mcptool.SearchPostResult{
+			keywordResults: []searchPostResult{
 				{
 					Post:     &model.Post{Id: "post1", ChannelId: "ch1", Message: "test"},
 					Username: "",
@@ -247,7 +277,7 @@ func TestFormatCombinedResults_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "channel filter is displayed",
-			keywordResults: []mcptool.SearchPostResult{
+			keywordResults: []searchPostResult{
 				{
 					Post:     &model.Post{Id: "post1", ChannelId: "channel123456789012345678", Message: "test"},
 					Username: "user1",
@@ -262,7 +292,7 @@ func TestFormatCombinedResults_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "thread reply shows root ID",
-			keywordResults: []mcptool.SearchPostResult{
+			keywordResults: []searchPostResult{
 				{
 					Post:     &model.Post{Id: "post1", ChannelId: "ch1", Message: "reply", RootId: "rootpost123"},
 					Username: "user1",
@@ -275,7 +305,7 @@ func TestFormatCombinedResults_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "semantic results show scores",
-			semanticResults: []mcptool.SearchPostResult{
+			semanticResults: []searchPostResult{
 				{
 					Post:     &model.Post{Id: "post1", ChannelId: "ch1", Message: "test"},
 					Username: "user1",
@@ -291,7 +321,7 @@ func TestFormatCombinedResults_EdgeCases(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := format.SearchPostsOutput(buildSearchPostsOutput("test query", tc.semanticResults, tc.keywordResults, true, tc.channelFilter))
+			result, err := provider.formatCombinedResults("test query", tc.semanticResults, tc.keywordResults, true, tc.channelFilter)
 			require.NoError(t, err)
 			tc.checkFn(t, result)
 		})
@@ -299,7 +329,11 @@ func TestFormatCombinedResults_EdgeCases(t *testing.T) {
 }
 
 func TestFormatCombinedResults_OnlySemanticResults(t *testing.T) {
-	semanticResults := []mcptool.SearchPostResult{
+	provider := &MattermostToolProvider{
+		logger: &testLogger{t: t},
+	}
+
+	semanticResults := []searchPostResult{
 		{
 			Post:        &model.Post{Id: "post1", ChannelId: "ch1", Message: "semantic result"},
 			ChannelName: "General",
@@ -309,7 +343,7 @@ func TestFormatCombinedResults_OnlySemanticResults(t *testing.T) {
 		},
 	}
 
-	result, err := format.SearchPostsOutput(buildSearchPostsOutput("test query", semanticResults, nil, true, ""))
+	result, err := provider.formatCombinedResults("test query", semanticResults, nil, true, "")
 	require.NoError(t, err)
 
 	assert.Contains(t, result, "1 result for", "should report 1 total result (singular)")
@@ -319,7 +353,11 @@ func TestFormatCombinedResults_OnlySemanticResults(t *testing.T) {
 }
 
 func TestFormatCombinedResults_OnlyKeywordResults(t *testing.T) {
-	keywordResults := []mcptool.SearchPostResult{
+	provider := &MattermostToolProvider{
+		logger: &testLogger{t: t},
+	}
+
+	keywordResults := []searchPostResult{
 		{
 			Post:        &model.Post{Id: "post1", ChannelId: "ch1", Message: "keyword result"},
 			ChannelName: "General",
@@ -328,7 +366,7 @@ func TestFormatCombinedResults_OnlyKeywordResults(t *testing.T) {
 		},
 	}
 
-	result, err := format.SearchPostsOutput(buildSearchPostsOutput("test query", nil, keywordResults, true, ""))
+	result, err := provider.formatCombinedResults("test query", nil, keywordResults, true, "")
 	require.NoError(t, err)
 
 	assert.Contains(t, result, "1 result for", "should report 1 total result (singular)")
@@ -338,7 +376,11 @@ func TestFormatCombinedResults_OnlyKeywordResults(t *testing.T) {
 }
 
 func TestFormatCombinedResults_KeywordOnlyMode(t *testing.T) {
-	keywordResults := []mcptool.SearchPostResult{
+	provider := &MattermostToolProvider{
+		logger: &testLogger{t: t},
+	}
+
+	keywordResults := []searchPostResult{
 		{
 			Post:        &model.Post{Id: "post1", ChannelId: "ch1", Message: "keyword result"},
 			ChannelName: "General",
@@ -347,7 +389,8 @@ func TestFormatCombinedResults_KeywordOnlyMode(t *testing.T) {
 		},
 	}
 
-	result, err := format.SearchPostsOutput(buildSearchPostsOutput("test query", nil, keywordResults, false, ""))
+	// Call with semanticEnabled=false to simulate keyword-only mode
+	result, err := provider.formatCombinedResults("test query", nil, keywordResults, false, "")
 	require.NoError(t, err)
 
 	// In keyword-only mode, the output format is simpler
@@ -361,38 +404,6 @@ func TestFormatCombinedResults_KeywordOnlyMode(t *testing.T) {
 	// Should still contain the results
 	assert.Contains(t, result, "post1", "should contain the post ID")
 	assert.Contains(t, result, "keyword result", "should contain the message")
-}
-
-func TestFormatSearchPostsOutput_PluginAnnotations(t *testing.T) {
-	o := buildSearchPostsOutput("hello world", nil, []mcptool.SearchPostResult{
-		{
-			Post:        &model.Post{Id: "post1", ChannelId: "ch1", Message: "body"},
-			ChannelName: "Town Square",
-			Username:    "alice",
-			Source:      "keyword",
-		},
-	}, false, "")
-	o.PluginAnnotations = []string{"", "  ", "Filtered 2 results.", "second line"}
-
-	result, err := format.SearchPostsOutput(o)
-	require.NoError(t, err)
-	assert.Contains(t, result, "Filtered 2 results.")
-	assert.Contains(t, result, "second line")
-}
-
-func TestBuildSearchPostsOutput_DeduplicatesAcrossSemanticAndKeyword(t *testing.T) {
-	dupID := "samepostid"
-	semantic := []mcptool.SearchPostResult{
-		{Post: &model.Post{Id: dupID, Message: "semantic"}, Source: "semantic"},
-	}
-	keyword := []mcptool.SearchPostResult{
-		{Post: &model.Post{Id: dupID, Message: "keyword"}, Source: "keyword"},
-		{Post: &model.Post{Id: "other", Message: "k2"}, Source: "keyword"},
-	}
-	o := buildSearchPostsOutput("q", semantic, keyword, true, "")
-	require.Len(t, o.SemanticResults, 1)
-	require.Len(t, o.KeywordResults, 1)
-	require.Equal(t, "other", o.KeywordResults[0].Post.Id)
 }
 
 func TestBuildSearchTermWithChannel(t *testing.T) {

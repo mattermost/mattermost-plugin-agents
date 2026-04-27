@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/format"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,10 +52,8 @@ func TestListAgents(t *testing.T) {
 			return json.Unmarshal([]byte(`{}`), target)
 		}
 
-		out, err := provider.toolListAgents(mcpCtx, argsGetter)
+		result, err := provider.toolListAgents(mcpCtx, argsGetter)
 		require.NoError(t, err)
-		result, ferr := format.ListAgentsOutput(out)
-		require.NoError(t, ferr)
 		assert.Contains(t, result, "This is YOU")
 	})
 
@@ -67,8 +64,8 @@ func TestListAgents(t *testing.T) {
 			return json.Unmarshal([]byte(`{}`), target)
 		}
 
-		_, err := provider.toolListAgents(mcpCtx, argsGetter)
+		result, err := provider.toolListAgents(mcpCtx, argsGetter)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to reach AI plugin")
+		assert.Contains(t, result, "not reachable")
 	})
 }

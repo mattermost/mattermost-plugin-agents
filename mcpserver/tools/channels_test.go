@@ -84,14 +84,13 @@ func TestToolGetChannelInfoChannelRole(t *testing.T) {
 
 			out, err := provider.toolGetChannelInfo(mcpCtx, argsGetter)
 			require.NoError(t, err)
-			require.Len(t, out.Channels, 1)
+			assert.Contains(t, out, channelID, "expected channel ID in formatted output")
 
-			role, ok := out.ChannelRoleByID[channelID]
+			roleLine := fmt.Sprintf("Your role: %s", tt.expectedRole)
 			if tt.expectInMap {
-				require.True(t, ok, "expected role to be present in ChannelRoleByID")
-				assert.Equal(t, tt.expectedRole, role)
+				assert.Contains(t, out, roleLine, "expected role line in formatted output")
 			} else {
-				assert.False(t, ok, "expected role to be omitted from ChannelRoleByID on error")
+				assert.NotContains(t, out, "Your role:", "expected role line to be omitted on error")
 			}
 		})
 	}

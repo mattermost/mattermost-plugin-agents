@@ -292,7 +292,6 @@ func (a *API) prepareAgentBridgeCompletion(
 		for name, cfg := range req.ToolHooks {
 			hooksPayload[name] = map[string]any{
 				"before_callback": cfg.BeforeCallback,
-				"after_callback":  cfg.AfterCallback,
 			}
 		}
 		llmRequest.Context.SetMCPServerMetadata(mcp.EmbeddedClientKey, map[string]any{

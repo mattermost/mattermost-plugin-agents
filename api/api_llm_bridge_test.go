@@ -1718,7 +1718,7 @@ func TestPrepareAgentBridgeCompletionStoresToolHooksInMCPMetadata(t *testing.T) 
 			AllowedTools: []string{"eligible_tool"},
 			UserID:       testUserID,
 			ToolHooks: map[string]bridgeclient.ToolHookConfig{
-				"eligible_tool": {BeforeCallback: "/hooks/before", AfterCallback: "/hooks/after"},
+				"eligible_tool": {BeforeCallback: "/hooks/before"},
 			},
 		},
 		"com.example.caller",
@@ -1737,7 +1737,6 @@ func TestPrepareAgentBridgeCompletionStoresToolHooksInMCPMetadata(t *testing.T) 
 	eligible, ok := hooks["eligible_tool"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "/hooks/before", eligible["before_callback"])
-	require.Equal(t, "/hooks/after", eligible["after_callback"])
 }
 
 func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {

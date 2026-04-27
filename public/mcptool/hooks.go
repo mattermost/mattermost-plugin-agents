@@ -20,21 +20,3 @@ type BeforeHookRequest struct {
 type BeforeHookResponse struct {
 	Error string `json:"error,omitempty"`
 }
-
-// AfterHookRequest is the JSON body POSTed to an after-hook callback.
-// For success-path calls, Output carries the tool's output payload as JSON (one of the *Output types in this package).
-// For error-path calls, Error carries the tool resolver error string and Output is omitted.
-// UserID is the Mattermost user ID when the MCP server resolved it for the tool call (same semantics as BeforeHookRequest).
-type AfterHookRequest struct {
-	ToolName string          `json:"tool_name"`
-	UserID   string          `json:"user_id,omitempty"`
-	Output   json.RawMessage `json:"output,omitempty"`
-	Error    string          `json:"error,omitempty"`
-}
-
-// AfterHookResponse is the JSON body returned from an after-hook callback.
-// A non-empty Error aborts the tool call. Otherwise Output replaces the tool's output payload.
-type AfterHookResponse struct {
-	Output json.RawMessage `json:"output,omitempty"`
-	Error  string          `json:"error,omitempty"`
-}

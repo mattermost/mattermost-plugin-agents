@@ -10,9 +10,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/format"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/public/mcptool"
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const aiBotsAPIPath = "/plugins/mattermost-ai/ai_bots"
@@ -32,45 +30,47 @@ type AIBotsResponse struct {
 // ListAgentsArgs represents arguments for the list_agents tool.
 type ListAgentsArgs struct{}
 
-// provideAgentTools registers agent discovery MCP tools.
-func (p *MattermostToolProvider) provideAgentTools(s *mcp.Server) {
-	registerTool[ListAgentsArgs](s, p, "list_agents",
-		`List all available AI agents (bots). Returns each agent's ID, display name, and username.`,
-		llm.NewJSONSchemaFromStruct[ListAgentsArgs](),
-		p.toolListAgents,
-		format.ListAgentsOutput,
-	)
+// getAgentTools returns agent discovery tools.
+func (p *MattermostToolProvider) getAgentTools() []MCPTool {
+	return []MCPTool{
+		{
+			Name:        "list_agents",
+			Description: `List all available AI agents (bots). Returns each agent's ID, display name, and username.`,
+			Schema:      llm.NewJSONSchemaFromStruct[ListAgentsArgs](),
+			Resolver:    p.toolListAgents,
+		},
+	}
 }
 
 // toolListAgents fetches available agents via the plugin's /ai_bots endpoint.
-func (p *MattermostToolProvider) toolListAgents(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (mcptool.ListAgentsOutput, error) {
+func (p *MattermostToolProvider) toolListAgents(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 	var args ListAgentsArgs
 	if err := argsGetter(&args); err != nil {
-		return mcptool.ListAgentsOutput{}, fmt.Errorf("failed to get arguments for tool list_agents: %w", err)
+		return "invalid parameters to function", fmt.Errorf("failed to get arguments for tool list_agents: %w", err)
 	}
 
 	if mcpContext == nil || mcpContext.Client == nil {
-		return mcptool.ListAgentsOutput{}, fmt.Errorf("client not available in context")
+		return "client not available", fmt.Errorf("client not available in context")
 	}
 
 	bots, err := p.fetchAIBots(mcpContext.Client)
 	if err != nil {
-		return mcptool.ListAgentsOutput{}, fmt.Errorf("failed to fetch agents: %w", err)
+		return "Failed to retrieve agents. The AI plugin is not reachable.", fmt.Errorf("failed to fetch agents: %w", err)
 	}
 
-	infos := make([]mcptool.AgentInfo, len(bots))
+	if len(bots) == 0 {
+		return "No agents are currently configured.", nil
+	}
+
+	infos := make([]format.AgentInfo, len(bots))
 	for i := range bots {
-		infos[i] = mcptool.AgentInfo{
+		infos[i] = format.AgentInfo{
 			ID:          bots[i].ID,
 			DisplayName: bots[i].DisplayName,
 			Username:    bots[i].Username,
 		}
 	}
-	out := mcptool.ListAgentsOutput{
-		Agents:           infos,
-		CurrentBotUserID: mcpContext.BotUserID,
-	}
-	return out, nil
+	return format.AgentList(infos, mcpContext.BotUserID), nil
 }
 
 // fetchAIBots calls the plugin's /ai_bots endpoint using the authenticated Client4.
