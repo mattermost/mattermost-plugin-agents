@@ -13,7 +13,12 @@ jest.mock('react-redux', () => ({
     useSelector: jest.fn(),
 }));
 
-const mockUseSelector = useSelector as jest.Mock;
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
+const mockUseSelector = useSelector as unknown as jest.Mock;
 const formatTextMock = jest.fn((text: string) => text);
 const messageHtmlToComponentMock = jest.fn((text: string) => <div>{text}</div>);
 
@@ -61,7 +66,12 @@ beforeEach(() => {
     formatTextMock.mockClear();
     messageHtmlToComponentMock.mockClear();
 
-    window.PostUtils = {
+    (window as unknown as Window & {
+        PostUtils: {
+            formatText: typeof formatTextMock;
+            messageHtmlToComponent: typeof messageHtmlToComponentMock;
+        };
+    }).PostUtils = {
         formatText: formatTextMock,
         messageHtmlToComponent: messageHtmlToComponentMock,
     };
@@ -75,7 +85,7 @@ describe('ToolCard argument rendering', () => {
     });
 
     test('does not show the no-parameters message for hidden arguments', () => {
-        renderComponent(makeTool({arguments: undefined}));
+        renderComponent(makeTool({}));
 
         expect(screen.queryByText(/No parameters required/)).toBeNull();
         expect(formatTextMock).not.toHaveBeenCalled();
