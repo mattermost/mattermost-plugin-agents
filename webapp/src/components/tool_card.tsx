@@ -326,6 +326,13 @@ interface ToolCardProps {
     isAutoApproved?: boolean;
 }
 
+export function isEmptyToolArgumentsObject(argumentsValue: ToolCall['arguments']): boolean {
+    return argumentsValue != null &&
+        typeof argumentsValue === 'object' &&
+        !Array.isArray(argumentsValue) &&
+        Object.keys(argumentsValue).length === 0;
+}
+
 const ToolCard: React.FC<ToolCardProps> = ({
     postID,
     tool,
@@ -386,15 +393,13 @@ const ToolCard: React.FC<ToolCardProps> = ({
     }), [postID]);
 
     const renderedArguments = useMemo(() => {
-        if (!showArguments) {
+        if (!showArguments || tool.arguments == null) {
             return null;
         }
 
-        const argumentsValue = tool.arguments ?? {};
-        const isEmpty = typeof argumentsValue === 'object' && !Array.isArray(argumentsValue) && Object.keys(argumentsValue).length === 0;
-        const content = isEmpty ?
+        const content = isEmptyToolArgumentsObject(tool.arguments) ?
             formatMessage({id: 'ai.tool_call.no_parameters_required', defaultMessage: 'No parameters required'}) :
-            JSON.stringify(argumentsValue, null, 2);
+            JSON.stringify(tool.arguments, null, 2);
         const argumentsMarkdown = `\`\`\`json\n${content}\n\`\`\``;
         return messageHtmlToComponent(
             formatText(argumentsMarkdown, markdownOptions),
