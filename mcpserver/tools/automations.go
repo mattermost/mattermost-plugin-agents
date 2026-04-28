@@ -237,7 +237,7 @@ func (p *MattermostToolProvider) getAutomationTools() []MCPTool {
 			Name: "list_automations",
 			Description: `List or get channel automations (trigger-action workflows).
 Provide automation_id to get a specific automation, or use optional channel_id to filter by trigger channel.
-Returns automation details including trigger configuration and action pipeline.`,
+Returns the full JSON for each automation including trigger configuration and action pipeline.`,
 			Schema:   llm.NewJSONSchemaFromStruct[ListAutomationsArgs](),
 			Resolver: p.toolListAutomations,
 		},
@@ -255,9 +255,10 @@ Returns automation details including trigger configuration and action pipeline.`
 		},
 		{
 			Name: "update_automation",
-			Description: `Update an existing channel automation. Replaces the full definition — provide all fields.
-Call get_automation_instructions for trigger/action format details. Use list_automations first
-to get the current definition, then modify and pass the full updated flow.
+			Description: `Update an existing channel automation. Replaces the full definition — any field you
+omit will be cleared. Always call list_automations first to fetch the current JSON, then modify
+only what needs to change and pass the full updated flow back. Call get_automation_instructions
+for trigger/action format details.
 IMPORTANT: Show the user what will change and get their confirmation first.`,
 			Schema:   llm.NewJSONSchemaFromStruct[UpdateAutomationArgs](),
 			Resolver: p.toolUpdateAutomation,
@@ -328,7 +329,7 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 		return "No automations found matching the specified criteria.", nil
 	}
 
-	return formatAutomationFlows(flows), nil
+	return formatAutomationFlowsJSON(flows)
 }
 
 func (p *MattermostToolProvider) getAutomationByID(ctx context.Context, mcpContext *MCPToolContext, id string) (string, error) {
@@ -343,7 +344,7 @@ func (p *MattermostToolProvider) getAutomationByID(ctx context.Context, mcpConte
 		return "failed to parse automation", fmt.Errorf("failed to decode automation response: %w", err)
 	}
 
-	return formatAutomationFlow(flow), nil
+	return formatAutomationFlowJSON(flow)
 }
 
 func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
@@ -392,7 +393,11 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 		return "failed to parse created automation", fmt.Errorf("failed to decode create response: %w", err)
 	}
 
-	return fmt.Sprintf("Successfully created automation '%s' (ID: %s).\n\n%s", created.Name, created.ID, formatAutomationFlow(created)), nil
+	jsonStr, err := marshalAutomationFlowJSON(created)
+	if err != nil {
+		return "failed to encode created automation", err
+	}
+	return fmt.Sprintf("Successfully created automation '%s' (ID: %s).\n\n%s", created.Name, created.ID, jsonStr), nil
 }
 
 func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
@@ -442,7 +447,11 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 		return "failed to parse updated automation", fmt.Errorf("failed to decode update response: %w", err)
 	}
 
-	return fmt.Sprintf("Successfully updated automation '%s' (ID: %s).\n\n%s", updated.Name, updated.ID, formatAutomationFlow(updated)), nil
+	jsonStr, err := marshalAutomationFlowJSON(updated)
+	if err != nil {
+		return "failed to encode updated automation", err
+	}
+	return fmt.Sprintf("Successfully updated automation '%s' (ID: %s).\n\n%s", updated.Name, updated.ID, jsonStr), nil
 }
 
 func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
@@ -483,34 +492,6 @@ func triggerChannelID(t AutomationTrigger) string {
 		return t.MembershipChanged.ChannelID
 	}
 	return ""
-}
-
-// triggerTypeName returns the trigger type name based on which config is present.
-func triggerTypeName(t AutomationTrigger) string {
-	if t.MessagePosted != nil {
-		return "message_posted"
-	}
-	if t.Schedule != nil {
-		return "schedule"
-	}
-	if t.MembershipChanged != nil {
-		return "membership_changed"
-	}
-	if t.ChannelCreated != nil {
-		return "channel_created"
-	}
-	return "unknown"
-}
-
-// actionTypeName returns the action type name based on which config is present.
-func actionTypeName(a AutomationAction) string {
-	if a.SendMessage != nil {
-		return "send_message"
-	}
-	if a.AIPrompt != nil {
-		return "ai_prompt"
-	}
-	return "unknown"
 }
 
 // handleAutomationHTTPError returns a user-friendly error message for automation API failures.
@@ -568,67 +549,37 @@ func automationErrorDetail(err error) string {
 	return err.Error()
 }
 
-// formatAutomationFlows formats multiple automation flows for display.
-func formatAutomationFlows(flows []AutomationFlow) string {
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d automation(s):\n\n", len(flows)))
-
-	for i, f := range flows {
-		result.WriteString(fmt.Sprintf("%d. %s\n", i+1, formatAutomationFlow(f)))
+// marshalAutomationFlowJSON returns the indented JSON representation of a single
+// flow. The exact JSON returned can be passed back into update_automation to
+// preserve all fields (update replaces the full definition).
+func marshalAutomationFlowJSON(f AutomationFlow) (string, error) {
+	b, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal automation: %w", err)
 	}
-
-	return result.String()
+	return string(b), nil
 }
 
-// formatAutomationFlow formats a single automation flow for display.
-func formatAutomationFlow(f AutomationFlow) string {
+// formatAutomationFlowJSON returns a single automation flow as JSON, with a header.
+func formatAutomationFlowJSON(f AutomationFlow) (string, error) {
+	jsonStr, err := marshalAutomationFlowJSON(f)
+	if err != nil {
+		return "failed to encode automation", err
+	}
+	return fmt.Sprintf("Automation '%s' (ID: %s):\n\n%s", f.Name, f.ID, jsonStr), nil
+}
+
+// formatAutomationFlowsJSON returns multiple automation flows as JSON, one per entry.
+// Each entry contains the exact JSON expected by update_automation.
+func formatAutomationFlowsJSON(flows []AutomationFlow) (string, error) {
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Name: %s\n", f.Name))
-	result.WriteString(fmt.Sprintf("ID: %s\n", f.ID))
-	result.WriteString(fmt.Sprintf("Enabled: %t\n", f.Enabled))
-
-	typeName := triggerTypeName(f.Trigger)
-	chID := triggerChannelID(f.Trigger)
-	if chID != "" {
-		result.WriteString(fmt.Sprintf("Trigger: type=%s, channel=%s", typeName, chID))
-	} else {
-		result.WriteString(fmt.Sprintf("Trigger: type=%s", typeName))
-	}
-	if f.Trigger.Schedule != nil && f.Trigger.Schedule.Interval != "" {
-		result.WriteString(fmt.Sprintf(", interval=%s", f.Trigger.Schedule.Interval))
-	}
-	result.WriteString("\n")
-
-	if len(f.Actions) > 0 {
-		result.WriteString("Actions:\n")
-		for j, a := range f.Actions {
-			typName := actionTypeName(a)
-			result.WriteString(fmt.Sprintf("  %d. id=%s (type=%s", j+1, a.ID, typName))
-			if a.SendMessage != nil {
-				if a.SendMessage.ChannelID != "" {
-					result.WriteString(fmt.Sprintf(", channel=%s", a.SendMessage.ChannelID))
-				}
-				if a.SendMessage.AsBotID != "" {
-					result.WriteString(fmt.Sprintf(", as_bot_id=%s", a.SendMessage.AsBotID))
-				}
-				if a.SendMessage.Body != "" {
-					result.WriteString(fmt.Sprintf(", body=%s", a.SendMessage.Body))
-				}
-			}
-			if a.AIPrompt != nil {
-				if a.AIPrompt.Prompt != "" {
-					result.WriteString(fmt.Sprintf(", prompt=%s", a.AIPrompt.Prompt))
-				}
-				if a.AIPrompt.SystemPrompt != "" {
-					result.WriteString(fmt.Sprintf(", system_prompt=%s", a.AIPrompt.SystemPrompt))
-				}
-				if len(a.AIPrompt.AllowedTools) > 0 {
-					result.WriteString(fmt.Sprintf(", allowed_tools=%v", a.AIPrompt.AllowedTools))
-				}
-			}
-			result.WriteString(")\n")
+	result.WriteString(fmt.Sprintf("Found %d automation(s):\n\n", len(flows)))
+	for i, f := range flows {
+		jsonStr, err := marshalAutomationFlowJSON(f)
+		if err != nil {
+			return "failed to encode automation", err
 		}
+		result.WriteString(fmt.Sprintf("%d. %s (ID: %s)\n%s\n\n", i+1, f.Name, f.ID, jsonStr))
 	}
-
-	return result.String()
+	return result.String(), nil
 }
