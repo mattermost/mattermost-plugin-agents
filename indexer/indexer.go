@@ -326,14 +326,19 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	mtx.Lock()
 	defer mtx.Unlock()
 
-	// Check if job is already running (allow restart if stale)
+	// Check if job is already running (allow restart if stale). Reset
+	// jobStatus on not-found so we never act on a populated zero-row that
+	// looks like an empty status struct.
 	var jobStatus JobStatus
 	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
 	if err != nil && !mmapi.IsKVNotFound(err) {
 		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
 	}
 	hasExisting := err == nil
-	if isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
+	if !hasExisting {
+		jobStatus = JobStatus{}
+	}
+	if hasExisting && isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
 		return jobStatus, fmt.Errorf("job already running")
 	}
 

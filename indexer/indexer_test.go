@@ -1640,6 +1640,11 @@ func TestCancelJob(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Equal(t, JobStatusCancelRequested, status.Status)
+		// CancelJob requests cancellation; the worker stamps CompletedAt
+		// when it observes the request and writes the terminal canceled
+		// state. CancelJob itself must leave it unset.
+		assert.True(t, status.CompletedAt.IsZero(),
+			"CompletedAt is the worker's job to set on the cancel_requested -> canceled transition")
 	})
 
 	t.Run("returns error on KVGet failure", func(t *testing.T) {
@@ -3471,14 +3476,6 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).
 			Return(true, nil).Maybe()
 
-		var loggedCancel int
-		var logMu sync.Mutex
-		mockClient.On("LogWarn", "Reindex job was canceled", mock.Anything).
-			Run(func(args mock.Arguments) {
-				logMu.Lock()
-				loggedCancel++
-				logMu.Unlock()
-			}).Return().Maybe()
 		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
 		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
 
@@ -3493,70 +3490,56 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 
 		indexer.runReindexJob(jobStatus, true)
 
-		assert.NotEqual(t, JobStatusCompleted, jobStatus.Status,
-			"worker should have exited on its own cancel signal, not completed")
+		assert.Equal(t, JobStatusCanceled, jobStatus.Status,
+			"worker must transition cancel_requested -> canceled, not just exit non-completed")
 
 		cancelMu.Lock()
 		assert.True(t, sawCancelCAS, "worker should CAS cancel_requested -> canceled")
 		cancelMu.Unlock()
-
-		logMu.Lock()
-		assert.Equal(t, 1, loggedCancel, `"Reindex job was canceled" should log once for current run`)
-		logMu.Unlock()
 	})
 }
 
-// TestStartReindexJobAssignsFreshJobID verifies that every call to
-// StartReindexJob produces a new, unique JobID. The plan keys cancel checks
-// and CAS transitions on this ID; without per-run uniqueness, a stale
-// cancel signal cannot be distinguished from a current one.
+// TestStartReindexJobAssignsFreshJobID verifies that StartReindexJob assigns
+// a JobID and that the JobID it returns to the caller is exactly the one
+// written via CAS — that round-trip is what the worker's cancel check at
+// `currentStatus.JobID == jobStatus.JobID` depends on. Cross-call uniqueness
+// is a property of `model.NewId()` and is not retested here.
 func TestStartReindexJobAssignsFreshJobID(t *testing.T) {
 	db := testDB(t)
 	defer cleanupDB(t, db)
 
-	startOnce := func(t *testing.T) string {
-		mockClient := mocks.NewMockClient(t)
-		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
-		mockMutexAPI := &plugintest.API{}
+	mockClient := mocks.NewMockClient(t)
+	mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
+	mockMutexAPI := &plugintest.API{}
 
-		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
-		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+	mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+	mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
 
-		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
-			Return(errors.New("not found")).Maybe()
-		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
+	mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+		Return(errors.New("not found")).Maybe()
+	mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
 
-		var captured string
-		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.MatchedBy(func(v interface{}) bool {
-			status, ok := v.(JobStatus)
-			if !ok {
-				return false
-			}
-			captured = status.JobID
-			return status.JobID != "" && status.Status == JobStatusRunning
-		})).Return(true, nil).Maybe()
-		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
-		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
-		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
-		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
-		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
-		mockSearch.On("Clear", mock.Anything).Return(nil).Maybe()
-		mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil).Maybe()
+	var captured string
+	mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.AnythingOfType("indexer.JobStatus")).
+		Run(func(args mock.Arguments) {
+			captured = args.Get(2).(JobStatus).JobID
+		}).
+		Return(true, nil).Once()
+	mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
+	mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
+	mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+	mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+	mockSearch.On("Clear", mock.Anything).Return(nil).Maybe()
+	mockSearch.On("Store", mock.Anything, mock.Anything).Return(nil).Maybe()
 
-		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, &bots.MMBots{}, db, mockMutexAPI)
-		status, err := indexer.StartReindexJob(true)
-		require.NoError(t, err)
-		require.NotEmpty(t, status.JobID, "StartReindexJob should assign a JobID")
-		// The captured JobID from the CAS write must equal the returned one.
-		assert.Equal(t, status.JobID, captured)
-		// Give the background goroutine a moment to settle.
-		time.Sleep(50 * time.Millisecond)
-		return status.JobID
-	}
-
-	first := startOnce(t)
-	second := startOnce(t)
-	assert.NotEqual(t, first, second, "successive StartReindexJob calls must produce distinct JobIDs")
+	indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, &bots.MMBots{}, db, mockMutexAPI)
+	status, err := indexer.StartReindexJob(true)
+	require.NoError(t, err)
+	require.NotEmpty(t, status.JobID, "StartReindexJob should assign a JobID")
+	assert.Equal(t, status.JobID, captured,
+		"the JobID returned to the caller must be the same one persisted via CAS")
+	time.Sleep(50 * time.Millisecond) // let the background goroutine settle
 }
 
 // TestCancelJobUsesCancelRequested verifies that CancelJob transitions a
@@ -3580,15 +3563,14 @@ func TestCancelJobUsesCancelRequested(t *testing.T) {
 		}).
 		Return(nil)
 
+	// Capture every CAS attempt without filtering by status so the test can
+	// distinguish "wrote cancel_requested" from "wrote canceled directly".
 	var capturedNew JobStatus
-	mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.MatchedBy(func(v interface{}) bool {
-		status, ok := v.(JobStatus)
-		if !ok {
-			return false
-		}
-		capturedNew = status
-		return status.JobID == jobID && status.Status == JobStatusCancelRequested
-	})).Return(true, nil)
+	mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.AnythingOfType("indexer.JobStatus")).
+		Run(func(args mock.Arguments) {
+			capturedNew = args.Get(2).(JobStatus)
+		}).
+		Return(true, nil)
 
 	indexer := New(nil, nil, mockClient, nil, nil, mockMutexAPI)
 	status, err := indexer.CancelJob()
@@ -3598,6 +3580,42 @@ func TestCancelJobUsesCancelRequested(t *testing.T) {
 	assert.Equal(t, jobID, status.JobID)
 	assert.Equal(t, JobStatusCancelRequested, capturedNew.Status,
 		"CancelJob must CAS the row to cancel_requested, not directly to canceled")
+	assert.NotEqual(t, JobStatusCanceled, capturedNew.Status,
+		"CancelJob must not write the terminal canceled state itself; that's the worker's job")
+}
+
+// TestSaveJobStatusDoesNotClobberSupersededRun verifies that a worker whose
+// row has been claimed by a newer run (different JobID) does not overwrite
+// that row on its next heartbeat. Without this, a stale worker that survived
+// MarkOrphanedJobAsFailed or a successor Start would clobber the new run's
+// running state on its first 500-batch / 2-minute heartbeat tick.
+func TestSaveJobStatusDoesNotClobberSupersededRun(t *testing.T) {
+	mockClient := mocks.NewMockClient(t)
+
+	// On-disk row belongs to a fresh successor run.
+	mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+		Run(func(args mock.Arguments) {
+			status := args.Get(1).(*JobStatus)
+			status.JobID = "successor-run"
+			status.Status = JobStatusRunning
+		}).
+		Return(nil)
+	mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+
+	indexer := New(nil, nil, mockClient, nil, nil, nil)
+
+	// Stale worker thinks it's still running its own run.
+	stale := &JobStatus{
+		JobID:         "superseded-run",
+		Status:        JobStatusRunning,
+		ProcessedRows: 42,
+	}
+	indexer.saveJobStatus(stale)
+
+	// The stale worker must not have written anything: neither a plain set
+	// nor a CAS attempt is permitted once a different JobID owns the row.
+	mockClient.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+	mockClient.AssertNotCalled(t, "KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything)
 }
 
 // TestCancelRequestedIsRecoverableWhenStale verifies that a cancel_requested

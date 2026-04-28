@@ -11,6 +11,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/format"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -413,10 +414,50 @@ func (s *Indexer) getLastIndexedTimestamp() int64 {
 	return timestamp
 }
 
-// saveJobStatus saves the job status to KV store
+// saveJobStatus persists the worker's view of the job status, but only if
+// the worker still owns the row. The CAS predicate is the row currently on
+// disk: if our JobID no longer matches, we have been superseded by a newer
+// run (e.g. MarkOrphanedJobAsFailed reclaimed us, or another node started a
+// fresh job) and writing would clobber that newer state. Drop the write in
+// that case.
+//
+// Legacy callers without a JobID (none in current code, but the field has
+// omitempty so an old row could be loaded with JobID=="" through some future
+// path) fall back to a plain KVSet so the previous behavior is preserved.
 func (s *Indexer) saveJobStatus(status *JobStatus) {
-	if err := s.pluginAPI.KVSet(ReindexJobKey, status); err != nil {
-		s.pluginAPI.LogError("Failed to save job status", "error", err)
+	if status.JobID == "" {
+		if err := s.pluginAPI.KVSet(ReindexJobKey, status); err != nil {
+			s.pluginAPI.LogError("Failed to save job status", "error", err)
+		}
+		return
+	}
+
+	var current JobStatus
+	err := s.pluginAPI.KVGet(ReindexJobKey, &current)
+	if err != nil && !mmapi.IsKVNotFound(err) {
+		s.pluginAPI.LogError("Failed to read job status before save", "error", err)
+		return
+	}
+
+	if err == nil && current.JobID != "" && current.JobID != status.JobID {
+		s.pluginAPI.LogWarn("Reindex worker superseded by a newer run, dropping status write",
+			"worker_job_id", status.JobID,
+			"current_job_id", current.JobID)
+		return
+	}
+
+	var oldValue interface{}
+	if err == nil {
+		oldValue = current
+	}
+	ok, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, oldValue, *status)
+	if casErr != nil {
+		s.pluginAPI.LogError("Failed to save job status", "error", casErr)
+		return
+	}
+	if !ok {
+		s.pluginAPI.LogWarn("Reindex job status write lost a CAS race; will retry on next iteration",
+			"worker_job_id", status.JobID)
 	}
 }
 
