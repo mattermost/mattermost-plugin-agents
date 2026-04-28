@@ -567,7 +567,7 @@ func (s *Indexer) MarkOrphanedJobAsFailed() error {
 	var jobStatus JobStatus
 	err := s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
 	if err != nil {
-		if err.Error() == "not found" {
+		if mmapi.IsKVNotFound(err) {
 			return nil // No job exists, nothing to do
 		}
 		return err
@@ -584,16 +584,29 @@ func (s *Indexer) MarkOrphanedJobAsFailed() error {
 		return nil // Job is running on a different node, don't interfere
 	}
 
-	// Mark as failed - the plugin restarted while this job was running
-	jobStatus.Status = JobStatusFailed
-	jobStatus.Error = fmt.Sprintf("Job orphaned: plugin restarted on node %s while job was running", currentNodeID)
-	jobStatus.CompletedAt = time.Now()
+	// Mark as failed - the plugin restarted while this job was running.
+	// CAS predicates the write on the row we observed, so a stale replica
+	// read cannot clobber a fresh run that another node started in the
+	// meantime: the CAS will simply fail and we treat the row as
+	// already-reclaimed.
+	newStatus := jobStatus
+	newStatus.Status = JobStatusFailed
+	newStatus.Error = fmt.Sprintf("Job orphaned: plugin restarted on node %s while job was running", currentNodeID)
+	newStatus.CompletedAt = time.Now()
 
 	s.pluginAPI.LogWarn("Marking orphaned reindex job as failed",
 		"node_id", currentNodeID,
 		"processed_rows", jobStatus.ProcessedRows)
 
-	return s.pluginAPI.KVSet(ReindexJobKey, jobStatus)
+	ok, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, jobStatus, newStatus)
+	if casErr != nil {
+		return casErr
+	}
+	if !ok {
+		// Row changed concurrently — a newer run already owns it.
+		return nil
+	}
+	return nil
 }
 
 // getModelInfoFromConfig builds ModelInfo from the current configuration

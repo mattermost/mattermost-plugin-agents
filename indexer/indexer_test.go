@@ -2760,13 +2760,16 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 			}).
 			Return(nil)
 
-		// Expect KVSet to mark as failed
+		// Expect a CAS predicated on the observed row to mark as failed.
 		var savedStatus *JobStatus
-		mockClient.On("KVSet", ReindexJobKey, mock.MatchedBy(func(v interface{}) bool {
-			status := v.(JobStatus)
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v interface{}) bool {
+			status, ok := v.(JobStatus)
+			if !ok {
+				return false
+			}
 			savedStatus = &status
 			return status.Status == JobStatusFailed
-		})).Return(nil)
+		})).Return(true, nil)
 
 		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
 
@@ -2794,12 +2797,13 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 			}).
 			Return(nil)
 
-		// KVSet should NOT be called
+		// No write should happen for a job owned by another node.
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		err := indexer.MarkOrphanedJobAsFailed()
 
 		require.NoError(t, err)
 		mockClient.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+		mockClient.AssertNotCalled(t, "KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("does nothing when no job exists", func(t *testing.T) {
@@ -2813,6 +2817,7 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 
 		require.NoError(t, err)
 		mockClient.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+		mockClient.AssertNotCalled(t, "KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("does nothing when job is not running", func(t *testing.T) {
@@ -2834,6 +2839,7 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 
 		require.NoError(t, err)
 		mockClient.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+		mockClient.AssertNotCalled(t, "KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("does nothing when job is failed", func(t *testing.T) {
@@ -2849,6 +2855,34 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 				status.NodeID = hostname
 			}).
 			Return(nil)
+
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
+		err := indexer.MarkOrphanedJobAsFailed()
+
+		require.NoError(t, err)
+		mockClient.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+		mockClient.AssertNotCalled(t, "KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("does not clobber when CAS predicate fails", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		hostname, _ := os.Hostname()
+
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusRunning
+				status.NodeID = hostname
+				status.JobID = "stale-observation"
+			}).
+			Return(nil)
+
+		// CAS reports "row changed underneath us" — orphan recovery must
+		// silently bail rather than retry-clobber a freshly-claimed row.
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.Anything).
+			Return(false, nil)
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
 
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		err := indexer.MarkOrphanedJobAsFailed()
@@ -3607,14 +3641,14 @@ func TestCancelRequestedIsRecoverableWhenStale(t *testing.T) {
 			Return(nil)
 
 		var saved JobStatus
-		mockClient.On("KVSet", ReindexJobKey, mock.MatchedBy(func(v interface{}) bool {
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v interface{}) bool {
 			status, ok := v.(JobStatus)
 			if !ok {
 				return false
 			}
 			saved = status
 			return status.Status == JobStatusFailed
-		})).Return(nil)
+		})).Return(true, nil)
 		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
 
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
