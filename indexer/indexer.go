@@ -127,13 +127,18 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	mtx.Lock()
 	defer mtx.Unlock()
 
-	// Re-check after acquiring lock (double-checked locking pattern)
+	// Re-check after acquiring lock (double-checked locking pattern). Reset
+	// jobStatus on not-found so a populated optimistic-read snapshot doesn't
+	// leak into the resume carry-over below.
 	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
 	if err != nil && !mmapi.IsKVNotFound(err) {
 		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
 	}
 	hasExisting := err == nil
-	if isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
+	if !hasExisting {
+		jobStatus = JobStatus{}
+	}
+	if hasExisting && isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
 		return jobStatus, fmt.Errorf("job already running")
 	}
 
@@ -161,7 +166,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 
 	// When resuming, preserve CutoffAt, TotalRows, and ProcessedRows from the previous job
 	// so the UI shows accurate progress and catch-up covers posts from original start time
-	if !clearIndex && jobStatus.Status != "" {
+	if !clearIndex && hasExisting {
 		newJobStatus.TotalRows = jobStatus.TotalRows
 		newJobStatus.CutoffAt = jobStatus.CutoffAt
 		newJobStatus.ProcessedRows = jobStatus.ProcessedRows

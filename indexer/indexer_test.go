@@ -2089,8 +2089,10 @@ func TestRunReindexJob(t *testing.T) {
 
 		indexer.runReindexJob(jobStatus, true)
 
-		// Job should exit without completing
-		assert.NotEqual(t, JobStatusCompleted, jobStatus.Status)
+		// Worker must transition cancel_requested -> canceled, not merely
+		// exit some other way (running/failed would also satisfy != completed
+		// but would be silent regressions).
+		assert.Equal(t, JobStatusCanceled, jobStatus.Status)
 	})
 
 	t.Run("job handles clear index failure", func(t *testing.T) {
