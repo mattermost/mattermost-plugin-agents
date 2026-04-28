@@ -541,14 +541,17 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
                     rounds++;
 
-                    // Peek: does the thread contain text suggesting this is a create_post result?
-                    // If we see "Successfully created post" or similar, this is the final round.
-                    const resultText = rhs.getByText(/created post|post.*created|Successfully/i);
-                    const isCreatePostResult = await resultText.first().isVisible().catch(() => false);
+                    // Detect the final round by the actual tool card name instead of
+                    // generic success text. Earlier tool results can also include
+                    // "Successfully", which caused this test to keep the wrong round
+                    // private and then hang waiting for later approvals to disappear.
+                    const createPostTool = rhs.getByText('Create Post', { exact: true });
+                    const isCreatePostResult = await createPostTool.last().isVisible().catch(() => false);
 
                     if (isCreatePostResult) {
                         // This is the create_post result — Keep Private
-                        await clickAllButtonsInThread(invokerPage, 'Keep private');
+                        const keepPrivateCount = await clickAllButtonsInThread(invokerPage, 'Keep private');
+                        expect(keepPrivateCount).toBeGreaterThanOrEqual(1);
                         await invokerPage.waitForTimeout(2000);
                         break;
                     } else {
