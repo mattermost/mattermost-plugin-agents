@@ -144,7 +144,7 @@ Embedded MCP tools are defined in `mcpserver/tools/`. Verify the active tool lis
 
 Required env vars: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET_NAME` (set as secrets).
 
-**Upload artifacts and generate public URLs:**
+**Upload artifacts and generate embeddable PR references:**
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
@@ -155,16 +155,20 @@ REGION=$(aws s3api get-bucket-location --bucket "$AWS_S3_BUCKET_NAME" --output t
 for f in /opt/cursor/artifacts/*; do
   FILENAME=$(basename "$f")
   if [ "$REGION" = "us-east-1" ]; then
-    echo "https://$AWS_S3_BUCKET_NAME.s3.amazonaws.com/$PREFIX/$FILENAME"
+    URL="https://$AWS_S3_BUCKET_NAME.s3.amazonaws.com/$PREFIX/$FILENAME"
   else
-    echo "https://$AWS_S3_BUCKET_NAME.s3.$REGION.amazonaws.com/$PREFIX/$FILENAME"
+    URL="https://$AWS_S3_BUCKET_NAME.s3.$REGION.amazonaws.com/$PREFIX/$FILENAME"
   fi
+  case "$FILENAME" in
+    *.gif|*.jpg|*.jpeg|*.png|*.webp) echo "![${FILENAME}](${URL})" ;;
+    *) echo "[${FILENAME}](${URL})" ;;
+  esac
 done
 ```
 
 **Including in the PR description:**
 
-After uploading, add the public S3 URL to the PR description. Never include secrets, credentials, API keys, or screenshots that show them.
+After uploading, add screenshot artifacts to the PR description as Markdown images (`![alt text](public-url)`) so they render inline. Use plain links only for non-image artifacts. Never include secrets, credentials, API keys, or screenshots that show them.
 
 **Rules:**
 - Upload relevant artifacts before creating/updating the PR description.
