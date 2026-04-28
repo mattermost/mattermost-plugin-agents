@@ -4,8 +4,10 @@
 package conversations_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"testing"
@@ -18,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -930,4 +933,55 @@ func TestDMCompletionRequest_BuiltFromTurns(t *testing.T) {
 	// Should contain both user messages from turns
 	assert.Contains(t, req.Posts[1].Message, "What is 2+2?")
 	assert.Contains(t, req.Posts[2].Message, "And what is 3+3?")
+}
+
+func TestDMCompletionRequest_IncludesAttachedFiles(t *testing.T) {
+	env := setupDMTestEnv(t, dmMakeTextStream("response"))
+
+	fileID := "file-image-1"
+	fileBody := []byte("fake-image-bytes")
+	fileInfo := &model.FileInfo{Id: fileID, MimeType: "image/png", Size: int64(len(fileBody))}
+	mmClient := mocks.NewMockClient(t)
+	mmClient.On("GetFileInfo", fileID).Return(fileInfo, nil).Once()
+	mmClient.On("GetFile", fileID).Return(io.NopCloser(bytes.NewReader(fileBody)), nil).Once()
+	env.convService = conversation.NewService(env.convStore, nil, mmClient, nil)
+	env.conversations.SetConversationService(env.convService)
+
+	post := &model.Post{
+		Id:        "post-with-image",
+		UserId:    env.userID,
+		ChannelId: env.channelID,
+		Message:   "Please analyze this image",
+		FileIds:   []string{fileID},
+	}
+
+	convResult, err := env.conversations.CreateOrGetDMConversation(
+		env.botID,
+		env.user,
+		env.channel,
+		post,
+		nil,
+	)
+	require.NoError(t, err)
+
+	_, err = env.conversations.ProcessDMRequest(
+		convResult.ConversationID,
+		env.fakeLLM,
+		nil,
+	)
+	require.NoError(t, err)
+
+	env.fakeLLM.mu.Lock()
+	require.Len(t, env.fakeLLM.requests, 1)
+	req := env.fakeLLM.requests[0]
+	env.fakeLLM.mu.Unlock()
+
+	require.Len(t, req.Posts, 2)
+	require.Len(t, req.Posts[1].Files, 1)
+	assert.Equal(t, "Please analyze this image", req.Posts[1].Message)
+	assert.Equal(t, "image/png", req.Posts[1].Files[0].MimeType)
+	assert.Equal(t, int64(len(fileBody)), req.Posts[1].Files[0].Size)
+	readBody, err := io.ReadAll(req.Posts[1].Files[0].Reader)
+	require.NoError(t, err)
+	assert.Equal(t, fileBody, readBody)
 }

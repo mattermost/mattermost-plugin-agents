@@ -70,6 +70,7 @@ type CreateConversationParams struct {
 	Operation    string  // e.g., "conversation", "thread_analysis", "search"
 	SystemPrompt string  // already-formatted system prompt text
 	UserMessage  string  // the first user message content
+	UserFileIDs  []string
 	UserPostID   *string // nullable: post ID for the user turn, if a post exists
 }
 
@@ -103,7 +104,7 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 	}
 
 	turnID := model.NewId()
-	content, err := marshalBlocks(textBlocks(params.UserMessage))
+	content, err := marshalBlocks(userContentBlocks(params.UserMessage, params.UserFileIDs))
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal user message: %w", err)
 	}
@@ -171,8 +172,9 @@ type GetOrCreateParams struct {
 	ChannelID    string
 	RootPostID   string // the thread root post ID
 	Operation    string
-	SystemPrompt string  // formatted system prompt (used only if creating)
-	UserMessage  string  // new user message
+	SystemPrompt string // formatted system prompt (used only if creating)
+	UserMessage  string // new user message
+	UserFileIDs  []string
 	UserPostID   *string // post ID for the new user turn
 }
 
@@ -192,7 +194,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	}
 
 	if existing != nil {
-		turnID, appendErr := s.appendUserTurn(existing.ID, params.UserMessage, params.UserPostID)
+		turnID, appendErr := s.appendUserTurn(existing.ID, params.UserMessage, params.UserFileIDs, params.UserPostID)
 		if appendErr != nil {
 			return nil, appendErr
 		}
@@ -215,6 +217,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 		Operation:    params.Operation,
 		SystemPrompt: params.SystemPrompt,
 		UserMessage:  params.UserMessage,
+		UserFileIDs:  params.UserFileIDs,
 		UserPostID:   params.UserPostID,
 	})
 	if errors.Is(err, store.ErrConversationConflict) {
@@ -226,7 +229,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 		if raceConv == nil {
 			return nil, fmt.Errorf("conversation vanished after conflict")
 		}
-		turnID, appendErr := s.appendUserTurn(raceConv.ID, params.UserMessage, params.UserPostID)
+		turnID, appendErr := s.appendUserTurn(raceConv.ID, params.UserMessage, params.UserFileIDs, params.UserPostID)
 		if appendErr != nil {
 			return nil, appendErr
 		}
@@ -253,8 +256,8 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 }
 
 // appendUserTurn creates a new user turn at the next available sequence number.
-func (s *Service) appendUserTurn(conversationID, message string, postID *string) (string, error) {
-	content, err := marshalBlocks(textBlocks(message))
+func (s *Service) appendUserTurn(conversationID, message string, fileIDs []string, postID *string) (string, error) {
+	content, err := marshalBlocks(userContentBlocks(message, fileIDs))
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal user message: %w", err)
 	}
@@ -331,7 +334,7 @@ func (s *Service) BuildCompletionRequest(
 		Message: conv.SystemPrompt,
 	})
 
-	turnPosts, err := turnsToLLMPosts(turns, redactUnshared)
+	turnPosts, err := s.turnsToLLMPosts(turns, redactUnshared)
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +353,7 @@ func (s *Service) BuildCompletionRequest(
 // single llm.Post. Without this merge, tool_use entries go out with empty
 // Result fields and bifrost emits empty-content tool messages, which
 // Anthropic rejects with "text content blocks must be non-empty".
-func turnsToLLMPosts(turns []store.Turn, redactUnshared bool) ([]llm.Post, error) {
+func (s *Service) turnsToLLMPosts(turns []store.Turn, redactUnshared bool) ([]llm.Post, error) {
 	posts := make([]llm.Post, 0, len(turns))
 	for i := 0; i < len(turns); i++ {
 		turn := turns[i]
@@ -366,9 +369,63 @@ func turnsToLLMPosts(turns []store.Turn, redactUnshared bool) ([]llm.Post, error
 			blocks = append(blocks, nextBlocks...)
 			i++
 		}
-		posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared))
+		post, err := s.blocksToPost(blocks, turn.Role, redactUnshared)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert turn %s blocks: %w", turn.ID, err)
+		}
+		posts = append(posts, post)
 	}
 	return posts, nil
+}
+
+func (s *Service) blocksToPost(blocks []ContentBlock, role string, redactUnshared bool) (llm.Post, error) {
+	post := BlocksToPost(blocks, role, redactUnshared)
+	if role != "user" {
+		return post, nil
+	}
+
+	files, err := s.resolvePostFiles(blocks)
+	if err != nil {
+		return llm.Post{}, err
+	}
+	post.Files = files
+	return post, nil
+}
+
+func (s *Service) resolvePostFiles(blocks []ContentBlock) ([]llm.File, error) {
+	fileBlocks := make([]ContentBlock, 0)
+	for _, block := range blocks {
+		if (block.Type == BlockTypeFile || block.Type == BlockTypeImage) && block.FileID != "" {
+			fileBlocks = append(fileBlocks, block)
+		}
+	}
+	if len(fileBlocks) == 0 {
+		return nil, nil
+	}
+	if s.mmClient == nil {
+		return nil, fmt.Errorf("mmClient is required to load file attachments")
+	}
+
+	files := make([]llm.File, 0, len(fileBlocks))
+	for _, block := range fileBlocks {
+		fileInfo, err := s.mmClient.GetFileInfo(block.FileID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get file info for %s: %w", block.FileID, err)
+		}
+
+		reader, err := s.mmClient.GetFile(block.FileID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get file %s: %w", block.FileID, err)
+		}
+
+		files = append(files, llm.File{
+			MimeType: fileInfo.MimeType,
+			Size:     fileInfo.Size,
+			Reader:   reader,
+		})
+	}
+
+	return files, nil
 }
 
 // CreatePlaceholderAssistantTurn creates an empty assistant turn linked to the response post.
@@ -605,7 +662,7 @@ func (s *Service) BuildChannelMentionRequest(
 	// (precedingSeq = 0). Route through turnsToLLMPosts so tool_use and
 	// tool_result within the same tool round merge into a single llm.Post,
 	// matching BuildCompletionRequest's behavior.
-	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], redactUnshared)
+	leadingPosts, err := s.turnsToLLMPosts(turnsByPrecedingPost[0], redactUnshared)
 	if err != nil {
 		return nil, err
 	}
@@ -618,7 +675,7 @@ func (s *Service) BuildChannelMentionRequest(
 			// preceding assistant turn's tool_use blocks.
 			turn := turnByPostID[threadPost.Id]
 			run := append([]store.Turn{turn}, turnsByPrecedingPost[turn.Sequence]...)
-			runPosts, err := turnsToLLMPosts(run, redactUnshared)
+			runPosts, err := s.turnsToLLMPosts(run, redactUnshared)
 			if err != nil {
 				return nil, err
 			}

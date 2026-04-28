@@ -4,9 +4,11 @@
 package conversation
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -182,6 +185,35 @@ func TestCreateConversation(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, turns, 1)
 				assert.Nil(t, turns[0].PostID)
+			},
+		},
+		{
+			name: "stores attached file IDs on the user turn",
+			params: CreateConversationParams{
+				UserID:       model.NewId(),
+				BotID:        model.NewId(),
+				Operation:    "conversation",
+				SystemPrompt: "You are helpful",
+				UserMessage:  "Please analyze this image",
+				UserFileIDs:  []string{"file_1", "", "file_2"},
+			},
+			validate: func(t *testing.T, svc *Service, s *store.Store, result *CreateConversationResult, err error) {
+				require.NoError(t, err)
+
+				turns, err := s.GetTurnsForConversation(result.ConversationID)
+				require.NoError(t, err)
+				require.Len(t, turns, 1)
+
+				var blocks []ContentBlock
+				err = json.Unmarshal(turns[0].Content, &blocks)
+				require.NoError(t, err)
+				require.Len(t, blocks, 3)
+				assert.Equal(t, BlockTypeText, blocks[0].Type)
+				assert.Equal(t, "Please analyze this image", blocks[0].Text)
+				assert.Equal(t, BlockTypeFile, blocks[1].Type)
+				assert.Equal(t, "file_1", blocks[1].FileID)
+				assert.Equal(t, BlockTypeFile, blocks[2].Type)
+				assert.Equal(t, "file_2", blocks[2].FileID)
 			},
 		},
 	}
@@ -429,6 +461,43 @@ func TestBuildCompletionRequest_NewConversation(t *testing.T) {
 	assert.Equal(t, "You are helpful", req.Posts[0].Message)
 	assert.Equal(t, llm.PostRoleUser, req.Posts[1].Role)
 	assert.Equal(t, "What is 2+2?", req.Posts[1].Message)
+}
+
+func TestBuildCompletionRequest_LoadsAttachedFilesForUserTurns(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	fileID := model.NewId()
+	fileBody := []byte("png-bytes")
+	fileInfo := &model.FileInfo{Id: fileID, MimeType: "image/png", Size: int64(len(fileBody))}
+	mmClient := mocks.NewMockClient(t)
+	mmClient.On("GetFileInfo", fileID).Return(fileInfo, nil).Once()
+	mmClient.On("GetFile", fileID).Return(io.NopCloser(bytes.NewReader(fileBody)), nil).Once()
+	svc.mmClient = mmClient
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		Operation:    "conversation",
+		SystemPrompt: "You are helpful",
+		UserMessage:  "Describe the attachment",
+		UserFileIDs:  []string{fileID},
+	})
+	require.NoError(t, err)
+
+	conv, err := s.GetConversation(result.ConversationID)
+	require.NoError(t, err)
+
+	req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+	require.NoError(t, err)
+	require.Len(t, req.Posts, 2)
+	require.Len(t, req.Posts[1].Files, 1)
+	assert.Equal(t, "Describe the attachment", req.Posts[1].Message)
+	assert.Equal(t, "image/png", req.Posts[1].Files[0].MimeType)
+	assert.Equal(t, int64(len(fileBody)), req.Posts[1].Files[0].Size)
+
+	readBody, err := io.ReadAll(req.Posts[1].Files[0].Reader)
+	require.NoError(t, err)
+	assert.Equal(t, fileBody, readBody)
 }
 
 func TestBuildCompletionRequest_MultiTurn(t *testing.T) {

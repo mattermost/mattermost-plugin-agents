@@ -208,6 +208,7 @@ func (c *Conversations) handleMentionViaConversation(
 		Operation:    "conversation",
 		SystemPrompt: systemPrompt,
 		UserMessage:  post.Message,
+		UserFileIDs:  post.FileIds,
 		UserPostID:   &userPostID,
 	})
 	if convErr != nil {

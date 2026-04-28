@@ -19,6 +19,23 @@ func textBlocks(message string) []ContentBlock {
 	return []ContentBlock{{Type: BlockTypeText, Text: message}}
 }
 
+// userContentBlocks creates content blocks for a user message and any attached
+// Mattermost files. Attachments are stored by file ID and hydrated into
+// llm.File readers later when building the CompletionRequest.
+func userContentBlocks(message string, fileIDs []string) []ContentBlock {
+	blocks := textBlocks(message)
+	for _, fileID := range fileIDs {
+		if fileID == "" {
+			continue
+		}
+		blocks = append(blocks, ContentBlock{
+			Type:   BlockTypeFile,
+			FileID: fileID,
+		})
+	}
+	return blocks
+}
+
 // marshalBlocks serializes content blocks to JSON for store.Turn.Content.
 func marshalBlocks(blocks []ContentBlock) (json.RawMessage, error) {
 	if blocks == nil {

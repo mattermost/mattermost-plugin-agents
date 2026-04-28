@@ -145,6 +145,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 			Operation:    "conversation",
 			SystemPrompt: systemPrompt,
 			UserMessage:  post.Message,
+			UserFileIDs:  post.FileIds,
 			UserPostID:   &postID,
 		})
 		if err != nil {
@@ -161,6 +162,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 		Operation:    "conversation",
 		SystemPrompt: systemPrompt,
 		UserMessage:  post.Message,
+		UserFileIDs:  post.FileIds,
 		UserPostID:   &postID,
 	})
 	if err != nil {
