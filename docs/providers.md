@@ -21,6 +21,12 @@ The Mattermost Agents plugin currently supports these LLM providers:
 
 For any LLM provider, you'll need to configure API authentication (keys, tokens, or other authentication methods), model selection for different use cases, parameters like context length and token limits, and ensure proper connectivity to provider endpoints.
 
+### Provider error sanitization
+
+For requests routed through Bifrost, provider-originated errors are sanitized before they are returned to callers, streamed to clients, or written to the Mattermost server log. This applies to Bifrost-backed OpenAI, OpenAI Compatible, Azure OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Google Gemini, and Google Vertex AI services.
+
+Sanitization redacts echoed credentials such as bearer tokens, JSON `apiKey` values, and configured API keys while preserving the high-level error message where possible. Administrators should not expect raw secrets from these provider failures in `mattermost.log`.
+
 ## Local Models (OpenAI Compatible)
 
 The OpenAI Compatible option allows integration with any OpenAI-compatible LLM provider, such as [Ollama](https://ollama.com/):

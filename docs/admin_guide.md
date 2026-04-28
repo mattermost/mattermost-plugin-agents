@@ -389,6 +389,8 @@ Enhanced logging can help diagnose issues:
 3. Enable debug logging in the plugin configuration for additional diagnostic information.
 4. For production environments, disable debug logging and LLM Trace after troubleshooting to reduce log volume.
 
+For Bifrost-backed services (OpenAI, OpenAI Compatible, Azure OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Google Gemini, and Google Vertex AI), provider-originated errors are sanitized before they are returned to callers, streamed to clients, or written to server logs. If an upstream error echoes a bearer token, API key, or similar secret, the value is redacted, including in Bifrost internal logger output. High-level causes such as invalid credentials can still remain visible for troubleshooting.
+
 ### Tool execution failures
 
 When a tool call fails, the agent does not always stop immediately. It may continue with a follow-up model turn so it can recover, explain the failure, or answer without that tool.
