@@ -42,16 +42,23 @@ const AgentsPage = () => {
 };
 
 const PageWrapper = styled.div`
+    display: flex;
+    flex-direction: column;
     width: 100%;
     height: 100%;
     background: var(--center-channel-bg, #fff);
-    overflow-y: auto;
+    overflow: hidden;
 `;
 
 const PageContainer = styled.div`
-    max-width: 1040px;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    max-width: 960px;
     margin: 0 auto;
-    padding: 40px 32px;
+    padding: 0 32px;
 `;
 
 export default AgentsPage;

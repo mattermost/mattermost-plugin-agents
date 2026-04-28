@@ -33,6 +33,7 @@ const (
 type LLM struct {
 	client           *bifrostcore.Bifrost
 	provider         schemas.ModelProvider
+	apiKey           string // used only to redact configured secrets from provider error surfaces
 	defaultModel     string
 	inputTokenLimit  int
 	outputTokenLimit int
@@ -58,11 +59,18 @@ type Config struct {
 	Region             string // For AWS Bedrock
 	AWSAccessKeyID     string
 	AWSSecretAccessKey string
-	DefaultModel       string
-	InputTokenLimit    int
-	OutputTokenLimit   int
-	StreamingTimeout   time.Duration
-	SendUserID         bool
+
+	// Vertex AI (GCP). Region is reused from the shared Region field.
+	// VertexAuthCredentials holds the service-account JSON; empty falls back to ADC/IAM.
+	VertexProjectID       string
+	VertexProjectNumber   string
+	VertexAuthCredentials string
+
+	DefaultModel     string
+	InputTokenLimit  int
+	OutputTokenLimit int
+	StreamingTimeout time.Duration
+	SendUserID       bool
 
 	// Native tools and reasoning configuration
 	EnabledNativeTools []string
@@ -83,6 +91,9 @@ type providerAccount struct {
 	region                  string
 	awsKeyID                string
 	awsSecret               string
+	vertexProjectID         string
+	vertexProjectNumber     string
+	vertexAuthCredentials   string
 	streamingTimeoutSeconds int
 }
 
@@ -114,6 +125,16 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 			AccessKey: schemas.EnvVar{Val: a.awsKeyID},
 			SecretKey: schemas.EnvVar{Val: a.awsSecret},
 			Region:    &region,
+		}
+	}
+
+	// Handle Vertex config. Empty AuthCredentials signals ADC / attached IAM role.
+	if a.provider == schemas.Vertex {
+		key.VertexKeyConfig = &schemas.VertexKeyConfig{
+			ProjectID:       schemas.EnvVar{Val: a.vertexProjectID},
+			ProjectNumber:   schemas.EnvVar{Val: a.vertexProjectNumber},
+			Region:          schemas.EnvVar{Val: a.region},
+			AuthCredentials: schemas.EnvVar{Val: a.vertexAuthCredentials},
 		}
 	}
 
@@ -184,14 +205,13 @@ func New(cfg Config) (*LLM, error) {
 		region:                  cfg.Region,
 		awsKeyID:                cfg.AWSAccessKeyID,
 		awsSecret:               cfg.AWSSecretAccessKey,
+		vertexProjectID:         cfg.VertexProjectID,
+		vertexProjectNumber:     cfg.VertexProjectNumber,
+		vertexAuthCredentials:   cfg.VertexAuthCredentials,
 		streamingTimeoutSeconds: int(cfg.StreamingTimeout.Seconds()),
 	}
 
-	bifrostConfig := schemas.BifrostConfig{
-		Account: account,
-	}
-
-	client, err := bifrostcore.Init(context.Background(), bifrostConfig)
+	client, err := newBifrostClient(account, cfg.APIKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Bifrost client: %w", err)
 	}
@@ -209,6 +229,7 @@ func New(cfg Config) (*LLM, error) {
 	return &LLM{
 		client:             client,
 		provider:           cfg.Provider,
+		apiKey:             cfg.APIKey,
 		defaultModel:       cfg.DefaultModel,
 		inputTokenLimit:    cfg.InputTokenLimit,
 		outputTokenLimit:   outputLimit,
@@ -514,7 +535,7 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 	if bifrostErr != nil {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message),
+			Value: llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey),
 		}
 		return
 	}
@@ -566,7 +587,7 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 		if chunk.BifrostError != nil {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message),
+				Value: llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey),
 			}
 			return
 		}
@@ -748,13 +769,27 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 	}
 	reasoning := &schemas.ChatReasoning{}
 
-	if b.provider == schemas.Anthropic {
+	switch b.provider {
+	case schemas.Anthropic:
 		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
 		reasoning.MaxTokens = Ptr(budget)
-	} else {
+	case schemas.Gemini, schemas.Vertex:
+		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
+		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
+		// When an explicit budget is set use it; otherwise fall back to effort.
+		if b.thinkingBudget > 0 {
+			reasoning.MaxTokens = Ptr(b.thinkingBudget)
+		} else {
+			effort := b.reasoningEffort
+			if effort == "" {
+				effort = "medium"
+			}
+			reasoning.Effort = Ptr(effort)
+		}
+	default:
 		effort := b.reasoningEffort
 		if effort == "" {
 			effort = "medium"
@@ -1167,12 +1202,7 @@ func Ptr[T any](v T) *T {
 }
 
 func (b *LLM) providerSupportsNativeTools() bool {
-	switch b.provider {
-	case schemas.OpenAI, schemas.Azure, schemas.Anthropic:
-		return true
-	default:
-		return false
-	}
+	return supportsNativeToolsProvider(b.provider)
 }
 
 // shouldUseResponsesAPI determines if the Responses API should be used for this request.
@@ -1403,13 +1433,29 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 	}
 	reasoning := &schemas.ResponsesParametersReasoning{}
 
-	if b.provider == schemas.Anthropic {
+	switch b.provider {
+	case schemas.Anthropic:
 		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
 		reasoning.MaxTokens = Ptr(budget)
-	} else {
+	case schemas.Gemini, schemas.Vertex:
+		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
+		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
+		// Prefer an explicit budget; otherwise fall back to effort. Enable summary
+		// so the provider returns reasoning text in the stream.
+		if b.thinkingBudget > 0 {
+			reasoning.MaxTokens = Ptr(b.thinkingBudget)
+		} else {
+			effort := b.reasoningEffort
+			if effort == "" {
+				effort = "medium"
+			}
+			reasoning.Effort = Ptr(effort)
+		}
+		reasoning.Summary = Ptr("auto")
+	default:
 		effort := b.reasoningEffort
 		if effort == "" {
 			effort = "medium"
@@ -1476,7 +1522,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	if bifrostErr != nil {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message),
+			Value: llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey),
 		}
 		return
 	}
@@ -1534,7 +1580,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 		if chunk.BifrostError != nil {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message),
+				Value: llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey),
 			}
 			return
 		}

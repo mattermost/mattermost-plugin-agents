@@ -2,10 +2,25 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import styled from 'styled-components';
+import styled, {createGlobalStyle} from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 import CreatableSelect from 'react-select/creatable';
 import {StylesConfig, SingleValue} from 'react-select';
+
+import {getPortalTarget} from '../../utils/dom';
+
+// Portaled Combobox menus need to stack above the agent config modal overlay
+// (z-index 2000). Targets react-select's classNamePrefix='SystemConsoleCombobox'
+// so the z-index lives in styled-components rather than inline style props.
+// react-select v5 emits its default menuPortalCSS (z-index: 1) via an
+// @emotion/react generated className, so whether that or our global rule wins
+// depends on CSS declaration order at runtime. Use !important to make the
+// override deterministic regardless of which stylesheet is parsed last.
+const ComboboxPortalStyles = createGlobalStyle`
+    .SystemConsoleCombobox__menu-portal {
+        z-index: 10000 !important;
+    }
+`;
 
 export const ItemList = styled.div`
 	display: grid;
@@ -207,9 +222,11 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
 
     return (
         <>
+            <ComboboxPortalStyles/>
             <ItemLabel>{props.label}</ItemLabel>
             <TextFieldContainer>
                 <CreatableSelect<SelectOption, false>
+                    classNamePrefix='SystemConsoleCombobox'
                     value={currentValue}
                     onChange={handleChange}
                     options={selectOptions}
@@ -217,6 +234,8 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                     styles={selectStyles}
                     isClearable={props.isClearable ?? true}
                     formatCreateLabel={(inputValue: string) => `Use custom model: ${inputValue}`}
+                    menuPortalTarget={getPortalTarget()}
+                    menuPosition='fixed'
                 />
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>

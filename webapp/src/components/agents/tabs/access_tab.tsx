@@ -7,10 +7,10 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from '@/components/system_console/llm_access';
-import {ItemList} from '@/components/system_console/item';
+import {ItemLabel, ItemList} from '@/components/system_console/item';
 import {SelectUser} from '@/components/select';
 
-import {AgentDraft} from '../agent_config_modal';
+import {AgentDraft} from '../agent_config_view';
 
 type Props = {
     draft: AgentDraft;
@@ -24,61 +24,53 @@ const AccessTab = (props: Props) => {
     return (
         <SectionsContainer>
             {/* Channel Access Section */}
-            <Section>
-                <SectionTitle>
-                    <FormattedMessage defaultMessage='Channel access'/>
-                </SectionTitle>
-                <SectionDescription>
+            <ItemList>
+                <ChannelAccessLevelItem
+                    label={intl.formatMessage({defaultMessage: 'Channel access'})}
+                    level={draft.channelAccessLevel}
+                    onChangeLevel={(level: ChannelAccessLevel) => onChange({channelAccessLevel: level})}
+                    channelIDs={draft.channelIds}
+                    onChangeChannelIDs={(ids: string[]) => onChange({channelIds: ids})}
+                />
+                <HelpTextInSecondColumn>
                     <FormattedMessage defaultMessage='Control which channels this agent can be mentioned in.'/>
-                </SectionDescription>
-                <ItemList>
-                    <ChannelAccessLevelItem
-                        label={intl.formatMessage({defaultMessage: 'Channel access level'})}
-                        level={draft.channelAccessLevel}
-                        onChangeLevel={(level: ChannelAccessLevel) => onChange({channelAccessLevel: level})}
-                        channelIDs={draft.channelIds}
-                        onChangeChannelIDs={(ids: string[]) => onChange({channelIds: ids})}
-                    />
-                </ItemList>
-            </Section>
+                </HelpTextInSecondColumn>
+            </ItemList>
 
             {/* User Access Section */}
-            <Section>
-                <SectionTitle>
-                    <FormattedMessage defaultMessage='User access'/>
-                </SectionTitle>
-                <SectionDescription>
+            <ItemList>
+                <UserAccessLevelItem
+                    label={intl.formatMessage({defaultMessage: 'User access'})}
+                    level={draft.userAccessLevel}
+                    onChangeLevel={(level: UserAccessLevel) => onChange({userAccessLevel: level})}
+                    userIDs={draft.userIds}
+                    teamIDs={draft.teamIds}
+                    onChangeIDs={(userIds: string[], teamIds: string[]) => onChange({userIds, teamIds})}
+                />
+                <HelpTextInSecondColumn>
                     <FormattedMessage defaultMessage='Control which users can interact with this agent.'/>
-                </SectionDescription>
-                <ItemList>
-                    <UserAccessLevelItem
-                        label={intl.formatMessage({defaultMessage: 'User access level'})}
-                        level={draft.userAccessLevel}
-                        onChangeLevel={(level: UserAccessLevel) => onChange({userAccessLevel: level})}
-                        userIDs={draft.userIds}
-                        teamIDs={draft.teamIds}
-                        onChangeIDs={(userIds: string[], teamIds: string[]) => onChange({userIds, teamIds})}
-                    />
-                </ItemList>
-            </Section>
+                </HelpTextInSecondColumn>
+            </ItemList>
 
             {/* Admin Access Section */}
-            <Section>
-                <SectionTitle>
+            <ItemList>
+                <ItemLabel>
                     <FormattedMessage defaultMessage='Agent admins'/>
-                </SectionTitle>
-                <SectionDescription>
-                    <FormattedMessage defaultMessage='These users can edit and delete this agent. The agent creator is always an admin.'/>
-                </SectionDescription>
-                <SelectUser
-                    userIDs={draft.adminUserIds}
-                    teamIDs={[]}
-                    onChangeIDs={(
-                        userIds: string[],
-                        _teamIds: string[], // eslint-disable-line @typescript-eslint/no-unused-vars -- SelectUser passes (userIds, teamIds)
-                    ) => onChange({adminUserIds: userIds})}
-                />
-            </Section>
+                </ItemLabel>
+                <AdminsColumn>
+                    <SelectUser
+                        userIDs={draft.adminUserIds}
+                        teamIDs={[]}
+                        onChangeIDs={(
+                            userIds: string[],
+                            _teamIds: string[], // eslint-disable-line @typescript-eslint/no-unused-vars -- SelectUser passes (userIds, teamIds)
+                        ) => onChange({adminUserIds: userIds})}
+                    />
+                    <HelpTextInline>
+                        <FormattedMessage defaultMessage='These users can edit and delete this agent. The agent creator is always an admin.'/>
+                    </HelpTextInline>
+                </AdminsColumn>
+            </ItemList>
         </SectionsContainer>
     );
 };
@@ -91,24 +83,26 @@ const SectionsContainer = styled.div`
     gap: 32px;
 `;
 
-const Section = styled.div`
+const HelpTextInSecondColumn = styled.div`
+    grid-column: 2;
+    margin-top: -16px;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 16px;
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+`;
+
+const AdminsColumn = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 8px;
 `;
 
-const SectionTitle = styled.h3`
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--center-channel-color);
-    margin: 0;
-`;
-
-const SectionDescription = styled.p`
-    font-size: 14px;
+const HelpTextInline = styled.div`
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 16px;
     color: rgba(var(--center-channel-color-rgb), 0.72);
-    margin: 0;
-    line-height: 20px;
 `;
 
 export default AccessTab;

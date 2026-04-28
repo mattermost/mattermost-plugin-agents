@@ -74,6 +74,7 @@
     "react-dom": "18.2.0",
     "react-intl": "7.1.14",
     "react-redux": "9.2.0",
+    "react-transition-group": "4.4.5",
     "react-select": "5.10.2",
     "react-use": "17.6.0",
     "redux": "5.0.1",

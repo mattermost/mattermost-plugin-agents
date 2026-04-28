@@ -12,14 +12,7 @@ import {ChannelType, ChannelWithTeamData} from '@mattermost/types/channels';
 
 import {getAutocompleteAllUsers, getChannelById, getProfilePictureUrl, getProfilesByIds, getTeamIconUrl, getTeamsByIds, searchAllChannels, searchTeams} from '../client';
 
-function selectMenuPortalTarget(): HTMLElement | null {
-    if (typeof document === 'undefined') {
-        return null;
-    }
-
-    // Prefer #root so portaled menus inherit Mattermost theme CSS variables (same as the main app).
-    return document.getElementById('root') ?? document.body;
-}
+import {getPortalTarget} from '../utils/dom';
 
 type Option = {
     value: string;
@@ -187,7 +180,7 @@ function SelectComponent<T extends Option>(props: SelectProps<T>) {
             loadOptions={loadOptions}
             formatOptionLabel={props.formatOptionLabel}
             placeholder={props.placeholder}
-            menuPortalTarget={selectMenuPortalTarget()}
+            menuPortalTarget={getPortalTarget()}
             menuPosition='fixed'
             styles={selectStyles}
             defaultOptions={true}

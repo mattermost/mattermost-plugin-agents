@@ -4,6 +4,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/config"
 	"github.com/mattermost/mattermost-plugin-agents/indexer"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/metrics"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
@@ -191,6 +193,59 @@ func TestHandleIndexHealthCheck(t *testing.T) {
 			if tt.expectedResultStatus == "not_configured" {
 				require.True(t, result.ModelCompatible)
 			}
+		})
+	}
+}
+
+// TestHandleFetchModelsVertexAndGeminiValidation covers the switch in
+// handleFetchModels (POST /admin/models/fetch): Vertex requires project + region;
+// other supported types require an API key unless they are openaicompatible/Vertex.
+func TestHandleFetchModelsVertexAndGeminiValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]any
+	}{
+		{
+			name: "Vertex missing project ID",
+			body: map[string]any{
+				"serviceType": llm.ServiceTypeVertex,
+				"region":      "us-central1",
+			},
+		},
+		{
+			name: "Vertex missing region",
+			body: map[string]any{
+				"serviceType":     llm.ServiceTypeVertex,
+				"vertexProjectID": "my-project",
+			},
+		},
+		{
+			name: "Gemini missing API key",
+			body: map[string]any{
+				"serviceType": llm.ServiceTypeGemini,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, mockAPI, _ := setupAdminTestEnvironment(t)
+			defer mockAPI.AssertExpectations(t)
+
+			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+			mockAPI.On("LogError", mock.Anything).Return().Maybe()
+
+			raw, err := json.Marshal(tt.body)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPost, "/admin/models/fetch", bytes.NewReader(raw))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Mattermost-User-Id", "admin-user")
+
+			recorder := httptest.NewRecorder()
+			api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 		})
 	}
 }

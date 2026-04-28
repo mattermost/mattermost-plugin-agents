@@ -82,7 +82,7 @@ func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, args
 		if !isValidImageFile(fileName) {
 			profileImageMessage = " (profile image upload failed: unsupported file type, only .jpeg, .jpg, .png, .gif are supported)"
 		} else {
-			imageData, err := fetchFileDataForLocal(args.ProfileImage, mcpContext.AccessMode)
+			imageData, err := fetchFileDataForLocal(mcpContext.Ctx, args.ProfileImage, mcpContext.AccessMode)
 			if err != nil {
 				profileImageMessage = fmt.Sprintf(" (profile image upload failed: %v)", err)
 			} else {

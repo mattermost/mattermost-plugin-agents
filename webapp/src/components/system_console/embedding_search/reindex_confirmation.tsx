@@ -14,12 +14,9 @@ interface ReindexConfirmationProps {
 }
 
 export const ReindexConfirmation = ({show, onConfirm, onCancel, embeddingProviderType}: ReindexConfirmationProps) => {
-    if (!show) {
-        return null;
-    }
-
     return (
         <ConfirmationDialog
+            show={show}
             title={<FormattedMessage defaultMessage='Confirm Reindexing'/>}
             message={
                 <>

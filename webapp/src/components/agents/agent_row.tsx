@@ -78,42 +78,96 @@ const AgentRow = (props: Props) => {
         onDelete(agent);
     }, [agent, onDelete]);
 
+    const handleRowActivate = useCallback(() => {
+        if (!canManage || menuOpen) {
+            return;
+        }
+        onEdit(agent);
+    }, [canManage, menuOpen, agent, onEdit]);
+
+    const handleRowKeyDown = useCallback(
+        (e: React.KeyboardEvent) => {
+            if (!canManage || menuOpen) {
+                return;
+            }
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onEdit(agent);
+            }
+        },
+        [canManage, menuOpen, agent, onEdit],
+    );
+
+    const handleMenuButtonClick = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        setMenuOpen((prev) => !prev);
+    }, []);
+
+    const handleMenuItemEdit = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        handleEdit();
+    }, [handleEdit]);
+
+    const handleMenuItemDelete = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        handleDelete();
+    }, [handleDelete]);
+
     return (
-        <RowContainer>
-            <Avatar
-                src={avatarUrl}
-                alt={agent.displayName || agent.name || 'agent avatar'}
-            />
-            <NameColumn>
-                <DisplayName>{agent.displayName}</DisplayName>
-                <Username>{'@'}{agent.name}</Username>
-            </NameColumn>
-            <BadgesColumn>
-                {serviceUnavailable && (
-                    <ServiceWarningBadge>
-                        <FormattedMessage defaultMessage='Service unavailable'/>
-                    </ServiceWarningBadge>
-                )}
-                {mcpBadge}
-            </BadgesColumn>
+        <RowContainer
+            $clickable={canManage}
+            {...(canManage ? {
+                onClick: handleRowActivate,
+                onKeyDown: handleRowKeyDown,
+                role: 'button',
+                tabIndex: 0,
+                'aria-label': intl.formatMessage(
+                    {defaultMessage: 'Edit agent {name}'},
+                    {name: agent.displayName || agent.name},
+                ),
+            } : {})}
+        >
+            <RowMain>
+                <Avatar
+                    src={avatarUrl}
+                    alt=''
+                    aria-hidden='true'
+                />
+                <NameColumn>
+                    <DisplayName>{agent.displayName}</DisplayName>
+                    <Username>{'@'}{agent.name}</Username>
+                </NameColumn>
+                <BadgesColumn>
+                    {serviceUnavailable && (
+                        <ServiceWarningBadge>
+                            <FormattedMessage defaultMessage='Service unavailable'/>
+                        </ServiceWarningBadge>
+                    )}
+                    {mcpBadge}
+                </BadgesColumn>
+            </RowMain>
             {canManage && (
                 <ActionsColumn ref={menuRef}>
                     <MenuButton
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setMenuOpen((prev) => !prev);
-                        }}
+                        type='button'
+                        onClick={handleMenuButtonClick}
                         aria-label={intl.formatMessage({defaultMessage: 'Agent actions'})}
                     >
                         <DotsHorizontalIcon size={18}/>
                     </MenuButton>
                     {menuOpen && (
                         <DropdownMenu>
-                            <MenuItem onClick={handleEdit}>
+                            <MenuItem
+                                type='button'
+                                onClick={handleMenuItemEdit}
+                            >
                                 <PencilOutlineIcon size={16}/>
                                 <FormattedMessage defaultMessage='Edit'/>
                             </MenuItem>
-                            <MenuItemDanger onClick={handleDelete}>
+                            <MenuItemDanger
+                                type='button'
+                                onClick={handleMenuItemDelete}
+                            >
                                 <TrashCanOutlineIcon size={16}/>
                                 <FormattedMessage defaultMessage='Delete'/>
                             </MenuItemDanger>
@@ -127,7 +181,7 @@ const AgentRow = (props: Props) => {
 
 // --- Styled Components ---
 
-const RowContainer = styled.div`
+const RowContainer = styled.div<{$clickable: boolean}>`
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -137,10 +191,29 @@ const RowContainer = styled.div`
     border-radius: 4px;
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
     background: var(--center-channel-bg, #fff);
+    cursor: ${({$clickable}) => ($clickable ? 'pointer' : 'default')};
+    outline: none;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
     }
+
+    ${({$clickable}) =>
+        $clickable &&
+        `
+        &:focus-visible {
+            box-shadow: 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
+        }
+    `}
+`;
+
+const RowMain = styled.div`
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
 `;
 
 const Avatar = styled.img`
