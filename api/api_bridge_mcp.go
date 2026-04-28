@@ -66,6 +66,16 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 		})
 		return
 	}
+	// Reject non-absolute paths at registration time. The PluginHTTP transport
+	// concatenates "/" + pluginID + cfg.Path, so a path like "mcp" would yield
+	// "/com.example.pluginmcp" instead of "/com.example.plugin/mcp" and break
+	// tool discovery. Surface misconfiguration to plugin authors immediately.
+	if cfg.Path[0] != '/' {
+		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
+			Error: "path must be absolute (start with '/')",
+		})
+		return
+	}
 
 	callerPluginID := c.GetHeader("Mattermost-Plugin-ID")
 	if cfg.PluginID != callerPluginID {

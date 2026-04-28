@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,6 +21,10 @@ const (
 	registerPath   = "/bridge/v1/mcp/register"
 	unregisterPath = "/bridge/v1/mcp/unregister"
 )
+
+// unregisterTimeout bounds Unregister()'s blocking POST so a hung Agents
+// plugin cannot stall OnDeactivate. var (not const) for test override.
+var unregisterTimeout = 5 * time.Second
 
 // Register asynchronously registers this server with the Agents plugin and
 // returns immediately.
@@ -62,6 +67,9 @@ func (s *Server) registerOnce(ctx context.Context) (bool, error) {
 }
 
 func (s *Server) postRegistration(ctx context.Context, path string, body any) (bool, error) {
+	if s.pluginAPI == nil {
+		return false, errors.New("mcphelper: PluginAPI is required for registration")
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return false, fmt.Errorf("marshal payload: %w", err)
@@ -81,15 +89,23 @@ func (s *Server) postRegistration(ctx context.Context, path string, body any) (b
 
 	switch {
 	case resp.StatusCode == http.StatusOK:
-		_, _ = io.Copy(io.Discard, resp.Body)
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			return false, fmt.Errorf("drain response body: %w", err)
+		}
 		return false, nil
 	case resp.StatusCode == http.StatusNotFound,
 		resp.StatusCode == http.StatusTooManyRequests,
 		resp.StatusCode >= 500:
-		msg, _ := io.ReadAll(resp.Body)
+		msg, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return true, fmt.Errorf("read error response body: %w", err)
+		}
 		return true, fmt.Errorf("status %d: %s", resp.StatusCode, string(msg))
 	default:
-		msg, _ := io.ReadAll(resp.Body)
+		msg, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return false, fmt.Errorf("read error response body: %w", err)
+		}
 		return false, fmt.Errorf("status %d: %s", resp.StatusCode, string(msg))
 	}
 }
@@ -99,6 +115,8 @@ func (s *Server) postRegistration(ctx context.Context, path string, body any) (b
 // OnDeactivate: bounded wait, single attempt.
 func (s *Server) Unregister() error {
 	s.regCancel()
-	_, err := s.postRegistration(context.Background(), unregisterPath, s.config)
+	ctx, cancel := context.WithTimeout(context.Background(), unregisterTimeout)
+	defer cancel()
+	_, err := s.postRegistration(ctx, unregisterPath, s.config)
 	return err
 }

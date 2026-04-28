@@ -34,21 +34,27 @@ func (p *proxyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	r := req.Clone(req.Context())
 	r.URL.Path = "/" + p.pluginID + p.basePath
 
-	respCh := make(chan *http.Response, 1)
+	respCh := make(chan *http.Response)
 	go func() {
-		respCh <- p.pluginAPI.PluginHTTP(r)
+		resp := p.pluginAPI.PluginHTTP(r)
+		select {
+		case respCh <- resp:
+		case <-req.Context().Done():
+			if resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+		}
 	}()
 
-	var resp *http.Response
 	select {
-	case resp = <-respCh:
+	case resp := <-respCh:
+		if resp == nil {
+			return nil, fmt.Errorf("PluginHTTP returned nil response for plugin %s", p.pluginID)
+		}
+		return resp, nil
 	case <-req.Context().Done():
 		return nil, req.Context().Err()
 	}
-	if resp == nil {
-		return nil, fmt.Errorf("PluginHTTP returned nil response for plugin %s", p.pluginID)
-	}
-	return resp, nil
 }
 
 // headerInjector sets fixed headers on every outbound request.

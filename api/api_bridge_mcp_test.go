@@ -142,6 +142,16 @@ func TestHandleMCPRegister(t *testing.T) {
 			assertMock: func(t *testing.T, m *mockMCPClientManager) { require.Empty(t, m.registerCalls) },
 		},
 		{
+			name: "non-absolute path rejected — would yield /<pluginID><path> at runtime",
+			body: mcp.PluginServerConfig{
+				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "mcp", Enabled: true,
+			},
+			header:     testCallerPluginID,
+			wantStatus: http.StatusBadRequest,
+			wantErrSub: "path must be absolute",
+			assertMock: func(t *testing.T, m *mockMCPClientManager) { require.Empty(t, m.registerCalls) },
+		},
+		{
 			name:       "SECURITY: plugin_id mismatch — 403, no registry mutation",
 			body:       mcp.PluginServerConfig{PluginID: testOtherPluginID, Name: "Fake", Path: "/mcp", Enabled: true},
 			header:     testEvilPluginID,

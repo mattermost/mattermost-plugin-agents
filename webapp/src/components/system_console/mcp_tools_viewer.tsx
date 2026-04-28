@@ -32,6 +32,7 @@ export type MCPServerInfo = {
     // Plugin-server fields; remote and embedded rows read state from mcpConfig.
     serverType?: string;
     enabled?: boolean;
+    exposeExternal?: boolean;
     toolConfigs?: MCPToolConfig[];
 };
 
@@ -55,7 +56,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
     const [clearSuccess, setClearSuccess] = useState<string | null>(null);
     const seededRef = useRef(false);
 
-    const fetchTools = useCallback(async (opts: {showLoading?: boolean} = {}) => {
+    const fetchTools = useCallback(async (opts: {showLoading?: boolean; propagateError?: boolean} = {}) => {
         try {
             if (opts.showLoading) {
                 setLoading(true);
@@ -64,6 +65,9 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             setToolsData(response);
             setError(null);
         } catch (err) {
+            if (opts.propagateError) {
+                throw err;
+            }
             if (opts.showLoading) {
                 setError(err instanceof Error ? err.message : 'Failed to fetch MCP tools');
             } else {
@@ -201,6 +205,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                 baseURL: server.url,
                 headers: {},
                 tool_configs: server.toolConfigs ?? [],
+                exposeExternal: server.exposeExternal ?? false,
             };
         }
 
@@ -232,9 +237,14 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             }
 
             const prev = findServerConfig(serverInfo);
-            const update: {enabled?: boolean; tool_configs?: MCPToolConfig[]} = {};
+            const update: {enabled?: boolean; expose_external?: boolean; tool_configs?: MCPToolConfig[]} = {};
             if (!prev || prev.enabled !== updatedServerConfig.enabled) {
                 update.enabled = updatedServerConfig.enabled;
+            }
+            const prevExpose = prev?.exposeExternal ?? false;
+            const nextExpose = updatedServerConfig.exposeExternal ?? false;
+            if (prevExpose !== nextExpose) {
+                update.expose_external = nextExpose;
             }
             const prevConfigs = prev?.tool_configs ?? [];
             const nextConfigs = updatedServerConfig.tool_configs ?? [];
@@ -247,7 +257,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             }
 
             updatePluginServer(pluginID, update).
-                then(() => fetchTools()).
+                then(() => fetchTools({propagateError: true})).
                 catch((err) => {
                     setError(
                         err instanceof Error ?

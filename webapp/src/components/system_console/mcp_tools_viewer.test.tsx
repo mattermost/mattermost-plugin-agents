@@ -233,6 +233,44 @@ describe('MCPToolsViewer — plugin branch', () => {
         });
     });
 
+    test('fetchTools rejection after successful update surfaces inline error', async () => {
+        // The PUT succeeds but the post-update reload fails: the UI must show
+        // the inline error rather than silently going stale.
+        mockUpdatePluginServer.mockResolvedValueOnce({});
+        mockGetMCPTools.mockRejectedValueOnce(new Error('refresh exploded'));
+
+        renderViewer(makePluginToolsResponse());
+
+        // Toggle the server-level enabled switch on the plugin row.
+        const toggles = screen.getAllByRole('checkbox');
+        fireEvent.click(toggles[0]);
+
+        await waitFor(() => {
+            expect(mockUpdatePluginServer).toHaveBeenCalledTimes(1);
+        });
+
+        await waitFor(() => {
+            expect(screen.getByText('refresh exploded')).toBeTruthy();
+        });
+    });
+
+    test('fetchTools rejection with non-Error reason falls back to localized message', async () => {
+        // Non-Error rejection (e.g., a thrown string) should still surface via
+        // setError using the same intl fallback the surrounding handler uses.
+        mockUpdatePluginServer.mockResolvedValueOnce({});
+        // eslint-disable-next-line prefer-promise-reject-errors
+        mockGetMCPTools.mockRejectedValueOnce('boom');
+
+        renderViewer(makePluginToolsResponse());
+
+        const toggles = screen.getAllByRole('checkbox');
+        fireEvent.click(toggles[0]);
+
+        await waitFor(() => {
+            expect(screen.getByText('Failed to update plugin server')).toBeTruthy();
+        });
+    });
+
     test('vetted tool seed merges missing configs without replacing existing entries', async () => {
         mockGetVettedToolSeed.mockImplementation((baseURL: string) => {
             if (baseURL === 'https://remote.example/mcp') {

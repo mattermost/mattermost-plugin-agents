@@ -305,3 +305,129 @@ func TestUnregister_NilResponse(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "PluginHTTP returned nil response")
 }
+
+// TestPostRegistration_NilPluginAPI — NewServer accepts a nil PluginAPI, so
+// postRegistration must return a normal error instead of panicking on the
+// pluginAPI.PluginHTTP dereference.
+func TestPostRegistration_NilPluginAPI(t *testing.T) {
+	s := NewServer(nil, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+
+	retriable, err := s.registerOnce(context.Background())
+	require.Error(t, err)
+	assert.False(t, retriable)
+	assert.Contains(t, err.Error(), "PluginAPI is required")
+}
+
+func TestUnregister_NilPluginAPI(t *testing.T) {
+	s := NewServer(nil, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+
+	err := s.Unregister()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PluginAPI is required")
+}
+
+// errReader is an io.ReadCloser that always errors on Read; used to simulate
+// a response body that fails mid-read.
+type errReader struct{ err error }
+
+func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }
+func (e *errReader) Close() error               { return nil }
+
+func errResponse(status int, err error) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Body:       &errReader{err: err},
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}
+}
+
+func TestPostRegistration_SurfacesDrainError(t *testing.T) {
+	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response {
+		return errResponse(http.StatusOK, io.ErrUnexpectedEOF)
+	}}
+	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+
+	retriable, err := s.registerOnce(context.Background())
+	require.Error(t, err)
+	assert.False(t, retriable)
+	assert.Contains(t, err.Error(), "drain response body")
+}
+
+func TestPostRegistration_SurfacesReadErrorOnRetriable(t *testing.T) {
+	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response {
+		return errResponse(http.StatusInternalServerError, io.ErrUnexpectedEOF)
+	}}
+	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+
+	retriable, err := s.registerOnce(context.Background())
+	require.Error(t, err)
+	assert.True(t, retriable)
+	assert.Contains(t, err.Error(), "read error response body")
+}
+
+func TestPostRegistration_SurfacesReadErrorOnPermanent(t *testing.T) {
+	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response {
+		return errResponse(http.StatusBadRequest, io.ErrUnexpectedEOF)
+	}}
+	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+
+	retriable, err := s.registerOnce(context.Background())
+	require.Error(t, err)
+	assert.False(t, retriable)
+	assert.Contains(t, err.Error(), "read error response body")
+}
+
+// withUnregisterTimeout swaps the package-level unregisterTimeout for the
+// duration of a test so the bounded-timeout behavior can be exercised
+// without sleeping for the production default.
+func withUnregisterTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := unregisterTimeout
+	unregisterTimeout = d
+	t.Cleanup(func() { unregisterTimeout = prev })
+}
+
+// TestUnregister_BoundedTimeout confirms that when PluginHTTP blocks
+// indefinitely (the Agents plugin is hung), Unregister returns within the
+// bounded timeout instead of stalling OnDeactivate forever.
+func TestUnregister_BoundedTimeout(t *testing.T) {
+	withUnregisterTimeout(t, 25*time.Millisecond)
+
+	api := &mockPluginAPI{fn: func(req *http.Request) *http.Response {
+		<-req.Context().Done()
+		return nil
+	}}
+	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+
+	start := time.Now()
+	err := s.Unregister()
+	elapsed := time.Since(start)
+
+	require.Error(t, err, "Unregister should surface the timeout-induced failure")
+	assert.GreaterOrEqual(t, elapsed, 20*time.Millisecond,
+		"should wait approximately the bounded timeout")
+	assert.Less(t, elapsed, 2*time.Second,
+		"Unregister must not block past its bounded timeout")
+}
+
+// TestUnregister_DeadlinePropagated verifies the request context handed to
+// PluginHTTP carries a deadline, so downstream code (and the Mattermost
+// plugin RPC layer) can short-circuit on cancel.
+func TestUnregister_DeadlinePropagated(t *testing.T) {
+	var (
+		gotDeadline bool
+		deadline    time.Time
+	)
+	api := &mockPluginAPI{fn: func(req *http.Request) *http.Response {
+		deadline, gotDeadline = req.Context().Deadline()
+		return newJSONResponse(200, "")
+	}}
+	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+
+	start := time.Now()
+	require.NoError(t, s.Unregister())
+
+	require.True(t, gotDeadline, "Unregister must propagate a deadline-bound context to PluginHTTP")
+	assert.WithinDuration(t, start.Add(unregisterTimeout), deadline, 500*time.Millisecond,
+		"deadline should be ~unregisterTimeout from invocation")
+}

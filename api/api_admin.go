@@ -11,7 +11,6 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-agents/config"
 	"github.com/mattermost/mattermost-plugin-agents/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -225,6 +224,9 @@ type MCPServerInfo struct {
 	// ServerType is one of "embedded", "remote", or "plugin".
 	ServerType string `json:"serverType"`
 	Enabled    bool   `json:"enabled"`
+	// ExposeExternal mirrors the persisted server-level external aggregation
+	// flag for plugin rows; embedded/remote rows leave it unset.
+	ExposeExternal bool `json:"exposeExternal,omitempty"`
 	// ToolConfigs is populated for plugin rows only.
 	ToolConfigs []mcp.ToolConfig `json:"toolConfigs,omitempty"`
 }
@@ -309,13 +311,14 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 	// can re-enable them.
 	for _, cfg := range a.mcpClientManager.ListPluginServers() {
 		serverInfo := MCPServerInfo{
-			Name:        cfg.Name,
-			URL:         fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
-			Tools:       []MCPToolInfo{},
-			Error:       nil,
-			ServerType:  "plugin",
-			Enabled:     cfg.Enabled,
-			ToolConfigs: cfg.ToolConfigs,
+			Name:           cfg.Name,
+			URL:            fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
+			Tools:          []MCPToolInfo{},
+			Error:          nil,
+			ServerType:     "plugin",
+			Enabled:        cfg.Enabled,
+			ExposeExternal: cfg.ExposeExternal,
+			ToolConfigs:    cfg.ToolConfigs,
 		}
 
 		if cfg.Enabled {
@@ -449,10 +452,15 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
+	// Snapshot the live registry once. A second ListPluginServers call would
+	// open a TOCTOU window where a concurrent UnregisterPluginServer could
+	// drop the entry from the snapshot we persist while the handler still
+	// re-registers it below.
+	snapshot := a.mcpClientManager.ListPluginServers()
 	var found *mcp.PluginServerConfig
-	for _, cfg := range a.mcpClientManager.ListPluginServers() {
-		cfg := cfg
-		if cfg.PluginID == pluginID {
+	for i := range snapshot {
+		if snapshot[i].PluginID == pluginID {
+			cfg := snapshot[i]
 			found = &cfg
 			break
 		}
@@ -473,9 +481,8 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		updated.ToolConfigs = *req.ToolConfigs
 	}
 
-	// Build the proposed registry snapshot locally; persist + broadcast
-	// before mutating the live registry so a failure leaves state intact.
-	snapshot := a.mcpClientManager.ListPluginServers()
+	// Apply the update in the snapshot we already captured so persist and
+	// register-after-persist agree on the same registry view.
 	for i := range snapshot {
 		if snapshot[i].PluginID == updated.PluginID {
 			snapshot[i] = updated
@@ -488,13 +495,12 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load config for plugin-server save: %w", getErr))
 		return
 	}
-	// Clone to avoid mutating the store's cached pointer.
-	var cfg *config.Config
 	if existing == nil {
-		cfg = &config.Config{}
-	} else {
-		cfg = existing.Clone()
+		c.AbortWithError(http.StatusInternalServerError, errors.New("no plugin configuration available"))
+		return
 	}
+	// Clone to avoid mutating the store's cached pointer.
+	cfg := existing.Clone()
 	cfg.MCP.PluginServers = snapshot
 
 	if err := a.configStore.SaveConfig(*cfg); err != nil {

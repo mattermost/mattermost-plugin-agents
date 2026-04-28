@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, waitFor} from '@testing-library/react';
+import {act, render, waitFor} from '@testing-library/react';
 
 // Minimal react-intl shim — see mcp_tools_viewer.test.tsx for rationale.
 jest.mock('react-intl', () => {
@@ -41,6 +41,7 @@ type ServerConfigChangeCb = (cfg: {
     baseURL: string;
     headers: Record<string, string>;
     tool_configs?: Array<{name: string; policy: string; enabled: boolean}>;
+    exposeExternal?: boolean;
 }) => void;
 
 const capturedHandlers: Array<{cb: ServerConfigChangeCb; serverName: string}> = [];
@@ -73,7 +74,7 @@ function makeMCPConfig(): MCPConfig {
     };
 }
 
-function makePluginToolsResponse(): MCPToolsResponse {
+function makePluginToolsResponse(overrides: Partial<MCPToolsResponse['servers'][number]> = {}): MCPToolsResponse {
     return {
         servers: [{
             name: 'Demo Plugin',
@@ -86,17 +87,18 @@ function makePluginToolsResponse(): MCPToolsResponse {
             needsOAuth: false,
             error: null,
             toolConfigs: [{name: 'com_example_demo__echo', policy: 'ask', enabled: true}],
+            ...overrides,
         }],
     };
 }
 
-function renderViewer() {
+function renderViewer(toolsData: MCPToolsResponse = makePluginToolsResponse()) {
     return render(
         <IntlProvider locale='en'>
             <MCPToolsViewer
                 mcpConfig={makeMCPConfig()}
                 onConfigChange={jest.fn()}
-                initialToolsData={makePluginToolsResponse()}
+                initialToolsData={toolsData}
             />
         </IntlProvider>,
     );
@@ -148,5 +150,75 @@ describe('MCPToolsViewer — plugin branch diff edge cases', () => {
         });
 
         expect(mockUpdatePluginServer).not.toHaveBeenCalled();
+    });
+
+    test('toggling exposeExternal sends expose_external in payload (round-trip)', async () => {
+        renderViewer();
+        expect(capturedHandlers.length).toBeGreaterThanOrEqual(1);
+
+        // Plugin row resolved with exposeExternal=false (response did not set it).
+        // Flipping to true must surface as `expose_external: true` in the diff.
+        await act(async () => {
+            capturedHandlers[0].cb({
+                name: 'Demo Plugin',
+                enabled: true,
+                baseURL: 'plugin://com.example.demo/mcp',
+                headers: {},
+                tool_configs: [{name: 'com_example_demo__echo', policy: 'ask', enabled: true}],
+                exposeExternal: true,
+            });
+        });
+
+        expect(mockUpdatePluginServer).toHaveBeenCalledTimes(1);
+        const [pluginID, update] = mockUpdatePluginServer.mock.calls[0];
+        expect(pluginID).toBe('com.example.demo');
+        expect(update).toHaveProperty('expose_external', true);
+        expect(update).not.toHaveProperty('enabled');
+        expect(update).not.toHaveProperty('tool_configs');
+    });
+
+    test('exposeExternal unchanged (false ↔ false) does not surface expose_external', async () => {
+        renderViewer();
+        expect(capturedHandlers.length).toBeGreaterThanOrEqual(1);
+
+        // Same exposeExternal as resolved (false default) plus a tool_configs change:
+        // diff payload must include tool_configs but NOT expose_external.
+        await act(async () => {
+            capturedHandlers[0].cb({
+                name: 'Demo Plugin',
+                enabled: true,
+                baseURL: 'plugin://com.example.demo/mcp',
+                headers: {},
+                tool_configs: [{name: 'com_example_demo__echo', policy: 'auto_run_in_dm', enabled: true}],
+                exposeExternal: false,
+            });
+        });
+
+        expect(mockUpdatePluginServer).toHaveBeenCalledTimes(1);
+        const [, update] = mockUpdatePluginServer.mock.calls[0];
+        expect(update).toHaveProperty('tool_configs');
+        expect(update).not.toHaveProperty('expose_external');
+    });
+
+    test('flipping exposeExternal true → false surfaces expose_external=false', async () => {
+        renderViewer(makePluginToolsResponse({exposeExternal: true}));
+        expect(capturedHandlers.length).toBeGreaterThanOrEqual(1);
+
+        await act(async () => {
+            capturedHandlers[0].cb({
+                name: 'Demo Plugin',
+                enabled: true,
+                baseURL: 'plugin://com.example.demo/mcp',
+                headers: {},
+                tool_configs: [{name: 'com_example_demo__echo', policy: 'ask', enabled: true}],
+                exposeExternal: false,
+            });
+        });
+
+        expect(mockUpdatePluginServer).toHaveBeenCalledTimes(1);
+        const [, update] = mockUpdatePluginServer.mock.calls[0];
+        expect(update).toHaveProperty('expose_external', false);
+        expect(update).not.toHaveProperty('enabled');
+        expect(update).not.toHaveProperty('tool_configs');
     });
 });

@@ -292,16 +292,23 @@ func createMockIndexer(t *testing.T, mockService *mockIndexerService) *indexer.I
 
 func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 	tests := []struct {
-		name              string
-		pluginServers     []mcp.PluginServerConfig
-		discoverToolsResp []mcp.ToolInfo
-		discoverToolsErr  error
-		expectServerType  string
-		expectEnabled     bool
-		expectToolCount   int
-		expectErrorNotNil bool
-		expectProbeCalls  int
-		expectToolConfigs []mcp.ToolConfig // nil => skip assertion
+		name                 string
+		pluginServers        []mcp.PluginServerConfig
+		discoverToolsResp    []mcp.ToolInfo
+		discoverToolsErr     error
+		expectServerType     string
+		expectEnabled        bool
+		expectToolCount      int
+		expectErrorNotNil    bool
+		expectProbeCalls     int
+		expectToolConfigs    []mcp.ToolConfig // nil => skip assertion
+		expectExposeExternal bool
+		// expectExposeFieldOmitted asserts the raw JSON for the plugin row
+		// does NOT include the "exposeExternal" key (because of omitempty
+		// when ExposeExternal is false). This guards against a regression
+		// where the field gets serialized as false and a webapp save reads
+		// false rather than the actually-persisted true.
+		expectExposeFieldOmitted bool
 	}{
 		{
 			name: "enabled plugin server returns tools",
@@ -315,10 +322,11 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 				{Name: "echo", Description: "echoes input"},
 				{Name: "add", Description: "adds numbers"},
 			},
-			expectServerType: "plugin",
-			expectEnabled:    true,
-			expectToolCount:  2,
-			expectProbeCalls: 1,
+			expectServerType:         "plugin",
+			expectEnabled:            true,
+			expectToolCount:          2,
+			expectProbeCalls:         1,
+			expectExposeFieldOmitted: true,
 		},
 		{
 			name: "disabled plugin server renders row with no probe",
@@ -328,10 +336,11 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 				Path:     "/mcp",
 				Enabled:  false,
 			}},
-			expectServerType: "plugin",
-			expectEnabled:    false,
-			expectToolCount:  0,
-			expectProbeCalls: 0,
+			expectServerType:         "plugin",
+			expectEnabled:            false,
+			expectToolCount:          0,
+			expectProbeCalls:         0,
+			expectExposeFieldOmitted: true,
 		},
 		{
 			name: "unreachable plugin populates Error",
@@ -341,11 +350,12 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 				Path:     "/mcp",
 				Enabled:  true,
 			}},
-			discoverToolsErr:  errors.New("connection refused"),
-			expectServerType:  "plugin",
-			expectEnabled:     true,
-			expectErrorNotNil: true,
-			expectProbeCalls:  1,
+			discoverToolsErr:         errors.New("connection refused"),
+			expectServerType:         "plugin",
+			expectEnabled:            true,
+			expectErrorNotNil:        true,
+			expectProbeCalls:         1,
+			expectExposeFieldOmitted: true,
 		},
 		{
 			name: "enabled plugin server with per-tool policy surfaces ToolConfigs",
@@ -371,6 +381,27 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 				{Name: "echo", Policy: "ask", Enabled: false},
 				{Name: "sum", Policy: "auto_run_in_dm", Enabled: true},
 			},
+			expectExposeFieldOmitted: true,
+		},
+		{
+			// Guards against the missing ExposeExternal field assignment in
+			// the plugin-row builder: if the handler drops the flag, the
+			// webapp reads false on next admin save and silently regresses
+			// the persisted value.
+			name: "ExposeExternal=true round-trips through JSON",
+			pluginServers: []mcp.PluginServerConfig{{
+				PluginID:       "com.mattermost.demo",
+				Name:           "Demo",
+				Path:           "/mcp",
+				Enabled:        true,
+				ExposeExternal: true,
+			}},
+			discoverToolsResp:    []mcp.ToolInfo{{Name: "echo", Description: "echoes input"}},
+			expectServerType:     "plugin",
+			expectEnabled:        true,
+			expectToolCount:      1,
+			expectProbeCalls:     1,
+			expectExposeExternal: true,
 		},
 	}
 
@@ -397,8 +428,11 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 			resp := recorder.Result()
 			require.Equal(t, http.StatusOK, resp.StatusCode)
 
+			rawBody, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+
 			var body MCPToolsResponse
-			require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+			require.NoError(t, json.Unmarshal(rawBody, &body))
 
 			var pluginRow *MCPServerInfo
 			for i := range body.Servers {
@@ -411,6 +445,8 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 			require.Equal(t, tt.expectServerType, pluginRow.ServerType)
 			require.Equal(t, tt.expectEnabled, pluginRow.Enabled)
 			require.Equal(t, tt.expectToolCount, len(pluginRow.Tools))
+			require.Equal(t, tt.expectExposeExternal, pluginRow.ExposeExternal,
+				"plugin row must surface persisted ExposeExternal verbatim")
 			if tt.expectErrorNotNil {
 				require.NotNil(t, pluginRow.Error)
 			} else {
@@ -419,6 +455,29 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 			require.Equal(t, tt.expectProbeCalls, mgr.discoverPluginToolsCallCount)
 			if tt.expectToolConfigs != nil {
 				require.Equal(t, tt.expectToolConfigs, pluginRow.ToolConfigs, "plugin row must surface ToolConfigs verbatim")
+			}
+
+			// Verify omitempty behavior at the raw-JSON level: when
+			// ExposeExternal is false, the key must not appear in the
+			// plugin row payload.
+			var rawResp struct {
+				Servers []map[string]json.RawMessage `json:"servers"`
+			}
+			require.NoError(t, json.Unmarshal(rawBody, &rawResp))
+			var rawPluginRow map[string]json.RawMessage
+			for _, s := range rawResp.Servers {
+				if st, ok := s["serverType"]; ok && string(st) == `"plugin"` {
+					rawPluginRow = s
+					break
+				}
+			}
+			require.NotNil(t, rawPluginRow, "expected raw plugin row in JSON")
+			_, hasField := rawPluginRow["exposeExternal"]
+			if tt.expectExposeFieldOmitted {
+				require.False(t, hasField, "exposeExternal must be omitted when false")
+			} else {
+				require.True(t, hasField, "exposeExternal must be present when true")
+				require.JSONEq(t, "true", string(rawPluginRow["exposeExternal"]))
 			}
 		})
 	}
@@ -617,7 +676,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api, mockAPI, _ := setupAdminTestEnvironment(t)
+			api, mockAPI, stores := setupAdminTestEnvironment(t)
 			defer mockAPI.AssertExpectations(t)
 
 			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(tt.hasAdminPerm).Maybe()
@@ -625,6 +684,10 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 
 			mgr := api.mcpClientManager.(*mockMCPClientManager)
 			mgr.pluginServers = tt.preRegistered
+
+			// Seed a baseline persisted config so the handler can clone it
+			// instead of treating the store's nil as a 500.
+			stores.configStore.cfg = &config.Config{}
 
 			spy := &spyRebuilder{}
 			api.SetExternalRebuilderForTest(spy)
@@ -657,17 +720,20 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 
 func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 	tests := []struct {
-		name                 string
-		preRegistered        []mcp.PluginServerConfig
-		body                 string
-		getErr               error
-		saveErr              error
-		publishErr           error
-		expectStatus         int
-		expectSaveCalls      int
-		expectUpdateCalls    int
-		expectPublishCalls   int
-		assertPersistedState func(t *testing.T, savedCfg *config.Config)
+		name                  string
+		preRegistered         []mcp.PluginServerConfig
+		body                  string
+		nilStoredConfig       bool
+		getErr                error
+		saveErr               error
+		publishErr            error
+		expectStatus          int
+		expectSaveCalls       int
+		expectUpdateCalls     int
+		expectPublishCalls    int
+		expectRegisterCalls   int
+		expectUnregisterCalls int
+		assertPersistedState  func(t *testing.T, savedCfg *config.Config)
 	}{
 		{
 			name: "happy path — saves full snapshot and broadcasts",
@@ -681,11 +747,13 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 					Enabled: false, ExposeExternal: false,
 				},
 			},
-			body:               `{"tool_configs": [{"name": "echo", "policy": "ask", "enabled": false}]}`,
-			expectStatus:       http.StatusOK,
-			expectSaveCalls:    1,
-			expectUpdateCalls:  1,
-			expectPublishCalls: 1,
+			body:                  `{"tool_configs": [{"name": "echo", "policy": "ask", "enabled": false}]}`,
+			expectStatus:          http.StatusOK,
+			expectSaveCalls:       1,
+			expectUpdateCalls:     1,
+			expectPublishCalls:    1,
+			expectRegisterCalls:   1,
+			expectUnregisterCalls: 0,
 			assertPersistedState: func(t *testing.T, savedCfg *config.Config) {
 				require.Len(t, savedCfg.MCP.PluginServers, 2, "full snapshot includes all registered plugins")
 
@@ -710,36 +778,59 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
 			}},
-			body:               `{"enabled": false}`,
-			getErr:             errors.New("config store unavailable"),
-			expectStatus:       http.StatusInternalServerError,
-			expectSaveCalls:    0,
-			expectUpdateCalls:  0,
-			expectPublishCalls: 0,
+			body:                  `{"enabled": false}`,
+			getErr:                errors.New("config store unavailable"),
+			expectStatus:          http.StatusInternalServerError,
+			expectSaveCalls:       0,
+			expectUpdateCalls:     0,
+			expectPublishCalls:    0,
+			expectRegisterCalls:   0,
+			expectUnregisterCalls: 0,
 		},
 		{
 			name: "SaveConfig failure returns 500 and skips Update/Publish",
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
 			}},
-			body:               `{"enabled": false}`,
-			saveErr:            errors.New("db unreachable"),
-			expectStatus:       http.StatusInternalServerError,
-			expectSaveCalls:    1,
-			expectUpdateCalls:  0,
-			expectPublishCalls: 0,
+			body:                  `{"enabled": false}`,
+			saveErr:               errors.New("db unreachable"),
+			expectStatus:          http.StatusInternalServerError,
+			expectSaveCalls:       1,
+			expectUpdateCalls:     0,
+			expectPublishCalls:    0,
+			expectRegisterCalls:   0,
+			expectUnregisterCalls: 0,
 		},
 		{
 			name: "PublishConfigUpdate failure returns 500 after Save and skips Update",
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
 			}},
-			body:               `{"enabled": false}`,
-			publishErr:         errors.New("cluster broadcast failed"),
-			expectStatus:       http.StatusInternalServerError,
-			expectSaveCalls:    1,
-			expectUpdateCalls:  0,
-			expectPublishCalls: 1,
+			body:                  `{"enabled": false}`,
+			publishErr:            errors.New("cluster broadcast failed"),
+			expectStatus:          http.StatusInternalServerError,
+			expectSaveCalls:       1,
+			expectUpdateCalls:     0,
+			expectPublishCalls:    1,
+			expectRegisterCalls:   0,
+			expectUnregisterCalls: 0,
+		},
+		{
+			// A nil persisted config must not be silently replaced by a
+			// zero-value baseline; doing so would clobber unrelated settings
+			// (services, bots, MCP flags) on the next save.
+			name: "nil persisted config returns 500 and skips Save/Update/Publish/Register",
+			preRegistered: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
+			}},
+			body:                  `{"enabled": false}`,
+			nilStoredConfig:       true,
+			expectStatus:          http.StatusInternalServerError,
+			expectSaveCalls:       0,
+			expectUpdateCalls:     0,
+			expectPublishCalls:    0,
+			expectRegisterCalls:   0,
+			expectUnregisterCalls: 0,
 		},
 	}
 
@@ -755,9 +846,18 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			mgr := api.mcpClientManager.(*mockMCPClientManager)
 			mgr.pluginServers = tt.preRegistered
 
+			// Seed a baseline persisted config unless the case explicitly
+			// exercises the nil path. Without a seed, GetConfig returns nil
+			// and the handler aborts before Save/Publish are invoked.
+			var seedCfg *config.Config
+			if !tt.nilStoredConfig {
+				seedCfg = &config.Config{}
+			}
+			stores.configStore.cfg = seedCfg
+
 			var failingStore *failingConfigStore
 			if tt.getErr != nil || tt.saveErr != nil {
-				failingStore = &failingConfigStore{getErr: tt.getErr, saveErr: tt.saveErr}
+				failingStore = &failingConfigStore{cfg: seedCfg, getErr: tt.getErr, saveErr: tt.saveErr}
 				api.configStore = failingStore
 			}
 			if tt.publishErr != nil {
@@ -779,6 +879,9 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			}
 			require.Equal(t, tt.expectUpdateCalls, stores.configUpdater.callCount)
 			require.Equal(t, tt.expectPublishCalls, stores.clusterNotifier.callCount)
+
+			require.Len(t, mgr.registerCalls, tt.expectRegisterCalls, "live plugin registry must not be mutated on failure paths")
+			require.Len(t, mgr.unregisterCalls, tt.expectUnregisterCalls, "live plugin registry must not be mutated on failure paths")
 
 			if tt.assertPersistedState != nil {
 				require.NotNil(t, stores.configStore.cfg, "SaveConfig must have been called and persisted cfg")
