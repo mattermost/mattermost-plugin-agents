@@ -135,9 +135,8 @@ export const useJobStatus = () => {
                 message: intl.formatMessage({defaultMessage: 'Cancel requested. Waiting for the reindexing job to stop…'}),
             });
 
-            // Keep polling: the server returns cancel_requested, and the
-            // worker transitions to the terminal canceled state on its next
-            // iteration. Polling lets the UI surface that transition.
+            // Keep polling so the UI surfaces the worker's transition to
+            // the terminal canceled state.
             setPolling(true);
         } catch (error) {
             setStatusMessage({

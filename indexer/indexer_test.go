@@ -1513,8 +1513,6 @@ func TestStartReindexJob(t *testing.T) {
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Return(errors.New("not found")).Once()
 
-		// CAS-write for the initial job status (oldValue is nil because the
-		// row did not exist).
 		var savedStatus *JobStatus
 		mockClient.On("KVCompareAndSet", ReindexJobKey, nil, mock.MatchedBy(func(v interface{}) bool {
 			status, ok := v.(JobStatus)
@@ -1576,7 +1574,6 @@ func TestStartReindexJob(t *testing.T) {
 
 		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
 
-		// CAS write fails
 		mockClient.On("KVCompareAndSet", ReindexJobKey, nil, mock.Anything).
 			Return(false, errors.New("kv set error")).Once()
 
@@ -1640,11 +1637,8 @@ func TestCancelJob(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Equal(t, JobStatusCancelRequested, status.Status)
-		// CancelJob requests cancellation; the worker stamps CompletedAt
-		// when it observes the request and writes the terminal canceled
-		// state. CancelJob itself must leave it unset.
 		assert.True(t, status.CompletedAt.IsZero(),
-			"CompletedAt is the worker's job to set on the cancel_requested -> canceled transition")
+			"CancelJob must not set the terminal CompletedAt; the worker does that")
 	})
 
 	t.Run("returns error on KVGet failure", func(t *testing.T) {
@@ -1715,7 +1709,6 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Return(errors.New("not found"))
 
-		// CAS-write job status (no existing row, so oldValue is nil)
 		mockClient.On("KVCompareAndSet", ReindexJobKey, nil, mock.MatchedBy(func(v interface{}) bool {
 			status, ok := v.(JobStatus)
 			if !ok {
@@ -2068,8 +2061,6 @@ func TestRunReindexJob(t *testing.T) {
 
 		mockSearch.On("Clear", mock.Anything).Return(nil)
 
-		// Return cancel_requested status keyed to this job's JobID. The
-		// worker should observe its own cancel signal and exit.
 		jobID := "job-detects-cancel"
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Run(func(args mock.Arguments) {
@@ -2094,10 +2085,8 @@ func TestRunReindexJob(t *testing.T) {
 
 		indexer.runReindexJob(jobStatus, true)
 
-		// Worker must transition cancel_requested -> canceled, not merely
-		// exit some other way (running/failed would also satisfy != completed
-		// but would be silent regressions).
-		assert.Equal(t, JobStatusCanceled, jobStatus.Status)
+		assert.Equal(t, JobStatusCanceled, jobStatus.Status,
+			"worker must transition cancel_requested -> canceled")
 	})
 
 	t.Run("job handles clear index failure", func(t *testing.T) {
@@ -2767,7 +2756,6 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 			}).
 			Return(nil)
 
-		// Expect a CAS predicated on the observed row to mark as failed.
 		var savedStatus *JobStatus
 		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v interface{}) bool {
 			status, ok := v.(JobStatus)
@@ -2804,7 +2792,6 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 			}).
 			Return(nil)
 
-		// No write should happen for a job owned by another node.
 		indexer := New(nil, nil, mockClient, nil, nil, nil)
 		err := indexer.MarkOrphanedJobAsFailed()
 
@@ -2885,8 +2872,7 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 			}).
 			Return(nil)
 
-		// CAS reports "row changed underneath us" — orphan recovery must
-		// silently bail rather than retry-clobber a freshly-claimed row.
+		// CAS rejects the write (row reclaimed by another node).
 		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.Anything).
 			Return(false, nil)
 		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
@@ -3091,7 +3077,6 @@ func TestResumePreservation(t *testing.T) {
 			}).
 			Return(nil)
 
-		// Capture the new job status that gets CAS-saved
 		var savedJobStatus *JobStatus
 		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.AnythingOfType("indexer.JobStatus")).
 			Run(func(args mock.Arguments) {
@@ -3316,16 +3301,9 @@ func TestGetModelInfoFromConfig(t *testing.T) {
 	}
 }
 
-// TestReindexJobCancelReplicaLagRace exercises the HA replica-lag race between
-// Cancel and Resume. After Cancel writes the canceled state to master and
-// Resume creates a new run with a fresh JobID, the worker's first KVGet may
-// route to a replica that still shows the previous run's canceled status.
-//
-// The worker must keep its cancel check scoped to its own JobID so a stale
-// read for a different run cannot make it exit. Without that scoping, the
-// resumed job logs "Reindex job was canceled" and disappears, leaving a
-// wedged "running" row on master that blocks all subsequent Resume attempts
-// until StaleJobThreshold elapses.
+// TestReindexJobCancelReplicaLagRace asserts that the worker's cancel check
+// is JobID-scoped: a stale KV read showing a different run's canceled state
+// must not stop the current worker.
 func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 	t.Run("worker ignores stale cancel from a previous JobID", func(t *testing.T) {
 		db := testDB(t)
@@ -3335,9 +3313,6 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
 		mockBots := &bots.MMBots{}
 
-		// Seed the DB with posts that the worker should index. If the worker
-		// exits prematurely on the stale cancel read, none of these will be
-		// stored.
 		now := model.GetMillis()
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
@@ -3352,12 +3327,8 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 		previousJobID := "previous-run-job-id"
 		currentJobID := "current-run-job-id"
 
-		// Replica lag simulation:
-		// - First poll returns the previous run's row showing it was canceled
-		//   (this is the stale read from a replica that hasn't replicated
-		//   Resume's master write yet). This is exactly the value the
-		//   pre-fix CancelJob wrote and that the pre-fix worker exits on.
-		// - Subsequent polls return the current run's row.
+		// First poll surfaces a stale row for a different JobID; later polls
+		// return the current run's row.
 		var pollCount int
 		var pollMu sync.Mutex
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
@@ -3376,12 +3347,10 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 			}).
 			Return(nil)
 
-		// Cursor and other KV reads
 		mockClient.On("KVGet", IndexerCursorKey, mock.AnythingOfType("*indexer.Cursor")).
 			Return(errors.New("not found"))
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(errors.New("not found")).Maybe()
 
-		// Track which posts were indexed
 		var storedPostIDs []string
 		var storedMu sync.Mutex
 		mockSearch.On("Clear", mock.Anything).Return(nil).Maybe()
@@ -3396,7 +3365,6 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 			}).
 			Return(nil).Maybe()
 
-		// CAS-gated heartbeats / completion writes always succeed in this test.
 		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).
 			Return(true, nil).Maybe()
 		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
@@ -3415,9 +3383,6 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 
 		indexer.runReindexJob(jobStatus, true)
 
-		// The worker must have run to completion despite the stale cancel
-		// read on its first poll. If the bug recurs, the worker exits before
-		// storing any documents and the status is left at JobStatusRunning.
 		storedMu.Lock()
 		defer storedMu.Unlock()
 		assert.Equal(t, JobStatusCompleted, jobStatus.Status,
@@ -3446,8 +3411,6 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 
 		jobID := "current-run"
 
-		// Every poll reports cancel_requested for our JobID — the worker
-		// should observe this and stop.
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Run(func(args mock.Arguments) {
 				status := args.Get(1).(*JobStatus)
@@ -3459,7 +3422,6 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 			Return(errors.New("not found"))
 		mockSearch.On("Clear", mock.Anything).Return(nil).Maybe()
 
-		// The worker should CAS the row from cancel_requested to canceled.
 		var sawCancelCAS bool
 		var cancelMu sync.Mutex
 		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.MatchedBy(func(v interface{}) bool {
@@ -3499,11 +3461,9 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 	})
 }
 
-// TestStartReindexJobAssignsFreshJobID verifies that StartReindexJob assigns
-// a JobID and that the JobID it returns to the caller is exactly the one
-// written via CAS — that round-trip is what the worker's cancel check at
-// `currentStatus.JobID == jobStatus.JobID` depends on. Cross-call uniqueness
-// is a property of `model.NewId()` and is not retested here.
+// TestStartReindexJobAssignsFreshJobID asserts that the JobID returned to
+// the caller is the same one persisted via CAS. The worker's cancel check
+// keys on equality between the two.
 func TestStartReindexJobAssignsFreshJobID(t *testing.T) {
 	db := testDB(t)
 	defer cleanupDB(t, db)
@@ -3542,10 +3502,8 @@ func TestStartReindexJobAssignsFreshJobID(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // let the background goroutine settle
 }
 
-// TestCancelJobUsesCancelRequested verifies that CancelJob transitions a
-// running job to the intermediate cancel_requested state via CAS. The actual
-// terminal canceled state is set by the worker after it observes the
-// cancel_requested signal scoped to its JobID.
+// TestCancelJobUsesCancelRequested asserts that CancelJob CASes the row to
+// cancel_requested and never directly to the terminal canceled state.
 func TestCancelJobUsesCancelRequested(t *testing.T) {
 	mockClient := mocks.NewMockClient(t)
 	mockMutexAPI := &plugintest.API{}
@@ -3563,8 +3521,8 @@ func TestCancelJobUsesCancelRequested(t *testing.T) {
 		}).
 		Return(nil)
 
-	// Capture every CAS attempt without filtering by status so the test can
-	// distinguish "wrote cancel_requested" from "wrote canceled directly".
+	// Capture every CAS attempt unfiltered so we can assert which terminal
+	// state was proposed.
 	var capturedNew JobStatus
 	mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.AnythingOfType("indexer.JobStatus")).
 		Run(func(args mock.Arguments) {
@@ -3584,15 +3542,12 @@ func TestCancelJobUsesCancelRequested(t *testing.T) {
 		"CancelJob must not write the terminal canceled state itself; that's the worker's job")
 }
 
-// TestSaveJobStatusDoesNotClobberSupersededRun verifies that a worker whose
-// row has been claimed by a newer run (different JobID) does not overwrite
-// that row on its next heartbeat. Without this, a stale worker that survived
-// MarkOrphanedJobAsFailed or a successor Start would clobber the new run's
-// running state on its first 500-batch / 2-minute heartbeat tick.
+// TestSaveJobStatusDoesNotClobberSupersededRun asserts that a worker whose
+// row has been claimed by a different JobID drops its heartbeat write
+// entirely — neither a plain set nor a CAS attempt is permitted.
 func TestSaveJobStatusDoesNotClobberSupersededRun(t *testing.T) {
 	mockClient := mocks.NewMockClient(t)
 
-	// On-disk row belongs to a fresh successor run.
 	mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 		Run(func(args mock.Arguments) {
 			status := args.Get(1).(*JobStatus)
@@ -3604,7 +3559,6 @@ func TestSaveJobStatusDoesNotClobberSupersededRun(t *testing.T) {
 
 	indexer := New(nil, nil, mockClient, nil, nil, nil)
 
-	// Stale worker thinks it's still running its own run.
 	stale := &JobStatus{
 		JobID:         "superseded-run",
 		Status:        JobStatusRunning,
@@ -3612,18 +3566,14 @@ func TestSaveJobStatusDoesNotClobberSupersededRun(t *testing.T) {
 	}
 	indexer.saveJobStatus(stale)
 
-	// The stale worker must not have written anything: neither a plain set
-	// nor a CAS attempt is permitted once a different JobID owns the row.
 	mockClient.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
 	mockClient.AssertNotCalled(t, "KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything)
 }
 
-// TestCancelRequestedIsRecoverableWhenStale verifies that a cancel_requested
-// row whose worker died before transitioning to canceled does not wedge the
-// reindex feature. Both the stale-detection path (isJobStale) and the
-// orphan-recovery path (MarkOrphanedJobAsFailed) must treat cancel_requested
-// as a non-terminal, reclaimable state — without that, isActiveJob keeps
-// every future Start rejected with "job already running".
+// TestCancelRequestedIsRecoverableWhenStale asserts that a cancel_requested
+// row is treated as non-terminal by both isJobStale and
+// MarkOrphanedJobAsFailed. Otherwise a worker that died mid-cancel would
+// wedge the reindex feature.
 func TestCancelRequestedIsRecoverableWhenStale(t *testing.T) {
 	t.Run("isJobStale flags cancel_requested past the threshold", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)

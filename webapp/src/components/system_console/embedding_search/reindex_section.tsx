@@ -218,9 +218,8 @@ export const ReindexSection = ({
     onHealthCheck,
     onResumeClick,
 }: ReindexSectionProps) => {
-    // Treat cancel_requested as in-progress: the cancel has been recorded
-    // but the worker hasn't yet transitioned to the terminal canceled state,
-    // so progress UI should keep showing and polling should continue.
+    // cancel_requested is non-terminal: the worker is still running until it
+    // observes the request and writes canceled.
     const isReindexing = jobStatus?.status === 'running' || jobStatus?.status === 'cancel_requested';
 
     // Check if job can be resumed (failed or canceled with progress)

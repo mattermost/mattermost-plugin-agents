@@ -127,9 +127,8 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	mtx.Lock()
 	defer mtx.Unlock()
 
-	// Re-check after acquiring lock (double-checked locking pattern). Reset
-	// jobStatus on not-found so a populated optimistic-read snapshot doesn't
-	// leak into the resume carry-over below.
+	// Re-read under the mutex. Reset on not-found so the optimistic-read
+	// snapshot can't leak into the resume carry-over.
 	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
 	if err != nil && !mmapi.IsKVNotFound(err) {
 		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
@@ -154,8 +153,6 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		count = 0 // Continue with zero estimate
 	}
 
-	// Create initial job status with a fresh JobID so cancel checks and CAS
-	// transitions for this run cannot be confused with a previous run.
 	newJobStatus := JobStatus{
 		JobID:     model.NewId(),
 		Status:    JobStatusRunning,
@@ -176,10 +173,8 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		newJobStatus.CutoffAt = cutoffTimestamp
 	}
 
-	// CAS-write the initial job status. The predicate is the row we observed
-	// above (or "no row" when the key was absent). This routes through the
-	// master and is rejected if the row changed underneath us, even when our
-	// initial KVGet was served by a stale replica.
+	// CAS routes through master; the predicate rejects the write if the row
+	// changed since our read, even when that read came from a stale replica.
 	var oldValue interface{}
 	if hasExisting {
 		oldValue = jobStatus
@@ -207,10 +202,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	return returnStatus, nil
 }
 
-// isActiveJob reports whether a job row represents a run that should block a
-// new Start: either still running, or with a cancel pending acknowledgment
-// from its worker. Both states are non-terminal and a Start would race with
-// the existing run.
+// isActiveJob reports whether a job is non-terminal and should block a new Start.
 func isActiveJob(s *JobStatus) bool {
 	return s.Status == JobStatusRunning || s.Status == JobStatusCancelRequested
 }
@@ -235,11 +227,10 @@ func (s *Indexer) GetJobStatus() (JobStatus, error) {
 	return jobStatus, nil
 }
 
-// CancelJob requests cancellation of the running reindex job. The transition
-// is Running -> CancelRequested via CAS; the actual terminal Canceled state
-// is written by the worker after it observes the request scoped to its own
-// JobID. This split lets cancel signaling survive replica-lag KVGet races
-// without poisoning a freshly-started successor run.
+// CancelJob asks the worker to stop. It CASes Running -> CancelRequested;
+// the worker writes the terminal Canceled state when it observes the request
+// scoped to its own JobID. The split keeps cancel signaling JobID-keyed so a
+// stale replica read can't poison a successor run.
 func (s *Indexer) CancelJob() (JobStatus, error) {
 	// Acquire cluster mutex
 	mtx, err := cluster.NewMutex(s.clusterMutex, "ai_reindex_job")
@@ -267,9 +258,7 @@ func (s *Indexer) CancelJob() (JobStatus, error) {
 		return JobStatus{}, fmt.Errorf("failed to save job status: %w", casErr)
 	}
 	if !ok {
-		// The row changed between our read and CAS — the worker has already
-		// completed, failed, or transitioned the row, so there is no live
-		// run to cancel.
+		// Row changed between read and CAS: nothing to cancel.
 		return JobStatus{}, fmt.Errorf("not running")
 	}
 
@@ -326,9 +315,6 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	mtx.Lock()
 	defer mtx.Unlock()
 
-	// Check if job is already running (allow restart if stale). Reset
-	// jobStatus on not-found so we never act on a populated zero-row that
-	// looks like an empty status struct.
 	var jobStatus JobStatus
 	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
 	if err != nil && !mmapi.IsKVNotFound(err) {
@@ -550,11 +536,9 @@ func (s *Indexer) CheckModelCompatibility(currentProviderType string, currentDim
 // StaleJobThreshold is the duration after which a running job is considered stale
 const StaleJobThreshold = 10 * time.Minute
 
-// isJobStale checks if a non-terminal job's heartbeat is beyond the stale
-// threshold. Both running and cancel_requested are non-terminal: a worker
-// that died after Cancel was requested but before it could record the
-// terminal canceled state must be reclaimable, otherwise every future Start
-// would be rejected by isActiveJob.
+// isJobStale reports whether a non-terminal job's heartbeat is older than
+// StaleJobThreshold. Both Running and CancelRequested are non-terminal: a
+// worker that died mid-cancel must still be reclaimable.
 func (s *Indexer) isJobStale(jobStatus *JobStatus) bool {
 	if jobStatus.Status != JobStatusRunning && jobStatus.Status != JobStatusCancelRequested {
 		return false
@@ -568,11 +552,9 @@ func (s *Indexer) isJobStale(jobStatus *JobStatus) bool {
 	return time.Since(lastUpdate) > StaleJobThreshold
 }
 
-// MarkOrphanedJobAsFailed marks any non-terminal job on this node as failed.
-// This should be called on plugin startup to handle cases where the
-// plugin/server crashed while a job was running, including the brief window
-// between CancelJob writing cancel_requested and the worker recording the
-// terminal canceled state. Only affects jobs that were owned by THIS node.
+// MarkOrphanedJobAsFailed marks a non-terminal job owned by this node as failed.
+// Intended to run at plugin startup so a crashed run (including one stuck in
+// cancel_requested) does not block future Starts.
 func (s *Indexer) MarkOrphanedJobAsFailed() error {
 	var jobStatus JobStatus
 	err := s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
@@ -583,22 +565,15 @@ func (s *Indexer) MarkOrphanedJobAsFailed() error {
 		return err
 	}
 
-	// Only mark non-terminal jobs (running or pending cancel) as failed.
 	if jobStatus.Status != JobStatusRunning && jobStatus.Status != JobStatusCancelRequested {
 		return nil
 	}
 
-	// Only mark as failed if job was running on THIS node
 	currentNodeID := s.getNodeID()
 	if jobStatus.NodeID != currentNodeID {
-		return nil // Job is running on a different node, don't interfere
+		return nil
 	}
 
-	// Mark as failed - the plugin restarted while this job was running.
-	// CAS predicates the write on the row we observed, so a stale replica
-	// read cannot clobber a fresh run that another node started in the
-	// meantime: the CAS will simply fail and we treat the row as
-	// already-reclaimed.
 	newStatus := jobStatus
 	newStatus.Status = JobStatusFailed
 	newStatus.Error = fmt.Sprintf("Job orphaned: plugin restarted on node %s while job was running", currentNodeID)
@@ -608,12 +583,13 @@ func (s *Indexer) MarkOrphanedJobAsFailed() error {
 		"node_id", currentNodeID,
 		"processed_rows", jobStatus.ProcessedRows)
 
+	// CAS-gate the write so a fresh run that has already claimed the row on
+	// another node is not clobbered.
 	ok, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, jobStatus, newStatus)
 	if casErr != nil {
 		return casErr
 	}
 	if !ok {
-		// Row changed concurrently — a newer run already owns it.
 		return nil
 	}
 	return nil
