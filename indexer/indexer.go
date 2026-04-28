@@ -540,9 +540,13 @@ func (s *Indexer) CheckModelCompatibility(currentProviderType string, currentDim
 // StaleJobThreshold is the duration after which a running job is considered stale
 const StaleJobThreshold = 10 * time.Minute
 
-// isJobStale checks if a running job's heartbeat is beyond the stale threshold.
+// isJobStale checks if a non-terminal job's heartbeat is beyond the stale
+// threshold. Both running and cancel_requested are non-terminal: a worker
+// that died after Cancel was requested but before it could record the
+// terminal canceled state must be reclaimable, otherwise every future Start
+// would be rejected by isActiveJob.
 func (s *Indexer) isJobStale(jobStatus *JobStatus) bool {
-	if jobStatus.Status != JobStatusRunning {
+	if jobStatus.Status != JobStatusRunning && jobStatus.Status != JobStatusCancelRequested {
 		return false
 	}
 
@@ -554,9 +558,11 @@ func (s *Indexer) isJobStale(jobStatus *JobStatus) bool {
 	return time.Since(lastUpdate) > StaleJobThreshold
 }
 
-// MarkOrphanedJobAsFailed marks any running job on this node as failed.
-// This should be called on plugin startup to handle cases where the plugin/server
-// crashed while a job was running. Only affects jobs that were running on THIS node.
+// MarkOrphanedJobAsFailed marks any non-terminal job on this node as failed.
+// This should be called on plugin startup to handle cases where the
+// plugin/server crashed while a job was running, including the brief window
+// between CancelJob writing cancel_requested and the worker recording the
+// terminal canceled state. Only affects jobs that were owned by THIS node.
 func (s *Indexer) MarkOrphanedJobAsFailed() error {
 	var jobStatus JobStatus
 	err := s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
@@ -567,8 +573,8 @@ func (s *Indexer) MarkOrphanedJobAsFailed() error {
 		return err
 	}
 
-	// Only mark as failed if job is running
-	if jobStatus.Status != JobStatusRunning {
+	// Only mark non-terminal jobs (running or pending cancel) as failed.
+	if jobStatus.Status != JobStatusRunning && jobStatus.Status != JobStatusCancelRequested {
 		return nil
 	}
 

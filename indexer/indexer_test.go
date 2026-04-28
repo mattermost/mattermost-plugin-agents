@@ -3563,3 +3563,65 @@ func TestCancelJobUsesCancelRequested(t *testing.T) {
 	assert.Equal(t, JobStatusCancelRequested, capturedNew.Status,
 		"CancelJob must CAS the row to cancel_requested, not directly to canceled")
 }
+
+// TestCancelRequestedIsRecoverableWhenStale verifies that a cancel_requested
+// row whose worker died before transitioning to canceled does not wedge the
+// reindex feature. Both the stale-detection path (isJobStale) and the
+// orphan-recovery path (MarkOrphanedJobAsFailed) must treat cancel_requested
+// as a non-terminal, reclaimable state — without that, isActiveJob keeps
+// every future Start rejected with "job already running".
+func TestCancelRequestedIsRecoverableWhenStale(t *testing.T) {
+	t.Run("isJobStale flags cancel_requested past the threshold", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		oldTime := time.Now().Add(-StaleJobThreshold - time.Minute)
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.Status = JobStatusCancelRequested
+				status.LastUpdatedAt = oldTime
+			}).
+			Return(nil)
+
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
+		jobStatus, err := indexer.GetJobStatus()
+
+		require.NoError(t, err)
+		assert.True(t, jobStatus.IsStale,
+			"cancel_requested with no recent heartbeat must be flagged stale or it wedges every future Start")
+	})
+
+	t.Run("MarkOrphanedJobAsFailed reclaims a cancel_requested row owned by this node", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		hostname, _ := os.Hostname()
+
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.JobID = "wedged-cancel"
+				status.Status = JobStatusCancelRequested
+				status.NodeID = hostname
+				status.StartedAt = time.Now().Add(-time.Hour)
+			}).
+			Return(nil)
+
+		var saved JobStatus
+		mockClient.On("KVSet", ReindexJobKey, mock.MatchedBy(func(v interface{}) bool {
+			status, ok := v.(JobStatus)
+			if !ok {
+				return false
+			}
+			saved = status
+			return status.Status == JobStatusFailed
+		})).Return(nil)
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
+		err := indexer.MarkOrphanedJobAsFailed()
+
+		require.NoError(t, err)
+		assert.Equal(t, JobStatusFailed, saved.Status,
+			"MarkOrphanedJobAsFailed must reclaim cancel_requested rows or the row stays wedged forever")
+	})
+}

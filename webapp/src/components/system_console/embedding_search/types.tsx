@@ -23,7 +23,7 @@ export interface EmbeddingSearchConfig {
 
 // Match the server's JobStatus struct field names
 export interface JobStatusType {
-    status: string; // 'running' | 'completed' | 'failed' | 'canceled' | 'no_job'
+    status: string; // 'running' | 'cancel_requested' | 'completed' | 'failed' | 'canceled' | 'no_job'
     error?: string;
     started_at: string; // ISO string from server's time.Time
     completed_at?: string;
