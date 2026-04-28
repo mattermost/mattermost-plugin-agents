@@ -31,19 +31,16 @@ type ClientManager struct {
 	embeddedClient *EmbeddedServerClient // Helper for embedded server (nil if disabled)
 	toolsCache     *ToolsCache
 
-	// Plugin-server registry. Protected by pluginServersMu and never held
-	// across PluginHTTP round trips.
+	// pluginServersMu must not be held across PluginHTTP round trips.
 	pluginServersMu sync.RWMutex
 	pluginServers   map[string]PluginServerConfig // keyed by PluginID
-	// sourcePluginAPI supplies PluginHTTP for PluginHTTPRoundTrippers built in
-	// ConnectToPluginServer. It is the agents-plugin mmapi.Client from main.go.
+	// sourcePluginAPI is the agents-plugin mmapi.Client; used by
+	// PluginHTTPRoundTripper to dispatch to source plugins.
 	sourcePluginAPI mmapi.Client
 }
 
-// NewClientManager creates a new MCP client manager.
-// embeddedServer may be nil if the embedded server is not available.
-// sourcePluginAPI is the agents-plugin mmapi.Client used to route PluginHTTP
-// requests to source plugins registered via the bridge /mcp/register endpoint.
+// NewClientManager creates a new MCP client manager. embeddedServer may be nil.
+// sourcePluginAPI routes PluginHTTP to source plugins; may be nil.
 func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *pluginapi.Client, oauthManager *OAuthManager, embeddedServer EmbeddedMCPServer, httpClient *http.Client, sourcePluginAPI mmapi.Client) *ClientManager {
 	manager := &ClientManager{
 		log:             log,
@@ -64,11 +61,8 @@ func (m *ClientManager) EnsureMCPSessionID(userID string) (string, error) {
 	return m.ensureEmbeddedSessionID(userID)
 }
 
-// cleanupInactiveClients periodically checks for and closes inactive client connections.
-// closeChan and ticker are passed in so the goroutine captures the values at launch time
-// instead of reading m.closeChan / m.cleanupTicker on every iteration — those fields
-// are mutated by Close() + ReInit() on the caller's goroutine and that would race
-// with the select expression evaluation here.
+// cleanupInactiveClients closes idle clients. closeChan/ticker are captured at
+// launch to avoid racing with Close()/ReInit() reassigning the m.* fields.
 func (m *ClientManager) cleanupInactiveClients(closeChan <-chan struct{}, ticker *time.Ticker) {
 	for {
 		select {
@@ -90,9 +84,7 @@ func (m *ClientManager) cleanupInactiveClients(closeChan <-chan struct{}, ticker
 	}
 }
 
-// ReInit re-initializes the client manager with a new configuration and embedded server.
-//
-// Plugin-server admin state is rehydrated from config at the end of ReInit.
+// ReInit re-initializes the client manager with a new configuration and embedded server
 func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) {
 	m.Close()
 
@@ -113,17 +105,10 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 	m.closeChan = make(chan struct{})
 	m.activity = make(map[string]time.Time)
 
-	// Start cleanup ticker to remove inactive clients. The ticker and close
-	// channel are passed in so the goroutine captures them at launch time
-	// — avoids a race with Close()/ReInit() reassigning m.closeChan and
-	// m.cleanupTicker later.
 	m.cleanupTicker = time.NewTicker(5 * time.Minute)
 	go m.cleanupInactiveClients(m.closeChan, m.cleanupTicker)
 
-	// Synchronize plugin-server admin state from the persisted config. Must
-	// happen AFTER m.config = config so that the persisted view drives the
-	// merge. Safe to call here: no caller of ReInit holds pluginServersMu
-	// (see Re-entrancy warning on syncPluginServersFromConfig).
+	// Must happen after m.config = config so the persisted view drives the merge.
 	m.syncPluginServersFromConfig(config)
 }
 
@@ -215,21 +200,18 @@ func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 				mcpErrors = &Errors{}
 			}
 			mcpErrors.Errors = append(mcpErrors.Errors, connectErr)
-			// Keep surfacing plugin connect failures on cached user clients.
+			// Surface plugin connect failures on subsequent cached lookups.
 			userClient.initialRemoteConnectErrors = mcpErrors
 		}
 	}
 
-	// Return admin-filtered tools from all connected servers (remote + embedded + plugin).
 	rawTools := userClient.GetTools()
 	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient, pluginSnap)
 	return filtered, mcpErrors
 }
 
-// snapshotEnabledPluginServers copies the enabled plugin-server configs out
-// from under pluginServersMu so callers can iterate without holding the lock.
-// Required because the iteration includes HTTP round trips and admin
-// Register/Unregister operations must not be serialized behind connect latency.
+// snapshotEnabledPluginServers returns a copy of enabled plugin configs so
+// callers can iterate (and do HTTP work) without holding pluginServersMu.
 func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
 	m.pluginServersMu.RLock()
 	defer m.pluginServersMu.RUnlock()
@@ -308,22 +290,19 @@ func (m *ClientManager) GetConfig() Config {
 }
 
 // RegisterPluginServer stores or overwrites a plugin-server registration.
-// cfg.PluginID must be non-empty; callers validate this.
+// Callers must ensure cfg.PluginID is non-empty.
 func (m *ClientManager) RegisterPluginServer(cfg PluginServerConfig) {
 	m.pluginServersMu.Lock()
 	defer m.pluginServersMu.Unlock()
 	m.pluginServers[cfg.PluginID] = cfg
 }
 
-// UnregisterPluginServer removes a plugin-server registration. It is a no-op
-// if the pluginID is not registered.
 func (m *ClientManager) UnregisterPluginServer(pluginID string) {
 	m.pluginServersMu.Lock()
 	defer m.pluginServersMu.Unlock()
 	delete(m.pluginServers, pluginID)
 }
 
-// ListPluginServers returns a snapshot of every registered plugin-server config.
 func (m *ClientManager) ListPluginServers() []PluginServerConfig {
 	m.pluginServersMu.RLock()
 	defer m.pluginServersMu.RUnlock()
@@ -342,16 +321,14 @@ func (m *ClientManager) GetPluginServer(pluginID string) (PluginServerConfig, bo
 	return cfg, ok
 }
 
-// syncPluginServersFromConfig merges persisted admin-owned state into live
-// plugin registrations. Callers must not hold pluginServersMu because config
-// updates can re-enter this method synchronously.
+// syncPluginServersFromConfig merges persisted admin-owned fields onto live
+// plugin registrations. Callers must not hold pluginServersMu.
 func (m *ClientManager) syncPluginServersFromConfig(cfg Config) {
 	m.pluginServersMu.Lock()
 	defer m.pluginServersMu.Unlock()
 
 	for _, persisted := range cfg.PluginServers {
 		if persisted.PluginID == "" {
-			// Defensive: skip malformed entries rather than poisoning the map.
 			continue
 		}
 		if existing, ok := m.pluginServers[persisted.PluginID]; ok {
@@ -362,30 +339,20 @@ func (m *ClientManager) syncPluginServersFromConfig(cfg Config) {
 			m.pluginServers[persisted.PluginID] = existing
 			continue
 		}
-		// No in-memory entry yet — insert config entry verbatim. Source
-		// plugin will re-register later; Name/Path will be refreshed then.
 		m.pluginServers[persisted.PluginID] = persisted
 	}
 }
 
-// DiscoverPluginServerTools lists tools from a plugin-registered MCP server
-// without using the per-user client cache.
 func (m *ClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg PluginServerConfig) ([]ToolInfo, error) {
 	return DiscoverPluginServerTools(ctx, userID, cfg, m.sourcePluginAPI, m.log)
 }
 
-// filterToolsByConfig filters raw discovered tools against the admin-configured
-// tool policies. Only tools that have a matching ServerConfig entry with a
-// ToolConfigs entry where enabled=true are returned. The result is ordered by
-// configured server order, then alphabetically by tool name within each server.
-//
-// For the embedded server, if no explicit ToolConfigs are present, the vetted
-// tool seed is used as the effective config.
-//
-// Plugin-registered servers flow through the same filter via synthetic
-// ServerConfig entries keyed by "plugin://<pluginID>".
+// filterToolsByConfig filters raw discovered tools against admin-configured
+// policies. Result is ordered by configured server order, then by tool name.
+// The embedded server falls back to the vetted seed when ToolConfigs is empty.
+// Plugin-registered servers flow through via synthetic ServerConfig entries
+// keyed by "plugin://<pluginID>".
 func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *EmbeddedServerClient, pluginServers []PluginServerConfig) []llm.Tool {
-	// Build a lookup: ServerOrigin (BaseURL) -> *ServerConfig
 	serverByOrigin := make(map[string]*ServerConfig, len(cfg.Servers)+len(pluginServers)+1)
 	serverOrder := make([]string, 0, len(cfg.Servers)+len(pluginServers)+1)
 
@@ -398,14 +365,13 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 		serverOrder = append(serverOrder, s.BaseURL)
 	}
 
-	// Handle embedded server
 	if embeddedClient != nil {
 		embeddedCfg := &ServerConfig{
 			Name:    EmbeddedServerName,
 			Enabled: true,
 			BaseURL: EmbeddedClientKey,
 		}
-		// Use persisted tool configs if present, otherwise fall back to vetted seed
+		// Persisted tool configs override the vetted seed.
 		if len(cfg.EmbeddedServer.ToolConfigs) > 0 {
 			embeddedCfg.ToolConfigs = cfg.EmbeddedServer.ToolConfigs
 		} else {
@@ -415,7 +381,6 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 		serverOrder = append(serverOrder, EmbeddedClientKey)
 	}
 
-	// Plugin ToolConfigs flow through to enforce per-tool admin policy.
 	for _, ps := range pluginServers {
 		if !ps.Enabled {
 			continue
@@ -430,7 +395,6 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 		serverOrder = append(serverOrder, origin)
 	}
 
-	// Group raw tools by ServerOrigin
 	toolsByOrigin := make(map[string][]llm.Tool, len(rawTools))
 	for _, t := range rawTools {
 		toolsByOrigin[t.ServerOrigin] = append(toolsByOrigin[t.ServerOrigin], t)
@@ -448,7 +412,6 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 			continue
 		}
 
-		// Filter: only tools with enabled config entries
 		var filtered []llm.Tool
 		for _, t := range tools {
 			_, enabled := sc.GetToolPolicy(t.Name)
@@ -457,7 +420,7 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 			}
 		}
 
-		// Sort by tool name for deterministic output
+		// Sort for deterministic output.
 		sort.Slice(filtered, func(i, j int) bool {
 			return filtered[i].Name < filtered[j].Name
 		})

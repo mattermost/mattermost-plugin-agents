@@ -19,8 +19,8 @@ import (
 // mmUserIDHeader propagates the calling Mattermost user ID through PluginHTTP.
 const mmUserIDHeader = "X-Mattermost-UserID"
 
-// proxyRoundTripper rewrites an outbound request's URL.Path to
-// "/{pluginID}{basePath}" and delegates to PluginHTTP.
+// proxyRoundTripper rewrites the outbound URL.Path to "/{pluginID}{basePath}"
+// and delegates to PluginHTTP.
 type proxyRoundTripper struct {
 	pluginID  string
 	basePath  string
@@ -51,7 +51,7 @@ func (p *proxyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	return resp, nil
 }
 
-// headerInjector sets fixed headers on every outbound request before delegating.
+// headerInjector sets fixed headers on every outbound request.
 type headerInjector struct {
 	base    http.RoundTripper
 	headers map[string]string
@@ -66,8 +66,8 @@ func (h *headerInjector) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // BuildProxyTools lists a source plugin's MCP tools and returns proxy tool
-// definitions plus handlers for the Agents plugin's external MCP server.
-// Names and input schemas are copied verbatim from the source plugin.
+// definitions and handlers for the Agents plugin's external MCP server. Names
+// and input schemas are pass-through.
 func BuildProxyTools(
 	ctx context.Context,
 	cfg mcppkg.PluginServerConfig,
@@ -102,6 +102,9 @@ func BuildProxyTools(
 	result, err := listSession.ListTools(ctx, &gosdkmcp.ListToolsParams{})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to list tools on plugin MCP server %s: %w", cfg.PluginID, err)
+	}
+	if result == nil {
+		return nil, nil, fmt.Errorf("plugin MCP server %s returned nil ListTools result", cfg.PluginID)
 	}
 
 	tools := make([]*gosdkmcp.Tool, 0, len(result.Tools))
@@ -153,6 +156,9 @@ func BuildProxyTools(
 			})
 			if callErr != nil {
 				return nil, fmt.Errorf("proxy tool %s: call failed: %w", toolName, callErr)
+			}
+			if callResult == nil {
+				return nil, fmt.Errorf("proxy tool %s: plugin returned nil CallTool result", toolName)
 			}
 			return callResult, nil
 		})

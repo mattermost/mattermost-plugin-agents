@@ -12,18 +12,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-// TestDelegateToMCPHandler_PropagatesUserIDIntoContext verifies that proxy
-// tool handlers can set X-Mattermost-UserID on outbound PluginHTTP calls.
 func TestDelegateToMCPHandler_PropagatesUserIDIntoContext(t *testing.T) {
 	e := SetupTestEnvironment(t)
 
 	const userID = "uzr1234567890123456789012X"
 
-	// Downstream handler captures the request context and asserts the key is set.
 	var gotUserID string
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if v, ok := r.Context().Value(auth.UserIDContextKey).(string); ok {
@@ -32,8 +28,6 @@ func TestDelegateToMCPHandler_PropagatesUserIDIntoContext(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// Minimal gin context with the middleware-populated "userID" key already
-	// present (we skip the middleware — that behavior is tested elsewhere).
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/plugins/mattermost-ai/mcp-server/mcp", nil)
@@ -83,8 +77,11 @@ func TestDelegateToMCPHandler_FailurePathsDoNotCallDownstream(t *testing.T) {
 			defer e.Cleanup(t)
 
 			e.mcp.ensureSessionErr = tt.ensureErr
-			e.mockAPI.On("LogError", mock.Anything).Maybe()
-			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+			e.mockAPI.On("LogError", "User ID not found in context - middleware not configured correctly").Maybe()
+			e.mockAPI.On("LogError", "Invalid user ID type in context").Maybe()
+			if tt.ensureErr != nil {
+				e.mockAPI.On("LogError", "Failed to ensure MCP session for user", "userId", testUserID, "error", tt.ensureErr).Maybe()
+			}
 
 			downstreamCalled := false
 			downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

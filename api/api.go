@@ -63,19 +63,11 @@ type MCPClientManager interface {
 	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
 	GetConfig() mcp.Config
 
-	// Plugin-server registry (populated via /bridge/v1/mcp/register,
-	// consumed by GetToolsForUser, admin Tools tab, and external aggregation).
-	// See mcp/client_manager.go for the concrete implementation.
 	RegisterPluginServer(cfg mcp.PluginServerConfig)
 	UnregisterPluginServer(pluginID string)
 	ListPluginServers() []mcp.PluginServerConfig
-	// GetPluginServer returns the current config for a plugin-registered MCP
-	// server, plus a bool indicating whether it was found. Used by the bridge
-	// register handler to preserve admin-set flags across re-registration.
 	GetPluginServer(pluginID string) (mcp.PluginServerConfig, bool)
 
-	// DiscoverPluginServerTools performs an ephemeral connect+ListTools against
-	// a registered plugin MCP server. Used by the admin Tools tab only.
 	DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error)
 }
 
@@ -151,16 +143,12 @@ type API struct {
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
 
-	// externalRebuilderForTest lets tests inject a spy for the
-	// externalServerRebuilder interface (see api_bridge_mcp.go). Production
-	// code MUST leave this nil — resolveExternalServerRebuilder falls through
-	// to a nil-safe type-assertion on mcpHandlers. Exposed only via
-	// SetExternalRebuilderForTest so accidental production use is loud.
+	// externalRebuilderForTest must be nil in production; SetExternalRebuilderForTest
+	// is the only supported entry point for tests.
 	externalRebuilderForTest externalServerRebuilder
 }
 
-// SetExternalRebuilderForTest installs a test-only implementation of the
-// externalServerRebuilder interface. Production code must never call this.
+// SetExternalRebuilderForTest installs a test-only externalServerRebuilder.
 func (a *API) SetExternalRebuilderForTest(rb externalServerRebuilder) {
 	a.externalRebuilderForTest = rb
 }
@@ -251,9 +239,6 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	completionRoute.POST("/service/:service", a.handleServiceCompletionStreaming)
 	completionRoute.POST("/service/:service/nostream", a.handleServiceCompletionNoStream)
 
-	// Plugin MCP registration endpoints — source plugins call these from
-	// mcphelper.Server.Register() / .Unregister() (see public/mcphelper).
-	// Inherits interPluginAuthorizationRequired via the group-level .Use above.
 	llmBridgeRoute.POST("/mcp/register", a.handleMCPRegister)
 	llmBridgeRoute.POST("/mcp/unregister", a.handleMCPUnregister)
 

@@ -27,16 +27,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// adminTestStores bundles the config-save spies so tests can assert on them
-// without reaching through several interface casts.
 type adminTestStores struct {
 	configStore     *testConfigStore
 	configUpdater   *testConfigUpdater
 	clusterNotifier *testClusterNotifier
 }
 
-// setupAdminTestEnvironment creates a test environment with real config-save
-// spies wired by default.
 func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API, *adminTestStores) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -239,8 +235,6 @@ func createMockIndexer(t *testing.T, mockService *mockIndexerService) *indexer.I
 	return indexer.New(nil, nil, mockClient, nil, nil, mockMutexAPI)
 }
 
-// TestHandleGetMCPTools_PluginServer verifies plugin rows in the admin MCP
-// tools response, including disabled rows and probe errors.
 func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -299,7 +293,6 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 			expectProbeCalls:  1,
 		},
 		{
-			// Plugin-row ToolConfigs must flow through for the policy dropdown.
 			name: "enabled plugin server with per-tool policy surfaces ToolConfigs",
 			pluginServers: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo",
@@ -376,7 +369,6 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 	}
 }
 
-// TestHandleUpdatePluginServer covers the admin plugin-server update endpoint.
 func TestHandleUpdatePluginServer(t *testing.T) {
 	tests := []struct {
 		name                   string
@@ -432,13 +424,11 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			expectStatus:        http.StatusOK,
 			expectRegisterCalls: 1,
 			expectEnabledAfter:  false,
-			expectExposeAfter:   true, // unchanged because request omitted the field
-			expectRebuildCalls:  1,    // still rebuilds because FOUND had ExposeExternal=true
+			expectExposeAfter:   true,
+			expectRebuildCalls:  1,
 		},
 		{
-			// REGRESSION: sending only expose_external must NOT zero Enabled.
-			// Before pointer-valued Enabled, the omitted field JSON-decoded
-			// to false and clobbered the admin-set true value.
+			// Omitted field must not JSON-decode to false and clobber the admin-set true value.
 			name:     "enabled omitted preserves existing true value",
 			pluginID: "com.mattermost.demo",
 			preRegistered: []mcp.PluginServerConfig{{
@@ -449,12 +439,11 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			hasAdminPerm:        true,
 			expectStatus:        http.StatusOK,
 			expectRegisterCalls: 1,
-			expectEnabledAfter:  true, // preserved — request omitted the field
+			expectEnabledAfter:  true,
 			expectExposeAfter:   true,
 			expectRebuildCalls:  1,
 		},
 		{
-			// REGRESSION mirror: omitted enabled with existing false preserved.
 			name:     "enabled omitted preserves existing false value",
 			pluginID: "com.mattermost.demo",
 			preRegistered: []mcp.PluginServerConfig{{
@@ -465,14 +454,11 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			hasAdminPerm:        true,
 			expectStatus:        http.StatusOK,
 			expectRegisterCalls: 1,
-			expectEnabledAfter:  false, // preserved
+			expectEnabledAfter:  false,
 			expectExposeAfter:   true,
 			expectRebuildCalls:  1,
 		},
 		{
-			// Empty body is a valid no-op that re-registers the existing
-			// config unchanged. Ensures neither pointer flip accidentally
-			// mutates state.
 			name:     "empty body preserves both fields",
 			pluginID: "com.mattermost.demo",
 			preRegistered: []mcp.PluginServerConfig{{
@@ -485,7 +471,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			expectRegisterCalls: 1,
 			expectEnabledAfter:  true,
 			expectExposeAfter:   true,
-			expectRebuildCalls:  1, // found.ExposeExternal=true still triggers rebuild
+			expectRebuildCalls:  1,
 		},
 		{
 			name:         "404 when pluginID not registered",
@@ -516,7 +502,6 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			expectRegisterCalls: 0,
 		},
 		{
-			// Admin can set per-tool policy without changing other fields.
 			name:     "tool_configs partial PUT sets policy, preserves enabled",
 			pluginID: "com.mattermost.demo",
 			preRegistered: []mcp.PluginServerConfig{{
@@ -527,15 +512,15 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			hasAdminPerm:        true,
 			expectStatus:        http.StatusOK,
 			expectRegisterCalls: 1,
-			expectEnabledAfter:  true,  // preserved
-			expectExposeAfter:   false, // preserved
+			expectEnabledAfter:  true,
+			expectExposeAfter:   false,
 			expectToolConfigsAfter: []mcp.ToolConfig{
 				{Name: "echo", Policy: "ask", Enabled: false},
 			},
-			expectRebuildCalls: 0, // ExposeExternal never true, no rebuild
+			expectRebuildCalls: 0,
 		},
 		{
-			// Clearing policy: non-nil empty slice — distinct from omitted field.
+			// Non-nil empty slice clears policy; distinct from an omitted field.
 			name:     "tool_configs empty slice clears policy",
 			pluginID: "com.mattermost.demo",
 			preRegistered: []mcp.PluginServerConfig{{
@@ -549,12 +534,10 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			expectRegisterCalls:    1,
 			expectEnabledAfter:     true,
 			expectExposeAfter:      false,
-			expectToolConfigsAfter: []mcp.ToolConfig{}, // cleared
+			expectToolConfigsAfter: []mcp.ToolConfig{},
 			expectRebuildCalls:     0,
 		},
 		{
-			// Preserve: tool_configs omitted while enabled flipped must not
-			// clear existing policy.
 			name:     "tool_configs omitted preserves existing policy",
 			pluginID: "com.mattermost.demo",
 			preRegistered: []mcp.PluginServerConfig{{
@@ -588,7 +571,6 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			mgr := api.mcpClientManager.(*mockMCPClientManager)
 			mgr.pluginServers = tt.preRegistered
 
-			// Observe rebuild calls in ExposeExternal toggle cases.
 			spy := &spyRebuilder{}
 			api.SetExternalRebuilderForTest(spy)
 
@@ -606,7 +588,6 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			if tt.expectStatus == http.StatusOK {
 				require.Equal(t, tt.expectEnabledAfter, mgr.registerCalls[0].Enabled)
 				require.Equal(t, tt.expectExposeAfter, mgr.registerCalls[0].ExposeExternal)
-				// Identity fields must be preserved.
 				require.Equal(t, "Demo", mgr.registerCalls[0].Name)
 				require.Equal(t, "/mcp", mgr.registerCalls[0].Path)
 				require.Equal(t, "com.mattermost.demo", mgr.registerCalls[0].PluginID)
@@ -619,8 +600,6 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 	}
 }
 
-// TestHandleUpdatePluginServer_PersistsToConfig verifies the save, update, and
-// cluster-notify path for plugin-server admin changes.
 func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 	tests := []struct {
 		name                 string
@@ -643,8 +622,6 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 					Enabled: true, ExposeExternal: false,
 				},
 				{
-					// Second pre-registered plugin — the full snapshot MUST
-					// include this one even though we're only updating the first.
 					PluginID: "com.mattermost.other", Name: "Other", Path: "/mcp",
 					Enabled: false, ExposeExternal: false,
 				},
@@ -698,7 +675,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectPublishCalls: 0,
 		},
 		{
-			name: "PublishConfigUpdate failure returns 500 after Save+Update succeeded",
+			name: "PublishConfigUpdate failure returns 500 after Save and skips Update",
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
 			}},
@@ -706,7 +683,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			publishErr:         errors.New("cluster broadcast failed"),
 			expectStatus:       http.StatusInternalServerError,
 			expectSaveCalls:    1,
-			expectUpdateCalls:  1,
+			expectUpdateCalls:  0,
 			expectPublishCalls: 1,
 		},
 	}
@@ -723,11 +700,8 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			mgr := api.mcpClientManager.(*mockMCPClientManager)
 			mgr.pluginServers = tt.preRegistered
 
-			// Inject failure modes via the spy stores.
 			var failingStore *failingConfigStore
 			if tt.getErr != nil || tt.saveErr != nil {
-				// testConfigStore doesn't currently fail — swap in a failing
-				// store directly on the API instance for this test.
 				failingStore = &failingConfigStore{getErr: tt.getErr, saveErr: tt.saveErr}
 				api.configStore = failingStore
 			}
@@ -745,9 +719,6 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			resp := recorder.Result()
 			require.Equal(t, tt.expectStatus, resp.StatusCode)
 
-			// Save-call count: on SaveConfig failure, we expect 1 save
-			// attempt and 0 update/publish. On PublishConfigUpdate failure,
-			// we expect 1 each of save+update+publish. Happy path: 1 each.
 			if tt.getErr != nil || tt.saveErr != nil {
 				require.Equal(t, tt.expectSaveCalls, failingStore.saveCallCount)
 			}
@@ -762,10 +733,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 	}
 }
 
-// failingConfigStore wraps testConfigStore with configurable error injection
-// for the SaveConfig path. testConfigStore in api_config_test.go doesn't
-// support error injection; rather than editing that file, we supply a local
-// test-only store for the failure-path cases.
+// failingConfigStore is a testConfigStore variant with configurable error injection on Get/Save.
 type failingConfigStore struct {
 	cfg           *config.Config
 	getErr        error

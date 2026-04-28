@@ -305,11 +305,8 @@ const McpsTab = (props: Props) => {
                                     aria-label={server.name}
                                 >
                                     {(() => {
-                                        // Compute pluginID once per server. For plugin-registered
-                                        // servers, tool names carry a "<sanitizedPluginID>__"
-                                        // wire prefix (added by public/mcphelper); strip it for
-                                        // display + aria-labels. The wire-format tool.name is
-                                        // still used for enable/disable identity.
+                                        // Strip the mcphelper "<pluginID>__" prefix for display
+                                        // only; wire tool.name remains the enable/disable identity.
                                         const pluginID = pluginIDFromServerOrigin(server.serverOrigin);
                                         return server.tools.filter((t) => t.enabled).map((tool) => {
                                             const toolOn = isToolEnabled(server.serverOrigin, tool.name);

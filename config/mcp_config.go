@@ -37,13 +37,9 @@ type MCPEmbeddedServerConfig struct {
 
 // MCPConfig contains the configuration for the MCP servers
 type MCPConfig struct {
-	Enabled            bool              `json:"enabled"`
-	EnablePluginServer bool              `json:"enablePluginServer"`
-	Servers            []MCPServerConfig `json:"servers"`
-	// PluginServers persists admin state for plugin-registered MCP servers.
-	// Hydrated into ClientManager.pluginServers on startup and on every
-	// config-update listener firing (see mcp/client_manager.go:
-	// syncPluginServersFromConfig). Slice (not map) for symmetry with Servers.
+	Enabled            bool                    `json:"enabled"`
+	EnablePluginServer bool                    `json:"enablePluginServer"`
+	Servers            []MCPServerConfig       `json:"servers"`
 	PluginServers      []PluginServerConfig    `json:"plugin_servers,omitempty"`
 	EmbeddedServer     MCPEmbeddedServerConfig `json:"embeddedServer"`
 	IdleTimeoutMinutes int                     `json:"idleTimeoutMinutes"`
@@ -104,9 +100,7 @@ func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 	return IsToolPolicyAutoRunInDM(policy) && enabled
 }
 
-// PluginServerConfig describes an MCP server registered by another Mattermost
-// plugin. Identity fields are plugin-owned; admin state fields are owned by
-// the Agents plugin.
+// PluginServerConfig describes an MCP server registered by another plugin.
 type PluginServerConfig struct {
 	PluginID       string          `json:"plugin_id"`
 	Name           string          `json:"name"`

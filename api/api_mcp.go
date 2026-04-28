@@ -109,9 +109,10 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 
 		origin := "plugin://" + cfg.PluginID
 		pluginConfig := &mcp.ServerConfig{
-			Name:    cfg.Name,
-			Enabled: true,
-			BaseURL: origin,
+			Name:        cfg.Name,
+			Enabled:     true,
+			BaseURL:     origin,
+			ToolConfigs: cfg.ToolConfigs,
 		}
 
 		servers = append(servers, buildUserMCPServerInfo(

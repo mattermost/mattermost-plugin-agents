@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -19,6 +20,17 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// fakePluginHTTPClient stubs mmapi.Client; only PluginHTTP is exercised in
+// these tests, so the embedded interface is left nil.
+type fakePluginHTTPClient struct {
+	mmapi.Client
+	pluginHTTP func(*http.Request) *http.Response
+}
+
+func (f *fakePluginHTTPClient) PluginHTTP(req *http.Request) *http.Response {
+	return f.pluginHTTP(req)
+}
 
 func TestClientManagerReInitIdleTimeoutDefaulting(t *testing.T) {
 	testCases := []struct {
@@ -75,7 +87,6 @@ func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T)
 	list := m.ListPluginServers()
 	require.Len(t, list, 2)
 
-	// Idempotent re-register (overwrite).
 	cfgA2 := PluginServerConfig{PluginID: "a", Name: "A prime", Path: "/mcp", Enabled: true}
 	m.RegisterPluginServer(cfgA2)
 	foundAPrime := false
@@ -87,7 +98,6 @@ func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T)
 	}
 	require.True(t, foundAPrime, "expected re-registered entry with overwritten Name")
 
-	// Enabled-snapshot filters out disabled entries.
 	enabled := m.snapshotEnabledPluginServers()
 	require.Len(t, enabled, 1)
 	require.Equal(t, "a", enabled[0].PluginID)
@@ -97,19 +107,14 @@ func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T)
 	require.Len(t, list, 1)
 	require.Equal(t, "b", list[0].PluginID)
 
-	// Unregister-noop on unknown ID.
 	m.UnregisterPluginServer("nonexistent")
 	require.Len(t, m.ListPluginServers(), 1)
 }
 
-// TestClientManager_GetPluginServer covers the lookup used by the bridge
-// register handler to preserve admin-set fields across plugin re-registration
-// (see handleMCPRegister in api/api_bridge_mcp.go).
 func TestClientManager_GetPluginServer(t *testing.T) {
 	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}}
 	t.Cleanup(m.Close)
 
-	// Not-found case returns zero value + false.
 	cfg, ok := m.GetPluginServer("missing")
 	require.False(t, ok)
 	require.Equal(t, PluginServerConfig{}, cfg)
@@ -127,7 +132,7 @@ func TestClientManager_GetPluginServer(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, stored, got)
 
-	// Mutating the returned value must not affect the stored entry (value copy).
+	// Returned value must be a copy.
 	got.Enabled = false
 	got.Name = "mutated"
 	again, ok := m.GetPluginServer("com.example.mcp")
@@ -135,8 +140,6 @@ func TestClientManager_GetPluginServer(t *testing.T) {
 	require.Equal(t, stored, again, "GetPluginServer must return an independent value copy")
 }
 
-// TestClientManager_HydratesPluginServersFromConfig verifies that persisted
-// plugin-server admin state is available before NewClientManager returns.
 func TestClientManager_HydratesPluginServersFromConfig(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
@@ -199,11 +202,9 @@ func TestClientManager_HydratesPluginServersFromConfig(t *testing.T) {
 	require.Empty(t, b.ToolConfigs)
 }
 
-// TestClientManager_ReInitSyncsPluginServerAdminFields covers the
-// Container.Update → listener → ReInit path: a config broadcast must merge
-// admin-owned fields (Enabled, ExposeExternal, ToolConfigs) onto in-memory
-// entries, while preserving runtime identity fields (Name, Path) that the
-// source plugin most recently set.
+// A config broadcast must merge admin-owned fields (Enabled, ExposeExternal,
+// ToolConfigs) onto in-memory entries while preserving runtime identity
+// fields (Name, Path) set by the source plugin.
 func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
@@ -212,22 +213,20 @@ func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
 	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
-	// Source plugin registered at runtime with self-declared identity.
 	m.RegisterPluginServer(PluginServerConfig{
 		PluginID:       "com.example.mcp",
 		Name:           "Live Name",
 		Path:           "/live-mcp",
-		Enabled:        false, // pre-merge state
+		Enabled:        false,
 		ExposeExternal: false,
 	})
 
-	// Cluster node receives a config broadcast that flips admin fields.
 	newCfg := Config{
 		IdleTimeoutMinutes: 30,
 		PluginServers: []PluginServerConfig{{
 			PluginID:       "com.example.mcp",
-			Name:           "Stale Name From Config", // identity field — must be ignored on merge
-			Path:           "/stale-from-config",     // identity field — must be ignored on merge
+			Name:           "Stale Name From Config", // must be ignored on merge
+			Path:           "/stale-from-config",     // must be ignored on merge
 			Enabled:        true,
 			ExposeExternal: true,
 			ToolConfigs: []ToolConfig{
@@ -241,21 +240,16 @@ func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
 	got, ok := m.GetPluginServer("com.example.mcp")
 	require.True(t, ok)
 
-	// Admin-owned fields take config values.
 	require.True(t, got.Enabled, "Enabled merged from config")
 	require.True(t, got.ExposeExternal, "ExposeExternal merged from config")
 	require.Len(t, got.ToolConfigs, 1, "ToolConfigs merged from config")
 	require.Equal(t, "echo", got.ToolConfigs[0].Name)
 	require.False(t, got.ToolConfigs[0].Enabled)
 
-	// Identity fields preserved from the live registration — the source
-	// plugin is the source of truth for these.
 	require.Equal(t, "Live Name", got.Name)
 	require.Equal(t, "/live-mcp", got.Path)
 }
 
-// TestClientManager_ReInitInsertsConfigOnlyEntries verifies config-only plugin
-// entries remain available until the source plugin registers again.
 func TestClientManager_ReInitInsertsConfigOnlyEntries(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
@@ -286,8 +280,7 @@ func TestClientManager_ReInitInsertsConfigOnlyEntries(t *testing.T) {
 	require.True(t, got.Enabled)
 }
 
-// TestClientManager_ReInitPreservesUnpersistedRuntimeEntries verifies that
-// live registrations absent from config survive config broadcasts.
+// Live registrations absent from config must survive config broadcasts.
 func TestClientManager_ReInitPreservesUnpersistedRuntimeEntries(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
@@ -304,8 +297,6 @@ func TestClientManager_ReInitPreservesUnpersistedRuntimeEntries(t *testing.T) {
 	}
 	m.RegisterPluginServer(live)
 
-	// Config broadcast carries a DIFFERENT plugin's persisted state — the
-	// live registration above is absent from cfg.PluginServers.
 	cfg := Config{
 		IdleTimeoutMinutes: 30,
 		PluginServers: []PluginServerConfig{{
@@ -317,18 +308,12 @@ func TestClientManager_ReInitPreservesUnpersistedRuntimeEntries(t *testing.T) {
 	}
 	m.ReInit(cfg, nil)
 
-	// Both entries must be present.
 	require.Len(t, m.ListPluginServers(), 2)
 	stillLive, ok := m.GetPluginServer("com.example.live")
 	require.True(t, ok, "runtime registration must survive ReInit")
 	require.Equal(t, live, stillLive)
 }
 
-// TestClientManager_SyncPluginServersFromConfig_SkipsEmptyPluginID exercises
-// the defensive `if persisted.PluginID == ""` guard in
-// syncPluginServersFromConfig. A malformed config blob carrying an empty
-// PluginID must not poison the registry — the offending entry is silently
-// skipped while well-formed entries still hydrate.
 func TestClientManager_SyncPluginServersFromConfig_SkipsEmptyPluginID(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
@@ -350,7 +335,6 @@ func TestClientManager_SyncPluginServersFromConfig_SkipsEmptyPluginID(t *testing
 	require.Equal(t, "com.example.valid", got[0].PluginID)
 }
 
-// Plugin server Enabled=true with 2 tools: both flow through.
 func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	target := newFakePluginMCPServer(t, 2)
 	t.Cleanup(target.Close)
@@ -380,7 +364,6 @@ func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	}
 }
 
-// Plugin server Enabled=false: zero tools, and PluginHTTP is never called.
 func TestClientManager_GetToolsForUser_PluginDisabled_ZeroTools(t *testing.T) {
 	mockAPI := mocks.NewMockClient(t)
 	mockAPI.EXPECT().PluginHTTP(mock.Anything).RunAndReturn(func(req *http.Request) *http.Response {
@@ -399,7 +382,7 @@ func TestClientManager_GetToolsForUser_PluginDisabled_ZeroTools(t *testing.T) {
 		PluginID: "com.example.mcp",
 		Name:     "Example",
 		Path:     "/mcp",
-		Enabled:  false, // disabled — should be skipped entirely
+		Enabled:  false,
 	}
 	m.RegisterPluginServer(cfg)
 
@@ -407,8 +390,6 @@ func TestClientManager_GetToolsForUser_PluginDisabled_ZeroTools(t *testing.T) {
 	require.Nil(t, mcpErrors, "no errors expected when plugin is simply disabled")
 	require.Empty(t, tools, "disabled plugin must contribute zero tools")
 
-	// PluginHTTP MUST NOT have been called — snapshotEnabledPluginServers filters
-	// disabled entries before any HTTP work is done.
 	mockAPI.AssertNotCalled(t, "PluginHTTP")
 }
 
@@ -435,10 +416,11 @@ func TestClientManager_GetToolsForUser_PluginEnabled_HTTPFailure(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			mockAPI := mocks.NewMockClient(t)
-			mockAPI.EXPECT().PluginHTTP(mock.Anything).RunAndReturn(func(req *http.Request) *http.Response {
-				return tc.pluginHTTP(t, req)
-			}).Maybe()
+			mockAPI := &fakePluginHTTPClient{
+				pluginHTTP: func(req *http.Request) *http.Response {
+					return tc.pluginHTTP(t, req)
+				},
+			}
 
 			pluginTestAPI := &plugintest.API{}
 			setupTestLogger(pluginTestAPI)
@@ -466,8 +448,6 @@ func TestClientManager_GetToolsForUser_PluginEnabled_HTTPFailure(t *testing.T) {
 	}
 }
 
-// TestClientManager_GetToolsForUser_MultiplePluginServers verifies per-plugin
-// origin bucketing through GetToolsForUser and filterToolsByConfig.
 func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 	targetA := newFakePluginMCPServerWithPrefix(t, "tool_a", 2)
 	t.Cleanup(targetA.Close)
@@ -478,21 +458,21 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	// Route PluginHTTP based on which plugin the req is destined for —
-	// PluginHTTPRoundTripper rewrites the path to "/<pluginID>/mcp".
-	mockAPI := mocks.NewMockClient(t)
-	mockAPI.EXPECT().PluginHTTP(mock.Anything).RunAndReturn(func(req *http.Request) *http.Response {
-		rec := httptest.NewRecorder()
-		switch {
-		case strings.HasPrefix(req.URL.Path, "/com.example.a"):
-			targetA.Config.Handler.ServeHTTP(rec, req)
-		case strings.HasPrefix(req.URL.Path, "/com.example.b"):
-			targetB.Config.Handler.ServeHTTP(rec, req)
-		default:
-			rec.WriteHeader(http.StatusNotFound)
-		}
-		return rec.Result()
-	}).Maybe()
+	// PluginHTTPRoundTripper rewrites paths to "/<pluginID>/mcp"; route accordingly.
+	mockAPI := &fakePluginHTTPClient{
+		pluginHTTP: func(req *http.Request) *http.Response {
+			rec := httptest.NewRecorder()
+			switch {
+			case strings.HasPrefix(req.URL.Path, "/com.example.a"):
+				targetA.Config.Handler.ServeHTTP(rec, req)
+			case strings.HasPrefix(req.URL.Path, "/com.example.b"):
+				targetB.Config.Handler.ServeHTTP(rec, req)
+			default:
+				rec.WriteHeader(http.StatusNotFound)
+			}
+			return rec.Result()
+		},
+	}
 
 	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
 	t.Cleanup(m.Close)
@@ -504,8 +484,7 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 	require.Nil(t, mcpErrors)
 	require.Len(t, tools, 3, "expected 2 tools from A + 1 tool from B")
 
-	// Bucket by ServerOrigin — the filter orders by serverOrder (map iteration
-	// order in the filter, so not deterministic across A/B; just count).
+	// Cross-server order is map-iteration-defined, so bucket-count.
 	counts := map[string]int{}
 	for _, tool := range tools {
 		counts[tool.ServerOrigin]++
@@ -514,11 +493,8 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 	require.Equal(t, 1, counts["plugin://com.example.b"])
 }
 
-// Race test: concurrent Register/Unregister/List/snapshotEnabledPluginServers
-// must not deadlock or race. Validates that pluginServersMu correctly
-// serializes writes and allows concurrent readers.
-//
-// Must be run with -race to verify data-race safety.
+// Run with -race. Concurrent Register/Unregister/List/snapshot must not
+// deadlock or race.
 func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 	m := &ClientManager{pluginServers: map[string]PluginServerConfig{}}
 	t.Cleanup(m.Close)
@@ -530,7 +506,6 @@ func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 	var wg sync.WaitGroup
 	var stop atomic.Bool
 
-	// Writer goroutines: continuously register + unregister plugin servers.
 	for i := 0; i < writers; i++ {
 		wg.Add(1)
 		go func(id int) {
@@ -548,7 +523,6 @@ func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 		}(i)
 	}
 
-	// Reader goroutines: continuously list + snapshot enabled.
 	for i := 0; i < readers; i++ {
 		wg.Add(1)
 		go func() {
@@ -560,7 +534,6 @@ func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 		}()
 	}
 
-	// Deadline: if the goroutines don't finish in 10 s, we deadlocked.
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
@@ -569,7 +542,6 @@ func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 
 	select {
 	case <-done:
-		// success
 	case <-time.After(10 * time.Second):
 		stop.Store(true)
 		t.Fatal("deadlock or excessive contention in Register/Unregister vs List/snapshot")

@@ -13,36 +13,24 @@ import (
 )
 
 // bifrostToolNameRe is the regex Bifrost / the Anthropic API apply to every
-// tool's `custom.name`. Tool names that fail this match cause an instant
-// "bifrost error: tools.X.custom.name: String should match pattern
-// '^[a-zA-Z0-9_-]{1,128}$'" before any LLM call is made — surfaced to users
-// as "Sorry! An error occurred while accessing the LLM".
+// tool's `custom.name`. Names that fail it cause an instant "bifrost error"
+// before any LLM call is made.
 var bifrostToolNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 
-// TestGetUserID_RoundTrip verifies withUserID/GetUserID are inverses.
 func TestGetUserID_RoundTrip(t *testing.T) {
 	ctx := withUserID(context.Background(), "user123")
 	require.Equal(t, "user123", GetUserID(ctx))
 }
 
-// TestGetUserID_Missing verifies GetUserID returns "" when no user ID was set.
 func TestGetUserID_Missing(t *testing.T) {
 	require.Equal(t, "", GetUserID(context.Background()))
 }
 
-// TestGetUserID_EmptyValue verifies that an explicitly-stored empty string
-// round-trips as empty (it's still a valid stored value).
 func TestGetUserID_EmptyValue(t *testing.T) {
 	ctx := withUserID(context.Background(), "")
 	require.Equal(t, "", GetUserID(ctx))
 }
 
-// TestSanitizeForToolName is a table-driven unit test on the helper. The
-// charset is intentionally stricter than go-sdk's validToolNameRune at
-// go-sdk@v1.4.1/mcp/tool.go:134-140 (which also allows '.') because Bifrost
-// and the Anthropic API enforce '^[a-zA-Z0-9_-]{1,128}$' on tool names. Real
-// Mattermost plugin IDs commonly contain dots, so we must strip them so the
-// final prefixed name is downstream-safe.
 func TestSanitizeForToolName(t *testing.T) {
 	cases := []struct {
 		name string
@@ -60,26 +48,19 @@ func TestSanitizeForToolName(t *testing.T) {
 		{"at_sign_replaced", "com@plugin", "com_plugin"},
 		{"mixed_invalid_runes", "com mattermost/@evil", "com_mattermost__evil"},
 		{"non_ascii_replaced", "café", "caf_"},
-		// Regression: pluginID like "com.mattermost.plugin-mcp-demo" produced a
-		// prefix that contained '.', which Bifrost / Anthropic reject with
-		// "tools.X.custom.name: String should match pattern '^[a-zA-Z0-9_-]{1,128}$'".
 		{"bifrost_regex_compliance", "com.mattermost.plugin-mcp-demo", "com_mattermost_plugin-mcp-demo"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := sanitizeForToolName(tc.in)
 			require.Equal(t, tc.want, got)
-			// Idempotency: sanitize(sanitize(x)) == sanitize(x).
 			assert.Equal(t, got, sanitizeForToolName(got), "sanitize should be idempotent")
 		})
 	}
 }
 
-// TestSanitizedPrefixIsBifrostCompliant is a regression guard for the
-// April 2026 outage: any sanitized prefix concatenated with "__" and a
-// realistic tool-name suffix MUST satisfy Bifrost's tool-name regex.
-// Empty pluginID is excluded because it produces "__<tool>" which is still
-// regex-valid; the real failure mode was '.' leaking through.
+// TestSanitizedPrefixIsBifrostCompliant ensures sanitized prefixes plus a
+// realistic suffix satisfy Bifrost's tool-name regex.
 func TestSanitizedPrefixIsBifrostCompliant(t *testing.T) {
 	pluginIDs := []string{
 		"com.mattermost.plugin-foo",

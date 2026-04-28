@@ -16,8 +16,6 @@ type MCPToolConfigRowProps = {
     toolConfig: MCPToolConfig;
     onToolConfigChange: (config: MCPToolConfig) => void;
     serverDisabled?: boolean;
-
-    // Human-readable label shown to the admin. Defaults to tool.name.
     displayName?: string;
 };
 

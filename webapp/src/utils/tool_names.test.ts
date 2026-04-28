@@ -8,10 +8,7 @@ import {
     stripWirePrefix,
 } from './tool_names';
 
-// These cases are kept aligned with public/mcphelper/mcphelper_test.go's
-// TestSanitizeForToolName so the TS and Go implementations stay in lockstep.
-// Anything that drifts here breaks the round-trip between server-side
-// prefixing (Go) and client-side stripping (TS).
+// Mirrors public/mcphelper/mcphelper_test.go's TestSanitizeForToolName; keep TS and Go cases in sync.
 describe('sanitizeForToolName', () => {
     test.each([
         ['', ''],
@@ -84,7 +81,6 @@ describe('stripWirePrefix', () => {
     });
 
     test('leaves embedded MCP tool names unchanged', () => {
-        // Spot-check names that exist in mcpserver/tools/*.go.
         for (const n of ['add_user_to_channel', 'create_channel', 'create_post', 'dm', 'read_channel']) {
             expect(stripWirePrefix(n)).toBe(n);
         }

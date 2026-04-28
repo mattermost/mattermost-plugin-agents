@@ -1,13 +1,6 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-// Separate test file dedicated to the parent's diff-and-route edge cases
-// (load-bearing empty-clear, no-op short-circuit). These exercise payload
-// shapes the real MCPServerToolRow child UI wouldn't emit on its own, so
-// this file stubs the child at module-load time to expose its
-// onServerConfigChange callback. Kept out of mcp_tools_viewer.test.tsx
-// because that file's first four tests rely on the real child rendering.
-
 import React from 'react';
 import {render, waitFor} from '@testing-library/react';
 
@@ -34,7 +27,6 @@ jest.mock('react-intl', () => {
     };
 });
 
-// Mock the client module.
 jest.mock('../../client', () => ({
     __esModule: true,
     getMCPTools: jest.fn().mockResolvedValue({servers: []}),
@@ -43,9 +35,6 @@ jest.mock('../../client', () => ({
     updatePluginServer: jest.fn().mockResolvedValue({}),
 }));
 
-// Module-scoped capture for the child's onServerConfigChange prop. The stub
-// below pushes each render's callback here; tests invoke whichever one was
-// rendered for the plugin row.
 type ServerConfigChangeCb = (cfg: {
     name: string;
     enabled: boolean;
@@ -124,10 +113,7 @@ describe('MCPToolsViewer — plugin branch diff edge cases', () => {
         renderViewer();
         expect(capturedHandlers.length).toBeGreaterThanOrEqual(1);
 
-        // Simulate the admin clearing every per-tool entry. Previous state
-        // had one entry; updated state has an empty array. Server-side
-        // pointer semantics treat non-nil empty slice as "clear all policy"
-        // (vs. nil = preserve).
+        // Pointer semantics: non-nil empty slice clears policy; nil preserves it.
         capturedHandlers[0].cb({
             name: 'Demo Plugin',
             enabled: true,
@@ -143,10 +129,6 @@ describe('MCPToolsViewer — plugin branch diff edge cases', () => {
         const [pluginID, update] = mockUpdatePluginServer.mock.calls[0];
         expect(pluginID).toBe('com.example.demo');
 
-        // The load-bearing assertion: `tool_configs` is present AND is an
-        // empty array (not omitted). A defensive `if (length > 0)` in the
-        // client would fail this — the server would then preserve policy
-        // instead of clearing it.
         expect(update).toHaveProperty('tool_configs');
         expect(Array.isArray(update.tool_configs)).toBe(true);
         expect(update.tool_configs).toHaveLength(0);
@@ -157,9 +139,6 @@ describe('MCPToolsViewer — plugin branch diff edge cases', () => {
         renderViewer();
         expect(capturedHandlers.length).toBeGreaterThanOrEqual(1);
 
-        // Feed back the exact shape findServerConfig would produce for this
-        // plugin: enabled=true, tool_configs=[{echo, ask, enabled: true}].
-        // Diff against prev is empty → short-circuit path fires, no PUT.
         capturedHandlers[0].cb({
             name: 'Demo Plugin',
             enabled: true,
@@ -168,8 +147,6 @@ describe('MCPToolsViewer — plugin branch diff edge cases', () => {
             tool_configs: [{name: 'com_example_demo__echo', policy: 'ask', enabled: true}],
         });
 
-        // Synchronous: the handler's empty-update guard must return before
-        // any fetch happens. No waitFor needed.
         expect(mockUpdatePluginServer).not.toHaveBeenCalled();
     });
 });

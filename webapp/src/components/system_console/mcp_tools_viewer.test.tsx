@@ -4,11 +4,7 @@
 import React from 'react';
 import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 
-// Minimal react-intl shim. ts-jest bypasses babel, so babel-plugin-formatjs
-// never runs to inject ids from defaultMessage — FormattedMessage throws on
-// render without an id. These stubs render defaultMessage verbatim (or the
-// Intl method's input) so the component tree mounts, which is all these
-// tests need. ICU token interpolation is preserved via values prop.
+// Minimal react-intl shim: ts-jest bypasses babel, so FormattedMessage needs an id at runtime.
 jest.mock('react-intl', () => {
     const React = require('react'); // eslint-disable-line @typescript-eslint/no-shadow, no-shadow, global-require
 
@@ -31,7 +27,6 @@ jest.mock('react-intl', () => {
     };
 });
 
-// Mock the client module so tests can assert on PUT bodies.
 jest.mock('../../client', () => ({
     __esModule: true,
     getMCPTools: jest.fn(),
@@ -117,11 +112,8 @@ describe('MCPToolsViewer — plugin branch', () => {
     test('renders plugin row with toolConfigs from server response (policy dropdown enabled)', () => {
         renderViewer(makePluginToolsResponse());
 
-        // Expand the server row so the tool list renders.
         fireEvent.click(screen.getByText('Demo Plugin'));
 
-        // The policy dropdowns are rendered for the plugin row's tools.
-        // None should be disabled.
         const selects = screen.getAllByRole('combobox');
         expect(selects.length).toBeGreaterThanOrEqual(1);
         for (const sel of selects) {
@@ -132,10 +124,8 @@ describe('MCPToolsViewer — plugin branch', () => {
     test('changing a tool policy fires updatePluginServer with tool_configs only', async () => {
         renderViewer(makePluginToolsResponse());
 
-        // Expand the row.
         fireEvent.click(screen.getByText('Demo Plugin'));
 
-        // Find the first policy select and change it.
         const selects = screen.getAllByRole('combobox');
         fireEvent.change(selects[0], {target: {value: 'auto_run_in_dm'}});
 
@@ -146,12 +136,9 @@ describe('MCPToolsViewer — plugin branch', () => {
         const [pluginID, update] = mockUpdatePluginServer.mock.calls[0];
         expect(pluginID).toBe('com.example.demo');
 
-        // Diff: only tool_configs changed; enabled stayed true. Body must
-        // omit `enabled`.
         expect(update).not.toHaveProperty('enabled');
         expect(update).toHaveProperty('tool_configs');
 
-        // The new tool_configs must contain the changed entry.
         const tcs = update.tool_configs as Array<{name: string; policy: string}>;
         const echoEntry = tcs.find((tc) => tc.name === 'com_example_demo__echo');
         expect(echoEntry?.policy).toBe('auto_run_in_dm');
@@ -160,8 +147,7 @@ describe('MCPToolsViewer — plugin branch', () => {
     test('toggling server-level enabled fires updatePluginServer with enabled only', async () => {
         renderViewer(makePluginToolsResponse());
 
-        // ToggleSwitch renders as a native checkbox input. The row is
-        // collapsed on mount — only the server-level toggle is in the DOM.
+        // ToggleSwitch renders as a native checkbox; row collapsed on mount, so only server toggle is in the DOM.
         const toggles = screen.getAllByRole('checkbox');
         expect(toggles.length).toBeGreaterThanOrEqual(1);
         fireEvent.click(toggles[0]);
@@ -173,14 +159,12 @@ describe('MCPToolsViewer — plugin branch', () => {
         const [pluginID, update] = mockUpdatePluginServer.mock.calls[0];
         expect(pluginID).toBe('com.example.demo');
 
-        // Diff: only enabled changed. Body must omit `tool_configs`.
         expect(update).toHaveProperty('enabled');
         expect(update.enabled).toBe(false);
         expect(update).not.toHaveProperty('tool_configs');
     });
 
     test('plugin branch ignores rows without serverType==="plugin"', async () => {
-        // Remote server, not a plugin — its mutations should NOT call updatePluginServer.
         const remoteResponse: MCPToolsResponse = {
             servers: [{
                 name: 'Remote',
@@ -204,11 +188,9 @@ describe('MCPToolsViewer — plugin branch', () => {
         const {onConfigChange} = renderViewer(remoteResponse, cfg);
         fireEvent.click(screen.getByText('Remote'));
 
-        // Server-level toggle (native checkbox) is the first checkbox in the DOM.
         const toggles = screen.getAllByRole('checkbox');
         fireEvent.click(toggles[0]);
 
-        // Remote rows route through onConfigChange (mcpConfig path), not the plugin endpoint.
         expect(onConfigChange).toHaveBeenCalled();
         expect(mockUpdatePluginServer).not.toHaveBeenCalled();
     });

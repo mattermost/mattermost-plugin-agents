@@ -280,7 +280,6 @@ func TestHandleGetUserMCPToolsIncludesPluginServers(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
-	// A plugin server registered in the mock, with one discovered tool.
 	pluginCfg := mcp.PluginServerConfig{
 		PluginID: "com.example.mcp-demo",
 		Name:     "MCP Demo",
@@ -313,18 +312,15 @@ func TestHandleGetUserMCPToolsIncludesPluginServers(t *testing.T) {
 
 	response := getUserMCPToolsResponse(t, e.api)
 
-	// Only the enabled plugin should appear; disabled is skipped.
 	require.Len(t, response.Servers, 1)
 	require.Equal(t, pluginCfg.Name, response.Servers[0].Name)
 	require.Equal(t, "plugin://"+pluginCfg.PluginID, response.Servers[0].ServerOrigin)
-	require.True(t, response.Servers[0].Authenticated) // has discovered tools
+	require.True(t, response.Servers[0].Authenticated)
 	require.False(t, response.Servers[0].NeedsOAuth)
 	require.Len(t, response.Servers[0].Tools, 2)
-	// Alphabetical sort per buildUserMCPServerInfo.
 	require.Equal(t, "add", response.Servers[0].Tools[0].Name)
 	require.Equal(t, "echo", response.Servers[0].Tools[1].Name)
-	// Default-allow: every tool is enabled with "ask" policy — matches the
-	// synthetic-entry path in filterToolsByConfig at mcp/client_manager.go.
+	// Default-allow synthetic entries (filterToolsByConfig): every tool is enabled with "ask" policy.
 	for _, tool := range response.Servers[0].Tools {
 		require.True(t, tool.Enabled, "tool %q should default to enabled", tool.Name)
 		require.Equal(t, "ask", tool.Policy, "tool %q should default to ask policy", tool.Name)

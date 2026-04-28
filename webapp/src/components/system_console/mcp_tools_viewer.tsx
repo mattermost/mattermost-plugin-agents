@@ -4,7 +4,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {RefreshIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton, SecondaryButton} from '../assets/buttons';
 import {getMCPTools, clearMCPToolsCache, getVettedToolSeed, updatePluginServer} from '../../client';
@@ -28,13 +28,9 @@ export type MCPServerInfo = {
     oauthURL?: string;
     error: string | null;
 
-    // Optional for compatibility with older server builds.
+    // Plugin-server fields; remote and embedded rows read state from mcpConfig.
     serverType?: string;
-
-    // Authoritative for plugin entries; embedded and remote rows mirror mcpConfig.
     enabled?: boolean;
-
-    // Per-tool policy for plugin rows. Remote and embedded rows read from mcpConfig.
     toolConfigs?: MCPToolConfig[];
 };
 
@@ -50,6 +46,7 @@ type MCPToolsViewerProps = {
 
 // Main component for MCP Tools viewer
 const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsViewerProps) => {
+    const intl = useIntl();
     const [toolsData, setToolsData] = useState<MCPToolsResponse | null>(initialToolsData || null);
     const [loading, setLoading] = useState(false);
     const [clearing, setClearing] = useState(false);
@@ -172,7 +169,7 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
     // The embedded server uses this key as its origin/URL
     const embeddedClientKey = EMBEDDED_MATTERMOST_BASE_URL;
 
-    // Find the matching ServerConfig for a discovered server.
+    // Find the matching ServerConfig for a discovered server
     const findServerConfig = (server: MCPServerInfo): MCPServerConfig | null => {
         if (server.url === embeddedClientKey) {
             return {
@@ -239,7 +236,11 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
             updatePluginServer(pluginID, update).
                 then(() => fetchTools()).
                 catch((err) => {
-                    setError(err instanceof Error ? err.message : 'Failed to update plugin server');
+                    setError(
+                        err instanceof Error ?
+                            err.message :
+                            intl.formatMessage({id: 'mcp_tools.update_plugin_server_failed', defaultMessage: 'Failed to update plugin server'}),
+                    );
                 });
             return;
         }

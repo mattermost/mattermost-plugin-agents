@@ -19,10 +19,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newFakePluginMCPServer spins up an httptest.Server exposing a go-sdk MCP
-// Streamable HTTP handler with toolCount echo tools named "test_tool_N".
-// If sawUserIDOut is non-nil, each incoming request's X-Mattermost-UserID
-// header is written to *sawUserIDOut before the MCP handler runs.
+// newFakePluginMCPServer exposes toolCount echo tools named "test_tool_N".
+// If sawUserIDOut is non-nil, the X-Mattermost-UserID header from each request
+// is written there before the MCP handler runs.
 func newFakePluginMCPServer(t *testing.T, toolCount int, sawUserIDOut *string) *httptest.Server {
 	t.Helper()
 	srv := gosdkmcp.NewServer(&gosdkmcp.Implementation{Name: "fake", Version: "1.0"}, nil)
@@ -52,8 +51,7 @@ func newFakePluginMCPServer(t *testing.T, toolCount int, sawUserIDOut *string) *
 	}))
 }
 
-// newPluginHTTPForwarder returns a mock mmapi.Client whose PluginHTTP forwards
-// the request to target.Config.Handler via an httptest.ResponseRecorder.
+// newPluginHTTPForwarder forwards PluginHTTP calls to target.Config.Handler.
 func newPluginHTTPForwarder(t *testing.T, target *httptest.Server) *mocks.MockClient {
 	t.Helper()
 	m := mocks.NewMockClient(t)
@@ -75,13 +73,10 @@ func TestBuildProxyTools_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tools, 2)
 	require.Len(t, handlers, 2)
-	// Names are passed through verbatim (no rename in proxy layer).
 	require.Equal(t, "test_tool_0", tools[0].Name)
 	require.Equal(t, "test_tool_1", tools[1].Name)
 }
 
-// TestBuildProxyTools_HandlerPropagatesUserID verifies end-to-end
-// X-Mattermost-UserID propagation into the source plugin request.
 func TestBuildProxyTools_HandlerPropagatesUserID(t *testing.T) {
 	var sawUserID string
 	target := newFakePluginMCPServer(t, 1, &sawUserID)
@@ -108,7 +103,6 @@ func TestBuildProxyTools_HandlerMissingUserID(t *testing.T) {
 	_, handlers, err := BuildProxyTools(context.Background(), cfg, mockAPI)
 	require.NoError(t, err)
 
-	// No auth.UserIDContextKey in context -> handler returns an error.
 	_, callErr := handlers[0](context.Background(), &gosdkmcp.CallToolRequest{Params: &gosdkmcp.CallToolParamsRaw{Name: "test_tool_0"}})
 	require.Error(t, callErr)
 }
@@ -119,7 +113,7 @@ func TestBuildProxyTools_UnreachablePluginReturnsError(t *testing.T) {
 
 	cfg := mcppkg.PluginServerConfig{PluginID: "com.example.dead", Name: "Dead", Path: "/mcp", Enabled: true, ExposeExternal: true}
 	_, _, err := BuildProxyTools(context.Background(), cfg, mockAPI)
-	require.Error(t, err, "unreachable plugin should return a non-nil error; caller decides whether to skip or propagate")
+	require.Error(t, err)
 }
 
 func TestBuildProxyTools_NilSourcePluginAPI(t *testing.T) {

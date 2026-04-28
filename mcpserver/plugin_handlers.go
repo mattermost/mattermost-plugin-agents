@@ -31,7 +31,8 @@ type PluginServerRegistry interface {
 // Keep this in sync with api/api_bridge_mcp.go's externalServerRebuilder.
 var _ interface{ RebuildExternalServer() } = (*PluginMCPHandlers)(nil)
 
-// PluginMCPHandlers contains the HTTP handlers for MCP endpoints.
+// PluginMCPHandlers wires the MCP HTTP handlers used by the Agents plugin's
+// external MCP endpoint.
 type PluginMCPHandlers struct {
 	OAuthMetadataHandler http.HandlerFunc
 
@@ -46,26 +47,20 @@ type PluginMCPHandlers struct {
 	registry        PluginServerRegistry
 	sourcePluginAPI mmapi.Client
 
-	// Bound each source plugin Connect/ListTools during rebuilds.
+	// Bounds each source-plugin Connect/ListTools during rebuilds.
 	proxyDiscoveryTimeout time.Duration
 
-	// rebuildMu serializes full rebuild operations while still allowing external
-	// MCP requests to use the current server. Without it, two overlapping
-	// rebuilds could finish out of order and swap an older registry snapshot over
-	// a newer one.
+	// rebuildMu serializes rebuilds so two concurrent rebuilds cannot swap an
+	// older registry snapshot over a newer one.
 	rebuildMu sync.Mutex
 
-	// mu guards the currently-active *mcp.Server.
 	mu            sync.RWMutex
 	currentServer *mcp.Server
 }
 
-// NewPluginMCPHandlers creates MCP handlers for use within a Mattermost plugin.
-//
-// registry may be nil to disable plugin-server aggregation.
-//
-// The handlers expect requests to have an Authorization Bearer token (or
-// equivalent session/user-ID identification) injected by the plugin middleware.
+// NewPluginMCPHandlers creates MCP handlers for the Mattermost plugin.
+// registry may be nil to disable plugin-server aggregation. Callers must
+// inject auth (bearer token or user-ID) via plugin middleware.
 func NewPluginMCPHandlers(
 	siteURL, internalURL string,
 	logger loggerlib.Logger,
@@ -105,7 +100,6 @@ func NewPluginMCPHandlers(
 	resourceURL := fmt.Sprintf("%s/plugins/mattermost-ai/mcp-server", siteURL)
 	metadataHandler := CreateOAuthMetadataHandler(resourceURL, siteURL, "Mattermost MCP Server")
 
-	// The metadata URL for WWW-Authenticate headers
 	metadataURL := fmt.Sprintf("%s/plugins/mattermost-ai/mcp-server/.well-known/oauth-protected-resource", siteURL)
 
 	h.MCPHandler = streamableHandler
@@ -115,9 +109,9 @@ func NewPluginMCPHandlers(
 	return h, nil
 }
 
-// buildServer constructs a fresh *mcp.Server with native + proxy tools. It does
-// not read or mutate currentServer, so callers do not need to hold h.mu while
-// proxy discovery performs source-plugin Connect/ListTools calls.
+// buildServer constructs a fresh *mcp.Server with native + proxy tools.
+// Does not touch currentServer, so callers can drop h.mu during the
+// source-plugin Connect/ListTools calls.
 func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 	mcpServer := mcp.NewServer(
 		&mcp.Implementation{
@@ -148,9 +142,9 @@ func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 	)
 	toolProvider.ProvideTools(mcpServer)
 
-	// Plugin tool policy is server-wide: disabled tools are not registered on
-	// the external MCP server.
+	// Disabled plugin tools are not registered on the external server.
 	if h.registry != nil {
+		toolOwners := map[string]string{}
 		for _, ps := range h.registry.ListPluginServers() {
 			if !ps.Enabled || !ps.ExposeExternal {
 				continue
@@ -178,6 +172,14 @@ func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 				if _, enabled := policyConfig.GetToolPolicy(proxyTools[i].Name); !enabled {
 					continue
 				}
+				if existing, ok := toolOwners[proxyTools[i].Name]; ok {
+					h.logger.Error("duplicate proxy tool name across plugin MCP servers; skipping",
+						"tool_name", proxyTools[i].Name,
+						"plugin_id", ps.PluginID,
+						"existing_plugin_id", existing)
+					continue
+				}
+				toolOwners[proxyTools[i].Name] = ps.PluginID
 				mcpServer.AddTool(proxyTools[i], proxyHandlers[i])
 			}
 		}

@@ -221,29 +221,25 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 	}
 }
 
-// pluginServerOriginKey is the synthetic origin string used for plugin-server
-// tools. Must match the key used by filterToolsByConfig when building
-// synthetic ServerConfig entries (mcp/client_manager.go).
+// pluginServerOriginKey returns the synthetic origin string for plugin-server
+// tools. Must match the key used by filterToolsByConfig.
 func pluginServerOriginKey(pluginID string) string {
 	return "plugin://" + pluginID
 }
 
-// ConnectToPluginServer establishes a cached MCP client session with a source
-// plugin's MCP endpoint over PluginHTTP, injecting X-Mattermost-UserID on every
-// request. Plugin servers use inter-plugin auth, not user OAuth.
+// ConnectToPluginServer establishes a cached MCP session with a source plugin
+// over PluginHTTP, injecting X-Mattermost-UserID. Plugin servers use
+// inter-plugin auth, not user OAuth.
 func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServerConfig, sourcePluginAPI mmapi.Client) error {
 	if sourcePluginAPI == nil {
 		return fmt.Errorf("sourcePluginAPI is nil; plugin MCP server %s cannot be reached", cfg.PluginID)
 	}
 
 	originKey := pluginServerOriginKey(cfg.PluginID)
-	// Idempotent: skip reconnect if we already have a live session.
 	if _, exists := c.clients[originKey]; exists {
 		return nil
 	}
 
-	// Build the transport chain: PluginHTTPRoundTripper (URL rewrite) ->
-	// headerTransport (X-Mattermost-UserID injection) -> http.Client.
 	roundTripper := &PluginHTTPRoundTripper{
 		pluginID:  cfg.PluginID,
 		basePath:  cfg.Path,
@@ -256,9 +252,8 @@ func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServe
 		},
 	}
 
-	// Connect via go-sdk MCP Streamable HTTP transport. Endpoint URL is a
-	// placeholder; PluginHTTPRoundTripper rewrites req.URL.Path before each
-	// round trip. The scheme/host must parse to a valid URL for go-sdk.
+	// Endpoint URL is a placeholder — PluginHTTPRoundTripper rewrites
+	// req.URL.Path on each round trip. go-sdk requires a parseable URL.
 	mcpClient := gosdkmcp.NewClient(
 		&gosdkmcp.Implementation{
 			Name:    "mattermost-agents-plugin-bridge",
@@ -274,8 +269,6 @@ func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServe
 		return fmt.Errorf("failed to connect to plugin MCP server %s: %w", cfg.PluginID, err)
 	}
 
-	// Discover tools. Zero-tool responses and list errors close the session
-	// and surface as errors — matches mcp/client.go:244-247.
 	initResult, err := session.ListTools(ctx, &gosdkmcp.ListToolsParams{})
 	if err != nil {
 		_ = session.Close()
@@ -286,9 +279,8 @@ func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServe
 		return fmt.Errorf("no tools found on plugin MCP server %s for user %s", cfg.PluginID, c.userID)
 	}
 
-	// Synthetic ServerConfig for the plugin server. BaseURL == originKey is the
-	// link to filterToolsByConfig's synthetic entry; GetTools propagates
-	// client.config.BaseURL as llm.Tool.ServerOrigin (mcp/user_clients.go:180).
+	// Synthetic ServerConfig: BaseURL == originKey ties the client into
+	// filterToolsByConfig via llm.Tool.ServerOrigin in GetTools.
 	pluginCfg := ServerConfig{
 		Name:    cfg.Name,
 		Enabled: true,
@@ -302,8 +294,7 @@ func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServe
 		userID:     c.userID,
 		log:        c.log,
 		httpClient: httpClient,
-		// Leave oauthManager and embeddedClient nil: reconnect reuses this
-		// PluginHTTP-backed httpClient rather than the OAuth or embedded paths.
+		// oauthManager/embeddedClient stay nil; reconnect reuses httpClient.
 	}
 	for _, tool := range initResult.Tools {
 		client.tools[tool.Name] = tool

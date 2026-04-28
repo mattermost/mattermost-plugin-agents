@@ -14,10 +14,7 @@ import (
 const pluginServerOriginPrefix = "plugin://"
 
 // lookupToolPolicy resolves a tool's policy for embedded, remote, and plugin
-// server origins. Unknown or disabled origins never auto-execute.
-//
-// Plugin entries use Enabled=true in the synthetic ServerConfig after checking
-// ps.Enabled, so GetToolPolicy can still read disabled per-tool entries.
+// origins. Unknown or disabled origins never auto-execute.
 func lookupToolPolicy(mcpCfg config.MCPConfig, serverBaseURL, toolName string) (string, bool) {
 	if serverBaseURL == mcp.EmbeddedClientKey {
 		toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
@@ -40,9 +37,6 @@ func lookupToolPolicy(mcpCfg config.MCPConfig, serverBaseURL, toolName string) (
 				continue
 			}
 			if !ps.Enabled {
-				// Disabled plugin: tool should already have been dropped by
-				// filterToolsByConfig. Defensive fallthrough — never
-				// auto-execute on behalf of a disabled plugin.
 				break
 			}
 			synthetic := &mcp.ServerConfig{

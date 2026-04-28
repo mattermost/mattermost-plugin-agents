@@ -19,10 +19,8 @@ const Client4 = new Client4Class();
 type MCPToolPolicy = 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
 type VettedToolConfig = {name: string; policy: MCPToolPolicy; enabled: boolean};
 
-// Local shape mirror of the webapp's MCPToolConfig (see
-// components/system_console/mcp_servers.tsx). Duplicated here to avoid
-// inverting the layering (client.tsx should not depend on UI components).
-// Future refactor: consolidate into a shared types module.
+// Mirrors components/system_console/mcp_servers.tsx MCPToolConfig; duplicated to
+// avoid client.tsx depending on UI components.
 type MCPToolConfig = {
     name: string;
     policy: MCPToolPolicy;
@@ -543,10 +541,7 @@ export async function clearMCPToolsCache() {
     });
 }
 
-/**
- * Apply a partial admin-state update to a plugin-registered MCP server.
- * Omitted fields are preserved; tool_configs: [] explicitly clears policy.
- */
+// Omitted fields are preserved server-side; tool_configs: [] clears policy.
 export async function updatePluginServer(
     pluginID: string,
     update: {

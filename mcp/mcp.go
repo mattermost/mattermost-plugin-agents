@@ -74,7 +74,7 @@ func DiscoverRemoteServerTools(
 }
 
 // DiscoverPluginServerTools lists tools from a plugin-registered MCP server
-// over PluginHTTP. It does not use the per-user client cache.
+// over PluginHTTP, bypassing the per-user client cache.
 func DiscoverPluginServerTools(
 	ctx context.Context,
 	userID string,
@@ -86,8 +86,7 @@ func DiscoverPluginServerTools(
 		return nil, fmt.Errorf("sourcePluginAPI is nil; plugin MCP server %s cannot be reached", cfg.PluginID)
 	}
 
-	// Build the transport chain: PluginHTTPRoundTripper (URL rewrite) ->
-	// headerTransport (X-Mattermost-UserID injection) -> http.Client.
+	// Transport chain: PluginHTTPRoundTripper (URL rewrite) -> headerTransport (UserID).
 	roundTripper := &PluginHTTPRoundTripper{
 		pluginID:  cfg.PluginID,
 		basePath:  cfg.Path,

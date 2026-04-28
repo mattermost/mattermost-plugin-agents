@@ -11,8 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestLookupToolPolicy_PluginServer_AutoRunEverywhere verifies admin-set
-// auto-run policy for plugin tools.
 func TestLookupToolPolicy_PluginServer_AutoRunEverywhere(t *testing.T) {
 	const pluginID = "com.mattermost.plugin-demo"
 	const toolName = "com_mattermost_plugin-demo__add_two_numbers"
@@ -37,9 +35,7 @@ func TestLookupToolPolicy_PluginServer_AutoRunEverywhere(t *testing.T) {
 	assert.True(t, enabled, "plugin tool with admin Enabled=true must report enabled=true")
 }
 
-// TestLookupToolPolicy covers the full decision matrix: embedded, remote,
-// plugin (matched and unmatched, enabled and disabled, with and without
-// ToolConfigs), and unknown origins.
+// TestLookupToolPolicy covers embedded, remote, plugin, and unknown origins.
 func TestLookupToolPolicy(t *testing.T) {
 	const remoteURL = "https://remote.example.com/mcp"
 	const pluginID = "com.example.demo"
@@ -47,8 +43,6 @@ func TestLookupToolPolicy(t *testing.T) {
 	const pluginToolName = "com_example_demo__add"
 	const remoteToolName = "remote_tool"
 
-	// Reusable cfg builders. Each subtest constructs the slice it needs to
-	// keep the test setup local to each assertion.
 	pluginServerEnabled := func(toolPolicy string, toolEnabled bool) config.PluginServerConfig {
 		return config.PluginServerConfig{
 			PluginID: pluginID,
@@ -85,9 +79,6 @@ func TestLookupToolPolicy(t *testing.T) {
 	})
 
 	t.Run("plugin tool Enabled=false -> reports configured policy with enabled=false", func(t *testing.T) {
-		// MCPServerConfig.GetToolPolicy preserves the configured policy value
-		// when a tool entry exists but is disabled. The downstream consumer
-		// (shouldAutoExecuteTool) gates on enabled — policy informational only.
 		cfg := config.MCPConfig{
 			PluginServers: []config.PluginServerConfig{
 				pluginServerEnabled(config.MCPToolPolicyAutoRunEverywhere, false),
@@ -105,7 +96,6 @@ func TestLookupToolPolicy(t *testing.T) {
 				PluginID: pluginID,
 				Name:     "Demo Plugin",
 				Enabled:  true,
-				// ToolConfigs intentionally empty: plugin tools default to ask/enabled.
 			}},
 		}
 		policy, enabled := lookupToolPolicy(cfg, pluginOrigin, pluginToolName)
@@ -113,7 +103,7 @@ func TestLookupToolPolicy(t *testing.T) {
 		assert.True(t, enabled, "unconfigured plugin tools must default to enabled with ask policy")
 	})
 
-	t.Run("plugin server Enabled=false -> ask, false (defensive fallthrough)", func(t *testing.T) {
+	t.Run("plugin server Enabled=false -> ask, false", func(t *testing.T) {
 		cfg := config.MCPConfig{
 			PluginServers: []config.PluginServerConfig{{
 				PluginID: pluginID,
@@ -143,8 +133,6 @@ func TestLookupToolPolicy(t *testing.T) {
 		assert.False(t, enabled)
 	})
 
-	// Keep embedded and remote behavior covered while adding plugin origins.
-
 	t.Run("remote server auto_run_everywhere -> propagates", func(t *testing.T) {
 		cfg := config.MCPConfig{
 			Servers: []config.MCPServerConfig{{
@@ -167,13 +155,9 @@ func TestLookupToolPolicy(t *testing.T) {
 		cfg := config.MCPConfig{
 			EmbeddedServer: config.MCPEmbeddedServerConfig{
 				Enabled:     true,
-				ToolConfigs: nil, // force seed fallback
+				ToolConfigs: nil,
 			},
 		}
-		// Pick any vetted seed entry — assert that lookupToolPolicy returns
-		// enabled=true for it. We don't pin the exact policy because seed
-		// values may shift; the regression we care about is that the seed
-		// fallback path runs at all.
 		seeds := mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
 		if len(seeds) == 0 {
 			t.Skip("no vetted seed tools available; skip regression pin")

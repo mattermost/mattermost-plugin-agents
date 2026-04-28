@@ -20,23 +20,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Test plugin IDs. These are not validated for format — the handlers trust
-// the Mattermost-Plugin-ID header (populated by the Mattermost server on
-// inter-plugin dispatch), which in production is an actual plugin manifest ID.
 const (
 	testCallerPluginID = "com.mattermost.plugin-playbooks"
 	testOtherPluginID  = "com.mattermost.plugin-calls"
 	testEvilPluginID   = "com.evil.plugin"
 )
 
-// spyRebuilder is a test double for externalServerRebuilder.
 type spyRebuilder struct {
 	callCount int
 }
 
 func (s *spyRebuilder) RebuildExternalServer() { s.callCount++ }
 
-// mcpRegisterRequest is a convenience wrapper to build JSON bodies in tests.
 func mcpRegisterRequest(t *testing.T, body any) *http.Request {
 	t.Helper()
 	var buf bytes.Buffer
@@ -55,10 +50,7 @@ func mcpUnregisterRequest(t *testing.T, body any) *http.Request {
 	return httptest.NewRequest(http.MethodPost, "/bridge/v1/mcp/unregister", &buf)
 }
 
-// serveAndReturn drives the full API router so the middleware chain runs.
-// We can't call handleMCPRegister directly with a raw gin.Context because the
-// security model depends on interPluginAuthorizationRequired being applied by
-// the group — using ServeHTTP is the only way to exercise the real stack.
+// serveAndReturn drives the full API router so interPluginAuthorizationRequired runs.
 func serveAndReturn(e *TestEnvironment, req *http.Request) *http.Response {
 	recorder := httptest.NewRecorder()
 	e.api.ServeHTTP(&plugin.Context{}, recorder, req)
@@ -77,10 +69,6 @@ func readJSONError(t *testing.T, resp *http.Response) string {
 	require.NoError(t, json.Unmarshal(body, &er))
 	return er.Error
 }
-
-// =============================================================================
-// handleMCPRegister
-// =============================================================================
 
 func TestHandleMCPRegister(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
@@ -154,7 +142,6 @@ func TestHandleMCPRegister(t *testing.T) {
 			assertMock: func(t *testing.T, m *mockMCPClientManager) { require.Empty(t, m.registerCalls) },
 		},
 		{
-			// Caller identity mismatch must not mutate the registry.
 			name:       "SECURITY: plugin_id mismatch — 403, no registry mutation",
 			body:       mcp.PluginServerConfig{PluginID: testOtherPluginID, Name: "Fake", Path: "/mcp", Enabled: true},
 			header:     testEvilPluginID,
@@ -261,8 +248,6 @@ func TestHandleMCPUnregister_PluginIDMismatch_Returns403(t *testing.T) {
 	require.Empty(t, e.mcp.unregisterCalls, "UnregisterPluginServer must not be called on identity mismatch")
 }
 
-// TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister verifies that
-// plugin re-registration refreshes identity while preserving admin fields.
 func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -279,7 +264,6 @@ func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
 		wantRebuilderInvoked bool
 	}{
 		{
-			// First registration honors the plugin's self-declared state.
 			name:     "first registration: plugin state honored as-is",
 			existing: nil,
 			incoming: mcp.PluginServerConfig{
@@ -293,7 +277,6 @@ func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
 			wantRebuilderInvoked: true,
 		},
 		{
-			// Admin state must win on re-registration.
 			name: "re-register: admin-set Enabled=true / Expose=true preserved",
 			existing: &mcp.PluginServerConfig{
 				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
@@ -307,11 +290,9 @@ func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
 			wantExposeAfter:      true,
 			wantName:             "Playbooks MCP",
 			wantPath:             "/mcp",
-			wantRebuilderInvoked: true, // existing.ExposeExternal=true => persisted
+			wantRebuilderInvoked: true,
 		},
 		{
-			// Re-registration where plugin upgraded Path/Name — identity
-			// refresh wins for those fields but admin flags still preserved.
 			name: "re-register: identity refreshed, admin flags preserved",
 			existing: &mcp.PluginServerConfig{
 				PluginID: testCallerPluginID, Name: "Old Name", Path: "/old",
@@ -319,16 +300,15 @@ func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
 			},
 			incoming: mcp.PluginServerConfig{
 				PluginID: testCallerPluginID, Name: "New Name", Path: "/new",
-				Enabled: false, ExposeExternal: true, // plugin claims expose=true — ignored
+				Enabled: false, ExposeExternal: true,
 			},
-			wantEnabledAfter:     true,  // from existing admin state
-			wantExposeAfter:      false, // from existing admin state, NOT from plugin
+			wantEnabledAfter:     true,
+			wantExposeAfter:      false,
 			wantName:             "New Name",
 			wantPath:             "/new",
-			wantRebuilderInvoked: false, // expose stays false => no rebuild
+			wantRebuilderInvoked: false,
 		},
 		{
-			// ToolConfigs is admin-owned and must survive re-registration.
 			name: "re-register: admin-set ToolConfigs preserved",
 			existing: &mcp.PluginServerConfig{
 				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
@@ -341,10 +321,9 @@ func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
 			incoming: mcp.PluginServerConfig{
 				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
 				Enabled: false, ExposeExternal: false,
-				// ToolConfigs intentionally omitted — plugin doesn't carry admin policy.
 			},
-			wantEnabledAfter: true,  // from existing admin state
-			wantExposeAfter:  false, // from existing admin state
+			wantEnabledAfter: true,
+			wantExposeAfter:  false,
 			wantName:         "Playbooks MCP",
 			wantPath:         "/mcp",
 			wantToolConfigsAfter: []mcp.ToolConfig{
@@ -402,7 +381,6 @@ func TestHandleMCPRegister_ExposeExternal_TriggersRebuild(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
-	// Covers both registered rebuilders and nil-rebuilder no-op behavior.
 	tests := []struct {
 		name           string
 		exposeExternal bool
@@ -447,10 +425,6 @@ func TestHandleMCPRegister_ExposeExternal_TriggersRebuild(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// handleMCPUnregister
-// =============================================================================
-
 func TestHandleMCPUnregister(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -490,7 +464,6 @@ func TestHandleMCPUnregister(t *testing.T) {
 			assertMock: func(t *testing.T, m *mockMCPClientManager) { require.Empty(t, m.unregisterCalls) },
 		},
 		{
-			// Caller identity mismatch must not mutate the registry.
 			name:       "SECURITY: plugin_id mismatch — 403, no registry mutation",
 			body:       map[string]string{"plugin_id": testOtherPluginID},
 			header:     testEvilPluginID,
@@ -540,12 +513,11 @@ func TestHandleMCPUnregister(t *testing.T) {
 	}
 }
 
+// Unregister always triggers rebuild so stale proxy tools are dropped, regardless of ExposeExternal.
 func TestHandleMCPUnregister_TriggersRebuild(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
-	// Unregister always triggers rebuild regardless of ExposeExternal — the
-	// server must drop any stale proxy tools for the departing plugin.
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
@@ -563,8 +535,6 @@ func TestHandleMCPUnregister_TriggersRebuild(t *testing.T) {
 	require.Equal(t, 1, spy.callCount, "unregister must always trigger external rebuild")
 }
 
-// TestHandleMCPRegister_NilRebuilderSafe confirms that when no rebuilder is
-// available, the register handler still updates the registry and returns 200.
 func TestHandleMCPRegister_NilRebuilderSafe(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -572,7 +542,6 @@ func TestHandleMCPRegister_NilRebuilderSafe(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
-	// No test spy injected; resolver should return nil and skip rebuild.
 	require.Nil(t, e.api.mcpHandlers, "precondition: production mcpHandlers must be nil in this test")
 
 	e.mockAPI.On("LogError", mock.Anything).Maybe()
@@ -580,7 +549,7 @@ func TestHandleMCPRegister_NilRebuilderSafe(t *testing.T) {
 
 	req := mcpRegisterRequest(t, mcp.PluginServerConfig{
 		PluginID: testCallerPluginID, Name: "X", Path: "/mcp",
-		Enabled: true, ExposeExternal: true, // <-- would trigger rebuild if available
+		Enabled: true, ExposeExternal: true,
 	})
 	req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
 
@@ -589,9 +558,8 @@ func TestHandleMCPRegister_NilRebuilderSafe(t *testing.T) {
 	require.Len(t, e.mcp.registerCalls, 1, "registry mutation must still happen")
 }
 
-// TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister covers the
-// unregister/register cycle where the in-memory entry is gone but persisted
-// admin state must still be recovered.
+// Persisted admin fields must be recovered when the in-memory entry is wiped
+// (unregister) and the plugin re-registers with a zero-valued payload.
 func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -615,9 +583,6 @@ func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
 		spy := &spyRebuilder{}
 		e.api.SetExternalRebuilderForTest(spy)
 
-		// Wire a configStore with the persisted admin state. The default
-		// SetupTestEnvironment passes nil for configStore — install our test
-		// double explicitly so the fallback path has something to read.
 		e.api.configStore = &testConfigStore{
 			cfg: &config.Config{
 				MCP: config.MCPConfig{
@@ -626,37 +591,26 @@ func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
 			},
 		}
 
-		// Pre-populate in-memory entry to mirror steady state (post-startup
-		// hydration via syncPluginServersFromConfig).
 		e.mcp.pluginServers = []mcp.PluginServerConfig{persistedAdmin}
 
 		e.mockAPI.On("LogError", mock.Anything).Maybe()
 		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
 
-		// Step 1: Unregister wipes in-memory entry. Persisted config untouched.
 		unregReq := mcpUnregisterRequest(t, map[string]string{"plugin_id": testCallerPluginID})
 		unregReq.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
 		unregResp := serveAndReturn(e, unregReq)
 		require.Equal(t, http.StatusOK, unregResp.StatusCode)
 		require.Equal(t, []string{testCallerPluginID}, e.mcp.unregisterCalls, "unregister must dispatch")
 		require.Empty(t, e.mcp.pluginServers, "in-memory entry must be wiped after unregister")
-		// Unregister always fires the rebuild (per
-		// TestHandleMCPUnregister_TriggersRebuild). Reset the spy so the
-		// next assertion isolates the rebuild fired by the recovered-state
-		// Register call.
 		require.Equal(t, 1, spy.callCount, "unregister always triggers rebuild")
 		spy.callCount = 0
 
-		// Step 2: Register with the zero-valued admin payload that mcphelper's
-		// wire format produces (no Enabled/ExposeExternal/ToolConfigs on the
-		// wire).
 		incoming := mcp.PluginServerConfig{
 			PluginID:       testCallerPluginID,
 			Name:           "Playbooks MCP",
 			Path:           "/mcp",
-			Enabled:        false, // zero value — plugin payload doesn't carry admin state
-			ExposeExternal: false, // zero value
-			// ToolConfigs intentionally omitted
+			Enabled:        false,
+			ExposeExternal: false,
 		}
 		regReq := mcpRegisterRequest(t, incoming)
 		regReq.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
@@ -669,11 +623,9 @@ func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
 		require.Equal(t, true, saved.ExposeExternal, "ExposeExternal recovered from persisted config")
 		require.Equal(t, persistedAdmin.ToolConfigs, saved.ToolConfigs, "ToolConfigs recovered from persisted config")
 
-		// Identity fields come from the new request as before.
 		require.Equal(t, "Playbooks MCP", saved.Name)
 		require.Equal(t, "/mcp", saved.Path)
 
-		// Recovered ExposeExternal=true must trigger the external rebuild.
 		require.Equal(t, 1, spy.callCount, "rebuild must fire because recovered ExposeExternal=true")
 	})
 
@@ -684,9 +636,6 @@ func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
 		spy := &spyRebuilder{}
 		e.api.SetExternalRebuilderForTest(spy)
 
-		// configStore wired but with NO entry for this pluginID. Helper must
-		// return (_, false) so the preserve+fallback skip and zero-value path
-		// runs (matches first-time-install behavior).
 		e.api.configStore = &testConfigStore{
 			cfg: &config.Config{
 				MCP: config.MCPConfig{
@@ -697,16 +646,12 @@ func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
 			},
 		}
 
-		// Direct unit-test on the helper for this slice/PluginID combination —
-		// proves nil/miss paths work without depending on the outer flow.
 		_, ok := e.api.findPersistedPluginServer(testCallerPluginID)
 		require.False(t, ok, "findPersistedPluginServer must return false when pluginID is absent from persisted config")
 
 		e.mockAPI.On("LogError", mock.Anything).Maybe()
 		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
 
-		// Plugin's first Register declares Enabled=false, ExposeExternal=true
-		// (e.g. first-party plugin opting into external aggregation by default).
 		incoming := mcp.PluginServerConfig{
 			PluginID:       testCallerPluginID,
 			Name:           "Playbooks MCP",
@@ -730,8 +675,6 @@ func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
 		e := SetupTestEnvironment(t)
 		defer e.Cleanup(t)
 
-		// configStore stays nil (the SetupTestEnvironment default). Helper
-		// must short-circuit cleanly without panicking.
 		require.Nil(t, e.api.configStore, "precondition: configStore must be nil")
 
 		_, ok := e.api.findPersistedPluginServer(testCallerPluginID)

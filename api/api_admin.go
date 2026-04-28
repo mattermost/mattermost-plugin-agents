@@ -222,13 +222,10 @@ type MCPServerInfo struct {
 	OAuthURL   string        `json:"oauthURL,omitempty"` // URL to redirect for OAuth if needed
 	Error      *string       `json:"error"`
 
-	// ServerType discriminates the row source: "embedded", "remote", or "plugin".
+	// ServerType is one of "embedded", "remote", or "plugin".
 	ServerType string `json:"serverType"`
-	// Enabled is always true for embedded servers; otherwise it mirrors the
-	// configured server state.
-	Enabled bool `json:"enabled"`
-	// ToolConfigs is populated for plugin rows; remote and embedded policy is
-	// sourced by the webapp from existing config paths.
+	Enabled    bool   `json:"enabled"`
+	// ToolConfigs is populated for plugin rows only.
 	ToolConfigs []mcp.ToolConfig `json:"toolConfigs,omitempty"`
 }
 
@@ -260,7 +257,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 			Tools:      []MCPToolInfo{},
 			Error:      nil,
 			ServerType: "embedded",
-			Enabled:    true, // embedded is non-toggleable
+			Enabled:    true,
 		}
 
 		// Embedded MCP is always available after PR #617, even if older configs still
@@ -287,7 +284,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 			Tools:      []MCPToolInfo{},
 			Error:      nil,
 			ServerType: "remote",
-			Enabled:    serverConfig.Enabled, // always true after the Enabled guard above; explicit for clarity
+			Enabled:    serverConfig.Enabled,
 		}
 
 		// Try to connect to the server and discover tools
@@ -308,9 +305,8 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		response.Servers = append(response.Servers, serverInfo)
 	}
 
-	// Discover tools from each plugin-registered MCP server.
-	// Unlike the remote branch, we render disabled plugin entries (with an empty
-	// tool list) so the admin UI can re-enable them via PUT /admin/mcp/plugin-servers/:pluginID.
+	// Render disabled plugin entries (with an empty tool list) so the admin UI
+	// can re-enable them.
 	for _, cfg := range a.mcpClientManager.ListPluginServers() {
 		serverInfo := MCPServerInfo{
 			Name:        cfg.Name,
@@ -410,8 +406,6 @@ func (a *API) handleClearMCPToolsCache(c *gin.Context) {
 	})
 }
 
-// discoverPluginServerTools performs an uncached probe of a plugin-registered
-// MCP server and normalizes its tool list into the admin-API shape.
 func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]MCPToolInfo, error) {
 	toolInfos, err := a.mcpClientManager.DiscoverPluginServerTools(ctx, userID, cfg)
 	if err != nil {
@@ -431,21 +425,17 @@ func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg 
 }
 
 // UpdatePluginServerRequest is the body shape for PUT /admin/mcp/plugin-servers/:pluginID.
-//
-// Pointer fields preserve partial-update semantics: nil means unchanged, while
-// a non-nil empty ToolConfigs slice explicitly clears per-tool policy.
+// Pointer fields use partial-update semantics: nil means unchanged.
 type UpdatePluginServerRequest struct {
 	Enabled        *bool             `json:"enabled,omitempty"`
 	ExposeExternal *bool             `json:"expose_external,omitempty"`
 	ToolConfigs    *[]mcp.ToolConfig `json:"tool_configs,omitempty"`
 }
 
-// handleUpdatePluginServer updates admin-owned fields on a registered plugin
-// MCP server. PluginID, Name, and Path remain owned by the source plugin.
-//
-// The handler saves a full registry snapshot so admin state survives restarts.
-// The snapshot is built before configUpdater.Update fires ReInit, avoiding
-// re-entrant pluginServersMu locking.
+// handleUpdatePluginServer updates admin-owned fields (Enabled, ExposeExternal,
+// ToolConfigs) on a registered plugin MCP server; PluginID, Name, and Path
+// remain owned by the source plugin. The full registry snapshot is captured
+// before configUpdater.Update to avoid re-entrant pluginServersMu locking.
 func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	pluginID := c.Param("pluginID")
 	if pluginID == "" {
@@ -459,11 +449,9 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	// Locate the existing registration. Plugin-registered servers register
-	// themselves; the admin cannot create a row from thin air here.
 	var found *mcp.PluginServerConfig
 	for _, cfg := range a.mcpClientManager.ListPluginServers() {
-		cfg := cfg // capture loop variable for pointer safety
+		cfg := cfg
 		if cfg.PluginID == pluginID {
 			found = &cfg
 			break
@@ -474,8 +462,6 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	// Pointer fields let callers update one admin field without clobbering the
-	// rest; an empty ToolConfigs slice means "clear all policy".
 	updated := *found
 	if req.Enabled != nil {
 		updated.Enabled = *req.Enabled
@@ -486,19 +472,23 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	if req.ToolConfigs != nil {
 		updated.ToolConfigs = *req.ToolConfigs
 	}
-	a.mcpClientManager.RegisterPluginServer(updated)
 
-	// Save a full snapshot so runtime registrations are persisted alongside
-	// the updated row. Failures return 500; the next successful config update
-	// reconciles in-memory state from persisted config.
+	// Build the proposed registry snapshot locally; persist + broadcast
+	// before mutating the live registry so a failure leaves state intact.
 	snapshot := a.mcpClientManager.ListPluginServers()
+	for i := range snapshot {
+		if snapshot[i].PluginID == updated.PluginID {
+			snapshot[i] = updated
+			break
+		}
+	}
 
 	existing, getErr := a.configStore.GetConfig()
 	if getErr != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load config for plugin-server save: %w", getErr))
 		return
 	}
-	// Clone (or construct fresh) to avoid mutating the store's cached pointer.
+	// Clone to avoid mutating the store's cached pointer.
 	var cfg *config.Config
 	if existing == nil {
 		cfg = &config.Config{}
@@ -512,13 +502,13 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	// Fires the config listener that rehydrates plugin-server admin state.
-	a.configUpdater.Update(cfg)
-
 	if err := a.clusterNotifier.PublishConfigUpdate(); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to notify cluster of plugin-server config update: %w", err))
 		return
 	}
+
+	a.mcpClientManager.RegisterPluginServer(updated)
+	a.configUpdater.Update(cfg)
 
 	// Rebuild when either old or new state was external so removed tools
 	// disappear from the aggregate server.

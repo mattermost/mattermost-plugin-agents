@@ -18,16 +18,12 @@ type externalServerRebuilder interface {
 	RebuildExternalServer()
 }
 
-// unregisterRequest is the minimal body shape for POST /bridge/v1/mcp/unregister.
-// The handler only needs the plugin_id; we intentionally do NOT reuse
-// mcp.PluginServerConfig here to avoid implying that Name/Path/Enabled/
-// ExposeExternal are honored on unregister (they are not).
+// unregisterRequest is intentionally narrower than mcp.PluginServerConfig:
+// only plugin_id is honored on unregister.
 type unregisterRequest struct {
 	PluginID string `json:"plugin_id"`
 }
 
-// resolveExternalServerRebuilder returns the active rebuilder implementation,
-// or nil if none is available.
 func (a *API) resolveExternalServerRebuilder() externalServerRebuilder {
 	if a.externalRebuilderForTest != nil {
 		return a.externalRebuilderForTest
@@ -41,11 +37,8 @@ func (a *API) resolveExternalServerRebuilder() externalServerRebuilder {
 	return nil
 }
 
-// handleMCPRegister handles POST /bridge/v1/mcp/register.
-//
-// Source plugins call this via mcphelper.Server.Register(). The route is
-// protected by interPluginAuthorizationRequired, and the handler also requires
-// the body PluginID to match Mattermost-Plugin-ID.
+// handleMCPRegister handles POST /bridge/v1/mcp/register. The body PluginID
+// must match the authenticated Mattermost-Plugin-ID header.
 func (a *API) handleMCPRegister(c *gin.Context) {
 	var cfg mcp.PluginServerConfig
 	if err := c.BindJSON(&cfg); err != nil {
@@ -55,8 +48,6 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 		return
 	}
 
-	// Required-field validation. Booleans (Enabled, ExposeExternal) have valid
-	// zero values and are not required to be true.
 	if cfg.PluginID == "" {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: "plugin_id is required",
@@ -76,8 +67,6 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 		return
 	}
 
-	// Prevent one authenticated plugin from registering a server under another
-	// plugin's identity.
 	callerPluginID := c.GetHeader("Mattermost-Plugin-ID")
 	if cfg.PluginID != callerPluginID {
 		c.JSON(http.StatusForbidden, bridgeclient.ErrorResponse{
@@ -86,9 +75,9 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 		return
 	}
 
-	// Preserve admin-managed fields across re-registration. Source plugin
-	// payloads carry identity, not admin state, so prefer the in-memory entry
-	// and fall back to persisted config after unregister/register cycles.
+	// Preserve admin-managed fields across re-registration; source-plugin
+	// payloads carry identity only. Fall back to persisted config in case
+	// an unregister/register cycle wiped the in-memory entry.
 	if existing, found := a.mcpClientManager.GetPluginServer(cfg.PluginID); found {
 		cfg.Enabled = existing.Enabled
 		cfg.ExposeExternal = existing.ExposeExternal
@@ -100,7 +89,6 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 	}
 	a.mcpClientManager.RegisterPluginServer(cfg)
 
-	// Live-update external aggregation when this server is externally exposed.
 	if cfg.ExposeExternal {
 		if rb := a.resolveExternalServerRebuilder(); rb != nil {
 			rb.RebuildExternalServer()
@@ -110,10 +98,8 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// handleMCPUnregister handles POST /bridge/v1/mcp/unregister.
-//
-// Source plugins call this from OnDeactivate. The body PluginID must match the
-// authenticated Mattermost-Plugin-ID header.
+// handleMCPUnregister handles POST /bridge/v1/mcp/unregister. The body
+// PluginID must match the authenticated Mattermost-Plugin-ID header.
 func (a *API) handleMCPUnregister(c *gin.Context) {
 	var req unregisterRequest
 	if err := c.BindJSON(&req); err != nil {
@@ -147,8 +133,6 @@ func (a *API) handleMCPUnregister(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// findPersistedPluginServer recovers admin-owned state when a plugin
-// unregister/register cycle wiped the in-memory entry before ReInit hydrated it.
 func (a *API) findPersistedPluginServer(pluginID string) (mcp.PluginServerConfig, bool) {
 	if a.configStore == nil {
 		return mcp.PluginServerConfig{}, false

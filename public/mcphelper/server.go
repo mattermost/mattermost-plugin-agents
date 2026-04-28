@@ -10,9 +10,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// ServeHTTP is the http.Handler for this plugin's MCP endpoint. It only accepts
-// inter-plugin calls from the Agents plugin before trusting X-Mattermost-UserID
-// and passing the request to the go-sdk handler.
+// ServeHTTP gates the MCP endpoint on the Mattermost-Plugin-ID header so only
+// the Agents plugin can call it; X-Mattermost-UserID is trusted only after
+// that check.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Mattermost-Plugin-ID") != bridgeclient.AiPluginID {
 		http.Error(w, "forbidden: plugin-ID header missing or mismatched", http.StatusForbidden)
@@ -26,8 +26,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.streamableHandler().ServeHTTP(w, r)
 }
 
-// streamableHandler lazily constructs a stateless JSON go-sdk HTTP handler.
-// JSON responses are required because PluginHTTP buffers the full response.
+// streamableHandler lazily constructs the go-sdk HTTP handler. JSON responses
+// are required because PluginHTTP buffers the full response.
 func (s *Server) streamableHandler() http.Handler {
 	s.mu.Lock()
 	defer s.mu.Unlock()

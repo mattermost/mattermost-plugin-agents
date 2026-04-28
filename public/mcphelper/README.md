@@ -1,564 +1,231 @@
 # mcphelper
 
-Expose MCP (Model Context Protocol) tools from your Mattermost plugin to the
-Agents plugin. This package gives you a small, opinionated wrapper around the
-[Anthropic go-sdk for MCP](https://github.com/modelcontextprotocol/go-sdk) that
-handles namespacing, inter-plugin authentication, user-ID propagation, and
-registration with the Agents plugin.
+Expose MCP (Model Context Protocol) tools from a Mattermost plugin to the
+Agents plugin. mcphelper wraps the [go-sdk MCP server](https://github.com/modelcontextprotocol/go-sdk)
+with the namespacing, inter-plugin auth, user-ID propagation, and async
+registration that Agents-plugin tool calls require.
 
-## Status
+Requires Mattermost 11.3 or newer (uses `Plugin.PluginHTTPStream`).
 
-Pre-release. The API is frozen for the initial rollout but not yet available
-via `go get` as a tagged version — see [Known Limitations](#known-limitations).
+## Install
 
-## Minimum Mattermost version
-
-**Mattermost 11.3 or newer.**
-
-mcphelper relies on the server-side plumbing for `Plugin.PluginHTTPStream`
-(streaming inter-plugin HTTP). That primitive shipped on 2025-11-05 in
-Mattermost 11.3. Plugins built against mcphelper will fail to register or
-serve tool calls on older servers.
-
----
-
-## Quick Start
-
-A minimal plugin that exposes three MCP tools. Save each file in a standard
-Mattermost plugin scaffold (`mattermost-plugin-starter-template` works).
-
-### `server/plugin.go`
+Until the Agents plugin cuts a release tag with `public/mcphelper/`
+exported, point your `go.mod` at a local checkout:
 
 ```go
+replace github.com/mattermost/mattermost-plugin-agents => ../mattermost-plugin-agents
+```
+
+## Quickstart
+
+A complete plugin that exposes one tool. The same shape works for any
+number of tools — call `AddTool` once per tool from `OnActivate`.
+
+```go
+// plugin/plugin.go
 package main
 
 import (
-    "net/http"
-    "strings"
+	"context"
+	"fmt"
+	"net/http"
+	"strings"
 
-    "github.com/mattermost/mattermost/server/public/plugin"
-    "github.com/mattermost/mattermost/server/public/pluginapi"
-    "github.com/pkg/errors"
-
-    "github.com/mattermost/mattermost-plugin-agents/public/mcphelper"
+	"github.com/mattermost/mattermost-plugin-agents/public/mcphelper"
+	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
-    pluginID      = "com.example.plugin-mcp-demo"
-    mcpBasePath   = "/mcp"
-    mcpServerName = "MCP Demo"
+	pluginID    = "com.example.plugin-mcp-demo"
+	mcpBasePath = "/mcp"
 )
 
 type Plugin struct {
-    plugin.MattermostPlugin
+	plugin.MattermostPlugin
+	client    *pluginapi.Client
+	mcpServer *mcphelper.Server
+}
 
-    client    *pluginapi.Client
-    mcpServer *mcphelper.Server
+type WhoAmIArgs struct{}
+type WhoAmIOutput struct {
+	Username string `json:"username" jsonschema:"Username of the caller"`
 }
 
 func (p *Plugin) OnActivate() error {
-    p.client = pluginapi.NewClient(p.API, p.Driver)
+	p.client = pluginapi.NewClient(p.API, p.Driver)
 
-    p.mcpServer = mcphelper.NewServer(p.API, mcphelper.PluginMCPServer{
-        PluginID: pluginID,
-        Name:     mcpServerName,
-        Path:     mcpBasePath,
-        Version:  "0.0.1",
-    })
+	p.mcpServer = mcphelper.NewServer(p.API, mcphelper.PluginMCPServer{
+		PluginID: pluginID,
+		Name:     "MCP Demo",
+		Path:     mcpBasePath,
+		Version:  "0.0.1",
+	})
 
-    p.registerTools()
+	mcphelper.AddTool(p.mcpServer, &mcp.Tool{
+		Name:        "whoami",
+		Description: "Return the calling user's username.",
+	}, p.whoami)
 
-    if err := p.mcpServer.Register(); err != nil {
-        return errors.Wrap(err, "failed to start MCP registration")
-    }
-    return nil
+	return p.mcpServer.Register()
 }
 
 func (p *Plugin) OnDeactivate() error {
-    if p.mcpServer == nil {
-        return nil
-    }
-    if err := p.mcpServer.Unregister(); err != nil {
-        p.API.LogWarn("MCP unregister failed during deactivate", "err", err.Error())
-    }
-    return nil
+	if p.mcpServer == nil {
+		return nil
+	}
+	return p.mcpServer.Unregister()
 }
 
 func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Request) {
-    if strings.HasPrefix(r.URL.Path, mcpBasePath) {
-        p.mcpServer.ServeHTTP(w, r)
-        return
-    }
-    http.NotFound(w, r)
+	if strings.HasPrefix(r.URL.Path, mcpBasePath) {
+		p.mcpServer.ServeHTTP(w, r)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (p *Plugin) whoami(ctx context.Context, _ *mcp.CallToolRequest, _ WhoAmIArgs) (*mcp.CallToolResult, WhoAmIOutput, error) {
+	userID := mcphelper.GetUserID(ctx)
+	if userID == "" {
+		return nil, WhoAmIOutput{}, fmt.Errorf("no Mattermost user ID in context")
+	}
+	user, err := p.client.User.Get(userID)
+	if err != nil {
+		return nil, WhoAmIOutput{}, fmt.Errorf("get user %s: %w", userID, err)
+	}
+	return nil, WhoAmIOutput{Username: user.Username}, nil
 }
 
 func main() {
-    plugin.ClientMain(&Plugin{})
+	plugin.ClientMain(&Plugin{})
 }
 ```
 
-### `server/tools.go`
+The tool appears in the Agents admin "Tools" tab as
+`com.example.plugin-mcp-demo__whoami`.
 
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-
-    "github.com/mattermost/mattermost-plugin-agents/public/mcphelper"
-    "github.com/mattermost/mattermost/server/public/model"
-    "github.com/modelcontextprotocol/go-sdk/mcp"
-)
-
-type EchoArgs struct {
-    Message string `json:"message" jsonschema:"The string to echo back,minLength=1"`
-}
-type EchoOutput struct {
-    Echoed string `json:"echoed" jsonschema:"The same string that was passed in"`
-}
-
-type AddTwoNumbersArgs struct {
-    A int `json:"a" jsonschema:"First addend"`
-    B int `json:"b" jsonschema:"Second addend"`
-}
-type AddTwoNumbersOutput struct {
-    Sum int `json:"sum" jsonschema:"Sum of a and b"`
-}
-
-type GetUserDisplayNameArgs struct{}
-type GetUserDisplayNameOutput struct {
-    UserID      string `json:"user_id" jsonschema:"Mattermost user ID of the caller"`
-    Username    string `json:"username" jsonschema:"Username of the caller"`
-    DisplayName string `json:"display_name" jsonschema:"Full-name display name of the caller"`
-}
-
-func (p *Plugin) registerTools() {
-    mcphelper.AddTool(p.mcpServer, &mcp.Tool{
-        Name:        "echo",
-        Description: "Echo a string back to the caller. Useful for verifying the MCP round-trip.",
-    }, p.echoHandler)
-
-    mcphelper.AddTool(p.mcpServer, &mcp.Tool{
-        Name:        "add_two_numbers",
-        Description: "Return the sum of two integers.",
-    }, p.addTwoNumbersHandler)
-
-    mcphelper.AddTool(p.mcpServer, &mcp.Tool{
-        Name:        "get_user_display_name",
-        Description: "Look up the calling user's display name.",
-    }, p.getUserDisplayNameHandler)
-}
-
-func (p *Plugin) echoHandler(_ context.Context, _ *mcp.CallToolRequest, in EchoArgs) (*mcp.CallToolResult, EchoOutput, error) {
-    return nil, EchoOutput{Echoed: in.Message}, nil
-}
-
-func (p *Plugin) addTwoNumbersHandler(_ context.Context, _ *mcp.CallToolRequest, in AddTwoNumbersArgs) (*mcp.CallToolResult, AddTwoNumbersOutput, error) {
-    return nil, AddTwoNumbersOutput{Sum: in.A + in.B}, nil
-}
-
-func (p *Plugin) getUserDisplayNameHandler(ctx context.Context, _ *mcp.CallToolRequest, _ GetUserDisplayNameArgs) (*mcp.CallToolResult, GetUserDisplayNameOutput, error) {
-    userID := mcphelper.GetUserID(ctx)
-    if userID == "" {
-        return nil, GetUserDisplayNameOutput{}, fmt.Errorf("no Mattermost user ID in tool context (did the request arrive via mcphelper.ServeHTTP?)")
-    }
-
-    user, err := p.client.User.Get(userID)
-    if err != nil {
-        return nil, GetUserDisplayNameOutput{}, fmt.Errorf("failed to fetch user %s: %w", userID, err)
-    }
-
-    return nil, GetUserDisplayNameOutput{
-        UserID:      user.Id,
-        Username:    user.Username,
-        DisplayName: user.GetDisplayName(model.ShowFullName),
-    }, nil
-}
-```
-
-That's the entire working plugin. Build it with `make dist`, install it
-alongside the Agents plugin, and the three tools appear in the Agents admin
-"Tools" tab as `com.example.plugin-mcp-demo__echo`, `...__add_two_numbers`,
-and `...__get_user_display_name`.
-
----
-
-## API Reference
-
-### `PluginMCPServer`
-
-The wire-serialized descriptor this plugin sends to the Agents plugin when
-registering. Stored in the Agents plugin's `ClientManager` registry.
+## API reference
 
 ```go
 type PluginMCPServer struct {
-    PluginID string `json:"plugin_id"`         // required; MUST match plugin.json's "id"
-    Name     string `json:"name"`              // human-readable; shown in admin UI
-    Path     string `json:"path"`              // your plugin's MCP endpoint, e.g. "/mcp"
-    Version  string `json:"version,omitempty"` // advertised via go-sdk Implementation.Version; defaults to "0.0.1"
+	PluginID string // required; must equal plugin.json "id"
+	Name     string // human-readable; shown in admin UI
+	Path     string // your plugin's MCP endpoint, e.g. "/mcp"
+	Version  string // optional; defaults to "0.0.1"
 }
-```
 
-`PluginID` must match the `id` in your `plugin.json`. The Agents plugin's
-bridge handler rejects any registration request where the body's `PluginID`
-doesn't match the `Mattermost-Plugin-ID` header (set by the Mattermost server
-on inter-plugin RPC). See [Security Model](#security-model).
-
-### `PluginAPI`
-
-The minimal subset of the Mattermost plugin API that mcphelper needs.
-
-```go
 type PluginAPI interface {
-    PluginHTTP(*http.Request) *http.Response
+	PluginHTTP(*http.Request) *http.Response
 }
 ```
 
-Satisfied automatically by `p.API` (the `plugin.MattermostPlugin` embedded
-API) and by `pluginapi.NewClient(...).API`. You can also pass a hand-rolled
-test double.
+- `NewServer(api PluginAPI, cfg PluginMCPServer) *Server` — construct a
+  server. `p.API` satisfies `PluginAPI`.
+- `AddTool[In, Out any](s *Server, tool *mcp.Tool, handler ...)` — register
+  a typed tool. `In`/`Out` are introspected by the go-sdk to build the
+  tool schema. Free function (not a method) because Go doesn't allow
+  type parameters on methods.
+- `(*Server).ServeHTTP(w, r)` — `http.Handler` for the MCP endpoint. Wire
+  it from your plugin's `ServeHTTP` for requests under `cfg.Path`.
+- `(*Server).Register() error` — start async registration with the
+  Agents plugin. Returns `nil` immediately; retries happen in a
+  goroutine.
+- `(*Server).Unregister() error` — synchronously cancel pending retries
+  and POST one unregister request. Call from `OnDeactivate`.
+- `GetUserID(ctx context.Context) string` — read the user ID extracted
+  by `ServeHTTP` from `X-Mattermost-UserID`. Returns `""` if missing.
 
-### `Server`
-
-Constructed via `NewServer`. Opaque to consumers — only the exposed methods
-and the `AddTool` free function are API. Safe for concurrent use after
-construction; `AddTool` may be called from any goroutine before the first
-`ServeHTTP` call. In practice plugins call `AddTool` from `OnActivate` and
-never again.
-
-### `NewServer(pluginAPI PluginAPI, config PluginMCPServer) *Server`
-
-Build a new MCP server. The returned server has no tools registered yet;
-call `AddTool` for each tool, wire `ServeHTTP` from your plugin's HTTP
-handler, and call `Register()` in `OnActivate`.
-
-### `AddTool[In, Out any](s *Server, tool *mcp.Tool, handler mcp.ToolHandlerFor[In, Out])`
-
-Register a typed tool on the server.
+Handler signature for `AddTool` is the go-sdk's
+`mcp.ToolHandlerFor[In, Out]`:
 
 ```go
-mcphelper.AddTool(p.mcpServer, &mcp.Tool{
-    Name:        "echo",
-    Description: "Echo a string back to the caller.",
-}, p.echoHandler)
+func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)
 ```
 
-- **`In` and `Out` are type parameters.** The go-sdk introspects them via
-  `google/jsonschema-go` to generate the tool's input/output schema. Field
-  tags matter: `json:"..."` names the JSON field, and
-  `jsonschema:"description,minLength=...,..."` annotates constraints.
-- **Namespacing.** `AddTool` prepends `{pluginID}__` to `tool.Name` (using
-  a sanitized form of your `PluginID` — see [Namespacing Constraint](#namespacing-constraint)).
-  If you already prefixed the name, the prefix is NOT duplicated. This
-  prefix is how the Agents plugin attributes tool calls to their source
-  plugin.
-- **Why a free function, not a method?** Go doesn't permit methods to
-  declare type parameters that don't appear on the receiver. The go-sdk's
-  own `mcp.AddTool` has the same signature for the same reason.
-- **Handler signature.** `mcp.ToolHandlerFor[In, Out]` is
-  `func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)`.
-  Return `(nil, out, nil)` for a happy path — mcphelper auto-packs `Out`
-  into a `CallToolResult`. Return `(customResult, _, nil)` to control the
-  `CallToolResult` directly (multi-content replies, explicit `IsError`, etc.).
+Return `(nil, out, nil)` and the helper packs `out` into a
+`CallToolResult`. Return a non-nil `*mcp.CallToolResult` to control the
+response yourself (multi-content replies, `IsError`, etc.).
 
-### `GetUserID(ctx context.Context) string`
-
-Extract the Mattermost user ID of the user whose request is being processed.
-Populated by `ServeHTTP` from the `X-Mattermost-UserID` header.
+Per-field schema annotations come from `json:` and `jsonschema:` tags:
 
 ```go
-func (p *Plugin) myHandler(ctx context.Context, _ *mcp.CallToolRequest, _ MyArgs) (*mcp.CallToolResult, MyOut, error) {
-    userID := mcphelper.GetUserID(ctx)
-    if userID == "" {
-        return nil, MyOut{}, fmt.Errorf("no Mattermost user ID in tool context")
-    }
-    // ... use userID to call pluginapi on behalf of the caller
+type EchoArgs struct {
+	Message string `json:"message" jsonschema:"The string to echo back,minLength=1"`
 }
 ```
 
-Returns `""` if no user ID was present. That can only happen in unit tests
-that bypass `ServeHTTP`, because the Agents plugin always sets
-`X-Mattermost-UserID` on outbound tool calls (and the Agents plugin is the
-only caller that can clear the [security gate](#security-model)).
+## How it works
 
-### `(s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request)`
+`Register` POSTs `cfg` to the Agents plugin's
+`/bridge/v1/mcp/register` with backoff (1s → 2s → 4s → 8s, max 15
+attempts) until the Agents plugin responds 200. The Agents plugin then
+issues MCP `tools/list` and `tools/call` requests back through
+`PluginHTTP` to your plugin's `ServeHTTP`, which delegates to the go-sdk
+streamable HTTP handler in stateless / JSON-response mode (PluginHTTP
+buffers the full response, so streaming SSE is not used).
 
-The `http.Handler` for this plugin's MCP endpoint. Wire it from your
-`Plugin.ServeHTTP` for requests matching `config.Path`:
+User-ID flow per call: browser → Mattermost server (sets
+`Mattermost-User-Id`) → Agents plugin → `PluginHTTP` (Mattermost adds
+`Mattermost-Plugin-ID: mattermost-ai`, Agents adds
+`X-Mattermost-UserID`) → your `ServeHTTP` → mcphelper checks the
+plugin-ID header and stashes the user ID in the request context →
+your handler reads it via `GetUserID`.
 
-```go
-func (p *Plugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Request) {
-    if strings.HasPrefix(r.URL.Path, mcpBasePath) {
-        p.mcpServer.ServeHTTP(w, r)
-        return
-    }
-    http.NotFound(w, r)
-}
-```
+## Constraints and gotchas
 
-`ServeHTTP` enforces its own [security gate](#security-model). Do **not**
-add a second gate in your outer `ServeHTTP`.
+**Tool-name sanitization (Bifrost / Anthropic).** `AddTool` prepends
+`{pluginID}__` to `tool.Name`, replacing any character outside
+`[A-Za-z0-9_-]` with `_` so the final name matches Bifrost's
+`^[a-zA-Z0-9_-]{1,128}$`. Sanitization applies **only** to the
+LLM-facing tool-name prefix; routing, registry keys, and the wire
+`PluginID` are kept verbatim. If `tool.Name` already starts with the
+prefix it is not duplicated.
 
-### `(s *Server) Register() error`
+**`PluginID` must not contain `__`.** The double-underscore is the
+namespace separator. mcphelper does not reject it, but a plugin ID
+containing `__` parses ambiguously on the Agents side. Use a normal
+reverse-DNS ID like `com.example.plugin-foo`.
 
-**Asynchronous.** Returns `nil` immediately and spawns a background
-goroutine that POSTs a registration request to the Agents plugin with
-exponential backoff: 1s → 2s → 4s → 8s (cap), up to 15 attempts. Give-up
-failures are logged via the standard library `log` package.
+**`GetUserID` is trustworthy only inside a `ServeHTTP` request.**
+`ServeHTTP` rejects requests without `Mattermost-Plugin-ID:
+mattermost-ai` (Mattermost strips that header on external requests, so
+only inter-plugin RPC sees it). The user ID is then read from
+`X-Mattermost-UserID` and stored under an unexported context key —
+external callers can't inject one. Don't add a second auth gate in
+your outer `ServeHTTP`, and don't read `X-Mattermost-UserID` directly
+from headers in handlers; always go through `GetUserID`.
 
-Calling from `OnActivate` is safe: `Register` does NOT block on the Agents
-plugin being loaded. If the Agents plugin becomes available later, the
-retry loop will catch up.
+**Registration is one-shot per `OnActivate`.** The retry goroutine
+exits on success or after 15 attempts. If the Agents plugin restarts
+later, the in-memory registration is lost. The Agents plugin restores
+admin-persisted entries on its own restart, but a never-saved
+registration only comes back when your plugin is re-activated. Permanent
+non-retriable errors (4xx other than 404/429) log
+`registration with Agents plugin failed permanently` and stop.
 
-Calling `Register` more than once is permitted but starts a fresh retry
-loop; the previous goroutine typically has already exited. If you need to
-re-register after a teardown, call `Unregister` first.
+**Tool-count budget.** Each tool costs ~20-200 schema tokens in every
+LLM request. Aim for ~10 tools per plugin, with union-typed args, over
+many narrow tools.
 
-### `(s *Server) Unregister() error`
-
-**Synchronous.** Cancels the pending `Register` goroutine (if any), fires
-one POST to the Agents plugin's `/bridge/v1/mcp/unregister`, and returns
-the HTTP error if any. Called from `OnDeactivate` where a bounded wait
-makes sense.
-
----
-
-## Tool-Count Best Practice
-
-**Target ~10 tools per plugin.** Batch semantically related operations
-rather than shipping one tool per method.
-
-LLM context windows are precious. Each tool registered with the Agents
-plugin contributes:
-
-- The tool name and description to the model's system prompt (~1-10 tokens).
-- The full input schema, serialized as JSON (~20-200 tokens per field).
-- A slot in the model's attention budget for "which tool do I call?"
-
-A plugin shipping 100 tiny tools will burn 5-10KB of context before the
-model sees the user's message. A plugin shipping 10 well-designed tools
-with union-typed arguments costs an order of magnitude less.
-
-**Good:** one `search_documents` tool that takes a `type` enum and a
-`query` string.
-**Bad:** `search_documents_by_title`, `search_documents_by_body`,
-`search_documents_by_author`, `search_documents_by_tag`.
-
-**Good:** one `create_or_update_entity` tool with a discriminated-union
-`operation` field.
-**Bad:** `create_entity`, `update_entity`, `delete_entity`,
-`upsert_entity`, all with overlapping schemas.
-
-If your plugin's surface really needs more than ~20 tools, consider
-splitting into multiple plugins (each with its own `PluginID`) so admins
-can toggle them independently.
-
----
-
-## Security Model
-
-mcphelper's security model has two cooperating gates, both enforced by the
-Mattermost server + the Agents plugin + mcphelper itself.
-
-### Why the `Mattermost-Plugin-ID` check exists
-
-`ServeHTTP` rejects any request that doesn't carry
-`Mattermost-Plugin-ID: mattermost-ai`. This gate closes a trust gap in
-`X-Mattermost-UserID`:
-
-- Mattermost's server DOES strip the `Mattermost-Plugin-ID` header on
-  external (browser / API client) requests before routing — see the server's
-  plugin_requests.go.
-- Mattermost's server does NOT strip `X-Mattermost-UserID` on external
-  requests.
-
-So if mcphelper trusted `X-Mattermost-UserID` alone, any authenticated API
-client could set `X-Mattermost-UserID: <any-user>` in a request to
-`/plugins/<your-plugin>/mcp` and impersonate that user inside your tool
-handlers. The `Mattermost-Plugin-ID` gate prevents this: any request past
-the gate arrived via genuine inter-plugin RPC (the only path that sets
-`Mattermost-Plugin-ID`), so the co-arriving `X-Mattermost-UserID` is
-trustworthy.
-
-### User-ID propagation chain (end-to-end)
-
-Here is the exact path an authenticated user ID takes from a browser
-session to your tool handler:
-
-1. **Browser sends a request** to the Mattermost server (e.g., a chat
-   message to the agents bot) with the user's session token in the
-   `Cookie` or `Authorization` header.
-2. **Mattermost server validates the session**, resolves the user ID, and
-   sets `Mattermost-User-Id: <user>` on the inbound request before
-   dispatching to the Agents plugin's `ServeHTTP`.
-3. **Agents plugin's LLM conversation path** reads `Mattermost-User-Id`
-   from the request context and uses it as the caller identity for MCP
-   tool invocations.
-4. **Agents plugin's `ClientManager`** selects the plugin-server client
-   for your tool and issues an MCP `CallTool` over a
-   `PluginHTTPRoundTripper`.
-5. **The RoundTripper layers a `headerTransport`** that injects
-   `X-Mattermost-UserID: <user>` on every outbound request.
-6. **`Plugin.PluginHTTP`** on the Agents plugin routes the request to
-   your plugin. During this hop, Mattermost **adds**
-   `Mattermost-Plugin-ID: mattermost-ai` (the Agents plugin's ID is the
-   source) and **preserves** `X-Mattermost-UserID`.
-7. **Your plugin's `ServeHTTP`** delegates to `mcphelper.Server.ServeHTTP`.
-8. **mcphelper's security gate** confirms
-   `Mattermost-Plugin-ID == mattermost-ai` (else 403).
-9. **mcphelper extracts `X-Mattermost-UserID`** and injects it into the
-   request context via an unexported key.
-10. **Your tool handler** calls `mcphelper.GetUserID(ctx)` and gets the
-    original authenticated user ID.
-
-### Threats this defends against
-
-| Threat | Defense |
-|---|---|
-| External API client sets fake `X-Mattermost-UserID` | `Mattermost-Plugin-ID` gate (strip on external requests is server-enforced) |
-| A non-Agents plugin calls your MCP endpoint | Gate value check: `Mattermost-Plugin-ID == mattermost-ai` |
-| A malicious plugin registers a fake MCP server claiming to be you | Agents plugin rejects `register` if body `PluginID != Mattermost-Plugin-ID` header |
-| Your handler accidentally trusts the `X-Mattermost-UserID` header directly | Use `mcphelper.GetUserID(ctx)` — it only reads from the context key set **after** the security gate |
-
----
-
-## Namespacing Constraint
-
-Every tool registered via `mcphelper.AddTool` is namespaced with
-`{pluginID}__{toolName}` so the Agents plugin can attribute calls. The
-double-underscore (`__`) is the separator.
-
-**Your `PluginID` must not contain `__`.** A plugin ID like
-`com.example__plugin-mcp-demo` would split incorrectly in the agents
-plugin's server-origin key (`"plugin://com.example__plugin-mcp-demo"`)
-and in any parser that splits tool names on `__`. mcphelper does NOT
-currently reject `__` in the sanitizer — it is a caller-side constraint
-and using `__` will produce undefined behavior. Pick a plugin ID that
-reads as a normal reverse-DNS name: `com.example.plugin-mcp-demo`.
-
-**Silent sanitization of other characters.** Characters outside
-`[A-Za-z0-9_\-.]` are silently replaced with `_` in the **tool-name prefix
-only**. Your `PluginID` is kept verbatim in every other context (registry
-key, wire JSON, PluginHTTP route, header, server-origin string,
-filter-config map). Real Mattermost plugin IDs
-(`com.mattermost.plugin-foo`) pass through unchanged.
-
-Examples:
-
-| Plugin ID | Tool-name prefix |
-|---|---|
-| `com.mattermost.plugin-agents` | `com.mattermost.plugin-agents__` |
-| `my-plugin` | `my-plugin__` |
-| `com.example plugin` | `com.example_plugin__` (space → `_`) |
-| `some@weird/id` | `some_weird_id__` |
-| `plugin__with__dunders` | **undefined** — do not use |
-
----
-
-## Known Limitations
-
-- **Not yet `go get`-able.** Until the Agents plugin cuts a release tag
-  with `public/mcphelper/` exported, consumers must point their `go.mod`
-  at a local checkout of the Agents plugin worktree via a `replace`
-  directive. Example:
-
-  ```
-  replace github.com/mattermost/mattermost-plugin-agents => ../mattermost-plugin-agents
-  ```
-
-  When a release tag lands, drop the `replace` and `go get` directly.
-
-- **No per-tool admin filtering UI for plugin-registered tools.** The
-  Agents plugin's admin "Tools" tab shows an enable/disable toggle at the
-  server level for plugin-registered servers, but per-tool policy controls
-  (auto-run-in-DM, require confirmation, etc.) are remote-server-only in
-  the initial release. If you need per-tool control, either (a) split the
-  tool onto a separate plugin, or (b) bake the policy into your handler.
-  A future release will unify the per-tool UI across remote and
-  plugin-registered servers.
-
-- **Stub `.gitignore` footgun.** The standard
-  `mattermost-plugin-starter-template` `.gitignore` excludes
-  `server/manifest.go`, which regenerates on every `make apply` from
-  `plugin.json`. Don't try to commit it — the generated file causes merge
-  noise. This is a starter-template convention, not an mcphelper concern,
-  but worth knowing if you're scaffolding a fresh plugin.
-
----
+**Per-tool admin policy.** Admins configure per-tool policy
+(enabled, auto-run-in-DM, require-confirmation) for plugin-registered
+tools from the system console Tools tab, alongside the server-level
+enable/disable toggle. Policy applies in both the user-facing tool flow
+and (when `ExposeExternal` is true) the external aggregated MCP
+endpoint.
 
 ## Troubleshooting
 
-### "My tool doesn't appear in the Agents admin Tools tab"
-
-1. Check the Agents plugin's server log for a line like
-   `Connected to plugin MCP server` with your plugin ID. If missing:
-   - Is your plugin enabled?
-   - Did you call `mcphelper.Server.Register()` in `OnActivate`?
-   - Is the Agents plugin loaded? mcphelper's registration retries for
-     ~15 attempts with exponential backoff before giving up — check the
-     log for `mcphelper: registration with Agents plugin gave up after N
-     attempts`.
-2. Check the Agents plugin's admin Tools tab. Your entry should appear
-   with `ServerType: "plugin"`. If it appears with `Error: ...`, the
-   Agents plugin reached your plugin but couldn't list tools — usually a
-   schema-generation failure in `AddTool`.
-3. Check the tool name. It will be prefixed with
-   `{your-sanitized-plugin-id}__`.
-
-### "mcphelper: registration keeps retrying"
-
-The Agents plugin isn't reachable. Common causes:
-
-- Agents plugin is disabled.
-- Agents plugin is in a crash loop (check its log).
-- You set `PluginID` to something that doesn't match your `plugin.json`
-  `id` — the Agents plugin's register handler returns 403, which
-  mcphelper treats as non-retriable and logs permanently. Check the log
-  for `registration with Agents plugin failed permanently`.
-
-### "mcphelper.GetUserID(ctx) returns empty string"
-
-- Did the request actually arrive via `mcphelper.Server.ServeHTTP`? If
-  you're invoking your tool handler directly in a unit test, bypass
-  mcphelper and pass a context built with your own value.
-- Is your outer `ServeHTTP` delegating correctly? Don't add a second
-  security gate — the Agents plugin's outbound headers are already
-  correct.
-
-### "Local `golangci-lint` fails with 'Go language version (go1.24) used to build golangci-lint is lower than the targeted Go version (go1.26.1)'"
-
-Your local `golangci-lint` binary was built against an older Go toolchain
-than your plugin's `go.mod` declares. Two workarounds:
-
-1. Upgrade your local `golangci-lint` to a version built against Go 1.26
-   or newer: `brew upgrade golangci-lint` or follow the install docs.
-2. Skip local lint and rely on CI. Agents plugin CI runs the correct
-   toolchain.
-
-### "`go mod tidy` pulls go-sdk v1.5.0 even though my plugin doesn't need it"
-
-This is Go's Minimum Version Selection (MVS) at work: if any dependency
-in your build graph requires a newer go-sdk than mcphelper pins, MVS picks
-the higher version. mcphelper's public API is API-stable across the
-v1.4.x → v1.5.x window, so this is safe. Your plugin's tests are the
-authority — if they pass, the version is fine.
-
-If you want a hard pin, add an `exclude` or `replace` directive in your
-`go.mod` that forces the exact go-sdk version. This is rarely worth the
-maintenance cost.
-
-### "`go.mod` `replace` directive breaks when I move the worktree"
-
-`replace` directives use **relative paths from the current `go.mod`'s
-directory**. If you move your plugin source tree, you must update the
-`replace` line to point at the new location of the Agents plugin
-checkout. Prefer a stable parent directory (e.g., `~/workspace/`) so the
-relative path is stable. When the Agents plugin cuts a release tag,
-remove the `replace` entirely.
-
-### "I get `PluginHTTP returned nil response (Agents plugin likely not loaded)` in my log"
-
-Agents plugin is not active at the moment mcphelper tries to register.
-This is retriable — mcphelper backs off and retries. If it persists,
-check the Agents plugin's activation state.
+- *Tool doesn't appear in the admin Tools tab.* Look for `Connected to
+  plugin MCP server <pluginID>` in the Agents plugin log; absence
+  indicates `Register()` was never called or kept failing. The retry
+  loop logs `registration with Agents plugin gave up after N attempts`
+  on terminal failure and `failed permanently` on a 4xx.
+- *`GetUserID` returns `""`.* Either the request didn't go through
+  `mcphelper.Server.ServeHTTP` (typical in unit tests — inject a
+  context yourself) or your outer `ServeHTTP` isn't routing to it.
+- *Registration keeps retrying.* Agents plugin disabled, in a crash
+  loop, or `cfg.PluginID` doesn't match `plugin.json`'s `id` (the
+  Agents plugin returns 403 in that case, which is non-retriable).

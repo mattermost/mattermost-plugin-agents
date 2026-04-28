@@ -13,15 +13,13 @@ import (
 
 	mcppkg "github.com/mattermost/mattermost-plugin-agents/mcp"
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 
 	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-// stubRegistry is a hand-written PluginServerRegistry for tests. Protect with
-// mu so tests can mutate the slice from the test goroutine between rebuilds.
+// stubRegistry is a mutable PluginServerRegistry for tests.
 type stubRegistry struct {
 	mu      sync.Mutex
 	servers []mcppkg.PluginServerConfig
@@ -41,15 +39,22 @@ func (s *stubRegistry) set(servers []mcppkg.PluginServerConfig) {
 	s.servers = servers
 }
 
-// Compile-time sanity: stubRegistry must satisfy PluginServerRegistry.
 var _ PluginServerRegistry = (*stubRegistry)(nil)
 
-// listToolNames enumerates the tools on the currently-active *mcp.Server by
-// standing up an httptest.Server around h.MCPHandler and driving it with an
-// in-process MCP client. This exercises the full public contract (the factory
-// read, the streamable handler, and tool listing) rather than reaching into
-// private state.
-func listToolNames(t *testing.T, h *PluginMCPHandlers) []string {
+// stubPluginAPI satisfies mmapi.Client via the embedded interface; only
+// PluginHTTP is exercised by these tests.
+type stubPluginAPI struct {
+	mmapi.Client
+	pluginHTTP func(req *http.Request) *http.Response
+}
+
+func (s *stubPluginAPI) PluginHTTP(req *http.Request) *http.Response {
+	return s.pluginHTTP(req)
+}
+
+// listToolNamesNoRequire lists the active server's tools through h.MCPHandler
+// without calling require, so it is safe to call from a goroutine.
+func listToolNamesNoRequire(t *testing.T, h *PluginMCPHandlers) ([]string, error) {
 	t.Helper()
 	ts := httptest.NewServer(h.MCPHandler)
 	t.Cleanup(ts.Close)
@@ -59,22 +64,31 @@ func listToolNames(t *testing.T, h *PluginMCPHandlers) []string {
 		Endpoint:   ts.URL,
 		HTTPClient: &http.Client{},
 	}, nil)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 	t.Cleanup(func() { _ = sess.Close() })
 
 	res, err := sess.ListTools(context.Background(), &gosdkmcp.ListToolsParams{})
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 	names := make([]string, 0, len(res.Tools))
 	for _, tool := range res.Tools {
 		names = append(names, tool.Name)
 	}
+	return names, nil
+}
+
+func listToolNames(t *testing.T, h *PluginMCPHandlers) []string {
+	t.Helper()
+	names, err := listToolNamesNoRequire(t, h)
+	require.NoError(t, err)
 	return names
 }
 
-// TestNewPluginMCPHandlers_IteratesRegistry verifies that only enabled and
-// externally exposed plugin servers contribute tools.
 func TestNewPluginMCPHandlers_IteratesRegistry(t *testing.T) {
-	target := newFakePluginMCPServer(t, 1, nil) // 1 tool named test_tool_0
+	target := newFakePluginMCPServer(t, 1, nil)
 	t.Cleanup(target.Close)
 	mockAPI := newPluginHTTPForwarder(t, target)
 
@@ -101,10 +115,7 @@ func TestNewPluginMCPHandlers_IteratesRegistry(t *testing.T) {
 	require.Equal(t, 1, proxyCount, "only Enabled && ExposeExternal plugin tools should be aggregated")
 }
 
-// TestNewPluginMCPHandlers_FiltersToolsByPolicy verifies per-tool admin policy
-// on the external aggregated MCP endpoint.
 func TestNewPluginMCPHandlers_FiltersToolsByPolicy(t *testing.T) {
-	// Source plugin advertises 2 tools: test_tool_0 and test_tool_1.
 	target := newFakePluginMCPServer(t, 2, nil)
 	t.Cleanup(target.Close)
 	mockAPI := newPluginHTTPForwarder(t, target)
@@ -115,8 +126,6 @@ func TestNewPluginMCPHandlers_FiltersToolsByPolicy(t *testing.T) {
 		Path:           "/mcp",
 		Enabled:        true,
 		ExposeExternal: true,
-		// Admin policy: deny test_tool_0, leave test_tool_1 unconfigured
-		// (default-allow).
 		ToolConfigs: []mcppkg.ToolConfig{
 			{Name: "test_tool_0", Policy: "ask", Enabled: false},
 		},
@@ -142,19 +151,15 @@ func TestNewPluginMCPHandlers_FiltersToolsByPolicy(t *testing.T) {
 	require.True(t, sawAllowed, "tool with no policy entry must default-allow through (matches GetToolPolicy fallback)")
 }
 
-// TestNewPluginMCPHandlers_PolicyIsPerPluginServer verifies that ToolConfigs
-// from one plugin server do not affect another plugin's tools with the same
-// advertised name.
+// TestNewPluginMCPHandlers_PolicyIsPerPluginServer verifies ToolConfigs are
+// scoped per-plugin: one plugin's deny does not affect another's same-named
+// tool.
 func TestNewPluginMCPHandlers_PolicyIsPerPluginServer(t *testing.T) {
-	// Two distinct fake plugin MCP servers, each advertising test_tool_0.
 	targetA := newFakePluginMCPServer(t, 1, nil)
 	t.Cleanup(targetA.Close)
 	targetB := newFakePluginMCPServer(t, 1, nil)
 	t.Cleanup(targetB.Close)
 
-	// Forwarder dispatches PluginHTTP based on the rewritten URL.Path
-	// prefix. Both targets are reachable; we use a custom forwarder so each
-	// plugin ID routes to its own httptest.Server.
 	mockAPI := newPerPluginForwarder(t, map[string]*httptest.Server{
 		"com.example.deny":  targetA,
 		"com.example.allow": targetB,
@@ -171,7 +176,6 @@ func TestNewPluginMCPHandlers_PolicyIsPerPluginServer(t *testing.T) {
 		{
 			PluginID: "com.example.allow", Name: "Allow", Path: "/mcp",
 			Enabled: true, ExposeExternal: true,
-			// No ToolConfigs → default-allow.
 		},
 	}}
 
@@ -190,10 +194,6 @@ func TestNewPluginMCPHandlers_PolicyIsPerPluginServer(t *testing.T) {
 	require.GreaterOrEqual(t, count, 1, "the allow-plugin's test_tool_0 must survive — policy scoping is per-plugin")
 }
 
-// TestRebuildExternalServer_PicksUpNewRegistrations asserts the rebuild
-// trigger chain works end-to-end: initially empty registry -> no proxy tools.
-// After registering a plugin server and calling RebuildExternalServer, the
-// tool appears on the currently-active server.
 func TestRebuildExternalServer_PicksUpNewRegistrations(t *testing.T) {
 	target := newFakePluginMCPServer(t, 1, nil)
 	t.Cleanup(target.Close)
@@ -225,8 +225,6 @@ func TestRebuildExternalServer_PicksUpNewRegistrations(t *testing.T) {
 	require.True(t, sawProxy, "RebuildExternalServer should have picked up the new registration")
 }
 
-// TestRebuildExternalServer_RemovesUnregistered asserts the converse: once a
-// plugin is removed from the registry, RebuildExternalServer drops its tools.
 func TestRebuildExternalServer_RemovesUnregistered(t *testing.T) {
 	target := newFakePluginMCPServer(t, 1, nil)
 	t.Cleanup(target.Close)
@@ -304,14 +302,15 @@ func TestRebuildExternalServer_DoesNotBlockExternalRequestsWhileDiscovering(t *t
 		require.Fail(t, "timed out waiting for rebuild to start proxy discovery")
 	}
 
-	listDone := make(chan struct{})
+	listErrCh := make(chan error, 1)
 	go func() {
-		_ = listToolNames(t, h)
-		close(listDone)
+		_, err := listToolNamesNoRequire(t, h)
+		listErrCh <- err
 	}()
 
 	select {
-	case <-listDone:
+	case err := <-listErrCh:
+		require.NoError(t, err)
 	case <-time.After(500 * time.Millisecond):
 		require.Fail(t, "external MCP requests should not wait for rebuild proxy discovery")
 	}
@@ -323,43 +322,23 @@ func TestRebuildExternalServer_DoesNotBlockExternalRequestsWhileDiscovering(t *t
 	}
 }
 
-// TestNewPluginMCPHandlers_NilRegistryIsNoOp lets callers pass nil registry
-// to disable aggregation entirely. Native tools should still register.
+// TestNewPluginMCPHandlers_NilRegistryIsNoOp confirms a nil registry disables
+// aggregation while keeping native tools available.
 func TestNewPluginMCPHandlers_NilRegistryIsNoOp(t *testing.T) {
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
 	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, h.MCPHandler)
-	// Listing tools should not panic or error — it's just the native set.
 	_ = listToolNames(t, h)
 }
 
-// newPerPluginForwarder returns a mock mmapi.Client whose PluginHTTP routes by
-// the leading /{pluginID} path segment that proxyRoundTripper writes onto
-// every outbound request. Used by TestNewPluginMCPHandlers_PolicyIsPerPluginServer
-// to dispatch two simultaneously-active plugin MCP servers.
-//
-// Mirrors newPluginHTTPForwarder (proxy_tools_test.go:55) but with a routing
-// table keyed on plugin ID — that helper hardcodes a single target.
-func newPerPluginForwarder(t *testing.T, byPluginID map[string]*httptest.Server) *mocks.MockClient {
+// newPerPluginForwarder routes PluginHTTP by the leading /{pluginID} path
+// segment proxyRoundTripper writes on every outbound request.
+func newPerPluginForwarder(t *testing.T, byPluginID map[string]*httptest.Server) *stubPluginAPI {
 	t.Helper()
-	m := mocks.NewMockClient(t)
-	m.EXPECT().PluginHTTP(mock.Anything).RunAndReturn(func(req *http.Request) *http.Response {
-		// proxyRoundTripper rewrote URL.Path to "/{pluginID}{basePath}".
-		// Trim the leading slash and split on the next slash to recover the ID.
-		p := req.URL.Path
-		if len(p) > 0 && p[0] == '/' {
-			p = p[1:]
-		}
-		var pluginID, rest string
-		if idx := indexByte(p, '/'); idx >= 0 {
-			pluginID = p[:idx]
-			rest = p[idx:]
-		} else {
-			pluginID = p
-		}
-
+	return &stubPluginAPI{pluginHTTP: func(req *http.Request) *http.Response {
+		pluginID, rest := splitPluginHTTPPath(req.URL.Path)
 		target, ok := byPluginID[pluginID]
 		if !ok {
 			rec := httptest.NewRecorder()
@@ -367,21 +346,18 @@ func newPerPluginForwarder(t *testing.T, byPluginID map[string]*httptest.Server)
 			return rec.Result()
 		}
 
-		// Forward to the target's handler with the basePath restored.
 		fwd := req.Clone(req.Context())
 		fwd.URL.Path = rest
 		rec := httptest.NewRecorder()
 		target.Config.Handler.ServeHTTP(rec, fwd)
 		return rec.Result()
-	}).Maybe()
-	return m
+	}}
 }
 
-func newHangingAndHealthyPluginForwarder(t *testing.T, hungPluginID string, healthy *httptest.Server, startedHungRequest chan<- struct{}) *mocks.MockClient {
+func newHangingAndHealthyPluginForwarder(t *testing.T, hungPluginID string, healthy *httptest.Server, startedHungRequest chan<- struct{}) *stubPluginAPI {
 	t.Helper()
-	m := mocks.NewMockClient(t)
 	var once sync.Once
-	m.EXPECT().PluginHTTP(mock.Anything).RunAndReturn(func(req *http.Request) *http.Response {
+	return &stubPluginAPI{pluginHTTP: func(req *http.Request) *http.Response {
 		pluginID, rest := splitPluginHTTPPath(req.URL.Path)
 		if pluginID == hungPluginID {
 			once.Do(func() {
@@ -406,8 +382,7 @@ func newHangingAndHealthyPluginForwarder(t *testing.T, hungPluginID string, heal
 		rec := httptest.NewRecorder()
 		healthy.Config.Handler.ServeHTTP(rec, fwd)
 		return rec.Result()
-	}).Maybe()
-	return m
+	}}
 }
 
 func splitPluginHTTPPath(path string) (pluginID, rest string) {
@@ -420,8 +395,6 @@ func splitPluginHTTPPath(path string) (pluginID, rest string) {
 	return path, ""
 }
 
-// indexByte is a tiny strings.IndexByte equivalent without importing strings
-// for one call site. Returns -1 if c is not present.
 func indexByte(s string, c byte) int {
 	for i := 0; i < len(s); i++ {
 		if s[i] == c {

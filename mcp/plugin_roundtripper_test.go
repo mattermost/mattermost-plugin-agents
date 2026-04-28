@@ -50,7 +50,6 @@ func TestPluginHTTPRoundTripper_RewritesURLPath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mockAPI := mocks.NewMockClient(t)
 
-			// Capture the request handed to PluginHTTP.
 			var captured *http.Request
 			mockAPI.On("PluginHTTP", mock.Anything).
 				Run(func(args mock.Arguments) {
@@ -82,9 +81,9 @@ func TestPluginHTTPRoundTripper_RewritesURLPath(t *testing.T) {
 	}
 }
 
+// Verifies headerTransport layering: the user-ID header set by the enclosing
+// http.Client reaches PluginHTTP unchanged.
 func TestPluginHTTPRoundTripper_PreservesHeaders(t *testing.T) {
-	// Verifies headerTransport layering: the User-ID header set by the
-	// enclosing http.Client reaches PluginHTTP unchanged.
 	mockAPI := mocks.NewMockClient(t)
 	var captured *http.Request
 	mockAPI.On("PluginHTTP", mock.Anything).

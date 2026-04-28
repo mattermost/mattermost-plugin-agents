@@ -166,8 +166,6 @@ func TestFilterToolsByConfig(t *testing.T) {
 			wantToolNames: []string{"tool_a", "tool_b"},
 		},
 		{
-			// Per-tool policy filters one plugin tool; the unconfigured one
-			// still defaults to enabled.
 			name:   "plugin server with per-tool policy filters disabled tool",
 			config: Config{},
 			pluginServers: []PluginServerConfig{
@@ -188,7 +186,6 @@ func TestFilterToolsByConfig(t *testing.T) {
 			wantToolNames: []string{"tool_b"},
 		},
 		{
-			// Defense-in-depth: explicitly Enabled=true row also passes through.
 			name:   "plugin server with per-tool policy returns explicitly enabled tool",
 			config: Config{},
 			pluginServers: []PluginServerConfig{
@@ -208,7 +205,6 @@ func TestFilterToolsByConfig(t *testing.T) {
 			wantToolNames: []string{"tool_a"},
 		},
 		{
-			// RELEASE GATE — this case MUST PASS before merge.
 			name:   "plugin server disabled, tools filtered out",
 			config: Config{},
 			pluginServers: []PluginServerConfig{
@@ -237,16 +233,14 @@ func TestFilterToolsByConfig(t *testing.T) {
 				{Name: "search_users", ServerOrigin: EmbeddedClientKey},
 				{Name: "plugin_tool", ServerOrigin: "plugin://com.example.mcp"},
 			},
-			// serverOrder: remote first (Atlassian), then embedded, then plugin.
+			// serverOrder: remote, embedded, plugin.
 			wantToolNames: []string{"getJiraIssue", "search_users", "plugin_tool"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Always provide the embedded client since the embedded server
-			// is always enabled. Tests that don't involve embedded tools
-			// are unaffected because no tools have the embedded origin.
+			// Tests without embedded tools are unaffected by the non-nil client.
 			embeddedClient := &EmbeddedServerClient{}
 
 			filtered := filterToolsByConfig(tt.rawTools, tt.config, embeddedClient, tt.pluginServers)

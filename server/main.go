@@ -443,8 +443,6 @@ func (p *Plugin) OnActivate() error {
 	conversationsService.SetMeetingsService(meetingsService)
 
 	// Wire per-tool policy checker for auto-approval in streaming and conversations.
-	// Decision logic lives in lookupToolPolicy (server/tool_policy.go) so it can
-	// be unit-tested without a live Plugin instance.
 	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
 		return lookupToolPolicy(p.configuration.MCP(), serverBaseURL, toolName)
 	})

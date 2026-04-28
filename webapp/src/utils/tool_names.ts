@@ -19,8 +19,6 @@ export function sanitizeForToolName(pluginID: string): string {
     return out;
 }
 
-// pluginIDFromServerOrigin parses "plugin://<pluginID><optional-path>" and
-// returns the pluginID portion. Returns "" for non-plugin origins.
 export function pluginIDFromServerOrigin(serverOrigin: string): string {
     const scheme = 'plugin://';
     if (!serverOrigin.startsWith(scheme)) {
@@ -31,7 +29,6 @@ export function pluginIDFromServerOrigin(serverOrigin: string): string {
     return slash === -1 ? rest : rest.slice(0, slash);
 }
 
-// stripPluginPrefix removes the "<sanitizedPluginID>__" prefix when present.
 export function stripPluginPrefix(toolName: string, pluginID: string): string {
     if (!pluginID) {
         return toolName;
@@ -43,8 +40,7 @@ export function stripPluginPrefix(toolName: string, pluginID: string): string {
     return toolName;
 }
 
-// stripWirePrefix is a heuristic for call sites that only have a wire-format
-// name and no server context.
+// Heuristic prefix strip for call sites without server context.
 export function stripWirePrefix(toolName: string): string {
     const idx = toolName.indexOf('__');
     if (idx <= 0) {

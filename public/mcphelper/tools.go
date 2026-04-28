@@ -9,9 +9,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// AddTool registers a typed tool and prepends the sanitized plugin-ID namespace
-// to tool.Name when it is not already present. Schema generation is delegated
-// to the go-sdk helper.
+// AddTool registers a typed tool, prepending the sanitized plugin-ID namespace
+// to tool.Name when not already present.
 func AddTool[In, Out any](s *Server, tool *mcp.Tool, handler mcp.ToolHandlerFor[In, Out]) {
 	prefix := sanitizeForToolName(s.config.PluginID) + "__"
 	if !strings.HasPrefix(tool.Name, prefix) {
@@ -21,8 +20,9 @@ func AddTool[In, Out any](s *Server, tool *mcp.Tool, handler mcp.ToolHandlerFor[
 }
 
 // sanitizeForToolName replaces characters outside [A-Za-z0-9_-] with '_'.
-// This applies only to the LLM-facing tool-name prefix; PluginHTTP routing and
-// registry keys keep the raw plugin ID.
+// Applies only to the LLM-facing tool-name prefix; routing and registry keys
+// keep the raw plugin ID. Stricter than go-sdk because Bifrost / Anthropic
+// enforce ^[a-zA-Z0-9_-]{1,128}$ on tool names.
 func sanitizeForToolName(pluginID string) string {
 	var b strings.Builder
 	b.Grow(len(pluginID))

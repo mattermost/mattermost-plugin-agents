@@ -80,7 +80,6 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
     test('plugin wire tool name renders with short user-visible label', () => {
         renderRow(makePluginServer(), makePluginServerConfig());
 
-        // Expand the row to reveal per-tool labels.
         fireEvent.click(screen.getByText('Demo Plugin'));
 
         expect(screen.getByText('echo')).not.toBeNull();
@@ -90,15 +89,11 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
     test('plugin row renders policy dropdown enabled', () => {
         renderRow(makePluginServer(), makePluginServerConfig());
 
-        // Expand the row to reveal per-tool dropdowns.
         fireEvent.click(screen.getByText('Demo Plugin'));
 
         const select = screen.getByRole('combobox') as HTMLSelectElement;
 
-        // Plugin rows must allow per-tool policy edits.
         expect(select.disabled).toBe(false);
-
-        // The selected value reflects toolConfigs from the server.
         expect(select.value).toBe('ask');
     });
 
@@ -112,8 +107,6 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
         expect(onServerConfigChange).toHaveBeenCalledTimes(1);
         const [updated] = onServerConfigChange.mock.calls[0];
 
-        // The full updated MCPServerConfig flows up; the parent does the diff
-        // and the PUT (covered by mcp_tools_viewer.test.tsx).
         expect(updated.tool_configs).toEqual([
             {name: 'com_example_demo__echo', policy: 'auto_run_everywhere', enabled: true},
         ]);
@@ -123,9 +116,7 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
         const {onServerConfigChange} = renderRow(makePluginServer(), makePluginServerConfig());
         fireEvent.click(screen.getByText('Demo Plugin'));
 
-        // ToggleSwitch renders as a native checkbox input. Two checkboxes
-        // are present after expansion: server-level (index 0) and per-tool
-        // (index 1 — the single echo tool). Click the per-tool toggle.
+        // ToggleSwitch renders as a native checkbox: index 0 is server-level, index 1 is the per-tool toggle.
         const switches = screen.getAllByRole('checkbox');
         expect(switches.length).toBeGreaterThanOrEqual(2);
         fireEvent.click(switches[1]);

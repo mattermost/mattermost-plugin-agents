@@ -16,22 +16,18 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 )
 
-// registerPath and unregisterPath are relative to the Agents plugin's
-// PluginHTTP route prefix.
 const (
 	registerPath   = "/bridge/v1/mcp/register"
 	unregisterPath = "/bridge/v1/mcp/unregister"
 )
 
 // Register asynchronously registers this server with the Agents plugin and
-// returns immediately. Call Unregister before starting a replacement retry loop.
+// returns immediately.
 func (s *Server) Register() error {
 	go s.registerWithBackoff(s.regCtx)
 	return nil
 }
 
-// registerWithBackoff is the retry loop, factored out so tests can invoke it
-// synchronously with a shrunken retryPolicy.
 func (s *Server) registerWithBackoff(ctx context.Context) {
 	delay := s.retry.baseDelay
 	for attempt := 1; attempt <= s.retry.maxAttempts; attempt++ {
@@ -59,16 +55,12 @@ func (s *Server) registerWithBackoff(ctx context.Context) {
 	}
 }
 
-// registerOnce performs a single POST attempt. Returns (retriable, err).
-// retriable is true if the caller should back off and retry; false if the
-// failure is permanent (4xx other than 404/429). retriable is meaningless
-// when err is nil.
+// registerOnce performs a single POST attempt. retriable is meaningless
+// when err is nil; 404/429/5xx are retriable, other 4xx are permanent.
 func (s *Server) registerOnce(ctx context.Context) (bool, error) {
 	return s.postRegistration(ctx, registerPath, s.config)
 }
 
-// postRegistration is the shared request plumbing for register/unregister.
-// Returns (retriable, err); see registerOnce for semantics.
 func (s *Server) postRegistration(ctx context.Context, path string, body any) (bool, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -89,8 +81,6 @@ func (s *Server) postRegistration(ctx context.Context, path string, body any) (b
 
 	switch {
 	case resp.StatusCode == http.StatusOK:
-		// Drain so the body connection can be reused; ignore any error (body
-		// content is advisory only for a 200).
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return false, nil
 	case resp.StatusCode == http.StatusNotFound,
@@ -104,10 +94,9 @@ func (s *Server) postRegistration(ctx context.Context, path string, body any) (b
 	}
 }
 
-// Unregister synchronously unregisters this server with the Agents plugin. It
-// cancels any pending Register() retry goroutine first, then fires one POST
-// to /bridge/v1/mcp/unregister. Unregister is called from OnDeactivate, where
-// we want a bounded wait: one attempt, report the outcome.
+// Unregister synchronously unregisters this server with the Agents plugin.
+// Cancels any pending Register() retries, then fires one POST. Intended for
+// OnDeactivate: bounded wait, single attempt.
 func (s *Server) Unregister() error {
 	s.regCancel()
 	_, err := s.postRegistration(context.Background(), unregisterPath, s.config)

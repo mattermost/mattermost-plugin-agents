@@ -97,14 +97,10 @@ type mockMCPClientManager struct {
 	disconnectErr    error
 	ensureSessionErr error
 
-	// Plugin-server registry spy. Tests read these slices to assert the
-	// bridge handlers dispatched correctly.
 	registerCalls   []mcp.PluginServerConfig
 	unregisterCalls []string
-	pluginServers   []mcp.PluginServerConfig // returned by ListPluginServers
+	pluginServers   []mcp.PluginServerConfig
 
-	// DiscoverPluginServerTools spy: tests set response/err and then read the
-	// call count to assert the admin Tools tab probed (or skipped) as expected.
 	discoverPluginToolsResponse  []mcp.ToolInfo
 	discoverPluginToolsErr       error
 	discoverPluginToolsCallCount int
@@ -155,9 +151,7 @@ func (m *mockMCPClientManager) GetConfig() mcp.Config {
 
 func (m *mockMCPClientManager) RegisterPluginServer(cfg mcp.PluginServerConfig) {
 	m.registerCalls = append(m.registerCalls, cfg)
-	// Mirror overwrite semantics of the real ClientManager: replace an
-	// existing entry with the same PluginID so ListPluginServers reflects
-	// the current registration.
+	// Mirror real ClientManager: same PluginID replaces existing entry.
 	for i, existing := range m.pluginServers {
 		if existing.PluginID == cfg.PluginID {
 			m.pluginServers[i] = cfg
