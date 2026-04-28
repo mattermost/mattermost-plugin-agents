@@ -389,8 +389,8 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 	defer resp.Body.Close()
 
 	var created AutomationFlow
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		return "failed to parse created automation", fmt.Errorf("failed to decode create response: %w", err)
+	if decodeErr := json.NewDecoder(resp.Body).Decode(&created); decodeErr != nil {
+		return "failed to parse created automation", fmt.Errorf("failed to decode create response: %w", decodeErr)
 	}
 
 	jsonStr, err := marshalAutomationFlowJSON(created)
@@ -443,8 +443,8 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 	defer resp.Body.Close()
 
 	var updated AutomationFlow
-	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
-		return "failed to parse updated automation", fmt.Errorf("failed to decode update response: %w", err)
+	if decodeErr := json.NewDecoder(resp.Body).Decode(&updated); decodeErr != nil {
+		return "failed to parse updated automation", fmt.Errorf("failed to decode update response: %w", decodeErr)
 	}
 
 	jsonStr, err := marshalAutomationFlowJSON(updated)
