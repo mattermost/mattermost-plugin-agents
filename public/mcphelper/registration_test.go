@@ -4,9 +4,12 @@
 package mcphelper
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -408,6 +411,161 @@ func TestUnregister_BoundedTimeout(t *testing.T) {
 		"should wait approximately the bounded timeout")
 	assert.Less(t, elapsed, 2*time.Second,
 		"Unregister must not block past its bounded timeout")
+}
+
+// TestUnregister_WaitsForInFlightRegister confirms Unregister blocks the
+// /unregister POST until the in-flight register goroutine drains, so a late
+// /register cannot land after /unregister and re-add the entry. The fake
+// PluginHTTP intentionally ignores ctx cancellation to simulate a hung
+// plugin RPC layer; only WaitGroup gating can serialize the two POSTs.
+func TestUnregister_WaitsForInFlightRegister(t *testing.T) {
+	withUnregisterTimeout(t, 200*time.Millisecond)
+
+	release := make(chan struct{})
+	registerStarted := make(chan struct{})
+	var startOnce sync.Once
+
+	api := &mockPluginAPI{fn: func(req *http.Request) *http.Response {
+		if strings.Contains(req.URL.Path, "/unregister") {
+			return newJSONResponse(200, "")
+		}
+		startOnce.Do(func() { close(registerStarted) })
+		<-release
+		return newJSONResponse(200, "")
+	}}
+	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, maxAttempts: 1}
+
+	require.NoError(t, s.Register())
+	<-registerStarted
+
+	unregDone := make(chan error, 1)
+	go func() { unregDone <- s.Unregister() }()
+
+	time.Sleep(50 * time.Millisecond)
+
+	for _, r := range api.requests() {
+		require.NotContains(t, r.URL.Path, "/unregister",
+			"Unregister must not POST while a register attempt is in flight")
+	}
+
+	close(release)
+
+	select {
+	case err := <-unregDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Unregister did not return after register goroutine drained")
+	}
+
+	var sawRegister, sawUnregister bool
+	for _, r := range api.requests() {
+		switch {
+		case strings.Contains(r.URL.Path, "/unregister"):
+			sawUnregister = true
+		case strings.Contains(r.URL.Path, "/register"):
+			sawRegister = true
+		}
+	}
+	assert.True(t, sawRegister, "register POST must have been sent")
+	assert.True(t, sawUnregister, "unregister POST must have been sent after register drained")
+}
+
+// TestUnregister_BoundedWaitForInFlightRegister confirms the wait phase is
+// bounded: when the in-flight register goroutine never drains (hung plugin
+// that ignores ctx), Unregister still proceeds to fire /unregister after
+// the bounded wait timeout instead of stalling OnDeactivate forever.
+func TestUnregister_BoundedWaitForInFlightRegister(t *testing.T) {
+	withUnregisterTimeout(t, 25*time.Millisecond)
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	registerStarted := make(chan struct{})
+	var startOnce sync.Once
+
+	api := &mockPluginAPI{fn: func(req *http.Request) *http.Response {
+		if strings.Contains(req.URL.Path, "/unregister") {
+			return newJSONResponse(200, "")
+		}
+		startOnce.Do(func() { close(registerStarted) })
+		<-release
+		return newJSONResponse(200, "")
+	}}
+	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+	s.retry = retryPolicy{baseDelay: 1 * time.Millisecond, maxDelay: 1 * time.Millisecond, maxAttempts: 1}
+
+	require.NoError(t, s.Register())
+	<-registerStarted
+
+	start := time.Now()
+	err := s.Unregister()
+	elapsed := time.Since(start)
+
+	require.NoError(t, err, "Unregister POST should succeed once the bounded wait elapses")
+	assert.GreaterOrEqual(t, elapsed, 20*time.Millisecond,
+		"Unregister should wait approximately the bounded wait timeout")
+	assert.Less(t, elapsed, 2*time.Second,
+		"Unregister must not block past its bounded budgets")
+
+	var sawUnregister bool
+	for _, r := range api.requests() {
+		if strings.Contains(r.URL.Path, "/unregister") {
+			sawUnregister = true
+			break
+		}
+	}
+	assert.True(t, sawUnregister,
+		"unregister POST must be sent even when the register goroutine is hung")
+}
+
+// closerErrReadCloser wraps an io.Reader and returns a fixed error from
+// Close(); used to simulate a response body whose Close() fails.
+type closerErrReadCloser struct {
+	io.Reader
+	closeErr error
+	closed   bool
+}
+
+func (c *closerErrReadCloser) Close() error {
+	c.closed = true
+	return c.closeErr
+}
+
+// TestPostRegistration_BodyCloseErrorIsLoggedNotReturned ensures a Close()
+// error on the response body does not break the OK path: postRegistration
+// must still succeed and explicitly log the close failure.
+func TestPostRegistration_BodyCloseErrorIsLoggedNotReturned(t *testing.T) {
+	body := &closerErrReadCloser{
+		Reader:   strings.NewReader(""),
+		closeErr: errors.New("synthetic close error"),
+	}
+	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}
+	}}
+	s := NewServer(api, PluginMCPServer{PluginID: "x", Name: "X", Path: "/mcp"})
+
+	var buf bytes.Buffer
+	prevOut := log.Writer()
+	prevFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	retriable, err := s.registerOnce(context.Background())
+	require.NoError(t, err, "Close() error must not break the OK path")
+	assert.False(t, retriable)
+	assert.True(t, body.closed, "Body should have been closed")
+	assert.Contains(t, buf.String(), "closing registration response body",
+		"explicit Close() error must be logged")
+	assert.Contains(t, buf.String(), "synthetic close error",
+		"the underlying close error should be included in the log")
 }
 
 // TestUnregister_DeadlinePropagated verifies the request context handed to

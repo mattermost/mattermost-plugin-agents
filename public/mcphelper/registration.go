@@ -27,9 +27,14 @@ const (
 var unregisterTimeout = 5 * time.Second
 
 // Register asynchronously registers this server with the Agents plugin and
-// returns immediately.
+// returns immediately. The background goroutine is tracked via s.regWG so
+// Unregister() can wait for it to drain before posting /unregister.
 func (s *Server) Register() error {
-	go s.registerWithBackoff(s.regCtx)
+	s.regWG.Add(1)
+	go func() {
+		defer s.regWG.Done()
+		s.registerWithBackoff(s.regCtx)
+	}()
 	return nil
 }
 
@@ -85,7 +90,11 @@ func (s *Server) postRegistration(ctx context.Context, path string, body any) (b
 	if resp == nil {
 		return true, fmt.Errorf("PluginHTTP returned nil response (Agents plugin likely not loaded)")
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			log.Printf("mcphelper: closing registration response body: %v", cerr)
+		}
+	}()
 
 	switch {
 	case resp.StatusCode == http.StatusOK:
@@ -111,10 +120,25 @@ func (s *Server) postRegistration(ctx context.Context, path string, body any) (b
 }
 
 // Unregister synchronously unregisters this server with the Agents plugin.
-// Cancels any pending Register() retries, then fires one POST. Intended for
-// OnDeactivate: bounded wait, single attempt.
+// Cancels any pending Register() retries, waits (bounded) for an in-flight
+// register attempt to drain so a late /register cannot land after our
+// /unregister, then fires one POST. Intended for OnDeactivate: bounded
+// wait, single attempt.
 func (s *Server) Unregister() error {
 	s.regCancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.regWG.Wait()
+		close(done)
+	}()
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), unregisterTimeout)
+	defer waitCancel()
+	select {
+	case <-done:
+	case <-waitCtx.Done():
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), unregisterTimeout)
 	defer cancel()
 	_, err := s.postRegistration(ctx, unregisterPath, s.config)

@@ -55,9 +55,12 @@ type Server struct {
 	handlerBuiltOK bool
 
 	// Unregister calls regCancel to stop pending retries before firing its
-	// own POST.
+	// own POST. regWG tracks the in-flight register goroutine so Unregister
+	// can wait for it to drain before posting /unregister, avoiding a race
+	// where a late /register lands after /unregister.
 	regCtx    context.Context
 	regCancel context.CancelFunc
+	regWG     sync.WaitGroup
 
 	retry retryPolicy
 }
