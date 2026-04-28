@@ -311,7 +311,7 @@ deploy: dist
 mcp-server:
 	@echo Building MCP server...
 	mkdir -p mcpserver/bin
-	$(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) $(GO_BUILD_LDFLAGS) -o bin/mattermost-mcp-server ./mcpserver/cmd/main.go
+	$(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) $(GO_BUILD_LDFLAGS) -o mcpserver/bin/mattermost-mcp-server ./mcpserver/cmd/main.go
 
 ## Builds the evalviewer binary.
 .PHONY: evalviewer
