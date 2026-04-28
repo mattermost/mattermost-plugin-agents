@@ -13,6 +13,7 @@ import (
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/subtitles"
 )
 
@@ -20,6 +21,7 @@ import (
 type Transcriber struct {
 	client   *bifrostcore.Bifrost
 	provider schemas.ModelProvider
+	apiKey   string // used only to redact configured secrets from provider error surfaces
 	model    string
 }
 
@@ -39,11 +41,7 @@ func NewTranscriber(cfg TranscriptionConfig) (*Transcriber, error) {
 		apiURL:   cfg.APIURL,
 	}
 
-	bifrostConfig := schemas.BifrostConfig{
-		Account: account,
-	}
-
-	client, err := bifrostcore.Init(context.Background(), bifrostConfig)
+	client, err := newBifrostClient(account, cfg.APIKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Bifrost client for transcription: %w", err)
 	}
@@ -56,6 +54,7 @@ func NewTranscriber(cfg TranscriptionConfig) (*Transcriber, error) {
 	return &Transcriber{
 		client:   client,
 		provider: cfg.Provider,
+		apiKey:   cfg.APIKey,
 		model:    model,
 	}, nil
 }
@@ -84,7 +83,7 @@ func (t *Transcriber) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
 
 	resp, bifrostErr := t.client.TranscriptionRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, fmt.Errorf("bifrost transcription error: %s", bifrostErr.Error.Message)
+		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost transcription error: %s", bifrostErr.Error.Message), t.apiKey)
 	}
 
 	if resp == nil || resp.Text == "" {
