@@ -362,9 +362,9 @@ func (s *Service) turnsToLLMPosts(turns []store.Turn, redactUnshared bool) ([]ll
 			return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turn.ID, err)
 		}
 		if turn.Role == "assistant" && i+1 < len(turns) && turns[i+1].Role == "tool_result" {
-			nextBlocks, err := unmarshalBlocks(turns[i+1].Content)
-			if err != nil {
-				return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turns[i+1].ID, err)
+			nextBlocks, nextErr := unmarshalBlocks(turns[i+1].Content)
+			if nextErr != nil {
+				return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turns[i+1].ID, nextErr)
 			}
 			blocks = append(blocks, nextBlocks...)
 			i++
