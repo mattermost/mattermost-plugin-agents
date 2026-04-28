@@ -112,10 +112,10 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	// Optimistic check before acquiring mutex
 	var jobStatus JobStatus
 	err := s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err != nil && err.Error() != "not found" {
+	if err != nil && !mmapi.IsKVNotFound(err) {
 		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
 	}
-	if jobStatus.Status == JobStatusRunning && !s.isJobStale(&jobStatus) {
+	if isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
 		return jobStatus, fmt.Errorf("job already running")
 	}
 
@@ -129,10 +129,11 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 
 	// Re-check after acquiring lock (double-checked locking pattern)
 	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err != nil && err.Error() != "not found" {
+	if err != nil && !mmapi.IsKVNotFound(err) {
 		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
 	}
-	if jobStatus.Status == JobStatusRunning && !s.isJobStale(&jobStatus) {
+	hasExisting := err == nil
+	if isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
 		return jobStatus, fmt.Errorf("job already running")
 	}
 
@@ -148,8 +149,10 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		count = 0 // Continue with zero estimate
 	}
 
-	// Create initial job status
+	// Create initial job status with a fresh JobID so cancel checks and CAS
+	// transitions for this run cannot be confused with a previous run.
 	newJobStatus := JobStatus{
+		JobID:     model.NewId(),
 		Status:    JobStatusRunning,
 		StartedAt: time.Now(),
 		Resumable: !clearIndex,
@@ -168,10 +171,20 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		newJobStatus.CutoffAt = cutoffTimestamp
 	}
 
-	// Save initial job status
-	err = s.pluginAPI.KVSet(ReindexJobKey, newJobStatus)
+	// CAS-write the initial job status. The predicate is the row we observed
+	// above (or "no row" when the key was absent). This routes through the
+	// master and is rejected if the row changed underneath us, even when our
+	// initial KVGet was served by a stale replica.
+	var oldValue interface{}
+	if hasExisting {
+		oldValue = jobStatus
+	}
+	ok, err := s.pluginAPI.KVCompareAndSet(ReindexJobKey, oldValue, newJobStatus)
 	if err != nil {
 		return JobStatus{}, fmt.Errorf("failed to save job status: %w", err)
+	}
+	if !ok {
+		return JobStatus{}, fmt.Errorf("job already running")
 	}
 
 	// Clear cursor if doing a fresh reindex
@@ -187,6 +200,14 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	go s.runReindexJob(&newJobStatus, clearIndex)
 
 	return returnStatus, nil
+}
+
+// isActiveJob reports whether a job row represents a run that should block a
+// new Start: either still running, or with a cancel pending acknowledgment
+// from its worker. Both states are non-terminal and a Start would race with
+// the existing run.
+func isActiveJob(s *JobStatus) bool {
+	return s.Status == JobStatusRunning || s.Status == JobStatusCancelRequested
 }
 
 // getNodeID returns a unique identifier for this node
@@ -209,7 +230,11 @@ func (s *Indexer) GetJobStatus() (JobStatus, error) {
 	return jobStatus, nil
 }
 
-// CancelJob cancels a running reindex job
+// CancelJob requests cancellation of the running reindex job. The transition
+// is Running -> CancelRequested via CAS; the actual terminal Canceled state
+// is written by the worker after it observes the request scoped to its own
+// JobID. This split lets cancel signaling survive replica-lag KVGet races
+// without poisoning a freshly-started successor run.
 func (s *Indexer) CancelJob() (JobStatus, error) {
 	// Acquire cluster mutex
 	mtx, err := cluster.NewMutex(s.clusterMutex, "ai_reindex_job")
@@ -229,17 +254,21 @@ func (s *Indexer) CancelJob() (JobStatus, error) {
 		return JobStatus{}, fmt.Errorf("not running")
 	}
 
-	// Update status to canceled
-	jobStatus.Status = JobStatusCanceled
-	jobStatus.CompletedAt = time.Now()
+	newStatus := jobStatus
+	newStatus.Status = JobStatusCancelRequested
 
-	// Save updated status
-	err = s.pluginAPI.KVSet(ReindexJobKey, jobStatus)
-	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to save job status: %w", err)
+	ok, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, jobStatus, newStatus)
+	if casErr != nil {
+		return JobStatus{}, fmt.Errorf("failed to save job status: %w", casErr)
+	}
+	if !ok {
+		// The row changed between our read and CAS — the worker has already
+		// completed, failed, or transitioned the row, so there is no live
+		// run to cancel.
+		return JobStatus{}, fmt.Errorf("not running")
 	}
 
-	return jobStatus, nil
+	return newStatus, nil
 }
 
 // shouldIndexPost returns whether a post should be indexed based on consistent criteria
@@ -295,7 +324,11 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	// Check if job is already running (allow restart if stale)
 	var jobStatus JobStatus
 	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err == nil && jobStatus.Status == JobStatusRunning && !s.isJobStale(&jobStatus) {
+	if err != nil && !mmapi.IsKVNotFound(err) {
+		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
+	}
+	hasExisting := err == nil
+	if isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
 		return jobStatus, fmt.Errorf("job already running")
 	}
 
@@ -313,6 +346,7 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	}
 
 	newJobStatus := JobStatus{
+		JobID:     model.NewId(),
 		Status:    JobStatusRunning,
 		StartedAt: time.Now(),
 		TotalRows: count,
@@ -321,9 +355,16 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 		CutoffAt:  cutoffTimestamp,
 	}
 
-	err = s.pluginAPI.KVSet(ReindexJobKey, newJobStatus)
+	var oldValue interface{}
+	if hasExisting {
+		oldValue = jobStatus
+	}
+	ok, err := s.pluginAPI.KVCompareAndSet(ReindexJobKey, oldValue, newJobStatus)
 	if err != nil {
 		return JobStatus{}, fmt.Errorf("failed to save job status: %w", err)
+	}
+	if !ok {
+		return JobStatus{}, fmt.Errorf("job already running")
 	}
 
 	// Set cursor to start from last indexed timestamp
