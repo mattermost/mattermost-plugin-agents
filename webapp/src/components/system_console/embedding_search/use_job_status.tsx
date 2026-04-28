@@ -131,7 +131,7 @@ export const useJobStatus = () => {
             const response = await cancelReindex();
             setJobStatus(response);
             setStatusMessage({
-                success: false,
+                success: true,
                 message: intl.formatMessage({defaultMessage: 'Cancel requested. Waiting for the reindexing job to stop…'}),
             });
 
