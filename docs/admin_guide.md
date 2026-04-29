@@ -334,6 +334,10 @@ Post indexing occurs automatically during initial setup and when changing embedd
    - Monitor indexing progress during initial setup.
    - Trigger reindexing when changing embedding providers.
    - Check indexing status.
+   - Cancel a running reindex. After you click **Cancel Reindexing**, Mattermost changes the button to **Canceling...**, shows that the cancel request is pending, and continues checking job status until the worker records the final **canceled** state.
+
+If the System Console shows **Job May Be Stale**, the reindex job has not updated in over 10 minutes. This can happen in HA deployments if the node running the job stops responding. Stale **running** and **cancel_requested** jobs remain recoverable, but they can continue blocking a new reindex until plugin startup orphan recovery runs or the stale threshold is reached.
+When the stale-job banner appears, start a new reindex to resume from the saved progress.
 
 ### Backup and restore
 
