@@ -7,12 +7,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+type recordKVSetWithExpiryClient struct {
+	mmapi.Client
+	key   string
+	value any
+	ttl   time.Duration
+}
+
+func (c *recordKVSetWithExpiryClient) KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error {
+	c.key = key
+	c.value = value
+	c.ttl = ttl
+	return nil
+}
 
 func TestClientManagerReInitIdleTimeoutDefaulting(t *testing.T) {
 	testCases := []struct {
@@ -58,38 +71,67 @@ func TestClientManagerReInitIdleTimeoutDefaulting(t *testing.T) {
 
 func TestClientManagerInvalidateUserClients(t *testing.T) {
 	now := time.Now()
-	manager := &ClientManager{
-		clients: map[string]*UserClients{
-			"user-1": {
-				clients: map[string]*Client{},
-			},
-			"user-2": {
-				clients: map[string]*Client{},
-			},
+	testCases := []struct {
+		name                 string
+		userID               string
+		expectedClientKeys   []string
+		expectedActivityKeys []string
+	}{
+		{
+			name:                 "removes existing user",
+			userID:               "user-1",
+			expectedClientKeys:   []string{"user-2"},
+			expectedActivityKeys: []string{"user-2"},
 		},
-		activity: map[string]time.Time{
-			"user-1": now,
-			"user-2": now.Add(time.Minute),
+		{
+			name:                 "ignores missing user",
+			userID:               "missing-user",
+			expectedClientKeys:   []string{"user-1", "user-2"},
+			expectedActivityKeys: []string{"user-1", "user-2"},
+		},
+		{
+			name:                 "ignores empty user",
+			userID:               "",
+			expectedClientKeys:   []string{"user-1", "user-2"},
+			expectedActivityKeys: []string{"user-1", "user-2"},
 		},
 	}
 
-	manager.InvalidateUserClients("user-1")
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := &ClientManager{
+				clients: map[string]*UserClients{
+					"user-1": {
+						clients: map[string]*Client{},
+					},
+					"user-2": {
+						clients: map[string]*Client{},
+					},
+				},
+				activity: map[string]time.Time{
+					"user-1": now,
+					"user-2": now.Add(time.Minute),
+				},
+			}
 
-	require.NotContains(t, manager.clients, "user-1")
-	require.NotContains(t, manager.activity, "user-1")
-	require.Contains(t, manager.clients, "user-2")
-	require.Equal(t, now.Add(time.Minute), manager.activity["user-2"])
+			manager.InvalidateUserClients(tc.userID)
 
-	manager.InvalidateUserClients("missing-user")
-	manager.InvalidateUserClients("")
-
-	require.Contains(t, manager.clients, "user-2")
-	require.Equal(t, now.Add(time.Minute), manager.activity["user-2"])
+			require.Len(t, manager.clients, len(tc.expectedClientKeys))
+			for _, key := range tc.expectedClientKeys {
+				require.Contains(t, manager.clients, key)
+			}
+			require.Len(t, manager.activity, len(tc.expectedActivityKeys))
+			for _, key := range tc.expectedActivityKeys {
+				require.Contains(t, manager.activity, key)
+			}
+			require.Equal(t, now.Add(time.Minute), manager.activity["user-2"])
+		})
+	}
 }
 
 func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) {
 	mockAPI := &plugintest.API{}
-	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything).Maybe()
+	mockAPI.On("LogDebug", "No remote MCP servers provided for user", "userID", "user-1").Return().Maybe()
 	client := pluginapi.NewClient(mockAPI, nil)
 	manager := &ClientManager{
 		config:   Config{},
@@ -113,22 +155,66 @@ func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) 
 }
 
 func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
-	manager := &ClientManager{}
-	manager.clients = map[string]*UserClients{
-		"user-1": {
-			clients: map[string]*Client{},
+	testCases := []struct {
+		name                     string
+		manager                  *ClientManager
+		expectedStoredKey        string
+		expectedStoredAuthURL    string
+		expectedStoredTTL        time.Duration
+		expectPersistenceAttempt bool
+	}{
+		{
+			name: "persists state when oauth manager exists",
+			manager: func() *ClientManager {
+				storeClient := &recordKVSetWithExpiryClient{}
+				manager := &ClientManager{
+					clients: map[string]*UserClients{
+						"user-1": {clients: map[string]*Client{}},
+					},
+					activity: map[string]time.Time{
+						"user-1": time.Now(),
+					},
+				}
+				manager.oauthManager = NewOAuthManager(storeClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", nil, nil)
+				return manager
+			}(),
+			expectedStoredKey:        "mcp_oauth_needed_v1_user-1_GitHub",
+			expectedStoredAuthURL:    "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start",
+			expectedStoredTTL:        oauthNeededStateTTL,
+			expectPersistenceAttempt: true,
+		},
+		{
+			name: "still invalidates without oauth manager",
+			manager: &ClientManager{
+				clients: map[string]*UserClients{
+					"user-1": {clients: map[string]*Client{}},
+				},
+				activity: map[string]time.Time{
+					"user-1": time.Now(),
+				},
+			},
 		},
 	}
-	manager.activity = map[string]time.Time{
-		"user-1": time.Now(),
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.manager.MarkOAuthNeeded("user-1", "GitHub", "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start")
+			require.NoError(t, err)
+			require.Empty(t, tc.manager.clients)
+			require.Empty(t, tc.manager.activity)
+
+			if !tc.expectPersistenceAttempt {
+				return
+			}
+
+			storeClient, ok := tc.manager.oauthManager.pluginAPI.(*recordKVSetWithExpiryClient)
+			require.True(t, ok)
+			require.Equal(t, tc.expectedStoredKey, storeClient.key)
+			require.Equal(t, tc.expectedStoredTTL, storeClient.ttl)
+
+			state, ok := storeClient.value.(*OAuthNeededState)
+			require.True(t, ok)
+			require.Equal(t, tc.expectedStoredAuthURL, state.AuthURL)
+		})
 	}
-
-	mockClient := mocks.NewMockClient(t)
-	mockClient.On("KVSetWithExpiry", "mcp_oauth_needed_v1_user-1_GitHub", mock.AnythingOfType("*mcp.OAuthNeededState"), oauthNeededStateTTL).Return(nil)
-	manager.oauthManager = NewOAuthManager(mockClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", nil, nil)
-
-	err := manager.MarkOAuthNeeded("user-1", "GitHub", "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start")
-	require.NoError(t, err)
-	require.Empty(t, manager.clients)
-	require.Empty(t, manager.activity)
 }

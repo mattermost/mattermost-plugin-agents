@@ -233,12 +233,10 @@ func (m *ClientManager) DisconnectUserOAuth(userID, serverName string) error {
 // MarkOAuthNeeded stores the latest upstream OAuth-needed state for a user/server
 // and drops any cached client so subsequent tool discovery reflects the reconnectable state.
 func (m *ClientManager) MarkOAuthNeeded(userID, serverName, authURL string) error {
-	if m.oauthManager == nil {
-		return nil
-	}
-
-	if err := m.oauthManager.StoreAuthNeededState(userID, serverName, authURL); err != nil {
-		return err
+	if m.oauthManager != nil {
+		if err := m.oauthManager.StoreAuthNeededState(userID, serverName, authURL); err != nil {
+			return err
+		}
 	}
 
 	m.InvalidateUserClients(userID)
