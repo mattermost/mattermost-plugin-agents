@@ -251,3 +251,20 @@ func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 		})
 	}
 }
+
+func TestClientManagerProcessOAuthCallbackRequiresOAuthManager(t *testing.T) {
+	manager := &ClientManager{}
+
+	session, err := manager.ProcessOAuthCallback(t.Context(), "user-1", "state", "code")
+
+	require.Nil(t, session)
+	require.ErrorIs(t, err, ErrOAuthNotConfigured)
+}
+
+func TestClientManagerDisconnectUserOAuthRequiresOAuthManager(t *testing.T) {
+	manager := &ClientManager{}
+
+	err := manager.DisconnectUserOAuth("user-1", "GitHub")
+
+	require.ErrorIs(t, err, ErrOAuthNotConfigured)
+}

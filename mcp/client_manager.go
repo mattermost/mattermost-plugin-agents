@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"sync"
@@ -13,6 +14,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
+
+var ErrOAuthNotConfigured = errors.New("oauth is not configured for this plugin")
 
 // ClientManager manages MCP clients for multiple users
 type ClientManager struct {
@@ -206,6 +209,10 @@ func (m *ClientManager) InvalidateUserClients(userID string) {
 
 // ProcessOAuthCallback processes the OAuth callback for a user
 func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state, code string) (*OAuthSession, error) {
+	if m.oauthManager == nil {
+		return nil, ErrOAuthNotConfigured
+	}
+
 	session, err := m.oauthManager.ProcessCallback(ctx, userID, state, code)
 	if err != nil {
 		return nil, err
@@ -221,6 +228,10 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 // and invalidates the cached MCP client so a fresh connection is established
 // on the next request.
 func (m *ClientManager) DisconnectUserOAuth(userID, serverName string) error {
+	if m.oauthManager == nil {
+		return ErrOAuthNotConfigured
+	}
+
 	if err := m.oauthManager.DeleteUserToken(userID, serverName); err != nil {
 		return err
 	}
