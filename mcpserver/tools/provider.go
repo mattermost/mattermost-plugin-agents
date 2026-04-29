@@ -265,16 +265,9 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 		return nil, err
 	}
 
-	// Propagate the resolved Mattermost auth token and user ID onto the tool-call
-	// context so downstream HTTP callbacks (e.g. tool hooks into the calling plugin)
-	// can set Authorization and include user_id.
-	if client != nil && client.AuthToken != "" {
-		ctx = context.WithValue(ctx, auth.AuthTokenContextKey, client.AuthToken)
-	}
 	var userID string
 	if identityProvider, ok := p.authProvider.(auth.UserIdentityProvider); ok {
 		if user, userErr := identityProvider.GetAuthenticatedUser(ctx); userErr == nil && user != nil {
-			ctx = context.WithValue(ctx, auth.UserIDContextKey, user.Id)
 			userID = user.Id
 		} else if userErr != nil {
 			p.logger.Debug("failed to resolve authenticated user for tool-call context", "error", userErr.Error())
