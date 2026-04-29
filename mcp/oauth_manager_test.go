@@ -320,6 +320,47 @@ func TestStaticCredsHelpers(t *testing.T) {
 	}
 }
 
+func TestOAuthNeededStateLifecycle(t *testing.T) {
+	manager, mockClient := setupTestOAuthManager(t)
+
+	const userID = "user123"
+	const serverID = "GitHub"
+	const authURL = "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start?resource_metadata=https%3A%2F%2Fapi.githubcopilot.com%2F.well-known%2Foauth-protected-resource%2Fmcp"
+
+	mockClient.On("KVSetWithExpiry", buildAuthNeededKey(userID, serverID), mock.AnythingOfType("*mcp.OAuthNeededState"), oauthNeededStateTTL).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*OAuthNeededState)
+			require.Equal(t, authURL, state.AuthURL)
+			require.False(t, state.SeenAt.IsZero())
+		}).
+		Return(nil).
+		Once()
+
+	require.NoError(t, manager.StoreAuthNeededState(userID, serverID, authURL))
+
+	mockClient.On("KVGet", buildAuthNeededKey(userID, serverID), mock.AnythingOfType("*mcp.OAuthNeededState")).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*OAuthNeededState)
+			*state = OAuthNeededState{
+				AuthURL: authURL,
+				SeenAt:  time.Now(),
+			}
+		}).
+		Return(nil).
+		Once()
+
+	state, err := manager.LoadAuthNeededState(userID, serverID)
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Equal(t, authURL, state.AuthURL)
+
+	mockClient.On("KVDelete", buildAuthNeededKey(userID, serverID)).
+		Return(nil).
+		Once()
+
+	require.NoError(t, manager.DeleteAuthNeededState(userID, serverID))
+}
+
 func TestProcessCallback_InvalidSession(t *testing.T) {
 	manager, mockClient := setupTestOAuthManager(t)
 

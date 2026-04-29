@@ -121,6 +121,12 @@ func TestHandleGetUserMCPToolsStaticOAuthCredentialsNeedOAuthWhenUnauthenticated
 			*token = oauth2.Token{}
 		}).
 		Return(nil)
+	mmClient.On("KVGet", "mcp_oauth_needed_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.OAuthNeededState")).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*mcp.OAuthNeededState)
+			*state = mcp.OAuthNeededState{}
+		}).
+		Return(nil)
 
 	oauthManager := mcp.NewOAuthManager(mmClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", &http.Client{}, func(serverID string) (mcp.ServerConfig, bool) {
 		if serverID == server.Name {
@@ -165,6 +171,12 @@ func TestHandleGetUserMCPToolsStoredTokenMarksZeroToolServerAuthenticated(t *tes
 		Run(func(args mock.Arguments) {
 			token := args.Get(1).(*oauth2.Token)
 			*token = oauth2.Token{AccessToken: "stored-token"}
+		}).
+		Return(nil)
+	mmClient.On("KVGet", "mcp_oauth_needed_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.OAuthNeededState")).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*mcp.OAuthNeededState)
+			*state = mcp.OAuthNeededState{}
 		}).
 		Return(nil)
 
@@ -214,6 +226,12 @@ func TestHandleGetUserMCPToolsAuthErrorsOverrideStoredTokensForZeroToolServers(t
 		}).
 		Return(nil).
 		Maybe()
+	mmClient.On("KVGet", "mcp_oauth_needed_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.OAuthNeededState")).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*mcp.OAuthNeededState)
+			*state = mcp.OAuthNeededState{}
+		}).
+		Return(nil)
 
 	oauthManager := mcp.NewOAuthManager(mmClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", &http.Client{}, func(serverID string) (mcp.ServerConfig, bool) {
 		if serverID == server.Name {
@@ -272,6 +290,67 @@ func TestHandleGetUserMCPToolsIncludesEmbeddedZeroToolServer(t *testing.T) {
 	require.Empty(t, response.Servers[0].Tools)
 	require.False(t, response.Servers[0].NeedsOAuth)
 	require.Empty(t, response.Servers[0].AuthURL)
+}
+
+func TestHandleGetUserMCPToolsAuthNeededStateOverridesDiscoveredTools(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := mcp.ServerConfig{
+		Name:    "GitHub",
+		Enabled: true,
+		BaseURL: "https://api.githubcopilot.com/mcp",
+	}
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{server},
+	}
+
+	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On("KVGet", "mcp_oauth_token_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*oauth2.Token")).
+		Run(func(args mock.Arguments) {
+			token := args.Get(1).(*oauth2.Token)
+			*token = oauth2.Token{}
+		}).
+		Return(nil)
+	mmClient.On("KVGet", "mcp_oauth_needed_v1_"+testUserID+"_"+server.Name, mock.AnythingOfType("*mcp.OAuthNeededState")).
+		Run(func(args mock.Arguments) {
+			state := args.Get(1).(*mcp.OAuthNeededState)
+			*state = mcp.OAuthNeededState{
+				AuthURL: "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start?resource_metadata=https%3A%2F%2Fapi.githubcopilot.com%2F.well-known%2Foauth-protected-resource%2Fmcp",
+			}
+		}).
+		Return(nil)
+
+	oauthManager := mcp.NewOAuthManager(mmClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", &http.Client{}, func(serverID string) (mcp.ServerConfig, bool) {
+		if serverID == server.Name {
+			return server, true
+		}
+		return mcp.ServerConfig{}, false
+	})
+
+	e.api.mcpClientManager = &mockMCPClientManager{
+		oauthManager: oauthManager,
+		tools: []llm.Tool{
+			{
+				Name:         "get_me",
+				Description:  "Get current user",
+				ServerOrigin: server.BaseURL,
+			},
+		},
+	}
+
+	response := getUserMCPToolsResponse(t, e.api)
+
+	require.Len(t, response.Servers, 1)
+	require.Equal(t, server.Name, response.Servers[0].Name)
+	require.False(t, response.Servers[0].Authenticated)
+	require.True(t, response.Servers[0].NeedsOAuth)
+	require.Equal(t, "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start?resource_metadata=https%3A%2F%2Fapi.githubcopilot.com%2F.well-known%2Foauth-protected-resource%2Fmcp", response.Servers[0].AuthURL)
+	require.Len(t, response.Servers[0].Tools, 1)
 }
 
 func getUserMCPToolsResponse(t *testing.T, api *API) UserMCPToolsResponse {

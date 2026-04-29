@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,4 +52,24 @@ func TestClientManagerReInitIdleTimeoutDefaulting(t *testing.T) {
 			require.Equal(t, tc.expectedTimeout, manager.clientTimeout)
 		})
 	}
+}
+
+func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
+	manager := &ClientManager{}
+	manager.clients = map[string]*UserClients{
+		"user-1": {
+			clients: map[string]*Client{},
+		},
+	}
+	manager.activity = map[string]time.Time{
+		"user-1": time.Now(),
+	}
+
+	mockClient := mocks.NewMockClient(t)
+	mockClient.On("KVSetWithExpiry", "mcp_oauth_needed_v1_user-1_GitHub", mock.AnythingOfType("*mcp.OAuthNeededState"), oauthNeededStateTTL).Return(nil)
+	manager.oauthManager = NewOAuthManager(mockClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", nil, nil)
+
+	err := manager.MarkOAuthNeeded("user-1", "GitHub", "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start")
+	require.NoError(t, err)
+	require.Empty(t, manager.clients)
 }

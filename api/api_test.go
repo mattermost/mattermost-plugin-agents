@@ -87,12 +87,13 @@ type mcpDisconnectCall struct {
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager    *mcp.OAuthManager
-	tools           []llm.Tool
-	mcpErrors       *mcp.Errors
-	config          mcp.Config
-	embeddedServer  mcp.EmbeddedMCPServer
-	disconnectCalls []mcpDisconnectCall
+	oauthManager     *mcp.OAuthManager
+	tools            []llm.Tool
+	mcpErrors        *mcp.Errors
+	config           mcp.Config
+	embeddedServer   mcp.EmbeddedMCPServer
+	disconnectCalls  []mcpDisconnectCall
+	oauthNeededCalls []mcpDisconnectCall
 }
 
 func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
@@ -109,6 +110,14 @@ func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedI
 
 func (m *mockMCPClientManager) DisconnectUserOAuth(userID, serverName string) error {
 	m.disconnectCalls = append(m.disconnectCalls, mcpDisconnectCall{
+		userID:     userID,
+		serverName: serverName,
+	})
+	return nil
+}
+
+func (m *mockMCPClientManager) MarkOAuthNeeded(userID, serverName, authURL string) error {
+	m.oauthNeededCalls = append(m.oauthNeededCalls, mcpDisconnectCall{
 		userID:     userID,
 		serverName: serverName,
 	})

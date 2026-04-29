@@ -191,6 +191,15 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 		return nil, err
 	}
 
+	if m.oauthManager != nil && session != nil {
+		if clearErr := m.oauthManager.DeleteAuthNeededState(userID, session.ServerID); clearErr != nil {
+			m.log.Warn("Failed to clear MCP OAuth-needed state after successful callback",
+				"userID", userID,
+				"serverID", session.ServerID,
+				"error", clearErr)
+		}
+	}
+
 	// Delete the client to force a re-creation (close first, like DisconnectUserOAuth).
 	m.clientsMu.Lock()
 	if uc, ok := m.clients[userID]; ok {
@@ -207,6 +216,27 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 // on the next request.
 func (m *ClientManager) DisconnectUserOAuth(userID, serverName string) error {
 	if err := m.oauthManager.DeleteUserToken(userID, serverName); err != nil {
+		return err
+	}
+
+	m.clientsMu.Lock()
+	if uc, ok := m.clients[userID]; ok {
+		uc.Close()
+		delete(m.clients, userID)
+	}
+	m.clientsMu.Unlock()
+
+	return nil
+}
+
+// MarkOAuthNeeded stores the latest upstream OAuth-needed state for a user/server
+// and drops any cached client so subsequent tool discovery reflects the reconnectable state.
+func (m *ClientManager) MarkOAuthNeeded(userID, serverName, authURL string) error {
+	if m.oauthManager == nil {
+		return nil
+	}
+
+	if err := m.oauthManager.StoreAuthNeededState(userID, serverName, authURL); err != nil {
 		return err
 	}
 

@@ -142,9 +142,22 @@ func buildUserMCPServerInfo(
 		}
 	}
 
-	authenticated := isUserMCPServerAuthenticated(serverConfig, len(originTools) > 0, hasAuthError, hasStoredToken)
+	var authNeededState *mcp.OAuthNeededState
+	if oauthManager != nil {
+		var err error
+		authNeededState, err = oauthManager.LoadAuthNeededState(userID, serverConfig.Name)
+		if err != nil {
+			authNeededState = nil
+			if api != nil {
+				api.pluginAPI.Log.Debug("Failed to load MCP OAuth-needed state", "userID", userID, "serverName", serverConfig.Name, "serverOrigin", serverConfig.BaseURL, "error", err)
+			}
+		}
+	}
+	hasPersistedAuthNeeded := authNeededState != nil && authNeededState.AuthURL != ""
+
+	authenticated := isUserMCPServerAuthenticated(serverConfig, len(originTools) > 0, hasAuthError, hasStoredToken, hasPersistedAuthNeeded)
 	staticOAuthConfigured := serverConfig.ClientID != ""
-	needsOAuth := hasAuthError || hasStoredToken || (!authenticated && staticOAuthConfigured)
+	needsOAuth := hasAuthError || hasStoredToken || hasPersistedAuthNeeded || (!authenticated && staticOAuthConfigured)
 
 	info := UserMCPServerInfo{
 		Name:          serverConfig.Name,
@@ -155,6 +168,8 @@ func buildUserMCPServerInfo(
 	}
 	if hasAuthError && !info.Authenticated {
 		info.AuthURL = authError.AuthURL
+	} else if hasPersistedAuthNeeded && !info.Authenticated {
+		info.AuthURL = authNeededState.AuthURL
 	} else if !info.Authenticated && oauthManager != nil && staticOAuthConfigured {
 		info.AuthURL = oauthManager.StartURL(serverConfig.Name)
 	}
@@ -166,17 +181,18 @@ func isUserMCPServerAuthenticated(
 	hasDiscoveredTools bool,
 	hasAuthError bool,
 	hasStoredToken bool,
+	hasPersistedAuthNeeded bool,
 ) bool {
 	if serverConfig.BaseURL == mcp.EmbeddedClientKey {
 		return true
 	}
 
-	if hasDiscoveredTools {
-		return true
+	if hasAuthError || hasPersistedAuthNeeded {
+		return false
 	}
 
-	if hasAuthError {
-		return false
+	if hasDiscoveredTools {
+		return true
 	}
 
 	return hasStoredToken

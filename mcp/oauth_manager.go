@@ -309,6 +309,9 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 	if err := m.storeToken(loggedInUserID, session.ServerID, token); err != nil {
 		return nil, fmt.Errorf("failed to save token: %w", err)
 	}
+	if err := m.DeleteAuthNeededState(loggedInUserID, session.ServerID); err != nil {
+		return nil, fmt.Errorf("failed to clear oauth-needed state: %w", err)
+	}
 
 	return session, nil
 }
