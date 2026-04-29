@@ -162,7 +162,7 @@ describe('AvatarItem', () => {
 
         const objectURL = mockObjectURL();
 
-        let unmount: (() => void) | undefined;
+        let unmount: (() => void) | null = null;
         try {
             const rendered = renderAvatar('agentnew');
             unmount = rendered.unmount;
@@ -190,7 +190,7 @@ describe('AvatarItem', () => {
             await Promise.resolve();
             expect(screen.getByRole('img').getAttribute('src')).toBe('blob:preview');
             unmount();
-            unmount = undefined;
+            unmount = null;
         } finally {
             unmount?.();
             objectURL.restore();
@@ -203,7 +203,7 @@ describe('AvatarItem', () => {
 
         const objectURL = mockObjectURL();
 
-        let unmount: (() => void) | undefined;
+        let unmount: (() => void) | null = null;
         try {
             const rendered = renderAvatar('alpha', 'alpha-id');
             unmount = rendered.unmount;
@@ -237,7 +237,7 @@ describe('AvatarItem', () => {
             expect(getBotProfilePictureUrl).toHaveBeenCalledTimes(2);
             expect(objectURL.revokeObjectURL).toHaveBeenCalledWith('blob:preview');
             unmount();
-            unmount = undefined;
+            unmount = null;
         } finally {
             unmount?.();
             objectURL.restore();

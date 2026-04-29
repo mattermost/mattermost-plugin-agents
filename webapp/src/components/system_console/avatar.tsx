@@ -23,7 +23,7 @@ type AvatarItemProps = {
 const AvatarItem = (props: AvatarItemProps) => {
     const [icon, setIcon] = useState<string>(aiIcon);
     const hasLocalUpload = useRef(false);
-    const localPreviewURL = useRef<string>();
+    const localPreviewURL = useRef<string | null>(null);
     const avatarOwnerKey = useRef(props.avatarOwnerKey);
     const hiddenInput = useRef<HTMLInputElement>(null);
 
@@ -37,7 +37,7 @@ const AvatarItem = (props: AvatarItemProps) => {
 
         if (localPreviewURL.current) {
             URL.revokeObjectURL(localPreviewURL.current);
-            localPreviewURL.current = undefined;
+            localPreviewURL.current = null;
         }
 
         setIcon(aiIcon);
@@ -96,7 +96,7 @@ const AvatarItem = (props: AvatarItemProps) => {
             hasLocalUpload.current = false;
             if (localPreviewURL.current) {
                 URL.revokeObjectURL(localPreviewURL.current);
-                localPreviewURL.current = undefined;
+                localPreviewURL.current = null;
             }
             setIcon(aiIcon);
         }
