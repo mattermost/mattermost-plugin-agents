@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -70,7 +71,7 @@ func (a *API) handleGetJobStatus(c *gin.Context) {
 
 	jobStatus, err := a.indexerService.GetJobStatus()
 	if err != nil {
-		if err.Error() == "not found" {
+		if mmapi.IsKVNotFound(err) {
 			c.JSON(http.StatusNotFound, gin.H{
 				"status": "no_job",
 			})
