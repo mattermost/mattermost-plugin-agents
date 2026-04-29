@@ -33,6 +33,7 @@ const (
 type LLM struct {
 	client           *bifrostcore.Bifrost
 	provider         schemas.ModelProvider
+	apiKey           string // used only to redact configured secrets from provider error surfaces
 	defaultModel     string
 	inputTokenLimit  int
 	outputTokenLimit int
@@ -210,11 +211,7 @@ func New(cfg Config) (*LLM, error) {
 		streamingTimeoutSeconds: int(cfg.StreamingTimeout.Seconds()),
 	}
 
-	bifrostConfig := schemas.BifrostConfig{
-		Account: account,
-	}
-
-	client, err := bifrostcore.Init(context.Background(), bifrostConfig)
+	client, err := newBifrostClient(account, cfg.APIKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Bifrost client: %w", err)
 	}
@@ -232,6 +229,7 @@ func New(cfg Config) (*LLM, error) {
 	return &LLM{
 		client:             client,
 		provider:           cfg.Provider,
+		apiKey:             cfg.APIKey,
 		defaultModel:       cfg.DefaultModel,
 		inputTokenLimit:    cfg.InputTokenLimit,
 		outputTokenLimit:   outputLimit,
@@ -537,7 +535,7 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 	if bifrostErr != nil {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message),
+			Value: llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey),
 		}
 		return
 	}
@@ -589,7 +587,7 @@ func (b *LLM) streamChat(request llm.CompletionRequest, cfg llm.LanguageModelCon
 		if chunk.BifrostError != nil {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message),
+				Value: llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey),
 			}
 			return
 		}
@@ -1524,7 +1522,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 	if bifrostErr != nil {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message),
+			Value: llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey),
 		}
 		return
 	}
@@ -1582,7 +1580,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 		if chunk.BifrostError != nil {
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message),
+				Value: llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey),
 			}
 			return
 		}

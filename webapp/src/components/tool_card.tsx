@@ -30,7 +30,7 @@ const ToolCallCard = styled.div`
     box-shadow: none;
 `;
 
-const ToolCallHeader = styled.div<{isCollapsed: boolean; $canExpand: boolean}>`
+const ToolCallHeader = styled.div<{$canExpand: boolean}>`
     display: flex;
     align-items: center;
     gap: 8px;
@@ -326,6 +326,13 @@ interface ToolCardProps {
     isAutoApproved?: boolean;
 }
 
+export function isEmptyToolArgumentsObject(argumentsValue: ToolCall['arguments']): boolean {
+    return argumentsValue != null &&
+        typeof argumentsValue === 'object' &&
+        !Array.isArray(argumentsValue) &&
+        Object.keys(argumentsValue).length === 0;
+}
+
 const ToolCard: React.FC<ToolCardProps> = ({
     postID,
     tool,
@@ -386,15 +393,17 @@ const ToolCard: React.FC<ToolCardProps> = ({
     }), [postID]);
 
     const renderedArguments = useMemo(() => {
-        if (!showArguments) {
+        if (!showArguments || tool.arguments == null) {
             return null;
         }
 
-        const argumentsValue = tool.arguments ?? {};
-        const isEmpty = typeof argumentsValue === 'object' && !Array.isArray(argumentsValue) && Object.keys(argumentsValue).length === 0;
-        const content = isEmpty ?
-            formatMessage({id: 'ai.tool_call.no_parameters_required', defaultMessage: 'No parameters required'}) :
-            JSON.stringify(argumentsValue, null, 2);
+        let content = JSON.stringify(tool.arguments, null, 2);
+        if (isEmptyToolArgumentsObject(tool.arguments)) {
+            content = formatMessage({
+                id: 'ai.tool_call.no_parameters_required',
+                defaultMessage: 'No parameters required',
+            });
+        }
         const argumentsMarkdown = `\`\`\`json\n${content}\n\`\`\``;
         return messageHtmlToComponent(
             formatText(argumentsMarkdown, markdownOptions),
@@ -530,7 +539,6 @@ const ToolCard: React.FC<ToolCardProps> = ({
     return (
         <ToolCallCard>
             <ToolCallHeader
-                isCollapsed={isCollapsed}
                 $canExpand={canExpand}
                 onClick={canExpand ? onToggleCollapse : undefined} // eslint-disable-line no-undefined
             >
