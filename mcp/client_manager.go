@@ -63,6 +63,7 @@ func (m *ClientManager) cleanupInactiveClients() {
 					m.log.Debug("Closing inactive MCP client", "userID", userID)
 					client.Close()
 					delete(m.clients, userID)
+					delete(m.activity, userID)
 				}
 			}
 			m.clientsMu.Unlock()
@@ -121,6 +122,7 @@ func (m *ClientManager) Close() {
 
 	// Clear the clients map
 	m.clients = make(map[string]*UserClients)
+	m.activity = make(map[string]time.Time)
 }
 
 // createAndStoreUserClient creates a new UserClients instance and stores it in the manager
@@ -144,19 +146,21 @@ func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClients, *
 	// Store the client even if some servers failed to connect
 	// This allows partial success - user gets tools from working servers
 	m.clients[userID] = userClients
+	m.activity[userID] = time.Now()
 
 	return userClients, mcpErrors
 }
 
 // getClientForUser gets or creates an MCP client for a specific user
 func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) {
-	m.clientsMu.RLock()
+	m.clientsMu.Lock()
 	client, exists := m.clients[userID]
-	m.clientsMu.RUnlock()
 	if exists {
 		m.activity[userID] = time.Now()
+		m.clientsMu.Unlock()
 		return client, client.initialRemoteConnectErrors
 	}
+	m.clientsMu.Unlock()
 
 	return m.createAndStoreUserClient(userID)
 }

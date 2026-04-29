@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -83,6 +85,31 @@ func TestClientManagerInvalidateUserClients(t *testing.T) {
 
 	require.Contains(t, manager.clients, "user-2")
 	require.Equal(t, now.Add(time.Minute), manager.activity["user-2"])
+}
+
+func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) {
+	mockAPI := &plugintest.API{}
+	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything).Maybe()
+	client := pluginapi.NewClient(mockAPI, nil)
+	manager := &ClientManager{
+		config:   Config{},
+		log:      client.Log,
+		clients:  make(map[string]*UserClients),
+		activity: make(map[string]time.Time),
+	}
+
+	before := time.Now()
+	userClients, mcpErrors := manager.createAndStoreUserClient("user-1")
+	after := time.Now()
+
+	require.NotNil(t, userClients)
+	require.Nil(t, mcpErrors)
+	require.Contains(t, manager.clients, "user-1")
+
+	lastActivity, ok := manager.activity["user-1"]
+	require.True(t, ok)
+	require.False(t, lastActivity.Before(before))
+	require.False(t, lastActivity.After(after))
 }
 
 func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {

@@ -361,42 +361,65 @@ func TestOAuthNeededStateLifecycle(t *testing.T) {
 	require.NoError(t, manager.DeleteAuthNeededState(userID, serverID))
 }
 
-func TestDeleteUserTokenAttemptsAuthNeededCleanupWhenTokenDeleteFails(t *testing.T) {
-	manager, mockClient := setupTestOAuthManager(t)
-
+func TestDeleteUserTokenCleanup(t *testing.T) {
 	const userID = "user123"
 	const serverID = "GitHub"
+
 	tokenErr := model.NewAppError("test", "token_delete_failed", nil, "token delete failed", http.StatusInternalServerError)
-
-	mockClient.On("KVDelete", buildTokenKey(userID, serverID)).
-		Return(tokenErr).
-		Once()
-	mockClient.On("KVDelete", buildAuthNeededKey(userID, serverID)).
-		Return(nil).
-		Once()
-
-	err := manager.DeleteUserToken(userID, serverID)
-
-	require.ErrorIs(t, err, tokenErr)
-}
-
-func TestDeleteUserTokenReturnsAuthNeededCleanupError(t *testing.T) {
-	manager, mockClient := setupTestOAuthManager(t)
-
-	const userID = "user123"
-	const serverID = "GitHub"
 	authNeededErr := model.NewAppError("test", "auth_needed_delete_failed", nil, "auth-needed delete failed", http.StatusInternalServerError)
 
-	mockClient.On("KVDelete", buildTokenKey(userID, serverID)).
-		Return(nil).
-		Once()
-	mockClient.On("KVDelete", buildAuthNeededKey(userID, serverID)).
-		Return(authNeededErr).
-		Once()
+	testCases := []struct {
+		name                string
+		tokenDeleteErr      error
+		authNeededDeleteErr error
+		expectedErr         error
+	}{
+		{
+			name:           "returns token delete error after auth-needed cleanup",
+			tokenDeleteErr: tokenErr,
+			expectedErr:    tokenErr,
+		},
+		{
+			name:                "returns auth-needed cleanup error",
+			authNeededDeleteErr: authNeededErr,
+			expectedErr:         authNeededErr,
+		},
+		{
+			name:                "joins both cleanup errors",
+			tokenDeleteErr:      tokenErr,
+			authNeededDeleteErr: authNeededErr,
+			expectedErr:         tokenErr,
+		},
+		{
+			name:        "succeeds when both deletes succeed",
+			expectedErr: nil,
+		},
+	}
 
-	err := manager.DeleteUserToken(userID, serverID)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			manager, mockClient := setupTestOAuthManager(t)
 
-	require.ErrorIs(t, err, authNeededErr)
+			mockClient.On("KVDelete", buildTokenKey(userID, serverID)).
+				Return(tc.tokenDeleteErr).
+				Once()
+			mockClient.On("KVDelete", buildAuthNeededKey(userID, serverID)).
+				Return(tc.authNeededDeleteErr).
+				Once()
+
+			err := manager.DeleteUserToken(userID, serverID)
+
+			if tc.expectedErr == nil {
+				require.NoError(t, err)
+				return
+			}
+
+			require.ErrorIs(t, err, tc.expectedErr)
+			if tc.authNeededDeleteErr != nil {
+				require.ErrorIs(t, err, tc.authNeededDeleteErr)
+			}
+		})
+	}
 }
 
 func TestProcessCallback_InvalidSession(t *testing.T) {

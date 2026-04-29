@@ -44,6 +44,10 @@ func (p *Plugin) PublishAgentUpdate() error {
 
 // PublishMCPOAuthUpdate broadcasts a per-user MCP OAuth cache invalidation to all other nodes.
 func (p *Plugin) PublishMCPOAuthUpdate(userID string) error {
+	if userID == "" {
+		return nil
+	}
+
 	payload, err := json.Marshal(mcpOAuthUserInvalidateClusterPayload{UserID: userID})
 	if err != nil {
 		return err
