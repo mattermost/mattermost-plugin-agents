@@ -77,7 +77,7 @@ const AvatarItem = (props: AvatarItemProps) => {
         return () => {
             cancelled = true;
         };
-    }, [props.botusername]);
+    }, [props.botusername, props.avatarOwnerKey]);
 
     const onUploadChange = (e: ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {

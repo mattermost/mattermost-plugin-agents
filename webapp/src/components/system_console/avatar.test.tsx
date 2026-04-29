@@ -223,17 +223,18 @@ describe('AvatarItem', () => {
             rendered.rerender(
                 <IntlProvider locale='en'>
                     <AvatarItem
-                        botusername='beta'
-                        avatarOwnerKey='beta-id'
+                        botusername='alpha'
+                        avatarOwnerKey='hydrated-alpha-id'
                         changedAvatar={jest.fn()}
                     />
                 </IntlProvider>,
             );
 
             await waitFor(() => {
-                expect(screen.getByRole('img').getAttribute('src')).toBe('/profile/beta.png');
+                expect(screen.getByRole('img').getAttribute('src')).toBe('/profile/alpha.png');
             });
 
+            expect(getBotProfilePictureUrl).toHaveBeenCalledTimes(2);
             expect(objectURL.revokeObjectURL).toHaveBeenCalledWith('blob:preview');
             unmount();
             unmount = undefined;
