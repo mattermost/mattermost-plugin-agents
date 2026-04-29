@@ -87,6 +87,31 @@ describe('AvatarItem', () => {
         expect(screen.getByRole('img').getAttribute('src')).toBe('placeholder-icon.png');
     });
 
+    it('keeps the placeholder when the avatar fetch rejects (no unhandled rejection)', async () => {
+        // Simulates the 404 path that fires while a user is typing a draft username before
+        // the underlying bot account exists, or any transient auth/network failure.
+        getBotProfilePictureUrl.mockRejectedValue(new Error('Not Found'));
+
+        const unhandled = jest.fn();
+        process.on('unhandledRejection', unhandled);
+
+        try {
+            renderAvatar('draftbot');
+
+            await waitFor(() => {
+                expect(getBotProfilePictureUrl).toHaveBeenCalledWith('draftbot');
+            });
+
+            // Flush any pending microtasks so the rejection has a chance to surface.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(screen.getByRole('img').getAttribute('src')).toBe('placeholder-icon.png');
+            expect(unhandled).not.toHaveBeenCalled();
+        } finally {
+            process.off('unhandledRejection', unhandled);
+        }
+    });
+
     it('ignores a stale fetch result when botusername changes during the request', async () => {
         let resolveAlpha: ((value: string) => void) | undefined;
         const alphaPending = new Promise<string>((resolve) => {

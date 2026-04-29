@@ -47,9 +47,17 @@ const AvatarItem = (props: AvatarItemProps) => {
             };
         }
         (async () => {
-            const userIcon = await getBotProfilePictureUrl(props.botusername);
-            if (!cancelled && userIcon) {
-                setIcon(userIcon);
+            // Fetches can reject (e.g. 404 while the user is still typing a draft username
+            // before the bot exists, or transient auth/network errors). Swallow the rejection
+            // and keep the placeholder icon already set above so we never bubble an unhandled
+            // promise rejection or wipe state we don't own.
+            try {
+                const userIcon = await getBotProfilePictureUrl(props.botusername);
+                if (!cancelled && userIcon) {
+                    setIcon(userIcon);
+                }
+            } catch {
+                // Placeholder is already in place; nothing more to do.
             }
         })();
         return () => {
