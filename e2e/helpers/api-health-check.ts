@@ -9,6 +9,7 @@
  * model-specific issues (deprecated, unavailable, etc).
  */
 
+import { test } from '@playwright/test';
 import { LLMService } from './api-config';
 
 interface HealthCheckResult {
@@ -31,6 +32,29 @@ function isTransientHealthCheckError(message: string): boolean {
 
 async function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isSkippableUpstreamHealthCheckFailure(result: HealthCheckResult): boolean {
+    const error = result.error?.toLowerCase() ?? '';
+
+    return error.includes('http 429') ||
+        error.includes('insufficient_quota') ||
+        error.includes('rate limit') ||
+        error.includes('quota') ||
+        error.includes('http 500') ||
+        error.includes('http 502') ||
+        error.includes('http 503') ||
+        error.includes('http 504') ||
+        error.includes('overloaded') ||
+        error.includes('temporarily unavailable') ||
+        error.includes('service unavailable');
+}
+
+function formatHealthCheckFailureMessage(result: HealthCheckResult): string {
+    return `API health check failed for ${result.provider} (model: ${result.model}):\n` +
+        `  ${result.error}\n\n` +
+        `This is likely an upstream API issue, not a test bug.\n` +
+        `Check API status: https://status.anthropic.com / https://status.openai.com`;
 }
 
 async function checkAnthropicHealth(service: LLMService): Promise<HealthCheckResult> {
@@ -192,11 +216,15 @@ export async function checkAPIHealth(service: LLMService): Promise<void> {
     const result = await healthCheckCache.get(service.id)!;
 
     if (!result.healthy) {
-        throw new Error(
-            `API health check failed for ${result.provider} (model: ${result.model}):\n` +
-            `  ${result.error}\n\n` +
-            `This is likely an upstream API issue, not a test bug.\n` +
-            `Check API status: https://status.anthropic.com / https://status.openai.com`
-        );
+        const failureMessage = formatHealthCheckFailureMessage(result);
+
+        if (isSkippableUpstreamHealthCheckFailure(result)) {
+            const skipMessage = `${failureMessage}\n\nSkipping real API tests for this provider until the upstream service quota or availability issue is resolved.`;
+            console.warn(skipMessage);
+            test.skip(true, skipMessage);
+            return;
+        }
+
+        throw new Error(failureMessage);
     }
 }
