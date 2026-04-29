@@ -184,6 +184,22 @@ func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 	return filtered, mcpErrors
 }
 
+// InvalidateUserClients closes and removes cached MCP clients for a user.
+func (m *ClientManager) InvalidateUserClients(userID string) {
+	if userID == "" {
+		return
+	}
+
+	m.clientsMu.Lock()
+	defer m.clientsMu.Unlock()
+
+	if uc, ok := m.clients[userID]; ok {
+		uc.Close()
+		delete(m.clients, userID)
+	}
+	delete(m.activity, userID)
+}
+
 // ProcessOAuthCallback processes the OAuth callback for a user
 func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state, code string) (*OAuthSession, error) {
 	session, err := m.oauthManager.ProcessCallback(ctx, userID, state, code)
@@ -191,22 +207,8 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 		return nil, err
 	}
 
-	if m.oauthManager != nil && session != nil {
-		if clearErr := m.oauthManager.DeleteAuthNeededState(userID, session.ServerID); clearErr != nil {
-			m.log.Warn("Failed to clear MCP OAuth-needed state after successful callback",
-				"userID", userID,
-				"serverID", session.ServerID,
-				"error", clearErr)
-		}
-	}
-
 	// Delete the client to force a re-creation (close first, like DisconnectUserOAuth).
-	m.clientsMu.Lock()
-	if uc, ok := m.clients[userID]; ok {
-		uc.Close()
-		delete(m.clients, userID)
-	}
-	m.clientsMu.Unlock()
+	m.InvalidateUserClients(userID)
 
 	return session, nil
 }
@@ -219,12 +221,7 @@ func (m *ClientManager) DisconnectUserOAuth(userID, serverName string) error {
 		return err
 	}
 
-	m.clientsMu.Lock()
-	if uc, ok := m.clients[userID]; ok {
-		uc.Close()
-		delete(m.clients, userID)
-	}
-	m.clientsMu.Unlock()
+	m.InvalidateUserClients(userID)
 
 	return nil
 }
@@ -240,12 +237,7 @@ func (m *ClientManager) MarkOAuthNeeded(userID, serverName, authURL string) erro
 		return err
 	}
 
-	m.clientsMu.Lock()
-	if uc, ok := m.clients[userID]; ok {
-		uc.Close()
-		delete(m.clients, userID)
-	}
-	m.clientsMu.Unlock()
+	m.InvalidateUserClients(userID)
 
 	return nil
 }

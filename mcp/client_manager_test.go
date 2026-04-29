@@ -54,6 +54,37 @@ func TestClientManagerReInitIdleTimeoutDefaulting(t *testing.T) {
 	}
 }
 
+func TestClientManagerInvalidateUserClients(t *testing.T) {
+	now := time.Now()
+	manager := &ClientManager{
+		clients: map[string]*UserClients{
+			"user-1": {
+				clients: map[string]*Client{},
+			},
+			"user-2": {
+				clients: map[string]*Client{},
+			},
+		},
+		activity: map[string]time.Time{
+			"user-1": now,
+			"user-2": now.Add(time.Minute),
+		},
+	}
+
+	manager.InvalidateUserClients("user-1")
+
+	require.NotContains(t, manager.clients, "user-1")
+	require.NotContains(t, manager.activity, "user-1")
+	require.Contains(t, manager.clients, "user-2")
+	require.Equal(t, now.Add(time.Minute), manager.activity["user-2"])
+
+	manager.InvalidateUserClients("missing-user")
+	manager.InvalidateUserClients("")
+
+	require.Contains(t, manager.clients, "user-2")
+	require.Equal(t, now.Add(time.Minute), manager.activity["user-2"])
+}
+
 func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 	manager := &ClientManager{}
 	manager.clients = map[string]*UserClients{
@@ -72,4 +103,5 @@ func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 	err := manager.MarkOAuthNeeded("user-1", "GitHub", "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start")
 	require.NoError(t, err)
 	require.Empty(t, manager.clients)
+	require.Empty(t, manager.activity)
 }

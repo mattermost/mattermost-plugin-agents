@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -136,13 +137,9 @@ func (m *OAuthManager) deleteToken(userID, serverID string) error {
 // DeleteUserToken removes the stored OAuth token for a user and server,
 // effectively disconnecting the user from that MCP server.
 func (m *OAuthManager) DeleteUserToken(userID, serverID string) error {
-	if err := m.deleteToken(userID, serverID); err != nil {
-		return err
-	}
-	if err := m.DeleteAuthNeededState(userID, serverID); err != nil {
-		return err
-	}
-	return nil
+	tokenErr := m.deleteToken(userID, serverID)
+	authNeededErr := m.DeleteAuthNeededState(userID, serverID)
+	return errors.Join(tokenErr, authNeededErr)
 }
 
 type ClientCredentials struct {

@@ -167,7 +167,7 @@ func buildUserMCPServerInfo(
 		Tools:         toolInfos,
 	}
 	switch {
-	case hasAuthError && !info.Authenticated:
+	case hasAuthError && !info.Authenticated && authError.AuthURL != "":
 		info.AuthURL = authError.AuthURL
 	case hasPersistedAuthNeeded && !info.Authenticated:
 		info.AuthURL = authNeededState.AuthURL
@@ -258,6 +258,7 @@ func (a *API) handleDeleteUserMCPOAuth(c *gin.Context) {
 		return
 	}
 
+	a.publishMCPOAuthClusterInvalidation(userID)
 	a.publishMCPDisconnected(userID, serverName)
 	c.Status(http.StatusOK)
 }

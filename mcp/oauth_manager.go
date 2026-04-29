@@ -310,7 +310,10 @@ func (m *OAuthManager) ProcessCallback(ctx context.Context, loggedInUserID, stat
 		return nil, fmt.Errorf("failed to save token: %w", err)
 	}
 	if err := m.DeleteAuthNeededState(loggedInUserID, session.ServerID); err != nil {
-		return nil, fmt.Errorf("failed to clear oauth-needed state: %w", err)
+		m.pluginAPI.LogWarn("Failed to clear OAuth-needed state after successful callback",
+			"userID", loggedInUserID,
+			"serverID", session.ServerID,
+			"error", err)
 	}
 
 	return session, nil

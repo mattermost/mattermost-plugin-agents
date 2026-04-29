@@ -261,7 +261,7 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 		result, err := client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
 		if err != nil {
 			c.rememberOAuthNeededForToolCall(client, err)
-			return "", err
+			return result, err
 		}
 
 		c.clearOAuthNeededForServer(client)
