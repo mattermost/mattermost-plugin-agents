@@ -21,22 +21,47 @@ type AvatarItemProps = {
 
 const AvatarItem = (props: AvatarItemProps) => {
     const [icon, setIcon] = useState<string>(aiIcon);
+
+    // Tracks whether the user has uploaded a local image in this session. While true, we
+    // skip the username-driven fetch so that typing into the username field does not wipe
+    // the unsaved upload preview.
+    const hasLocalUpload = useRef(false);
     const hiddenInput = useRef<HTMLInputElement>(null);
 
+    // Refetch the avatar whenever botusername changes so this widget can be reused across
+    // different bots/agents (e.g. when navigating between agents in the edit page) without
+    // showing the previous bot's avatar. Reset to the placeholder before the new fetch
+    // resolves to avoid a brief flash of the previous bot's image, and ignore late
+    // responses from a stale fetch via a "cancelled" flag.
     useEffect(() => {
-        const getUserIcon = async () => {
+        let cancelled = false;
+        if (hasLocalUpload.current) {
+            return () => {
+                cancelled = true;
+            };
+        }
+        setIcon(aiIcon);
+        if (!props.botusername) {
+            return () => {
+                cancelled = true;
+            };
+        }
+        (async () => {
             const userIcon = await getBotProfilePictureUrl(props.botusername);
-            if (userIcon) {
+            if (!cancelled && userIcon) {
                 setIcon(userIcon);
             }
+        })();
+        return () => {
+            cancelled = true;
         };
-        getUserIcon();
-    }, []);
+    }, [props.botusername]);
 
     const onUploadChange = async (e: ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
             const file = e.target.files[0];
 
+            hasLocalUpload.current = true;
             const reader = new FileReader();
             reader.onload = () => {
                 setIcon(URL.createObjectURL(file));
@@ -45,6 +70,7 @@ const AvatarItem = (props: AvatarItemProps) => {
             e.target.value = '';
             props.changedAvatar(file);
         } else {
+            hasLocalUpload.current = false;
             setIcon(aiIcon);
         }
     };
