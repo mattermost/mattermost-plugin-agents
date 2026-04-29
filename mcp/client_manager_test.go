@@ -4,10 +4,12 @@
 package mcp
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/require"
@@ -15,16 +17,17 @@ import (
 
 type recordKVSetWithExpiryClient struct {
 	mmapi.Client
-	key   string
-	value any
-	ttl   time.Duration
+	key    string
+	value  any
+	ttl    time.Duration
+	setErr error
 }
 
 func (c *recordKVSetWithExpiryClient) KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error {
 	c.key = key
 	c.value = value
 	c.ttl = ttl
-	return nil
+	return c.setErr
 }
 
 func TestClientManagerReInitIdleTimeoutDefaulting(t *testing.T) {
@@ -158,6 +161,7 @@ func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 	testCases := []struct {
 		name                     string
 		manager                  *ClientManager
+		expectedErr              string
 		expectedStoredKey        string
 		expectedStoredAuthURL    string
 		expectedStoredTTL        time.Duration
@@ -184,6 +188,29 @@ func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 			expectPersistenceAttempt: true,
 		},
 		{
+			name: "returns persistence error but still invalidates",
+			manager: func() *ClientManager {
+				storeClient := &recordKVSetWithExpiryClient{
+					setErr: model.NewAppError("test", "oauth_needed_store_failed", nil, "persist failed", http.StatusInternalServerError),
+				}
+				manager := &ClientManager{
+					clients: map[string]*UserClients{
+						"user-1": {clients: map[string]*Client{}},
+					},
+					activity: map[string]time.Time{
+						"user-1": time.Now(),
+					},
+				}
+				manager.oauthManager = NewOAuthManager(storeClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", nil, nil)
+				return manager
+			}(),
+			expectedErr:              "failed to store OAuth-needed state",
+			expectedStoredKey:        "mcp_oauth_needed_v1_user-1_GitHub",
+			expectedStoredAuthURL:    "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start",
+			expectedStoredTTL:        oauthNeededStateTTL,
+			expectPersistenceAttempt: true,
+		},
+		{
 			name: "still invalidates without oauth manager",
 			manager: &ClientManager{
 				clients: map[string]*UserClients{
@@ -199,7 +226,13 @@ func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.manager.MarkOAuthNeeded("user-1", "GitHub", "https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/GitHub/start")
-			require.NoError(t, err)
+
+			if tc.expectedErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expectedErr)
+			}
 			require.Empty(t, tc.manager.clients)
 			require.Empty(t, tc.manager.activity)
 
