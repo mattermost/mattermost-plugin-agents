@@ -166,11 +166,12 @@ func buildUserMCPServerInfo(
 		NeedsOAuth:    needsOAuth,
 		Tools:         toolInfos,
 	}
-	if hasAuthError && !info.Authenticated {
+	switch {
+	case hasAuthError && !info.Authenticated:
 		info.AuthURL = authError.AuthURL
-	} else if hasPersistedAuthNeeded && !info.Authenticated {
+	case hasPersistedAuthNeeded && !info.Authenticated:
 		info.AuthURL = authNeededState.AuthURL
-	} else if !info.Authenticated && oauthManager != nil && staticOAuthConfigured {
+	case !info.Authenticated && oauthManager != nil && staticOAuthConfigured:
 		info.AuthURL = oauthManager.StartURL(serverConfig.Name)
 	}
 	return info
