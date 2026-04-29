@@ -112,22 +112,7 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
                 <FormattedMessage defaultMessage='Setting up chat channel...'/>
             </div>
         );
-    } else if (AdvancedTextEditor) {
-        editorComponent = (
-            <AdvancedTextEditor
-                channelId={botChannelId}
-                placeholder={intl.formatMessage({defaultMessage: 'Ask Agents anything...'})}
-                isThreadView={true}
-                location={'RHS_COMMENT'}
-                afterSubmit={(result: {created?: {id: string}}) => {
-                    if (result.created?.id) {
-                        selectPost(result.created?.id);
-                        setCurrentTab('thread');
-                    }
-                }}
-            />
-        );
-    } else {
+    } else if (CreatePost) {
         editorComponent = (
             <CreatePost
                 channelId={botChannelId}
@@ -166,6 +151,27 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
                 }}
             />
         );
+    } else if (AdvancedTextEditor) {
+        // Prefer the plugin-scoped CreatePost wrapper when available. The generic
+        // AdvancedTextEditor registers file drop handlers as a center-post composer
+        // when no real rootId exists, which causes uploads dropped into the center
+        // channel to also attach to the Agents RHS draft.
+        editorComponent = (
+            <AdvancedTextEditor
+                channelId={botChannelId}
+                placeholder={intl.formatMessage({defaultMessage: 'Ask Agents anything...'})}
+                isThreadView={true}
+                location={'RHS_COMMENT'}
+                afterSubmit={(result: {created?: {id: string}}) => {
+                    if (result.created?.id) {
+                        selectPost(result.created?.id);
+                        setCurrentTab('thread');
+                    }
+                }}
+            />
+        );
+    } else {
+        editorComponent = null;
     }
 
     return (
