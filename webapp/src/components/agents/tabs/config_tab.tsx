@@ -238,6 +238,7 @@ const ConfigTab = (props: Props) => {
                 {errors.username && <FieldError>{errors.username}</FieldError>}
                 <AvatarItem
                     botusername={draft.username}
+                    avatarOwnerKey={props.botUserId}
                     changedAvatar={(image: File) => onAvatarChange(image)}
                 />
                 <SelectionItem

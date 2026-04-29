@@ -22,18 +22,18 @@ jest.mock('@/client', () => ({
     getBotProfilePictureUrl: jest.fn(),
 }));
 
-// Stub the static asset so the placeholder has a stable, predictable src in tests.
 jest.mock('src/../../assets/bot_icon.png', () => 'placeholder-icon.png', {virtual: true});
 
 const {getBotProfilePictureUrl} = jest.requireMock('@/client') as {
     getBotProfilePictureUrl: jest.Mock<Promise<string>, [string]>;
 };
 
-function renderAvatar(botusername: string) {
+function renderAvatar(botusername: string, avatarOwnerKey?: string) {
     return render(
         <IntlProvider locale='en'>
             <AvatarItem
                 botusername={botusername}
+                avatarOwnerKey={avatarOwnerKey}
                 changedAvatar={jest.fn()}
             />
         </IntlProvider>,
@@ -44,6 +44,29 @@ beforeEach(() => {
     getBotProfilePictureUrl.mockReset();
 });
 
+function mockObjectURL(previewURL = 'blob:preview') {
+    const createObjectURL = jest.fn(() => previewURL);
+    const revokeObjectURL = jest.fn();
+    const url = URL as unknown as {
+        createObjectURL?: typeof createObjectURL;
+        revokeObjectURL?: typeof revokeObjectURL;
+    };
+    const originalCreateObjectURL = url.createObjectURL;
+    const originalRevokeObjectURL = url.revokeObjectURL;
+
+    url.createObjectURL = createObjectURL;
+    url.revokeObjectURL = revokeObjectURL;
+
+    return {
+        createObjectURL,
+        revokeObjectURL,
+        restore: () => {
+            url.createObjectURL = originalCreateObjectURL;
+            url.revokeObjectURL = originalRevokeObjectURL;
+        },
+    };
+}
+
 describe('AvatarItem', () => {
     it('refetches the avatar when botusername changes (no leak from previous bot)', async () => {
         getBotProfilePictureUrl.mockImplementation((username: string) =>
@@ -51,13 +74,10 @@ describe('AvatarItem', () => {
 
         const {rerender} = renderAvatar('alpha');
 
-        // First fetch resolves to alpha's URL.
         await waitFor(() => {
             expect(screen.getByRole('img').getAttribute('src')).toBe('/profile/alpha.png');
         });
 
-        // Switch to beta — same component instance, different bot. Avatar must reflect beta,
-        // not the previously displayed alpha image (regression guard for MM-68531).
         rerender(
             <IntlProvider locale='en'>
                 <AvatarItem
@@ -88,8 +108,6 @@ describe('AvatarItem', () => {
     });
 
     it('keeps the placeholder when the avatar fetch rejects (no unhandled rejection)', async () => {
-        // Simulates the 404 path that fires while a user is typing a draft username before
-        // the underlying bot account exists, or any transient auth/network failure.
         getBotProfilePictureUrl.mockRejectedValue(new Error('Not Found'));
 
         const unhandled = jest.fn();
@@ -102,7 +120,6 @@ describe('AvatarItem', () => {
                 expect(getBotProfilePictureUrl).toHaveBeenCalledWith('draftbot');
             });
 
-            // Flush any pending microtasks so the rejection has a chance to surface.
             await new Promise((resolve) => setTimeout(resolve, 0));
 
             expect(screen.getByRole('img').getAttribute('src')).toBe('placeholder-icon.png');
@@ -135,7 +152,6 @@ describe('AvatarItem', () => {
             expect(screen.getByRole('img').getAttribute('src')).toBe('/profile/beta.png');
         });
 
-        // Late alpha response must not overwrite beta's image.
         resolveAlpha?.('/profile/alpha.png');
         await Promise.resolve();
         expect(screen.getByRole('img').getAttribute('src')).toBe('/profile/beta.png');
@@ -144,25 +160,12 @@ describe('AvatarItem', () => {
     it('preserves a locally uploaded preview when the username changes', async () => {
         getBotProfilePictureUrl.mockResolvedValue('');
 
-        // Stub createObjectURL since jsdom doesn't implement it.
-        const createObjectURL = jest.fn(() => 'blob:preview');
-        const originalCreateObjectURL = (URL as unknown as {createObjectURL?: typeof createObjectURL}).createObjectURL;
-        (URL as unknown as {createObjectURL: typeof createObjectURL}).createObjectURL = createObjectURL;
+        const objectURL = mockObjectURL();
 
-        // FileReader.readAsArrayBuffer just needs to fire onload; we don't care about the bytes.
-        class FakeFileReader {
-            onload: (() => void) | null = null;
-            readAsArrayBuffer() {
-                this.onload?.();
-            }
-        }
-        const originalFileReader = global.FileReader;
-
-        // @ts-expect-error - replacing for the test only
-        global.FileReader = FakeFileReader;
-
+        let unmount: (() => void) | undefined;
         try {
-            const {rerender} = renderAvatar('agentnew');
+            const rendered = renderAvatar('agentnew');
+            unmount = rendered.unmount;
             await waitFor(() => {
                 expect(getBotProfilePictureUrl).toHaveBeenCalledWith('agentnew');
             });
@@ -175,9 +178,7 @@ describe('AvatarItem', () => {
                 expect(screen.getByRole('img').getAttribute('src')).toBe('blob:preview');
             });
 
-            // The preview must persist when the user edits the username while a local upload
-            // preview is active; the avatar must not snap back to the placeholder.
-            rerender(
+            rendered.rerender(
                 <IntlProvider locale='en'>
                     <AvatarItem
                         botusername='agentnewx'
@@ -188,9 +189,57 @@ describe('AvatarItem', () => {
 
             await Promise.resolve();
             expect(screen.getByRole('img').getAttribute('src')).toBe('blob:preview');
+            unmount();
+            unmount = undefined;
         } finally {
-            (URL as unknown as {createObjectURL?: typeof createObjectURL}).createObjectURL = originalCreateObjectURL;
-            global.FileReader = originalFileReader;
+            unmount?.();
+            objectURL.restore();
+        }
+    });
+
+    it('clears a locally uploaded preview when the avatar owner changes', async () => {
+        getBotProfilePictureUrl.mockImplementation((username: string) =>
+            Promise.resolve(`/profile/${username}.png`));
+
+        const objectURL = mockObjectURL();
+
+        let unmount: (() => void) | undefined;
+        try {
+            const rendered = renderAvatar('alpha', 'alpha-id');
+            unmount = rendered.unmount;
+
+            await waitFor(() => {
+                expect(screen.getByRole('img').getAttribute('src')).toBe('/profile/alpha.png');
+            });
+
+            const file = new File(['x'], 'a.png', {type: 'image/png'});
+            const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+            fireEvent.change(input, {target: {files: [file]}});
+
+            await waitFor(() => {
+                expect(screen.getByRole('img').getAttribute('src')).toBe('blob:preview');
+            });
+
+            rendered.rerender(
+                <IntlProvider locale='en'>
+                    <AvatarItem
+                        botusername='beta'
+                        avatarOwnerKey='beta-id'
+                        changedAvatar={jest.fn()}
+                    />
+                </IntlProvider>,
+            );
+
+            await waitFor(() => {
+                expect(screen.getByRole('img').getAttribute('src')).toBe('/profile/beta.png');
+            });
+
+            expect(objectURL.revokeObjectURL).toHaveBeenCalledWith('blob:preview');
+            unmount();
+            unmount = undefined;
+        } finally {
+            unmount?.();
+            objectURL.restore();
         }
     });
 });

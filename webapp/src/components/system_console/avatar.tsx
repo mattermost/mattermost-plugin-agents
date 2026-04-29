@@ -16,23 +16,41 @@ import {ItemLabel} from './item';
 
 type AvatarItemProps = {
     botusername: string;
+    avatarOwnerKey?: string;
     changedAvatar: (image: File) => void;
 }
 
 const AvatarItem = (props: AvatarItemProps) => {
     const [icon, setIcon] = useState<string>(aiIcon);
-
-    // Tracks whether the user has uploaded a local image in this session. While true, we
-    // skip the username-driven fetch so that typing into the username field does not wipe
-    // the unsaved upload preview.
     const hasLocalUpload = useRef(false);
+    const localPreviewURL = useRef<string>();
+    const avatarOwnerKey = useRef(props.avatarOwnerKey);
     const hiddenInput = useRef<HTMLInputElement>(null);
 
-    // Refetch the avatar whenever botusername changes so this widget can be reused across
-    // different bots/agents (e.g. when navigating between agents in the edit page) without
-    // showing the previous bot's avatar. Reset to the placeholder before the new fetch
-    // resolves to avoid a brief flash of the previous bot's image, and ignore late
-    // responses from a stale fetch via a "cancelled" flag.
+    useEffect(() => {
+        if (avatarOwnerKey.current === props.avatarOwnerKey) {
+            return;
+        }
+
+        avatarOwnerKey.current = props.avatarOwnerKey;
+        hasLocalUpload.current = false;
+
+        if (localPreviewURL.current) {
+            URL.revokeObjectURL(localPreviewURL.current);
+            localPreviewURL.current = undefined;
+        }
+
+        setIcon(aiIcon);
+    }, [props.avatarOwnerKey]);
+
+    useEffect(() => {
+        return () => {
+            if (localPreviewURL.current) {
+                URL.revokeObjectURL(localPreviewURL.current);
+            }
+        };
+    }, []);
+
     useEffect(() => {
         let cancelled = false;
         if (hasLocalUpload.current) {
@@ -47,17 +65,13 @@ const AvatarItem = (props: AvatarItemProps) => {
             };
         }
         (async () => {
-            // Fetches can reject (e.g. 404 while the user is still typing a draft username
-            // before the bot exists, or transient auth/network errors). Swallow the rejection
-            // and keep the placeholder icon already set above so we never bubble an unhandled
-            // promise rejection or wipe state we don't own.
             try {
                 const userIcon = await getBotProfilePictureUrl(props.botusername);
                 if (!cancelled && userIcon) {
                     setIcon(userIcon);
                 }
             } catch {
-                // Placeholder is already in place; nothing more to do.
+                // Keep the placeholder for unknown or temporarily unreachable users.
             }
         })();
         return () => {
@@ -65,20 +79,25 @@ const AvatarItem = (props: AvatarItemProps) => {
         };
     }, [props.botusername]);
 
-    const onUploadChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const onUploadChange = (e: ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
             const file = e.target.files[0];
 
             hasLocalUpload.current = true;
-            const reader = new FileReader();
-            reader.onload = () => {
-                setIcon(URL.createObjectURL(file));
-            };
-            reader.readAsArrayBuffer(file);
+            if (localPreviewURL.current) {
+                URL.revokeObjectURL(localPreviewURL.current);
+            }
+
+            localPreviewURL.current = URL.createObjectURL(file);
+            setIcon(localPreviewURL.current);
             e.target.value = '';
             props.changedAvatar(file);
         } else {
             hasLocalUpload.current = false;
+            if (localPreviewURL.current) {
+                URL.revokeObjectURL(localPreviewURL.current);
+                localPreviewURL.current = undefined;
+            }
             setIcon(aiIcon);
         }
     };
