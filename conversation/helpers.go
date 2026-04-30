@@ -21,10 +21,9 @@ func textBlocks(message string) []ContentBlock {
 	return []ContentBlock{{Type: BlockTypeText, Text: message}}
 }
 
-// userBlocksWithAttachments builds content blocks for a user turn: a text
-// block (if message is non-empty) followed by attachment blocks (image or
-// file) for each fileID. fileInfo lookups that error are logged and skipped
-// so a single missing/deleted file does not break the whole user turn.
+// userBlocksWithAttachments emits a text block followed by image/file blocks
+// for each fileID. A failed GetFileInfo is logged and the bad ID is skipped
+// so one deleted or unreadable attachment does not poison the whole turn.
 func userBlocksWithAttachments(message string, fileIDs []string, mmClient mmapi.Client) []ContentBlock {
 	blocks := textBlocks(message)
 	if mmClient == nil {

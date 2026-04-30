@@ -32,16 +32,12 @@ type Store interface {
 	GetMaxSequenceForConversation(conversationID string) (int, error)
 }
 
-// BotLookup checks whether a user ID belongs to an AI bot, and exposes the
-// per-bot attachment-handling configuration that BlocksToPost needs to lazily
-// resolve image and file blocks back into llm.Post.Files / llm.Post.Message.
+// BotLookup answers bot-membership and per-bot config queries.
 type BotLookup interface {
 	IsAnyBot(userID string) bool
 
-	// GetBotConfigByID returns the EnableVision and MaxFileSize settings for
-	// the given bot ID. The ok return is false when no bot exists with that
-	// ID, in which case attachment resolution should fall back to safe
-	// defaults (vision off, default max file size).
+	// GetBotConfigByID returns the bot's EnableVision and MaxFileSize.
+	// ok is false when botID is unknown.
 	GetBotConfigByID(botID string) (enableVision bool, maxFileSize int64, ok bool)
 }
 
@@ -79,12 +75,7 @@ type CreateConversationParams struct {
 	SystemPrompt string  // already-formatted system prompt text
 	UserMessage  string  // the first user message content
 	UserPostID   *string // nullable: post ID for the user turn, if a post exists
-
-	// FileIDs are the Mattermost file attachment IDs that accompany the
-	// initial user message. These are stored as references on the user
-	// turn (file/image content blocks) and lazy-resolved at LLM-request
-	// build time. Empty means the user turn has no attachments.
-	FileIDs []string
+	FileIDs      []string
 }
 
 // CreateConversationResult is the return value of CreateConversation.
@@ -188,10 +179,7 @@ type GetOrCreateParams struct {
 	SystemPrompt string  // formatted system prompt (used only if creating)
 	UserMessage  string  // new user message
 	UserPostID   *string // post ID for the new user turn
-
-	// FileIDs are the Mattermost file attachment IDs that accompany this
-	// user message. See CreateConversationParams.FileIDs for semantics.
-	FileIDs []string
+	FileIDs      []string
 }
 
 // GetOrCreateResult is the return value of GetOrCreateConversation.
@@ -364,10 +352,8 @@ func (s *Service) BuildCompletionRequest(
 	}, nil
 }
 
-// attachmentConfigForBot returns the EnableVision and MaxFileSize settings
-// that BlocksToPost needs to lazy-resolve image and file blocks for the given
-// bot. Falls back to safe defaults (vision off, default max file size) when
-// the bot lookup is unavailable or the bot is unknown.
+// attachmentConfigForBot returns the bot's EnableVision and MaxFileSize.
+// Falls back to vision-off + DefaultMaxFileSize when the bot is unknown.
 func (s *Service) attachmentConfigForBot(botID string) (bool, int64) {
 	if s.bots == nil {
 		return false, DefaultMaxFileSize

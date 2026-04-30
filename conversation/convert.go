@@ -12,9 +12,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 )
 
-// DefaultMaxFileSize is the fallback cap for text-content reads when a bot's
-// MaxFileSize config is unset or non-positive. Matches the pre-refactor
-// constant from conversations/conversations.go.
 const DefaultMaxFileSize = int64(5 * 1024 * 1024)
 
 // UnsharedToolResultRedaction replaces tool_result content the requester has
@@ -32,12 +29,6 @@ var unsharedToolUseArgumentsRedaction = json.RawMessage("{}")
 // true is replaced with UnsharedToolResultRedaction, and tool_use arguments
 // whose Shared flag is not true are replaced with an empty JSON object so the
 // LLM cannot paraphrase private tool parameters into a channel-visible reply.
-//
-// mmClient is used to lazily resolve image and file blocks back into
-// llm.Post.Files / llm.Post.Message at request-build time. enableVision gates
-// whether image blocks are sent at all. maxFileSize caps text-content reads
-// (DefaultMaxFileSize when <= 0). mmClient may be nil only when blocks contain
-// no file or image entries.
 func BlocksToPost(
 	blocks []ContentBlock,
 	role string,

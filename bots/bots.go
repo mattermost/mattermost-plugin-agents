@@ -554,10 +554,8 @@ func (b *MMBots) GetBotByID(botID string) *Bot {
 	return nil
 }
 
-// GetBotConfigByID returns the EnableVision and MaxFileSize attachment-handling
-// settings for the given bot ID, with ok=false when no bot has that ID. This
-// is used by the conversation service to lazy-resolve image and file content
-// blocks at LLM-request build time.
+// GetBotConfigByID returns the bot's EnableVision and MaxFileSize. ok is
+// false when botID is unknown.
 func (b *MMBots) GetBotConfigByID(botID string) (bool, int64, bool) {
 	bot := b.GetBotByID(botID)
 	if bot == nil {
