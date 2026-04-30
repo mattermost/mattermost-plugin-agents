@@ -566,7 +566,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 	})
 
 	t.Run("text/plain file at exactly maxFileSize gets truncation marker", func(t *testing.T) {
-		const cap = int64(8)
+		const maxBytes = int64(8)
 		body := "ABCDEFGH" // exactly 8 bytes
 
 		mmClient := mmapimocks.NewMockClient(t)
@@ -582,7 +582,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "big.txt", MimeType: "text/plain"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, cap)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes)
 
 		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
 			"reading exactly maxFileSize bytes must append the truncation marker so the LLM knows the content was cut")
@@ -840,8 +840,8 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 		// a per-bot MaxFileSize lower than the server's cap could be
 		// silently violated by the pre-extracted-content shortcut. Cap it
 		// the same way the GetFile branch does.
-		const cap = int64(8)
-		oversized := strings.Repeat("X", int(cap)+1) // 9 bytes vs cap=8
+		const maxBytes = int64(8)
+		oversized := strings.Repeat("X", int(maxBytes)+1) // 9 bytes vs maxBytes=8
 
 		mmClient := mmapimocks.NewMockClient(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
@@ -855,7 +855,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "huge.pdf", MimeType: "application/pdf"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, cap)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes)
 
 		mmClient.AssertNotCalled(t, "GetFile", "doc1",
 			"the pre-extracted-content cap must not trigger a GetFile fetch")
