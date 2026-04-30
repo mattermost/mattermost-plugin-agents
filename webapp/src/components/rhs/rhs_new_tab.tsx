@@ -39,19 +39,43 @@ const ReverseScroll = styled.div`
 	justify-content: flex-end;
 `;
 
+const SubmitErrorBanner = styled.div`
+    text-align: center;
+    padding: 0 0 12px;
+    color: var(--error-text);
+`;
+
 type Props = {
     selectPost: (postId: string) => void
     setCurrentTab: (tab: string) => void
     activeBot: LLMBot | null
 }
 
+type RHSDraftFileInfo = {
+    id: string;
+}
+
+type RHSDraft = {
+    message: string;
+    fileInfos: RHSDraftFileInfo[];
+    uploadsInProgress: string[];
+    updateAt?: number;
+    createAt?: number;
+}
+
+type RHSSubmitPost = RHSDraft & {
+    channel_id: string;
+    props: Record<string, unknown>;
+    file_ids: string[];
+}
+
 const EMPTY_BOTS: LLMBot[] = [];
-const EMPTY_RHS_DRAFT = {message: '', fileInfos: [], uploadsInProgress: []};
+const EMPTY_RHS_DRAFT: RHSDraft = {message: '', fileInfos: [], uploadsInProgress: []};
 
 const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
     const intl = useIntl();
     const dispatch = useDispatch();
-    const [draft, updateDraft] = useState<any>(null);
+    const [draft, updateDraft] = useState<RHSDraft | null>(null);
     const [creatingChannel, setCreatingChannel] = useState(false);
     const currentUserId = useSelector((state: any) => state.entities.users.currentUserId);
     const botChannelId = activeBot?.dmChannelID || '';
@@ -120,13 +144,19 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
                 channelId={botChannelId}
                 placeholder={intl.formatMessage({defaultMessage: 'Ask Agents anything...'})}
                 rootId={'ai_agents'}
-                onSubmit={async (p: any) => {
+                onSubmit={async (p: RHSDraft) => {
                     try {
-                        const post = {...p};
+                        const fileInfos = Array.isArray(p.fileInfos) ? p.fileInfos : [];
+                        const post: RHSSubmitPost = {
+                            ...p,
+                            channel_id: botChannelId || '',
+                            props: {},
+                            file_ids: [],
+                        };
                         post.channel_id = botChannelId || '';
                         post.props = {};
                         post.uploadsInProgress = [];
-                        post.file_ids = p.fileInfos.map((f: any) => f.id);
+                        post.file_ids = fileInfos.map((f) => f.id);
                         const created = await createPost(post);
                         setSubmitError('');
                         updateDraft(EMPTY_RHS_DRAFT);
@@ -145,7 +175,7 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
                     }
                 }}
                 draft={draft}
-                onUpdateCommentDraft={(newDraft: any) => {
+                onUpdateCommentDraft={(newDraft: RHSDraft) => {
                     setSubmitError('');
                     updateDraft(newDraft);
                     const timestamp = new Date().getTime();
@@ -198,9 +228,9 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
                     />
                 )}
                 {submitError && (
-                    <div style={{textAlign: 'center', padding: '0 0 12px', color: 'var(--error-text)'}}>
+                    <SubmitErrorBanner>
                         {submitError}
-                    </div>
+                    </SubmitErrorBanner>
                 )}
                 <CreatePostContainer
                     data-testid='rhs-new-tab-create-post'
