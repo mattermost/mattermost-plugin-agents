@@ -7,25 +7,45 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/indexer"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+// ReindexRequest represents the request body for reindexing
+type ReindexRequest struct {
+	ClearIndex *bool `json:"clearIndex"`
+}
+
 // handleReindexPosts starts a background job to reindex all posts
 func (a *API) handleReindexPosts(c *gin.Context) {
-	if err := a.enforceEmptyBody(c); err != nil {
-		c.AbortWithError(http.StatusBadRequest, err)
-		return
-	}
 	if a.indexerService == nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
 		return
 	}
 
-	jobStatus, err := a.indexerService.StartReindexJob()
+	// Parse request body (optional — empty body uses defaults, malformed JSON returns 400)
+	var req ReindexRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		if !errors.Is(err, io.EOF) {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+			return
+		}
+		req.ClearIndex = nil
+	}
+
+	// Default to clearIndex=true for backward compatibility
+	clearIndex := true
+	if req.ClearIndex != nil {
+		clearIndex = *req.ClearIndex
+	}
+
+	jobStatus, err := a.indexerService.StartReindexJob(clearIndex)
 	if err != nil {
 		switch err.Error() {
 		case "job already running":
@@ -51,7 +71,7 @@ func (a *API) handleGetJobStatus(c *gin.Context) {
 
 	jobStatus, err := a.indexerService.GetJobStatus()
 	if err != nil {
-		if err.Error() == "not found" {
+		if mmapi.IsKVNotFound(err) {
 			c.JSON(http.StatusNotFound, gin.H{
 				"status": "no_job",
 			})
@@ -100,6 +120,83 @@ func (a *API) handleCancelJob(c *gin.Context) {
 	c.JSON(http.StatusOK, jobStatus)
 }
 
+// handleCatchUpIndex starts a catch-up indexing job
+func (a *API) handleCatchUpIndex(c *gin.Context) {
+	if err := a.enforceEmptyBody(c); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if a.indexerService == nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
+		return
+	}
+
+	jobStatus, err := a.indexerService.StartCatchUpJob()
+	if err != nil {
+		switch err.Error() {
+		case "job already running":
+			c.JSON(http.StatusConflict, jobStatus)
+			return
+		case "no previous index found, run a full reindex first":
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		default:
+			c.AbortWithError(http.StatusInternalServerError, err)
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, jobStatus)
+}
+
+// handleIndexHealthCheck performs a health check on the search index,
+// including model compatibility information.
+func (a *API) handleIndexHealthCheck(c *gin.Context) {
+	if a.indexerService == nil {
+		c.JSON(http.StatusOK, a.notConfiguredHealthCheck())
+		return
+	}
+
+	result, err := a.indexerService.CheckIndexHealth(c.Request.Context())
+	if err != nil {
+		if err.Error() == "search functionality is not configured" {
+			c.JSON(http.StatusOK, a.notConfiguredHealthCheck())
+			return
+		}
+		c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+
+	// Include model compatibility in the health check result
+	cfg := a.config.EmbeddingSearchConfig()
+	compat := a.indexerService.CheckModelCompatibility(cfg.GetProviderType(), cfg.Dimensions, cfg.GetModelName())
+	result.ModelCompatible = compat.Compatible
+	result.ModelNeedsReindex = compat.NeedsReindex
+	result.ModelCompatReason = compat.Reason
+	result.StoredProviderType = compat.StoredProviderType
+	result.StoredDimensions = compat.StoredDimensions
+	result.StoredModelName = compat.StoredModelName
+
+	c.JSON(http.StatusOK, result)
+}
+
+// notConfiguredHealthCheck returns a HealthCheckResult for when search is not configured,
+// including any initialization error if available.
+func (a *API) notConfiguredHealthCheck() indexer.HealthCheckResult {
+	result := indexer.HealthCheckResult{
+		Status:          "not_configured",
+		ModelCompatible: true,
+	}
+	if a.getSearchInitError != nil {
+		if errMsg := a.getSearchInitError(); errMsg != "" {
+			result.Status = "init_error"
+			result.Error = errMsg
+		}
+	}
+	return result
+}
+
 func (a *API) mattermostAdminAuthorizationRequired(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
@@ -118,12 +215,12 @@ type MCPToolInfo struct {
 
 // MCPServerInfo represents a server and its tools for API response
 type MCPServerInfo struct {
-	Name        string        `json:"name"`
-	URL         string        `json:"url"`
-	Tools       []MCPToolInfo `json:"tools"`
-	NeethsOAuth bool          `json:"needsOAuth"`
-	OAuthURL    string        `json:"oauthURL,omitempty"` // URL to redirect for OAuth if needed
-	Error       *string       `json:"error"`
+	Name       string        `json:"name"`
+	URL        string        `json:"url"`
+	Tools      []MCPToolInfo `json:"tools"`
+	NeedsOAuth bool          `json:"needsOAuth"`
+	OAuthURL   string        `json:"oauthURL,omitempty"` // URL to redirect for OAuth if needed
+	Error      *string       `json:"error"`
 }
 
 // MCPToolsResponse represents the response structure for MCP tools endpoint
@@ -142,40 +239,30 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 
 	mcpConfig := a.config.MCP()
 
-	// If MCP is not enabled, return empty response
-	if !mcpConfig.Enabled {
-		c.JSON(http.StatusOK, MCPToolsResponse{
-			Servers: []MCPServerInfo{},
-		})
-		return
-	}
-
 	response := MCPToolsResponse{
 		Servers: make([]MCPServerInfo, 0, len(mcpConfig.Servers)+1),
 	}
 
-	// Discover tools from embedded server if enabled
-	if mcpConfig.EmbeddedServer.Enabled {
-		embeddedServer := a.mcpClientManager.GetEmbeddedServer()
-		if embeddedServer != nil {
-			serverInfo := MCPServerInfo{
-				Name:  mcp.EmbeddedServerName,
-				URL:   mcp.EmbeddedClientKey,
-				Tools: []MCPToolInfo{},
-				Error: nil,
-			}
-
-			// Try to discover tools from embedded server
-			tools, err := a.discoverEmbeddedServerTools(c.Request.Context(), userID, mcpConfig.EmbeddedServer, embeddedServer)
-			if err != nil {
-				errMsg := err.Error()
-				serverInfo.Error = &errMsg
-			} else {
-				serverInfo.Tools = tools
-			}
-
-			response.Servers = append(response.Servers, serverInfo)
+	embeddedServer := a.mcpClientManager.GetEmbeddedServer()
+	if embeddedServer != nil {
+		serverInfo := MCPServerInfo{
+			Name:  mcp.EmbeddedServerName,
+			URL:   mcp.EmbeddedClientKey,
+			Tools: []MCPToolInfo{},
+			Error: nil,
 		}
+
+		// Embedded MCP is always available after PR #617, even if older configs still
+		// have the legacy toggle stored as false.
+		tools, err := a.discoverEmbeddedServerTools(c.Request.Context(), userID, mcpConfig.EmbeddedServer, embeddedServer)
+		if err != nil {
+			errMsg := err.Error()
+			serverInfo.Error = &errMsg
+		} else {
+			serverInfo.Tools = tools
+		}
+
+		response.Servers = append(response.Servers, serverInfo)
 	}
 
 	// Discover tools from each configured remote server
@@ -195,7 +282,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		if err != nil {
 			var oauthErr *mcp.OAuthNeededError
 			if errors.As(err, &oauthErr) {
-				serverInfo.NeethsOAuth = true
+				serverInfo.NeedsOAuth = true
 				serverInfo.OAuthURL = oauthErr.AuthURL()
 			} else {
 				errMsg := err.Error()

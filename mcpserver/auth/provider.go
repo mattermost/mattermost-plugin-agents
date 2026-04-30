@@ -19,6 +19,8 @@ const (
 	SessionIDContextKey ContextKey = "session_id"
 	// TokenResolverContextKey is used to store a function that resolves sessionID to token
 	TokenResolverContextKey ContextKey = "token_resolver"
+	// UserIDContextKey is used to store the user ID in context for HTTP callbacks
+	UserIDContextKey ContextKey = "user_id"
 )
 
 // TokenResolver is a function that resolves a sessionID to a token

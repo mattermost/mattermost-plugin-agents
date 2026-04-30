@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
@@ -29,6 +29,11 @@ type UserClients struct {
 	oauthManager *OAuthManager
 	httpClient   *http.Client
 	toolsCache   *ToolsCache
+	// initialRemoteConnectErrors holds OAuth / connect failures from the first
+	// ConnectToRemoteServers. It must be re-returned on every lookup while this
+	// user client is cached; otherwise callers only see those errors once (first
+	// GetToolsForUser) and lose stable auth-required state on subsequent requests.
+	initialRemoteConnectErrors *Errors
 }
 
 func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
@@ -68,9 +73,10 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 			var oauthErr *OAuthNeededError
 			if errors.As(err, &oauthErr) {
 				mcpErrors.ToolAuthErrors = append(mcpErrors.ToolAuthErrors, llm.ToolAuthError{
-					ServerName: serverConfig.Name,
-					AuthURL:    oauthErr.AuthURL(),
-					Error:      err,
+					ServerName:   serverConfig.Name,
+					ServerOrigin: serverConfig.BaseURL,
+					AuthURL:      oauthErr.AuthURL(),
+					Error:        err,
 				})
 			} else {
 				c.log.Error("Failed to connect to MCP server", "userID", c.userID, "serverID", serverConfig.Name, "error", err)
@@ -167,10 +173,11 @@ func (c *UserClients) GetTools() []llm.Tool {
 			seenTools[toolName] = serverID
 
 			tools = append(tools, llm.Tool{
-				Name:        toolName,
-				Description: tool.Description,
-				Schema:      tool.InputSchema,
-				Resolver:    c.createToolResolver(client, toolName),
+				Name:         toolName,
+				Description:  tool.Description,
+				Schema:       tool.InputSchema,
+				Resolver:     c.createToolResolver(client, toolName),
+				ServerOrigin: client.config.BaseURL,
 			})
 		}
 	}

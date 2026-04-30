@@ -53,7 +53,7 @@ test.describe.serial('Initial State and Navigation', () => {
         await mattermost.stop();
     });
 
-    test('should display no bots page when services exist but no bots configured', async ({ page }) => {
+    test('should show AI Bots moved notice when services exist but no legacy config bots', async ({ page }) => {
         test.setTimeout(60000);
 
         // Start container with one service but no bots
@@ -87,16 +87,13 @@ test.describe.serial('Initial State and Navigation', () => {
 
         // Verify AI Services panel is visible
         const servicesPanel = systemConsole.getServicesPanel();
-        await expect(servicesPanel).toBeVisible();
+        await expect(servicesPanel).toBeVisible({ timeout: 10000 });
 
-        // Verify No Bots message is displayed
-        const noBotsMessage = systemConsole.getNoBotsMessage();
-        await expect(noBotsMessage).toBeVisible();
+        // Wait for the bots panel to be fully loaded
+        await systemConsole.waitForBotsPanel();
 
-        // Verify Add Bot button is visible
-        const addBotButton = systemConsole.getAddBotButton();
-        await expect(addBotButton).toBeVisible();
-        await expect(addBotButton).toBeEnabled();
+        await expect(page.getByText(/AI bot configuration has moved/i)).toBeVisible({ timeout: 10000 });
+        await expect(systemConsole.getAddBotButton()).not.toBeVisible();
 
         // Cleanup
         await openAIMock.stop();
@@ -152,8 +149,11 @@ test.describe.serial('Initial State and Navigation', () => {
         // Verify service is listed
         await expect(page.getByText('Test Service').first()).toBeVisible();
 
-        // Verify bot is listed
-        await expect(page.getByText('Test Bot').first()).toBeVisible();
+        await expect(page.getByText(/AI bot configuration has moved/i)).toBeVisible();
+
+        const defaultBotDropdown = page.getByText('Default bot').locator('..').getByRole('combobox');
+        await defaultBotDropdown.scrollIntoViewIfNeeded();
+        await expect(defaultBotDropdown).toContainText('Test Bot');
 
         // Cleanup
         await openAIMock.stop();

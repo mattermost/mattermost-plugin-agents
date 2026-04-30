@@ -8,30 +8,35 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-ai/api"
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/config"
-	"github.com/mattermost/mattermost-plugin-ai/conversations"
-	"github.com/mattermost/mattermost-plugin-ai/database"
-	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/i18n"
-	"github.com/mattermost/mattermost-plugin-ai/indexer"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/llmcontext"
-	"github.com/mattermost/mattermost-plugin-ai/mcp"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver"
-	"github.com/mattermost/mattermost-plugin-ai/meetings"
-	"github.com/mattermost/mattermost-plugin-ai/metrics"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/mmtools"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
-	"github.com/mattermost/mattermost-plugin-ai/search"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/api"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/customprompts"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/indexer"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/meetings"
+	"github.com/mattermost/mattermost-plugin-agents/metrics"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/search"
+	"github.com/mattermost/mattermost-plugin-agents/store"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 	"github.com/mattermost/mattermost/server/public/shared/httpservice"
 )
 
@@ -50,18 +55,77 @@ type Plugin struct {
 	indexerService       *indexer.Indexer
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
+	store                *store.Store
+	configMigrated       bool
+}
+
+type pluginLogger struct {
+	service *pluginapi.LogService
+}
+
+func (l *pluginLogger) Debug(message string, keyValuePairs ...any) {
+	if l == nil || l.service == nil {
+		return
+	}
+	l.service.Debug(message, keyValuePairs...)
+}
+
+func (l *pluginLogger) Info(message string, keyValuePairs ...any) {
+	if l == nil || l.service == nil {
+		return
+	}
+	l.service.Info(message, keyValuePairs...)
+}
+
+func (l *pluginLogger) Warn(message string, keyValuePairs ...any) {
+	if l == nil || l.service == nil {
+		return
+	}
+	l.service.Warn(message, keyValuePairs...)
+}
+
+func (l *pluginLogger) Error(message string, keyValuePairs ...any) {
+	if l == nil || l.service == nil {
+		return
+	}
+	l.service.Error(message, keyValuePairs...)
 }
 
 func (p *Plugin) OnActivate() error {
 	pluginAPI := pluginapi.NewClient(p.API, p.Driver)
+	p.pluginAPI = pluginAPI
 	mmClient := mmapi.NewClient(pluginAPI)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
 	dbClient := mmapi.NewDBClient(pluginAPI)
+
+	// Initialize store and run database migrations
+	p.store = store.New(dbClient.DB)
+	mtx, err := cluster.NewMutex(p.API, "ai_db_migrations")
+	if err != nil {
+		return fmt.Errorf("failed to create cluster mutex: %w", err)
+	}
+	mtx.Lock()
+	if migrateErr := func() error {
+		defer mtx.Unlock()
+		return p.store.RunMigrations()
+	}(); migrateErr != nil {
+		return fmt.Errorf("failed to run database migrations: %w", migrateErr)
+	}
 
 	i18nBundle := i18n.Init()
 
 	llmUpstreamHTTPClient := httpservice.MakeHTTPServicePlugin(p.API).MakeClient(true)
 	llmUpstreamHTTPClient.Timeout = time.Minute * 10 // LLM requests can be slow
+
+	// Tune connection pool for LLM streaming: shorter idle timeout to avoid
+	// reusing stale connections after SSE streams close during tool calling,
+	// and more idle connections per host for concurrent LLM requests.
+	if mmTransport, ok := llmUpstreamHTTPClient.Transport.(*httpservice.MattermostTransport); ok {
+		if transport, ok := mmTransport.Transport.(*http.Transport); ok {
+			transport.IdleConnTimeout = 30 * time.Second
+			transport.MaxIdleConnsPerHost = 10
+		}
+	}
 
 	untrustedHTTPClient := httpservice.MakeHTTPServicePlugin(p.API).MakeClient(false)
 
@@ -70,29 +134,87 @@ func (p *Plugin) OnActivate() error {
 		PluginVersion:  manifest.Version, // Manifest imported from manifest.go which is generated by the build process
 	})
 
-	// Get current config and run migrations
-	currentConfig := *p.configuration.Config()
-	potentiallyUpdatedConfig, wasUpdated, err := runAllMigrations(p.API, pluginAPI, currentConfig)
+	// One-time config data migration (config.json -> DB).
+	// This uses a separate cluster mutex from schema migrations above,
+	// ensuring only one node performs config migration at a time.
+	mtx2, err := cluster.NewMutex(p.API, "ai_config_migration")
 	if err != nil {
-		return fmt.Errorf("failed to run migrations: %w", err)
+		return fmt.Errorf("failed to create config migration mutex: %w", err)
 	}
-	if wasUpdated {
-		// Update in-memory copy immediately (can't wait for async callbacks)
-		p.configuration.Update(&potentiallyUpdatedConfig)
-		pluginAPI.Log.Info("In-memory configuration updated after migrations")
+	mtx2.Lock()
+
+	migrated, err := p.store.IsConfigMigrated()
+	if err != nil {
+		mtx2.Unlock()
+		return fmt.Errorf("failed to check config migration status: %w", err)
+	}
+	if !migrated {
+		// Load from config.json
+		var cfgWrap configuration
+		if loadErr := p.API.LoadPluginConfiguration(&cfgWrap); loadErr != nil {
+			mtx2.Unlock()
+			return fmt.Errorf("failed to load plugin configuration for migration: %w", loadErr)
+		}
+
+		// Apply legacy config transforms
+		loadLegacyConfig := func() (config.LegacyServiceConfig, error) {
+			var legacy config.LegacyServiceConfig
+			if legacyErr := p.API.LoadPluginConfiguration(&legacy); legacyErr != nil {
+				return legacy, fmt.Errorf("failed to load legacy config: %w", legacyErr)
+			}
+			return legacy, nil
+		}
+
+		finalCfg, _, migrationErr := config.RunAllLegacyMigrations(cfgWrap.Config, loadLegacyConfig)
+		if migrationErr != nil {
+			mtx2.Unlock()
+			return fmt.Errorf("failed to run legacy config migrations: %w", migrationErr)
+		}
+
+		// Write to DB (first entry in config history)
+		if saveErr := p.store.SaveConfig(finalCfg); saveErr != nil {
+			mtx2.Unlock()
+			return fmt.Errorf("failed to save migrated config to database: %w", saveErr)
+		}
+
+		pluginAPI.Log.Info("Config migrated from config.json to database")
+	}
+	mtx2.Unlock()
+
+	// Load config from DB into memory and set migrated flag
+	dbConfig, err := p.store.GetConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config from database: %w", err)
+	}
+	if dbConfig != nil {
+		p.configuration.Update(dbConfig)
+	}
+	p.configMigrated = true
+
+	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService)
+
+	// migrateAndRefresh runs the one-time legacy bot migration, then forces
+	// a bot refresh only if the migration actually created new agents.
+	migrateAndRefresh := func(context string) {
+		migrated, migErr := migrateLegacyConfigBotsToUserAgents(p.API, pluginAPI, p.store, &p.configuration)
+		if migErr != nil {
+			pluginAPI.Log.Error("failed to migrate legacy config bots to user agents", "context", context, "error", migErr)
+		}
+		if migrated {
+			bots.ForceRefreshOnNextEnsure()
+			if ensureErr := bots.EnsureBots(); ensureErr != nil {
+				pluginAPI.Log.Error("failed to ensure bots after legacy bot migration", "context", context, "error", ensureErr)
+			} else if pubErr := p.PublishAgentUpdate(); pubErr != nil {
+				pluginAPI.Log.Error("Failed to publish agent update cluster event", "error", pubErr.Error())
+			}
+		}
 	}
 
-	tokenLogger, err := llm.CreateTokenLogger()
-	if err != nil {
-		return fmt.Errorf("failed to create token usage logger: %w", err)
-	}
-
-	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient, tokenLogger, metricsService)
 	p.configuration.RegisterUpdateListener(func() {
 		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
-			return
 		}
+		migrateAndRefresh("config_update")
 	})
 
 	if ensureBotsErr := bots.EnsureBots(); ensureBotsErr != nil {
@@ -100,11 +222,7 @@ func (p *Plugin) OnActivate() error {
 		// as it would leave the plugin in a state where it can't be configured from the system console.
 		pluginAPI.Log.Error("failed to ensure bots", "error", ensureBotsErr)
 	}
-
-	if setupTablesErr := database.SetupTables(dbClient.DB); setupTablesErr != nil {
-		pluginAPI.Log.Error("failed to setup database tables", "error", setupTablesErr)
-		return setupTablesErr
-	}
+	migrateAndRefresh("activation")
 
 	prompts, promptManagerErr := llm.NewPrompts(prompts.PromptsFolder)
 	if promptManagerErr != nil {
@@ -114,6 +232,34 @@ func (p *Plugin) OnActivate() error {
 
 	streamingService := streaming.NewMMPostStreamService(mmClient, i18nBundle)
 
+	// Atomic pointer for the embedding search - single source of truth
+	var currentSearch atomic.Pointer[embeddings.EmbeddingSearch]
+	var lastSearchInitError atomic.Value // stores string
+
+	// Getter function that reads from the atomic pointer
+	getSearch := func() embeddings.EmbeddingSearch {
+		ptr := currentSearch.Load()
+		if ptr == nil {
+			return nil
+		}
+		return *ptr
+	}
+
+	// Config getter for saving model info after reindexing
+	configGetter := func() embeddings.EmbeddingSearchConfig {
+		return p.configuration.EmbeddingSearchConfig()
+	}
+
+	// Getter for the last search initialization error
+	getSearchInitError := func() string {
+		val := lastSearchInitError.Load()
+		if val == nil {
+			return ""
+		}
+		return val.(string)
+	}
+
+	// Initialize embedding search
 	embeddingsSearch, err := search.InitEmbeddingsSearch(
 		dbClient.DB,
 		llmUpstreamHTTPClient,
@@ -121,24 +267,102 @@ func (p *Plugin) OnActivate() error {
 		licenseChecker,
 	)
 	if err != nil {
-		pluginAPI.Log.Error("failed to initialize search infrastructure", "error", err)
+		pluginAPI.Log.Warn("failed to initialize search infrastructure", "error", err)
+		lastSearchInitError.Store(err.Error())
 		// Continue without search functionality
 	}
 
-	indexerService := indexer.New(embeddingsSearch, mmClient, bots, dbClient.DB)
+	// Create indexer service with getter function
+	indexerService := indexer.New(getSearch, configGetter, mmClient, bots, dbClient.DB, p.API)
 
+	// Mark any orphaned reindex jobs from this node as failed
+	// This handles the case where the plugin/server crashed while a job was running
+	if orphanErr := indexerService.MarkOrphanedJobAsFailed(); orphanErr != nil {
+		pluginAPI.Log.Warn("Failed to check for orphaned reindex job", "error", orphanErr)
+	}
+
+	// Check model compatibility and disable search if the model has changed since last reindex.
+	// Search will be re-enabled by the config update listener (registered below) after a
+	// reindex updates the stored model info — this is intentional, not a deadlock.
+	if embeddingsSearch != nil {
+		embeddingsCfg := p.configuration.EmbeddingSearchConfig()
+		compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.GetProviderType(), embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())
+		if !compatibility.Compatible {
+			pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
+				"reason", compatibility.Reason)
+			embeddingsSearch = nil // Disable search
+			lastSearchInitError.Store("search disabled: " + compatibility.Reason)
+		}
+	}
+
+	// Store initial search in atomic pointer
+	if embeddingsSearch != nil {
+		currentSearch.Store(&embeddingsSearch)
+		lastSearchInitError.Store("") // Clear any previous error
+	}
+
+	// Create search service with getter function
 	searchService := search.New(
-		embeddingsSearch,
+		getSearch,
 		mmClient,
 		prompts,
 		streamingService,
 		licenseChecker,
+		nil, // conversation service wired in a later step
 	)
+
+	// Register update listener for embedding search config changes
+	p.configuration.RegisterUpdateListener(func() {
+		newEmbeddingsSearch, initErr := search.InitEmbeddingsSearch(
+			dbClient.DB,
+			llmUpstreamHTTPClient,
+			p.configuration.EmbeddingSearchConfig(),
+			licenseChecker,
+		)
+		if initErr != nil {
+			pluginAPI.Log.Error("Failed to reinitialize embedding search on config change", "error", initErr)
+			// Disable search on failure
+			currentSearch.Store(nil)
+			lastSearchInitError.Store(initErr.Error())
+			return
+		}
+
+		// Check model compatibility.
+		// If the configured model no longer matches the indexed model, search is intentionally
+		// disabled until a reindex updates the stored model info. This is not a deadlock: the
+		// listener re-fires on every config save and re-calls InitEmbeddingsSearch above, so
+		// after a successful reindex the next config change will pass this check and re-enable search.
+		if newEmbeddingsSearch != nil {
+			embeddingsCfg := p.configuration.EmbeddingSearchConfig()
+			compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.GetProviderType(), embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())
+			if !compatibility.Compatible {
+				pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
+					"reason", compatibility.Reason)
+				newEmbeddingsSearch = nil
+				lastSearchInitError.Store("search disabled: " + compatibility.Reason)
+			}
+		}
+
+		// Update atomic pointer - both services will see the new value
+		if newEmbeddingsSearch != nil {
+			currentSearch.Store(&newEmbeddingsSearch)
+			lastSearchInitError.Store("") // Clear any previous error
+		} else {
+			currentSearch.Store(nil)
+			if lastSearchInitError.Load() != nil {
+				lastSearchInitError.Store("")
+			}
+		}
+		pluginAPI.Log.Info("Embedding search reinitialized on config change")
+	})
+
+	webSearchService := mmtools.NewWebSearchService(func() *config.Config {
+		return p.configuration.Config()
+	}, &pluginLogger{service: &pluginAPI.Log}, untrustedHTTPClient)
 
 	toolProvider := mmtools.NewMMToolProvider(
 		mmClient,
-		searchService,
-		untrustedHTTPClient,
+		webSearchService,
 	)
 
 	// Build redirect URI
@@ -149,27 +373,30 @@ func (p *Plugin) OnActivate() error {
 	manifestID := manifest.Id
 	oauthCallbackURL := fmt.Sprintf("%s/plugins/%s/oauth/callback", *siteURL, manifestID)
 
-	// Create embedded MCP server if enabled
+	// Embedded MCP is always available after PR #617, even if older configs still
+	// have the legacy toggle stored as false.
 	var embeddedMCPServer mcp.EmbeddedMCPServer
-	if p.configuration.MCP().EmbeddedServer.Enabled {
-		embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
-		if err != nil {
-			pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
-			// Continue without embedded server
-		} else {
-			pluginAPI.Log.Info("Embedded MCP server created successfully")
-		}
+	embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
+	if err != nil {
+		pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
+		// Continue without embedded server
+	} else {
+		pluginAPI.Log.Info("Embedded MCP server created successfully")
 	}
 
-	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient), embeddedMCPServer, untrustedHTTPClient)
-	p.configuration.RegisterUpdateListener(func() {
-		var embeddedServer mcp.EmbeddedMCPServer
-		var embeddedErr error
-		if p.configuration.MCP().EmbeddedServer.Enabled {
-			embeddedServer, embeddedErr = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log)
-			if embeddedErr != nil {
-				pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
+	serverConfigLookup := func(serverID string) (mcp.ServerConfig, bool) {
+		for _, s := range p.configuration.MCP().Servers {
+			if s.Name == serverID {
+				return s, true
 			}
+		}
+		return mcp.ServerConfig{}, false
+	}
+	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient)
+	p.configuration.RegisterUpdateListener(func() {
+		embeddedServer, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
+		if embeddedErr != nil {
+			pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
 		}
 
 		mcpClientManager.ReInit(p.configuration.MCP(), embeddedServer)
@@ -192,7 +419,12 @@ func (p *Plugin) OnActivate() error {
 		licenseChecker,
 		i18nBundle,
 		nil, // meetingsService will be set after it's created
+		&p.configuration,
 	)
+
+	convService := conversation.NewService(p.store, prompts, mmClient, bots)
+	conversationsService.SetConversationService(convService)
+	searchService.SetConversationService(convService)
 
 	meetingsService := meetings.NewService(
 		pluginAPI,
@@ -210,17 +442,41 @@ func (p *Plugin) OnActivate() error {
 	// TODO: Refactor to avoid circular dependency
 	conversationsService.SetMeetingsService(meetingsService)
 
+	// Wire per-tool policy checker for auto-approval in streaming and conversations
+	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
+		mcpCfg := p.configuration.MCP()
+		if serverBaseURL == mcp.EmbeddedClientKey {
+			toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
+			if len(toolConfigs) == 0 {
+				toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
+			}
+			embeddedCfg := &mcp.ServerConfig{Enabled: true, ToolConfigs: toolConfigs}
+			return embeddedCfg.GetToolPolicy(toolName)
+		}
+		for i := range mcpCfg.Servers {
+			if mcpCfg.Servers[i].BaseURL == serverBaseURL {
+				return mcpCfg.Servers[i].GetToolPolicy(toolName)
+			}
+		}
+		return "ask", false
+	})
+	streamingService.SetTurnStore(p.store)
+	conversationsService.SetToolPolicyChecker(policyChecker)
+
 	// Initialize embedded MCP server handlers for plugin endpoints
 	var mcpHandlers *mcpserver.PluginMCPHandlers
 	// Create logger adapter to route MCP handler logs through plugin logging
 	mcpHandlerLogger := NewPluginAPILoggerAdapter(pluginAPI.Log)
-	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, mcpHandlerLogger)
+	internalServerURL := deriveInternalServerURL(pluginAPI)
+	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger)
 	if err != nil {
 		pluginAPI.Log.Error("Failed to create MCP handlers", "error", err)
 	} else {
 		mcpHandlers = handlers
 		pluginAPI.Log.Info("Embedded MCP server handlers initialized successfully")
 	}
+
+	customPromptsStore := customprompts.NewStore(dbClient)
 
 	apiService := api.New(
 		bots,
@@ -241,10 +497,19 @@ func (p *Plugin) OnActivate() error {
 		mcpClientManager,
 		mcpHandlers,
 		llmUpstreamHTTPClient,
+		p.store,
+		p.store,
+		&p.configuration,
+		p,
+		p,
+		p.store,
+		getSearchInitError,
+		customPromptsStore,
 	)
 
+	apiService.SetConversationService(convService)
+
 	// Keep only what we need
-	p.pluginAPI = pluginAPI
 	p.apiService = apiService
 	p.bots = bots
 	p.indexerService = indexerService
@@ -300,11 +565,37 @@ func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *mode
 }
 
 func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
+	if post == nil {
+		return
+	}
 	if p.indexerService != nil {
 		if err := p.indexerService.DeletePost(context.Background(), post.Id); err != nil {
 			p.pluginAPI.Log.Error("Failed to delete post from vector database", "error", err)
 		}
 	}
+	if p.conversationsService != nil {
+		if err := p.conversationsService.DeleteConversationsForDeletedPost(post); err != nil {
+			p.pluginAPI.Log.Error("Failed to soft-delete conversations for deleted post", "error", err, "post_id", post.Id)
+		}
+	}
+}
+
+func (p *Plugin) RunDataRetention(nowTime, batchSize int64) (int64, error) {
+	if p.indexerService == nil {
+		return 0, nil
+	}
+
+	count, err := p.indexerService.RunDataRetention(context.Background(), nowTime, batchSize)
+	if err != nil {
+		p.pluginAPI.Log.Error("Failed to run data retention for embeddings", "error", err)
+		return 0, err
+	}
+
+	if count > 0 {
+		p.pluginAPI.Log.Info("Data retention cleaned up orphaned embeddings", "deleted", count)
+	}
+
+	return count, nil
 }
 
 func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {

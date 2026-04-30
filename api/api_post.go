@@ -5,20 +5,25 @@ package api
 
 import (
 	stdcontext "context"
+	"errors"
 	"fmt"
 	"net/http"
 
-	"errors"
-
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/render"
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/conversations"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/react"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
-	"github.com/mattermost/mattermost-plugin-ai/threads"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/react"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/threads"
 	"github.com/mattermost/mattermost/server/public/model"
+)
+
+const (
+	TitleThreadSummary     = "Thread Summary"
+	TitleFindActionItems   = "Action Items"
+	TitleFindOpenQuestions = "Open Questions"
 )
 
 func (a *API) postAuthorizationRequired(c *gin.Context) {
@@ -133,43 +138,53 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 		return
 	}
 
-	// Build LLM context
+	// Thread analysis disables tools, so skip MCP/tool initialization entirely.
 	llmContext := a.contextBuilder.BuildLLMContextUserRequest(
 		bot,
 		user,
 		channel,
-		a.contextBuilder.WithLLMContextDefaultTools(bot),
+		a.contextBuilder.WithLLMContextNoTools(),
 	)
 
-	// Create thread analyzer
-	analyzer := threads.New(bot.LLM(), a.prompts, a.mmClient)
-	var analysisStream *llm.TextStreamResult
+	// Create thread analyzer with conversation service
+	botUserID := bot.GetMMBot().UserId
+	analyzer := threads.New(bot.LLM(), a.prompts, a.mmClient, a.convService)
+	var analyzeResult *threads.AnalyzeResult
 	var title string
 	switch data.AnalysisType {
 	case "summarize_thread":
 		title = TitleThreadSummary
-		analysisStream, err = analyzer.Summarize(post.Id, llmContext)
+		analyzeResult, err = analyzer.Summarize(post.Id, llmContext, botUserID, userID)
 	case "action_items":
 		title = TitleFindActionItems
-		analysisStream, err = analyzer.FindActionItems(post.Id, llmContext)
+		analyzeResult, err = analyzer.FindActionItems(post.Id, llmContext, botUserID, userID)
 	case "open_questions":
 		title = TitleFindOpenQuestions
-		analysisStream, err = analyzer.FindOpenQuestions(post.Id, llmContext)
+		analyzeResult, err = analyzer.FindOpenQuestions(post.Id, llmContext, botUserID, userID)
 	}
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to analyze thread: %w", err))
 		return
 	}
 
-	// Create analysis post
-	siteURL := a.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
-	analysisPost := a.makeAnalysisPost(user.Locale, post.Id, data.AnalysisType, *siteURL)
-	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), bot.GetMMBot().UserId, analysisStream, user.Id, analysisPost, post.Id); err != nil {
+	// Create analysis post with conversation ID
+	analysisPost := a.makeAnalysisPost(user.Locale, post.Id, data.AnalysisType, analyzeResult.ConversationID)
+	if err := a.streamingService.StreamToNewDM(stdcontext.Background(), botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 
-	a.conversationsService.SaveTitleAsync(post.Id, title)
+	// Update conversation's RootPostID to the analysis DM post (now that it's been created)
+	if a.convService != nil {
+		if updateErr := a.convService.UpdateConversationRootPostID(analyzeResult.ConversationID, analysisPost.Id); updateErr != nil {
+			// Log the error but don't fail the request -- the analysis was already streamed
+			a.mmClient.LogError("Failed to update conversation root post ID", "error", updateErr.Error())
+		}
+		// Set title directly (no LLM call needed for fixed analysis titles)
+		if titleErr := a.convService.UpdateConversationTitle(analyzeResult.ConversationID, title); titleErr != nil {
+			a.mmClient.LogError("Failed to set conversation title", "error", titleErr.Error())
+		}
+	}
 
 	c.JSON(http.StatusOK, map[string]string{
 		"postid":    analysisPost.Id,
@@ -237,7 +252,8 @@ func (a *API) handleStop(c *gin.Context) {
 		return
 	}
 
-	if post.GetProp(streaming.LLMRequesterUserID) != userID {
+	// Check ownership via conversation entity
+	if !a.isConversationOwner(post, userID) {
 		c.AbortWithError(http.StatusForbidden, errors.New("only the original poster can stop the stream"))
 		return
 	}
@@ -253,6 +269,11 @@ func (a *API) handleRegenerate(c *gin.Context) {
 
 	if err := a.enforceEmptyBody(c); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if !a.isConversationOwner(post, userID) {
+		c.AbortWithError(http.StatusForbidden, errors.New("only the original poster can regenerate"))
 		return
 	}
 
@@ -275,8 +296,13 @@ func (a *API) handleToolCall(c *gin.Context) {
 		return
 	}
 
-	// Only the original requester can approve/reject tool calls
-	if post.GetProp(streaming.LLMRequesterUserID) != userID {
+	isDM := mmapi.IsDMWith(post.UserId, channel)
+	if !isDM && !a.config.EnableChannelMentionToolCalling() {
+		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
+		return
+	}
+
+	if !a.isConversationOwner(post, userID) {
 		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can approve/reject tool calls"))
 		return
 	}
@@ -290,17 +316,97 @@ func (a *API) handleToolCall(c *gin.Context) {
 		return
 	}
 
-	err := a.conversationsService.HandleToolCall(userID, post, channel, data.AcceptedToolIDs)
-	if err != nil {
-		if err.Error() == "post missing pending tool calls" || err.Error() == "post pending tool calls not valid JSON" {
-			c.AbortWithError(http.StatusBadRequest, err)
-		} else {
-			c.AbortWithError(http.StatusInternalServerError, err)
-		}
+	if err := a.conversationsService.HandleToolCall(userID, post, channel, data.AcceptedToolIDs); err != nil {
+		c.AbortWithError(toolApprovalHTTPStatus(err), err)
 		return
 	}
 
 	c.Status(http.StatusOK)
+}
+
+// toolApprovalHTTPStatus maps errors from HandleToolCall/HandleToolResult to
+// HTTP statuses. Stale-click and missing-conversation cases are client-side
+// issues (400); requester-mismatch is a permission denial (403); everything
+// else falls through to 500.
+func toolApprovalHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, conversations.ErrStaleToolClick),
+		errors.Is(err, conversations.ErrPostMissingConversationID):
+		return http.StatusBadRequest
+	case errors.Is(err, conversations.ErrNotRequester):
+		return http.StatusForbidden
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+func (a *API) handleToolResult(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	post := c.MustGet(ContextPostKey).(*model.Post)
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
+
+	if !a.licenseChecker.IsBasicsLicensed() {
+		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		return
+	}
+
+	isDM := mmapi.IsDMWith(post.UserId, channel)
+	if !isDM && !a.config.EnableChannelMentionToolCalling() {
+		c.AbortWithError(http.StatusForbidden, errors.New("channel tool calling is disabled"))
+		return
+	}
+
+	if !a.isConversationOwner(post, userID) {
+		c.AbortWithError(http.StatusForbidden, errors.New("only the original requester can approve/reject tool results"))
+		return
+	}
+
+	var data struct {
+		AcceptedToolIDs []string `json:"accepted_tool_ids" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&data); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if err := a.conversationsService.HandleToolResult(userID, post, channel, data.AcceptedToolIDs); err != nil {
+		c.AbortWithError(toolApprovalHTTPStatus(err), err)
+		return
+	}
+
+	c.Status(http.StatusOK)
+}
+
+// isConversationOwner checks whether the given user is the owner of the
+// conversation associated with the post (via the conversation_id prop).
+//
+// Falls back to the llm_requester_user_id prop for legacy custom_llmbot posts
+// that were not produced via the conversation entity flow — currently only
+// meeting summarization. Remove the fallback once meeting flows migrate.
+func (a *API) isConversationOwner(post *model.Post, userID string) bool {
+	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
+	if !ok || convID == "" {
+		requester, _ := post.GetProp(streaming.LLMRequesterUserIDProp).(string)
+		return requester != "" && requester == userID
+	}
+
+	// Try the full conversation service first, then fall back to the store interface.
+	if a.convService != nil {
+		conv, err := a.convService.GetConversation(convID)
+		if err != nil {
+			return false
+		}
+		return conv.UserID == userID
+	}
+	if a.conversationStore != nil {
+		conv, err := a.conversationStore.GetConversation(convID)
+		if err != nil {
+			return false
+		}
+		return conv.UserID == userID
+	}
+	return false
 }
 
 func (a *API) handlePostbackSummary(c *gin.Context) {
@@ -326,10 +432,13 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 }
 
 // makeAnalysisPost creates a post for thread analysis results
-func (a *API) makeAnalysisPost(locale string, postIDToAnalyze string, analysisType string, siteURL string) *model.Post {
+func (a *API) makeAnalysisPost(locale string, postIDToAnalyze string, analysisType string, conversationID string) *model.Post {
 	post := &model.Post{}
 	post.AddProp(conversations.ThreadIDProp, postIDToAnalyze)
 	post.AddProp(conversations.AnalysisTypeProp, analysisType)
+	if conversationID != "" {
+		post.AddProp(streaming.ConversationIDProp, conversationID)
+	}
 
 	return post
 }

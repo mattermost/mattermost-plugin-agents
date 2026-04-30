@@ -8,6 +8,10 @@
  * import issues with webpack-specific assets in the webapp files.
  */
 
+// Default models for each provider. Update these when bumping model versions.
+export const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-20250514';
+export const DEFAULT_OPENAI_MODEL = 'gpt-5.2';
+
 /**
  * LLM Service Configuration
  * Mirrors webapp/src/components/system_console/service.tsx LLMService type
@@ -76,6 +80,21 @@ export interface APITestConfig {
     hasAnthropicKey: boolean;
     hasOpenAIKey: boolean;
     shouldRunTests: boolean;
+    requestedProvider: 'anthropic' | 'openai' | null;
+}
+
+function getRequestedProvider(): 'anthropic' | 'openai' | null {
+    const rawProvider = process.env.E2E_PROVIDER?.trim().toLowerCase();
+
+    if (!rawProvider) {
+        return null;
+    }
+
+    if (rawProvider !== 'anthropic' && rawProvider !== 'openai') {
+        throw new Error(`Unsupported E2E_PROVIDER value: ${rawProvider}`);
+    }
+
+    return rawProvider;
 }
 
 /**
@@ -84,11 +103,22 @@ export interface APITestConfig {
 export function getAPIConfig(): APITestConfig {
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
     const openaiKey = process.env.OPENAI_API_KEY;
+    const requestedProvider = getRequestedProvider();
+    const hasAnthropicKey = !!anthropicKey && anthropicKey.length > 0;
+    const hasOpenAIKey = !!openaiKey && openaiKey.length > 0;
+
+    let shouldRunTests = hasAnthropicKey || hasOpenAIKey;
+    if (requestedProvider === 'anthropic') {
+        shouldRunTests = hasAnthropicKey;
+    } else if (requestedProvider === 'openai') {
+        shouldRunTests = hasOpenAIKey;
+    }
 
     return {
-        hasAnthropicKey: !!anthropicKey && anthropicKey.length > 0,
-        hasOpenAIKey: !!openaiKey && openaiKey.length > 0,
-        shouldRunTests: !!(anthropicKey || openaiKey),
+        hasAnthropicKey,
+        hasOpenAIKey,
+        shouldRunTests,
+        requestedProvider,
     };
 }
 
@@ -98,6 +128,14 @@ export function getAPIConfig(): APITestConfig {
 export function getSkipMessage(): string | null {
     const config = getAPIConfig();
     if (!config.shouldRunTests) {
+        if (config.requestedProvider === 'anthropic') {
+            return 'Skipping real API tests: E2E_PROVIDER=anthropic was requested but ANTHROPIC_API_KEY is not configured.';
+        }
+
+        if (config.requestedProvider === 'openai') {
+            return 'Skipping real API tests: E2E_PROVIDER=openai was requested but OPENAI_API_KEY is not configured.';
+        }
+
         return 'Skipping llmbot-post-component tests: No ANTHROPIC_API_KEY or OPENAI_API_KEY found in environment. Set one to run these tests with real APIs.';
     }
     return null;
@@ -114,12 +152,11 @@ export function logAPIConfig(): void {
         return;
     }
 
-    console.log('🔴 LLMBot tests using REAL APIs:');
-    if (config.hasAnthropicKey) {
-        console.log('   - Anthropic: claude-3-7-sonnet-20250219');
-    }
-    if (config.hasOpenAIKey) {
-        console.log('   - OpenAI: gpt-5');
+    const providers = getAvailableProviders();
+    const providerScope = config.requestedProvider ? ` (${config.requestedProvider} only)` : '';
+    console.log(`🔴 LLMBot tests using REAL APIs${providerScope}:`);
+    for (const p of providers) {
+        console.log(`   - ${p.name}: ${p.service.defaultModel}`);
     }
     console.log('   ⚠️  This will incur API costs (~$0.05 per run)');
 }
@@ -150,7 +187,7 @@ export function createAnthropicService(overrides: ServiceConfigOverrides = {}): 
         apiKey,
         apiURL: 'https://api.anthropic.com',
         orgId: '',
-        defaultModel: 'claude-3-7-sonnet-20250219',
+        defaultModel: process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL,
         tokenLimit: 16384,
         outputTokenLimit: 16384,
         streamingTimeoutSeconds: 0,
@@ -176,7 +213,7 @@ export function createOpenAIService(overrides: ServiceConfigOverrides = {}): LLM
         apiKey,
         apiURL: 'https://api.openai.com/v1',
         orgId: '',
-        defaultModel: 'gpt-5',
+        defaultModel: process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL,
         tokenLimit: 16384,
         outputTokenLimit: 16384,
         streamingTimeoutSeconds: 500,
@@ -216,7 +253,7 @@ export function createBotConfig(
             thinkingBudget: 1024,
         }),
         ...(service.useResponsesAPI && {
-            reasoningEffort: 'minimal',
+            reasoningEffort: 'high',
         }),
         ...overrides,
     };
@@ -238,7 +275,7 @@ export function getAvailableProviders(): ProviderBundle[] {
     const config = getAPIConfig();
     const providers: ProviderBundle[] = [];
 
-    if (config.hasAnthropicKey) {
+    if (config.hasAnthropicKey && (config.requestedProvider === null || config.requestedProvider === 'anthropic')) {
         const service = createAnthropicService();
         const bot = createBotConfig(service);
         providers.push({
@@ -248,7 +285,7 @@ export function getAvailableProviders(): ProviderBundle[] {
         });
     }
 
-    if (config.hasOpenAIKey) {
+    if (config.hasOpenAIKey && (config.requestedProvider === null || config.requestedProvider === 'openai')) {
         const service = createOpenAIService();
         const bot = createBotConfig(service);
         providers.push({

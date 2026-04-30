@@ -7,6 +7,7 @@ package mocks
 import (
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	mock "github.com/stretchr/testify/mock"
@@ -789,6 +790,62 @@ func (_c *MockClient_GetPostsSince_Call) RunAndReturn(run func(channelID string,
 	return _c
 }
 
+// GetTeam provides a mock function for the type MockClient
+func (_mock *MockClient) GetTeam(teamID string) (*model.Team, error) {
+	ret := _mock.Called(teamID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetTeam")
+	}
+
+	var r0 *model.Team
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(string) (*model.Team, error)); ok {
+		return returnFunc(teamID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(string) *model.Team); ok {
+		r0 = returnFunc(teamID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.Team)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(string) error); ok {
+		r1 = returnFunc(teamID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClient_GetTeam_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetTeam'
+type MockClient_GetTeam_Call struct {
+	*mock.Call
+}
+
+// GetTeam is a helper method to define mock.On call
+//   - teamID
+func (_e *MockClient_Expecter) GetTeam(teamID interface{}) *MockClient_GetTeam_Call {
+	return &MockClient_GetTeam_Call{Call: _e.mock.On("GetTeam", teamID)}
+}
+
+func (_c *MockClient_GetTeam_Call) Run(run func(teamID string)) *MockClient_GetTeam_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string))
+	})
+	return _c
+}
+
+func (_c *MockClient_GetTeam_Call) Return(team *model.Team, err error) *MockClient_GetTeam_Call {
+	_c.Call.Return(team, err)
+	return _c
+}
+
+func (_c *MockClient_GetTeam_Call) RunAndReturn(run func(teamID string) (*model.Team, error)) *MockClient_GetTeam_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetUser provides a mock function for the type MockClient
 func (_mock *MockClient) GetUser(userID string) (*model.User, error) {
 	ret := _mock.Called(userID)
@@ -1050,6 +1107,62 @@ func (_c *MockClient_HasPermissionToChannel_Call) RunAndReturn(run func(userID s
 	return _c
 }
 
+// KVCompareAndSet provides a mock function for the type MockClient
+func (_mock *MockClient) KVCompareAndSet(key string, oldValue interface{}, newValue interface{}) (bool, error) {
+	ret := _mock.Called(key, oldValue, newValue)
+
+	if len(ret) == 0 {
+		panic("no return value specified for KVCompareAndSet")
+	}
+
+	var r0 bool
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(string, interface{}, interface{}) (bool, error)); ok {
+		return returnFunc(key, oldValue, newValue)
+	}
+	if returnFunc, ok := ret.Get(0).(func(string, interface{}, interface{}) bool); ok {
+		r0 = returnFunc(key, oldValue, newValue)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	if returnFunc, ok := ret.Get(1).(func(string, interface{}, interface{}) error); ok {
+		r1 = returnFunc(key, oldValue, newValue)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClient_KVCompareAndSet_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'KVCompareAndSet'
+type MockClient_KVCompareAndSet_Call struct {
+	*mock.Call
+}
+
+// KVCompareAndSet is a helper method to define mock.On call
+//   - key
+//   - oldValue
+//   - newValue
+func (_e *MockClient_Expecter) KVCompareAndSet(key interface{}, oldValue interface{}, newValue interface{}) *MockClient_KVCompareAndSet_Call {
+	return &MockClient_KVCompareAndSet_Call{Call: _e.mock.On("KVCompareAndSet", key, oldValue, newValue)}
+}
+
+func (_c *MockClient_KVCompareAndSet_Call) Run(run func(key string, oldValue interface{}, newValue interface{})) *MockClient_KVCompareAndSet_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(interface{}), args[2].(interface{}))
+	})
+	return _c
+}
+
+func (_c *MockClient_KVCompareAndSet_Call) Return(b bool, err error) *MockClient_KVCompareAndSet_Call {
+	_c.Call.Return(b, err)
+	return _c
+}
+
+func (_c *MockClient_KVCompareAndSet_Call) RunAndReturn(run func(key string, oldValue interface{}, newValue interface{}) (bool, error)) *MockClient_KVCompareAndSet_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // KVDelete provides a mock function for the type MockClient
 func (_mock *MockClient) KVDelete(key string) error {
 	ret := _mock.Called(key)
@@ -1183,6 +1296,53 @@ func (_c *MockClient_KVSet_Call) Return(err error) *MockClient_KVSet_Call {
 }
 
 func (_c *MockClient_KVSet_Call) RunAndReturn(run func(key string, value interface{}) error) *MockClient_KVSet_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// KVSetWithExpiry provides a mock function for the type MockClient
+func (_mock *MockClient) KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error {
+	ret := _mock.Called(key, value, ttl)
+
+	if len(ret) == 0 {
+		panic("no return value specified for KVSetWithExpiry")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(string, interface{}, time.Duration) error); ok {
+		r0 = returnFunc(key, value, ttl)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockClient_KVSetWithExpiry_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'KVSetWithExpiry'
+type MockClient_KVSetWithExpiry_Call struct {
+	*mock.Call
+}
+
+// KVSetWithExpiry is a helper method to define mock.On call
+//   - key
+//   - value
+//   - ttl
+func (_e *MockClient_Expecter) KVSetWithExpiry(key interface{}, value interface{}, ttl interface{}) *MockClient_KVSetWithExpiry_Call {
+	return &MockClient_KVSetWithExpiry_Call{Call: _e.mock.On("KVSetWithExpiry", key, value, ttl)}
+}
+
+func (_c *MockClient_KVSetWithExpiry_Call) Run(run func(key string, value interface{}, ttl time.Duration)) *MockClient_KVSetWithExpiry_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(interface{}), args[2].(time.Duration))
+	})
+	return _c
+}
+
+func (_c *MockClient_KVSetWithExpiry_Call) Return(err error) *MockClient_KVSetWithExpiry_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockClient_KVSetWithExpiry_Call) RunAndReturn(run func(key string, value interface{}, ttl time.Duration) error) *MockClient_KVSetWithExpiry_Call {
 	_c.Call.Return(run)
 	return _c
 }

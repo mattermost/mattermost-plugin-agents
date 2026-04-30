@@ -4,9 +4,11 @@
 package llm
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBotConfig_IsValid(t *testing.T) {
@@ -313,24 +315,6 @@ func TestIsValidService(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "Valid ASage service with API key",
-			service: ServiceConfig{
-				ID:     "service-5",
-				Type:   ServiceTypeASage,
-				APIKey: "asage-key",
-			},
-			want: true,
-		},
-		{
-			name: "ASage service missing API key",
-			service: ServiceConfig{
-				ID:     "service-5",
-				Type:   ServiceTypeASage,
-				APIKey: "", // bad
-			},
-			want: false,
-		},
-		{
 			name: "Valid Cohere service with API key",
 			service: ServiceConfig{
 				ID:     "service-6",
@@ -395,6 +379,118 @@ func TestIsValidService(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "Valid Scale service with API key and API URL",
+			service: ServiceConfig{
+				ID:     "service-9",
+				Type:   ServiceTypeScale,
+				APIKey: "scale-key",
+				APIURL: "https://sgp-api.scalegov.com/v5",
+			},
+			want: true,
+		},
+		{
+			name: "Valid Scale service with API key, API URL, and OrgID",
+			service: ServiceConfig{
+				ID:     "service-9",
+				Type:   ServiceTypeScale,
+				APIKey: "scale-key",
+				APIURL: "https://sgp-api.scalegov.com/v5",
+				OrgID:  "account-123",
+			},
+			want: true,
+		},
+		{
+			name: "Scale service missing API key",
+			service: ServiceConfig{
+				ID:     "service-9",
+				Type:   ServiceTypeScale,
+				APIKey: "", // bad
+				APIURL: "https://sgp-api.scalegov.com/v5",
+			},
+			want: false,
+		},
+		{
+			name: "Scale service missing API URL",
+			service: ServiceConfig{
+				ID:     "service-9",
+				Type:   ServiceTypeScale,
+				APIKey: "scale-key",
+				APIURL: "", // bad
+			},
+			want: false,
+		},
+		{
+			name: "Valid Gemini service with API key",
+			service: ServiceConfig{
+				ID:     "service-10",
+				Type:   ServiceTypeGemini,
+				APIKey: "gemini-key",
+			},
+			want: true,
+		},
+		{
+			name: "Gemini service missing API key",
+			service: ServiceConfig{
+				ID:     "service-10",
+				Type:   ServiceTypeGemini,
+				APIKey: "", // bad
+			},
+			want: false,
+		},
+		{
+			name: "Valid Vertex service with ADC (no credentials)",
+			service: ServiceConfig{
+				ID:              "service-11",
+				Type:            ServiceTypeVertex,
+				VertexProjectID: "my-project",
+				Region:          "us-central1",
+				// VertexAuthCredentials empty — ADC / IAM role path
+			},
+			want: true,
+		},
+		{
+			name: "Valid Vertex service with service account JSON",
+			service: ServiceConfig{
+				ID:                    "service-11",
+				Type:                  ServiceTypeVertex,
+				VertexProjectID:       "my-project",
+				Region:                "europe-west4",
+				VertexAuthCredentials: `{"type":"service_account"}`,
+			},
+			want: true,
+		},
+		{
+			name: "Vertex service missing project ID",
+			service: ServiceConfig{
+				ID:              "service-11",
+				Type:            ServiceTypeVertex,
+				VertexProjectID: "", // bad
+				Region:          "us-central1",
+			},
+			want: false,
+		},
+		{
+			name: "Vertex service missing region",
+			service: ServiceConfig{
+				ID:              "service-11",
+				Type:            ServiceTypeVertex,
+				VertexProjectID: "my-project",
+				Region:          "", // bad
+			},
+			want: false,
+		},
+		{
+			name: "Vertex service with invalid service account JSON",
+			service: ServiceConfig{
+				ID:                    "service-11",
+				Type:                  ServiceTypeVertex,
+				VertexProjectID:       "my-project",
+				Region:                "us-central1",
+				VertexAuthCredentials: `{not-json`, // bad
+			},
+			want: false,
+		},
+		{
 			name: "Service with empty ID",
 			service: ServiceConfig{
 				ID:     "", // bad
@@ -437,4 +533,12 @@ func TestIsValidService(t *testing.T) {
 			assert.Equalf(t, tt.want, result, "IsValidService() for test case %q", tt.name)
 		})
 	}
+}
+
+func TestServiceConfig_JSONUnmarshal_sendUserID(t *testing.T) {
+	const payload = `{"id":"s1","name":"x","type":"openai","sendUserID":true}`
+	var cfg ServiceConfig
+	err := json.Unmarshal([]byte(payload), &cfg)
+	require.NoError(t, err)
+	assert.True(t, cfg.SendUserID)
 }

@@ -32,6 +32,12 @@ default: all
 # Verify environment, and define PLUGIN_ID, PLUGIN_VERSION, HAS_SERVER and HAS_WEBAPP as needed.
 include build/setup.mk
 
+# The public/ directory contains the bridgeclient Go module for external consumption,
+# not HTTP assets. Override HAS_PUBLIC to prevent bundling these files.
+# TODO: Move bridgeclient to a top-level client/ directory for a cleaner import path.
+HAS_PUBLIC :=
+$(info Note: public/ directory contains Go modules, not HTTP assets - skipping bundle)
+
 BUNDLE_NAME ?= $(PLUGIN_ID)-$(PLUGIN_VERSION).tar.gz
 BUNDLE_NAME_FIPS ?= $(PLUGIN_ID)-$(PLUGIN_VERSION)-fips.tar.gz
 
@@ -405,7 +411,7 @@ deploy: dist
 mcp-server:
 	@echo Building MCP server...
 	mkdir -p mcpserver/bin
-	$(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) $(GO_BUILD_LDFLAGS) -o bin/mattermost-mcp-server ./mcpserver/cmd/main.go
+	$(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) $(GO_BUILD_LDFLAGS) -o mcpserver/bin/mattermost-mcp-server ./mcpserver/cmd/main.go
 
 ## Builds the evalviewer binary.
 .PHONY: evalviewer
@@ -417,12 +423,12 @@ evalviewer:
 ## Environment variables:
 ##   LLM_PROVIDER: openai, anthropic, azure, all, or comma-separated (default: all)
 ##   OPENAI_API_KEY: OpenAI API key
-##   OPENAI_MODEL: Model to use for OpenAI (default: gpt-4o)
+##   OPENAI_MODEL: Model to use for OpenAI (overrides code default)
 ##   ANTHROPIC_API_KEY: Anthropic API key
-##   ANTHROPIC_MODEL: Model to use for Anthropic (default: claude-sonnet-4-20250514)
+##   ANTHROPIC_MODEL: Model to use for Anthropic (overrides code default)
 ##   AZURE_OPENAI_API_KEY: Azure OpenAI API key
 ##   AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
-##   AZURE_OPENAI_MODEL: Model to use for Azure OpenAI (default: gpt-4o)
+##   AZURE_OPENAI_MODEL: Model to use for Azure OpenAI (overrides code default)
 .PHONY: evals
 evals: evalviewer
 	@echo Running evaluations interactively...
@@ -441,6 +447,14 @@ evals-ci: evalviewer
 evals-comment: evalviewer
 	@echo Running evaluations and generating GitHub comment...
 	./bin/evalviewer comment -v ./conversations ./threads ./channels ./react
+
+## Runs MCP server evaluations testing tool output quality and agentic flows.
+## Requires: OPENAI_API_KEY (or other provider keys), Docker for testcontainers.
+## Uses the same LLM_PROVIDER environment variable as the evals target.
+.PHONY: mcp-evals
+mcp-evals:
+	@echo Running MCP server evaluations...
+	GOEVALS=1 $(GO) test -v ./mcpserver/ -run "Eval" -timeout 10m
 
 ## Builds and installs the plugin to a server, updating the webapp automatically when changed.
 .PHONY: watch
@@ -530,7 +544,7 @@ i18n-extract: i18n-extract-webapp i18n-extract-server
 
 .PHONY: i18n-extract-webapp
 i18n-extract-webapp:
-	cd webapp && $(NPM) run i18n-extract -- --out-file src/i18n/en.json --id-interpolation-pattern '[sha512:contenthash:base64:8]' --format simple src/index.tsx src/components/**/*.{ts,tsx}
+	cd webapp && $(NPM) run i18n-extract -- --out-file src/i18n/en.json --id-interpolation-pattern '[sha512:contenthash:base64:8]' --format simple src/index.tsx 'src/components/**/*.{ts,tsx}'
 
 .PHONY: i18n-extract-server
 i18n-extract-server:

@@ -6,6 +6,7 @@ package mmapi
 import (
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -21,6 +22,7 @@ type Client interface {
 	CreatePost(post *model.Post) error
 	UpdatePost(post *model.Post) error
 	DM(senderID, receiverID string, post *model.Post) error
+	GetTeam(teamID string) (*model.Team, error)
 	GetChannel(channelID string) (*model.Channel, error)
 	GetDirectChannel(userID1, userID2 string) (*model.Channel, error)
 	PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast)
@@ -29,6 +31,8 @@ type Client interface {
 	LogWarn(msg string, keyValuePairs ...interface{})
 	KVGet(key string, value interface{}) error
 	KVSet(key string, value interface{}) error
+	KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error
+	KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error)
 	KVDelete(key string) error
 	GetUserByUsername(username string) (*model.User, error)
 	GetUserStatus(userID string) (*model.Status, error)
@@ -65,6 +69,10 @@ func (m *client) GetUser(userID string) (*model.User, error) {
 	return m.pluginAPI.User.Get(userID)
 }
 
+func (m *client) GetTeam(teamID string) (*model.Team, error) {
+	return m.pluginAPI.Team.Get(teamID)
+}
+
 func (m *client) GetChannel(channelID string) (*model.Channel, error) {
 	return m.pluginAPI.Channel.Get(channelID)
 }
@@ -85,9 +93,31 @@ func (m *client) KVGet(key string, value interface{}) error {
 	return m.pluginAPI.KV.Get(key, value)
 }
 
+// IsKVNotFound returns true if the error represents a KV key not found condition.
+// The pluginapi returns ErrNotFound (with message "not found") for 404 status codes,
+// and test mocks use the same error message convention.
+func IsKVNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return err.Error() == "not found"
+}
+
 func (m *client) KVSet(key string, value interface{}) error {
 	_, err := m.pluginAPI.KV.Set(key, value)
 	return err
+}
+
+func (m *client) KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error {
+	_, err := m.pluginAPI.KV.Set(key, value, pluginapi.SetExpiry(ttl))
+	return err
+}
+
+// KVCompareAndSet performs an atomic compare-and-set. If oldValue is nil, the
+// write only succeeds when the key does not currently exist. Returns true when
+// the write was applied, false when the current value differed from oldValue.
+func (m *client) KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error) {
+	return m.pluginAPI.KV.Set(key, newValue, pluginapi.SetAtomic(oldValue))
 }
 
 func (m *client) KVDelete(key string) error {

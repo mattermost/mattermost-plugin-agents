@@ -1,3 +1,5 @@
+//go:build integration
+
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
@@ -15,12 +17,7 @@ import (
 
 // TestClient_CreateClient tests creating a client and verifying its properties
 func TestClient_CreateClient(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	user, session := suite.CreateUserAndSession(t)
@@ -38,12 +35,7 @@ func TestClient_CreateClient(t *testing.T) {
 
 // TestClient_CreateClient_InvalidSession tests session validation in CreateClient
 func TestClient_CreateClient_InvalidSession(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	ctx := context.Background()
@@ -72,12 +64,7 @@ func TestClient_CreateClient_InvalidSession(t *testing.T) {
 
 // TestClient_CallTool_ReadChannel tests the Client.CallTool() method with proper output validation
 func TestClient_CallTool_ReadChannel(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	ctx := context.Background()
@@ -109,12 +96,7 @@ func TestClient_CallTool_ReadChannel(t *testing.T) {
 
 // TestClient_CallTool_SearchUsers tests search_users with output validation
 func TestClient_CallTool_SearchUsers(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	ctx := context.Background()
@@ -141,12 +123,7 @@ func TestClient_CallTool_SearchUsers(t *testing.T) {
 
 // TestClient_CallTool_ReadPost tests read_post with proper output validation
 func TestClient_CallTool_ReadPost(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	ctx := context.Background()
@@ -183,12 +160,7 @@ func TestClient_CallTool_ReadPost(t *testing.T) {
 
 // TestClient_CallTool_InvalidToolName tests error handling for non-existent tools
 func TestClient_CallTool_InvalidToolName(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	ctx := context.Background()
@@ -206,12 +178,7 @@ func TestClient_CallTool_InvalidToolName(t *testing.T) {
 
 // TestClient_CallTool_InvalidArguments tests error handling for invalid arguments
 func TestClient_CallTool_InvalidArguments(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	ctx := context.Background()
@@ -238,12 +205,7 @@ func TestClient_CallTool_InvalidArguments(t *testing.T) {
 
 // TestClient_Reconnection tests the automatic reconnection logic in Client.CallTool()
 func TestClient_Reconnection(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	ctx := context.Background()
@@ -277,12 +239,7 @@ func TestClient_Reconnection(t *testing.T) {
 
 // TestClient_Tools tests that Client.Tools() returns the correct tool list
 func TestClient_Tools(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	user, session := suite.CreateUserAndSession(t)
@@ -322,12 +279,7 @@ func TestClient_Tools(t *testing.T) {
 
 // TestClientManager_GetToolsForUser tests the ClientManager.GetToolsForUser() method
 func TestClientManager_GetToolsForUser(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	suite := SetupEmbeddedTestSuite(t)
-	defer suite.TearDown()
+	suite := GetSharedTestSuite(t)
 	suite.SetupEmbeddedServer()
 
 	user, session := suite.CreateUserAndSession(t)

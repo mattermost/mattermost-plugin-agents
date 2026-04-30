@@ -26,11 +26,18 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
         return null;
     }
 
-    // Determine if this service supports reasoning
+    // Determine if this service supports reasoning.
+    //   - OpenAI direct always uses the Responses API.
+    //   - Anthropic uses extended thinking with a token budget.
+    //   - Gemini / Vertex AI map reasoning to Google's thinkingConfig via Bifrost,
+    //     accepting both a thinking budget and an effort level.
     const isAnthropic = props.service.type === 'anthropic';
-    const isOpenAIWithResponses = ['openai', 'openaicompatible', 'azure'].includes(props.service.type) && props.service.useResponsesAPI;
+    const isOpenAIWithResponses =
+        props.service.type === 'openai' ||
+        (['openaicompatible', 'azure'].includes(props.service.type) && props.service.useResponsesAPI);
+    const isGoogle = props.service.type === 'gemini' || props.service.type === 'vertex';
 
-    if (!isAnthropic && !isOpenAIWithResponses) {
+    if (!isAnthropic && !isOpenAIWithResponses && !isGoogle) {
         return null;
     }
 
@@ -57,14 +64,15 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
         return defaultBudget;
     };
 
+    const headerLabel = isAnthropic ?
+        intl.formatMessage({defaultMessage: 'Extended Thinking'}) :
+        intl.formatMessage({defaultMessage: 'Reasoning'});
+
     return (
         <>
             <ItemLabel>
                 <Horizontal>
-                    {isAnthropic ?
-                        intl.formatMessage({defaultMessage: 'Extended Thinking'}) :
-                        intl.formatMessage({defaultMessage: 'Reasoning'})
-                    }
+                    {headerLabel}
                 </Horizontal>
             </ItemLabel>
             <ReasoningContainer>
@@ -115,6 +123,56 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     </ErrorText>
                                 )}
                             </ConfigField>
+                        )}
+
+                        {isGoogle && (
+                            <>
+                                <ConfigField>
+                                    <FieldLabel>
+                                        {intl.formatMessage({defaultMessage: 'Thinking Budget (tokens, optional)'})}
+                                    </FieldLabel>
+                                    <FieldInput
+                                        type='number'
+                                        min='0'
+                                        max={props.maxTokens}
+                                        value={thinkingBudgetValue}
+                                        onChange={handleThinkingBudgetChange}
+                                        placeholder={intl.formatMessage({defaultMessage: 'Use effort level'})}
+                                    />
+                                    <HelpText>
+                                        {intl.formatMessage({
+                                            defaultMessage: 'Optional token budget for Gemini thinking. When set this takes priority over the effort level and maps to thinkingConfig.thinkingBudget. Leave blank to use the effort level below.',
+                                        })}
+                                    </HelpText>
+                                </ConfigField>
+                                <ConfigField>
+                                    <FieldLabel>
+                                        {intl.formatMessage({defaultMessage: 'Reasoning Effort'})}
+                                    </FieldLabel>
+                                    <FieldSelect
+                                        value={reasoningEffort}
+                                        onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
+                                    >
+                                        <option value='minimal'>
+                                            {intl.formatMessage({defaultMessage: 'Minimal'})}
+                                        </option>
+                                        <option value='low'>
+                                            {intl.formatMessage({defaultMessage: 'Low'})}
+                                        </option>
+                                        <option value='medium'>
+                                            {intl.formatMessage({defaultMessage: 'Medium'})}
+                                        </option>
+                                        <option value='high'>
+                                            {intl.formatMessage({defaultMessage: 'High'})}
+                                        </option>
+                                    </FieldSelect>
+                                    <HelpText>
+                                        {intl.formatMessage({
+                                            defaultMessage: 'Effort level maps to Gemini 3.0+ thinkingLevel and is estimated as a budget for Gemini 2.5 models. Ignored when a thinking budget is set above.',
+                                        })}
+                                    </HelpText>
+                                </ConfigField>
+                            </>
                         )}
 
                         {isOpenAIWithResponses && (
@@ -200,16 +258,21 @@ const FieldInput = styled.input`
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
     box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.075) inset;
     height: 35px;
-    background: white;
+    background: var(--center-channel-bg);
+    color: var(--center-channel-color);
     font-size: 14px;
     font-weight: 400;
     line-height: 20px;
     max-width: 200px;
 
+    &::placeholder {
+        color: rgba(var(--center-channel-color-rgb), 0.48);
+    }
+
     &:focus {
-        border-color: #66afe9;
-        box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075), 0 0 8px rgba(102, 175, 233, 0.75);
-        outline: 0;
+        border-color: var(--button-bg);
+        outline: none;
+        box-shadow: none;
     }
 `;
 
@@ -220,7 +283,8 @@ const FieldSelect = styled.select`
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
     box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.075) inset;
     height: 35px;
-    background: white;
+    background: var(--center-channel-bg);
+    color: var(--center-channel-color);
     font-size: 14px;
     font-weight: 400;
     line-height: 20px;
@@ -228,9 +292,9 @@ const FieldSelect = styled.select`
     cursor: pointer;
 
     &:focus {
-        border-color: #66afe9;
-        box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075), 0 0 8px rgba(102, 175, 233, 0.75);
-        outline: 0;
+        border-color: var(--button-bg);
+        outline: none;
+        box-shadow: none;
     }
 `;
 

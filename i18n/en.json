@@ -28,10 +28,6 @@
     "translation": "Sure, I will summarize this recording: %s/_redirect/pl/%s\n"
   },
   {
-    "id": "agents.summarize_thread",
-    "translation": "Sure, I will summarize this thread: %s/_redirect/pl/%s\n"
-  },
-  {
     "id": "agents.summarize_transcription",
     "translation": "Sure, I will summarize this transcription: %s/_redirect/pl/%s\n"
   }

@@ -50,6 +50,21 @@ func (m *OAuthManager) loadToken(userID, serverID string) (*oauth2.Token, error)
 	return &oauth2Token, nil
 }
 
+// HasStoredToken returns true when a non-expired OAuth token exists for the
+// given user and server. It does not refresh the token or contact upstream.
+func (m *OAuthManager) HasStoredToken(userID, serverID string) (bool, error) {
+	tok, err := m.loadToken(userID, serverID)
+	if err != nil {
+		return false, err
+	}
+	if tok == nil {
+		return false, nil
+	}
+	// Consider a token present even if it might be expired — the caller only
+	// needs to know whether the user has ever authenticated with this server.
+	return true, nil
+}
+
 func (m *OAuthManager) storeToken(userID, serverID string, token *oauth2.Token) error {
 	tokenKey := buildTokenKey(userID, serverID)
 
@@ -66,6 +81,12 @@ func (m *OAuthManager) deleteToken(userID, serverID string) error {
 		return fmt.Errorf("failed to delete token from KV store: %w", err)
 	}
 	return nil
+}
+
+// DeleteUserToken removes the stored OAuth token for a user and server,
+// effectively disconnecting the user from that MCP server.
+func (m *OAuthManager) DeleteUserToken(userID, serverID string) error {
+	return m.deleteToken(userID, serverID)
 }
 
 type ClientCredentials struct {
@@ -119,6 +140,7 @@ type OAuthSession struct {
 	ServerMetadataURL string    `json:"serverMetadataURL"`
 	CodeVerifier      string    `json:"codeVerifier"`
 	State             string    `json:"state"`
+	StaticClientID    string    `json:"staticClientID,omitempty"`
 	CreatedAt         time.Time `json:"createdAt"`
 }
 
@@ -139,14 +161,12 @@ func (m *OAuthManager) loadSession(userID, state string) (*OAuthSession, error) 
 	return &session, nil
 }
 
+const oauthSessionTTL = 10 * time.Minute
+
 func (m *OAuthManager) storeSession(session *OAuthSession) error {
 	sessionKey := buildSessionKey(session.UserID, session.State)
-	sessionData, err := json.Marshal(session)
-	if err != nil {
-		return fmt.Errorf("failed to marshal OAuth session: %w", err)
-	}
 
-	if err := m.pluginAPI.KVSet(sessionKey, sessionData); err != nil {
+	if err := m.pluginAPI.KVSetWithExpiry(sessionKey, session, oauthSessionTTL); err != nil {
 		return fmt.Errorf("failed to store OAuth session: %w", err)
 	}
 

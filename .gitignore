@@ -10,6 +10,9 @@ go.work.sum
 
 .claude/settings.local.json
 
+# Cloud agent instructions (materialized from AGENTS.cloud.md by update script)
+AGENTS.md
+
 # MCP Server file storage
 mcpserver/data/
 
@@ -36,4 +39,16 @@ mcpserver/data/
 
 node_modules/
 
+test-results/
+
 specs/
+
+.cursor/
+
+/.plan
+
+.opencode/
+
+opencode.json
+
+.planning

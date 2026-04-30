@@ -4,24 +4,24 @@
 package bots
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"sync"
 
-	"github.com/mattermost/mattermost-plugin-ai/anthropic"
-	"github.com/mattermost/mattermost-plugin-ai/asage"
-	"github.com/mattermost/mattermost-plugin-ai/bedrock"
-	"github.com/mattermost/mattermost-plugin-ai/config"
-	"github.com/mattermost/mattermost-plugin-ai/enterprise"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/mmapi"
-	"github.com/mattermost/mattermost-plugin-ai/openai"
-	"github.com/mattermost/mattermost-plugin-ai/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/assets"
+	"github.com/mattermost/mattermost-plugin-agents/bifrost"
+	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
-	"github.com/mattermost/mattermost/server/public/shared/mlog"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 type Config interface {
@@ -30,7 +30,15 @@ type Config interface {
 	GetDefaultBotName() string
 	EnableLLMLogging() bool
 	EnableTokenUsageLogging() bool
+	EnableTokenUsageLogToPlugin() bool
+	EnableTokenUsageLogToFile() bool
 	GetTranscriptGenerator() string
+}
+
+// AgentStore provides read access to user-created agents from the database.
+// This is a subset of the full store.AgentStore — only read methods needed here.
+type AgentStore interface {
+	ListAgents() ([]*llm.BotConfig, error)
 }
 
 // Transcriber interface defines the contract for transcription services
@@ -43,38 +51,79 @@ type MMBots struct {
 	pluginAPI              *pluginapi.Client
 	licenseChecker         *enterprise.LicenseChecker
 	config                 Config
+	agentStore             AgentStore
 	llmUpstreamHTTPClient  *http.Client
-	tokenLogger            *mlog.Logger
+	tokenUsageSinks        *llm.TokenUsageSinks
 	metrics                llm.MetricsObserver
 
-	botsLock sync.RWMutex
-	bots     []*Bot
+	tokenSinksMu sync.Mutex
+	botsLock     sync.RWMutex
+	bots         []*Bot
 
-	// lastEnsuredBotCfgs stores the bot configs that were last successfully ensured
-	// This is used for optimistic checking to avoid unnecessary cluster mutex acquisition
+	// lastEnsuredBotCfgs stores the bot configs that were last successfully ensured.
+	// This is used for optimistic checking to avoid unnecessary cluster mutex acquisition.
 	lastEnsuredBotCfgs []llm.BotConfig
+	// lastEnsuredServiceCfgs stores the resolved service configs keyed by service ID
+	// that were last successfully ensured, for optimistic change detection.
+	lastEnsuredServiceCfgs map[string]llm.ServiceConfig
+
+	// forceRefresh bypasses the optimistic config-equality check in EnsureBots.
+	// Set to true by the cluster event handler or API handlers after agent CRUD.
+	forceRefresh bool
 }
 
-func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, llmUpstreamHTTPClient *http.Client, tokenLogger *mlog.Logger, metrics llm.MetricsObserver) *MMBots {
+func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, agentStore AgentStore, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
+	var pluginTokenLogger llm.TokenUsagePluginLogger
+	if pluginAPI != nil {
+		pluginTokenLogger = &pluginAPI.Log
+	}
+
 	return &MMBots{
 		ensureBotsClusterMutex: mutexPluginAPI,
 		pluginAPI:              pluginAPI,
 		licenseChecker:         licenseChecker,
 		config:                 config,
+		agentStore:             agentStore,
 		llmUpstreamHTTPClient:  llmUpstreamHTTPClient,
-		tokenLogger:            tokenLogger,
+		tokenUsageSinks:        llm.NewTokenUsageSinks(pluginTokenLogger),
 		metrics:                metrics,
 	}
 }
 
-// botConfigsEqual compares two bot config slices for equality
-// This is used for optimistic checking to avoid unnecessary cluster mutex acquisition
+// resolveServiceCfgs builds a map of service configs referenced by the given bot configs.
+func (b *MMBots) resolveServiceCfgs(botCfgs []llm.BotConfig) map[string]llm.ServiceConfig {
+	result := make(map[string]llm.ServiceConfig, len(botCfgs))
+	for _, botCfg := range botCfgs {
+		if _, exists := result[botCfg.ServiceID]; exists {
+			continue
+		}
+		if svc, ok := b.config.GetServiceByID(botCfg.ServiceID); ok {
+			result[botCfg.ServiceID] = svc
+		}
+	}
+	return result
+}
+
+// ForceRefreshOnNextEnsure clears the optimistic ensure snapshot and sets forceRefresh so the
+// next EnsureBots() cannot take the fast path. DB-backed agents are not part of the
+// config-file bot slice used for botConfigsEqual, so we must invalidate when agents change.
+func (b *MMBots) ForceRefreshOnNextEnsure() {
+	b.botsLock.Lock()
+	defer b.botsLock.Unlock()
+	b.lastEnsuredBotCfgs = nil
+	b.lastEnsuredServiceCfgs = nil
+	b.forceRefresh = true
+}
+
+// botConfigsEqual compares two bot config slices for equality.
+// Uses reflect.DeepEqual to compare all fields, ensuring changes to any field
+// (e.g., EnabledNativeTools, CustomInstructions, access levels) are detected.
+// Comparison is order-independent, matching configs by ID.
 func botConfigsEqual(a, b []llm.BotConfig) bool {
 	if len(a) != len(b) {
 		return false
 	}
 
-	// Build a map of bot configs by ID for efficient comparison
 	aMap := make(map[string]llm.BotConfig, len(a))
 	for _, cfg := range a {
 		aMap[cfg.ID] = cfg
@@ -85,11 +134,7 @@ func botConfigsEqual(a, b []llm.BotConfig) bool {
 		if !ok {
 			return false
 		}
-		// Compare all fields that affect bot setup
-		if aCfg.Name != cfg.Name ||
-			aCfg.DisplayName != cfg.DisplayName ||
-			aCfg.ServiceID != cfg.ServiceID ||
-			aCfg.Model != cfg.Model {
+		if !reflect.DeepEqual(aCfg, cfg) {
 			return false
 		}
 	}
@@ -97,18 +142,83 @@ func botConfigsEqual(a, b []llm.BotConfig) bool {
 	return true
 }
 
+// serviceConfigsEqual compares two service config maps for equality.
+func serviceConfigsEqual(a, b map[string]llm.ServiceConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for id, aCfg := range a {
+		bCfg, ok := b[id]
+		if !ok {
+			return false
+		}
+		if !reflect.DeepEqual(aCfg, bCfg) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (b *MMBots) reconcileTokenUsageSinks() {
+	if b == nil || b.config == nil || b.tokenUsageSinks == nil {
+		return
+	}
+
+	loggingEnabled := b.config.EnableTokenUsageLogging()
+	pluginEnabled := loggingEnabled && b.config.EnableTokenUsageLogToPlugin()
+	fileEnabled := loggingEnabled && b.config.EnableTokenUsageLogToFile()
+
+	b.tokenSinksMu.Lock()
+	defer b.tokenSinksMu.Unlock()
+
+	b.tokenUsageSinks.SetLoggingEnabled(loggingEnabled)
+	b.tokenUsageSinks.SetPluginEnabled(pluginEnabled)
+	b.tokenUsageSinks.SetFileEnabled(fileEnabled)
+
+	if !fileEnabled {
+		b.tokenUsageSinks.SetFileLogger(nil)
+		return
+	}
+
+	if b.tokenUsageSinks.FileLogger() != nil {
+		return
+	}
+
+	tokenLogger, err := llm.CreateTokenLogger()
+	if err != nil {
+		if b.pluginAPI != nil {
+			b.pluginAPI.Log.Warn("Failed to initialize token usage file logger; continuing without file sink", "error", err)
+		}
+		b.tokenUsageSinks.SetFileLogger(nil)
+		b.tokenUsageSinks.SetFileEnabled(false)
+		return
+	}
+	b.tokenUsageSinks.SetFileLogger(tokenLogger)
+}
+
 func (b *MMBots) EnsureBots() error {
-	// Optimistic check: if bot configuration hasn't changed since last ensure,
+	if b.config == nil {
+		return nil
+	}
+
+	// Optimistic check: if bot and service configuration hasn't changed since last ensure,
 	// skip the expensive cluster mutex acquisition. This prevents HA timeout issues
 	// when multiple nodes all try to acquire the mutex simultaneously on config changes.
+	b.reconcileTokenUsageSinks()
+
 	currentBotCfgs := b.config.GetBots()
+	currentServiceCfgs := b.resolveServiceCfgs(currentBotCfgs)
 	b.botsLock.RLock()
 	botsAlreadyInitialized := len(b.bots) > 0
-	lastCfgs := b.lastEnsuredBotCfgs
+	lastBotCfgs := b.lastEnsuredBotCfgs
+	lastServiceCfgs := b.lastEnsuredServiceCfgs
+	forceRefresh := b.forceRefresh
 	b.botsLock.RUnlock()
 
-	if botsAlreadyInitialized && botConfigsEqual(lastCfgs, currentBotCfgs) {
-		b.pluginAPI.Log.Debug("EnsureBots: skipping - bot configuration unchanged")
+	if botsAlreadyInitialized && !forceRefresh && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
+		b.pluginAPI.Log.Debug("EnsureBots: skipping - bot/service configuration unchanged")
 		return nil
 	}
 
@@ -120,14 +230,19 @@ func (b *MMBots) EnsureBots() error {
 	defer mtx.Unlock()
 
 	// Re-check after acquiring lock - another node may have already handled this
+	b.reconcileTokenUsageSinks()
+
 	currentBotCfgs = b.config.GetBots()
+	currentServiceCfgs = b.resolveServiceCfgs(currentBotCfgs)
 	b.botsLock.RLock()
 	botsAlreadyInitialized = len(b.bots) > 0
-	lastCfgs = b.lastEnsuredBotCfgs
+	lastBotCfgs = b.lastEnsuredBotCfgs
+	lastServiceCfgs = b.lastEnsuredServiceCfgs
+	forceRefresh = b.forceRefresh
 	b.botsLock.RUnlock()
 
-	if botsAlreadyInitialized && botConfigsEqual(lastCfgs, currentBotCfgs) {
-		b.pluginAPI.Log.Debug("EnsureBots: skipping after lock - bot configuration unchanged")
+	if botsAlreadyInitialized && !forceRefresh && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
+		b.pluginAPI.Log.Debug("EnsureBots: skipping after lock - bot/service configuration unchanged")
 		return nil
 	}
 
@@ -141,6 +256,24 @@ func (b *MMBots) EnsureBots() error {
 	if len(botCfgs) > 1 && !b.licenseChecker.IsMultiLLMLicensed() {
 		b.pluginAPI.Log.Error("Only one bot allowed with current license.")
 		botCfgs = botCfgs[:1]
+	}
+
+	// Load DB-backed user agents and merge into the bot config list.
+	// These bypass the license multi-LLM check — they are gated by
+	// PermissionManageOwnAgent at the API layer.
+	activeDBBotUsernames := make(map[string]struct{})
+	if b.agentStore != nil {
+		dbAgents, err := b.agentStore.ListAgents()
+		if err != nil {
+			return fmt.Errorf("failed to list user agents: %w", err)
+		}
+		for _, cfg := range dbAgents {
+			if cfg == nil {
+				continue
+			}
+			activeDBBotUsernames[cfg.Name] = struct{}{}
+			botCfgs = append(botCfgs, *cfg)
+		}
 	}
 
 	var bots []*Bot
@@ -187,6 +320,10 @@ func (b *MMBots) EnsureBots() error {
 	// For each of the bots we found, if it's not in the configuration, delete it.
 	for _, bot := range previousMMBots {
 		if _, ok := aiBotsByUsername[bot.Username]; !ok {
+			if _, dbActive := activeDBBotUsernames[bot.Username]; dbActive {
+				b.pluginAPI.Log.Debug("EnsureBots: skipping deactivation for active DB agent not in ensure set (missing or invalid service)", "bot_name", bot.Username)
+				continue
+			}
 			if _, err := b.pluginAPI.Bot.UpdateActive(bot.UserId, false); err != nil {
 				b.pluginAPI.Log.Error("Failed to delete bot", "bot_name", bot.Username, "error", err.Error())
 				continue
@@ -224,6 +361,9 @@ func (b *MMBots) EnsureBots() error {
 				continue
 			}
 		}
+
+		b.ensureDefaultProfileImage(bot)
+
 		var err error
 		bot.llm, err = b.getLLM(bot.service, bot.cfg)
 		if err != nil {
@@ -233,61 +373,69 @@ func (b *MMBots) EnsureBots() error {
 
 	b.botsLock.Lock()
 	b.bots = bots
-	// Store the successfully ensured bot configs for optimistic checking
-	b.lastEnsuredBotCfgs = make([]llm.BotConfig, len(currentBotCfgs))
-	copy(b.lastEnsuredBotCfgs, currentBotCfgs)
+	// Store deep copies of the successfully ensured configs for optimistic checking.
+	// Deep copy is needed because BotConfig contains slice fields (EnabledNativeTools, etc.)
+	// that would otherwise share backing arrays with the live config. The JSON-based
+	// copy has non-trivial cost for large bot sets, but this path runs only when
+	// optimistic checks above detect bot/service config changes.
+	copiedBotCfgs, copyErr := config.DeepCopyJSON(currentBotCfgs)
+	if copyErr != nil {
+		b.botsLock.Unlock()
+		return fmt.Errorf("failed to deep copy bot configs for change tracking: %w", copyErr)
+	}
+	b.lastEnsuredBotCfgs = copiedBotCfgs
+	b.lastEnsuredServiceCfgs = currentServiceCfgs
+	b.forceRefresh = false
 	b.botsLock.Unlock()
 
 	return nil
 }
 
-func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (llm.LanguageModel, error) {
-	// Create the correct model
-	var result llm.LanguageModel
-	switch serviceConfig.Type {
-	case llm.ServiceTypeOpenAI:
-		result = openai.New(config.OpenAIConfigFromServiceConfig(serviceConfig, botConfig), b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeOpenAICompatible:
-		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfig(serviceConfig, botConfig), b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeAzure:
-		result = openai.NewAzure(config.OpenAIConfigFromServiceConfig(serviceConfig, botConfig), b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeAnthropic:
-		result = anthropic.New(serviceConfig, botConfig, b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeBedrock:
-		var err error
-		result, err = bedrock.New(serviceConfig, b.llmUpstreamHTTPClient)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Bedrock client: %w", err)
-		}
-	case llm.ServiceTypeASage:
-		result = asage.New(serviceConfig, b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeCohere:
-		// Set the Cohere OpenAI compatibility endpoint
-		cohereCfg := serviceConfig
-		cohereCfg.APIURL = "https://api.cohere.ai/compatibility/v1"
-		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfig(cohereCfg, botConfig), b.llmUpstreamHTTPClient)
-	case llm.ServiceTypeMistral:
-		// Set the Mistral OpenAI compatibility endpoint
-		mistralCfg := serviceConfig
-		mistralCfg.APIURL = "https://api.mistral.ai/v1"
-		result = openai.NewCompatible(config.OpenAIConfigFromServiceConfigWithOptions(mistralCfg, botConfig, true, true), b.llmUpstreamHTTPClient)
-	default:
-		b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
-		return nil, fmt.Errorf("unsupported service type: %s", serviceConfig.Type)
+func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
+	user, err := b.pluginAPI.User.Get(bot.mmBot.UserId)
+	if err != nil {
+		b.pluginAPI.Log.Error("Failed to get bot user for profile image check", "bot_name", bot.cfg.Name, "error", err.Error())
+		return
 	}
+
+	if user.LastPictureUpdate != 0 {
+		return
+	}
+
+	if err := b.pluginAPI.User.SetProfileImage(bot.mmBot.UserId, bytes.NewReader(assets.DefaultAgentProfilePicture)); err != nil {
+		b.pluginAPI.Log.Error("Failed to set bot profile image", "bot_name", bot.cfg.Name, "error", err.Error())
+	}
+}
+
+func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig) (llm.LanguageModel, error) {
+	// Create the correct model using Bifrost for all providers
+	var result llm.LanguageModel
+	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig)
+	if err != nil {
+		b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
+		return nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
+	}
+
+	result = bifrostLLM
 
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)
 
 	// Token Usage Logging
-	if b.tokenLogger != nil && b.config.EnableTokenUsageLogging() {
+	// NOTE: This wrapper converts ChatCompletionNoStream into a streaming call
+	// internally, so any wrapper that needs to intercept ChatCompletionNoStream
+	// must be placed outside (after) this one.
+	if b.tokenUsageSinks != nil || b.metrics != nil {
 		result = llm.NewTokenUsageLoggingWrapper(
 			result,
 			botConfig.Name,
-			b.tokenLogger,
+			b.tokenUsageSinks,
 			b.metrics,
 		)
 	}
+
+	// Structured output fallback
+	result = llm.NewStructuredOutputFallbackWrapper(result, botConfig.StructuredOutputEnabled)
 
 	// Logging
 	if b.config.EnableLLMLogging() {
@@ -307,19 +455,39 @@ func (b *MMBots) GetTranscribe() Transcriber {
 	}
 
 	service := bot.service
+
+	// Map service type to Bifrost provider
+	var provider schemas.ModelProvider
 	switch service.Type {
 	case llm.ServiceTypeOpenAI:
-		return openai.New(config.OpenAIConfigFromServiceConfig(service, bot.cfg), b.llmUpstreamHTTPClient)
+		provider = schemas.OpenAI
 	case llm.ServiceTypeOpenAICompatible:
-		return openai.NewCompatible(config.OpenAIConfigFromServiceConfig(service, bot.cfg), b.llmUpstreamHTTPClient)
+		provider = schemas.OpenAI
 	case llm.ServiceTypeAzure:
-		return openai.NewAzure(config.OpenAIConfigFromServiceConfig(service, bot.cfg), b.llmUpstreamHTTPClient)
+		provider = schemas.Azure
 	default:
 		b.pluginAPI.Log.Error("Unsupported service type for transcript generator",
 			"bot_name", bot.GetMMBot().Username,
 			"service_type", service.Type)
 		return nil
 	}
+
+	transcriptModel := "whisper-1"
+
+	transcriber, err := bifrost.NewTranscriber(bifrost.TranscriptionConfig{
+		Provider: provider,
+		APIKey:   service.APIKey,
+		APIURL:   service.APIURL,
+		Model:    transcriptModel,
+	})
+	if err != nil {
+		b.pluginAPI.Log.Error("Failed to create Bifrost transcriber",
+			"bot_name", bot.GetMMBot().Username,
+			"error", err.Error())
+		return nil
+	}
+
+	return transcriber
 }
 
 func (b *MMBots) getTrasncriberBot() *Bot {
@@ -439,4 +607,18 @@ func (b *MMBots) SetBotsForTesting(bots []*Bot) {
 	b.botsLock.Lock()
 	defer b.botsLock.Unlock()
 	b.bots = bots
+}
+
+// GetAllBotUserIDs returns a list of all bot user IDs
+func (b *MMBots) GetAllBotUserIDs() []string {
+	b.botsLock.RLock()
+	defer b.botsLock.RUnlock()
+
+	ids := make([]string, 0, len(b.bots))
+	for _, bot := range b.bots {
+		if bot.mmBot != nil {
+			ids = append(ids, bot.mmBot.UserId)
+		}
+	}
+	return ids
 }

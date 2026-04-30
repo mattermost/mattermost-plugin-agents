@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -50,7 +50,8 @@ func (r *React) Resolve(message string, context *llm.Context) (string, error) {
 				Message: message,
 			},
 		},
-		Context: context,
+		Context:   context,
+		Operation: llm.OperationEmojiSelection,
 	}
 
 	// Get emoji from LLM

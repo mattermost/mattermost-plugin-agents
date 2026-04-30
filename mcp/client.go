@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/config"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -20,7 +22,19 @@ const (
 	MMUserIDHeader     = "X-Mattermost-UserID"
 	EmbeddedServerName = "Mattermost"
 	EmbeddedClientKey  = "embedded://mattermost"
+
+	ToolPolicyAsk               = config.MCPToolPolicyAsk
+	ToolPolicyAutoRunInDM       = config.MCPToolPolicyAutoRunInDM
+	ToolPolicyAutoRunEverywhere = config.MCPToolPolicyAutoRunEverywhere
 )
+
+func IsToolPolicyAutoRunInDM(policy string) bool {
+	return config.IsToolPolicyAutoRunInDM(policy)
+}
+
+func IsToolPolicyAutoRunEverywhere(policy string) bool {
+	return config.IsToolPolicyAutoRunEverywhere(policy)
+}
 
 // EmbeddedMCPServer interface for dependency injection
 type EmbeddedMCPServer interface {
@@ -47,12 +61,54 @@ type Client struct {
 	sessionID      string                // session ID for embedded server reconnection
 }
 
-// ServerConfig contains the configuration for a single MCP server
-type ServerConfig struct {
-	Name    string            `json:"name"`
-	Enabled bool              `json:"enabled"`
-	BaseURL string            `json:"baseURL"`
-	Headers map[string]string `json:"headers,omitempty"`
+// staticOAuthCreds returns static OAuth credentials from a server config, or nil if not configured.
+func staticOAuthCreds(s ServerConfig) *StaticOAuthCredentials {
+	if s.ClientID == "" {
+		return nil
+	}
+	return &StaticOAuthCredentials{
+		ClientID:     s.ClientID,
+		ClientSecret: s.ClientSecret,
+	}
+}
+
+func shouldUseSharedToolsCache(serverConfig ServerConfig) bool {
+	return staticOAuthCreds(serverConfig) == nil
+}
+
+func invalidateSharedToolsCacheForOAuthDiscovery(toolsCache *ToolsCache, log Logger, userID, serverID string, serverConfig ServerConfig, hasStoredToken bool) {
+	if toolsCache == nil || hasStoredToken {
+		return
+	}
+
+	if err := toolsCache.InvalidateServer(serverID); err != nil {
+		log.Warn("Failed to invalidate shared tools cache for OAuth-backed MCP server",
+			"serverID", serverID,
+			"server", serverConfig.Name,
+			"userID", userID,
+			"error", err)
+	}
+}
+
+// maybeInvalidateSharedToolsBeforeOAuthListTools drops any shared-cache tool list for this
+// server when the MCP server uses OAuth and the user has not completed OAuth yet. That avoids
+// ListTools reusing tools discovered before authentication (shared cache is only for non-OAuth servers).
+func maybeInvalidateSharedToolsBeforeOAuthListTools(userID string, serverConfig ServerConfig, log pluginapi.LogService, toolsCache *ToolsCache, oauthManager *OAuthManager) {
+	if shouldUseSharedToolsCache(serverConfig) || toolsCache == nil || oauthManager == nil {
+		return
+	}
+
+	serverID := serverConfig.Name
+	hasStoredToken, tokenErr := oauthManager.HasStoredToken(userID, serverID)
+	if tokenErr != nil {
+		log.Warn("Failed to check stored OAuth token before MCP tool discovery",
+			"serverID", serverID,
+			"server", serverConfig.Name,
+			"userID", userID,
+			"error", tokenErr)
+		return
+	}
+	invalidateSharedToolsCacheForOAuthDiscovery(toolsCache, &log, userID, serverID, serverConfig, hasStoredToken)
 }
 
 func NewEmbeddedServerClient(server EmbeddedMCPServer, log pluginapi.LogService, pluginAPI *pluginapi.Client) *EmbeddedServerClient {
@@ -101,7 +157,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 	// Create client instance
 	client := &Client{
 		session:        mcpSession,
-		config:         ServerConfig{Name: EmbeddedClientKey},
+		config:         ServerConfig{Name: EmbeddedClientKey, BaseURL: EmbeddedClientKey, Enabled: true},
 		tools:          make(map[string]*mcp.Tool),
 		userID:         userID,
 		log:            c.log,
@@ -156,9 +212,12 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 		return nil, fmt.Errorf("failed to create MCP session for server %s: %w", serverConfig.Name, err)
 	}
 
-	// Try to get tools from global cache first
+	useSharedToolsCache := shouldUseSharedToolsCache(serverConfig)
+	maybeInvalidateSharedToolsBeforeOAuthListTools(userID, serverConfig, log, toolsCache, oauthManager)
 	serverID := serverConfig.Name
-	if toolsCache != nil {
+
+	// Try to get tools from global cache first.
+	if toolsCache != nil && useSharedToolsCache {
 		cachedTools := toolsCache.GetTools(serverID)
 		if len(cachedTools) > 0 {
 			// Cache hit - use cached tools
@@ -176,6 +235,9 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 	initResult, err := session.ListTools(ctx, &mcp.ListToolsParams{})
 	if err != nil {
 		session.Close()
+		if oauthErr := c.oauthNeededError(err); oauthErr != nil {
+			return nil, oauthErr
+		}
 		return nil, fmt.Errorf("failed to list tools: %w", err)
 	}
 
@@ -194,8 +256,8 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 			"server", serverConfig.Name)
 	}
 
-	// Update the global cache with fetched tools
-	if toolsCache != nil {
+	// Update the global cache with fetched tools.
+	if toolsCache != nil && useSharedToolsCache {
 		if err := toolsCache.SetTools(serverID, serverConfig.Name, serverConfig.BaseURL, c.tools, time.Now()); err != nil {
 			log.Warn("Failed to update tools cache", "server", serverConfig.Name, "error", err)
 		}
@@ -214,8 +276,9 @@ func extractOAuthMetadataURL(err error) (string, bool) {
 	}
 
 	errMsg := err.Error()
-	// Match the pattern from mcpUnauthrorized.Error():
+	// Match the pattern from mcpUnauthorized.Error():
 	// "OAuth authentication needed for resource at <URL>"
+	// "OAuth authentication needed for resource at <URL>: Got error: <err>"
 	const prefix = "OAuth authentication needed for resource at "
 
 	idx := strings.Index(errMsg, prefix)
@@ -227,14 +290,43 @@ func extractOAuthMetadataURL(err error) (string, bool) {
 	urlStart := idx + len(prefix)
 	remaining := errMsg[urlStart:]
 
-	// Find the end of the URL (either end of string, or before ": Got error:")
+	// Find the end of the URL. The delimiter is ": Got error:" which separates
+	// the URL from the wrapped error. We cannot split on bare ":" because URLs
+	// contain colons (e.g. "https://").
 	urlEnd := len(remaining)
-	if colonIdx := strings.Index(remaining, ":"); colonIdx != -1 {
-		urlEnd = colonIdx
+	const errorSuffix = ": Got error:"
+	if suffixIdx := strings.Index(remaining, errorSuffix); suffixIdx != -1 {
+		urlEnd = suffixIdx
 	}
 
 	metadataURL := strings.TrimSpace(remaining[:urlEnd])
 	return metadataURL, metadataURL != ""
+}
+
+func (c *Client) oauthNeededError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var mcpAuthErr *mcpUnauthorized
+	if errors.As(err, &mcpAuthErr) {
+		md := mcpAuthErr.MetadataURL()
+		return &OAuthNeededError{
+			authURL:     c.oauthNeededRedirectURL(md),
+			metadataURL: md,
+		}
+	}
+
+	// Temporary workaround: check for OAuth error by string matching since go-sdk
+	// does not preserve error chains with %w.
+	if md, ok := extractOAuthMetadataURL(err); ok {
+		return &OAuthNeededError{
+			authURL:     c.oauthNeededRedirectURL(md),
+			metadataURL: md,
+		}
+	}
+
+	return nil
 }
 
 func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (*mcp.ClientSession, error) {
@@ -267,28 +359,9 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 		return session, nil
 	}
 
-	// Check for OAuth error from Streamable HTTP attempt
-	var mcpAuthErr *mcpUnauthorized
-	if errors.As(errStreamable, &mcpAuthErr) {
-		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, mcpAuthErr.MetadataURL())
-		if oauthErr != nil {
-			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
-		}
-		return nil, &OAuthNeededError{
-			authURL: authURL,
-		}
-	}
-
-	// Temporary workaround: check for OAuth error by string matching since go-sdk does not preserve error chains with %w
-	// remove when go-sdk is updated to support oauth directly.
-	if metadataURL, ok := extractOAuthMetadataURL(errStreamable); ok {
-		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, metadataURL)
-		if oauthErr != nil {
-			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
-		}
-		return nil, &OAuthNeededError{
-			authURL: authURL,
-		}
+	// Check for OAuth error from Streamable HTTP attempt.
+	if oauthErr := c.oauthNeededError(errStreamable); oauthErr != nil {
+		return nil, oauthErr
 	}
 
 	// Fallback to old HTTP+SSE transport for backwards compatibility (2024-11-05 spec)
@@ -301,31 +374,39 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 		return session, nil
 	}
 
-	// Check for OAuth error from SSE attempt
-	if errors.As(errSSE, &mcpAuthErr) {
-		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, mcpAuthErr.MetadataURL())
-		if oauthErr != nil {
-			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
-		}
-		return nil, &OAuthNeededError{
-			authURL: authURL,
-		}
-	}
-
-	// Temporary workaround: check for OAuth error by string matching since go-sdk does not preserve error chains with %w
-	// remove when go-sdk is updated to support oauth directly.
-	if metadataURL, ok := extractOAuthMetadataURL(errSSE); ok {
-		authURL, oauthErr := c.oauthManager.InitiateOAuthFlow(ctx, c.userID, c.config.Name, serverConfig.BaseURL, metadataURL)
-		if oauthErr != nil {
-			return nil, fmt.Errorf("failed to initiate OAuth flow for server %s: %w", c.config.Name, oauthErr)
-		}
-		return nil, &OAuthNeededError{
-			authURL: authURL,
-		}
+	// Check for OAuth error from SSE attempt.
+	if oauthErr := c.oauthNeededError(errSSE); oauthErr != nil {
+		return nil, oauthErr
 	}
 
 	// If we reach here, all connection attempts failed
 	return nil, fmt.Errorf("failed to connect to MCP server %s, Streamable HTTP: %w, SSE: %w", c.config.Name, errStreamable, errSSE)
+}
+
+func (c *Client) oauthStartURL() string {
+	if c.oauthManager == nil {
+		return ""
+	}
+
+	return c.oauthManager.StartURL(c.config.Name)
+}
+
+// oauthNeededRedirectURL returns the plugin MCP OAuth start URL, optionally
+// appending resource_metadata so InitiateOAuthFlow can use the same discovery
+// path as the failed MCP handshake (RFC 9728).
+func (c *Client) oauthNeededRedirectURL(metadataURL string) string {
+	base := c.oauthStartURL()
+	if metadataURL == "" || base == "" {
+		return base
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	q := u.Query()
+	q.Set("resource_metadata", metadataURL)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // Close closes the connection to the MCP server
@@ -398,16 +479,28 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 			return "", fmt.Errorf("failed to call tool %s on server %s: %w", toolName, c.config.Name, err)
 		}
 	}
-
 	// Extract text content from the result
+	text := ""
 	if len(result.Content) > 0 {
-		text := ""
 		for _, content := range result.Content {
 			// Use type assertion to extract text content
 			if textContent, ok := content.(*mcp.TextContent); ok {
 				text += textContent.Text + "\n"
 			}
 		}
+	}
+
+	// MCP tools can return IsError=true without transport-level errors.
+	// Surface this as a resolver error so tool-call status is set correctly.
+	if result.IsError {
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "" {
+			return "", fmt.Errorf("tool %s on server %s returned an error", toolName, c.config.Name)
+		}
+		return trimmed, errors.New(trimmed)
+	}
+
+	if text != "" {
 		return text, nil
 	}
 

@@ -12,7 +12,10 @@ The Mattermost Agents plugin currently supports these LLM providers:
 - AWS Bedrock
 - Cohere
 - Mistral
+- Scale AI
 - Azure OpenAI
+- Google Gemini
+- Google Vertex AI
 
 ## General Configuration Concepts
 
@@ -39,16 +42,19 @@ The OpenAI Compatible option allows integration with any OpenAI-compatible LLM p
 | **Default Model** | Yes | The model to use by default |
 | **Organization ID** | No | Organization ID if your service supports it |
 | **Send User ID** | No | Whether to send user IDs to the service |
+| **Use Responses API** | No | Defaults to enabled. Uses the OpenAI Responses API when supported. Turn off for legacy Chat Completions compatibility with endpoints that do not implement the Responses API. |
 
 ### Special Considerations
 
-Ensure your self-hosted solution has sufficient compute resources and test for compatibility with the Mattermost plugin. Some advanced features may not be available with all compatible providers, so adjust token limits based on your deployment's capabilities.
+Ensure your self-hosted solution has sufficient compute resources and test for compatibility with the Mattermost plugin. Some advanced features may not be available with all compatible providers, so adjust token limits based on your deployment's capabilities. If you need OpenAI-compatible behavior without the Responses API, use **OpenAI Compatible** with **Use Responses API** disabled instead of the **OpenAI** service type.
 
 ## OpenAI
 
 ### Authentication
 
 Obtain an [OpenAI API key](https://platform.openai.com/account/api-keys), then select **OpenAI** in the **Service** dropdown and enter your API key. Specify a model name in the **Default Model** field that corresponds with the model's label in the API. If your API key belongs to an OpenAI organization, you can optionally specify your **Organization ID**.
+
+Direct **OpenAI** services always use the OpenAI **Responses** API. There is no System Console setting to disable the Responses API for this service type.
 
 ### Configuration Options
 
@@ -74,166 +80,22 @@ Obtain an [Anthropic API key](https://console.anthropic.com/settings/keys), then
 
 ## AWS Bedrock
 
-### Overview
-
-AWS Bedrock provides access to multiple foundation models through a unified API, including models from Anthropic (Claude), Amazon (Titan), and other providers. Bedrock is ideal for organizations already using AWS infrastructure or those requiring sovereign AI deployments.
-
-### Prerequisites
-
-Before configuring Bedrock:
-
-1. Ensure you have an active AWS account with access to Amazon Bedrock
-2. Enable model access in the AWS Bedrock console for the models you want to use
-3. Have appropriate IAM permissions for `bedrock:Converse` and `bedrock:ConverseStream`
-4. Know which AWS region you'll be using (model availability varies by region)
+AWS Bedrock provides access to foundation models from Anthropic (Claude), Amazon (Nova, Titan), and other providers via a unified API. For full setup instructions — including IAM policy configuration and Anthropic-specific Claude requirements — see the [AWS Bedrock Setup Guide](aws_bedrock_setup.md).
 
 ### Authentication
 
-AWS Bedrock supports multiple authentication methods:
-
-#### Option 1: IAM Roles (Recommended for AWS deployments)
-
-If your Mattermost server runs on AWS infrastructure (EC2, ECS, EKS), you can use IAM roles:
-
-1. Create an IAM role with Bedrock permissions
-2. Attach the role to your Mattermost infrastructure
-3. In Mattermost, select **AWS Bedrock** in the **Service** dropdown
-4. Enter your AWS region (e.g., `us-east-1`) in the **AWS Region** field
-5. Leave the **API Key** field blank - AWS SDK will use the IAM role automatically
-
-#### Option 2: Bedrock Console API Keys (Short-term)
-
-For quick testing and development (valid for 12 hours):
-
-1. Go to Amazon Bedrock console in your desired region
-2. Click on your profile → **Generate API Key**
-3. Copy the generated API key (format: `bedrock-api-key-...`)
-4. In Mattermost, select **AWS Bedrock** in the **Service** dropdown
-5. Enter your AWS region (e.g., `us-west-2`) in the **AWS Region** field
-6. Paste the Bedrock API key directly in the **API Key** field
-
-**Note**: Short-term API keys expire after 12 hours or when your console session ends. For production use, consider IAM user credentials or IAM roles.
-
-#### Option 3: AWS IAM User Access Keys
-
-For long-term production use with IAM user credentials, there are two ways to configure them:
-
-**Method A: Using dedicated IAM credential fields (Recommended)**
-
-1. Create an IAM user with programmatic access and Bedrock permissions (see IAM Policy Example below)
-2. Generate AWS access keys for the IAM user
-3. In Mattermost, select **AWS Bedrock** in the **Service** dropdown
-4. Enter your AWS region (e.g., `us-west-2`) in the **AWS Region** field
-5. Enter your AWS Access Key ID in the **AWS Access Key ID** field
-6. Enter your AWS Secret Access Key in the **AWS Secret Access Key** field
-7. Leave the **API Key** field blank
-
-**Method B: Using the API Key field (Legacy format)**
-
-1. Create an IAM user with programmatic access and Bedrock permissions
-2. Generate AWS access keys for the IAM user
-3. In Mattermost, select **AWS Bedrock** in the **Service** dropdown
-4. Enter your AWS region (e.g., `us-west-2`) in the **AWS Region** field
-5. Enter your IAM user credentials in the **API Key** field using the format: `access_key_id:secret_access_key`
-
-**Note**: If both IAM credential fields and the API Key are provided, the IAM credential fields take precedence.
-
-#### Option 4: Environment Variables
-
-You can also configure AWS credentials through environment variables on your Mattermost server:
-
-```bash
-export AWS_ACCESS_KEY_ID=your_access_key
-export AWS_SECRET_ACCESS_KEY=your_secret_key
-export AWS_REGION=us-east-1
-```
-
-Then in Mattermost:
-- Enter the region in the **AWS Region** field
-- Leave the **AWS Access Key ID**, **AWS Secret Access Key**, and **API Key** fields blank
-
-**Note**: Environment variables have the lowest precedence. Credentials configured in the System Console (IAM fields or API Key) will take precedence over environment variables.
+The plugin uses the [AWS SDK default credential chain](https://docs.aws.amazon.com/sdkref/latest/guide/standardized-credentials.html). For Mattermost servers running on EC2, attach an IAM instance profile to your instance and leave all credential fields blank — the SDK discovers credentials automatically. For non-EC2 deployments, enter an `AWS Access Key ID` and `AWS Secret Access Key`, or a short-term Bedrock console API key.
 
 ### Configuration Options
 
 | Setting | Required | Description |
 |---------|----------|-------------|
 | **AWS Region** | Yes | AWS region where Bedrock is available (e.g., `us-east-1`, `us-west-2`, `eu-central-1`) |
-| **Custom Endpoint URL** | No | Optional custom endpoint for VPC endpoints or proxies (e.g., `https://bedrock-runtime.vpce-xxx.us-east-1.vpce.amazonaws.com`). Leave blank for standard AWS endpoints. |
-| **AWS Access Key ID** | No | IAM user access key ID for long-term credentials. Takes precedence over API Key if both are set. Can also be set via `AWS_ACCESS_KEY_ID` environment variable. |
-| **AWS Secret Access Key** | No | IAM user secret access key. Required if AWS Access Key ID is provided. Can also be set via `AWS_SECRET_ACCESS_KEY` environment variable. |
-| **API Key** | No | Bedrock console API key (base64 encoded, format: `ABSKQm...`). If IAM credentials above are set, they take precedence. Can also use environment variables or IAM roles. |
-| **Default Model** | Yes | The Bedrock model ID to use (e.g., `anthropic.claude-3-5-sonnet-20241022-v2:0`). See the [AWS Bedrock model IDs documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list of available models and their IDs. Model availability varies by AWS region. |
-
-### IAM Policy Example
-
-Here's a minimal IAM policy for Bedrock access using the Converse API:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "bedrock:Converse",
-        "bedrock:ConverseStream"
-      ],
-      "Resource": "arn:aws:bedrock:*::foundation-model/*"
-    }
-  ]
-}
-```
-
-For more restrictive access, limit the resource to specific models:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "bedrock:Converse",
-        "bedrock:ConverseStream"
-      ],
-      "Resource": "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-sonnet-*"
-    }
-  ]
-}
-```
-
-### Regional Considerations
-
-- **Model Availability**: Not all models are available in all regions. Check AWS documentation for current availability
-- **Latency**: Choose a region close to your Mattermost deployment for optimal performance
-- **Data Residency**: Select regions that meet your data sovereignty requirements
-- **Cost**: Pricing may vary by region
-
-### Supported Features
-
-AWS Bedrock through Mattermost Agents supports:
-
-- Streaming responses for real-time interaction
-- Tool/function calling for integrations
-- Multi-modal capabilities (text and images) with compatible models
-- Token usage tracking for cost management
-- Custom endpoint URLs for VPC endpoints and proxy configurations
-- Bearer token authentication for Bedrock console API keys
-
-### Special Considerations
-
-- **Authentication Priority**: The authentication method is selected in this order:
-  1. IAM credentials (AWS Access Key ID + Secret Access Key fields in System Console)
-  2. Bearer token (API Key field with base64 encoded Bedrock console key)
-  3. Default credential chain (environment variables, IAM roles, etc.)
-- **Model Enablement**: You must explicitly enable models in the AWS Bedrock console before using them
-- **Quotas**: Be aware of AWS Bedrock service quotas and request increases if needed
-- **Cold Starts**: First requests to a model may experience slightly higher latency
-- **Cost Management**: Monitor usage through AWS Cost Explorer and consider setting up billing alerts
-- **API Key Expiration**: Bedrock console API keys (base64 encoded) expire after 12 hours or when your console session ends. For production use, configure IAM user credentials (dedicated fields or API Key field format) or IAM roles for persistent authentication
-- **VPC Endpoints**: If using AWS PrivateLink VPC endpoints, configure the VPC endpoint URL in the Custom Endpoint URL field
-- **Proxy Support**: For proxy configurations, either configure the proxy at the Mattermost server level (environment variables) or use the Custom Endpoint URL field to point to a proxy endpoint
+| **Custom Endpoint URL** | No | Optional custom endpoint for VPC endpoints or proxies. Leave blank for standard AWS endpoints. |
+| **AWS Access Key ID** | No | IAM user access key ID for long-term credentials. Takes precedence over API Key if both are set. |
+| **AWS Secret Access Key** | No | IAM user secret access key. Required if AWS Access Key ID is provided. |
+| **API Key** | No | Bedrock console API key (base64 encoded, format: `ABSKQm...`). If IAM credentials above are set, they take precedence. |
+| **Default Model** | Yes | The Bedrock model ID to use (e.g., `us.anthropic.claude-sonnet-4-6`). See the [AWS Bedrock model IDs documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the full list of available models and their IDs. Model availability varies by AWS region. |
 
 ## Cohere
 
@@ -261,6 +123,29 @@ Obtain a [Mistral API key](https://console.mistral.ai/api-keys/), then select **
 | **API Key** | Yes | Your Mistral API key |
 | **Default Model** | Yes | The model to use by default (see [Mistral's model documentation](https://docs.mistral.ai/getting-started/models/)) |
 
+## Scale AI
+
+### Overview
+
+Scale AI (including ScaleGov) provides access to LLM models through an OpenAI-compatible API with custom authentication. Scale uses `x-api-key` and `x-selected-account-id` headers for authentication instead of the standard Authorization header.
+
+### Authentication
+
+Obtain your Scale AI API key and account ID from your Scale AI or ScaleGov dashboard, then select **Scale AI** in the **Service** dropdown. Enter your API key and the API URL for your Scale endpoint (e.g., `https://sgp-api.scalegov.com/v5`). If using ScaleGov, enter your account ID in the **Account ID** field.
+
+### Configuration Options
+
+| Setting | Required | Description |
+|---------|----------|-------------|
+| **API Key** | Yes | Your Scale AI API key (sent as `x-api-key` header) |
+| **API URL** | Yes | Your Scale API endpoint (e.g., `https://sgp-api.scalegov.com/v5`) |
+| **Account ID** | No | Your Scale account ID (sent as `x-selected-account-id` header, required for ScaleGov) |
+| **Default Model** | Yes | The model to use by default in `vendor/model-name` format (e.g., `openai/gpt-4o`) |
+
+### Models
+
+Models use the `vendor/model-name` format (e.g., `openai/gpt-4o`). For the full list of available models, see the [Scale AI documentation](https://scale.com/docs).
+
 ## Azure OpenAI
 
 ### Authentication
@@ -274,7 +159,7 @@ For more details about integrating with Microsoft Azure's OpenAI services, see t
 5. Select **Deploy model** then **Deploy base model**
 6. Select your desired model and select **Confirm**
 7. Select **Deploy** to start your model
-8. In Mattermost, select **OpenAI Compatible** in the **Service** dropdown
+8. In Mattermost, select **Azure** in the **Service** dropdown
 9. In the **Endpoint** panel for your new model deployment, copy the base URI of the **Target URI** (everything up to and including `.com`) and paste it in the **API URL** field in Mattermost
 10. In the **Endpoint** panel for your new model deployment, copy the **Key** and paste it in the **API Key** field in Mattermost
 11. In the **Deployment** panel for your new model deployment, copy the **Model name** and paste it in the **Default Model** field in Mattermost
@@ -287,3 +172,67 @@ For more details about integrating with Microsoft Azure's OpenAI services, see t
 | **API URL** | Yes | Your Azure OpenAI endpoint |
 | **Default Model** | Yes | The model to use by default (see [Azure OpenAI's model documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models)) |
 | **Send User ID** | No | Whether to send user IDs to Azure OpenAI |
+| **Use Responses API** | No | Defaults to enabled. Uses the OpenAI Responses API when your Azure deployment supports it. Turn off for legacy Chat Completions compatibility if your endpoint or deployment does not support the Responses API. |
+
+## Google Gemini
+
+Google Gemini uses the Generative Language API (AI Studio), which authenticates with a single API key. If you need enterprise GCP authentication, project/region scoping, or VPC-SC, use **Google Vertex AI** instead.
+
+### Authentication
+
+Obtain a [Gemini API key](https://aistudio.google.com/apikey), then select **Google Gemini** in the **Service** dropdown and enter your API key. Specify a model name in the **Default Model** field (e.g., `gemini-2.5-pro`, `gemini-2.0-flash`).
+
+### Configuration Options
+
+| Setting | Required | Description |
+|---------|----------|-------------|
+| **API Key** | Yes | Your Gemini API key from AI Studio |
+| **Default Model** | Yes | The model to use by default (see [Gemini model documentation](https://ai.google.dev/gemini-api/docs/models)) |
+
+### Reasoning and native web search
+
+Gemini supports provider-native capabilities through Bifrost:
+
+- **Reasoning / thinking** — enable **Reasoning** on the agent. Bifrost maps the
+  **Thinking Budget** to `thinkingConfig.thinkingBudget`, and the **Reasoning
+  Effort** selector to `thinkingConfig.thinkingLevel` on Gemini 3.0+ (or an
+  estimated budget on Gemini 2.5). If both are provided, the explicit thinking
+  budget wins.
+- **Native web search** — enable **Web Search** under **Native Google Tools**.
+  This is routed through Bifrost's Responses API and grounded with Google
+  Search, so Gemini can answer with up-to-date information and citations.
+
+## Google Vertex AI
+
+Vertex AI provides access to Gemini and other Google models through Google Cloud's enterprise AI platform, with project-scoped billing, regional deployment, and IAM-based access control.
+
+### Authentication
+
+The plugin supports two authentication modes:
+
+- **Application Default Credentials (ADC)** — recommended when the plugin runs on GCP (GKE, GCE) with an attached service account, or when `GOOGLE_APPLICATION_CREDENTIALS` points at a service account key file on the server. Leave the **Service Account JSON** field blank.
+- **Service Account JSON** — paste the full contents of a service account key JSON into the **Service Account JSON** field. The account needs the `roles/aiplatform.user` role (or a role with the `aiplatform.endpoints.predict` permission) in your project.
+
+### Configuration Options
+
+| Setting | Required | Description |
+|---------|----------|-------------|
+| **GCP Project ID** | Yes | Your Google Cloud project ID (e.g., `my-project-123`) |
+| **GCP Project Number** | No | Numeric project number — required by some Vertex endpoints, leave blank otherwise |
+| **GCP Region** | Yes | Vertex AI region (e.g., `us-central1`, `europe-west4`) |
+| **Service Account JSON** | No | Full service account JSON. Leave blank to use ADC or an attached IAM role. |
+| **Default Model** | Yes | The Vertex model ID to use (see [Vertex AI model documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models)) |
+
+### Reasoning and native web search
+
+For Gemini models running on Vertex AI, Bifrost exposes the same reasoning and
+native web-search capabilities as direct Gemini:
+
+- **Reasoning / thinking** — enable **Reasoning** on the agent. The optional
+  **Thinking Budget** maps to `thinkingConfig.thinkingBudget`, and the
+  **Reasoning Effort** selector maps to `thinkingConfig.thinkingLevel` (3.0+).
+- **Native web search** — enable **Web Search** under **Native Google Tools**
+  to ground responses with Google Search via the Vertex Responses API.
+
+Anthropic models served through Vertex AI continue to use Anthropic-style
+extended thinking.

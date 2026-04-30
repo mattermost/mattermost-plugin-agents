@@ -27,30 +27,34 @@ export const PostPreview: React.FC<Props> = ({postId, userId, channelId, content
     const channel = useSelector((state: GlobalState) => state.entities.channels.channels[channelId]);
     const team = useSelector((state: GlobalState) => state.entities.teams.teams[channel?.team_id || '']);
     const teamName = team?.name || '';
+    const storedPost = useSelector((state: GlobalState) => state.entities.posts.posts[postId]);
 
     useEffect(() => {
         async function fetchData() {
-            const [post, profiles] = await Promise.all([
-                getPost(postId),
-                getProfilesByIds([userId]),
-            ]);
+            try {
+                const [post, profiles] = await Promise.all([
+                    getPost(postId),
+                    getProfilesByIds([userId]),
+                ]);
 
-            // Store post in Redux
-            dispatch({
-                type: 'RECEIVED_POST',
-                data: post,
-            });
+                dispatch({
+                    type: 'RECEIVED_POST',
+                    data: post,
+                });
 
-            // Store profiles in Redux
-            const profilesById = profiles.reduce<Record<string, any>>((acc, profile) => {
-                acc[profile.id] = profile;
-                return acc;
-            }, {});
+                const profilesById = profiles.reduce<Record<string, any>>((acc, profile) => {
+                    acc[profile.id] = profile;
+                    return acc;
+                }, {});
 
-            dispatch({
-                type: 'RECEIVED_PROFILES',
-                data: profilesById,
-            });
+                dispatch({
+                    type: 'RECEIVED_PROFILES',
+                    data: profilesById,
+                });
+            } catch (err) {
+                // eslint-disable-next-line no-console
+                console.error('PostPreview: failed to fetch source post or profile', err);
+            }
         }
 
         fetchData();
@@ -66,8 +70,11 @@ export const PostPreview: React.FC<Props> = ({postId, userId, channelId, content
                     post_id: postId,
                     team_name: teamName,
                     post: {
+                        id: postId,
                         message: content,
                         user_id: userId,
+                        channel_id: channelId,
+                        create_at: storedPost?.create_at,
                     },
                 }}
             />

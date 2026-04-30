@@ -11,16 +11,26 @@ import {GlobalState} from '@mattermost/types/store';
 
 import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
 import {useSelectNotAIPost} from '@/hooks';
+import {useConversation, useTurnForPost, invalidateConversation} from '@/hooks/use_conversation';
 import {PostMessagePreview} from '@/mm_webapp';
 
-import {SearchSources} from '../search_sources';
 import PostText from '../post_text';
+import {SearchSources} from '../search_sources';
 import ToolApprovalSet from '../tool_approval_set';
+import {ToolApprovalStage, ToolCall} from '../tool_types';
 import {Annotation} from '../citations/types';
 
+import {
+    extractToolCallsForPost,
+    extractReasoningFromTurn,
+    extractAnnotationsFromTurn,
+    deriveApprovalStageForPost,
+} from './turn_content_utils';
 import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
 import {ControlsBarComponent} from './controls_bar';
 import {extractPermalinkData} from './permalink_data';
+
+const SearchResultsPropKey = 'search_results';
 
 // Types
 export interface PostUpdateWebsocketMessage {
@@ -32,171 +42,101 @@ export interface PostUpdateWebsocketMessage {
     annotations?: string
 }
 
-export enum ToolCallStatus {
-    Pending = 0,
-    Accepted = 1,
-    Rejected = 2,
-    Error = 3,
-    Success = 4
-}
-
-export interface ToolCall {
-    id: string;
-    name: string;
-    description: string;
-    arguments: any;
-    result?: string;
-    status: ToolCallStatus;
-}
-
 interface LLMBotPostProps {
     post: any;
     websocketRegister?: (postID: string, listenerID: string, handler: (msg: WebSocketMessage<any>) => void) => void;
     websocketUnregister?: (postID: string, listenerID: string) => void;
 }
 
-const SearchResultsPropKey = 'search_results';
-
 export const LLMBotPost = (props: LLMBotPostProps) => {
     const selectPost = useSelectNotAIPost();
-    const [message, setMessage] = useState(props.post.message);
 
-    // Generating is true while we are receiving new content from the websocket
-    const [generating, setGenerating] = useState(false);
+    // Conversation entity data
+    const conversationId: string | undefined = props.post.props?.conversation_id;
+    const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
+    const turn = useTurnForPost(conversation, props.post.id);
 
-    // State for tool calls - initialize from persisted tool calls if available
-    const [toolCalls, setToolCalls] = useState<ToolCall[]>(() => {
-        const toolCallsJson = props.post.props?.pending_tool_call;
-        if (toolCallsJson) {
-            try {
-                return JSON.parse(toolCallsJson);
-            } catch (error) {
-                return [];
-            }
-        }
-        return [];
-    });
-
-    // State for annotations/citations - initialize from persisted annotations if available
-    const [annotations, setAnnotations] = useState<Annotation[]>(() => {
-        const persistedAnnotations = props.post.props?.annotations || '';
-        if (persistedAnnotations) {
-            try {
-                return JSON.parse(persistedAnnotations);
-            } catch (error) {
-                return [];
-            }
-        }
-        return [];
-    });
-
-    // Precontent is true when we're waiting for the first content to arrive
-    // Initialize to true if post is empty AND has no reasoning AND no tool calls AND no annotations (fresh post)
-    const persistedReasoning = props.post.props?.reasoning_summary || '';
-    const [precontent, setPrecontent] = useState(
-        props.post.message === '' &&
-        persistedReasoning === '' &&
-        toolCalls.length === 0 &&
-        annotations.length === 0,
+    // Derive requester check from conversation entity. Meeting summarization
+    // posts currently have no conversation entity; fall back to the legacy
+    // llm_requester_user_id prop for those. Remove the fallback once meeting
+    // flows produce conversation entities.
+    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
+    const legacyRequester: string | undefined = props.post.props?.llm_requester_user_id;
+    const requesterIsCurrentUser = Boolean(
+        (conversation && conversation.user_id === currentUserId) ||
+        (!conversationId && legacyRequester && legacyRequester === currentUserId),
     );
 
-    // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation
+    const channel = useSelector<GlobalState, {type?: string} | undefined>(
+        (state) => state.entities.channels.channels[props.post.channel_id],
+    );
+    const isDM = channel?.type === 'D';
+    const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
+
+    // Local state for streaming
+    const [message, setMessage] = useState(props.post.message);
+    const [generating, setGenerating] = useState(false);
+    const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+    const [toolApprovalStage, setToolApprovalStage] = useState<ToolApprovalStage>('call');
+    const [annotations, setAnnotations] = useState<Annotation[]>([]);
+    const [precontent, setPrecontent] = useState(props.post.message === '');
+    const [error, setError] = useState('');
+
+    // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation.
     // Needs a ref because of the useEffect closure.
     const [stopped, setStopped] = useState(false);
     const stoppedRef = useRef(stopped);
     stoppedRef.current = stopped;
 
-    const [error, setError] = useState('');
-
     // State for reasoning summary display
-    // Use the same persistedReasoning from above
-    const [reasoningSummary, setReasoningSummary] = useState(persistedReasoning);
-    const [showReasoning, setShowReasoning] = useState(persistedReasoning !== '');
+    const [reasoningSummary, setReasoningSummary] = useState('');
+    const [showReasoning, setShowReasoning] = useState(false);
     const [isReasoningCollapsed, setIsReasoningCollapsed] = useState(true);
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
 
-    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
-    const rootPost = useSelector<GlobalState, any>((state) => state.entities.posts.posts[props.post.root_id]);
-
-    // Initialize reasoning from persisted data when navigating to different posts
-    const previousPostIdRef = useRef(props.post.id);
+    // Populate local state from turn data when not streaming.
+    // This overwrites whatever was accumulated during streaming once
+    // the finalized turn arrives from the conversation API.
     useEffect(() => {
-        if (previousPostIdRef.current !== props.post.id) {
-            const persistedReasoning = props.post.props?.reasoning_summary || '';
-            if (persistedReasoning) {
-                setReasoningSummary(persistedReasoning);
-                setShowReasoning(true);
-                setIsReasoningCollapsed(true);
-                setIsReasoningLoading(false);
-            } else {
-                // Reset reasoning state for posts without reasoning
-                setReasoningSummary('');
-                setShowReasoning(false);
-                setIsReasoningCollapsed(true);
-                setIsReasoningLoading(false);
-            }
-
-            // Initialize annotations from persisted data
-            const persistedAnnotations = props.post.props?.annotations || '';
-            let parsedAnnotations: Annotation[] = [];
-            if (persistedAnnotations) {
-                try {
-                    parsedAnnotations = JSON.parse(persistedAnnotations);
-                    setAnnotations(parsedAnnotations);
-                } catch (error) {
-                    setAnnotations([]);
-                }
-            } else {
-                setAnnotations([]);
-            }
-
-            // Initialize tool calls from persisted data
-            const toolCallsJson = props.post.props?.pending_tool_call;
-            let parsedToolCalls: ToolCall[] = [];
-            if (toolCallsJson) {
-                try {
-                    parsedToolCalls = JSON.parse(toolCallsJson);
-                    setToolCalls(parsedToolCalls);
-                } catch (error) {
-                    setToolCalls([]);
-                }
-            } else {
-                setToolCalls([]);
-            }
-
-            // Set precontent if this is a fresh empty post (no content, no reasoning, no tool calls, no annotations)
-            // Otherwise reset to false (historical posts or posts with any content)
-            setPrecontent(
-                props.post.message === '' &&
-                persistedReasoning === '' &&
-                parsedToolCalls.length === 0 &&
-                parsedAnnotations.length === 0,
-            );
-
-            previousPostIdRef.current = props.post.id;
+        if (!turn || generating) {
+            return;
         }
-    }, [props.post.id, props.post.props?.reasoning_summary, props.post.props?.annotations, props.post.props?.pending_tool_call, props.post.message]);
 
-    // Update tool calls from props when available
-    useEffect(() => {
-        const toolCallsJson = props.post.props?.pending_tool_call;
-        if (toolCallsJson) {
-            try {
-                const parsedToolCalls = JSON.parse(toolCallsJson);
-                setToolCalls(parsedToolCalls);
-            } catch (error) {
-                // Log error for debugging
-                setError('Error parsing tool calls');
-            }
+        // Tool calls — aggregate across every turn that belongs to this
+        // post's response so multi-round tool use displays all calls.
+        if (conversation) {
+            const derived = extractToolCallsForPost(conversation, props.post.id);
+            setToolCalls(derived);
+            setToolApprovalStage(deriveApprovalStageForPost(conversation, props.post.id));
         }
-    }, [props.post.props?.pending_tool_call]);
 
+        // Reasoning
+        const reasoning = extractReasoningFromTurn(turn);
+        if (reasoning.summary) {
+            setReasoningSummary(reasoning.summary);
+            setShowReasoning(true);
+            setIsReasoningLoading(false);
+        } else {
+            setReasoningSummary('');
+            setShowReasoning(false);
+        }
+
+        // Annotations
+        const turnAnnotations = extractAnnotationsFromTurn(turn);
+        setAnnotations(turnAnnotations);
+
+        // Precontent should be false when we have turn data
+        setPrecontent(false);
+    }, [turn, generating, conversation, props.post.id]);
+
+    // Sync message from post.message changes (e.g. after post update)
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
             setMessage(props.post.message);
         }
     }, [props.post.message]);
 
+    // WebSocket handler for streaming -- largely unchanged
     useEffect(() => {
         if (props.websocketRegister && props.websocketUnregister) {
             const listenerID = Math.random().toString(36).substring(7);
@@ -211,34 +151,45 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
                 // Handle reasoning summary events
                 if (data.control === 'reasoning_summary' && data.reasoning) {
-                    // Replace entire reasoning with accumulated text from backend
                     setReasoningSummary(data.reasoning);
                     setShowReasoning(true);
                     setIsReasoningLoading(true);
-
-                    // Explicitly set generating to false to prevent blinking cursor during reasoning
                     setGenerating(false);
-                    setPrecontent(false); // Clear "Starting..." when reasoning begins
+                    setPrecontent(false);
                     return;
                 }
 
                 if (data.control === 'reasoning_summary_done' && data.reasoning) {
-                    // Final reasoning text
                     setReasoningSummary(data.reasoning);
                     setIsReasoningLoading(false);
-
-                    // Don't change collapsed state - preserve user's choice
                     return;
                 }
 
-                // Handle tool call events from the websocket event
+                // Handle tool call events from the websocket event.
+                // Each round emits its own event; merge by id so live display
+                // shows every round's calls instead of only the last round's.
                 if (data.control === 'tool_call' && data.tool_call) {
                     try {
-                        const parsedToolCalls = JSON.parse(data.tool_call);
-                        setToolCalls(parsedToolCalls);
-                        setPrecontent(false); // Clear "Starting..." when tool calls arrive
-                    } catch (error) {
-                        // Handle error silently
+                        const parsedToolCalls = JSON.parse(data.tool_call) as ToolCall[];
+                        setToolCalls((prev) => {
+                            const byID = new Map<string, number>();
+                            const next = [...prev];
+                            for (let i = 0; i < next.length; i++) {
+                                byID.set(next[i].id, i);
+                            }
+                            for (const tc of parsedToolCalls) {
+                                const idx = byID.get(tc.id);
+                                if (idx === undefined) { // eslint-disable-line no-undefined
+                                    byID.set(tc.id, next.length);
+                                    next.push(tc);
+                                } else {
+                                    next[idx] = tc;
+                                }
+                            }
+                            return next;
+                        });
+                        setPrecontent(false);
+                    } catch {
                         setError('Error parsing tool call data');
                     }
                     return;
@@ -249,9 +200,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     try {
                         const parsedAnnotations = JSON.parse(data.annotations);
                         setAnnotations(parsedAnnotations);
-                        setPrecontent(false); // Clear "Starting..." when annotations arrive
-                    } catch (error) {
-                        // Handle error silently
+                        setPrecontent(false);
+                    } catch {
                         setError('Error parsing annotation data');
                     }
                     return;
@@ -267,6 +217,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     setPrecontent(false);
                     setStopped(false);
                     setIsReasoningLoading(false);
+
+                    // Re-fetch the conversation to get finalized turn data
+                    if (conversationId) {
+                        invalidateConversation(conversationId);
+                    }
                 } else if (data.control === 'cancel') {
                     setGenerating(false);
                     setPrecontent(false);
@@ -301,7 +256,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         }
 
         return () => {/* no cleanup */};
-    }, [props.post.id]);
+    }, [props.post.id, conversationId]);
 
     const regnerate = () => {
         setMessage('');
@@ -336,7 +291,12 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         selectPost(result.rootid, result.channelid);
     };
 
-    const requesterIsCurrentUser = (props.post.props?.llm_requester_user_id === currentUserId);
+    // Privacy: the API handles filtering. For the requester, all data is present.
+    // For non-requesters, `input` is null on redacted tool_use blocks and `content`
+    // is absent on redacted tool_result blocks. We reflect this directly.
+    const showToolArguments = toolCalls.length > 0 && toolCalls.some((tc) => tc.arguments != null);
+    const showToolResults = toolCalls.length > 0 && toolCalls.some((tc) => tc.result != null);
+
     const isThreadSummaryPost = (props.post.props?.referenced_thread && props.post.props?.referenced_thread !== '');
     const isNoShowRegen = (props.post.props?.no_regen && props.post.props?.no_regen !== '');
     const isTranscriptionResult = rootPost?.props?.referenced_transcript_post_id && rootPost?.props?.referenced_transcript_post_id !== '';
@@ -357,7 +317,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Consider both generating and reasoning loading states for determining if generation is in progress
     const isGenerationInProgress = generating || isReasoningLoading;
 
-    const showRegenerate = !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
+    const showRegenerate = isDM && !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
     const showPostbackButton = !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
     const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
     const hasContent = message !== '' || reasoningSummary !== '';
@@ -368,6 +328,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             data-testid='llm-bot-post'
         >
             {error && <div className='error'>{error}</div>}
+            {conversationError && !generating && (
+                <div className='error'>
+                    <FormattedMessage defaultMessage='Failed to load conversation data'/>
+                </div>
+            )}
             {isThreadSummaryPost && permalinkView &&
             <>
                 {permalinkView}
@@ -381,13 +346,25 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     onToggleCollapse={setIsReasoningCollapsed}
                 />
             )}
-            {precontent && (
+            {(precontent || (conversationLoading && !generating && !message)) && (
                 <MinimalReasoningContainer>
-                    <LoadingSpinner/>
+                    <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>
                     <span>
                         <FormattedMessage defaultMessage='Starting...'/>
                     </span>
                 </MinimalReasoningContainer>
+            )}
+            {toolCalls && toolCalls.length > 0 && (
+                <ToolApprovalSet
+                    postID={props.post.id}
+                    conversationID={conversationId}
+                    toolCalls={toolCalls}
+                    approvalStage={toolApprovalStage}
+                    canApprove={requesterIsCurrentUser}
+                    canExpand={requesterIsCurrentUser}
+                    showArguments={showToolArguments}
+                    showResults={showToolResults}
+                />
             )}
             <PostText
                 message={message}
@@ -399,12 +376,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             {props.post.props?.[SearchResultsPropKey] && (
                 <SearchSources
                     sources={JSON.parse(props.post.props[SearchResultsPropKey])}
-                />
-            )}
-            {toolCalls && toolCalls.length > 0 && (
-                <ToolApprovalSet
-                    postID={props.post.id}
-                    toolCalls={toolCalls}
                 />
             )}
             { showPostbackButton &&
@@ -430,15 +401,21 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 const PostBody = styled.div`
 `;
 
-const PostSummaryHelpMessage = styled.div`
-	font-size: 14px;
-	font-style: italic;
-	font-weight: 400;
-	line-height: 20px;
-	border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-
-	padding-top: 8px;
-	padding-bottom: 8px;
-	margin-top: 16px;
+const SpinnerWrapper = styled.div`
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
 `;
 
+const PostSummaryHelpMessage = styled.div`
+    font-size: 14px;
+    font-style: italic;
+    font-weight: 400;
+    line-height: 20px;
+    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+    padding-top: 8px;
+    padding-bottom: 8px;
+    margin-top: 16px;
+`;

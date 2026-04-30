@@ -3,7 +3,7 @@
 
 import React, {useState, useEffect} from 'react';
 import styled from 'styled-components';
-import {useIntl} from 'react-intl';
+import {useIntl, type IntlShape} from 'react-intl';
 
 import {TrashCanOutlineIcon, ChevronDownIcon, ChevronUpIcon} from '@mattermost/compass-icons/components';
 
@@ -31,6 +31,9 @@ export type LLMService = {
     region: string
     awsAccessKeyID: string
     awsSecretAccessKey: string
+    vertexProjectID: string
+    vertexProjectNumber: string
+    vertexAuthCredentials: string
 }
 
 const mapServiceTypeToDisplayName = new Map<string, string>([
@@ -42,9 +45,18 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['cohere', 'Cohere'],
     ['mistral', 'Mistral'],
     ['asage', 'asksage (Experimental)'],
+    ['gemini', 'Google Gemini'],
+    ['vertex', 'Google Vertex AI'],
 ]);
 
-function serviceTypeToDisplayName(serviceType: string): string {
+function scaleAIToDisplayName(intl: IntlShape): string {
+    return intl.formatMessage({defaultMessage: 'Scale AI'});
+}
+
+function serviceTypeToDisplayName(intl: IntlShape, serviceType: string): string {
+    if (serviceType === 'scale') {
+        return scaleAIToDisplayName(intl);
+    }
     return mapServiceTypeToDisplayName.get(serviceType) || serviceType;
 }
 
@@ -61,22 +73,40 @@ type ServiceFieldsProps = {
 const ServiceFields = (props: ServiceFieldsProps) => {
     const type = props.service.type;
     const intl = useIntl();
-    const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral';
+    const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale';
+    const supportsResponsesAPIToggle = type === 'openaicompatible' || type === 'azure';
     const isCohere = type === 'cohere';
     const isMistral = type === 'mistral';
+    const isScale = type === 'scale';
 
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
 
-    // Determine if we should support model fetching for this service type
-    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible';
+    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini' || type === 'vertex';
 
-    // Fetch models when API key or URL changes for supported service types
     useEffect(() => {
-        // For openaicompatible, API key is optional if there's an API URL
-        // For other types, API key is required
-        const hasRequiredCredentials = type === 'openaicompatible' ? (props.service.apiKey || props.service.apiURL) : props.service.apiKey;
+        if (type === 'openai' && !props.service.useResponsesAPI) {
+            props.onChange({...props.service, useResponsesAPI: true});
+        }
+    }, [type, props.onChange, props.service]);
+
+    useEffect(() => {
+        // Providers have different credential shapes for model listing:
+        // - openaicompatible: API key OR API URL
+        // - vertex: GCP project ID + region (service-account JSON optional)
+        // - others: API key
+        let hasRequiredCredentials = false;
+        switch (type) {
+        case 'openaicompatible':
+            hasRequiredCredentials = Boolean(props.service.apiKey || props.service.apiURL);
+            break;
+        case 'vertex':
+            hasRequiredCredentials = Boolean(props.service.vertexProjectID && props.service.region);
+            break;
+        default:
+            hasRequiredCredentials = Boolean(props.service.apiKey);
+        }
 
         if (!supportsModelFetching || !hasRequiredCredentials) {
             setAvailableModels([]);
@@ -94,6 +124,12 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     props.service.apiKey,
                     props.service.apiURL || '',
                     props.service.orgId || '',
+                    {
+                        region: props.service.region || '',
+                        vertexProjectID: props.service.vertexProjectID || '',
+                        vertexProjectNumber: props.service.vertexProjectNumber || '',
+                        vertexAuthCredentials: props.service.vertexAuthCredentials || '',
+                    },
                 );
                 setAvailableModels(data);
             } catch (error) {
@@ -105,7 +141,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
         };
 
         loadModels();
-    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, supportsModelFetching, intl]);
+    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, supportsModelFetching, intl]);
 
     const getDefaultOutputTokenLimit = () => {
         switch (type) {
@@ -137,22 +173,34 @@ const ServiceFields = (props: ServiceFieldsProps) => {
             <SelectionItem
                 label={intl.formatMessage({defaultMessage: 'Service type'})}
                 value={props.service.type}
-                onChange={(e) => props.onChange({...props.service, type: e.target.value})}
+                onChange={(e) => {
+                    const nextType = e.target.value;
+                    props.onChange({
+                        ...props.service,
+                        type: nextType,
+                        apiKey: nextType === 'vertex' ? '' : props.service.apiKey,
+                        useResponsesAPI: nextType === 'openai' ? true : props.service.useResponsesAPI,
+                    });
+                }}
             >
                 <SelectionItemOption value='openai'>{'OpenAI'}</SelectionItemOption>
                 <SelectionItemOption value='anthropic'>{'Anthropic'}</SelectionItemOption>
+                <SelectionItemOption value='gemini'>{'Google Gemini'}</SelectionItemOption>
+                <SelectionItemOption value='vertex'>{'Google Vertex AI'}</SelectionItemOption>
                 <SelectionItemOption value='bedrock'>{'AWS Bedrock'}</SelectionItemOption>
                 <SelectionItemOption value='openaicompatible'>{'OpenAI Compatible'}</SelectionItemOption>
                 <SelectionItemOption value='azure'>{'Azure'}</SelectionItemOption>
                 <SelectionItemOption value='cohere'>{'Cohere'}</SelectionItemOption>
                 <SelectionItemOption value='mistral'>{'Mistral'}</SelectionItemOption>
+                <SelectionItemOption value='scale'>{scaleAIToDisplayName(intl)}</SelectionItemOption>
                 <SelectionItemOption value='asage'>{'asksage (Experimental)'}</SelectionItemOption>
             </SelectionItem>
-            {(type === 'openaicompatible' || type === 'azure' || type === 'asage') && (
+            {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale') && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'API URL'})}
                     value={props.service.apiURL}
                     onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
+                    helptext={isScale ? intl.formatMessage({defaultMessage: 'Scale API endpoint (e.g., https://sgp-api.scalegov.com/v5)'}) : undefined} // eslint-disable-line no-undefined
                 />
             )}
             {type === 'bedrock' && (
@@ -184,30 +232,64 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     />
                 </>
             )}
-            <TextItem
-                label={intl.formatMessage({defaultMessage: 'API Key'})}
-                type='password'
-                value={props.service.apiKey}
-                onChange={(e) => props.onChange({...props.service, apiKey: e.target.value})}
-                // eslint-disable-next-line no-undefined
-                helptext={type === 'bedrock' ? intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'}) : undefined}
-            />
+            {type === 'vertex' && (
+                <>
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'GCP Project ID'})}
+                        value={props.service.vertexProjectID}
+                        onChange={(e) => props.onChange({...props.service, vertexProjectID: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'Your Google Cloud project ID (e.g., my-project-123)'})}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'GCP Project Number (Optional)'})}
+                        value={props.service.vertexProjectNumber}
+                        onChange={(e) => props.onChange({...props.service, vertexProjectNumber: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'Numeric project number. Required for some Vertex endpoints, leave blank otherwise.'})}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'GCP Region'})}
+                        value={props.service.region}
+                        onChange={(e) => props.onChange({...props.service, region: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'Vertex AI region (e.g., us-central1, europe-west4)'})}
+                    />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'Service Account JSON (Optional)'})}
+                        type='password'
+                        value={props.service.vertexAuthCredentials}
+                        onChange={(e) => props.onChange({...props.service, vertexAuthCredentials: e.target.value})}
+                        helptext={intl.formatMessage({defaultMessage: 'Paste the full service account JSON. Leave blank to use Application Default Credentials (ADC) or an attached IAM role.'})}
+                    />
+                </>
+            )}
+            {type !== 'vertex' && (
+                <TextItem
+                    label={intl.formatMessage({defaultMessage: 'API Key'})}
+                    type='password'
+                    value={props.service.apiKey}
+                    onChange={(e) => props.onChange({...props.service, apiKey: e.target.value})}
+                    // eslint-disable-next-line no-undefined
+                    helptext={type === 'bedrock' ? intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'}) : undefined}
+                />
+            )}
             {isOpenAIType && (
                 <>
                     {!isCohere && !isMistral && (
                         <TextItem
-                            label={intl.formatMessage({defaultMessage: 'Organization ID'})}
+                            label={isScale ? intl.formatMessage({defaultMessage: 'Account ID'}) : intl.formatMessage({defaultMessage: 'Organization ID'})}
                             value={props.service.orgId}
                             onChange={(e) => props.onChange({...props.service, orgId: e.target.value})}
+                            helptext={isScale ? intl.formatMessage({defaultMessage: 'Scale Account ID (x-selected-account-id header, required for ScaleGov)'}) : undefined} // eslint-disable-line no-undefined
                         />
                     )}
-                    <BooleanItem
-                        label={intl.formatMessage({defaultMessage: 'Send User ID'})}
-                        value={props.service.sendUserId}
-                        onChange={(to: boolean) => props.onChange({...props.service, sendUserId: to})}
-                        helpText={intl.formatMessage({defaultMessage: 'Sends the Mattermost user ID to the upstream LLM.'})}
-                    />
-                    {(type === 'openai' || type === 'openaicompatible' || type === 'azure') && (
+                    {!isScale && (
+                        <BooleanItem
+                            label={intl.formatMessage({defaultMessage: 'Send User ID'})}
+                            value={props.service.sendUserId}
+                            onChange={(to: boolean) => props.onChange({...props.service, sendUserId: to})}
+                            helpText={intl.formatMessage({defaultMessage: 'Sends the Mattermost user ID to the upstream LLM.'})}
+                        />
+                    )}
+                    {supportsResponsesAPIToggle && (
                         <BooleanItem
                             label={intl.formatMessage({defaultMessage: 'Use Responses API'})}
                             value={props.service.useResponsesAPI ?? false}
@@ -217,7 +299,7 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     )}
                 </>
             )}
-            {supportsModelFetching && availableModels.length > 0 ? (
+            {supportsModelFetching && availableModels.length > 0 && (
                 <ComboboxItem
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
@@ -227,12 +309,13 @@ const ServiceFields = (props: ServiceFieldsProps) => {
                     helptext={intl.formatMessage({defaultMessage: 'Select from the list or type a custom model name'})}
                     isClearable={false}
                 />
-            ) : (
+            )}
+            {!(supportsModelFetching && availableModels.length > 0) && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
                     onChange={(e) => props.onChange({...props.service, defaultModel: e.target.value})}
-                    helptext={loadModelsHelpText}
+                    helptext={loadModelsHelpText || (isScale ? intl.formatMessage({defaultMessage: 'Use vendor/model-name format (e.g., openai/gpt-4o). See Scale AI documentation for available models.'}) : '')}
                 />
             )}
             <TextItem
@@ -279,6 +362,7 @@ type Props = {
 
 const Service = (props: Props) => {
     const [open, setOpen] = useState(false);
+    const intl = useIntl();
 
     return (
         <ServiceContainer>
@@ -286,10 +370,10 @@ const Service = (props: Props) => {
                 <IconAI/>
                 <Title>
                     <NameText>
-                        {props.service.name || serviceTypeToDisplayName(props.service.type)}
+                        {props.service.name || serviceTypeToDisplayName(intl, props.service.type)}
                     </NameText>
                     <VerticalDivider/>
-                    <ServiceTypeText>{serviceTypeToDisplayName(props.service.type)}</ServiceTypeText>
+                    <ServiceTypeText>{serviceTypeToDisplayName(intl, props.service.type)}</ServiceTypeText>
                     {props.service.defaultModel && (
                         <>
                             <VerticalDivider/>

@@ -4,12 +4,11 @@
 package llm
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"strings"
 	"text/template"
-
-	"errors"
 )
 
 type Prompts struct {
@@ -18,8 +17,19 @@ type Prompts struct {
 
 const PromptExtension = "tmpl"
 
+// EscapePromptContent replaces angle brackets in user-generated content to prevent
+// injection of fake XML structural elements into prompt templates.
+func EscapePromptContent(s string) string {
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
+}
+
 func NewPrompts(input fs.FS) (*Prompts, error) {
-	templates, err := template.ParseFS(input, "*.tmpl")
+	funcMap := template.FuncMap{
+		"escapeContent": EscapePromptContent,
+	}
+	templates, err := template.New("").Funcs(funcMap).ParseFS(input, "*.tmpl")
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse prompt templates: %w", err)
 	}
@@ -33,19 +43,21 @@ func withPromptExtension(filename string) string {
 	return filename + "." + PromptExtension
 }
 
-func (p *Prompts) FormatString(templateCode string, context *Context) (string, error) {
-	template, err := p.templates.Clone()
+func (p *Prompts) FormatString(templateCode string, data any) (string, error) {
+	tmpl, err := p.templates.Clone()
 	if err != nil {
 		return "", err
 	}
 
-	template, err = template.Parse(templateCode)
+	tmpl.Option("missingkey=zero")
+
+	tmpl, err = tmpl.Parse(templateCode)
 	if err != nil {
 		return "", err
 	}
 
 	out := &strings.Builder{}
-	if err := template.Execute(out, context); err != nil {
+	if err := tmpl.Execute(out, data); err != nil {
 		return "", fmt.Errorf("unable to execute template: %w", err)
 	}
 	return strings.TrimSpace(out.String()), nil

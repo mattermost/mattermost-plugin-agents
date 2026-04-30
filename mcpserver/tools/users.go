@@ -4,10 +4,9 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-ai/llm"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -58,7 +57,7 @@ func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, args
 		return "client not available", fmt.Errorf("client not available in context")
 	}
 	client := mcpContext.Client
-	ctx := context.Background()
+	ctx := mcpContext.Ctx
 
 	// Create the user
 	user := &model.User{
@@ -83,7 +82,7 @@ func (p *MattermostToolProvider) toolCreateUser(mcpContext *MCPToolContext, args
 		if !isValidImageFile(fileName) {
 			profileImageMessage = " (profile image upload failed: unsupported file type, only .jpeg, .jpg, .png, .gif are supported)"
 		} else {
-			imageData, err := fetchFileDataForLocal(args.ProfileImage, mcpContext.AccessMode)
+			imageData, err := fetchFileDataForLocal(mcpContext.Ctx, args.ProfileImage, mcpContext.AccessMode)
 			if err != nil {
 				profileImageMessage = fmt.Sprintf(" (profile image upload failed: %v)", err)
 			} else {

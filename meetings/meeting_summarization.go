@@ -13,13 +13,13 @@ import (
 
 	sq "github.com/Masterminds/squirrel"
 
-	"github.com/mattermost/mattermost-plugin-ai/bots"
-	"github.com/mattermost/mattermost-plugin-ai/chunking"
-	"github.com/mattermost/mattermost-plugin-ai/i18n"
-	"github.com/mattermost/mattermost-plugin-ai/llm"
-	"github.com/mattermost/mattermost-plugin-ai/prompts"
-	"github.com/mattermost/mattermost-plugin-ai/streaming"
-	"github.com/mattermost/mattermost-plugin-ai/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -195,7 +195,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			bot,
 			requestingUser,
 			channel,
-			s.contextBuilder.WithLLMContextDefaultTools(bot),
+			s.contextBuilder.WithLLMContextNoTools(),
 		)
 		summaryStream, err := s.SummarizeTranscription(bot, text, requestContext)
 		if err != nil {
@@ -256,7 +256,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			bot,
 			requestingUser,
 			channel,
-			s.contextBuilder.WithLLMContextDefaultTools(bot),
+			s.contextBuilder.WithLLMContextNoTools(),
 		)
 		summaryStream, err := s.SummarizeTranscription(bot, transcription, llmContext)
 		if err != nil {
@@ -273,7 +273,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 		}
 		defer s.streamingService.FinishStreaming(transcriptPost.Id)
 
-		s.streamingService.StreamToPost(ctx, summaryStream, transcriptPost, requestingUser.Locale)
+		s.streamingService.StreamToPost(ctx, summaryStream, transcriptPost, requestingUser.Locale, requestingUser.Id)
 
 		return nil
 	}() //nolint:errcheck
@@ -310,7 +310,9 @@ func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles
 						Message: chunk,
 					},
 				},
-				Context: context,
+				Context:          context,
+				Operation:        llm.OperationMeetingChunkSummary,
+				OperationSubType: llm.SubTypeTranscriptionChunk,
 			}
 
 			summarizedChunk, err := bot.LLM().ChatCompletionNoStream(request)
@@ -332,6 +334,11 @@ func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles
 		return nil, fmt.Errorf("unable to get meeting summary prompt: %w", err)
 	}
 
+	operationSubType := llm.SubTypeChunkedFalse
+	if isChunked {
+		operationSubType = llm.SubTypeChunkedTrue
+	}
+
 	completionRequest := llm.CompletionRequest{
 		Posts: []llm.Post{
 			{
@@ -343,7 +350,9 @@ func (s *Service) SummarizeTranscription(bot *bots.Bot, transcription *subtitles
 				Message: llmFormattedTranscription,
 			},
 		},
-		Context: context,
+		Context:          context,
+		Operation:        llm.OperationMeetingSummary,
+		OperationSubType: operationSubType,
 	}
 
 	summaryStream, err := bot.LLM().ChatCompletion(completionRequest, llm.WithToolsDisabled())

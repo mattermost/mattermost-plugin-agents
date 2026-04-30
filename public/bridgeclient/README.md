@@ -7,7 +7,7 @@ Go client library for Mattermost plugins and the server to interact with the AI 
 ### From a Plugin
 
 ```go
-import "github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
+import "github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 
 type MyPlugin struct {
     plugin.MattermostPlugin
@@ -34,7 +34,7 @@ func (p *MyPlugin) handleCommand() {
 ### From Mattermost Server
 
 ```go
-import "github.com/mattermost/mattermost-plugin-ai/public/bridgeclient"
+import "github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 
 type MyService struct {
     app       *app.App
@@ -73,7 +73,7 @@ response, err := client.ServiceCompletion("openai", request)
 ### Streaming
 
 ```go
-import "github.com/mattermost/mattermost-plugin-ai/llm"
+import "github.com/mattermost/mattermost-plugin-agents/llm"
 
 // Start streaming request (using Bot ID)
 result, err := client.AgentCompletionStream("bot-user-id", request)
@@ -125,6 +125,25 @@ response, err := client.AgentCompletion("bot-user-id", request)
 ```
 
 If not using built-in permission checks, your plugin must verify permissions before making requests.
+
+## Token Usage Dimensions
+
+Bridge callers can optionally provide `Operation` and `OperationSubType` in `CompletionRequest` to customize token usage categorization in logs.
+
+If omitted, the bridge keeps current defaults:
+
+- `Operation`: `bridge_agent` or `bridge_service` (based on endpoint)
+- `OperationSubType`: `streaming` or `nostream` (based on request mode)
+
+```go
+request := bridgeclient.CompletionRequest{
+    Posts: []bridgeclient.Post{
+        {Role: "user", Message: "Summarize incident timeline"},
+    },
+    Operation:        "playbooks_summary",
+    OperationSubType: "incident_report",
+}
+```
 
 ## Agent vs Service
 

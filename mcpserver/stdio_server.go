@@ -6,10 +6,11 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"strings"
 
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/auth"
-	loggerlib "github.com/mattermost/mattermost-plugin-ai/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-ai/mcpserver/tools"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
+	loggerlib "github.com/mattermost/mattermost-plugin-agents/mcpserver/logger"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -19,8 +20,10 @@ type MattermostStdioMCPServer struct {
 	config StdioConfig
 }
 
-// NewStdioServer creates a new STDIO transport MCP server
-func NewStdioServer(config StdioConfig, logger loggerlib.Logger) (*MattermostStdioMCPServer, error) {
+// NewStdioServer creates a new STDIO transport MCP server.
+// searchService is optional — if nil, a default HTTP-based service is created that
+// calls back to the plugin's /api/v1/search/raw endpoint.
+func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService tools.SemanticSearchService) (*MattermostStdioMCPServer, error) {
 	if config.MMServerURL == "" {
 		return nil, fmt.Errorf("server URL cannot be empty")
 	}
@@ -60,8 +63,14 @@ func NewStdioServer(config StdioConfig, logger loggerlib.Logger) (*MattermostStd
 		return nil, fmt.Errorf("startup token validation failed: %w", err)
 	}
 
+	// Use provided search service or create default HTTP callback service
+	if searchService == nil {
+		pluginURL := strings.TrimRight(config.GetMMServerURL(), "/") + "/plugins/mattermost-ai"
+		searchService = tools.NewHTTPSemanticSearchService(pluginURL)
+	}
+
 	// Register tools with local access mode
-	mattermostServer.registerTools(tools.AccessModeLocal)
+	mattermostServer.registerTools(tools.AccessModeLocal, searchService)
 
 	return mattermostServer, nil
 }
