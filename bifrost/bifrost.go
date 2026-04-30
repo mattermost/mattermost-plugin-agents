@@ -109,6 +109,9 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 	key := schemas.Key{
 		Value:  schemas.EnvVar{Val: a.apiKey},
 		Weight: 1.0,
+		// Bifrost v1.5+ requires keys to declare which models they support;
+		// "*" allows any model the configured provider can serve.
+		Models: schemas.WhiteList{"*"},
 	}
 
 	// Handle Azure config
