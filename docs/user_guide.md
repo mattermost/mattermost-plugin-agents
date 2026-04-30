@@ -35,6 +35,8 @@ You can have conversations with Agents in several ways:
 
 **Channel mentions**: [@mention](https://docs.mattermost.com/collaborate/mention-people.html) Agent bots by their username, such as `@copilot`, in any thread to bring Agents capabilities to your conversation. The bot responds in a thread to keep channels organized, and other team members can view and contribute to the conversation. An Agent can help extract information quickly or transform discussions into charts, resources, documentation, and more, and can find action items and open questions in new messages.
 
+When you attach files in the Agents pane, direct messages, or channel @mentions, Agents can use them as conversation context. Images are included only when vision is enabled for the bot. Other files contribute text only when Mattermost can read text from them, such as plain-text files or files with extracted text. Very large attachment text may be shortened, and if one attachment can't be read, that attachment is skipped while the conversation continues.
+
 > **Note:** Whether AI-generated links are clickable depends on your system admin configuration. Treat links in AI responses with caution and verify destinations before opening them.
 
 ### Select a bot
@@ -141,7 +143,7 @@ Contact your system admin if this feature isn't available for your Mattermost in
 
 ## Analyze images
 
-For AI models with vision capabilities, attach an image file to your message when chatting with an Agent to ask questions about the image or request analysis. The Agent responds based on the visual content.
+For AI models with vision capabilities, attach an image file to your message when chatting with an Agent or @mentioning an Agent in a channel to ask questions about the image or request analysis. The Agent responds based on the visual content.
 
 Your system admin must enable vision capabilities for your bot, and the underlying AI model must support vision features.
 
