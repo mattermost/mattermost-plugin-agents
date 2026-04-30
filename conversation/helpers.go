@@ -5,8 +5,10 @@ package conversation
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -17,6 +19,40 @@ func textBlocks(message string) []ContentBlock {
 		return nil
 	}
 	return []ContentBlock{{Type: BlockTypeText, Text: message}}
+}
+
+// userBlocksWithAttachments builds content blocks for a user turn: a text
+// block (if message is non-empty) followed by attachment blocks (image or
+// file) for each fileID. fileInfo lookups that error are logged and skipped
+// so a single missing/deleted file does not break the whole user turn.
+func userBlocksWithAttachments(message string, fileIDs []string, mmClient mmapi.Client) []ContentBlock {
+	blocks := textBlocks(message)
+	if mmClient == nil {
+		return blocks
+	}
+	for _, fileID := range fileIDs {
+		fileInfo, err := mmClient.GetFileInfo(fileID)
+		if err != nil {
+			mmClient.LogError("failed to get file info for user attachment", "error", err, "file_id", fileID)
+			continue
+		}
+		if strings.HasPrefix(fileInfo.MimeType, "image/") {
+			blocks = append(blocks, ContentBlock{
+				Type:     BlockTypeImage,
+				FileID:   fileID,
+				Filename: fileInfo.Name,
+				MimeType: fileInfo.MimeType,
+			})
+		} else {
+			blocks = append(blocks, ContentBlock{
+				Type:     BlockTypeFile,
+				FileID:   fileID,
+				Filename: fileInfo.Name,
+				MimeType: fileInfo.MimeType,
+			})
+		}
+	}
+	return blocks
 }
 
 // marshalBlocks serializes content blocks to JSON for store.Turn.Content.

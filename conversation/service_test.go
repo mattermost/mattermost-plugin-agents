@@ -6,8 +6,11 @@ package conversation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,10 +18,12 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -60,10 +65,27 @@ func TestMain(m *testing.M) {
 // testBotLookup is a simple test double for BotLookup.
 type testBotLookup struct {
 	botUserIDs map[string]bool
+
+	// configByID is consulted by GetBotConfigByID. When nil/missing, the
+	// lookup returns ok=false so callers fall back to safe defaults.
+	configByID map[string]testBotConfig
+}
+
+type testBotConfig struct {
+	enableVision bool
+	maxFileSize  int64
 }
 
 func (t *testBotLookup) IsAnyBot(userID string) bool {
 	return t.botUserIDs[userID]
+}
+
+func (t *testBotLookup) GetBotConfigByID(botID string) (bool, int64, bool) {
+	cfg, ok := t.configByID[botID]
+	if !ok {
+		return false, 0, false
+	}
+	return cfg.enableVision, cfg.maxFileSize, true
 }
 
 // testLLM is a simple test double for llm.LanguageModel that returns a
@@ -1622,4 +1644,469 @@ func TestGetOrCreateConversation_RaceConflict(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, blocks, 1)
 	assert.Equal(t, "second message", blocks[0].Text)
+}
+
+// setupTestServiceWithClient is like setupTestService but also wires in an
+// mmapi.Client mock and a populated testBotLookup so attachment-handling
+// tests can drive lazy file/image resolution end-to-end.
+func setupTestServiceWithClient(
+	t *testing.T,
+	mmClient mmapi.Client,
+	bots *testBotLookup,
+) (*Service, *store.Store) {
+	t.Helper()
+
+	db, err := sqlx.Connect("postgres", testConnStr)
+	require.NoError(t, err)
+
+	schemaName := fmt.Sprintf("test_%d", time.Now().UnixNano())
+	_, err = db.Exec(fmt.Sprintf("CREATE SCHEMA %s", schemaName))
+	require.NoError(t, err)
+
+	_, err = db.Exec(fmt.Sprintf("SET search_path TO %s", schemaName))
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_, _ = db.Exec(fmt.Sprintf("DROP SCHEMA %s CASCADE", schemaName))
+		db.Close()
+	})
+
+	s := store.New(db)
+	err = s.RunMigrations()
+	require.NoError(t, err)
+
+	if bots == nil {
+		bots = &testBotLookup{botUserIDs: map[string]bool{}}
+	}
+	svc := NewService(s, nil, mmClient, bots)
+	return svc, s
+}
+
+// TestCreateConversation_FileIDsPersistsAsContentBlocks pins the user-turn
+// schema for attachments. CreateConversation must store FileIDs as
+// BlockTypeImage / BlockTypeFile entries (lazy-load: NO inlined Content)
+// alongside the leading text block.
+func TestCreateConversation_FileIDsPersistsAsContentBlocks(t *testing.T) {
+	mmClient := mmapimocks.NewMockClient(t)
+	// No .Maybe(): GetFileInfo MUST be called for every FileID so the
+	// MIME type is read from the server (not inferred from the filename
+	// extension). Mockery fails the test if either expectation is unmet.
+	mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
+		Id: "img1", Name: "shot.png", MimeType: "image/png",
+	}, nil)
+	mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+		Id: "doc1", Name: "foo.txt", MimeType: "text/plain",
+	}, nil)
+
+	svc, s := setupTestServiceWithClient(t, mmClient, nil)
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "look at these",
+		FileIDs:      []string{"img1", "doc1"},
+	})
+	require.NoError(t, err)
+
+	turns, err := s.GetTurnsForConversation(result.ConversationID)
+	require.NoError(t, err)
+	require.Len(t, turns, 1)
+
+	var blocks []ContentBlock
+	err = json.Unmarshal(turns[0].Content, &blocks)
+	require.NoError(t, err)
+
+	require.Len(t, blocks, 3, "expect [text, image, file] in this order")
+
+	assert.Equal(t, BlockTypeText, blocks[0].Type)
+	assert.Equal(t, "look at these", blocks[0].Text)
+
+	assert.Equal(t, BlockTypeImage, blocks[1].Type, "image attachment must persist as a BlockTypeImage")
+	assert.Equal(t, "img1", blocks[1].FileID)
+	assert.Equal(t, "image/png", blocks[1].MimeType)
+	assert.Empty(t, blocks[1].Content,
+		"image block must NOT inline content at user-turn write time; image bytes lazy-load via mmClient at request build time")
+
+	assert.Equal(t, BlockTypeFile, blocks[2].Type, "non-image attachment must persist as a BlockTypeFile")
+	assert.Equal(t, "doc1", blocks[2].FileID)
+	assert.Equal(t, "text/plain", blocks[2].MimeType)
+	assert.Empty(t, blocks[2].Content,
+		"file content must NOT be inlined at user-turn write time; it lazy-loads via mmClient at request build time")
+}
+
+// TestGetOrCreateConversation_AppendsFileIDs verifies the same shape applies
+// when appending a new user turn to an existing conversation.
+func TestGetOrCreateConversation_AppendsFileIDs(t *testing.T) {
+	mmClient := mmapimocks.NewMockClient(t)
+	// No .Maybe(): GetFileInfo for the appended attachment MUST run so
+	// MIME comes from the server, not the filename extension.
+	mmClient.On("GetFileInfo", "doc2").Return(&model.FileInfo{
+		Id: "doc2", Name: "notes.txt", MimeType: "text/plain",
+	}, nil)
+
+	svc, s := setupTestServiceWithClient(t, mmClient, nil)
+
+	botID := model.NewId()
+	userID := model.NewId()
+	rootPostID := "thread1"
+
+	// Seed an initial conversation.
+	_, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       userID,
+		BotID:        botID,
+		RootPostID:   &rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "first",
+	})
+	require.NoError(t, err)
+
+	res, err := svc.GetOrCreateConversation(GetOrCreateParams{
+		UserID:       userID,
+		BotID:        botID,
+		ChannelID:    "chan1",
+		RootPostID:   rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "ignored",
+		UserMessage:  "follow-up with attachment",
+		FileIDs:      []string{"doc2"},
+	})
+	require.NoError(t, err)
+	require.False(t, res.IsNew)
+
+	turns, err := s.GetTurnsForConversation(res.Conversation.ID)
+	require.NoError(t, err)
+	require.Len(t, turns, 2)
+
+	var blocks []ContentBlock
+	err = json.Unmarshal(turns[1].Content, &blocks)
+	require.NoError(t, err)
+
+	require.Len(t, blocks, 2)
+	assert.Equal(t, BlockTypeText, blocks[0].Type)
+	assert.Equal(t, "follow-up with attachment", blocks[0].Text)
+
+	assert.Equal(t, BlockTypeFile, blocks[1].Type)
+	assert.Equal(t, "doc2", blocks[1].FileID)
+	assert.Equal(t, "text/plain", blocks[1].MimeType)
+	assert.Empty(t, blocks[1].Content,
+		"appended file blocks must also leave Content empty (lazy-load model)")
+}
+
+// TestCreateConversation_EmptyFileIDsAndMessage keeps the existing behavior
+// for a message with no attachments and no body — empty content array.
+func TestCreateConversation_EmptyFileIDsAndMessage(t *testing.T) {
+	svc, s := setupTestServiceWithClient(t, nil, nil)
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "",
+	})
+	require.NoError(t, err)
+
+	turns, err := s.GetTurnsForConversation(result.ConversationID)
+	require.NoError(t, err)
+	require.Len(t, turns, 1)
+
+	var blocks []ContentBlock
+	err = json.Unmarshal(turns[0].Content, &blocks)
+	require.NoError(t, err)
+	assert.Empty(t, blocks)
+}
+
+// TestCreateConversation_FileIDInfoErrorIsSkipped pins the resilience
+// contract. If GetFileInfo errors for one fileID, the user turn must still
+// be created with the rest. Mirrors the old PostToAIPost behavior.
+func TestCreateConversation_FileIDInfoErrorIsSkipped(t *testing.T) {
+	mmClient := mmapimocks.NewMockClient(t)
+	// Both GetFileInfo calls MUST happen — the bad one returns an error,
+	// but production must still attempt the fetch (otherwise an
+	// implementation that filtered FileIDs by some local rule would
+	// silently match this test). LogError must also actually fire so
+	// the error is observable to operators.
+	mmClient.On("GetFileInfo", "broken").Return(nil, errors.New("file gone"))
+	mmClient.On("GetFileInfo", "ok1").Return(&model.FileInfo{
+		Id: "ok1", Name: "good.txt", MimeType: "text/plain",
+	}, nil)
+	mmClient.On("LogError", mock.Anything, mock.Anything).Return()
+
+	svc, s := setupTestServiceWithClient(t, mmClient, nil)
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "with mixed",
+		FileIDs:      []string{"broken", "ok1"},
+	})
+	require.NoError(t, err, "a single bad file must not break conversation creation")
+
+	turns, err := s.GetTurnsForConversation(result.ConversationID)
+	require.NoError(t, err)
+	require.Len(t, turns, 1)
+
+	var blocks []ContentBlock
+	err = json.Unmarshal(turns[0].Content, &blocks)
+	require.NoError(t, err)
+
+	// Expected layout: text + (skipped broken) + ok1 file block.
+	require.Len(t, blocks, 2)
+	assert.Equal(t, BlockTypeText, blocks[0].Type)
+	assert.Equal(t, BlockTypeFile, blocks[1].Type)
+	assert.Equal(t, "ok1", blocks[1].FileID)
+}
+
+// TestBuildCompletionRequest_AttachmentsResolveLazily wires the full path:
+// CreateConversation persists references → BuildCompletionRequest →
+// BlocksToPost re-fetches the file/image bytes via mmClient.
+func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
+	t.Run("EnableVision=true populates Files and message gets file content", func(t *testing.T) {
+		mmClient := mmapimocks.NewMockClient(t)
+
+		// Used twice: once for user-turn creation (read MIME) and once at
+		// request build time (lazy resolve).
+		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
+			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
+		}, nil)
+		mmClient.On("GetFile", "img1").Return(io.NopCloser(strings.NewReader("PNGDATA")), nil)
+		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+			Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
+		}, nil)
+		mmClient.On("GetFile", "doc1").Return(io.NopCloser(strings.NewReader("hello")), nil)
+
+		botID := model.NewId()
+		bots := &testBotLookup{
+			botUserIDs: map[string]bool{},
+			configByID: map[string]testBotConfig{
+				botID: {enableVision: true, maxFileSize: 0},
+			},
+		}
+
+		svc, _ := setupTestServiceWithClient(t, mmClient, bots)
+
+		result, err := svc.CreateConversation(CreateConversationParams{
+			UserID:       model.NewId(),
+			BotID:        botID,
+			Operation:    "conversation",
+			SystemPrompt: "system",
+			UserMessage:  "the body",
+			FileIDs:      []string{"img1", "doc1"},
+		})
+		require.NoError(t, err)
+
+		conv, err := svc.GetConversation(result.ConversationID)
+		require.NoError(t, err)
+
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		require.NoError(t, err)
+
+		require.Len(t, req.Posts, 2, "system + user")
+		userPost := req.Posts[1]
+		assert.Equal(t, llm.PostRoleUser, userPost.Role)
+
+		require.Len(t, userPost.Files, 1, "image attachment must round-trip back into Post.Files")
+		assert.Equal(t, "image/png", userPost.Files[0].MimeType)
+
+		assert.Contains(t, userPost.Message, "the body")
+		assert.Contains(t, userPost.Message, "Attached File Contents:")
+		assert.Contains(t, userPost.Message, "File Name: notes.txt")
+		assert.Contains(t, userPost.Message, "Content: hello")
+	})
+
+	t.Run("EnableVision=false drops image but keeps file text content", func(t *testing.T) {
+		mmClient := mmapimocks.NewMockClient(t)
+
+		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
+			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
+		}, nil)
+		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+			Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
+		}, nil)
+		mmClient.On("GetFile", "doc1").Return(io.NopCloser(strings.NewReader("hello")), nil)
+		// NOTE: no GetFile(img1) expectation — vision is off so it must NOT be called.
+
+		botID := model.NewId()
+		bots := &testBotLookup{
+			botUserIDs: map[string]bool{},
+			configByID: map[string]testBotConfig{
+				botID: {enableVision: false, maxFileSize: 0},
+			},
+		}
+
+		svc, _ := setupTestServiceWithClient(t, mmClient, bots)
+
+		result, err := svc.CreateConversation(CreateConversationParams{
+			UserID:       model.NewId(),
+			BotID:        botID,
+			Operation:    "conversation",
+			SystemPrompt: "system",
+			UserMessage:  "no vision plz",
+			FileIDs:      []string{"img1", "doc1"},
+		})
+		require.NoError(t, err)
+
+		conv, err := svc.GetConversation(result.ConversationID)
+		require.NoError(t, err)
+
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		require.NoError(t, err)
+
+		require.Len(t, req.Posts, 2)
+		userPost := req.Posts[1]
+		// Explicit AssertNotCalled so the no-vision contract is
+		// readable in the test, not just implicit in mockery's strict
+		// mode. Production silently fetching the image bytes anyway
+		// would be a bug we'd want to surface here.
+		mmClient.AssertNotCalled(t, "GetFile", "img1")
+		assert.Empty(t, userPost.Files, "image attachments must be dropped entirely when vision is disabled")
+		assert.Contains(t, userPost.Message, "Content: hello",
+			"text-file content must still flow through to the LLM even when vision is off")
+	})
+}
+
+// TestBuildChannelMentionRequest_AttachmentsResolveLazily mirrors the
+// BuildCompletionRequest integration test for the channel-mention path.
+// Both builders run user turns through BlocksToPost, so attachments must
+// flow identically — a regression in only one path would leak otherwise.
+//
+// This test passes a non-nil threadData containing the user-turn's PostID so
+// BuildChannelMentionRequest takes its post-iteration branch (the long body
+// at service.go ~line 586+) and resolves the user turn's attachment blocks
+// via turnsToLLMPosts → BlocksToPost using the bot's vision/maxFileSize
+// config. With nil threadData the function short-circuits to
+// BuildCompletionRequest, which would not exercise this path.
+func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
+	t.Run("EnableVision=true populates Files and message gets file content", func(t *testing.T) {
+		mmClient := mmapimocks.NewMockClient(t)
+
+		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
+			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
+		}, nil)
+		mmClient.On("GetFile", "img1").Return(io.NopCloser(strings.NewReader("PNGDATA")), nil)
+		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+			Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
+		}, nil)
+		mmClient.On("GetFile", "doc1").Return(io.NopCloser(strings.NewReader("hello")), nil)
+
+		botID := model.NewId()
+		userID := model.NewId()
+		userPostID := "post_user_1"
+		bots := &testBotLookup{
+			botUserIDs: map[string]bool{botID: true},
+			configByID: map[string]testBotConfig{
+				botID: {enableVision: true, maxFileSize: 0},
+			},
+		}
+
+		svc, _ := setupTestServiceWithClient(t, mmClient, bots)
+
+		result, err := svc.CreateConversation(CreateConversationParams{
+			UserID:       userID,
+			BotID:        botID,
+			Operation:    "conversation",
+			SystemPrompt: "system",
+			UserMessage:  "channel mention body",
+			UserPostID:   stringPtr(userPostID),
+			FileIDs:      []string{"img1", "doc1"},
+		})
+		require.NoError(t, err)
+
+		conv, err := svc.GetConversation(result.ConversationID)
+		require.NoError(t, err)
+
+		// Non-nil threadData with a post that matches the user turn's
+		// PostID — this drives the post-iteration branch so the user
+		// turn's attachment blocks flow through turnsToLLMPosts with the
+		// bot's vision/maxFileSize config.
+		threadData := &mmapi.ThreadData{
+			Posts: []*model.Post{
+				{Id: userPostID, UserId: userID, CreateAt: 1000, Message: "channel mention body"},
+			},
+			UsersByID: map[string]*model.User{
+				userID: {Id: userID, Username: "alice"},
+				botID:  {Id: botID, Username: "aibot"},
+			},
+		}
+
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		require.NoError(t, err)
+
+		require.Len(t, req.Posts, 2, "system + user (resolved from the user turn)")
+		userPost := req.Posts[1]
+		require.Equal(t, llm.PostRoleUser, userPost.Role)
+		require.Len(t, userPost.Files, 1,
+			"BuildChannelMentionRequest must lazy-resolve image attachments just like BuildCompletionRequest")
+		assert.Equal(t, "image/png", userPost.Files[0].MimeType)
+		assert.Contains(t, userPost.Message, "channel mention body")
+		assert.Contains(t, userPost.Message, "Attached File Contents:")
+		assert.Contains(t, userPost.Message, "File Name: notes.txt")
+		assert.Contains(t, userPost.Message, "Content: hello")
+	})
+
+	t.Run("EnableVision=false drops image but keeps file text content", func(t *testing.T) {
+		mmClient := mmapimocks.NewMockClient(t)
+
+		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
+			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
+		}, nil)
+		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
+			Id: "doc1", Name: "notes.txt", MimeType: "text/plain", Size: 5,
+		}, nil)
+		mmClient.On("GetFile", "doc1").Return(io.NopCloser(strings.NewReader("hello")), nil)
+		// NOTE: no GetFile(img1) expectation — vision is off so the
+		// channel-mention path must NOT fetch the image bytes either.
+
+		botID := model.NewId()
+		userID := model.NewId()
+		userPostID := "post_user_2"
+		bots := &testBotLookup{
+			botUserIDs: map[string]bool{botID: true},
+			configByID: map[string]testBotConfig{
+				botID: {enableVision: false, maxFileSize: 0},
+			},
+		}
+
+		svc, _ := setupTestServiceWithClient(t, mmClient, bots)
+
+		result, err := svc.CreateConversation(CreateConversationParams{
+			UserID:       userID,
+			BotID:        botID,
+			Operation:    "conversation",
+			SystemPrompt: "system",
+			UserMessage:  "no vision channel mention",
+			UserPostID:   stringPtr(userPostID),
+			FileIDs:      []string{"img1", "doc1"},
+		})
+		require.NoError(t, err)
+
+		conv, err := svc.GetConversation(result.ConversationID)
+		require.NoError(t, err)
+
+		threadData := &mmapi.ThreadData{
+			Posts: []*model.Post{
+				{Id: userPostID, UserId: userID, CreateAt: 1000, Message: "no vision channel mention"},
+			},
+			UsersByID: map[string]*model.User{
+				userID: {Id: userID, Username: "alice"},
+				botID:  {Id: botID, Username: "aibot"},
+			},
+		}
+
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		require.NoError(t, err)
+
+		require.Len(t, req.Posts, 2)
+		userPost := req.Posts[1]
+		mmClient.AssertNotCalled(t, "GetFile", "img1")
+		assert.Empty(t, userPost.Files,
+			"image attachments must be dropped on the channel-mention path when vision is disabled")
+		assert.Contains(t, userPost.Message, "Content: hello",
+			"text-file content must still flow through to the LLM via the channel-mention path")
+	})
 }

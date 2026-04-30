@@ -146,6 +146,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 			SystemPrompt: systemPrompt,
 			UserMessage:  post.Message,
 			UserPostID:   &postID,
+			FileIDs:      post.FileIds,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create conversation: %w", err)
@@ -162,6 +163,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 		SystemPrompt: systemPrompt,
 		UserMessage:  post.Message,
 		UserPostID:   &postID,
+		FileIDs:      post.FileIds,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get or create conversation: %w", err)
