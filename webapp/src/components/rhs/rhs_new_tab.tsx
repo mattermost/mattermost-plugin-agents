@@ -46,6 +46,7 @@ type Props = {
 }
 
 const EMPTY_BOTS: LLMBot[] = [];
+const EMPTY_RHS_DRAFT = {message: '', fileInfos: [], uploadsInProgress: []};
 
 const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
     const intl = useIntl();
@@ -61,6 +62,7 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
 
     // State for error handling
     const [channelError, setChannelError] = useState(false);
+    const [submitError, setSubmitError] = useState('');
 
     // If botChannelId is empty, we need to create a direct channel
     useEffect(() => {
@@ -119,24 +121,32 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
                 placeholder={intl.formatMessage({defaultMessage: 'Ask Agents anything...'})}
                 rootId={'ai_agents'}
                 onSubmit={async (p: any) => {
-                    const post = {...p};
-                    post.channel_id = botChannelId || '';
-                    post.props = {};
-                    post.uploadsInProgress = [];
-                    post.file_ids = p.fileInfos.map((f: any) => f.id);
-                    const created = await createPost(post);
-                    selectPost(created.id);
-                    setCurrentTab('thread');
-                    dispatch({
-                        type: 'SET_GLOBAL_ITEM',
-                        data: {
-                            name: 'comment_draft_ai_agents',
-                            value: {message: '', fileInfos: [], uploadsInProgress: []},
-                        },
-                    });
+                    try {
+                        const post = {...p};
+                        post.channel_id = botChannelId || '';
+                        post.props = {};
+                        post.uploadsInProgress = [];
+                        post.file_ids = p.fileInfos.map((f: any) => f.id);
+                        const created = await createPost(post);
+                        setSubmitError('');
+                        updateDraft(EMPTY_RHS_DRAFT);
+                        selectPost(created.id);
+                        setCurrentTab('thread');
+                        dispatch({
+                            type: 'SET_GLOBAL_ITEM',
+                            data: {
+                                name: 'comment_draft_ai_agents',
+                                value: EMPTY_RHS_DRAFT,
+                            },
+                        });
+                    } catch (e) {
+                        console.error('Failed to create Agents RHS post:', e); // eslint-disable-line no-console
+                        setSubmitError(intl.formatMessage({defaultMessage: 'Failed to send message. Please try again.'}));
+                    }
                 }}
                 draft={draft}
                 onUpdateCommentDraft={(newDraft: any) => {
+                    setSubmitError('');
                     updateDraft(newDraft);
                     const timestamp = new Date().getTime();
                     newDraft.updateAt = timestamp;
@@ -186,6 +196,11 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
                         selectPost={selectPost}
                         setCurrentTab={setCurrentTab}
                     />
+                )}
+                {submitError && (
+                    <div style={{textAlign: 'center', padding: '0 0 12px', color: 'var(--error-text)'}}>
+                        {submitError}
+                    </div>
                 )}
                 <CreatePostContainer
                     data-testid='rhs-new-tab-create-post'
