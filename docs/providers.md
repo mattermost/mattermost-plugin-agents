@@ -78,6 +78,10 @@ Obtain an [Anthropic API key](https://console.anthropic.com/settings/keys), then
 | **API Key** | Yes | Your Anthropic API key |
 | **Default Model** | Yes | The model to use by default (see [Anthropic's model documentation](https://docs.anthropic.com/claude/docs/models-overview)) |
 
+### Reasoning
+
+When **Reasoning** is enabled for Claude Opus 4.7 and the request includes Anthropic reasoning, the plugin automatically uses Anthropic adaptive thinking and omits `budget_tokens` for that model. Anthropic no longer accepts the older `thinking.type: "enabled"` format for Opus 4.7.
+
 ## AWS Bedrock
 
 AWS Bedrock provides access to foundation models from Anthropic (Claude), Amazon (Nova, Titan), and other providers via a unified API. For full setup instructions — including IAM policy configuration and Anthropic-specific Claude requirements — see the [AWS Bedrock Setup Guide](aws_bedrock_setup.md).
