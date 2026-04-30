@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 env:
-  GO_VERSION: 1.24.6
+  GO_VERSION: 1.26.1
 
 # Set the CI_RUNNER repository or organization variable to a larger runner label
 # for the heavier e2e path jobs. Other CI jobs intentionally stay on the
