@@ -19,6 +19,20 @@ func textBlocks(message string) []ContentBlock {
 	return []ContentBlock{{Type: BlockTypeText, Text: message}}
 }
 
+func userTurnBlocks(message string, fileIDs []string) []ContentBlock {
+	blocks := textBlocks(message)
+	for _, fileID := range fileIDs {
+		if fileID == "" {
+			continue
+		}
+		blocks = append(blocks, ContentBlock{
+			Type:   BlockTypeImage,
+			FileID: fileID,
+		})
+	}
+	return blocks
+}
+
 // marshalBlocks serializes content blocks to JSON for store.Turn.Content.
 func marshalBlocks(blocks []ContentBlock) (json.RawMessage, error) {
 	if blocks == nil {

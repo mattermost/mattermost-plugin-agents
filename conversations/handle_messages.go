@@ -209,6 +209,7 @@ func (c *Conversations) handleMentionViaConversation(
 		SystemPrompt: systemPrompt,
 		UserMessage:  post.Message,
 		UserPostID:   &userPostID,
+		UserFileIDs:  visionFileIDs(bot, post),
 	})
 	if convErr != nil {
 		return fmt.Errorf("failed to get or create conversation: %w", convErr)

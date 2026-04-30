@@ -4,9 +4,11 @@
 package conversation
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"testing"
 	"time"
@@ -83,6 +85,26 @@ func (t *testLLM) ChatCompletionNoStream(_ llm.CompletionRequest, _ ...llm.Langu
 
 func (t *testLLM) CountTokens(_ string) int { return 0 }
 func (t *testLLM) InputTokenLimit() int     { return 100000 }
+
+type testFileClient struct {
+	mmapi.Client
+	fileInfo *model.FileInfo
+	data     []byte
+}
+
+func (c *testFileClient) GetFileInfo(fileID string) (*model.FileInfo, error) {
+	if c.fileInfo == nil || c.fileInfo.Id != fileID {
+		return nil, fmt.Errorf("file info not found")
+	}
+	return c.fileInfo, nil
+}
+
+func (c *testFileClient) GetFile(fileID string) (io.ReadCloser, error) {
+	if c.fileInfo == nil || c.fileInfo.Id != fileID {
+		return nil, fmt.Errorf("file not found")
+	}
+	return io.NopCloser(bytes.NewReader(c.data)), nil
+}
 
 func stringPtr(s string) *string { return &s }
 
@@ -429,6 +451,114 @@ func TestBuildCompletionRequest_NewConversation(t *testing.T) {
 	assert.Equal(t, "You are helpful", req.Posts[0].Message)
 	assert.Equal(t, llm.PostRoleUser, req.Posts[1].Role)
 	assert.Equal(t, "What is 2+2?", req.Posts[1].Message)
+}
+
+func TestBuildCompletionRequest_IncludesUserFiles(t *testing.T) {
+	svc, _ := setupTestService(t)
+
+	fileID := model.NewId()
+	imageData := []byte("fake image bytes")
+	svc.mmClient = &testFileClient{
+		fileInfo: &model.FileInfo{
+			Id:       fileID,
+			MimeType: "image/png",
+			Size:     int64(len(imageData)),
+		},
+		data: imageData,
+	}
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       model.NewId(),
+		BotID:        model.NewId(),
+		Operation:    "conversation",
+		SystemPrompt: "You are helpful",
+		UserMessage:  "What is in this image?",
+		UserFileIDs:  []string{fileID},
+	})
+	require.NoError(t, err)
+
+	turns, err := svc.store.GetTurnsForConversation(result.ConversationID)
+	require.NoError(t, err)
+	require.Len(t, turns, 1)
+	var blocks []ContentBlock
+	require.NoError(t, json.Unmarshal(turns[0].Content, &blocks))
+	require.Len(t, blocks, 2)
+	assert.Equal(t, BlockTypeText, blocks[0].Type)
+	assert.Equal(t, BlockTypeImage, blocks[1].Type)
+	assert.Equal(t, fileID, blocks[1].FileID)
+
+	conv, err := svc.store.GetConversation(result.ConversationID)
+	require.NoError(t, err)
+
+	req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+	require.NoError(t, err)
+
+	require.Len(t, req.Posts, 2)
+	require.Len(t, req.Posts[1].Files, 1)
+	assert.Equal(t, "What is in this image?", req.Posts[1].Message)
+	assert.Equal(t, "image/png", req.Posts[1].Files[0].MimeType)
+	assert.Equal(t, int64(len(imageData)), req.Posts[1].Files[0].Size)
+
+	data, err := io.ReadAll(req.Posts[1].Files[0].Reader)
+	require.NoError(t, err)
+	assert.Equal(t, imageData, data)
+}
+
+func TestBuildCompletionRequest_IncludesFilesForAppendedUserTurn(t *testing.T) {
+	svc, _ := setupTestService(t)
+
+	fileID := model.NewId()
+	imageData := []byte("fake follow-up image")
+	svc.mmClient = &testFileClient{
+		fileInfo: &model.FileInfo{
+			Id:       fileID,
+			MimeType: "image/png",
+			Size:     int64(len(imageData)),
+		},
+		data: imageData,
+	}
+
+	userID := model.NewId()
+	botID := model.NewId()
+	rootPostID := model.NewId()
+	channelID := model.NewId()
+	_, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       userID,
+		BotID:        botID,
+		ChannelID:    &channelID,
+		RootPostID:   &rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "You are helpful",
+		UserMessage:  "First message",
+	})
+	require.NoError(t, err)
+
+	result, err := svc.GetOrCreateConversation(GetOrCreateParams{
+		UserID:       userID,
+		BotID:        botID,
+		ChannelID:    channelID,
+		RootPostID:   rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "ignored",
+		UserMessage:  "Follow-up with image",
+		UserFileIDs:  []string{fileID},
+	})
+	require.NoError(t, err)
+	require.False(t, result.IsNew)
+
+	req, err := svc.BuildCompletionRequest(result.Conversation, &llm.Context{})
+	require.NoError(t, err)
+
+	require.Len(t, req.Posts, 3)
+	lastPost := req.Posts[2]
+	assert.Equal(t, llm.PostRoleUser, lastPost.Role)
+	assert.Equal(t, "Follow-up with image", lastPost.Message)
+	require.Len(t, lastPost.Files, 1)
+	assert.Equal(t, "image/png", lastPost.Files[0].MimeType)
+
+	data, err := io.ReadAll(lastPost.Files[0].Reader)
+	require.NoError(t, err)
+	assert.Equal(t, imageData, data)
 }
 
 func TestBuildCompletionRequest_MultiTurn(t *testing.T) {

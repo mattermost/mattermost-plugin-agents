@@ -1,9 +1,5 @@
 [
   {
-    "id": "agents.no_longer_access_error",
-    "translation": "Sorry, you no longer have access to the original thread."
-  },
-  {
     "id": "agents.stream_to_post_access_llm_error",
     "translation": "Sorry! An error occurred while accessing the LLM. See server logs for details."
   },

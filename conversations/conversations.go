@@ -134,6 +134,10 @@ func (c *Conversations) CreateOrGetDMConversation(
 	}
 
 	postID := post.Id
+	var userFileIDs []string
+	if c.bots != nil {
+		userFileIDs = visionFileIDs(c.bots.GetBotByID(botID), post)
+	}
 
 	if post.RootId == "" {
 		channelID := channel.Id
@@ -146,6 +150,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 			SystemPrompt: systemPrompt,
 			UserMessage:  post.Message,
 			UserPostID:   &postID,
+			UserFileIDs:  userFileIDs,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create conversation: %w", err)
@@ -162,11 +167,22 @@ func (c *Conversations) CreateOrGetDMConversation(
 		SystemPrompt: systemPrompt,
 		UserMessage:  post.Message,
 		UserPostID:   &postID,
+		UserFileIDs:  userFileIDs,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get or create conversation: %w", err)
 	}
 	return &DMConversationResult{ConversationID: result.Conversation.ID, IsNew: result.IsNew}, nil
+}
+
+func visionFileIDs(bot *bots.Bot, post *model.Post) []string {
+	if bot == nil || post == nil || len(post.FileIds) == 0 {
+		return nil
+	}
+	if !bot.GetConfig().EnableVision {
+		return nil
+	}
+	return append([]string(nil), post.FileIds...)
 }
 
 // DMStreamResult is the return value of ProcessDMRequest.

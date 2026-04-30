@@ -449,7 +449,7 @@ i18n-extract-webapp:
 .PHONY: i18n-extract-server
 i18n-extract-server:
 	$(GO) install -modfile=go.tools.mod github.com/mattermost/mattermost-utilities/mmgotool
-	cd server && $(GOBIN)/mmgotool i18n extract --portal-dir="" --skip-dynamic
+	$(GOBIN)/mmgotool i18n extract --portal-dir="" --skip-dynamic
 
 ## Disable the plugin.
 .PHONY: disable
