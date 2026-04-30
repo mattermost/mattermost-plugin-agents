@@ -46,88 +46,88 @@ func validateAutomationTriggerForTest(tr AutomationTrigger) string {
 }
 
 // newTestAutomationServer creates an httptest server that mimics the channel-automation plugin API.
-func newTestAutomationServer(t *testing.T, flows []AutomationFlow) *httptest.Server {
+func newTestAutomationServer(t *testing.T, automations []Automation) *httptest.Server {
 	t.Helper()
 
-	flowMap := make(map[string]AutomationFlow)
-	for _, f := range flows {
-		flowMap[f.ID] = f
+	automationMap := make(map[string]Automation)
+	for _, a := range automations {
+		automationMap[a.ID] = a
 	}
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/plugins/com.mattermost.channel-automation/api/v1/flows", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/plugins/com.mattermost.channel-automation/api/v1/automations", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			allFlows := make([]AutomationFlow, 0, len(flowMap))
+			all := make([]Automation, 0, len(automationMap))
 			filterChID := r.URL.Query().Get("channel_id")
-			for _, f := range flowMap {
-				if filterChID != "" && triggerChannelID(f.Trigger) != filterChID {
+			for _, a := range automationMap {
+				if filterChID != "" && triggerChannelID(a.Trigger) != filterChID {
 					continue
 				}
-				allFlows = append(allFlows, f)
+				all = append(all, a)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(allFlows)
+			_ = json.NewEncoder(w).Encode(all)
 
 		case http.MethodPost:
 			body, _ := io.ReadAll(r.Body)
-			var flow AutomationFlow
-			if err := json.Unmarshal(body, &flow); err != nil {
+			var automation Automation
+			if err := json.Unmarshal(body, &automation); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			if msg := validateAutomationTriggerForTest(flow.Trigger); msg != "" {
+			if msg := validateAutomationTriggerForTest(automation.Trigger); msg != "" {
 				http.Error(w, msg, http.StatusBadRequest)
 				return
 			}
-			flow.ID = "new-flow-id"
-			flowMap[flow.ID] = flow
+			automation.ID = "new-automation-id"
+			automationMap[automation.ID] = automation
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(flow)
+			_ = json.NewEncoder(w).Encode(automation)
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 
-	mux.HandleFunc("/plugins/com.mattermost.channel-automation/api/v1/flows/", func(w http.ResponseWriter, r *http.Request) {
-		// Extract ID from path: /plugins/.../flows/{id}
-		id := r.URL.Path[len("/plugins/com.mattermost.channel-automation/api/v1/flows/"):]
+	mux.HandleFunc("/plugins/com.mattermost.channel-automation/api/v1/automations/", func(w http.ResponseWriter, r *http.Request) {
+		// Extract ID from path: /plugins/.../automations/{id}
+		id := r.URL.Path[len("/plugins/com.mattermost.channel-automation/api/v1/automations/"):]
 
 		switch r.Method {
 		case http.MethodGet:
-			flow, ok := flowMap[id]
+			automation, ok := automationMap[id]
 			if !ok {
 				http.Error(w, `{"message":"not found"}`, http.StatusNotFound)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(flow)
+			_ = json.NewEncoder(w).Encode(automation)
 
 		case http.MethodPut:
-			if _, ok := flowMap[id]; !ok {
+			if _, ok := automationMap[id]; !ok {
 				http.Error(w, `{"message":"not found"}`, http.StatusNotFound)
 				return
 			}
 			body, _ := io.ReadAll(r.Body)
-			var flow AutomationFlow
-			if err := json.Unmarshal(body, &flow); err != nil {
+			var automation Automation
+			if err := json.Unmarshal(body, &automation); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			flow.ID = id
-			flowMap[id] = flow
+			automation.ID = id
+			automationMap[id] = automation
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(flow)
+			_ = json.NewEncoder(w).Encode(automation)
 
 		case http.MethodDelete:
-			if _, ok := flowMap[id]; !ok {
+			if _, ok := automationMap[id]; !ok {
 				http.Error(w, `{"message":"not found"}`, http.StatusNotFound)
 				return
 			}
-			delete(flowMap, id)
+			delete(automationMap, id)
 			w.WriteHeader(http.StatusOK)
 
 		default:
@@ -170,21 +170,21 @@ func newTestClient(serverURL string) *model.Client4 {
 	return client
 }
 
-func TestAutomationListFlows(t *testing.T) {
-	flowID1 := model.NewId()
-	flowID2 := model.NewId()
+func TestAutomationListAutomations(t *testing.T) {
+	id1 := model.NewId()
+	id2 := model.NewId()
 	chID1 := model.NewId()
 	chID2 := model.NewId()
-	sampleFlows := []AutomationFlow{
+	sample := []Automation{
 		{
-			ID:      flowID1,
+			ID:      id1,
 			Name:    "Welcome Bot",
 			Enabled: true,
 			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: chID1}},
 			Actions: []AutomationAction{{ID: "greet", SendMessage: &SendMessageActionConfig{Body: "Hello!"}}},
 		},
 		{
-			ID:      flowID2,
+			ID:      id2,
 			Name:    "Bug Triage",
 			Enabled: false,
 			Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: chID2}},
@@ -192,7 +192,7 @@ func TestAutomationListFlows(t *testing.T) {
 		},
 	}
 
-	ts := newTestAutomationServer(t, sampleFlows)
+	ts := newTestAutomationServer(t, sample)
 	defer ts.Close()
 
 	provider := newTestProvider(t, ts.URL)
@@ -212,7 +212,7 @@ func TestAutomationListFlows(t *testing.T) {
 
 	t.Run("get by id", func(t *testing.T) {
 		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id":%q}`, flowID1)), target)
+			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id":%q}`, id1)), target)
 		}
 
 		result, err := provider.toolListAutomations(mcpCtx, argsGetter)
@@ -274,7 +274,7 @@ func TestGetAutomationInstructions(t *testing.T) {
 	assert.Contains(t, result, "ACTION SELECTION:")
 }
 
-func TestAutomationCreateFlow(t *testing.T) {
+func TestAutomationCreate(t *testing.T) {
 	ts := newTestAutomationServer(t, nil)
 	defer ts.Close()
 
@@ -285,7 +285,7 @@ func TestAutomationCreateFlow(t *testing.T) {
 	t.Run("create with message_posted trigger", func(t *testing.T) {
 		argsGetter := func(target any) error {
 			return json.Unmarshal([]byte(`{
-				"name": "Test Flow",
+				"name": "Test Automation",
 				"enabled": true,
 				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz"}},
 				"actions": [{"id": "greet", "send_message": {"channel_id": "abcdefghijklmnopqrstuvwxyz", "body": "Hello!"}}]
@@ -295,8 +295,8 @@ func TestAutomationCreateFlow(t *testing.T) {
 		result, err := provider.toolCreateAutomation(mcpCtx, argsGetter)
 		require.NoError(t, err)
 		assert.Contains(t, result, "Successfully created automation")
-		assert.Contains(t, result, "Test Flow")
-		assert.Contains(t, result, "new-flow-id")
+		assert.Contains(t, result, "Test Automation")
+		assert.Contains(t, result, "new-automation-id")
 	})
 
 	t.Run("create missing name", func(t *testing.T) {
@@ -339,14 +339,14 @@ func TestAutomationCreateFlow(t *testing.T) {
 	})
 }
 
-func TestAutomationUpdateFlow(t *testing.T) {
-	flowID := model.NewId()
+func TestAutomationUpdate(t *testing.T) {
+	id := model.NewId()
 	chID := model.NewId()
-	sampleFlows := []AutomationFlow{
-		{ID: flowID, Name: "Original", Enabled: true, Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: chID}}},
+	sample := []Automation{
+		{ID: id, Name: "Original", Enabled: true, Trigger: AutomationTrigger{MessagePosted: &MessagePostedConfig{ChannelID: chID}}},
 	}
 
-	ts := newTestAutomationServer(t, sampleFlows)
+	ts := newTestAutomationServer(t, sample)
 	defer ts.Close()
 
 	provider := newTestProvider(t, ts.URL)
@@ -361,7 +361,7 @@ func TestAutomationUpdateFlow(t *testing.T) {
 				"enabled": false,
 				"trigger": {"message_posted": {"channel_id": "abcdefghijklmnopqrstuvwxyz"}},
 				"actions": []
-			}`, flowID)), target)
+			}`, id)), target)
 		}
 
 		result, err := provider.toolUpdateAutomation(mcpCtx, argsGetter)
@@ -396,13 +396,13 @@ func TestAutomationUpdateFlow(t *testing.T) {
 	})
 }
 
-func TestAutomationDeleteFlow(t *testing.T) {
-	flowID := model.NewId()
-	sampleFlows := []AutomationFlow{
-		{ID: flowID, Name: "To Delete", Enabled: true},
+func TestAutomationDelete(t *testing.T) {
+	id := model.NewId()
+	sample := []Automation{
+		{ID: id, Name: "To Delete", Enabled: true},
 	}
 
-	ts := newTestAutomationServer(t, sampleFlows)
+	ts := newTestAutomationServer(t, sample)
 	defer ts.Close()
 
 	provider := newTestProvider(t, ts.URL)
@@ -411,13 +411,13 @@ func TestAutomationDeleteFlow(t *testing.T) {
 
 	t.Run("delete success", func(t *testing.T) {
 		argsGetter := func(target any) error {
-			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id": %q}`, flowID)), target)
+			return json.Unmarshal([]byte(fmt.Sprintf(`{"automation_id": %q}`, id)), target)
 		}
 
 		result, err := provider.toolDeleteAutomation(mcpCtx, argsGetter)
 		require.NoError(t, err)
 		assert.Contains(t, result, "Successfully deleted automation")
-		assert.Contains(t, result, flowID)
+		assert.Contains(t, result, id)
 	})
 
 	t.Run("delete not found", func(t *testing.T) {

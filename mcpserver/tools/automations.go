@@ -23,7 +23,7 @@ const automationPluginAPIPath = "/plugins/com.mattermost.channel-automation/api/
 // the plugin is installed and reachable. Returns true if the plugin responds (even
 // with an auth error), false if it 404s or is unreachable.
 func (p *MattermostToolProvider) isAutomationPluginInstalled() bool {
-	reqURL := p.automationAPIURL("/flows")
+	reqURL := p.automationAPIURL("/automations")
 	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
 	if err != nil {
 		p.logger.Warn("Automation plugin check failed: bad request", "url", reqURL, "error", err.Error())
@@ -44,7 +44,7 @@ func (p *MattermostToolProvider) isAutomationPluginInstalled() bool {
 
 // --- Trigger types (union: exactly one pointer field should be non-nil) ---
 
-// AutomationTrigger defines when a flow fires. Exactly one config pointer should be set.
+// AutomationTrigger defines when an automation fires. Exactly one config pointer should be set.
 type AutomationTrigger struct {
 	MessagePosted     *MessagePostedConfig     `json:"message_posted,omitempty"`
 	Schedule          *ScheduleConfig          `json:"schedule,omitempty"`
@@ -80,7 +80,7 @@ type UserJoinedTeamConfig struct {
 
 // --- Action types (union: exactly one config pointer should be non-nil) ---
 
-// AutomationAction defines a single step in a flow. Exactly one config pointer should be set.
+// AutomationAction defines a single step in an automation. Exactly one config pointer should be set.
 type AutomationAction struct {
 	ID          string                   `json:"id"`
 	SendMessage *SendMessageActionConfig `json:"send_message,omitempty"`
@@ -112,8 +112,8 @@ type AIPromptActionConfig struct {
 	AllowedTools []string `json:"allowed_tools,omitempty"`
 }
 
-// AutomationFlow mirrors the channel-automation plugin's Flow model.
-type AutomationFlow struct {
+// Automation mirrors the channel-automation plugin's Automation model.
+type Automation struct {
 	ID        string             `json:"id,omitempty"`
 	Name      string             `json:"name"`
 	Enabled   bool               `json:"enabled"`
@@ -257,7 +257,7 @@ Returns the full JSON for each automation including trigger configuration and ac
 			Name: "update_automation",
 			Description: `Update an existing channel automation. Replaces the full definition — any field you
 omit will be cleared. Always call list_automations first to fetch the current JSON, then modify
-only what needs to change and pass the full updated flow back. Call get_automation_instructions
+only what needs to change and pass the full updated automation back. Call get_automation_instructions
 for trigger/action format details.
 IMPORTANT: Show the user what will change and get their confirmation first.`,
 			Schema:   llm.NewJSONSchemaFromStruct[UpdateAutomationArgs](),
@@ -309,42 +309,42 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 	}
 
 	// Use server-side channel_id filter if provided, otherwise fetch all.
-	flowsURL := p.automationAPIURL("/flows")
+	listURL := p.automationAPIURL("/automations")
 	if args.ChannelID != "" {
-		flowsURL += "?channel_id=" + url.QueryEscape(args.ChannelID)
+		listURL += "?channel_id=" + url.QueryEscape(args.ChannelID)
 	}
 
-	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, flowsURL, "")
+	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, listURL, "")
 	if err != nil {
 		return handleAutomationHTTPError(resp, err, "")
 	}
 	defer resp.Body.Close()
 
-	var flows []AutomationFlow
-	if err := json.NewDecoder(resp.Body).Decode(&flows); err != nil {
+	var automations []Automation
+	if err := json.NewDecoder(resp.Body).Decode(&automations); err != nil {
 		return "failed to parse automation list", fmt.Errorf("failed to decode automations response: %w", err)
 	}
 
-	if len(flows) == 0 {
+	if len(automations) == 0 {
 		return "No automations found matching the specified criteria.", nil
 	}
 
-	return formatAutomationFlowsJSON(flows)
+	return formatAutomationsJSON(automations)
 }
 
 func (p *MattermostToolProvider) getAutomationByID(ctx context.Context, mcpContext *MCPToolContext, id string) (string, error) {
-	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, p.automationAPIURL("/flows/"+id), "")
+	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, p.automationAPIURL("/automations/"+id), "")
 	if err != nil {
 		return handleAutomationHTTPError(resp, err, id)
 	}
 	defer resp.Body.Close()
 
-	var flow AutomationFlow
-	if err := json.NewDecoder(resp.Body).Decode(&flow); err != nil {
+	var automation Automation
+	if err := json.NewDecoder(resp.Body).Decode(&automation); err != nil {
 		return "failed to parse automation", fmt.Errorf("failed to decode automation response: %w", err)
 	}
 
-	return formatAutomationFlowJSON(flow)
+	return formatAutomationJSON(automation)
 }
 
 func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
@@ -362,19 +362,19 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 	}
 	ctx := context.Background()
 
-	flow := AutomationFlow{
+	automation := Automation{
 		Name:    args.Name,
 		Enabled: args.Enabled,
 		Trigger: args.Trigger,
 		Actions: args.Actions,
 	}
 
-	body, err := json.Marshal(flow)
+	body, err := json.Marshal(automation)
 	if err != nil {
 		return "failed to encode automation", fmt.Errorf("failed to marshal automation: %w", err)
 	}
 
-	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodPost, p.automationAPIURL("/flows"), string(body))
+	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodPost, p.automationAPIURL("/automations"), string(body))
 	if err != nil {
 		statusCode := 0
 		if resp != nil {
@@ -388,12 +388,12 @@ func (p *MattermostToolProvider) toolCreateAutomation(mcpContext *MCPToolContext
 	}
 	defer resp.Body.Close()
 
-	var created AutomationFlow
+	var created Automation
 	if decodeErr := json.NewDecoder(resp.Body).Decode(&created); decodeErr != nil {
 		return "failed to parse created automation", fmt.Errorf("failed to decode create response: %w", decodeErr)
 	}
 
-	jsonStr, err := marshalAutomationFlowJSON(created)
+	jsonStr, err := marshalAutomationJSON(created)
 	if err != nil {
 		return "failed to encode created automation", err
 	}
@@ -415,7 +415,7 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 	}
 	ctx := context.Background()
 
-	flow := AutomationFlow{
+	automation := Automation{
 		ID:      args.AutomationID,
 		Name:    args.Name,
 		Enabled: args.Enabled,
@@ -423,12 +423,12 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 		Actions: args.Actions,
 	}
 
-	body, err := json.Marshal(flow)
+	body, err := json.Marshal(automation)
 	if err != nil {
 		return "failed to encode automation", fmt.Errorf("failed to marshal automation: %w", err)
 	}
 
-	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodPut, p.automationAPIURL("/flows/"+args.AutomationID), string(body))
+	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodPut, p.automationAPIURL("/automations/"+args.AutomationID), string(body))
 	if err != nil {
 		statusCode := 0
 		if resp != nil {
@@ -442,12 +442,12 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 	}
 	defer resp.Body.Close()
 
-	var updated AutomationFlow
+	var updated Automation
 	if decodeErr := json.NewDecoder(resp.Body).Decode(&updated); decodeErr != nil {
 		return "failed to parse updated automation", fmt.Errorf("failed to decode update response: %w", decodeErr)
 	}
 
-	jsonStr, err := marshalAutomationFlowJSON(updated)
+	jsonStr, err := marshalAutomationJSON(updated)
 	if err != nil {
 		return "failed to encode updated automation", err
 	}
@@ -469,7 +469,7 @@ func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext
 	}
 	ctx := context.Background()
 
-	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodDelete, p.automationAPIURL("/flows/"+args.AutomationID), "")
+	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodDelete, p.automationAPIURL("/automations/"+args.AutomationID), "")
 	if err != nil {
 		return handleAutomationHTTPError(resp, err, args.AutomationID)
 	}
@@ -549,37 +549,37 @@ func automationErrorDetail(err error) string {
 	return err.Error()
 }
 
-// marshalAutomationFlowJSON returns the indented JSON representation of a single
-// flow. The exact JSON returned can be passed back into update_automation to
+// marshalAutomationJSON returns the indented JSON representation of a single
+// automation. The exact JSON returned can be passed back into update_automation to
 // preserve all fields (update replaces the full definition).
-func marshalAutomationFlowJSON(f AutomationFlow) (string, error) {
-	b, err := json.MarshalIndent(f, "", "  ")
+func marshalAutomationJSON(a Automation) (string, error) {
+	b, err := json.MarshalIndent(a, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal automation: %w", err)
 	}
 	return string(b), nil
 }
 
-// formatAutomationFlowJSON returns a single automation flow as JSON, with a header.
-func formatAutomationFlowJSON(f AutomationFlow) (string, error) {
-	jsonStr, err := marshalAutomationFlowJSON(f)
+// formatAutomationJSON returns a single automation as JSON, with a header.
+func formatAutomationJSON(a Automation) (string, error) {
+	jsonStr, err := marshalAutomationJSON(a)
 	if err != nil {
 		return "failed to encode automation", err
 	}
-	return fmt.Sprintf("Automation '%s' (ID: %s):\n\n%s", f.Name, f.ID, jsonStr), nil
+	return fmt.Sprintf("Automation '%s' (ID: %s):\n\n%s", a.Name, a.ID, jsonStr), nil
 }
 
-// formatAutomationFlowsJSON returns multiple automation flows as JSON, one per entry.
+// formatAutomationsJSON returns multiple automations as JSON, one per entry.
 // Each entry contains the exact JSON expected by update_automation.
-func formatAutomationFlowsJSON(flows []AutomationFlow) (string, error) {
+func formatAutomationsJSON(automations []Automation) (string, error) {
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d automation(s):\n\n", len(flows)))
-	for i, f := range flows {
-		jsonStr, err := marshalAutomationFlowJSON(f)
+	result.WriteString(fmt.Sprintf("Found %d automation(s):\n\n", len(automations)))
+	for i, a := range automations {
+		jsonStr, err := marshalAutomationJSON(a)
 		if err != nil {
 			return "failed to encode automation", err
 		}
-		result.WriteString(fmt.Sprintf("%d. %s (ID: %s)\n%s\n\n", i+1, f.Name, f.ID, jsonStr))
+		result.WriteString(fmt.Sprintf("%d. %s (ID: %s)\n%s\n\n", i+1, a.Name, a.ID, jsonStr))
 	}
 	return result.String(), nil
 }
