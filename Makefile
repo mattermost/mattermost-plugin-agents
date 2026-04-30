@@ -14,7 +14,7 @@ DEFAULT_GOARCH := $(shell go env GOARCH)
 # To build FIPS-compliant plugin: make dist-fips
 # Requires Docker to be installed and running
 FIPS_ENABLED ?= false
-FIPS_IMAGE ?= cgr.dev/mattermost.com/go-msft-fips:1.24.6@sha256:b94d424ab26b590163634001b22242ceac6f5d76bfbbaa77b6f0dda97220c717
+FIPS_IMAGE ?= cgr.dev/mattermost.com/go-msft-fips:1.26.1@sha256:f6c1634bb20cf6b674254b300598add05cb271234c374a06cd3ea71e38cd20a0
 
 export GO111MODULE=on
 
