@@ -79,7 +79,7 @@ export const BotDropdown = (props: BotDropdownProps) => {
         >
             <MenuHeader>
                 <MenuInfoMessage>
-                    <FormattedMessage defaultMessage='Choose a Bot'/>
+                    <FormattedMessage defaultMessage='Choose an Agent'/>
                 </MenuInfoMessage>
                 <ManageLink
                     onClick={(e) => {

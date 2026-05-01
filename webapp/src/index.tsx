@@ -8,7 +8,7 @@ import {FormattedMessage, createIntl} from 'react-intl';
 
 import {WebSocketMessage} from '@mattermost/client';
 import {GlobalState} from '@mattermost/types/store';
-import {CodeTagsIcon, CogOutlineIcon} from '@mattermost/compass-icons/components';
+import {CodeTagsIcon} from '@mattermost/compass-icons/components';
 
 //@ts-ignore it exists
 import aiIcon from '../../assets/bot_icon.png';
@@ -334,18 +334,6 @@ export default class Plugin {
                 text: <FormattedMessage defaultMessage='Custom prompts'/>,
                 sortOrder: 10,
                 component: CustomPromptsDropdown,
-            });
-            registry.registerAIActionMenuItemComponent({
-                icon: <CogOutlineIcon size={18}/>,
-                text: <FormattedMessage defaultMessage='Manage agents'/>,
-                sortOrder: 20,
-                action: () => {
-                    if (window.WebappUtils?.browserHistory?.push) {
-                        window.WebappUtils.browserHistory.push(AGENTS_ROUTE);
-                        return;
-                    }
-                    window.location.assign(AGENTS_ROUTE);
-                },
             });
         }
     }
