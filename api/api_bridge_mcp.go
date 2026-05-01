@@ -90,7 +90,9 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 	prevEffectiveExternal := a.pluginServerExternallyExposed(cfg.PluginID)
 
 	// Preserve admin-managed Enabled and ToolConfigs across re-registration.
-	// ExposeExternal comes from the calling plugin's payload (authoritative).
+	// ExposeExternal starts from the plugin payload; if this plugin already has a
+	// persisted system-console row, admin ExposeExternal is a ceiling (false in
+	// config blocks external exposure until an admin allows it again).
 	// Fall back to persisted config when in-memory was cleared (e.g. unregister).
 	if existing, found := a.mcpClientManager.GetPluginServer(cfg.PluginID); found {
 		cfg.Enabled = existing.Enabled
@@ -98,6 +100,9 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 	} else if persisted, ok := a.findPersistedPluginServer(cfg.PluginID); ok {
 		cfg.Enabled = persisted.Enabled
 		cfg.ToolConfigs = persisted.ToolConfigs
+	}
+	if persisted, ok := a.findPersistedPluginServer(cfg.PluginID); ok {
+		cfg.ExposeExternal = cfg.ExposeExternal && persisted.ExposeExternal
 	}
 	a.mcpClientManager.RegisterPluginServer(cfg)
 

@@ -177,12 +177,15 @@ plugin-ID header and stashes the user ID in the request context →
 your handler reads it via `GetUserID`.
 
 **`ExposeExternal` vs admin `Enabled` / tool policy.** Each registration POST
-sets `expose_external` from your `PluginMCPServer`. Whether tools actually
+sends `expose_external` from your `PluginMCPServer`. Whether tools actually
 appear on the **external** MCP server still requires the server to be
 **Enabled** in the Agents system console (and per-tool policy still applies).
 `Enabled` and per-tool settings are admin-managed and are preserved across
-your plugin's re-registration; `ExposeExternal` is taken from your latest
-registration payload.
+your plugin's re-registration. If this plugin already has a row under **MCP plugin
+servers** in config, the persisted **Expose external** toggle is a ceiling: when
+the admin turns it off, registration cannot turn external exposure back on until
+the admin allows it again; when the admin leaves it on, your latest registration
+value applies.
 
 ## Constraints and gotchas
 

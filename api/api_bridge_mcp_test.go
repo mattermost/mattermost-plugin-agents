@@ -603,6 +603,72 @@ func TestHandleMCPRegister_NilRebuilderSafe(t *testing.T) {
 	require.Len(t, e.mcp.registerCalls, 1, "registry mutation must still happen")
 }
 
+// Persisted system-console ExposeExternal=false must cap plugin-requested true
+// so admins keep a durable veto without uninstalling the plugin.
+func TestHandleMCPRegister_PersistedExposeExternal_CeilsPluginRequest(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	t.Run("persisted false caps plugin true", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		e.api.configStore = &testConfigStore{
+			cfg: &config.Config{
+				MCP: config.MCPConfig{
+					PluginServers: []config.PluginServerConfig{{
+						PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+						Enabled: true, ExposeExternal: false,
+					}},
+				},
+			},
+		}
+
+		e.mockAPI.On("LogError", mock.Anything).Maybe()
+		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+		req := mcpRegisterRequest(t, mcp.PluginServerConfig{
+			PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+			Enabled: true, ExposeExternal: true,
+		})
+		req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+		resp := serveAndReturn(e, req)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Len(t, e.mcp.registerCalls, 1)
+		require.False(t, e.mcp.registerCalls[0].ExposeExternal,
+			"persisted expose_external=false must cap plugin-requested true")
+	})
+
+	t.Run("persisted true preserves plugin true", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		e.api.configStore = &testConfigStore{
+			cfg: &config.Config{
+				MCP: config.MCPConfig{
+					PluginServers: []config.PluginServerConfig{{
+						PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+						Enabled: true, ExposeExternal: true,
+					}},
+				},
+			},
+		}
+
+		e.mockAPI.On("LogError", mock.Anything).Maybe()
+		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+		req := mcpRegisterRequest(t, mcp.PluginServerConfig{
+			PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+			Enabled: true, ExposeExternal: true,
+		})
+		req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+		resp := serveAndReturn(e, req)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Len(t, e.mcp.registerCalls, 1)
+		require.True(t, e.mcp.registerCalls[0].ExposeExternal)
+	})
+}
+
 // Persisted admin fields must be recovered when the in-memory entry is wiped
 // (unregister) and the plugin re-registers with a zero-valued payload.
 func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
