@@ -113,7 +113,10 @@ type PluginMCPServer struct {
 	PluginID string // required; must equal plugin.json "id"
 	Name     string // human-readable; shown in admin UI
 	Path     string // your plugin's MCP endpoint, e.g. "/mcp"
-	Version  string // optional; defaults to "0.0.1"
+	// ExposeExternal: if true, your tools may be included on the Agents plugin's
+	// external MCP aggregate when the server is also Enabled in admin (see below).
+	ExposeExternal bool
+	Version        string // optional; defaults to "0.0.1"
 }
 
 type PluginAPI interface {
@@ -172,6 +175,14 @@ User-ID flow per call: browser → Mattermost server (sets
 `X-Mattermost-UserID`) → your `ServeHTTP` → mcphelper checks the
 plugin-ID header and stashes the user ID in the request context →
 your handler reads it via `GetUserID`.
+
+**`ExposeExternal` vs admin `Enabled` / tool policy.** Each registration POST
+sets `expose_external` from your `PluginMCPServer`. Whether tools actually
+appear on the **external** MCP server still requires the server to be
+**Enabled** in the Agents system console (and per-tool policy still applies).
+`Enabled` and per-tool settings are admin-managed and are preserved across
+your plugin's re-registration; `ExposeExternal` is taken from your latest
+registration payload.
 
 ## Constraints and gotchas
 

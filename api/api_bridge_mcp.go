@@ -85,27 +85,43 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 		return
 	}
 
-	// Preserve admin-managed fields across re-registration; source-plugin
-	// payloads carry identity only. Fall back to persisted config in case
-	// an unregister/register cycle wiped the in-memory entry.
+	// External aggregate includes a plugin only when Enabled && ExposeExternal.
+	// Snapshot before merge so we rebuild when exposure transitions off as well as on.
+	prevEffectiveExternal := a.pluginServerExternallyExposed(cfg.PluginID)
+
+	// Preserve admin-managed Enabled and ToolConfigs across re-registration.
+	// ExposeExternal comes from the calling plugin's payload (authoritative).
+	// Fall back to persisted config when in-memory was cleared (e.g. unregister).
 	if existing, found := a.mcpClientManager.GetPluginServer(cfg.PluginID); found {
 		cfg.Enabled = existing.Enabled
-		cfg.ExposeExternal = existing.ExposeExternal
 		cfg.ToolConfigs = existing.ToolConfigs
 	} else if persisted, ok := a.findPersistedPluginServer(cfg.PluginID); ok {
 		cfg.Enabled = persisted.Enabled
-		cfg.ExposeExternal = persisted.ExposeExternal
 		cfg.ToolConfigs = persisted.ToolConfigs
 	}
 	a.mcpClientManager.RegisterPluginServer(cfg)
 
-	if cfg.ExposeExternal {
+	newEffectiveExternal := cfg.Enabled && cfg.ExposeExternal
+	if prevEffectiveExternal || newEffectiveExternal {
 		if rb := a.resolveExternalServerRebuilder(); rb != nil {
 			rb.RebuildExternalServer()
 		}
 	}
 
 	c.Status(http.StatusOK)
+}
+
+// pluginServerExternallyExposed reports whether the plugin's tools are (or would be)
+// included on the external MCP server: Enabled && ExposeExternal, using in-memory
+// registration first, then persisted config.
+func (a *API) pluginServerExternallyExposed(pluginID string) bool {
+	if existing, found := a.mcpClientManager.GetPluginServer(pluginID); found {
+		return existing.Enabled && existing.ExposeExternal
+	}
+	if persisted, ok := a.findPersistedPluginServer(pluginID); ok {
+		return persisted.Enabled && persisted.ExposeExternal
+	}
+	return false
 }
 
 // handleMCPUnregister handles POST /bridge/v1/mcp/unregister. The body

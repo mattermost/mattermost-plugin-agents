@@ -21,7 +21,10 @@ type PluginMCPServer struct {
 	PluginID string `json:"plugin_id"`
 	Name     string `json:"name"`
 	Path     string `json:"path"`
-	Version  string `json:"version,omitempty"`
+	// ExposeExternal, when true, allows the server's tools to appear on the
+	// Agents plugin's external MCP aggregate (subject to Enabled and admin tool policy).
+	ExposeExternal bool   `json:"expose_external"`
+	Version        string `json:"version,omitempty"`
 }
 
 // PluginAPI is the minimal Mattermost plugin API subset mcphelper needs.

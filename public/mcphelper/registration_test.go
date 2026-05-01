@@ -83,10 +83,11 @@ func fastRetry() retryPolicy {
 func TestRegisterOnce_URLAndPayload(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(200, "")}}
 	s := NewServer(api, PluginMCPServer{
-		PluginID: "com.example.demo",
-		Name:     "Demo",
-		Path:     "/mcp",
-		Version:  "0.5.0",
+		PluginID:       "com.example.demo",
+		Name:           "Demo",
+		Path:           "/mcp",
+		ExposeExternal: true,
+		Version:        "0.5.0",
 	})
 
 	retriable, err := s.registerOnce(context.Background())
@@ -103,6 +104,25 @@ func TestRegisterOnce_URLAndPayload(t *testing.T) {
 	var got PluginMCPServer
 	require.NoError(t, json.Unmarshal(body, &got))
 	assert.Equal(t, s.config, got)
+}
+
+func TestRegisterOnce_PayloadIncludesExposeExternalFalse(t *testing.T) {
+	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(200, "")}}
+	s := NewServer(api, PluginMCPServer{
+		PluginID: "com.example.demo", Name: "Demo", Path: "/mcp",
+		ExposeExternal: false, Version: "0.5.0",
+	})
+
+	retriable, err := s.registerOnce(context.Background())
+	require.NoError(t, err)
+	assert.False(t, retriable)
+
+	reqs := api.requests()
+	require.Len(t, reqs, 1)
+	body, _ := io.ReadAll(reqs[0].Body)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	assert.Equal(t, false, raw["expose_external"])
 }
 
 func TestRegisterOnce_Retries5xx(t *testing.T) {

@@ -284,10 +284,10 @@ func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
 			wantExposeAfter:      true,
 			wantName:             "Playbooks MCP",
 			wantPath:             "/mcp",
-			wantRebuilderInvoked: true,
+			wantRebuilderInvoked: false,
 		},
 		{
-			name: "re-register: admin-set Enabled=true / Expose=true preserved",
+			name: "re-register: Enabled preserved; ExposeExternal from plugin payload (can turn off)",
 			existing: &mcp.PluginServerConfig{
 				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
 				Enabled: true, ExposeExternal: true,
@@ -297,13 +297,13 @@ func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
 				Enabled: false, ExposeExternal: false,
 			},
 			wantEnabledAfter:     true,
-			wantExposeAfter:      true,
+			wantExposeAfter:      false,
 			wantName:             "Playbooks MCP",
 			wantPath:             "/mcp",
 			wantRebuilderInvoked: true,
 		},
 		{
-			name: "re-register: identity refreshed, admin flags preserved",
+			name: "re-register: identity refreshed; Enabled preserved; ExposeExternal from plugin payload",
 			existing: &mcp.PluginServerConfig{
 				PluginID: testCallerPluginID, Name: "Old Name", Path: "/old",
 				Enabled: true, ExposeExternal: false,
@@ -313,10 +313,10 @@ func TestHandleMCPRegister_PreservesAdminSetFieldsOnReregister(t *testing.T) {
 				Enabled: false, ExposeExternal: true,
 			},
 			wantEnabledAfter:     true,
-			wantExposeAfter:      false,
+			wantExposeAfter:      true,
 			wantName:             "New Name",
 			wantPath:             "/new",
-			wantRebuilderInvoked: false,
+			wantRebuilderInvoked: true,
 		},
 		{
 			name: "re-register: admin-set ToolConfigs preserved",
@@ -398,7 +398,7 @@ func TestHandleMCPRegister_ExposeExternal_TriggersRebuild(t *testing.T) {
 		wantCalls      int
 	}{
 		{"ExposeExternal=true, rebuilder present — triggers rebuild", true, true, 1},
-		{"ExposeExternal=false, rebuilder present — does NOT trigger", false, true, 0},
+		{"ExposeExternal=false, first register — does NOT trigger", false, true, 0},
 		{"ExposeExternal=true, rebuilder absent — pre-1G no-op path", true, false, 0},
 	}
 
@@ -433,6 +433,41 @@ func TestHandleMCPRegister_ExposeExternal_TriggersRebuild(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleMCPRegister_RebuildWhenDroppingEffectiveExternalExposure(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	spy := &spyRebuilder{}
+	e.api.SetExternalRebuilderForTest(spy)
+
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+	e.mcp.pluginServers = []mcp.PluginServerConfig{{
+		PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+		Enabled: true, ExposeExternal: true,
+	}}
+
+	req := mcpRegisterRequest(t, mcp.PluginServerConfig{
+		PluginID:       testCallerPluginID,
+		Name:           "Playbooks MCP",
+		Path:           "/mcp",
+		Enabled:        false,
+		ExposeExternal: false,
+	})
+	req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+
+	resp := serveAndReturn(e, req)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, e.mcp.registerCalls, 1)
+	require.True(t, e.mcp.registerCalls[0].Enabled, "Enabled preserved from existing")
+	require.False(t, e.mcp.registerCalls[0].ExposeExternal, "ExposeExternal from plugin payload")
+	require.Equal(t, 1, spy.callCount, "rebuild when effective external drops from true to false")
 }
 
 func TestHandleMCPUnregister(t *testing.T) {
@@ -630,13 +665,13 @@ func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
 
 		saved := e.mcp.registerCalls[0]
 		require.Equal(t, true, saved.Enabled, "Enabled recovered from persisted config")
-		require.Equal(t, true, saved.ExposeExternal, "ExposeExternal recovered from persisted config")
+		require.Equal(t, false, saved.ExposeExternal, "ExposeExternal comes from plugin payload (authoritative)")
 		require.Equal(t, persistedAdmin.ToolConfigs, saved.ToolConfigs, "ToolConfigs recovered from persisted config")
 
 		require.Equal(t, "Playbooks MCP", saved.Name)
 		require.Equal(t, "/mcp", saved.Path)
 
-		require.Equal(t, 1, spy.callCount, "rebuild must fire because recovered ExposeExternal=true")
+		require.Equal(t, 1, spy.callCount, "rebuild must fire when dropping external exposure after prior effective external")
 	})
 
 	t.Run("first register ever: no persisted entry — plugin payload wins (no regression)", func(t *testing.T) {
