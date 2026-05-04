@@ -41,7 +41,6 @@ type LanguageModelConfig struct {
 	JSONOutputFormat       *jsonschema.Schema
 	ToolsDisabled          bool
 	NativeWebSearchAllowed bool // Allows native web search even when ToolsDisabled is true
-	AutoRunTools           []string
 	ReasoningDisabled      bool
 }
 
@@ -73,12 +72,6 @@ func WithToolsDisabled() LanguageModelOption {
 func WithNativeWebSearchAllowed() LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.NativeWebSearchAllowed = true
-	}
-}
-
-func WithAutoRunTools(toolNames []string) LanguageModelOption {
-	return func(cfg *LanguageModelConfig) {
-		cfg.AutoRunTools = toolNames
 	}
 }
 

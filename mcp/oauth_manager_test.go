@@ -5,7 +5,9 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -28,6 +30,16 @@ func setupTestOAuthManagerFull(t *testing.T, lookup ServerConfigLookup, httpClie
 	mockClient := mocks.NewMockClient(t)
 	manager := NewOAuthManager(mockClient, "http://test.com/callback", httpClient, lookup)
 	return manager, mockClient
+}
+
+func TestStartURL(t *testing.T) {
+	manager, _ := setupTestOAuthManagerFull(t, nil, nil)
+	manager.callbackURL = "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback"
+
+	require.Equal(t,
+		"https://mattermost.example.com/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start",
+		manager.StartURL("OAuth Server"),
+	)
 }
 
 func TestBuildClientCredentialsKey(t *testing.T) {
@@ -234,6 +246,45 @@ func TestLoadOrCreateClientCredentials_EmptyStaticCredsFallsBackToKVStore(t *tes
 	require.Equal(t, "kv-client-id", creds.ClientID)
 	require.Equal(t, "kv-client-secret", creds.ClientSecret)
 	mockClient.AssertCalled(t, "KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials"))
+}
+
+func TestCreateOAuthConfig_FallbackStripsPathFromServerURL(t *testing.T) {
+	// Verifies the Atlassian JIRA MCP scenario: the server URL has a path
+	// (e.g. /v1/mcp), protected resource metadata is unavailable, and
+	// authorization server metadata is only at the base well-known URL.
+	// Per MCP spec, the path must be stripped for auth server discovery.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			metadata := AuthorizationServerMetadata{
+				Issuer:                "https://auth.example.com",
+				AuthorizationEndpoint: "https://auth.example.com/authorize",
+				TokenEndpoint:         "https://auth.example.com/token",
+			}
+			_ = json.NewEncoder(w).Encode(metadata)
+		default:
+			// Protected resource metadata and path-suffixed well-known both 404
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	manager, _ := setupTestOAuthManagerFull(t, nil, server.Client())
+
+	staticCreds := &StaticOAuthCredentials{
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+	}
+
+	ctx := context.Background()
+	config, err := manager.createOAuthConfig(ctx, server.URL+"/v1/mcp", "", staticCreds)
+
+	require.NoError(t, err)
+	require.NotNil(t, config)
+	require.Equal(t, "https://auth.example.com/authorize", config.Endpoint.AuthURL)
+	require.Equal(t, "https://auth.example.com/token", config.Endpoint.TokenURL)
+	require.Equal(t, "test-client", config.ClientID)
 }
 
 func TestStaticCredsHelpers(t *testing.T) {

@@ -311,7 +311,7 @@ deploy: dist
 mcp-server:
 	@echo Building MCP server...
 	mkdir -p mcpserver/bin
-	$(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) $(GO_BUILD_LDFLAGS) -o bin/mattermost-mcp-server ./mcpserver/cmd/main.go
+	$(GO) build $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) $(GO_BUILD_LDFLAGS) -o mcpserver/bin/mattermost-mcp-server ./mcpserver/cmd/main.go
 
 ## Builds the evalviewer binary.
 .PHONY: evalviewer
@@ -444,7 +444,7 @@ i18n-extract: i18n-extract-webapp i18n-extract-server
 
 .PHONY: i18n-extract-webapp
 i18n-extract-webapp:
-	cd webapp && $(NPM) run i18n-extract -- --out-file src/i18n/en.json --id-interpolation-pattern '[sha512:contenthash:base64:8]' --format simple src/index.tsx src/components/**/*.{ts,tsx}
+	cd webapp && $(NPM) run i18n-extract -- --out-file src/i18n/en.json --id-interpolation-pattern '[sha512:contenthash:base64:8]' --format simple src/index.tsx 'src/components/**/*.{ts,tsx}'
 
 .PHONY: i18n-extract-server
 i18n-extract-server:

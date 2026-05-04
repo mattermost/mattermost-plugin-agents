@@ -1107,6 +1107,62 @@ func (_c *MockClient_HasPermissionToChannel_Call) RunAndReturn(run func(userID s
 	return _c
 }
 
+// KVCompareAndSet provides a mock function for the type MockClient
+func (_mock *MockClient) KVCompareAndSet(key string, oldValue interface{}, newValue interface{}) (bool, error) {
+	ret := _mock.Called(key, oldValue, newValue)
+
+	if len(ret) == 0 {
+		panic("no return value specified for KVCompareAndSet")
+	}
+
+	var r0 bool
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(string, interface{}, interface{}) (bool, error)); ok {
+		return returnFunc(key, oldValue, newValue)
+	}
+	if returnFunc, ok := ret.Get(0).(func(string, interface{}, interface{}) bool); ok {
+		r0 = returnFunc(key, oldValue, newValue)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	if returnFunc, ok := ret.Get(1).(func(string, interface{}, interface{}) error); ok {
+		r1 = returnFunc(key, oldValue, newValue)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClient_KVCompareAndSet_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'KVCompareAndSet'
+type MockClient_KVCompareAndSet_Call struct {
+	*mock.Call
+}
+
+// KVCompareAndSet is a helper method to define mock.On call
+//   - key
+//   - oldValue
+//   - newValue
+func (_e *MockClient_Expecter) KVCompareAndSet(key interface{}, oldValue interface{}, newValue interface{}) *MockClient_KVCompareAndSet_Call {
+	return &MockClient_KVCompareAndSet_Call{Call: _e.mock.On("KVCompareAndSet", key, oldValue, newValue)}
+}
+
+func (_c *MockClient_KVCompareAndSet_Call) Run(run func(key string, oldValue interface{}, newValue interface{})) *MockClient_KVCompareAndSet_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(interface{}), args[2].(interface{}))
+	})
+	return _c
+}
+
+func (_c *MockClient_KVCompareAndSet_Call) Return(b bool, err error) *MockClient_KVCompareAndSet_Call {
+	_c.Call.Return(b, err)
+	return _c
+}
+
+func (_c *MockClient_KVCompareAndSet_Call) RunAndReturn(run func(key string, oldValue interface{}, newValue interface{}) (bool, error)) *MockClient_KVCompareAndSet_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // KVDelete provides a mock function for the type MockClient
 func (_mock *MockClient) KVDelete(key string) error {
 	ret := _mock.Called(key)

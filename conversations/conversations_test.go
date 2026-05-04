@@ -32,18 +32,16 @@ import (
 type mockToolProvider struct{}
 
 func (m *mockToolProvider) GetTools(bot *bots.Bot) []llm.Tool {
-	tools := []llm.Tool{}
-
-	tools = append(tools, llm.Tool{
-		Name:        "SearchServer",
-		Description: "Search the Mattermost chat server for relevant messages.",
-		Schema:      llm.NewJSONSchemaFromStruct[struct{ Term string }](),
-		Resolver: func(context *llm.Context, args llm.ToolArgumentGetter) (string, error) {
-			return "No relevant messages found.", nil
+	return []llm.Tool{
+		{
+			Name:        "WebSearch",
+			Description: "Search the web for information.",
+			Schema:      llm.NewJSONSchemaFromStruct[struct{ Term string }](),
+			Resolver: func(context *llm.Context, args llm.ToolArgumentGetter) (string, error) {
+				return "No results found.", nil
+			},
 		},
-	})
-
-	return tools
+	}
 }
 
 type mockMCPClientManager struct{}
@@ -87,7 +85,7 @@ func TestConversationMentionHandling(t *testing.T) {
 			client := pluginapi.NewClient(mockAPI, nil)
 			mmClient := mocks.NewMockClient(t)
 			licenseChecker := enterprise.NewLicenseChecker(client)
-			botService := bots.New(mockAPI, client, licenseChecker, nil, &http.Client{}, nil)
+			botService := bots.New(mockAPI, client, licenseChecker, nil, nil, &http.Client{}, nil)
 			prompts, err := llm.NewPrompts(prompts.PromptsFolder)
 			require.NoError(t, err, "Failed to load prompts")
 
@@ -117,7 +115,7 @@ func TestConversationMentionHandling(t *testing.T) {
 				configProvider,
 			)
 
-			conv := conversations.New(
+			_ = conversations.New(
 				prompts,
 				mmClient,
 				nil,
@@ -150,10 +148,27 @@ func TestConversationMentionHandling(t *testing.T) {
 			}
 			llmInstance := llm.NewLanguageModelTestLogWrapper(t.T, t.LLM)
 
-			bot := bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
+			_ = bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
 
-			textStream, err := conv.ProcessUserRequest(context.Background(), bot, threadData.RequestingUser(), threadData.Channel, threadData.LatestPost(), true, false)
-			require.NoError(t, err, "Failed to process user request")
+			// Build completion request directly (ProcessUserRequest was removed in Step L)
+			llmContext := contextBuilder.BuildLLMContextUserRequest(
+				bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance),
+				threadData.RequestingUser(),
+				threadData.Channel,
+			)
+			systemPrompt, err := prompts.Format("direct_message_question_system", llmContext)
+			require.NoError(t, err, "Failed to format system prompt")
+
+			posts := []llm.Post{
+				{Role: llm.PostRoleSystem, Message: systemPrompt},
+				{Role: llm.PostRoleUser, Message: threadData.LatestPost().Message},
+			}
+			textStream, err := llmInstance.ChatCompletion(context.Background(), llm.CompletionRequest{
+				Posts:     posts,
+				Context:   llmContext,
+				Operation: llm.OperationConversation,
+			})
+			require.NoError(t, err, "Failed to get chat completion")
 			require.NotNil(t, textStream, "Expected a non-nil text stream")
 
 			// Read the response from the text stream

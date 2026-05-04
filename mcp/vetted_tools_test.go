@@ -162,9 +162,9 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			for _, cfg := range got {
 				require.True(t, cfg.Enabled)
 				if strings.Contains(tt.baseURL, "api.githubcopilot.com") {
-					require.True(t, cfg.Policy == ToolPolicyAutoRun || cfg.Policy == ToolPolicyAsk)
+					require.True(t, cfg.Policy == ToolPolicyAutoRunInDM || cfg.Policy == ToolPolicyAsk)
 				} else {
-					require.Equal(t, ToolPolicyAutoRun, cfg.Policy)
+					require.Equal(t, ToolPolicyAutoRunInDM, cfg.Policy)
 				}
 				require.NotEmpty(t, cfg.Name)
 			}
@@ -175,32 +175,32 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 func TestSeedVettedToolConfigsSpotChecks(t *testing.T) {
 	t.Run("Atlassian", func(t *testing.T) {
 		configs := SeedVettedToolConfigs("https://mcp.atlassian.com/v1/mcp")
-		requireToolConfig(t, configs, "getJiraIssue", ToolPolicyAutoRun, true)
-		requireToolConfig(t, configs, "search", ToolPolicyAutoRun, true)
+		requireToolConfig(t, configs, "getJiraIssue", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "search", ToolPolicyAutoRunInDM, true)
 		requireNoToolConfig(t, configs, "createJiraIssue")
 	})
 
 	t.Run("GitHub", func(t *testing.T) {
 		configs := SeedVettedToolConfigs("https://api.githubcopilot.com/mcp/")
-		requireToolConfig(t, configs, "get_me", ToolPolicyAutoRun, true)
-		requireToolConfig(t, configs, "pull_request_read", ToolPolicyAutoRun, true)
+		requireToolConfig(t, configs, "get_me", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "pull_request_read", ToolPolicyAutoRunInDM, true)
 		requireToolConfig(t, configs, "get_code_scanning_alert", ToolPolicyAsk, true)
 		requireToolConfig(t, configs, "list_repository_security_advisories", ToolPolicyAsk, true)
-		requireToolConfig(t, configs, "get_global_security_advisory", ToolPolicyAutoRun, true)
+		requireToolConfig(t, configs, "get_global_security_advisory", ToolPolicyAutoRunInDM, true)
 		requireNoToolConfig(t, configs, "create_repository")
 	})
 
 	t.Run("Figma", func(t *testing.T) {
 		configs := SeedVettedToolConfigs("https://mcp.figma.com/mcp")
-		requireToolConfig(t, configs, "get_design_context", ToolPolicyAutoRun, true)
-		requireToolConfig(t, configs, "whoami", ToolPolicyAutoRun, true)
+		requireToolConfig(t, configs, "get_design_context", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "whoami", ToolPolicyAutoRunInDM, true)
 		requireNoToolConfig(t, configs, "generate_diagram")
 	})
 
 	t.Run("Mattermost", func(t *testing.T) {
 		configs := SeedVettedToolConfigs(EmbeddedClientKey)
-		requireToolConfig(t, configs, "search_posts", ToolPolicyAutoRun, true)
-		requireToolConfig(t, configs, "search_users", ToolPolicyAutoRun, true)
+		requireToolConfig(t, configs, "search_posts", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "search_users", ToolPolicyAutoRunInDM, true)
 		requireNoToolConfig(t, configs, "create_post")
 	})
 }

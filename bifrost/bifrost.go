@@ -36,6 +36,7 @@ const (
 type LLM struct {
 	client           *bifrostcore.Bifrost
 	provider         schemas.ModelProvider
+	apiKey           string // used only to redact configured secrets from provider error surfaces
 	defaultModel     string
 	inputTokenLimit  int
 	outputTokenLimit int
@@ -61,11 +62,18 @@ type Config struct {
 	Region             string // For AWS Bedrock
 	AWSAccessKeyID     string
 	AWSSecretAccessKey string
-	DefaultModel       string
-	InputTokenLimit    int
-	OutputTokenLimit   int
-	StreamingTimeout   time.Duration
-	SendUserID         bool
+
+	// Vertex AI (GCP). Region is reused from the shared Region field.
+	// VertexAuthCredentials holds the service-account JSON; empty falls back to ADC/IAM.
+	VertexProjectID       string
+	VertexProjectNumber   string
+	VertexAuthCredentials string
+
+	DefaultModel     string
+	InputTokenLimit  int
+	OutputTokenLimit int
+	StreamingTimeout time.Duration
+	SendUserID       bool
 
 	// Native tools and reasoning configuration
 	EnabledNativeTools []string
@@ -86,6 +94,9 @@ type providerAccount struct {
 	region                  string
 	awsKeyID                string
 	awsSecret               string
+	vertexProjectID         string
+	vertexProjectNumber     string
+	vertexAuthCredentials   string
 	streamingTimeoutSeconds int
 }
 
@@ -101,6 +112,9 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 	key := schemas.Key{
 		Value:  schemas.EnvVar{Val: a.apiKey},
 		Weight: 1.0,
+		// Bifrost v1.5+ requires keys to declare which models they support;
+		// "*" allows any model the configured provider can serve.
+		Models: schemas.WhiteList{"*"},
 	}
 
 	// Handle Azure config
@@ -117,6 +131,16 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 			AccessKey: schemas.EnvVar{Val: a.awsKeyID},
 			SecretKey: schemas.EnvVar{Val: a.awsSecret},
 			Region:    &region,
+		}
+	}
+
+	// Handle Vertex config. Empty AuthCredentials signals ADC / attached IAM role.
+	if a.provider == schemas.Vertex {
+		key.VertexKeyConfig = &schemas.VertexKeyConfig{
+			ProjectID:       schemas.EnvVar{Val: a.vertexProjectID},
+			ProjectNumber:   schemas.EnvVar{Val: a.vertexProjectNumber},
+			Region:          schemas.EnvVar{Val: a.region},
+			AuthCredentials: schemas.EnvVar{Val: a.vertexAuthCredentials},
 		}
 	}
 
@@ -167,6 +191,16 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 	return config, nil
 }
 
+// toolArgsToJSON ensures tool arguments are valid JSON.
+// Tools with no parameters produce an empty string which is not valid JSON,
+// so we default to "{}".
+func toolArgsToJSON(s string) json.RawMessage {
+	if s == "" {
+		return json.RawMessage("{}")
+	}
+	return json.RawMessage(s)
+}
+
 // New creates a new LLM instance with the given configuration.
 func New(cfg Config) (*LLM, error) {
 	account := &providerAccount{
@@ -177,14 +211,13 @@ func New(cfg Config) (*LLM, error) {
 		region:                  cfg.Region,
 		awsKeyID:                cfg.AWSAccessKeyID,
 		awsSecret:               cfg.AWSSecretAccessKey,
+		vertexProjectID:         cfg.VertexProjectID,
+		vertexProjectNumber:     cfg.VertexProjectNumber,
+		vertexAuthCredentials:   cfg.VertexAuthCredentials,
 		streamingTimeoutSeconds: int(cfg.StreamingTimeout.Seconds()),
 	}
 
-	bifrostConfig := schemas.BifrostConfig{
-		Account: account,
-	}
-
-	client, err := bifrostcore.Init(context.Background(), bifrostConfig)
+	client, err := newBifrostClient(account, cfg.APIKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Bifrost client: %w", err)
 	}
@@ -202,6 +235,7 @@ func New(cfg Config) (*LLM, error) {
 	return &LLM{
 		client:             client,
 		provider:           cfg.Provider,
+		apiKey:             cfg.APIKey,
 		defaultModel:       cfg.DefaultModel,
 		inputTokenLimit:    cfg.InputTokenLimit,
 		outputTokenLimit:   outputLimit,
@@ -236,6 +270,211 @@ func (b *LLM) createConfig(opts []llm.LanguageModelOption) llm.LanguageModelConf
 		opt(&cfg)
 	}
 	return cfg
+}
+
+func buildResponsesJSONSchema(schemaMap map[string]interface{}) (*schemas.ResponsesTextConfigFormatJSONSchema, error) {
+	responseSchema := &schemas.ResponsesTextConfigFormatJSONSchema{}
+
+	if typeVal, ok := schemaMap["type"].(string); ok {
+		responseSchema.Type = Ptr(typeVal)
+	} else if typeList, ok := schemaMap["type"].([]interface{}); ok {
+		anyOf := make([]map[string]any, 0, len(typeList))
+		for i, item := range typeList {
+			typeName, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("responses JSON schema type[%d] must be a string", i)
+			}
+			anyOf = append(anyOf, map[string]any{"type": typeName})
+		}
+		if len(anyOf) > 0 {
+			responseSchema.AnyOf = anyOf
+		}
+	}
+	if properties, ok := schemaMap["properties"].(map[string]interface{}); ok {
+		responseSchema.Properties = &properties
+	}
+	if required := extractStringSlice(schemaMap["required"]); len(required) > 0 {
+		responseSchema.Required = required
+	}
+	if description, ok := schemaMap["description"].(string); ok {
+		responseSchema.Description = Ptr(description)
+	}
+	if additionalProps, ok := schemaMap["additionalProperties"].(bool); ok {
+		responseSchema.AdditionalProperties = &schemas.AdditionalPropertiesStruct{
+			AdditionalPropertiesBool: &additionalProps,
+		}
+	} else if additionalProps, ok := schemas.SafeExtractOrderedMap(schemaMap["additionalProperties"]); ok {
+		responseSchema.AdditionalProperties = &schemas.AdditionalPropertiesStruct{
+			AdditionalPropertiesMap: additionalProps,
+		}
+	}
+	if name, ok := schemaMap["name"].(string); ok {
+		responseSchema.Name = Ptr(name)
+	} else if title, ok := schemaMap["title"].(string); ok {
+		responseSchema.Name = Ptr(title)
+	}
+	if defs, ok := schemaMap["$defs"].(map[string]interface{}); ok {
+		responseSchema.Defs = &defs
+	}
+	if definitions, ok := schemaMap["definitions"].(map[string]interface{}); ok {
+		responseSchema.Definitions = &definitions
+	}
+	if ref, ok := schemaMap["$ref"].(string); ok {
+		responseSchema.Ref = Ptr(ref)
+	}
+	if items, ok := schemaMap["items"].(map[string]interface{}); ok {
+		responseSchema.Items = &items
+	}
+	if minItems, ok := toInt64(schemaMap["minItems"]); ok {
+		responseSchema.MinItems = &minItems
+	}
+	if maxItems, ok := toInt64(schemaMap["maxItems"]); ok {
+		responseSchema.MaxItems = &maxItems
+	}
+	if anyOf := extractSchemaList(schemaMap["anyOf"]); len(anyOf) > 0 {
+		responseSchema.AnyOf = append(responseSchema.AnyOf, anyOf...)
+	}
+	if oneOf := extractSchemaList(schemaMap["oneOf"]); len(oneOf) > 0 {
+		responseSchema.OneOf = oneOf
+	}
+	if allOf := extractSchemaList(schemaMap["allOf"]); len(allOf) > 0 {
+		responseSchema.AllOf = allOf
+	}
+	if format, ok := schemaMap["format"].(string); ok {
+		responseSchema.Format = Ptr(format)
+	}
+	if pattern, ok := schemaMap["pattern"].(string); ok {
+		responseSchema.Pattern = Ptr(pattern)
+	}
+	if minLength, ok := toInt64(schemaMap["minLength"]); ok {
+		responseSchema.MinLength = &minLength
+	}
+	if maxLength, ok := toInt64(schemaMap["maxLength"]); ok {
+		responseSchema.MaxLength = &maxLength
+	}
+	if minimum, ok := toFloat64(schemaMap["minimum"]); ok {
+		responseSchema.Minimum = &minimum
+	}
+	if maximum, ok := toFloat64(schemaMap["maximum"]); ok {
+		responseSchema.Maximum = &maximum
+	}
+	if title, ok := schemaMap["title"].(string); ok {
+		responseSchema.Title = Ptr(title)
+	}
+	if defaultVal, exists := schemaMap["default"]; exists {
+		responseSchema.Default = defaultVal
+	}
+	if nullable, ok := schemaMap["nullable"].(bool); ok {
+		responseSchema.Nullable = &nullable
+	}
+
+	enumValues, err := extractStringEnum(schemaMap["enum"])
+	if err != nil {
+		return nil, err
+	}
+	if len(enumValues) > 0 {
+		responseSchema.Enum = enumValues
+	}
+
+	return responseSchema, nil
+}
+
+func extractStringSlice(value interface{}) []string {
+	switch items := value.(type) {
+	case []string:
+		if len(items) == 0 {
+			return nil
+		}
+		return append([]string(nil), items...)
+	case []interface{}:
+		result := make([]string, 0, len(items))
+		for _, item := range items {
+			str, ok := item.(string)
+			if !ok {
+				continue
+			}
+			result = append(result, str)
+		}
+		if len(result) == 0 {
+			return nil
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func extractStringEnum(value interface{}) ([]string, error) {
+	switch items := value.(type) {
+	case nil:
+		return nil, nil
+	case []string:
+		if len(items) == 0 {
+			return nil, nil
+		}
+		return append([]string(nil), items...), nil
+	case []interface{}:
+		result := make([]string, 0, len(items))
+		for i, item := range items {
+			str, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("responses JSON schema enum[%d] must be a string, got %T", i, item)
+			}
+			result = append(result, str)
+		}
+		if len(result) == 0 {
+			return nil, nil
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("responses JSON schema enum must be an array, got %T", value)
+	}
+}
+
+func extractSchemaList(value interface{}) []map[string]any {
+	items, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		schemaMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		result = append(result, schemaMap)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func toInt64(value interface{}) (int64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return int64(v), true
+	case int:
+		return int64(v), true
+	case int64:
+		return v, true
+	default:
+		return 0, false
+	}
+}
+
+func toFloat64(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	default:
+		return 0, false
+	}
 }
 
 // ChatCompletion performs a streaming chat completion request.
@@ -307,7 +546,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
-		err := fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message)
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -362,7 +601,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 		}
 
 		if chunk.BifrostError != nil {
-			err := fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message)
+			err := llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
@@ -451,7 +690,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 							toolCalls = append(toolCalls, llm.ToolCall{
 								ID:        buf.id,
 								Name:      buf.name,
-								Arguments: []byte(buf.arguments.String()),
+								Arguments: toolArgsToJSON(buf.arguments.String()),
 							})
 						}
 						if len(toolCalls) > 0 {
@@ -521,7 +760,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 				toolCalls = append(toolCalls, llm.ToolCall{
 					ID:        buf.id,
 					Name:      buf.name,
-					Arguments: []byte(buf.arguments.String()),
+					Arguments: toolArgsToJSON(buf.arguments.String()),
 				})
 			}
 		}
@@ -553,13 +792,27 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 	}
 	reasoning := &schemas.ChatReasoning{}
 
-	if b.provider == schemas.Anthropic {
+	switch b.provider {
+	case schemas.Anthropic:
 		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
 		reasoning.MaxTokens = Ptr(budget)
-	} else {
+	case schemas.Gemini, schemas.Vertex:
+		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
+		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
+		// When an explicit budget is set use it; otherwise fall back to effort.
+		if b.thinkingBudget > 0 {
+			reasoning.MaxTokens = Ptr(b.thinkingBudget)
+		} else {
+			effort := b.reasoningEffort
+			if effort == "" {
+				effort = "medium"
+			}
+			reasoning.Effort = Ptr(effort)
+		}
+	default:
 		effort := b.reasoningEffort
 		if effort == "" {
 			effort = "medium"
@@ -690,12 +943,19 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 				// Add the assistant message with tool calls
 				messages = append(messages, msg)
 
-				// Add tool result messages
+				// Add tool result messages. Anthropic rejects tool result
+				// messages with empty content ("text content blocks must be
+				// non-empty"), so substitute a placeholder if the tool
+				// returned an empty string.
 				for _, tc := range post.ToolUse {
+					result := tc.Result
+					if result == "" {
+						result = "(no output)"
+					}
 					toolResultMsg := schemas.ChatMessage{
 						Role: schemas.ChatMessageRoleTool,
 						Content: &schemas.ChatMessageContent{
-							ContentStr: Ptr(tc.Result),
+							ContentStr: Ptr(result),
 						},
 						ChatToolMessage: &schemas.ChatToolMessage{
 							ToolCallID: Ptr(tc.ID),
@@ -928,22 +1188,24 @@ func buildChatResponseFormat(schema *jsonschema.Schema) *interface{} {
 }
 
 // buildResponsesTextConfig creates the text configuration for the Responses API with JSON schema output.
-func buildResponsesTextConfig(schema *jsonschema.Schema) *schemas.ResponsesTextConfig {
+func buildResponsesTextConfig(schema *jsonschema.Schema) (*schemas.ResponsesTextConfig, error) {
 	schemaMap, err := jsonSchemaToMap(schema)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	var schemaAny any = schemaMap
+
+	responseSchema, err := buildResponsesJSONSchema(schemaMap)
+	if err != nil {
+		return nil, err
+	}
 	return &schemas.ResponsesTextConfig{
 		Format: &schemas.ResponsesTextConfigFormat{
-			Type:   "json_schema",
-			Name:   Ptr("response"),
-			Strict: Ptr(true),
-			JSONSchema: &schemas.ResponsesTextConfigFormatJSONSchema{
-				Schema: &schemaAny,
-			},
+			Type:       "json_schema",
+			Name:       Ptr("response"),
+			Strict:     Ptr(true),
+			JSONSchema: responseSchema,
 		},
-	}
+	}, nil
 }
 
 // isValidImageType checks if the MIME type is supported.
@@ -962,15 +1224,19 @@ func Ptr[T any](v T) *T {
 	return &v
 }
 
+func (b *LLM) providerSupportsNativeTools() bool {
+	return supportsNativeToolsProvider(b.provider)
+}
+
 // shouldUseResponsesAPI determines if the Responses API should be used for this request.
 func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 	if b.useResponsesAPI {
 		return true
 	}
-	if len(b.enabledNativeTools) > 0 {
+	if b.providerSupportsNativeTools() && len(b.enabledNativeTools) > 0 {
 		return true
 	}
-	if cfg.NativeWebSearchAllowed {
+	if b.providerSupportsNativeTools() && cfg.NativeWebSearchAllowed {
 		return true
 	}
 	return false
@@ -1190,13 +1456,29 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 	}
 	reasoning := &schemas.ResponsesParametersReasoning{}
 
-	if b.provider == schemas.Anthropic {
+	switch b.provider {
+	case schemas.Anthropic:
 		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
 		if budget >= cfg.MaxGeneratedTokens {
 			return nil // Anthropic requires budget < max_tokens
 		}
 		reasoning.MaxTokens = Ptr(budget)
-	} else {
+	case schemas.Gemini, schemas.Vertex:
+		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
+		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
+		// Prefer an explicit budget; otherwise fall back to effort. Enable summary
+		// so the provider returns reasoning text in the stream.
+		if b.thinkingBudget > 0 {
+			reasoning.MaxTokens = Ptr(b.thinkingBudget)
+		} else {
+			effort := b.reasoningEffort
+			if effort == "" {
+				effort = "medium"
+			}
+			reasoning.Effort = Ptr(effort)
+		}
+		reasoning.Summary = Ptr("auto")
+	default:
 		effort := b.reasoningEffort
 		if effort == "" {
 			effort = "medium"
@@ -1210,7 +1492,7 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 }
 
 // convertToBifrostResponsesRequest converts our CompletionRequest to Bifrost's Responses API format.
-func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) *schemas.BifrostResponsesRequest {
+func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) (*schemas.BifrostResponsesRequest, error) {
 	messages := b.convertToResponsesMessages(request.Posts)
 	tools := b.convertToResponsesTools(request, cfg)
 
@@ -1232,11 +1514,15 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 	params.Reasoning = b.buildResponsesReasoning(cfg)
 	// Apply structured output (JSON schema) configuration
 	if cfg.JSONOutputFormat != nil {
-		params.Text = buildResponsesTextConfig(cfg.JSONOutputFormat)
+		textConfig, err := buildResponsesTextConfig(cfg.JSONOutputFormat)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build responses text config: %w", err)
+		}
+		params.Text = textConfig
 	}
 	req.Params = params
 
-	return req
+	return req, nil
 }
 
 // streamResponses handles the streaming Responses API completion.
@@ -1246,12 +1532,19 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	defer cancel()
 
 	// Convert to Bifrost Responses API request
-	bifrostReq := b.convertToBifrostResponsesRequest(request, cfg)
+	bifrostReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+	if err != nil {
+		output <- llm.TextStreamEvent{
+			Type:  llm.EventTypeError,
+			Value: err,
+		}
+		return
+	}
 
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ResponsesStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
-		err := fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message)
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErr.Error.Message), b.apiKey)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -1312,7 +1605,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		}
 
 		if chunk.BifrostError != nil {
-			err := fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message)
+			err := llm.SanitizeProviderError(fmt.Errorf("stream error: %s", chunk.BifrostError.Error.Message), b.apiKey)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
@@ -1512,7 +1805,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 							toolCalls = append(toolCalls, llm.ToolCall{
 								ID:        buf.id,
 								Name:      buf.name,
-								Arguments: []byte(buf.arguments.String()),
+								Arguments: toolArgsToJSON(buf.arguments.String()),
 							})
 						}
 					}
@@ -1559,7 +1852,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				toolCalls = append(toolCalls, llm.ToolCall{
 					ID:        buf.id,
 					Name:      buf.name,
-					Arguments: []byte(buf.arguments.String()),
+					Arguments: toolArgsToJSON(buf.arguments.String()),
 				})
 			}
 		}

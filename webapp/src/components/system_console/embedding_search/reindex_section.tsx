@@ -218,8 +218,9 @@ export const ReindexSection = ({
     onHealthCheck,
     onResumeClick,
 }: ReindexSectionProps) => {
-    // Check if job is running
-    const isReindexing = jobStatus?.status === 'running';
+    // cancel_requested is non-terminal: the worker is still running until it
+    // observes the request and writes canceled.
+    const isReindexing = jobStatus?.status === 'running' || jobStatus?.status === 'cancel_requested';
 
     // Check if job can be resumed (failed or canceled with progress)
     const canResume = (jobStatus?.status === 'failed' || jobStatus?.status === 'canceled') &&
@@ -297,8 +298,15 @@ export const ReindexSection = ({
                     {isReindexing && (
                         <>
                             <ButtonGroup>
-                                <SecondaryButton onClick={onCancelJob}>
-                                    <FormattedMessage defaultMessage='Cancel Reindexing'/>
+                                <SecondaryButton
+                                    onClick={onCancelJob}
+                                    disabled={jobStatus?.status === 'cancel_requested'}
+                                >
+                                    {jobStatus?.status === 'cancel_requested' ? (
+                                        <FormattedMessage defaultMessage='Canceling…'/>
+                                    ) : (
+                                        <FormattedMessage defaultMessage='Cancel Reindexing'/>
+                                    )}
                                 </SecondaryButton>
                             </ButtonGroup>
 

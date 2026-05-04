@@ -14,7 +14,9 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/api"
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/i18n"
@@ -93,6 +95,7 @@ func (l *pluginLogger) Error(message string, keyValuePairs ...any) {
 
 func (p *Plugin) OnActivate() error {
 	pluginAPI := pluginapi.NewClient(p.API, p.Driver)
+	p.pluginAPI = pluginAPI
 	mmClient := mmapi.NewClient(pluginAPI)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
 	dbClient := mmapi.NewDBClient(pluginAPI)
@@ -190,12 +193,30 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.configMigrated = true
 
-	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, llmUpstreamHTTPClient, metricsService)
+	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService)
+
+	// migrateAndRefresh runs the one-time legacy bot migration, then forces
+	// a bot refresh only if the migration actually created new agents.
+	migrateAndRefresh := func(context string) {
+		migrated, migErr := migrateLegacyConfigBotsToUserAgents(p.API, pluginAPI, p.store, &p.configuration)
+		if migErr != nil {
+			pluginAPI.Log.Error("failed to migrate legacy config bots to user agents", "context", context, "error", migErr)
+		}
+		if migrated {
+			bots.ForceRefreshOnNextEnsure()
+			if ensureErr := bots.EnsureBots(); ensureErr != nil {
+				pluginAPI.Log.Error("failed to ensure bots after legacy bot migration", "context", context, "error", ensureErr)
+			} else if pubErr := p.PublishAgentUpdate(); pubErr != nil {
+				pluginAPI.Log.Error("Failed to publish agent update cluster event", "error", pubErr.Error())
+			}
+		}
+	}
+
 	p.configuration.RegisterUpdateListener(func() {
 		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
-			return
 		}
+		migrateAndRefresh("config_update")
 	})
 
 	if ensureBotsErr := bots.EnsureBots(); ensureBotsErr != nil {
@@ -203,6 +224,7 @@ func (p *Plugin) OnActivate() error {
 		// as it would leave the plugin in a state where it can't be configured from the system console.
 		pluginAPI.Log.Error("failed to ensure bots", "error", ensureBotsErr)
 	}
+	migrateAndRefresh("activation")
 
 	prompts, promptManagerErr := llm.NewPrompts(prompts.PromptsFolder)
 	if promptManagerErr != nil {
@@ -288,6 +310,7 @@ func (p *Plugin) OnActivate() error {
 		prompts,
 		streamingService,
 		licenseChecker,
+		nil, // conversation service wired in a later step
 	)
 
 	// Register update listener for embedding search config changes
@@ -341,7 +364,6 @@ func (p *Plugin) OnActivate() error {
 
 	toolProvider := mmtools.NewMMToolProvider(
 		mmClient,
-		searchService,
 		webSearchService,
 	)
 
@@ -353,16 +375,15 @@ func (p *Plugin) OnActivate() error {
 	manifestID := manifest.Id
 	oauthCallbackURL := fmt.Sprintf("%s/plugins/%s/oauth/callback", *siteURL, manifestID)
 
-	// Create embedded MCP server if enabled
+	// Embedded MCP is always available after PR #617, even if older configs still
+	// have the legacy toggle stored as false.
 	var embeddedMCPServer mcp.EmbeddedMCPServer
-	if p.configuration.MCP().EmbeddedServer.Enabled {
-		embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
-		if err != nil {
-			pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
-			// Continue without embedded server
-		} else {
-			pluginAPI.Log.Info("Embedded MCP server created successfully")
-		}
+	embeddedMCPServer, err = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
+	if err != nil {
+		pluginAPI.Log.Error("Failed to create embedded MCP server", "error", err)
+		// Continue without embedded server
+	} else {
+		pluginAPI.Log.Info("Embedded MCP server created successfully")
 	}
 
 	serverConfigLookup := func(serverID string) (mcp.ServerConfig, bool) {
@@ -375,13 +396,9 @@ func (p *Plugin) OnActivate() error {
 	}
 	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient)
 	p.configuration.RegisterUpdateListener(func() {
-		var embeddedServer mcp.EmbeddedMCPServer
-		var embeddedErr error
-		if p.configuration.MCP().EmbeddedServer.Enabled {
-			embeddedServer, embeddedErr = NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
-			if embeddedErr != nil {
-				pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
-			}
+		embeddedServer, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService)
+		if embeddedErr != nil {
+			pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
 		}
 
 		mcpClientManager.ReInit(p.configuration.MCP(), embeddedServer)
@@ -407,6 +424,10 @@ func (p *Plugin) OnActivate() error {
 		&p.configuration,
 	)
 
+	convService := conversation.NewService(p.store, prompts, mmClient, bots)
+	conversationsService.SetConversationService(convService)
+	searchService.SetConversationService(convService)
+
 	meetingsService := meetings.NewService(
 		pluginAPI,
 		streamingService,
@@ -424,9 +445,9 @@ func (p *Plugin) OnActivate() error {
 	conversationsService.SetMeetingsService(meetingsService)
 
 	// Wire per-tool policy checker for auto-approval in streaming and conversations
-	policyChecker := streaming.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
+	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
 		mcpCfg := p.configuration.MCP()
-		if serverBaseURL == mcp.EmbeddedClientKey && mcpCfg.EmbeddedServer.Enabled {
+		if serverBaseURL == mcp.EmbeddedClientKey {
 			toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
 			if len(toolConfigs) == 0 {
 				toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
@@ -441,8 +462,7 @@ func (p *Plugin) OnActivate() error {
 		}
 		return "ask", false
 	})
-	streamingService.SetToolPolicyChecker(policyChecker)
-	streamingService.SetAutoExecuteCallback(conversationsService.AutoExecuteApprovedToolCalls)
+	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)
 
 	// Initialize embedded MCP server handlers for plugin endpoints
@@ -457,6 +477,8 @@ func (p *Plugin) OnActivate() error {
 		mcpHandlers = handlers
 		pluginAPI.Log.Info("Embedded MCP server handlers initialized successfully")
 	}
+
+	customPromptsStore := customprompts.NewStore(dbClient)
 
 	apiService := api.New(
 		bots,
@@ -478,10 +500,16 @@ func (p *Plugin) OnActivate() error {
 		mcpHandlers,
 		llmUpstreamHTTPClient,
 		p.store,
+		p.store,
 		&p.configuration,
 		p,
+		p,
+		p.store,
 		getSearchInitError,
+		customPromptsStore,
 	)
+
+	apiService.SetConversationService(convService)
 
 	// Initialize OpenTelemetry tracing if enabled
 	cfg := p.configuration.Config()
@@ -496,7 +524,6 @@ func (p *Plugin) OnActivate() error {
 	}
 
 	// Keep only what we need
-	p.pluginAPI = pluginAPI
 	p.apiService = apiService
 	p.bots = bots
 	p.indexerService = indexerService
@@ -568,8 +595,8 @@ func (p *Plugin) MessageHasBeenDeleted(c *plugin.Context, post *model.Post) {
 		}
 	}
 	if p.conversationsService != nil {
-		if err := p.conversationsService.DeletePostMetaForDeletedPost(post); err != nil {
-			p.pluginAPI.Log.Error("Failed to delete LLM thread title for deleted post", "error", err, "post_id", post.Id)
+		if err := p.conversationsService.DeleteConversationsForDeletedPost(post); err != nil {
+			p.pluginAPI.Log.Error("Failed to soft-delete conversations for deleted post", "error", err, "post_id", post.Id)
 		}
 	}
 }

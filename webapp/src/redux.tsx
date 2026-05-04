@@ -1,16 +1,22 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {combineReducers, Store, UnknownAction} from 'redux';
+import {combineReducers, Dispatch, Store, UnknownAction} from 'redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {makeCallsPostButtonClickedHandler} from './calls_button';
+import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
 import manifest from './manifest';
+import {CustomPrompt} from './types';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
 const CallsClickHandler = 'calls_post_button_clicked_handler';
 export const BotsHandler = manifest.id + '_bots';
+export const CustomPromptsHandler = 'SET_CUSTOM_PROMPTS';
+export const PinnedPromptIdsHandler = 'SET_PINNED_PROMPT_IDS';
+export const ShowCustomPromptsModalHandler = 'SHOW_CUSTOM_PROMPTS_MODAL';
+export const SelectedBotIdHandler = 'SET_SELECTED_BOT_ID';
 
 export async function setupRedux(registry: any, store: WebappStore) {
     const reducer = combineReducers({
@@ -20,6 +26,10 @@ export async function setupRedux(registry: any, store: WebappStore) {
         selectedPostId,
         searchEnabled,
         allowUnsafeLinks,
+        customPrompts,
+        pinnedPromptIds,
+        showCustomPromptsModal,
+        selectedBotId,
     });
     registry.registerReducer(reducer);
 
@@ -100,4 +110,62 @@ function selectedPostId(state = '', action: any) {
     default:
         return state;
     }
+}
+
+function customPrompts(state: CustomPrompt[] | null = null, action: any) {
+    switch (action.type) {
+    case CustomPromptsHandler:
+        return action.customPrompts;
+    default:
+        return state;
+    }
+}
+
+function pinnedPromptIds(state: string[] | null = null, action: any) {
+    switch (action.type) {
+    case PinnedPromptIdsHandler:
+        return action.pinnedPromptIds;
+    default:
+        return state;
+    }
+}
+
+function showCustomPromptsModal(state = false, action: any) {
+    switch (action.type) {
+    case ShowCustomPromptsModalHandler:
+        return action.show;
+    default:
+        return state;
+    }
+}
+
+function selectedBotId(state: string | null = null, action: any) {
+    switch (action.type) {
+    case SelectedBotIdHandler:
+        return action.botId;
+    default:
+        return state;
+    }
+}
+
+export function fetchCustomPrompts() {
+    return async (dispatch: Dispatch) => {
+        try {
+            const prompts = await fetchCustomPromptsAPI();
+            dispatch({type: CustomPromptsHandler, customPrompts: prompts});
+        } catch (e) {
+            console.error('Failed to fetch custom prompts:', e); // eslint-disable-line no-console
+        }
+    };
+}
+
+export function fetchPinnedPromptIds() {
+    return async (dispatch: Dispatch) => {
+        try {
+            const ids = await getCustomPromptPins();
+            dispatch({type: PinnedPromptIdsHandler, pinnedPromptIds: ids});
+        } catch (e) {
+            console.error('Failed to fetch pinned prompt IDs:', e); // eslint-disable-line no-console
+        }
+    };
 }

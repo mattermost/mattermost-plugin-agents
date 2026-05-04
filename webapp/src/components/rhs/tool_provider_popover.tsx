@@ -6,7 +6,9 @@ import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 import {ChevronDownIcon} from '@mattermost/compass-icons/components';
 
-import {getUserMCPTools, updateUserToolPreferences} from '@/client';
+import {disconnectMCPOAuth, getUserMCPTools, updateUserToolPreferences} from '@/client';
+import {EnabledMCPTool} from '@/bots';
+import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 
 import DotMenu, {DotMenuButton, DropdownMenu} from '../dot_menu';
 import {ToggleSwitch} from '../toggle_switch';
@@ -15,6 +17,8 @@ export type UserMCPServerInfo = {
     name: string;
     serverOrigin: string;
     authenticated: boolean;
+    needsOAuth: boolean;
+    authURL?: string;
     tools: Array<{
         name: string;
         description: string;
@@ -27,28 +31,57 @@ type ToolProviderPopoverProps = {
     disabledServers: string[];
     onDisabledServersChange: (servers: string[]) => void;
     preloadedServers?: UserMCPServerInfo[];
+    enabledMCPTools?: EnabledMCPTool[];
+    autoEnableNewMCPTools?: boolean;
 };
 
-const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers}: ToolProviderPopoverProps) => {
-    const [servers, setServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
+// filterServersByEnabledTools filters the server list to only show servers
+// that the active agent is allowed to use. When autoEnableNewMCPTools is true,
+// every server is shown. Otherwise only servers appearing in enabledTools are kept.
+function filterServersByEnabledTools(
+    servers: UserMCPServerInfo[],
+    enabledTools: EnabledMCPTool[] | undefined,
+    autoEnableNewMCPTools: boolean | undefined,
+): UserMCPServerInfo[] {
+    if (autoEnableNewMCPTools) {
+        return servers;
+    }
+    const allowedOrigins = new Set((enabledTools ?? []).map((t) => t.server_origin));
+    return servers.filter((s) => allowedOrigins.has(s.serverOrigin));
+}
+
+const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: ToolProviderPopoverProps) => {
+    const [allServers, setAllServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
         if (preloadedServers && preloadedServers.length > 0) {
-            setServers(preloadedServers);
+            setAllServers(preloadedServers);
         }
     }, [preloadedServers]);
 
-    const fetchServers = useCallback(async () => {
-        setLoading(true);
+    const servers = filterServersByEnabledTools(allServers, enabledMCPTools, autoEnableNewMCPTools);
+
+    const fetchServers = useCallback(async (opts: {showLoading?: boolean} = {showLoading: true}) => {
+        if (opts.showLoading) {
+            setLoading(true);
+        }
         try {
             const response = await getUserMCPTools();
-            setServers(response.servers);
-        } catch {
-            // Silently fail - servers stay empty
+            setAllServers(response.servers);
+        } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error('Failed to fetch MCP tools for RHS popover:', error);
+        } finally {
+            if (opts.showLoading) {
+                setLoading(false);
+            }
         }
-        setLoading(false);
     }, []);
+
+    useMCPConnectionEvents(useCallback(() => {
+        fetchServers({showLoading: false});
+    }, [fetchServers]));
 
     const handleToggle = useCallback(async (serverOrigin: string, enabled: boolean) => {
         let updatedDisabled: string[];
@@ -66,6 +99,20 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
             onDisabledServersChange(disabledServers);
         }
     }, [disabledServers, onDisabledServersChange]);
+
+    const handleConnect = useCallback((authURL: string) => {
+        window.open(authURL, '_blank', 'noopener,noreferrer');
+    }, []);
+
+    const handleDisconnect = useCallback(async (serverName: string) => {
+        try {
+            await disconnectMCPOAuth(serverName);
+            await fetchServers();
+        } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error(`Failed to disconnect MCP OAuth for ${serverName}:`, error);
+        }
+    }, [fetchServers]);
 
     return (
         <DotMenu
@@ -105,10 +152,26 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
                         {server.name.charAt(0).toUpperCase()}
                     </ProviderAvatar>
                     <ProviderName>{server.name}</ProviderName>
-                    <ToggleSwitch
-                        checked={!disabledServers.includes(server.serverOrigin)}
-                        onChange={(checked) => handleToggle(server.serverOrigin, checked)}
-                    />
+                    {!server.authenticated && server.needsOAuth ? (
+                        <ConnectButton
+                            onClick={() => server.authURL && handleConnect(server.authURL)}
+                            disabled={!server.authURL}
+                        >
+                            <FormattedMessage defaultMessage='Connect'/>
+                        </ConnectButton>
+                    ) : (
+                        <ProviderActions>
+                            {server.needsOAuth && (
+                                <DisconnectButton onClick={() => handleDisconnect(server.name)}>
+                                    <FormattedMessage defaultMessage='Disconnect'/>
+                                </DisconnectButton>
+                            )}
+                            <ToggleSwitch
+                                checked={!disabledServers.includes(server.serverOrigin)}
+                                onChange={(checked) => handleToggle(server.serverOrigin, checked)}
+                            />
+                        </ProviderActions>
+                    )}
                 </ProviderRow>
             ))}
         </DotMenu>
@@ -156,10 +219,11 @@ const PopoverHeader = styled.div`
 `;
 
 const ProviderRow = styled.div`
-    display: flex;
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
     align-items: center;
+    column-gap: 8px;
     padding: 6px 16px;
-    gap: 8px;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.08);
@@ -181,13 +245,71 @@ const ProviderAvatar = styled.div`
 `;
 
 const ProviderName = styled.div`
-    flex: 1;
+    min-width: 0;
     font-size: 14px;
     font-weight: 400;
     color: var(--center-channel-color);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+`;
+
+const ProviderActions = styled.div`
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    height: 24px;
+`;
+
+const ConnectButton = styled.button`
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    flex-shrink: 0;
+    background: var(--button-bg);
+    color: var(--button-color);
+
+    &:hover:not(:disabled) {
+        background: rgba(var(--button-bg-rgb), 0.88);
+    }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: default;
+    }
+`;
+
+const DisconnectButton = styled.button`
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: none;
+    min-width: 0;
+    min-height: 0;
+    height: 24px;
+    background: none;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+
+    &:hover {
+        color: var(--error-text);
+    }
 `;
 
 const LoadingRow = styled.div`

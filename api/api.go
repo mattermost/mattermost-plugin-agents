@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,7 +18,9 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/i18n"
@@ -30,6 +33,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/metrics"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/search"
+	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -55,6 +59,7 @@ type MCPClientManager interface {
 	GetToolsCache() *mcp.ToolsCache
 	GetHTTPClient() *http.Client
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
+	DisconnectUserOAuth(userID, serverName string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (string, error)
 	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
@@ -67,6 +72,17 @@ type ConfigStore interface {
 	SaveConfig(cfg config.Config) error
 }
 
+// AgentStore provides CRUD access to user-created agents in the database.
+type AgentStore interface {
+	CreateAgent(cfg *llm.BotConfig) error
+	GetAgent(id string) (*llm.BotConfig, error)
+	ListAgents() ([]*llm.BotConfig, error)
+	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
+	CountActiveAgents() (int, error)
+	UpdateAgent(cfg *llm.BotConfig) error
+	DeleteAgent(id string) error
+}
+
 // ConfigUpdater updates the in-memory plugin configuration.
 type ConfigUpdater interface {
 	Update(cfg *config.Config)
@@ -75,6 +91,20 @@ type ConfigUpdater interface {
 // ClusterNotifier broadcasts config update events to other cluster nodes.
 type ClusterNotifier interface {
 	PublishConfigUpdate() error
+}
+
+// ConversationStore provides read/write access to conversation and turn data.
+type ConversationStore interface {
+	GetConversation(id string) (*store.Conversation, error)
+	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
+	GetTurnByPostID(postID string) (*store.Turn, error)
+	UpdateTurnContent(id string, content json.RawMessage) error
+	GetConversationSummariesForUser(userID string, limit, offset int) ([]store.ConversationSummary, error)
+}
+
+// ClusterAgentNotifier broadcasts agent update events to other cluster nodes.
+type ClusterAgentNotifier interface {
+	PublishAgentUpdate() error
 }
 
 // API represents the HTTP API functionality for the plugin
@@ -99,9 +129,14 @@ type API struct {
 	mcpHandlers           *mcpserver.PluginMCPHandlers
 	llmUpstreamHTTPClient *http.Client
 	configStore           ConfigStore
+	agentStore            AgentStore
 	configUpdater         ConfigUpdater
 	clusterNotifier       ClusterNotifier
+	clusterAgentNotifier  ClusterAgentNotifier
+	conversationStore     ConversationStore
+	convService           *conversation.Service
 	getSearchInitError    func() string
+	customPromptsStore    *customprompts.Store
 }
 
 // New creates a new API instance
@@ -125,9 +160,13 @@ func New(
 	mcpHandlers *mcpserver.PluginMCPHandlers,
 	llmUpstreamHTTPClient *http.Client,
 	configStore ConfigStore,
+	agentStore AgentStore,
 	configUpdater ConfigUpdater,
 	clusterNotifier ClusterNotifier,
+	clusterAgentNotifier ClusterAgentNotifier,
+	conversationStore ConversationStore,
 	getSearchInitError func() string,
+	customPromptsStore *customprompts.Store,
 ) *API {
 	return &API{
 		bots:                  bots,
@@ -150,10 +189,19 @@ func New(
 		mcpHandlers:           mcpHandlers,
 		llmUpstreamHTTPClient: llmUpstreamHTTPClient,
 		configStore:           configStore,
+		agentStore:            agentStore,
 		configUpdater:         configUpdater,
 		clusterNotifier:       clusterNotifier,
+		clusterAgentNotifier:  clusterAgentNotifier,
+		conversationStore:     conversationStore,
 		getSearchInitError:    getSearchInitError,
+		customPromptsStore:    customPromptsStore,
 	}
+}
+
+// SetConversationService sets the conversation entity service for channel analysis.
+func (a *API) SetConversationService(svc *conversation.Service) {
+	a.convService = svc
 }
 
 // ServeHTTP handles HTTP requests to the plugin
@@ -201,16 +249,46 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 	router.Use(a.MattermostAuthorizationRequired)
 
+	router.GET("/conversations/:conversationid", a.handleGetConversation)
+
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
 	router.GET("/mcp/tools", a.handleGetUserMCPTools)
+	router.GET("/mcp/oauth/:serverName/start", a.handleOAuthStart)
 	router.GET("/mcp/user-preferences", a.handleGetUserPreferences)
 	router.PUT("/mcp/user-preferences", a.handlePutUserPreferences)
+	router.DELETE("/mcp/oauth/:serverName", a.handleDeleteUserMCPOAuth)
+
+	// Agent routes — authenticated. Free-tier instances (no multi-LLM license)
+	// can CRUD up to one self-service agent; the quota is enforced inside
+	// handleCreateAgent so reads, updates, deletes, and avatar uploads remain
+	// available even after a license downgrade.
+	agentRouter := router.Group("/agents")
+	agentRouter.POST("", a.handleCreateAgent)
+	agentRouter.GET("", a.handleListAgents)
+	// Register /models/fetch before /:agentid routes so "models" is never captured as :agentid.
+	agentRouter.POST("/models/fetch", a.handleFetchModelsForService)
+	agentRouter.GET("/:agentid", a.handleGetAgent)
+	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
+	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
+	agentRouter.POST("/:agentid/avatar", a.handleUploadAgentAvatar)
+
+	router.GET("/services", a.handleListServices)
 
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
 	// Used by the MCP server for external search callbacks.
 	router.POST("/search/raw", a.handleRawSearch)
+
+	// Custom prompts routes — available to all authenticated users
+	promptsRouter := router.Group("/custom-prompts")
+	promptsRouter.POST("", a.handleCreateCustomPrompt)
+	promptsRouter.GET("", a.handleListCustomPrompts)
+	promptsRouter.PUT("/:id", a.handleUpdateCustomPrompt)
+	promptsRouter.DELETE("/:id", a.handleDeleteCustomPrompt)
+	promptsRouter.GET("/pins", a.handleGetPromptPins)
+	promptsRouter.PUT("/pins", a.handleSetPromptPin)
+	promptsRouter.POST("/:id/render", a.handleRenderCustomPrompt)
 
 	botRequiredRouter := router.Group("")
 	botRequiredRouter.Use(a.aiBotRequired)
@@ -224,8 +302,6 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	postRouter.POST("/stop", a.handleStop)
 	postRouter.POST("/regenerate", a.handleRegenerate)
 	postRouter.POST("/tool_call", a.handleToolCall)
-	postRouter.GET("/tool_call_private", a.handleToolCallPrivate)
-	postRouter.GET("/tool_result_private", a.handleToolResultPrivate)
 	postRouter.POST("/tool_result", a.handleToolResult)
 	postRouter.POST("/postback_summary", a.handlePostbackSummary)
 
@@ -281,8 +357,11 @@ func (a *API) metricsMiddleware(c *gin.Context) {
 }
 
 func (a *API) aiBotRequired(c *gin.Context) {
-	// We should integreate LLM here
 	botUsername := c.Query("botUsername")
+	if botUsername == "" {
+		botUsername = a.config.GetDefaultBotName()
+	}
+
 	bot := a.bots.GetBotByUsernameOrFirst(botUsername)
 	if bot == nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get bot: %s", botUsername))
@@ -324,28 +403,57 @@ func (a *API) enforceEmptyBody(c *gin.Context) error {
 	return nil
 }
 
+// aiThreadResponse is the JSON shape for items in the GET /ai_threads response.
+// This is a history DTO — only navigable, summary-level fields. No message
+// preview is included because the 2.0 conversation model stores assistant
+// content in typed blocks rather than a single message string.
+type aiThreadResponse struct {
+	ID         string  `json:"id"`
+	Title      string  `json:"title"`
+	ChannelID  *string `json:"channel_id"`
+	BotID      string  `json:"bot_id"`
+	RootPostID *string `json:"root_post_id"`
+	TurnCount  int     `json:"turn_count"`
+	UpdateAt   int64   `json:"update_at"`
+}
+
 func (a *API) handleGetAIThreads(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
-	threads, err := a.conversationsService.GetAIThreads(userID)
+	summaries, err := a.conversationStore.GetConversationSummariesForUser(userID, 60, 0)
 	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get posts for bot DM: %w", err))
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get conversation summaries: %w", err))
 		return
+	}
+
+	threads := make([]aiThreadResponse, len(summaries))
+	for i, s := range summaries {
+		threads[i] = aiThreadResponse{
+			ID:         s.ID,
+			Title:      s.Title,
+			ChannelID:  s.ChannelID,
+			BotID:      s.BotID,
+			RootPostID: s.RootPostID,
+			TurnCount:  s.TurnCount,
+			UpdateAt:   s.UpdatedAt,
+		}
 	}
 
 	c.JSON(http.StatusOK, threads)
 }
 
 type AIBotInfo struct {
-	ID                 string                 `json:"id"`
-	DisplayName        string                 `json:"displayName"`
-	Username           string                 `json:"username"`
-	LastIconUpdate     int64                  `json:"lastIconUpdate"`
-	DMChannelID        string                 `json:"dmChannelID"`
-	ChannelAccessLevel llm.ChannelAccessLevel `json:"channelAccessLevel"`
-	ChannelIDs         []string               `json:"channelIDs"`
-	UserAccessLevel    llm.UserAccessLevel    `json:"userAccessLevel"`
-	UserIDs            []string               `json:"userIDs"`
+	ID                    string                 `json:"id"`
+	DisplayName           string                 `json:"displayName"`
+	Username              string                 `json:"username"`
+	LastIconUpdate        int64                  `json:"lastIconUpdate"`
+	DMChannelID           string                 `json:"dmChannelID"`
+	ChannelAccessLevel    llm.ChannelAccessLevel `json:"channelAccessLevel"`
+	ChannelIDs            []string               `json:"channelIDs"`
+	UserAccessLevel       llm.UserAccessLevel    `json:"userAccessLevel"`
+	UserIDs               []string               `json:"userIDs"`
+	EnabledMCPTools       []llm.EnabledMCPTool   `json:"enabledMCPTools"`
+	AutoEnableNewMCPTools bool                   `json:"autoEnableNewMCPTools"`
 }
 
 type AIBotsResponse struct {
@@ -362,7 +470,7 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 	// Put the default bot first.
 	bots := make([]AIBotInfo, 0, len(allBots))
 	defaultBotName := a.config.GetDefaultBotName()
-	for i, bot := range allBots {
+	for _, bot := range allBots {
 		// Don't return bots the user is excluded from using.
 		if a.bots.CheckUsageRestrictionsForUser(bot, userID) != nil {
 			continue
@@ -378,18 +486,21 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 		}
 
 		bots = append(bots, AIBotInfo{
-			ID:                 bot.GetMMBot().UserId,
-			DisplayName:        bot.GetMMBot().DisplayName,
-			Username:           bot.GetMMBot().Username,
-			LastIconUpdate:     bot.GetMMBot().LastIconUpdate,
-			DMChannelID:        dmChannelID,
-			ChannelAccessLevel: bot.GetConfig().ChannelAccessLevel,
-			ChannelIDs:         bot.GetConfig().ChannelIDs,
-			UserAccessLevel:    bot.GetConfig().UserAccessLevel,
-			UserIDs:            bot.GetConfig().UserIDs,
+			ID:                    bot.GetMMBot().UserId,
+			DisplayName:           bot.GetMMBot().DisplayName,
+			Username:              bot.GetMMBot().Username,
+			LastIconUpdate:        bot.GetMMBot().LastIconUpdate,
+			DMChannelID:           dmChannelID,
+			ChannelAccessLevel:    bot.GetConfig().ChannelAccessLevel,
+			ChannelIDs:            bot.GetConfig().ChannelIDs,
+			UserAccessLevel:       bot.GetConfig().UserAccessLevel,
+			UserIDs:               bot.GetConfig().UserIDs,
+			EnabledMCPTools:       bot.GetConfig().EnabledMCPTools,
+			AutoEnableNewMCPTools: bot.GetConfig().AutoEnableNewMCPTools,
 		})
 		if bot.GetMMBot().Username == defaultBotName {
-			bots[0], bots[i] = bots[i], bots[0]
+			last := len(bots) - 1
+			bots[0], bots[last] = bots[last], bots[0]
 		}
 	}
 
@@ -419,6 +530,14 @@ type FetchModelsRequest struct {
 	APIKey      string `json:"apiKey"`
 	APIURL      string `json:"apiURL"`
 	OrgID       string `json:"orgID"`
+
+	// Region applies to providers that require it for model listing (Vertex AI).
+	Region string `json:"region"`
+
+	// Vertex AI credentials. VertexAuthCredentials may be empty to signal ADC.
+	VertexProjectID       string `json:"vertexProjectID"`
+	VertexProjectNumber   string `json:"vertexProjectNumber"`
+	VertexAuthCredentials string `json:"vertexAuthCredentials"`
 }
 
 func (a *API) handleFetchModels(c *gin.Context) {
@@ -433,16 +552,24 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	// API key is required for most services, but optional for openaicompatible (some don't require auth).
-	if req.APIKey == "" && req.ServiceType != "openaicompatible" {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey is required"))
-		return
-	}
-
-	// For openaicompatible, require at least an API URL if no API key
-	if req.ServiceType == "openaicompatible" && req.APIKey == "" && req.APIURL == "" {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiURL is required for openaicompatible when apiKey is not provided"))
-		return
+	switch req.ServiceType {
+	case llm.ServiceTypeOpenAICompatible:
+		// openaicompatible accepts API key OR API URL (some endpoints don't require auth).
+		if req.APIKey == "" && req.APIURL == "" {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiURL is required for openaicompatible when apiKey is not provided"))
+			return
+		}
+	case llm.ServiceTypeVertex:
+		// Vertex AI authenticates via project + region; service-account JSON is optional (ADC).
+		if req.VertexProjectID == "" || req.Region == "" {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("vertexProjectID and region are required for Vertex AI"))
+			return
+		}
+	default:
+		if req.APIKey == "" {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey is required"))
+			return
+		}
 	}
 
 	if !bifrost.IsSupported(req.ServiceType) {
@@ -450,7 +577,16 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	models, err := bifrost.FetchModelsForServiceType(req.ServiceType, req.APIKey, req.APIURL, req.OrgID)
+	models, err := bifrost.FetchModelsForService(llm.ServiceConfig{
+		Type:                  req.ServiceType,
+		APIKey:                req.APIKey,
+		APIURL:                req.APIURL,
+		OrgID:                 req.OrgID,
+		Region:                req.Region,
+		VertexProjectID:       req.VertexProjectID,
+		VertexProjectNumber:   req.VertexProjectNumber,
+		VertexAuthCredentials: req.VertexAuthCredentials,
+	})
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
 		return
