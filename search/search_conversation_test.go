@@ -134,7 +134,8 @@ func (s *fakeConversationStore) UpdateConversationRootPostID(id string, rootPost
 // fakeBotLookup is a no-op implementation of conversation.BotLookup.
 type fakeBotLookup struct{}
 
-func (f *fakeBotLookup) IsAnyBot(string) bool { return false }
+func (f *fakeBotLookup) IsAnyBot(string) bool                        { return false }
+func (f *fakeBotLookup) GetBotConfigByID(string) (bool, int64, bool) { return false, 0, false }
 
 // makeSearchResult creates a single embeddings.SearchResult for testing.
 func makeSearchResult(postID, channelID, userID, content string, score float32) embeddings.SearchResult {

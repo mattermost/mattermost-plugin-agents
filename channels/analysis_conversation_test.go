@@ -131,6 +131,10 @@ func (b *testBotLookup) IsAnyBot(userID string) bool {
 	return b.botUserIDs[userID]
 }
 
+func (b *testBotLookup) GetBotConfigByID(string) (bool, int64, bool) {
+	return false, 0, false
+}
+
 // fakeLLM implements llm.LanguageModel for tests. It returns a sequence of
 // pre-configured streams, one per call to ChatCompletion.
 type fakeLLM struct {

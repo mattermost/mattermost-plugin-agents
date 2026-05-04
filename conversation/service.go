@@ -32,9 +32,13 @@ type Store interface {
 	GetMaxSequenceForConversation(conversationID string) (int, error)
 }
 
-// BotLookup checks whether a user ID belongs to an AI bot.
+// BotLookup answers bot-membership and per-bot config queries.
 type BotLookup interface {
 	IsAnyBot(userID string) bool
+
+	// GetBotConfigByID returns the bot's EnableVision and MaxFileSize.
+	// ok is false when botID is unknown.
+	GetBotConfigByID(botID string) (enableVision bool, maxFileSize int64, ok bool)
 }
 
 // Service manages conversation entities: creation, continuation,
@@ -71,6 +75,7 @@ type CreateConversationParams struct {
 	SystemPrompt string  // already-formatted system prompt text
 	UserMessage  string  // the first user message content
 	UserPostID   *string // nullable: post ID for the user turn, if a post exists
+	FileIDs      []string
 }
 
 // CreateConversationResult is the return value of CreateConversation.
@@ -103,7 +108,7 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 	}
 
 	turnID := model.NewId()
-	content, err := marshalBlocks(textBlocks(params.UserMessage))
+	content, err := marshalBlocks(userBlocksWithAttachments(params.UserMessage, params.FileIDs, s.mmClient))
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal user message: %w", err)
 	}
@@ -174,6 +179,7 @@ type GetOrCreateParams struct {
 	SystemPrompt string  // formatted system prompt (used only if creating)
 	UserMessage  string  // new user message
 	UserPostID   *string // post ID for the new user turn
+	FileIDs      []string
 }
 
 // GetOrCreateResult is the return value of GetOrCreateConversation.
@@ -192,7 +198,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	}
 
 	if existing != nil {
-		turnID, appendErr := s.appendUserTurn(existing.ID, params.UserMessage, params.UserPostID)
+		turnID, appendErr := s.appendUserTurn(existing.ID, params.UserMessage, params.UserPostID, params.FileIDs)
 		if appendErr != nil {
 			return nil, appendErr
 		}
@@ -216,6 +222,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 		SystemPrompt: params.SystemPrompt,
 		UserMessage:  params.UserMessage,
 		UserPostID:   params.UserPostID,
+		FileIDs:      params.FileIDs,
 	})
 	if errors.Is(err, store.ErrConversationConflict) {
 		// Another request created the conversation concurrently. Look it up and append the user turn.
@@ -226,7 +233,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 		if raceConv == nil {
 			return nil, fmt.Errorf("conversation vanished after conflict")
 		}
-		turnID, appendErr := s.appendUserTurn(raceConv.ID, params.UserMessage, params.UserPostID)
+		turnID, appendErr := s.appendUserTurn(raceConv.ID, params.UserMessage, params.UserPostID, params.FileIDs)
 		if appendErr != nil {
 			return nil, appendErr
 		}
@@ -253,8 +260,8 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 }
 
 // appendUserTurn creates a new user turn at the next available sequence number.
-func (s *Service) appendUserTurn(conversationID, message string, postID *string) (string, error) {
-	content, err := marshalBlocks(textBlocks(message))
+func (s *Service) appendUserTurn(conversationID, message string, postID *string, fileIDs []string) (string, error) {
+	content, err := marshalBlocks(userBlocksWithAttachments(message, fileIDs, s.mmClient))
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal user message: %w", err)
 	}
@@ -331,7 +338,8 @@ func (s *Service) BuildCompletionRequest(
 		Message: conv.SystemPrompt,
 	})
 
-	turnPosts, err := turnsToLLMPosts(turns, redactUnshared)
+	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
+	turnPosts, err := turnsToLLMPosts(turns, redactUnshared, s.mmClient, enableVision, maxFileSize)
 	if err != nil {
 		return nil, err
 	}
@@ -344,13 +352,32 @@ func (s *Service) BuildCompletionRequest(
 	}, nil
 }
 
+// attachmentConfigForBot returns the bot's EnableVision and MaxFileSize.
+// Falls back to vision-off + DefaultMaxFileSize when the bot is unknown.
+func (s *Service) attachmentConfigForBot(botID string) (bool, int64) {
+	if s.bots == nil {
+		return false, DefaultMaxFileSize
+	}
+	enableVision, maxFileSize, ok := s.bots.GetBotConfigByID(botID)
+	if !ok {
+		return false, DefaultMaxFileSize
+	}
+	return enableVision, maxFileSize
+}
+
 // turnsToLLMPosts converts a contiguous slice of turns into llm.Posts,
 // merging each tool_result turn into the preceding assistant turn so that
 // BlocksToPost can pair tool_result blocks with their tool_use entries in a
 // single llm.Post. Without this merge, tool_use entries go out with empty
 // Result fields and bifrost emits empty-content tool messages, which
 // Anthropic rejects with "text content blocks must be non-empty".
-func turnsToLLMPosts(turns []store.Turn, redactUnshared bool) ([]llm.Post, error) {
+func turnsToLLMPosts(
+	turns []store.Turn,
+	redactUnshared bool,
+	mmClient mmapi.Client,
+	enableVision bool,
+	maxFileSize int64,
+) ([]llm.Post, error) {
 	posts := make([]llm.Post, 0, len(turns))
 	for i := 0; i < len(turns); i++ {
 		turn := turns[i]
@@ -366,7 +393,7 @@ func turnsToLLMPosts(turns []store.Turn, redactUnshared bool) ([]llm.Post, error
 			blocks = append(blocks, nextBlocks...)
 			i++
 		}
-		posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared))
+		posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared, mmClient, enableVision, maxFileSize))
 	}
 	return posts, nil
 }
@@ -547,6 +574,8 @@ func (s *Service) BuildChannelMentionRequest(
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
 
+	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
+
 	// Build a set of post IDs that belong to the bot's turns.
 	turnPostIDs := make(map[string]bool)
 	// Map from postID to the turn for quick lookup.
@@ -605,7 +634,7 @@ func (s *Service) BuildChannelMentionRequest(
 	// (precedingSeq = 0). Route through turnsToLLMPosts so tool_use and
 	// tool_result within the same tool round merge into a single llm.Post,
 	// matching BuildCompletionRequest's behavior.
-	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], redactUnshared)
+	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], redactUnshared, s.mmClient, enableVision, maxFileSize)
 	if err != nil {
 		return nil, err
 	}
@@ -618,7 +647,7 @@ func (s *Service) BuildChannelMentionRequest(
 			// preceding assistant turn's tool_use blocks.
 			turn := turnByPostID[threadPost.Id]
 			run := append([]store.Turn{turn}, turnsByPrecedingPost[turn.Sequence]...)
-			runPosts, err := turnsToLLMPosts(run, redactUnshared)
+			runPosts, err := turnsToLLMPosts(run, redactUnshared, s.mmClient, enableVision, maxFileSize)
 			if err != nil {
 				return nil, err
 			}
