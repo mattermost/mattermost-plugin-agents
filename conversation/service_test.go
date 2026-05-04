@@ -2109,4 +2109,74 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 		assert.Contains(t, userPost.Message, "Content: hello",
 			"text-file content must still flow through to the LLM via the channel-mention path")
 	})
+
+	t.Run("image on root post is visible to later mention in same thread", func(t *testing.T) {
+		mmClient := mmapimocks.NewMockClient(t)
+
+		mmClient.On("GetFileInfo", "img-root").Return(&model.FileInfo{
+			Id: "img-root", Name: "screenshot.png", MimeType: "image/png", Size: 100,
+		}, nil)
+		mmClient.On("GetFile", "img-root").Return(io.NopCloser(strings.NewReader("PNGDATA")), nil)
+
+		botID := model.NewId()
+		userID := model.NewId()
+		rootPostID := "root_post_with_image"
+		mentionPostID := "later_mention_post"
+		bots := &testBotLookup{
+			botUserIDs: map[string]bool{botID: true},
+			configByID: map[string]testBotConfig{
+				botID: {enableVision: true, maxFileSize: 0},
+			},
+		}
+
+		svc, _ := setupTestServiceWithClient(t, mmClient, bots)
+
+		result, err := svc.CreateConversation(CreateConversationParams{
+			UserID:       userID,
+			BotID:        botID,
+			RootPostID:   stringPtr(rootPostID),
+			Operation:    "conversation",
+			SystemPrompt: "system",
+			UserMessage:  "@aibot what do you think?",
+			UserPostID:   stringPtr(mentionPostID),
+		})
+		require.NoError(t, err)
+
+		conv, err := svc.GetConversation(result.ConversationID)
+		require.NoError(t, err)
+
+		threadData := &mmapi.ThreadData{
+			Posts: []*model.Post{
+				{
+					Id:       rootPostID,
+					UserId:   userID,
+					CreateAt: 1000,
+					Message:  "I noticed this",
+					FileIds:  []string{"img-root"},
+				},
+				{
+					Id:       mentionPostID,
+					UserId:   userID,
+					CreateAt: 2000,
+					Message:  "@aibot what do you think?",
+				},
+			},
+			UsersByID: map[string]*model.User{
+				userID: {Id: userID, Username: "alice"},
+				botID:  {Id: botID, Username: "aibot"},
+			},
+		}
+
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		require.NoError(t, err)
+
+		require.Len(t, req.Posts, 3, "system + root thread post + later mention turn")
+		rootPost := req.Posts[1]
+		require.Equal(t, llm.PostRoleUser, rootPost.Role)
+		require.Len(t, rootPost.Files, 1,
+			"image attachments on earlier thread posts must be visible when a later post mentions the agent")
+		assert.Equal(t, "image/png", rootPost.Files[0].MimeType)
+		assert.Contains(t, rootPost.Message, "@alice")
+		assert.Contains(t, rootPost.Message, "I noticed this")
+	})
 }

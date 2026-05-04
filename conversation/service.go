@@ -653,15 +653,14 @@ func (s *Service) BuildChannelMentionRequest(
 			}
 			posts = append(posts, runPosts...)
 		} else {
-			// Render as plain text with @username prefix.
+			// Render as user content with @username prefix, preserving any
+			// uploaded files on thread posts that are not stored turns.
 			username := ""
 			if user, ok := threadData.UsersByID[threadPost.UserId]; ok {
 				username = user.Username
 			}
-			posts = append(posts, llm.Post{
-				Role:    llm.PostRoleUser,
-				Message: "@" + username + ": " + format.PostBody(threadPost),
-			})
+			blocks := userBlocksWithAttachments("@"+username+": "+format.PostBody(threadPost), threadPost.FileIds, s.mmClient)
+			posts = append(posts, BlocksToPost(blocks, "user", redactUnshared, s.mmClient, enableVision, maxFileSize))
 		}
 	}
 
