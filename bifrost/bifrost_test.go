@@ -847,6 +847,60 @@ func TestConvertBifrostAnnotation(t *testing.T) {
 	}
 }
 
+func TestFillMissingAnnotationIndicesUsesUTF16(t *testing.T) {
+	emDashPrefix := "Canvas released — a feature"
+	emojiPrefix := "Look 🔎 here"
+
+	assert.Equal(t, llm.UTF16CodeUnitCount(emDashPrefix), advanceStreamingTextPosition(0, emDashPrefix))
+	assert.NotEqual(t, len(emDashPrefix), advanceStreamingTextPosition(0, emDashPrefix))
+
+	tests := []struct {
+		name          string
+		ann           llm.Annotation
+		source        *schemas.ResponsesOutputMessageContentTextAnnotation
+		blockStartPos int
+		textLen       int
+		expectedStart int
+		expectedEnd   int
+	}{
+		{
+			name:          "fills missing Anthropic indices with UTF-16 text positions",
+			ann:           llm.Annotation{Type: llm.AnnotationTypeURLCitation},
+			source:        &schemas.ResponsesOutputMessageContentTextAnnotation{Type: "url_citation"},
+			blockStartPos: llm.UTF16CodeUnitCount(emDashPrefix),
+			textLen:       llm.UTF16CodeUnitCount(emDashPrefix + " directly inside Cursor"),
+			expectedStart: llm.UTF16CodeUnitCount(emDashPrefix),
+			expectedEnd:   llm.UTF16CodeUnitCount(emDashPrefix + " directly inside Cursor"),
+		},
+		{
+			name: "preserves provider-supplied indices",
+			ann: llm.Annotation{
+				Type:       llm.AnnotationTypeURLCitation,
+				StartIndex: 3,
+				EndIndex:   8,
+			},
+			source: &schemas.ResponsesOutputMessageContentTextAnnotation{
+				Type:       "url_citation",
+				StartIndex: intPtr(3),
+				EndIndex:   intPtr(8),
+			},
+			blockStartPos: llm.UTF16CodeUnitCount(emojiPrefix),
+			textLen:       llm.UTF16CodeUnitCount(emojiPrefix + " after"),
+			expectedStart: 3,
+			expectedEnd:   8,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fillMissingAnnotationIndices(&tt.ann, tt.source, tt.blockStartPos, tt.textLen)
+
+			assert.Equal(t, tt.expectedStart, tt.ann.StartIndex)
+			assert.Equal(t, tt.expectedEnd, tt.ann.EndIndex)
+		})
+	}
+}
+
 type testStructuredOutput struct {
 	Name  string `json:"name"`
 	Score int    `json:"score"`

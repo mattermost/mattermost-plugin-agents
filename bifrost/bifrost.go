@@ -1542,8 +1542,8 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 
 	// Annotation buffer and text position tracking
 	var annotations []llm.Annotation
-	var textLen int       // cumulative byte length of all streamed text
-	var blockStartPos int // byte position where current text block started
+	var textLen int       // cumulative UTF-16 code units of all streamed text
+	var blockStartPos int // UTF-16 position where current text block started
 
 	// Watchdog timer for streaming timeout
 	watchdog := make(chan struct{})
@@ -1611,7 +1611,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 						Type:  llm.EventTypeText,
 						Value: *resp.Delta,
 					}
-					textLen += len(*resp.Delta)
+					textLen = advanceStreamingTextPosition(textLen, *resp.Delta)
 				}
 
 			case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
@@ -1644,12 +1644,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 						// Bifrost doesn't provide output-text positions during Anthropic streaming.
 						// Compute them from tracked block boundaries, matching the approach used by
 						// the old Anthropic SDK implementation (extractAnnotations).
-						if resp.Annotation.StartIndex == nil {
-							ann.StartIndex = blockStartPos
-						}
-						if resp.Annotation.EndIndex == nil {
-							ann.EndIndex = textLen
-						}
+						fillMissingAnnotationIndices(ann, resp.Annotation, blockStartPos, textLen)
 						annotations = append(annotations, *ann)
 					}
 				}
@@ -1874,4 +1869,17 @@ func convertBifrostAnnotation(ann *schemas.ResponsesOutputMessageContentTextAnno
 	}
 
 	return result
+}
+
+func advanceStreamingTextPosition(current int, delta string) int {
+	return current + llm.UTF16CodeUnitCount(delta)
+}
+
+func fillMissingAnnotationIndices(ann *llm.Annotation, source *schemas.ResponsesOutputMessageContentTextAnnotation, blockStartPos int, textLen int) {
+	if source.StartIndex == nil {
+		ann.StartIndex = blockStartPos
+	}
+	if source.EndIndex == nil {
+		ann.EndIndex = textLen
+	}
 }
