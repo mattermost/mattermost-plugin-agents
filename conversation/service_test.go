@@ -1343,6 +1343,55 @@ func TestBuildChannelMentionRequest_MixedThread(t *testing.T) {
 	assert.Contains(t, req.Posts[3].Message, "comment from B")
 }
 
+func TestBuildChannelMentionRequest_StopsAtCurrentUserTurn(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	botID := model.NewId()
+	userID := model.NewId()
+	rootPostID := "trim_root"
+	currentPostID := "current_mention"
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       userID,
+		BotID:        botID,
+		RootPostID:   &rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "@aibot look at the earlier post",
+		UserPostID:   stringPtr(currentPostID),
+	})
+	require.NoError(t, err)
+
+	conv, err := s.GetConversation(result.ConversationID)
+	require.NoError(t, err)
+
+	threadData := &mmapi.ThreadData{
+		Posts: []*model.Post{
+			{Id: rootPostID, UserId: userID, CreateAt: 1000, Message: "earlier context"},
+			{Id: currentPostID, UserId: userID, CreateAt: 2000, Message: "@aibot look at the earlier post"},
+			{Id: "placeholder", UserId: botID, CreateAt: 3000, Message: "Thinking..."},
+			{Id: "later_reply", UserId: userID, CreateAt: 4000, Message: "this happened after the mention"},
+		},
+		UsersByID: map[string]*model.User{
+			userID: {Id: userID, Username: "alice"},
+			botID:  {Id: botID, Username: "aibot"},
+		},
+	}
+
+	svc.bots = &testBotLookup{botUserIDs: map[string]bool{botID: true}}
+
+	req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+	require.NoError(t, err)
+
+	require.Len(t, req.Posts, 3, "system + earlier context + current mention")
+	assert.Contains(t, req.Posts[1].Message, "earlier context")
+	assert.Contains(t, req.Posts[2].Message, "@aibot look at the earlier post")
+	for _, post := range req.Posts {
+		assert.NotContains(t, post.Message, "Thinking...")
+		assert.NotContains(t, post.Message, "this happened after the mention")
+	}
+}
+
 func TestBuildChannelMentionRequest_MultiBotThread(t *testing.T) {
 	svc, s := setupTestService(t)
 
