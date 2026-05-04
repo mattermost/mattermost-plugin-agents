@@ -901,6 +901,26 @@ func TestFillMissingAnnotationIndicesUsesUTF16(t *testing.T) {
 	}
 }
 
+func TestNormalizeZeroWidthLeadingAnnotations(t *testing.T) {
+	annotations := []llm.Annotation{
+		{Type: llm.AnnotationTypeURLCitation, StartIndex: 0, EndIndex: 0, Index: 1},
+		{Type: llm.AnnotationTypeURLCitation, StartIndex: 0, EndIndex: 0, Index: 2},
+		{Type: llm.AnnotationTypeURLCitation, StartIndex: 109, EndIndex: 109, Index: 3},
+		{Type: llm.AnnotationTypeURLCitation, StartIndex: 242, EndIndex: 242, Index: 4},
+	}
+
+	normalizeMissingAnnotationPositions(annotations, 581)
+
+	assert.Equal(t, 109, annotations[0].StartIndex)
+	assert.Equal(t, 109, annotations[0].EndIndex)
+	assert.Equal(t, 109, annotations[1].StartIndex)
+	assert.Equal(t, 109, annotations[1].EndIndex)
+	assert.Equal(t, 109, annotations[2].StartIndex)
+	assert.Equal(t, 109, annotations[2].EndIndex)
+	assert.Equal(t, 242, annotations[3].StartIndex)
+	assert.Equal(t, 242, annotations[3].EndIndex)
+}
+
 type testStructuredOutput struct {
 	Name  string `json:"name"`
 	Score int    `json:"score"`

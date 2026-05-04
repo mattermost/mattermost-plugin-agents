@@ -1657,6 +1657,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 				// Keep the annotation buffer so subsequent output_text_done events can include
 				// citations accumulated across the full response.
 				if len(annotations) > 0 {
+					normalizeMissingAnnotationPositions(annotations, textLen)
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeAnnotations,
 						Value: annotations,
@@ -1754,6 +1755,7 @@ func (b *LLM) streamResponses(request llm.CompletionRequest, cfg llm.LanguageMod
 
 				// Emit any accumulated annotations
 				if len(annotations) > 0 {
+					normalizeMissingAnnotationPositions(annotations, textLen)
 					output <- llm.TextStreamEvent{
 						Type:  llm.EventTypeAnnotations,
 						Value: annotations,
@@ -1881,5 +1883,22 @@ func fillMissingAnnotationIndices(ann *llm.Annotation, source *schemas.Responses
 	}
 	if source.EndIndex == nil {
 		ann.EndIndex = textLen
+	}
+}
+
+func normalizeMissingAnnotationPositions(annotations []llm.Annotation, textLen int) {
+	fallbackPosition := textLen
+	for _, ann := range annotations {
+		if ann.EndIndex > 0 {
+			fallbackPosition = ann.EndIndex
+			break
+		}
+	}
+
+	for i := range annotations {
+		if annotations[i].StartIndex == 0 && annotations[i].EndIndex == 0 {
+			annotations[i].StartIndex = fallbackPosition
+			annotations[i].EndIndex = fallbackPosition
+		}
 	}
 }
