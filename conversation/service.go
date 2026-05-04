@@ -667,7 +667,7 @@ func (s *Service) BuildChannelMentionRequest(
 			if user, ok := threadData.UsersByID[threadPost.UserId]; ok {
 				username = user.Username
 			}
-			blocks := userBlocksWithAttachments("@"+username+": "+format.PostBody(threadPost), threadPost.FileIds, s.mmClient)
+			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, s.mmClient)
 			posts = append(posts, BlocksToPost(blocks, "user", redactUnshared, s.mmClient, enableVision, maxFileSize))
 		}
 		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
