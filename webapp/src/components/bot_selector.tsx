@@ -162,19 +162,24 @@ const MenuInfoMessage = styled.div`
 	text-transform: uppercase;
 `;
 
-const ManageLink = styled.a`
-	&& {
-		color: var(--button-bg);
-		font-size: 12px;
-		font-weight: 600;
-		line-height: 16px;
-		text-decoration: none;
-		cursor: pointer;
-	}
+const ManageLink = styled.button.attrs({type: 'button'})`
+    appearance: none;
+    padding: 0;
+    border: 0;
+    background: none;
 
-	&&:hover {
-		text-decoration: underline;
-	}
+    && {
+        color: var(--button-bg);
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 16px;
+        text-decoration: none;
+        cursor: pointer;
+    }
+
+    &&:hover {
+        text-decoration: underline;
+    }
 `;
 
 const BotIconDropdownItem = styled.img`
