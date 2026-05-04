@@ -584,6 +584,7 @@ func (s *Service) BuildChannelMentionRequest(
 	var turnsWithoutPosts []store.Turn
 	latestPostLinkedSequence := 0
 	latestPostLinkedPostID := ""
+	latestPostLinkedRole := ""
 
 	for _, turn := range turns {
 		if turn.PostID != nil {
@@ -592,6 +593,7 @@ func (s *Service) BuildChannelMentionRequest(
 			if turn.Sequence > latestPostLinkedSequence {
 				latestPostLinkedSequence = turn.Sequence
 				latestPostLinkedPostID = *turn.PostID
+				latestPostLinkedRole = turn.Role
 			}
 		} else {
 			turnsWithoutPosts = append(turnsWithoutPosts, turn)
@@ -668,7 +670,7 @@ func (s *Service) BuildChannelMentionRequest(
 			blocks := userBlocksWithAttachments("@"+username+": "+format.PostBody(threadPost), threadPost.FileIds, s.mmClient)
 			posts = append(posts, BlocksToPost(blocks, "user", redactUnshared, s.mmClient, enableVision, maxFileSize))
 		}
-		if latestPostLinkedPostID != "" && threadPost.Id == latestPostLinkedPostID {
+		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
 			break
 		}
 	}
