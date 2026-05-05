@@ -33,7 +33,7 @@ You can have conversations with Agents in several ways:
 
 **Direct messages**: Start a direct message with an Agent bot to have a private conversation. Chat privately with an Agent in direct message threads like you would any other Mattermost user.
 
-**Channel mentions**: [@mention](https://docs.mattermost.com/collaborate/mention-people.html) Agent bots by their username, such as `@copilot`, in any thread to bring Agents capabilities to your conversation. The bot responds in a thread to keep channels organized, and other team members can view and contribute to the conversation. An Agent can help extract information quickly or transform discussions into charts, resources, documentation, and more, and can find action items and open questions in new messages.
+**Channel mentions**: [@mention](https://docs.mattermost.com/collaborate/mention-people.html) Agent bots by their username, such as `@copilot`, in any thread to bring Agents capabilities to your conversation. The bot responds in a thread to keep channels organized, and other team members can view and contribute to the conversation. An Agent can help extract information quickly or transform discussions into charts, resources, documentation, and more, and can find action items and open questions in new messages. When you @mention an Agent in a thread, it uses earlier thread context up to that mention, including earlier posts in the thread. Later replies posted after that mention, and temporary placeholder bot posts, aren't included in that request.
 
 > **Note:** Whether AI-generated links are clickable depends on your system admin configuration. Treat links in AI responses with caution and verify destinations before opening them.
 
@@ -142,6 +142,8 @@ Contact your system admin if this feature isn't available for your Mattermost in
 ## Analyze images
 
 For AI models with vision capabilities, attach an image file to your message when chatting with an Agent to ask questions about the image or request analysis. The Agent responds based on the visual content.
+
+In channel threads, a later @mention can also include image attachments from earlier posts in the same thread when those posts are part of the thread context.
 
 Your system admin must enable vision capabilities for your bot, and the underlying AI model must support vision features.
 
