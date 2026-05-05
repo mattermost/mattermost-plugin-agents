@@ -13,7 +13,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
@@ -85,19 +84,22 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 
 	// Build LLM context with tools for execution.
-	contextOpts := []llm.ContextOption{
-		c.contextBuilder.WithLLMContextDefaultTools(bot),
+	var contextOpts []llm.ContextOption
+	if isDM || channel.Type == model.ChannelTypeGroup {
+		contextOpts = append(contextOpts, c.userMCPPreferenceContextOptions(
+			user.Id,
+			"Failed to load user tool preferences for tool approval",
+		)...)
 	}
+	contextOpts = append(contextOpts,
+		c.contextBuilder.WithLLMContextDefaultTools(bot),
+	)
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
 
-	// Apply user-disabled-provider filtering for DM/group channels.
+	// Pre-build filtering protects strict registries; post-build removal preserves
+	// existing visible-store behavior for flag-off contexts.
 	if isDM || channel.Type == model.ChannelTypeGroup {
-		prefs, prefsErr := mcp.LoadUserPreferences(c.mmClient, user.Id)
-		if prefsErr != nil {
-			c.mmClient.LogWarn("Failed to load user tool preferences for tool approval", "error", prefsErr.Error())
-		} else if len(prefs.DisabledServers) > 0 && llmContext.Tools != nil {
-			llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
-		}
+		removePreFilteredMCPServersFromVisibleStore(llmContext)
 	}
 
 	// Execute approved tools and build results.
@@ -385,19 +387,24 @@ func (c *Conversations) streamToolFollowUp(
 	conv *store.Conversation,
 	isDM bool,
 ) error {
-	contextOpts := []llm.ContextOption{
-		c.contextBuilder.WithLLMContextDefaultTools(bot),
+	var contextOpts []llm.ContextOption
+	if isDM || channel.Type == model.ChannelTypeGroup {
+		contextOpts = append(contextOpts, c.userMCPPreferenceContextOptions(
+			user.Id,
+			"Failed to load user tool preferences for tool follow-up",
+		)...)
 	}
+	channelToolFilterOpts, channelToolsAutoRunEverywhereOnly := c.channelFollowUpMCPToolFilterContextOptions(isDM, conv)
+	contextOpts = append(contextOpts, channelToolFilterOpts...)
+	contextOpts = append(contextOpts,
+		c.contextBuilder.WithLLMContextDefaultTools(bot),
+	)
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
 
-	// Apply user-disabled-provider filtering for DM/group channels.
+	// Pre-build filtering protects strict registries; post-build removal preserves
+	// existing visible-store behavior for flag-off contexts.
 	if isDM || channel.Type == model.ChannelTypeGroup {
-		prefs, prefsErr := mcp.LoadUserPreferences(c.mmClient, user.Id)
-		if prefsErr != nil {
-			c.mmClient.LogWarn("Failed to load user tool preferences for tool follow-up", "error", prefsErr.Error())
-		} else if len(prefs.DisabledServers) > 0 && llmContext.Tools != nil {
-			llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
-		}
+		removePreFilteredMCPServersFromVisibleStore(llmContext)
 	}
 
 	toolsDisabled := !isDM
@@ -408,15 +415,8 @@ func (c *Conversations) streamToolFollowUp(
 		llmContext.DisabledToolsInfo = llmContext.Tools.GetToolsInfo()
 	}
 
-	if !isDM && !toolsDisabled && conv.RootPostID != nil {
-		if rootPost, rootErr := c.mmClient.GetPost(*conv.RootPostID); rootErr == nil {
-			if rootUser, userErr := c.mmClient.GetUser(rootPost.UserId); userErr == nil {
-				configEnabled := c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
-				if configEnabled && isBotActivateAI(rootPost, rootUser) && c.toolPolicyChecker != nil {
-					c.applyBotChannelAutoEverywhereToolFilter(llmContext)
-				}
-			}
-		}
+	if !isDM && !toolsDisabled && channelToolsAutoRunEverywhereOnly {
+		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
 
 	completionReq, err := c.convService.BuildCompletionRequest(conv, llmContext)

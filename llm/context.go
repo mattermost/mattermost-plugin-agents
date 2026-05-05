@@ -46,6 +46,14 @@ type Context struct {
 	Tools             *ToolStore
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
 	Parameters        map[string]interface{}
+
+	// DisabledMCPServerOrigins contains per-user disabled MCP server origins that
+	// must be removed before strict registry construction.
+	DisabledMCPServerOrigins []string
+
+	// KeepMCPTool, when non-nil, is applied to MCP tools before strict registry
+	// construction and before flag-off visible MCP insertion.
+	KeepMCPTool func(Tool) bool
 }
 
 // ContextOption defines a function that configures a Context

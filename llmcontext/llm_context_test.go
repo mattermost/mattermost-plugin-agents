@@ -4,6 +4,7 @@
 package llmcontext
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/bots"
@@ -20,6 +21,14 @@ type emptyToolProvider struct{}
 
 func (p *emptyToolProvider) GetTools(*bots.Bot) []llm.Tool {
 	return nil
+}
+
+type staticToolProvider struct {
+	tools []llm.Tool
+}
+
+func (p *staticToolProvider) GetTools(*bots.Bot) []llm.Tool {
+	return p.tools
 }
 
 type countingMCPToolProvider struct {
@@ -67,6 +76,108 @@ func newTestBotWithConfig(cfg llm.BotConfig) *bots.Bot {
 		&model.Bot{UserId: "bot-id", Username: "matty", DisplayName: "Matty"},
 		nil,
 	)
+}
+
+func newTestBuilder(t *testing.T, toolProvider ToolProvider, mcpProvider MCPToolProvider) *Builder {
+	t.Helper()
+
+	mockAPI := &plugintest.API{}
+	siteName := "Mattermost"
+	siteURL := "https://example.com"
+	mockAPI.On("GetConfig").Return(&model.Config{
+		TeamSettings:    model.TeamSettings{SiteName: &siteName},
+		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
+	}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+
+	return NewLLMContextBuilder(
+		pluginapi.NewClient(mockAPI, nil),
+		toolProvider,
+		mcpProvider,
+		&contextTestConfigProvider{},
+	)
+}
+
+func testUser() *model.User {
+	return &model.User{Id: "user-id", Username: "test-user", Locale: "en"}
+}
+
+func testChannel() *model.Channel {
+	return &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect}
+}
+
+func testBuiltinTool(name string) llm.Tool {
+	return llm.Tool{
+		Name:        name,
+		Description: name + " built-in",
+		Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
+		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+			return "builtin:" + name, nil
+		},
+	}
+}
+
+func testMCPTool(name, origin, description string) llm.Tool {
+	return llm.Tool{
+		Name:         name,
+		Description:  description,
+		ServerOrigin: origin,
+		Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+			return "mcp:" + name, nil
+		},
+	}
+}
+
+func toolNames(store *llm.ToolStore) []string {
+	if store == nil {
+		return nil
+	}
+
+	tools := store.GetTools()
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}
+
+func mustTool(t *testing.T, store *llm.ToolStore, name string) *llm.Tool {
+	t.Helper()
+
+	require.NotNil(t, store)
+	tool := store.GetTool(name)
+	require.NotNil(t, tool, "tool %q should be visible", name)
+	return tool
+}
+
+func contextToolArgs(raw string) llm.ToolArgumentGetter {
+	return func(args any) error {
+		return json.Unmarshal([]byte(raw), args)
+	}
+}
+
+func searchToolNames(t *testing.T, store *llm.ToolStore, query string) []string {
+	t.Helper()
+
+	searchTool := mustTool(t, store, mcp.SearchToolsName)
+	resultJSON, err := searchTool.Resolver(&llm.Context{Tools: store}, contextToolArgs(`{"query":"`+query+`"}`))
+	require.NoError(t, err)
+
+	var result mcp.SearchToolsResult
+	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
+
+	names := make([]string, 0, len(result.Tools))
+	for _, item := range result.Tools {
+		names = append(names, item.Name)
+	}
+	return names
+}
+
+func buildToolsContext(builder *Builder, bot *bots.Bot, opts ...llm.ContextOption) *llm.Context {
+	allOpts := append([]llm.ContextOption{}, opts...)
+	allOpts = append(allOpts, builder.WithLLMContextDefaultTools(bot))
+	return builder.BuildLLMContextUserRequest(bot, testUser(), testChannel(), allOpts...)
 }
 
 func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
@@ -173,6 +284,269 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 	require.Len(t, authErrors, 1)
 	assert.Equal(t, "https://mcp.atlassian.com", authErrors[0].ServerOrigin)
 	assert.Equal(t, "https://auth.example.com", authErrors[0].AuthURL)
+}
+
+func TestStrictToolStoreInitialVisibility(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "find Jira issues"),
+			testMCPTool("github__search", "https://github.example.com", "search GitHub"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.ElementsMatch(t, []string{"builtin", mcp.SearchToolsName, mcp.LoadToolName}, toolNames(context.Tools))
+	require.Nil(t, context.Tools.GetTool("jira__get_issue"))
+	require.Nil(t, context.Tools.GetTool("github__search"))
+}
+
+func TestStrictToolStoreSearchUsesFilteredRegistry(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+			testMCPTool("github__search", "https://github.example.com", "search GitHub code"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.Contains(t, searchToolNames(t, context.Tools, "jira"), "jira__get_issue")
+	require.Nil(t, context.Tools.GetTool("jira__get_issue"))
+}
+
+func TestStrictToolStoreLoadMaterializesTool(t *testing.T) {
+	originalTool := testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details")
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{originalTool}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+	context := buildToolsContext(builder, bot)
+
+	loadTool := mustTool(t, context.Tools, mcp.LoadToolName)
+	resultJSON, err := loadTool.Resolver(context, contextToolArgs(`{"name":"jira__get_issue"}`))
+	require.NoError(t, err)
+
+	var result mcp.LoadToolResult
+	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
+	require.True(t, result.Loaded)
+	require.Equal(t, "jira__get_issue", result.Name)
+
+	loadedTool := mustTool(t, context.Tools, "jira__get_issue")
+	require.Equal(t, originalTool.Schema, loadedTool.Schema)
+	require.Equal(t, originalTool.ServerOrigin, loadedTool.ServerOrigin)
+	resolved, err := loadedTool.Resolver(context, contextToolArgs(`{}`))
+	require.NoError(t, err)
+	require.Equal(t, "mcp:jira__get_issue", resolved)
+}
+
+func TestFlagOffFullSchemaParity(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+			testMCPTool("github__search", "https://github.example.com", "search GitHub code"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: false,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.ElementsMatch(t, []string{"builtin", "jira__get_issue", "github__search"}, toolNames(context.Tools))
+	require.Nil(t, context.Tools.GetTool(mcp.SearchToolsName))
+	require.Nil(t, context.Tools.GetTool(mcp.LoadToolName))
+}
+
+func TestStrictRegistryAfterBotAllowlist(t *testing.T) {
+	jiraOrigin := "https://jira.example.com"
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", jiraOrigin, "fetch Jira issue details"),
+			testMCPTool("github__search", "https://github.example.com", "search GitHub code"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: false,
+		EnabledMCPTools: []llm.EnabledMCPTool{
+			{ServerOrigin: jiraOrigin, ToolName: "get_issue"},
+		},
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.ElementsMatch(t, []string{"builtin", mcp.SearchToolsName, mcp.LoadToolName}, toolNames(context.Tools))
+	require.Empty(t, searchToolNames(t, context.Tools, "github"))
+	require.Contains(t, searchToolNames(t, context.Tools, "jira"), "jira__get_issue")
+}
+
+func TestStrictRegistryAfterDisabledServerOrigins(t *testing.T) {
+	githubOrigin := "https://github.example.com"
+	mcpProvider := &staticMCPToolProvider{tools: []llm.Tool{
+		testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+		testMCPTool("github__search", githubOrigin, "search GitHub code"),
+	}}
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		mcpProvider,
+	)
+	strictBot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+	flagOffBot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: false,
+	})
+
+	strictContext := buildToolsContext(builder, strictBot, builder.WithLLMContextDisabledMCPServers([]string{githubOrigin}))
+	require.Empty(t, searchToolNames(t, strictContext.Tools, "github"))
+	require.Contains(t, searchToolNames(t, strictContext.Tools, "jira"), "jira__get_issue")
+
+	flagOffContext := buildToolsContext(builder, flagOffBot, builder.WithLLMContextDisabledMCPServers([]string{githubOrigin}))
+	require.ElementsMatch(t, []string{"builtin", "jira__get_issue"}, toolNames(flagOffContext.Tools))
+}
+
+func TestStrictRegistryAfterMCPToolPredicate(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__safe_tool", "https://jira.example.com", "safe auto-run Jira tool"),
+			testMCPTool("jira__ask_tool", "https://jira.example.com", "dangerous ask-first Jira tool"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot, builder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
+		return tool.Name == "jira__safe_tool"
+	}))
+
+	require.Contains(t, searchToolNames(t, context.Tools, "safe"), "jira__safe_tool")
+	require.Empty(t, searchToolNames(t, context.Tools, "ask"))
+
+	loadTool := mustTool(t, context.Tools, mcp.LoadToolName)
+	resultJSON, err := loadTool.Resolver(context, contextToolArgs(`{"name":"jira__ask_tool"}`))
+	require.NoError(t, err)
+	var result mcp.LoadToolResult
+	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
+	require.False(t, result.Loaded)
+	require.Equal(t, "tool not found", result.Error)
+}
+
+func TestStrictModeEmptyMCPProviderStillAddsMetaTools(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		nil,
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.ElementsMatch(t, []string{"builtin", mcp.SearchToolsName, mcp.LoadToolName}, toolNames(context.Tools))
+	require.Empty(t, searchToolNames(t, context.Tools, "jira"))
+}
+
+func TestDisableToolsStillReturnsNoTools(t *testing.T) {
+	mcpProvider := &countingMCPToolProvider{}
+	builder := newTestBuilder(t, &staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}}, mcpProvider)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		DisableTools:          true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.Empty(t, context.Tools.GetTools())
+	require.Equal(t, 0, mcpProvider.calls)
+}
+
+func TestStrictModePreservesAuthErrors(t *testing.T) {
+	origin := "https://mcp.atlassian.com"
+	builder := newTestBuilder(t,
+		&emptyToolProvider{},
+		&staticMCPToolProvider{
+			errors: &mcp.Errors{
+				ToolAuthErrors: []llm.ToolAuthError{
+					{
+						ServerName:   "Atlassian",
+						ServerOrigin: origin,
+						AuthURL:      "https://auth.example.com",
+					},
+				},
+			},
+		},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: false,
+		EnabledMCPTools: []llm.EnabledMCPTool{
+			{ServerOrigin: origin, ToolName: llm.MCPServerToolWildcard},
+		},
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.ElementsMatch(t, []string{mcp.SearchToolsName, mcp.LoadToolName}, toolNames(context.Tools))
+	authErrors := context.Tools.GetAuthErrors()
+	require.Len(t, authErrors, 1)
+	require.Equal(t, origin, authErrors[0].ServerOrigin)
+	require.Equal(t, "https://auth.example.com", authErrors[0].AuthURL)
 }
 
 func TestSanitizeUserProfileField(t *testing.T) {

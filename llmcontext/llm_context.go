@@ -146,6 +146,24 @@ func filterToolAuthErrorsForAllowlist(errors []llm.ToolAuthError, allowlist []ll
 	})
 }
 
+func (b *Builder) WithLLMContextDisabledMCPServers(origins []string) llm.ContextOption {
+	return func(c *llm.Context) {
+		if len(origins) == 0 {
+			return
+		}
+		c.DisabledMCPServerOrigins = slices.Clone(origins)
+	}
+}
+
+func (b *Builder) WithLLMContextMCPToolFilter(keep func(llm.Tool) bool) llm.ContextOption {
+	return func(c *llm.Context) {
+		if keep == nil {
+			return
+		}
+		c.KeepMCPTool = keep
+	}
+}
+
 // sanitizeUserProfileField strips characters that could be used for prompt injection
 // in user profile fields rendered into the system prompt. It collapses newlines, carriage
 // returns, and tabs to spaces, removes other control characters, and trims the result.
@@ -189,32 +207,29 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 
 	// Create a tool store that requires user approval for tool calls
 	store := llm.NewToolStore(&b.pluginAPI.Log, b.configProvider.GetEnableLLMTrace())
+	botCfg := bot.GetConfig()
 
 	// Add built-in tools (always add for LLM awareness; execution controlled via WithToolsDisabled)
 	store.AddTools(b.toolProvider.GetTools(bot))
 
-	// Add MCP tools if available and enabled
-	// Note: MCP tools are only executable in DMs, but we always add them to the store
-	// so that GetToolsInfo() can inform the LLM about their availability.
-	// Actual execution is controlled via WithToolsDisabled() based on channel type.
+	var mcpTools []llm.Tool
+	var mcpErrors *mcp.Errors
+
+	// Fetch MCP tools if available. They are filtered before either full-schema
+	// insertion or strict private-registry construction.
 	if b.mcpToolProvider != nil {
 		// Get tools from all connected servers
-		mcpTools, mcpErrors := b.mcpToolProvider.GetToolsForUser(userID)
-
-		// Add tools from successfully connected servers even if some had errors
-		// These will be disabled in non-DM channels via WithToolsDisabled()
-		if len(mcpTools) > 0 {
-			store.AddTools(mcpTools)
-		}
+		mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForUser(userID)
 
 		// Per-agent MCP tool filtering: unless the agent is configured to pick up
 		// every MCP tool automatically, retain only tools listed in its allowlist.
 		// This runs AFTER admin policy (filterToolsByConfig inside GetToolsForUser)
-		// and BEFORE per-user filtering (RemoveToolsByServerOrigin in conversations.go).
-		botCfg := bot.GetConfig()
+		// and BEFORE per-user/channel filtering and strict registry construction.
 		if !botCfg.AutoEnableNewMCPTools {
-			store.RetainOnlyMCPTools(botCfg.EnabledMCPTools)
+			mcpTools = retainOnlyAllowedMCPTools(mcpTools, botCfg.EnabledMCPTools)
 		}
+		mcpTools = filterMCPToolsByDisabledOrigins(mcpTools, c.DisabledMCPServerOrigins)
+		mcpTools = filterMCPToolsByPredicate(mcpTools, c.KeepMCPTool)
 
 		if mcpErrors != nil {
 			authErrors := mcpErrors.ToolAuthErrors
@@ -227,7 +242,66 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 		}
 	}
 
+	if botCfg.MCPDynamicToolLoading {
+		buildStrictMCPToolStore(store, mcpTools)
+		return store
+	}
+
+	if len(mcpTools) > 0 {
+		store.AddTools(mcpTools)
+	}
+
 	return store
+}
+
+func buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool) {
+	registry := mcp.NewMCPToolRegistry(mcpTools)
+	store.AddTools(mcp.NewMetaTools(registry))
+}
+
+func filterMCPToolsByDisabledOrigins(tools []llm.Tool, disabled []string) []llm.Tool {
+	if len(tools) == 0 || len(disabled) == 0 {
+		return tools
+	}
+
+	disabledSet := make(map[string]bool, len(disabled))
+	for _, origin := range disabled {
+		disabledSet[origin] = true
+	}
+
+	filtered := make([]llm.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if disabledSet[tool.ServerOrigin] {
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+	return filtered
+}
+
+func filterMCPToolsByPredicate(tools []llm.Tool, keep func(llm.Tool) bool) []llm.Tool {
+	if len(tools) == 0 || keep == nil {
+		return tools
+	}
+
+	filtered := make([]llm.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if keep(tool) {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
+}
+
+func retainOnlyAllowedMCPTools(tools []llm.Tool, allowlist []llm.EnabledMCPTool) []llm.Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+
+	filteredMCPStore := llm.NewNoTools()
+	filteredMCPStore.AddTools(tools)
+	filteredMCPStore.RetainOnlyMCPTools(allowlist)
+	return filteredMCPStore.GetTools()
 }
 
 // WithLLMContextTools adds tools to the LLM context the requester can access.

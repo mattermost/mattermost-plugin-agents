@@ -80,6 +80,32 @@ func computeAllowToolsInChannel(configEnabled bool, post *model.Post, postingUse
 	return !isAutomatedInvoker(post, postingUser)
 }
 
+func (c *Conversations) userMCPPreferenceContextOptions(userID string, logMessage string) []llm.ContextOption {
+	if c.contextBuilder == nil || c.mmClient == nil || userID == "" {
+		return nil
+	}
+
+	prefs, err := mcp.LoadUserPreferences(c.mmClient, userID)
+	if err != nil {
+		c.mmClient.LogWarn(logMessage, "error", err.Error(), "userID", userID)
+		return nil
+	}
+	if len(prefs.DisabledServers) == 0 {
+		return nil
+	}
+
+	return []llm.ContextOption{
+		c.contextBuilder.WithLLMContextDisabledMCPServers(prefs.DisabledServers),
+	}
+}
+
+func removePreFilteredMCPServersFromVisibleStore(llmContext *llm.Context) {
+	if llmContext == nil || llmContext.Tools == nil || len(llmContext.DisabledMCPServerOrigins) == 0 {
+		return
+	}
+	llmContext.Tools.RemoveToolsByServerOrigin(llmContext.DisabledMCPServerOrigins)
+}
+
 func (c *Conversations) MessageHasBeenPosted(ctx *plugin.Context, post *model.Post) {
 	if err := c.handleMessages(post); err != nil {
 		if errors.Is(err, ErrNoResponse) {
@@ -177,9 +203,15 @@ func (c *Conversations) handleMentionViaConversation(
 	channelToolsAutoRunEverywhereOnly bool,
 	responseRootID string,
 ) error {
-	contextOpts := []llm.ContextOption{
-		c.contextBuilder.WithLLMContextTools(bot),
+	var contextOpts []llm.ContextOption
+	if channelToolsAutoRunEverywhereOnly {
+		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
+			return botChannelAutoEverywhereKeepTool(c.toolPolicyChecker, tool)
+		}))
 	}
+	contextOpts = append(contextOpts,
+		c.contextBuilder.WithLLMContextTools(bot),
+	)
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, contextOpts...)
 
 	toolsDisabled := !allowToolsInChannel
@@ -309,9 +341,16 @@ func (c *Conversations) handleDMs(bot *bots.Bot, channel *model.Channel, posting
 
 // handleDMViaConversation processes a DM message using the conversation entity model.
 func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
-	contextOpts := []llm.ContextOption{
-		c.contextBuilder.WithLLMContextTools(bot),
+	var contextOpts []llm.ContextOption
+	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+		contextOpts = append(contextOpts, c.userMCPPreferenceContextOptions(
+			postingUser.Id,
+			"Failed to load user tool preferences",
+		)...)
 	}
+	contextOpts = append(contextOpts,
+		c.contextBuilder.WithLLMContextTools(bot),
+	)
 	webSearchParams := c.extractWebSearchContext(post)
 	if len(webSearchParams) > 0 {
 		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
@@ -328,12 +367,9 @@ func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Ch
 	}
 
 	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
-		prefs, err := mcp.LoadUserPreferences(c.mmClient, postingUser.Id)
-		if err != nil {
-			c.mmClient.LogWarn("Failed to load user tool preferences", "error", err.Error(), "userID", postingUser.Id)
-		} else if len(prefs.DisabledServers) > 0 && llmContext.Tools != nil {
-			llmContext.Tools.RemoveToolsByServerOrigin(prefs.DisabledServers)
-		}
+		// Pre-build filtering protects strict registries; post-build removal preserves
+		// existing visible-store behavior for flag-off contexts.
+		removePreFilteredMCPServersFromVisibleStore(llmContext)
 	}
 
 	responseRootID := post.Id
