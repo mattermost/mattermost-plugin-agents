@@ -33,7 +33,7 @@ Install the plugin through the System Console by navigating to **System Console 
 
 Navigate to **System Console > Plugins > Agents** to configure plugin-wide settings such as AI services, the default bot, web search, embedding search, and MCP settings.
 
-Create and manage agents from the top-level **Agents** product page. You can also open it from **AI Actions > Manage agents**. The **AI Bots** section in the System Console links to the Agents page instead of hosting the full agent editor.
+Create and manage agents from the top-level **Agents** product page. If an agent selector dropdown is available in the Agents experience, use its **Manage** link to open the same page. The **AI Bots** section in the System Console links to the Agents page instead of hosting the full agent editor.
 
 ### Enable the plugin
 
@@ -102,7 +102,7 @@ See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html)
 
 ### Agent configuration
 
-Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry or from **AI Actions > Manage agents**. Agents use the service inventory configured in **System Console > Plugins > Agents**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
+Create and manage agents from the **Agents** product page. Open it from the top-level **Agents** product entry, or use the **Manage** link in an agent selector dropdown to navigate there. Agents use the service inventory configured in **System Console > Plugins > Agents**, and multiple agents can reuse the same service configuration. See [license requirements](#license-requirements) for details on features that require a license.
 
 If you can manage an agent, select its row in the Agents list to open the full-page configuration view directly. The overflow menu remains available for **Edit** and **Delete**. Use **Back to agents** to return to the list.
 
