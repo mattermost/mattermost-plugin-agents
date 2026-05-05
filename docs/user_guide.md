@@ -39,9 +39,9 @@ When you attach files in the Agents pane, direct messages, or channel @mentions,
 
 > **Note:** Whether AI-generated links are clickable depends on your system admin configuration. Treat links in AI responses with caution and verify destinations before opening them.
 
-### Select a bot
+### Select an agent
 
-If multiple Agent bots are configured for your Mattermost workspace, select your preferred bot in the Agents pane or @mention specific bots by name in channels.
+If multiple agents are configured for your Mattermost workspace, select your preferred agent in the Agents pane or @mention a specific agent by name in channels.
 
 ### Use custom prompt templates
 
