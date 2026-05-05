@@ -320,7 +320,7 @@ Native Google tools are **off by default** for Vertex AI, matching the same post
 
 | Tool | What it does | Notes |
 |------|--------------|-------|
-| **Web Search** | Grounds responses with Google Search via the Vertex Responses API. | When enabled, Bifrost switches to the Responses API. Citations are returned alongside the response. Grounding should work with `roles/aiplatform.user` on the project. If requests fail with grounding enabled, check that the Vertex AI API is enabled and the model supports grounding. `[VERIFY: confirm via QA against a live GCP project — exact IAM/billing requirements are determined by Google.]` |
+| **Web Search** | Grounds responses with Google Search via the Vertex Responses API. | When enabled, Bifrost switches to the Responses API. Citations are returned alongside the response. If requests fail with grounding enabled, confirm the Vertex AI API is enabled, the selected model supports grounding, and your Google Cloud project satisfies Vertex AI grounding prerequisites. |
 
 OpenAI-style `file_search` and `code_interpreter` are not available in the System Console for Google providers — only Web Search is offered.
 
@@ -351,4 +351,4 @@ Native Google Tools:
 - **Saving fails with "invalid service account JSON".** The plugin validates that the **Service Account JSON** field contains valid JSON before saving. Re-copy the full contents of the key file, including the surrounding `{ }`, and check there are no truncated or escaped characters.
 - **Requests fail with `PERMISSION_DENIED`.** Confirm the service account has `roles/aiplatform.user` on the project, and that the Vertex AI API is enabled. For ADC deployments, confirm the bound principal (workload identity, instance SA, etc.) has the same role.
 - **Model not found in region.** Vertex model IDs are region-scoped. Check the model is available in your **GCP Region**, or switch to a region that has it.
-- **Web search returns no citations.** Confirm **Web Search** is checked under **Native Google Tools** for the agent and that the model supports grounding (Gemini 2.5+ recommended). Grounding is gated server-side by Google — refer to the Vertex AI grounding documentation for the current list of supported models. `[VERIFY: confirm via QA against a live GCP project.]`
+- **Web search returns no citations.** Confirm **Web Search** is checked under **Native Google Tools** for the agent, verify the selected model supports grounding, and make sure your Google Cloud project meets the current Vertex AI grounding prerequisites.

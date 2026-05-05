@@ -1,30 +1,4 @@
-<!--
-DRAFT — Mattermost Agents V2 launch docs
-Owner agent: tech-writer-2
-Pairs with Confluence blog: "Multiplayer Tool Calling — Authentication Deep Dive"
-
-GROUNDING MANDATE (do not remove until ready for review):
-This document covers authentication semantics. EVERY claim about who can approve what, whose credentials run a tool, and what other channel members can see MUST be verified against source code by an engineer agent before review. Mark [VERIFY] aggressively in the first draft. Never guess.
-
-Source-of-truth references:
-- PR #491 — secure tool calling in channels
-- PR #520 — per-tool config / vetted tool seeding
-- PR #591 — auto-run everywhere policy
-- PR #611 — policy behavior for bot-triggered flows
-- PR #631 — multiplayer approval stabilization + e2e suite
-- PR #642 — thread tool card postId through markdown rendering; regression test for unsafe images
-- PR #645 — fix mixed tool approval rendering (auto-approved + pending in same stream)
-- PR #664 — Accept/Reject button labels (was Approve/Reject)
-- PR #681 — hidden tool params placeholder for onlookers
-- PR #596 (commit 289dd21d) — "No parameters required" approval card
-- conversations/, toolrunner/, channels/ packages
-- user_guide.md (current state) — already partially rewritten for new semantics
-- planning research: ../planning/research.md §E (2026-04-29 update) and §2 (governed tool execution)
--->
-
 # Multiplayer Tool Calling — Authentication Model
-
-> Status: draft — see HTML comment block above for the grounding mandate and source-of-truth references. Authentication claims throughout this document are flagged with `[VERIFY]` and must be confirmed against source code by an engineer before publish.
 
 ## 1. Overview
 
@@ -223,7 +197,3 @@ To make the model auditable, several things are deliberately **not** supported. 
 - [Admin guide](../admin_guide.md): per-tool policy configuration, agent management, and the **Enable Channel Mention Tool Calling** setting.
 - [Channel summaries](channel_summaries.md): a related channel-aware feature with its own privacy story.
 - [Providers](../providers.md): provider-side tool support, OAuth setup for MCP servers.
-
----
-
-> **Reviewer checklist before publish.** Walk every `[VERIFY]` marker and confirm against `conversations/tool_approval.go`, `conversations/conversations.go`, `toolrunner/toolrunner.go`, `mcp/oauth_transport.go`, `config/mcp_config.go`, and the relevant webapp components. Pay special attention to: (a) the exact set of policy values and their string identifiers, (b) the `Shared`-flag semantics on tool result blocks, (c) the bot-triggered branch behavior, and (d) whether bulk Accept/Reject controls obey the initiator check.

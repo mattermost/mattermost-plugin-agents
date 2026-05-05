@@ -1,44 +1,4 @@
-<!--
-DRAFT — Mattermost Agents V2 launch docs (UPGRADE NOTES)
-Owner agent: release-writer-2
-Ships with the agents-v2-docs-updates docs PR.
-
-GROUNDING MANDATE (do not remove until ready for review):
-Upgrade notes are operational. Every claim about migration order, version sequence, default behavior changes, and rollback safety MUST be verified against source code, migration files, and merged PRs. Coordinate with release-writer-1 (Release Notes) so the two artifacts agree exactly.
-
-Source-of-truth references:
-- PR #589 — Agents CRUD; legacy `config.bots` -> `Agents_UserAgents` migration; "bots moved" notice
-- PR #602 — Conversation entities; `LLM_PostMeta` table dropped; migration 000007
-- PR #503 — earlier migration: config.json -> DB (must have run before v2 migration)
-- Embedded MCP toggle removal — confirmed in PR #617 commit body ("Always enable MCP client and embedded server; remove disable toggles")
-- PR #689 — idempotent migration index creation; HA reindex Cancel/Resume race fix
-- PR #617 — defaults flip: MCP / Responses API / native tools / structured output / web search / reasoning
-- DB migrations confirmed on disk at `store/migrations/`:
-    - 000005 `create_user_agents_table` (creates `Agents_UserAgents`)
-    - 000006 `user_agent_bot_fields` (adds Model, EnableVision, DisableTools, EnabledNativeTools, ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled; backfills existing rows with reasoning=true, vision=false, tools-enabled)
-    - 000007 `create_conversations_table` (creates `LLM_Conversations` and `LLM_Turns`; drops `LLM_PostMeta`. The migration's `UPDATE LLM_Conversations ... FROM LLM_PostMeta` runs against an empty `LLM_Conversations` and matches zero rows — v1.x conversation titles in `LLM_PostMeta` are NOT preserved.)
-- Bots/services split (migration prerequisite) shipped in v1.5.0 via PRs #409, #410, #411; embedded-service-config migration fix shipped in v1.6.0 (PR #428)
-- Legacy bot migration source: `server/legacy_bot_migration.go` — `legacyConfigBotsMigratedKey` system flag, cluster-mutex-protected, defers migration when Mattermost bot rows haven't been provisioned yet
-- v2.0.0 GA tag found in repo (`v2.0.0` -> `f40ed1d3`, tagged 2026-04-29).
-
-Suggested outline (kept in sync with the body below):
-1. Who this guide is for
-2. Pre-flight checklist
-3. Version sequence
-4. What gets migrated automatically
-5. Breaking changes
-6. Default behavior changes
-7. Step-by-step upgrade procedure
-8. Rollback considerations
-9. HA-specific notes
-10. Verification checklist
-11. Troubleshooting
-12. Where to get help
--->
-
 # Upgrading to Mattermost Agents V2
-
-> Status: draft.
 
 This guide describes how to upgrade the Mattermost Agents plugin (formerly Mattermost AI) from a v1.x release to v2.0.0. It covers the supported version path, the migrations that run automatically on first start of v2.0.0, the breaking changes and default-behavior flips that admins should know about before the upgrade window, and the verification steps to confirm the upgrade succeeded.
 

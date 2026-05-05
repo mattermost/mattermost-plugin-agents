@@ -81,7 +81,7 @@ For the full feature/license matrix, see [License requirements](../admin_guide.m
 3. Fill in the tabs (see below). Required fields are validated when you save.
 4. Select **Save**. The plugin creates a Mattermost bot user, persists the agent record, propagates the change to other cluster nodes, and returns you to the Agents list.
 
-[VERIFY: screenshot needed — Agents list with "Create agent" button highlighted.]
+![Agents page showing the All agents tab and Create agent button.](../img/managing-agents-overview.png)
 
 ### Configuration tab
 
@@ -174,7 +174,7 @@ Deleting an agent:
 - Deactivates the linked Mattermost bot account, so `@mentions` no longer route to it.
 - Publishes a cluster event so every Mattermost node refreshes its bot cache, and broadcasts a `bots_invalidate` websocket event so connected webapp clients drop the agent from their pickers.
 
-Existing posts that mention or were authored by the agent remain in channels with their original content; only the agent's ability to reply to new requests is removed. Custom prompts that referenced the agent by username will not find it after deletion and will fall back to the default agent. [VERIFY: confirm fallback behavior in custom prompt resolution path]
+Existing posts that mention or were authored by the agent remain in channels with their original content; only the agent's ability to reply to new requests is removed. Custom prompts that referenced the agent by username may no longer resolve that agent after deletion.
 
 ## Legacy bot migration
 

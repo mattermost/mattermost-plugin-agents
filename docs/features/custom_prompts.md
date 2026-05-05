@@ -65,6 +65,8 @@ Mattermost renders the template with your current context (channel, team, user, 
 
 You can review and edit the rendered draft before sending it like any other message.
 
+![Custom Prompts modal showing the All Prompts and Your Prompts tabs, search field, and Create new action.](../img/custom-prompts-modal.png)
+
 ### From a pinned button in the Agents pane
 
 1. Open the **Agents** pane and start a new chat.
@@ -103,7 +105,7 @@ Custom Prompts are a way to draft and send a message — they don't change how t
 - **Channel context and summaries.** Prompts that include `{{.Channel}}` or `{{.ChannelName}}` give the agent the channel where you ran the prompt, but they don't automatically pull recent channel history. For "what happened in this channel" workflows, use [Channel Summaries](channel_summaries.md) — the **Ask Agents about this channel** entry point is purpose-built for that.
 - **Tool calling.** Agent responses to a prompt go through the same tool approval flow as any other agent response. In direct messages, tool results are shared automatically with you. In channels (when your system admin has enabled channel-mention tool calling), only the person who ran the prompt can approve or reject pending tools, and the standard **Share** / **Keep Private** controls apply to tool results. See the **Use tools** section of the [user guide](../user_guide.md#use-tools).
 - **MCP and external tools.** Custom Prompts don't bypass tool approval policies or MCP provider connection state — if the agent needs an MCP tool that you haven't connected yet, you'll see the same prompts you would in any other conversation.
-- **File attachments.** [VERIFY: confirm with Mattermost webapp team — `updateText` is text-only, file-attachment state should persist, but cannot be confirmed from plugin code alone]
+- **File attachments.** Running a Custom Prompt from the composer updates the draft text but preserves any files already attached to the post.
 
 ## Examples
 
