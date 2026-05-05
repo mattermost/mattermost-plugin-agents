@@ -33,6 +33,7 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 			{ServerOrigin: "https://mcp.example.com", ToolName: "file_search"},
 		},
 		AutoEnableNewMCPTools:   true,
+		MCPDynamicToolLoading:   true,
 		Model:                   "gpt-4",
 		EnableVision:            true,
 		DisableTools:            false,
@@ -89,6 +90,7 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.Equal(t, "https://mcp.example.com", fetched.EnabledMCPTools[0].ServerOrigin)
 	assert.Equal(t, "file_search", fetched.EnabledMCPTools[1].ToolName)
 	assert.True(t, fetched.AutoEnableNewMCPTools)
+	assert.True(t, fetched.MCPDynamicToolLoading)
 
 	assert.Equal(t, "gpt-4", fetched.Model)
 	assert.True(t, fetched.EnableVision)
@@ -343,6 +345,29 @@ func TestAgentAutoEnableNewMCPToolsRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, again)
 	assert.False(t, again.AutoEnableNewMCPTools)
+}
+
+func TestAgentMCPDynamicToolLoadingRoundTrip(t *testing.T) {
+	s := setupTestStore(t)
+	err := s.RunMigrations()
+	require.NoError(t, err)
+
+	agent := testAgent("creator-1", "dynamic-off", "Dynamic Off Agent")
+	agent.MCPDynamicToolLoading = false
+	require.NoError(t, s.CreateAgent(agent))
+
+	fetched, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	assert.False(t, fetched.MCPDynamicToolLoading)
+
+	fetched.MCPDynamicToolLoading = true
+	require.NoError(t, s.UpdateAgent(fetched))
+
+	again, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, again)
+	assert.True(t, again.MCPDynamicToolLoading)
 }
 
 func TestAgentEnabledMCPToolsBareAndNamespacedRoundTrip(t *testing.T) {
