@@ -1671,7 +1671,7 @@ func TestPrepareAgentBridgeCompletionToolHooksRequiresPluginID(t *testing.T) {
 	}
 	e.setupTestBot(botConfig)
 
-	_, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
 		testBotUserID,
 		bridgeclient.CompletionRequest{
 			Posts: []bridgeclient.Post{
@@ -1692,7 +1692,7 @@ func TestPrepareAgentBridgeCompletionToolHooksRequiresPluginID(t *testing.T) {
 	require.Contains(t, err.Error(), "tool_hooks requires Mattermost-Plugin-ID header")
 }
 
-func TestPrepareAgentBridgeCompletionStoresToolHooksInMCPMetadata(t *testing.T) {
+func TestPrepareAgentBridgeCompletionStoresToolHookKeysInMCPMetadata(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
@@ -1709,7 +1709,28 @@ func TestPrepareAgentBridgeCompletionStoresToolHooksInMCPMetadata(t *testing.T) 
 	}
 	e.setupTestBot(botConfig)
 
-	_, llmRequest, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+	var storedKey string
+	var storedEntry mcp.BeforeHookEntry
+	e.mockAPI.On(
+		"KVSetWithOptions",
+		mock.MatchedBy(func(key string) bool {
+			storedKey = key
+			return strings.HasPrefix(key, "beforeHook:")
+		}),
+		mock.MatchedBy(func(data []byte) bool {
+			if err := json.Unmarshal(data, &storedEntry); err != nil {
+				return false
+			}
+			return storedEntry.UserID == testUserID &&
+				storedEntry.ToolName == "eligible_tool" &&
+				storedEntry.CallbackURL == "/plugins/com.example.caller/hooks/before"
+		}),
+		mock.MatchedBy(func(opts model.PluginKVSetOptions) bool {
+			return opts.ExpireInSeconds == int64(mcp.BeforeHookKeyTTL.Seconds())
+		}),
+	).Return(true, (*model.AppError)(nil)).Once()
+
+	_, llmRequest, _, _, beforeHookKeys, statusCode, err := e.api.prepareAgentBridgeCompletion(
 		testBotUserID,
 		bridgeclient.CompletionRequest{
 			Posts: []bridgeclient.Post{
@@ -1721,22 +1742,76 @@ func TestPrepareAgentBridgeCompletionStoresToolHooksInMCPMetadata(t *testing.T) 
 				"eligible_tool": {BeforeCallback: "/hooks/before"},
 			},
 		},
-		"com.example.caller",
+		" com.example.caller ",
 		llm.OperationBridgeAgent,
 		llm.SubTypeNoStream,
 	)
 	require.NoError(t, err)
 	require.Equal(t, 0, statusCode)
 	require.NotNil(t, llmRequest.Context)
+	require.Equal(t, []string{storedKey}, beforeHookKeys)
 
 	md := llmRequest.Context.GetMCPServerMetadata(mcp.EmbeddedClientKey)
 	require.NotNil(t, md)
-	require.Equal(t, "com.example.caller", md["hook_plugin_id"])
+	require.NotContains(t, md, "hook_plugin_id")
 	hooks, ok := md["tool_hooks"].(map[string]any)
 	require.True(t, ok)
 	eligible, ok := hooks["eligible_tool"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "/hooks/before", eligible["before_callback"])
+	require.Equal(t, storedKey, eligible["before_hook_key"])
+	require.NotContains(t, eligible, "before_callback")
+	require.Equal(t, testUserID, storedEntry.UserID)
+	require.Equal(t, "eligible_tool", storedEntry.ToolName)
+}
+
+func TestCleanupBeforeHookKeysDeletesIssuedKeys(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	e.mockAPI.On("KVSetWithOptions", "beforeHook:key-1", []byte(nil), model.PluginKVSetOptions{}).Return(true, (*model.AppError)(nil)).Once()
+	e.mockAPI.On("KVSetWithOptions", "beforeHook:key-2", []byte(nil), model.PluginKVSetOptions{}).Return(true, (*model.AppError)(nil)).Once()
+
+	e.api.cleanupBeforeHookKeys([]string{"beforeHook:key-1", "beforeHook:key-2"})
+}
+
+func TestPrepareAgentBridgeCompletionToolHooksRequiresUserID(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
+	defer server.Close()
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+		testBotUserID,
+		bridgeclient.CompletionRequest{
+			Posts: []bridgeclient.Post{
+				{Role: "user", Message: "Hi"},
+			},
+			AllowedTools: []string{"eligible_tool"},
+			ToolHooks: map[string]bridgeclient.ToolHookConfig{
+				"eligible_tool": {BeforeCallback: "/hooks/before"},
+			},
+		},
+		"com.example.caller",
+		llm.OperationBridgeAgent,
+		llm.SubTypeNoStream,
+	)
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, statusCode)
+	require.Contains(t, err.Error(), "tool_hooks requires user_id")
 }
 
 func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {

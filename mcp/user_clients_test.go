@@ -16,10 +16,9 @@ func TestPrepareToolCallMetadata_EmbeddedMergesServerMetadataAndBotUserID(t *tes
 	llmContext.SetMCPServerMetadata(EmbeddedClientKey, map[string]any{
 		"tool_hooks": map[string]any{
 			"search_posts": map[string]any{
-				"before_callback": "/hooks/before/1",
+				"before_hook_key": "beforeHook:user-1:secret",
 			},
 		},
-		"hook_plugin_id": "com.example.caller",
 	})
 
 	clients := &UserClients{}
@@ -32,7 +31,7 @@ func TestPrepareToolCallMetadata_EmbeddedMergesServerMetadataAndBotUserID(t *tes
 	hooks, ok := embeddedMeta["tool_hooks"].(map[string]any)
 	require.True(t, ok)
 	require.Contains(t, hooks, "search_posts")
-	require.Equal(t, "com.example.caller", embeddedMeta["hook_plugin_id"])
+	require.NotContains(t, embeddedMeta, "hook_plugin_id")
 
 	remoteMeta := clients.prepareToolCallMetadata(&Client{
 		config: ServerConfig{Name: "remote-server"},

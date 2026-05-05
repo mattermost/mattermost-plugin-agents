@@ -28,7 +28,7 @@ func TestContext_MCPServerMetadata(t *testing.T) {
 	metadata := map[string]any{
 		"tool_hooks": map[string]any{
 			"search_messages": map[string]any{
-				"before_callback": "/hooks/before/1",
+				"before_hook_key": "beforeHook:user-1:secret",
 			},
 		},
 	}

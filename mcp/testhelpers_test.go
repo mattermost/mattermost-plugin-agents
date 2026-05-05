@@ -499,7 +499,7 @@ func (w *embeddedServerWrapper) CreateClientTransport(userID, sessionID string, 
 		return session.Token, nil
 	}
 
-	return w.server.CreateConnectionForUser(userID, sessionID, tokenResolver)
+	return w.server.CreateConnectionForUser(userID, sessionID, tokenResolver, nil)
 }
 
 // CreateClientManager creates a ClientManager for testing
