@@ -173,13 +173,10 @@ function createProviderTestSuite(provider: ProviderBundle) {
 
             await page.reload();
             await aiPlugin.openRHS();
-            await page.waitForTimeout(2000);
 
             // After refresh, RHS shows fresh conversation - must navigate to chat history
             await aiPlugin.openChatHistory();
-            await page.waitForTimeout(1000);
             await aiPlugin.clickChatHistoryItem(0); // Select most recent conversation
-            await page.waitForTimeout(2000);
 
             // Verify reasoning persists in loaded conversation
             await llmBotHelper.expectReasoningVisible(true);

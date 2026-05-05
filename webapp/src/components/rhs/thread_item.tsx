@@ -70,7 +70,10 @@ const DefaultTitle = 'Conversation with Agents';
 export default function ThreadItem(props: Props) {
     const turnText = props.turnCount === 1 ? '1 message' : `${props.turnCount} messages`;
     return (
-        <ThreadItemContainer onClick={props.onClick}>
+        <ThreadItemContainer
+            data-testid='rhs-thread-item'
+            onClick={props.onClick}
+        >
             <Title>
                 <TitleText>{props.postTitle || DefaultTitle}</TitleText>
                 <LastActivityDate>
