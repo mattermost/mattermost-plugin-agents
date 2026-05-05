@@ -377,26 +377,29 @@ These settings can be configured via the System Console plugin settings page or 
 
 When the endpoint is empty or the feature is disabled, the plugin uses a no-op tracer with zero overhead.
 
-#### Local development with Jaeger
+#### Local development with Grafana Tempo
 
-For local development and debugging, use the included Docker Compose file to run [Jaeger](https://www.jaegertracing.io/) as an all-in-one trace collector and UI:
+For local development and debugging, use the included Docker Compose file to run [Grafana Tempo](https://grafana.com/oss/tempo/) and Grafana:
 
 ```bash
 docker compose -f dev/docker-compose.otel.yml up -d
 ```
 
 This starts:
-- **OTLP gRPC receiver** on port `4317`
-- **OTLP HTTP receiver** on port `4318`
-- **Jaeger UI** at `http://localhost:16686`
+- **Tempo** with OTLP gRPC on port `4317` and OTLP HTTP on port `4318`
+- **Grafana** at `http://localhost:3001` with the Tempo datasource preprovisioned (anonymous Admin, no login required)
 
-Configure the plugin with endpoint `localhost:4317`, then interact with the bot. Traces will appear in the Jaeger UI under the `mattermost-ai-agents` service.
+Configure the plugin with endpoint `localhost:4317`, then interact with the bot. Open Grafana → **Explore** → **Tempo** and search by service name `mattermost-ai-agents`, or paste a trace ID directly.
 
-To stop Jaeger:
+Grafana is mapped to port `3001` (not the default `3000`) so it does not collide with Mattermost's webapp dev server or the `mattermost-server` build/docker-compose stack.
+
+To stop the stack:
 
 ```bash
 docker compose -f dev/docker-compose.otel.yml down
 ```
+
+Add `-v` to also discard accumulated traces.
 
 #### Production deployment
 

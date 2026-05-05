@@ -26,7 +26,7 @@ The plugin uses OpenTelemetry for distributed tracing. Key architecture points:
 - **Span instrumentation**: Spans are created in `bifrost/` (LLM calls), `llm/tools.go` (tool resolution), `conversations/tool_handling.go` (tool call handling), `mcp/` (MCP tool calls), `search/` (semantic search), `websearch/` (Brave/Google), and `streaming/` (post streaming). The `otelgin` middleware auto-creates HTTP spans.
 - **Adding new spans**: Use `ctx, span := telemetry.Tracer().Start(ctx, "span name", trace.WithAttributes(...))` and `defer span.End()`. Record errors with `span.RecordError(err)` and `span.SetStatus(codes.Error, msg)`. Use attribute keys from `telemetry/attributes.go`.
 - **Config**: `EnableOpenTelemetry` (bool) and `OpenTelemetryEndpoint` (string, e.g. `localhost:4317`) in plugin settings.
-- **Local testing**: `docker compose -f dev/docker-compose.otel.yml up -d` starts Jaeger at `http://localhost:16686`.
+- **Local testing**: `docker compose -f dev/docker-compose.otel.yml up -d` starts Grafana Tempo (OTLP on `localhost:4317`) and Grafana at `http://localhost:3001` (anonymous Admin, Tempo datasource preprovisioned). Open Explore → Tempo to view traces.
 - **Context aliasing**: In files where a `context *llm.Context` parameter shadows the `context` package, use `stdcontext` as the import alias for `"context"`.
 
 ## Code Style Guidelines
