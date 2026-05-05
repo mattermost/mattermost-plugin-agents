@@ -444,6 +444,7 @@ func (p *Plugin) OnActivate() error {
 
 	// Wire per-tool policy checker for auto-approval in streaming and conversations
 	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
+		bareToolName := llm.BareMCPToolName(toolName)
 		mcpCfg := p.configuration.MCP()
 		if serverBaseURL == mcp.EmbeddedClientKey {
 			toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
@@ -451,11 +452,11 @@ func (p *Plugin) OnActivate() error {
 				toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
 			}
 			embeddedCfg := &mcp.ServerConfig{Enabled: true, ToolConfigs: toolConfigs}
-			return embeddedCfg.GetToolPolicy(toolName)
+			return embeddedCfg.GetToolPolicy(bareToolName)
 		}
 		for i := range mcpCfg.Servers {
 			if mcpCfg.Servers[i].BaseURL == serverBaseURL {
-				return mcpCfg.Servers[i].GetToolPolicy(toolName)
+				return mcpCfg.Servers[i].GetToolPolicy(bareToolName)
 			}
 		}
 		return "ask", false

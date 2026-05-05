@@ -111,3 +111,29 @@ func TestApplyBotChannelAutoEverywhereToolFilter_nilCheckerFailClosed(t *testing
 	require.Empty(t, llmContext.Tools.GetTools())
 	require.Len(t, llmContext.DisabledToolsInfo, 2)
 }
+
+func TestBotChannelAutoEverywhereFilterDenormalizesNamespacedTool(t *testing.T) {
+	origin := "https://mcp.atlassian.com"
+	c := &Conversations{
+		toolPolicyChecker: mapPolicyChecker{
+			origin: {
+				"safe_tool": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
+				"ask_tool":  {policy: mcp.ToolPolicyAsk, enabled: true},
+			},
+		},
+	}
+
+	llmContext := &llm.Context{
+		Tools: llm.NewToolStore(nil, false),
+	}
+	llmContext.Tools.AddTools([]llm.Tool{
+		{Name: "jira__safe_tool", ServerOrigin: origin, Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "jira__ask_tool", ServerOrigin: origin, Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+	})
+
+	c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+
+	tools := llmContext.Tools.GetTools()
+	require.Len(t, tools, 1)
+	require.Equal(t, "jira__safe_tool", tools[0].Name)
+}

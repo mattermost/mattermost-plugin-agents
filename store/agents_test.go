@@ -345,6 +345,36 @@ func TestAgentAutoEnableNewMCPToolsRoundTrip(t *testing.T) {
 	assert.False(t, again.AutoEnableNewMCPTools)
 }
 
+func TestAgentEnabledMCPToolsBareAndNamespacedRoundTrip(t *testing.T) {
+	s := setupTestStore(t)
+	err := s.RunMigrations()
+	require.NoError(t, err)
+
+	agent := testAgent("creator-1", "mixed-mcp", "Mixed MCP Agent")
+	agent.AutoEnableNewMCPTools = false
+	agent.EnabledMCPTools = []llm.EnabledMCPTool{
+		{ServerOrigin: "https://mcp.example.com", ToolName: "read_post"},
+		{ServerOrigin: "embedded://mattermost", ToolName: "mattermost__search_users"},
+	}
+	require.NoError(t, s.CreateAgent(agent))
+
+	fetched, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	require.Equal(t, agent.EnabledMCPTools, fetched.EnabledMCPTools)
+
+	fetched.EnabledMCPTools = []llm.EnabledMCPTool{
+		{ServerOrigin: "https://mcp.atlassian.com", ToolName: "get_issue"},
+		{ServerOrigin: "https://api.githubcopilot.com", ToolName: "github__search"},
+	}
+	require.NoError(t, s.UpdateAgent(fetched))
+
+	again, err := s.GetAgent(agent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, again)
+	require.Equal(t, fetched.EnabledMCPTools, again.EnabledMCPTools)
+}
+
 func TestAgentConcurrentCreates(t *testing.T) {
 	s := setupTestStore(t)
 	err := s.RunMigrations()

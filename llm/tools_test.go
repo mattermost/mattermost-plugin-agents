@@ -484,6 +484,21 @@ func TestRemoveToolsByServerOrigin(t *testing.T) {
 	}
 }
 
+func TestMCPToolNameHelpers(t *testing.T) {
+	assert.Equal(t, "jira__get_issue", NamespaceMCPToolName("jira", "get_issue"))
+	assert.Equal(t, "get_issue", NamespaceMCPToolName("", "get_issue"))
+	assert.Equal(t, "", NamespaceMCPToolName("jira", ""))
+
+	assert.Equal(t, "get_issue", BareMCPToolName("jira__get_issue"))
+	assert.Equal(t, "search", BareMCPToolName("search"))
+	assert.Equal(t, "foo__bar", BareMCPToolName("server__foo__bar"))
+
+	assert.True(t, MCPToolNameMatches("jira__get_issue", "jira__get_issue"))
+	assert.True(t, MCPToolNameMatches("jira__get_issue", "get_issue"))
+	assert.True(t, MCPToolNameMatches("server__foo__bar", "foo__bar"))
+	assert.False(t, MCPToolNameMatches("jira__get_issue", "create_issue"))
+}
+
 func TestRetainOnlyMCPTools(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -534,18 +549,37 @@ func TestRetainOnlyMCPTools(t *testing.T) {
 			wantToolNames: []string{},
 		},
 		{
-			name: "same tool name different server origins — last write wins",
+			name: "namespaced tools with same bare name are retained independently per origin",
 			tools: []Tool{
-				{Name: "search", ServerOrigin: "https://server-a.com"},
-				{Name: "search", ServerOrigin: "https://server-b.com"},
+				{Name: "jira__search", ServerOrigin: "https://server-a.com"},
+				{Name: "github__search", ServerOrigin: "https://server-b.com"},
 			},
 			allowlist: []EnabledMCPTool{
 				{ServerOrigin: "https://server-a.com", ToolName: "search"},
 			},
-			// ToolStore uses tool.Name as map key, so server-b overwrites
-			// server-a. The allowlist references server-a, which no longer
-			// exists in the store, so the result is empty.
-			wantToolNames: []string{},
+			wantToolNames: []string{"jira__search"},
+		},
+		{
+			name: "bare allowlist retains namespaced runtime tool",
+			tools: []Tool{
+				{Name: "jira__get_issue", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "jira__create_issue", ServerOrigin: "https://mcp.atlassian.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://mcp.atlassian.com", ToolName: "get_issue"},
+			},
+			wantToolNames: []string{"jira__get_issue"},
+		},
+		{
+			name: "namespaced allowlist retains namespaced runtime tool",
+			tools: []Tool{
+				{Name: "jira__get_issue", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "jira__create_issue", ServerOrigin: "https://mcp.atlassian.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://mcp.atlassian.com", ToolName: "jira__get_issue"},
+			},
+			wantToolNames: []string{"jira__get_issue"},
 		},
 		{
 			name: "server wildcard entry retains every tool from that origin",
@@ -573,6 +607,19 @@ func TestRetainOnlyMCPTools(t *testing.T) {
 				{ServerOrigin: "https://mcp.slack.com", ToolName: "slack_post"},
 			},
 			wantToolNames: []string{"jira_get", "jira_create", "slack_post"},
+		},
+		{
+			name: "server wildcard retains namespaced runtime tools",
+			tools: []Tool{
+				{Name: "builtin_search", ServerOrigin: ""},
+				{Name: "jira__get_issue", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "jira__create_issue", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "github__search", ServerOrigin: "https://api.githubcopilot.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://mcp.atlassian.com", ToolName: MCPServerToolWildcard},
+			},
+			wantToolNames: []string{"builtin_search", "jira__get_issue", "jira__create_issue"},
 		},
 		{
 			name:  "nil ToolStore is safe",

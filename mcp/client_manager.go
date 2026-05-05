@@ -308,7 +308,7 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 		// Filter: only tools with enabled config entries
 		var filtered []llm.Tool
 		for _, t := range tools {
-			_, enabled := sc.GetToolPolicy(t.Name)
+			_, enabled := sc.GetToolPolicy(llm.BareMCPToolName(t.Name))
 			if enabled {
 				filtered = append(filtered, t)
 			}

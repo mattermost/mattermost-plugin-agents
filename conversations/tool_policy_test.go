@@ -70,13 +70,15 @@ func TestShouldAutoExecuteTool_NilChecker(t *testing.T) {
 }
 
 type countingPolicyChecker struct {
-	calls   int
-	policy  string
-	enabled bool
+	calls        int
+	lastToolName string
+	policy       string
+	enabled      bool
 }
 
-func (c *countingPolicyChecker) GetToolPolicy(string, string) (string, bool) {
+func (c *countingPolicyChecker) GetToolPolicy(_ string, toolName string) (string, bool) {
 	c.calls++
+	c.lastToolName = toolName
 	return c.policy, c.enabled
 }
 
@@ -103,6 +105,21 @@ func TestShouldAutoExecuteTool_KnownToolUsesPolicy(t *testing.T) {
 
 	assert.True(t, got)
 	assert.Equal(t, 1, checker.calls)
+}
+
+func TestShouldAutoExecuteToolDenormalizesNamespacedTool(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	const origin = "https://mcp.atlassian.com"
+	const runtimeToolName = "jira__get_issue"
+	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeToolName, ServerOrigin: origin}})
+
+	got := c.shouldAutoExecuteTool(llmCtx, false)(llm.ToolCall{Name: runtimeToolName})
+
+	assert.True(t, got)
+	assert.Equal(t, 1, checker.calls)
+	assert.Equal(t, "get_issue", checker.lastToolName)
 }
 
 // TestAllToolsAutoRunEverywhere_RespectsEnabledFlag pins the result-sharing
@@ -142,4 +159,20 @@ func TestAllToolsAutoRunEverywhere_UnknownToolReturnsFalse(t *testing.T) {
 
 	assert.False(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
 	assert.Zero(t, checker.calls)
+}
+
+func TestAllToolsAutoRunEverywhereDenormalizesNamespacedTool(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	const origin = "https://mcp.atlassian.com"
+	const runtimeToolName = "jira__get_issue"
+	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeToolName, ServerOrigin: origin}})
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{Name: runtimeToolName}},
+	}}
+
+	assert.True(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+	assert.Equal(t, 1, checker.calls)
+	assert.Equal(t, "get_issue", checker.lastToolName)
 }

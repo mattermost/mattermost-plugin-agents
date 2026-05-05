@@ -70,6 +70,6 @@ func botChannelAutoEverywhereKeepTool(checker mcp.ToolPolicyChecker, tool llm.To
 	if tool.ServerOrigin == "" {
 		return false
 	}
-	policy, enabled := checker.GetToolPolicy(tool.ServerOrigin, tool.Name)
+	policy, enabled := checker.GetToolPolicy(tool.ServerOrigin, llm.BareMCPToolName(tool.Name))
 	return mcp.IsToolPolicyAutoRunEverywhere(policy) && enabled
 }

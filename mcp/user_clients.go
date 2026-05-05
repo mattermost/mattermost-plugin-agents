@@ -5,9 +5,14 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
@@ -154,26 +159,51 @@ func (c *UserClients) GetTools() []llm.Tool {
 	}
 
 	var tools []llm.Tool
-	seenTools := make(map[string]string) // toolName -> serverID for conflict detection
+	seenTools := make(map[string]string) // runtime toolName -> serverID for conflict detection
+	usedSlugs := make(map[string]string) // slug -> server origin for collision suffixing
+
+	serverIDs := make([]string, 0, len(c.clients))
+	for serverID := range c.clients {
+		serverIDs = append(serverIDs, serverID)
+	}
+	sort.Strings(serverIDs)
 
 	// Iterate over all clients and collect their tools
-	for serverID, client := range c.clients {
+	for _, serverID := range serverIDs {
+		client := c.clients[serverID]
+		if err := client.ensureDiscoveredTools(context.Background()); err != nil {
+			c.log.Warn("Failed to rediscover MCP tools after list_changed notification",
+				"userID", c.userID,
+				"serverID", serverID,
+				"server", client.config.Name,
+				"error", err)
+			continue
+		}
+
 		clientTools := client.Tools()
-		for toolName, tool := range clientTools {
-			// Check for tool name conflicts across servers
-			if existingServerID, exists := seenTools[toolName]; exists {
-				c.log.Warn("Tool name conflict detected",
+		serverSlug := dedupeMCPServerSlug(mcpServerSlug(serverID, client), client.config.BaseURL, serverID, usedSlugs)
+		toolNames := make([]string, 0, len(clientTools))
+		for toolName := range clientTools {
+			toolNames = append(toolNames, toolName)
+		}
+		sort.Strings(toolNames)
+		for _, toolName := range toolNames {
+			tool := clientTools[toolName]
+			runtimeToolName := llm.NamespaceMCPToolName(serverSlug, toolName)
+			// Namespacing should make cross-server duplicate bare names safe. A
+			// final collision means the slug de-dupe or upstream catalog is broken.
+			if existingServerID, exists := seenTools[runtimeToolName]; exists {
+				c.log.Warn("Namespaced MCP tool name conflict detected",
 					"userID", c.userID,
-					"tool", toolName,
+					"tool", runtimeToolName,
 					"server1", existingServerID,
 					"server2", serverID)
-				// Skip duplicate tool (first server wins)
 				continue
 			}
-			seenTools[toolName] = serverID
+			seenTools[runtimeToolName] = serverID
 
 			tools = append(tools, llm.Tool{
-				Name:         toolName,
+				Name:         runtimeToolName,
 				Description:  tool.Description,
 				Schema:       tool.InputSchema,
 				Resolver:     c.createToolResolver(client, toolName),
@@ -217,4 +247,75 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 
 		return client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
 	}
+}
+
+func mcpServerSlug(serverID string, client *Client) string {
+	if client != nil && (client.config.BaseURL == EmbeddedClientKey || client.config.Name == EmbeddedClientKey || serverID == EmbeddedClientKey) {
+		return "mattermost"
+	}
+
+	candidates := []string{}
+	if client != nil {
+		candidates = append(candidates, client.config.Name)
+	}
+	candidates = append(candidates, serverID)
+	if client != nil && client.config.BaseURL != "" {
+		if parsed, err := url.Parse(client.config.BaseURL); err == nil {
+			baseURLName := strings.Trim(strings.Trim(parsed.Host+parsed.Path, "/"), "_")
+			candidates = append(candidates, baseURLName)
+		}
+	}
+	candidates = append(candidates, "mcp")
+
+	for _, candidate := range candidates {
+		if slug := sanitizeMCPServerSlug(candidate); slug != "" {
+			return slug
+		}
+	}
+	return "mcp"
+}
+
+func dedupeMCPServerSlug(slug, serverOrigin, serverID string, usedSlugs map[string]string) string {
+	if slug == "" {
+		slug = "mcp"
+	}
+	if existingOrigin, exists := usedSlugs[slug]; !exists || existingOrigin == serverOrigin {
+		usedSlugs[slug] = serverOrigin
+		return slug
+	}
+
+	hashInput := serverOrigin
+	if hashInput == "" {
+		hashInput = serverID
+	}
+	if hashInput == "" {
+		hashInput = slug
+	}
+	dedupedSlug := slug + "_" + shortSlugHash(hashInput)
+	usedSlugs[dedupedSlug] = serverOrigin
+	return dedupedSlug
+}
+
+func sanitizeMCPServerSlug(value string) string {
+	value = strings.ToLower(value)
+	var b strings.Builder
+	lastWasSeparator := false
+	for _, r := range value {
+		isAllowed := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if isAllowed {
+			b.WriteRune(r)
+			lastWasSeparator = false
+			continue
+		}
+		if b.Len() > 0 && !lastWasSeparator {
+			b.WriteByte('_')
+			lastWasSeparator = true
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+func shortSlugHash(value string) string {
+	sum := sha1.Sum([]byte(value))
+	return hex.EncodeToString(sum[:])[:8]
 }

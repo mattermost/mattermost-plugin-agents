@@ -411,6 +411,27 @@ func (s *ToolStore) RemoveToolsByServerOrigin(disabledOrigins []string) {
 // MCPServerToolWildcard in EnabledMCPTool.ToolName means every tool from that ServerOrigin is allowed.
 const MCPServerToolWildcard = "*"
 
+const MCPToolNameSeparator = "__"
+
+func NamespaceMCPToolName(serverSlug, bareToolName string) string {
+	if serverSlug == "" || bareToolName == "" {
+		return bareToolName
+	}
+	return serverSlug + MCPToolNameSeparator + bareToolName
+}
+
+func BareMCPToolName(toolName string) string {
+	_, bareName, ok := strings.Cut(toolName, MCPToolNameSeparator)
+	if !ok {
+		return toolName
+	}
+	return bareName
+}
+
+func MCPToolNameMatches(runtimeName, configuredName string) bool {
+	return runtimeName == configuredName || BareMCPToolName(runtimeName) == configuredName
+}
+
 // RetainOnlyMCPTools filters the tool store to only retain MCP tools whose
 // (ServerOrigin, Name) pair appears in the allowlist. Built-in tools (those
 // with empty ServerOrigin) are never removed by this method.
@@ -442,8 +463,10 @@ func (s *ToolStore) RetainOnlyMCPTools(allowlist []EnabledMCPTool) {
 		if wildcardOrigins[tool.ServerOrigin] {
 			continue
 		}
-		// Remove MCP tools not in the allowlist
-		if !allowed[tool.ServerOrigin+"\x00"+tool.Name] {
+		// Remove MCP tools not in the allowlist. Runtime tool names may be
+		// namespaced, but persisted allowlists can contain legacy bare names.
+		if !allowed[tool.ServerOrigin+"\x00"+tool.Name] &&
+			!allowed[tool.ServerOrigin+"\x00"+BareMCPToolName(tool.Name)] {
 			delete(s.tools, name)
 		}
 	}
