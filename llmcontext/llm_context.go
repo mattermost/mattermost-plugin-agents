@@ -12,6 +12,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	storepkg "github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -26,6 +27,12 @@ type MCPToolProvider interface {
 	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
 }
 
+type LoadedMCPToolStore interface {
+	UpsertLoadedMCPTool(tool storepkg.LoadedMCPTool) error
+	ListLoadedMCPTools(conversationID, botID, userID string) ([]storepkg.LoadedMCPTool, error)
+	DeleteLoadedMCPTool(conversationID, botID, userID, toolName string) error
+}
+
 // ConfigProvider provides configuration access
 type ConfigProvider interface {
 	GetEnableLLMTrace() bool
@@ -38,6 +45,8 @@ type Builder struct {
 	toolProvider    ToolProvider
 	mcpToolProvider MCPToolProvider
 	configProvider  ConfigProvider
+
+	loadedMCPToolStore LoadedMCPToolStore
 }
 
 // NewLLMContextBuilder creates a new LLM context builder
@@ -53,6 +62,10 @@ func NewLLMContextBuilder(
 		mcpToolProvider: mcpToolProvider,
 		configProvider:  configProvider,
 	}
+}
+
+func (b *Builder) SetLoadedMCPToolStore(store LoadedMCPToolStore) {
+	b.loadedMCPToolStore = store
 }
 
 // BuildLLMContextUserRequest is a helper function to collect the required context for a user request.
@@ -119,6 +132,15 @@ func (b *Builder) WithLLMContextRequestingUser(user *model.User) llm.ContextOpti
 				c.Time = time.Now().In(loc).Format(time.RFC1123)
 			}
 		}
+	}
+}
+
+func (b *Builder) WithLLMContextConversationID(conversationID string) llm.ContextOption {
+	return func(c *llm.Context) {
+		if conversationID == "" {
+			return
+		}
+		c.ConversationID = conversationID
 	}
 }
 
@@ -243,7 +265,7 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	}
 
 	if botCfg.MCPDynamicToolLoading {
-		buildStrictMCPToolStore(store, mcpTools)
+		b.buildStrictMCPToolStore(store, mcpTools, c, botIDForLoadedMCPTools(c, bot), userID)
 		return store
 	}
 
@@ -254,9 +276,109 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	return store
 }
 
-func buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool) {
+func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool, c *llm.Context, botID, userID string) {
 	registry := mcp.NewMCPToolRegistry(mcpTools)
-	store.AddTools(mcp.NewMetaTools(registry))
+	b.restoreLoadedMCPTools(store, registry, c, botID, userID)
+	store.AddTools(mcp.NewMetaTools(registry, mcp.WithLoadedToolRecorder(b.loadedToolRecorder(c.ConversationID, botID, userID))))
+}
+
+func botIDForLoadedMCPTools(c *llm.Context, bot *bots.Bot) string {
+	if c != nil && c.BotUserID != "" {
+		return c.BotUserID
+	}
+	if bot != nil && bot.GetMMBot() != nil {
+		return bot.GetMMBot().UserId
+	}
+	return ""
+}
+
+func (b *Builder) loadedToolRecorder(conversationID, botID, userID string) mcp.LoadedToolRecorder {
+	if b.loadedMCPToolStore == nil {
+		return nil
+	}
+
+	return func(llmContext *llm.Context, entry mcp.MCPToolRegistryEntry) error {
+		resolvedConversationID := conversationID
+		if llmContext != nil && llmContext.ConversationID != "" {
+			resolvedConversationID = llmContext.ConversationID
+		}
+		if resolvedConversationID == "" || botID == "" || userID == "" {
+			b.logWarn("Unable to persist loaded MCP tool without full context identity",
+				"conversation_id", resolvedConversationID,
+				"bot_id", botID,
+				"user_id", userID,
+				"tool_name", entry.Name,
+			)
+			return nil
+		}
+
+		now := model.GetMillis()
+		return b.loadedMCPToolStore.UpsertLoadedMCPTool(storepkg.LoadedMCPTool{
+			ConversationID: resolvedConversationID,
+			BotID:          botID,
+			UserID:         userID,
+			ToolName:       entry.Name,
+			ServerOrigin:   entry.ServerOrigin,
+			BareName:       entry.BareName,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		})
+	}
+}
+
+func (b *Builder) restoreLoadedMCPTools(publicStore *llm.ToolStore, registry *mcp.MCPToolRegistry, c *llm.Context, botID, userID string) {
+	if b.loadedMCPToolStore == nil || publicStore == nil || registry == nil || c == nil ||
+		c.ConversationID == "" || botID == "" || userID == "" {
+		return
+	}
+
+	loaded, err := b.loadedMCPToolStore.ListLoadedMCPTools(c.ConversationID, botID, userID)
+	if err != nil {
+		b.logWarn("Failed to list loaded MCP tools", "error", err.Error(), "conversation_id", c.ConversationID)
+		return
+	}
+
+	deleteStale := c.KeepMCPTool == nil
+	for _, row := range loaded {
+		entry, ok := registry.Lookup(row.ToolName)
+		if ok {
+			publicStore.AddTools([]llm.Tool{entry.Tool})
+			continue
+		}
+
+		if !deleteStale {
+			b.logDebug("Omitting stale loaded MCP tool during scoped rebuild",
+				"conversation_id", c.ConversationID,
+				"tool_name", row.ToolName,
+			)
+			continue
+		}
+
+		if err := b.loadedMCPToolStore.DeleteLoadedMCPTool(c.ConversationID, botID, userID, row.ToolName); err != nil {
+			b.logWarn("Failed to delete stale loaded MCP tool",
+				"error", err.Error(),
+				"conversation_id", c.ConversationID,
+				"tool_name", row.ToolName,
+			)
+		} else {
+			b.logDebug("Deleted stale loaded MCP tool",
+				"conversation_id", c.ConversationID,
+				"tool_name", row.ToolName,
+			)
+		}
+	}
+}
+
+func (b *Builder) logWarn(message string, keyValuePairs ...any) {
+	if b != nil && b.pluginAPI != nil {
+		b.pluginAPI.Log.Warn(message, keyValuePairs...)
+	}
+}
+
+func (b *Builder) logDebug(message string, keyValuePairs ...any) {
+	if b != nil && b.pluginAPI != nil {
+		b.pluginAPI.Log.Debug(message, keyValuePairs...)
+	}
 }
 
 func filterMCPToolsByDisabledOrigins(tools []llm.Tool, disabled []string) []llm.Tool {

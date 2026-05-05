@@ -92,6 +92,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		)...)
 	}
 	contextOpts = append(contextOpts,
+		c.contextBuilder.WithLLMContextConversationID(conv.ID),
 		c.contextBuilder.WithLLMContextDefaultTools(bot),
 	)
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
@@ -397,6 +398,7 @@ func (c *Conversations) streamToolFollowUp(
 	channelToolFilterOpts, channelToolsAutoRunEverywhereOnly := c.channelFollowUpMCPToolFilterContextOptions(isDM, conv)
 	contextOpts = append(contextOpts, channelToolFilterOpts...)
 	contextOpts = append(contextOpts,
+		c.contextBuilder.WithLLMContextConversationID(conv.ID),
 		c.contextBuilder.WithLLMContextDefaultTools(bot),
 	)
 	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)

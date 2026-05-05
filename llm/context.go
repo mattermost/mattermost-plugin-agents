@@ -35,6 +35,9 @@ type Context struct {
 	// User that is making the request
 	RequestingUser *model.User
 
+	// ConversationID identifies the conversation whose context is being built.
+	ConversationID string
+
 	// Bot Specific
 	BotName            string
 	BotUsername        string

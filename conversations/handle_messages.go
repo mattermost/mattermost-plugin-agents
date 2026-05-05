@@ -209,10 +209,9 @@ func (c *Conversations) handleMentionViaConversation(
 			return botChannelAutoEverywhereKeepTool(c.toolPolicyChecker, tool)
 		}))
 	}
-	contextOpts = append(contextOpts,
-		c.contextBuilder.WithLLMContextTools(bot),
-	)
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, contextOpts...)
+	initialOpts := append([]llm.ContextOption{}, contextOpts...)
+	initialOpts = append(initialOpts, c.contextBuilder.WithLLMContextTools(bot))
+	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, initialOpts...)
 
 	toolsDisabled := !allowToolsInChannel
 	if llmContext != nil {
@@ -245,6 +244,23 @@ func (c *Conversations) handleMentionViaConversation(
 	})
 	if convErr != nil {
 		return fmt.Errorf("failed to get or create conversation: %w", convErr)
+	}
+
+	rebuildOpts := append([]llm.ContextOption{}, contextOpts...)
+	rebuildOpts = append(rebuildOpts,
+		c.contextBuilder.WithLLMContextConversationID(convResult.Conversation.ID),
+		c.contextBuilder.WithLLMContextTools(bot),
+	)
+	llmContext = c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, rebuildOpts...)
+	if llmContext != nil {
+		if toolsDisabled && llmContext.Tools != nil {
+			llmContext.DisabledToolsInfo = llmContext.Tools.GetToolsInfo()
+		} else {
+			llmContext.DisabledToolsInfo = nil
+		}
+	}
+	if channelToolsAutoRunEverywhereOnly {
+		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
 
 	responsePost := &model.Post{
@@ -348,23 +364,14 @@ func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Ch
 			"Failed to load user tool preferences",
 		)...)
 	}
-	contextOpts = append(contextOpts,
-		c.contextBuilder.WithLLMContextTools(bot),
-	)
 	webSearchParams := c.extractWebSearchContext(post)
 	if len(webSearchParams) > 0 {
 		contextOpts = append(contextOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, contextOpts...)
-	if llmContext.Parameters == nil {
-		llmContext.Parameters = make(map[string]interface{})
-	}
-	if _, hasCount := llmContext.Parameters[mmtools.WebSearchCountKey]; !hasCount {
-		llmContext.Parameters[mmtools.WebSearchCountKey] = 0
-	}
-	if _, hasQueries := llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey]; !hasQueries {
-		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
-	}
+	initialOpts := append([]llm.ContextOption{}, contextOpts...)
+	initialOpts = append(initialOpts, c.contextBuilder.WithLLMContextTools(bot))
+	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, initialOpts...)
+	ensureDMWebSearchTracking(llmContext)
 
 	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 		// Pre-build filtering protects strict registries; post-build removal preserves
@@ -381,6 +388,17 @@ func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Ch
 	convResult, err := c.CreateOrGetDMConversation(bot.GetMMBot().UserId, postingUser, channel, post, llmContext)
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
+	}
+
+	rebuildOpts := append([]llm.ContextOption{}, contextOpts...)
+	rebuildOpts = append(rebuildOpts,
+		c.contextBuilder.WithLLMContextConversationID(convResult.ConversationID),
+		c.contextBuilder.WithLLMContextTools(bot),
+	)
+	llmContext = c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel, rebuildOpts...)
+	ensureDMWebSearchTracking(llmContext)
+	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+		removePreFilteredMCPServersFromVisibleStore(llmContext)
 	}
 
 	responsePost := &model.Post{
@@ -412,6 +430,21 @@ func (c *Conversations) handleDMViaConversation(bot *bots.Bot, channel *model.Ch
 	}
 
 	return nil
+}
+
+func ensureDMWebSearchTracking(llmContext *llm.Context) {
+	if llmContext == nil {
+		return
+	}
+	if llmContext.Parameters == nil {
+		llmContext.Parameters = make(map[string]interface{})
+	}
+	if _, hasCount := llmContext.Parameters[mmtools.WebSearchCountKey]; !hasCount {
+		llmContext.Parameters[mmtools.WebSearchCountKey] = 0
+	}
+	if _, hasQueries := llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey]; !hasQueries {
+		llmContext.Parameters[mmtools.WebSearchExecutedQueriesKey] = []string{}
+	}
 }
 
 func (c *Conversations) createResponsePlaceholder(botID, requesterUserID string, post *model.Post, respondingToPostID string) error {
