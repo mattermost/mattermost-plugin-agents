@@ -55,7 +55,8 @@ type AutomationTrigger struct {
 
 // MessagePostedConfig holds trigger config for the message_posted trigger type.
 type MessagePostedConfig struct {
-	ChannelID string `json:"channel_id"`
+	ChannelID            string `json:"channel_id"`
+	IncludeThreadReplies bool   `json:"include_thread_replies,omitempty"`
 }
 
 // ScheduleConfig holds trigger config for the schedule trigger type.
@@ -68,14 +69,18 @@ type ScheduleConfig struct {
 // MembershipChangedConfig holds trigger config for the membership_changed trigger type.
 type MembershipChangedConfig struct {
 	ChannelID string `json:"channel_id"`
+	Action    string `json:"action,omitempty"`
 }
 
 // ChannelCreatedConfig holds trigger config for the channel_created trigger type.
-type ChannelCreatedConfig struct{}
+type ChannelCreatedConfig struct {
+	TeamID string `json:"team_id"`
+}
 
 // UserJoinedTeamConfig holds trigger config for the user_joined_team trigger type.
 type UserJoinedTeamConfig struct {
-	TeamID string `json:"team_id"`
+	TeamID   string `json:"team_id"`
+	UserType string `json:"user_type,omitempty"`
 }
 
 // --- Action types (union: exactly one config pointer should be non-nil) ---
@@ -105,11 +110,12 @@ type SendMessageActionConfig struct {
 
 // AIPromptActionConfig holds config for the ai_prompt action type.
 type AIPromptActionConfig struct {
-	SystemPrompt string   `json:"system_prompt,omitempty"`
-	Prompt       string   `json:"prompt"`
-	ProviderType string   `json:"provider_type"`
-	ProviderID   string   `json:"provider_id"`
-	AllowedTools []string `json:"allowed_tools,omitempty"`
+	SystemPrompt string                `json:"system_prompt,omitempty"`
+	Prompt       string                `json:"prompt"`
+	ProviderType string                `json:"provider_type"`
+	ProviderID   string                `json:"provider_id"`
+	AllowedTools []string              `json:"allowed_tools,omitempty"`
+	Guardrails   *AutomationGuardrails `json:"guardrails,omitempty"`
 }
 
 // AutomationFlow mirrors the channel-automation plugin's Flow model.
@@ -122,6 +128,12 @@ type AutomationFlow struct {
 	CreatedAt int64              `json:"created_at,omitempty"`
 	UpdatedAt int64              `json:"updated_at,omitempty"`
 	CreatedBy string             `json:"created_by,omitempty"`
+}
+
+// AutomationGuardrails mirrors channel-automation guardrails that constrain where
+// an automation may operate.
+type AutomationGuardrails struct {
+	ChannelIDs []string `json:"channel_ids,omitempty"`
 }
 
 // automationAPIURL builds a full URL for the channel automation plugin API.

@@ -299,27 +299,35 @@ func (a *API) prepareAgentBridgeCompletion(
 		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, fmt.Errorf("invalid request: %v", err)
 	}
 
-	if len(req.ToolHooks) > 0 {
-		hooksPayload := make(map[string]any, len(req.ToolHooks))
-		for name, cfg := range req.ToolHooks {
-			hookEntry := make(map[string]any)
-			if cfg.BeforeCallback != "" {
-				beforeHookKey, hookErr := a.beforeHookStore.Issue(req.UserID, name, normalizedPluginID, cfg.BeforeCallback)
-				if hookErr != nil {
-					statusCode := http.StatusInternalServerError
-					if errors.Is(hookErr, mcp.ErrInvalidBeforeHookConfig) {
-						statusCode = http.StatusBadRequest
-					}
-					return nil, llm.CompletionRequest{}, nil, nil, nil, statusCode, fmt.Errorf("invalid tool_hooks: %w", hookErr)
+	if len(req.ToolHooks) > 0 && !toolsRequested {
+		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, errors.New("tool_hooks requires allowed_tools")
+	}
+
+	// Issue before-hook keys up front so we have a stable per-tool metadata map to
+	// bind into each scoped tool's CallMetadata below. Hook keys are tracked in
+	// beforeHookKeys so the deferred cleanup runs even on later failures.
+	hookMetaByTool := make(map[string]map[string]any, len(req.ToolHooks))
+	for name, cfg := range req.ToolHooks {
+		hookEntry := make(map[string]any)
+		if cfg.BeforeCallback != "" {
+			beforeHookKey, hookErr := a.beforeHookStore.Issue(req.UserID, name, normalizedPluginID, cfg.BeforeCallback)
+			if hookErr != nil {
+				statusCode := http.StatusInternalServerError
+				if errors.Is(hookErr, mcp.ErrInvalidBeforeHookConfig) {
+					statusCode = http.StatusBadRequest
 				}
-				beforeHookKeys = append(beforeHookKeys, beforeHookKey)
-				hookEntry["before_hook_key"] = beforeHookKey
+				return nil, llm.CompletionRequest{}, nil, nil, nil, statusCode, fmt.Errorf("invalid tool_hooks: %w", hookErr)
 			}
-			hooksPayload[name] = hookEntry
+			beforeHookKeys = append(beforeHookKeys, beforeHookKey)
+			hookEntry["before_hook_key"] = beforeHookKey
 		}
-		llmRequest.Context.SetMCPServerMetadata(mcp.EmbeddedClientKey, map[string]any{
-			"tool_hooks": hooksPayload,
-		})
+		// Wire format on the MCP server side keys hooks by tool name (see
+		// mcpserver/tools/provider.go decodeToolHooksFromMetadata). Per-tool binding
+		// means each call only carries its own entry, but the structure stays the
+		// same so the server-side decode is unchanged.
+		hookMetaByTool[name] = map[string]any{
+			"tool_hooks": map[string]any{name: hookEntry},
+		}
 	}
 
 	autoRunNames := make(map[string]struct{})
@@ -344,8 +352,12 @@ func (a *API) prepareAgentBridgeCompletion(
 					name,
 				)
 			}
-			scopedTools.AddTools([]llm.Tool{*tool})
-			autoRunNames[tool.Name] = struct{}{}
+			scopedTool := *tool
+			if meta, ok := hookMetaByTool[name]; ok {
+				scopedTool = scopedTool.WithCallMetadata(meta)
+			}
+			scopedTools.AddTools([]llm.Tool{scopedTool})
+			autoRunNames[scopedTool.Name] = struct{}{}
 		}
 		llmRequest.Context.Tools = scopedTools
 	}

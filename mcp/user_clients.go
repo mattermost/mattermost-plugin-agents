@@ -186,23 +186,34 @@ func (c *UserClients) GetTools() []llm.Tool {
 	return tools
 }
 
-// prepareToolCallMetadata prepares metadata to be sent with MCP tool calls
-// This is where we inject context-specific information that tools need but shouldn't be in arguments
-func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Context) map[string]any {
-	// Only add metadata if we have a valid context
+// prepareToolCallMetadata prepares metadata to be sent with MCP tool calls.
+// Per-call metadata is sourced from the tool itself (set at scope-time via
+// llm.Tool.WithCallMetadata) so callers can plumb runtime info — like before-hook
+// keys — without leaking it into the LLM-visible schema or onto llm.Context.
+// bot_user_id is sourced from llm.Context because it is identity, not per-call config.
+func (c *UserClients) prepareToolCallMetadata(client *Client, toolName string, llmContext *llm.Context) map[string]any {
 	if llmContext == nil {
 		return nil
 	}
 
-	// Only inject metadata for the embedded server
+	// Only inject metadata for the embedded server.
 	if client.config.Name != EmbeddedClientKey {
 		return nil
 	}
 
-	metadata := llmContext.GetMCPServerMetadata(EmbeddedClientKey)
+	var metadata map[string]any
+	if llmContext.Tools != nil {
+		if tool := llmContext.Tools.GetTool(toolName); tool != nil && len(tool.CallMetadata) > 0 {
+			metadata = make(map[string]any, len(tool.CallMetadata)+1)
+			for k, v := range tool.CallMetadata {
+				metadata[k] = v
+			}
+		}
+	}
+
 	if llmContext.BotUserID != "" {
 		if metadata == nil {
-			metadata = make(map[string]any)
+			metadata = make(map[string]any, 1)
 		}
 		metadata["bot_user_id"] = llmContext.BotUserID
 	}
@@ -218,8 +229,7 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 			return "", fmt.Errorf("failed to get arguments for tool %s: %w", toolName, err)
 		}
 
-		// Prepare metadata for the tool call
-		metadata := c.prepareToolCallMetadata(client, llmContext)
+		metadata := c.prepareToolCallMetadata(client, toolName, llmContext)
 
 		return client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
 	}

@@ -1751,10 +1751,12 @@ func TestPrepareAgentBridgeCompletionStoresToolHookKeysInMCPMetadata(t *testing.
 	require.NotNil(t, llmRequest.Context)
 	require.Equal(t, []string{storedKey}, beforeHookKeys)
 
-	md := llmRequest.Context.GetMCPServerMetadata(mcp.EmbeddedClientKey)
-	require.NotNil(t, md)
-	require.NotContains(t, md, "hook_plugin_id")
-	hooks, ok := md["tool_hooks"].(map[string]any)
+	require.NotNil(t, llmRequest.Context.Tools)
+	scopedTool := llmRequest.Context.Tools.GetTool("eligible_tool")
+	require.NotNil(t, scopedTool)
+	require.NotNil(t, scopedTool.CallMetadata)
+	require.NotContains(t, scopedTool.CallMetadata, "hook_plugin_id")
+	hooks, ok := scopedTool.CallMetadata["tool_hooks"].(map[string]any)
 	require.True(t, ok)
 	eligible, ok := hooks["eligible_tool"].(map[string]any)
 	require.True(t, ok)
@@ -1812,6 +1814,43 @@ func TestPrepareAgentBridgeCompletionToolHooksRequiresUserID(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, http.StatusBadRequest, statusCode)
 	require.Contains(t, err.Error(), "tool_hooks requires user_id")
+}
+
+func TestPrepareAgentBridgeCompletionToolHooksRequiresAllowedTools(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
+	defer server.Close()
+
+	botConfig := llm.BotConfig{
+		Name:            "testbot",
+		DisplayName:     "Test Bot",
+		UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.setupTestBot(botConfig)
+
+	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+		testBotUserID,
+		bridgeclient.CompletionRequest{
+			Posts: []bridgeclient.Post{
+				{Role: "user", Message: "Hi"},
+			},
+			UserID: testUserID,
+			ToolHooks: map[string]bridgeclient.ToolHookConfig{
+				"eligible_tool": {BeforeCallback: "/hooks/before"},
+			},
+		},
+		"com.example.caller",
+		llm.OperationBridgeAgent,
+		llm.SubTypeNoStream,
+	)
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, statusCode)
+	require.Contains(t, err.Error(), "tool_hooks requires allowed_tools")
 }
 
 func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {
