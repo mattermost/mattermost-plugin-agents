@@ -5,7 +5,6 @@ package conversation
 
 import (
 	"context"
-	stdcontext "context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,11 +95,11 @@ type testLLM struct {
 	noStreamErr      error
 }
 
-func (t *testLLM) ChatCompletion(_ stdcontext.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (t *testLLM) ChatCompletion(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	return nil, fmt.Errorf("not implemented in test")
 }
 
-func (t *testLLM) ChatCompletionNoStream(_ stdcontext.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (string, error) {
+func (t *testLLM) ChatCompletionNoStream(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (string, error) {
 	return t.noStreamResponse, t.noStreamErr
 }
 
