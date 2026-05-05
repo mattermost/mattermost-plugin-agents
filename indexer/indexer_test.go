@@ -2739,13 +2739,13 @@ func TestResumeFromCheckpoint(t *testing.T) {
 
 // TestMarkOrphanedJobAsFailed tests the automatic marking of orphaned jobs on startup
 func TestMarkOrphanedJobAsFailed(t *testing.T) {
-	t.Run("marks running job on same node as failed", func(t *testing.T) {
+	t.Run("marks stale running job on same node as failed", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
 
 		// Get current hostname to match the job's NodeID
 		hostname, _ := os.Hostname()
 
-		// Return a running job on this node
+		// Return a stale running job on this node
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Run(func(args mock.Arguments) {
 				status := args.Get(1).(*JobStatus)
@@ -2774,21 +2774,67 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, savedStatus)
 		assert.Equal(t, JobStatusFailed, savedStatus.Status)
-		assert.Contains(t, savedStatus.Error, "Job orphaned")
-		assert.Contains(t, savedStatus.Error, hostname)
+		assert.Contains(t, savedStatus.Error, "orphaned")
+		assert.True(t, savedStatus.Resumable,
+			"orphan reclaim must mark the row Resumable so admins can resume from cursor")
+		assert.Equal(t, int64(1000), savedStatus.ProcessedRows,
+			"orphan reclaim must preserve ProcessedRows for resume")
 		assert.False(t, savedStatus.CompletedAt.IsZero())
 	})
 
-	t.Run("does not mark job running on different node", func(t *testing.T) {
+	t.Run("marks stale running job on a different node as failed", func(t *testing.T) {
+		// Hostname-bound recovery is the wedge: in containerized deploys the
+		// hostname changes on restart, and in clusters the original node may
+		// be gone. Reclaim must key on staleness, not NodeID.
 		mockClient := mocks.NewMockClient(t)
 
-		// Return a running job on a DIFFERENT node
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.JobID = "wedged-job"
+				status.Status = JobStatusRunning
+				status.NodeID = "different-node-hostname"
+				status.ProcessedRows = 5000
+				status.StartedAt = time.Now().Add(-1 * time.Hour)
+				status.LastUpdatedAt = time.Now().Add(-StaleJobThreshold - time.Minute)
+			}).
+			Return(nil)
+
+		var saved JobStatus
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v interface{}) bool {
+			status, ok := v.(JobStatus)
+			if !ok {
+				return false
+			}
+			saved = status
+			return status.Status == JobStatusFailed
+		})).Return(true, nil)
+
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
+		err := indexer.MarkOrphanedJobAsFailed()
+
+		require.NoError(t, err)
+		assert.Equal(t, JobStatusFailed, saved.Status,
+			"a stale row on any node must be reclaimable; otherwise hostname-bound deploys wedge forever")
+		assert.True(t, saved.Resumable)
+		assert.Equal(t, int64(5000), saved.ProcessedRows)
+	})
+
+	t.Run("does NOT mark a job whose heartbeat is just inside the threshold", func(t *testing.T) {
+		// Boundary case: don't kill live jobs. A heartbeat one second
+		// inside StaleJobThreshold must not be treated as stale.
+		mockClient := mocks.NewMockClient(t)
+
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Run(func(args mock.Arguments) {
 				status := args.Get(1).(*JobStatus)
 				status.Status = JobStatusRunning
 				status.NodeID = "different-node-hostname"
 				status.ProcessedRows = 1000
+				status.StartedAt = time.Now().Add(-time.Hour)
+				status.LastUpdatedAt = time.Now().Add(-StaleJobThreshold + time.Second)
 			}).
 			Return(nil)
 
@@ -2869,6 +2915,7 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 				status.Status = JobStatusRunning
 				status.NodeID = hostname
 				status.JobID = "stale-observation"
+				status.StartedAt = time.Now().Add(-1 * time.Hour)
 			}).
 			Return(nil)
 
@@ -3595,17 +3642,15 @@ func TestCancelRequestedIsRecoverableWhenStale(t *testing.T) {
 			"cancel_requested with no recent heartbeat must be flagged stale or it wedges every future Start")
 	})
 
-	t.Run("MarkOrphanedJobAsFailed reclaims a cancel_requested row owned by this node", func(t *testing.T) {
+	t.Run("MarkOrphanedJobAsFailed reclaims a stale cancel_requested row regardless of node", func(t *testing.T) {
 		mockClient := mocks.NewMockClient(t)
-
-		hostname, _ := os.Hostname()
 
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Run(func(args mock.Arguments) {
 				status := args.Get(1).(*JobStatus)
 				status.JobID = "wedged-cancel"
 				status.Status = JobStatusCancelRequested
-				status.NodeID = hostname
+				status.NodeID = "any-other-node"
 				status.StartedAt = time.Now().Add(-time.Hour)
 			}).
 			Return(nil)
@@ -3627,5 +3672,38 @@ func TestCancelRequestedIsRecoverableWhenStale(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, JobStatusFailed, saved.Status,
 			"MarkOrphanedJobAsFailed must reclaim cancel_requested rows or the row stays wedged forever")
+		assert.True(t, saved.Resumable, "reclaim should mark cancel-wedged rows resumable")
 	})
+}
+
+// TestSaveJobStatusPreservesCancelRequested asserts that saveJobStatus
+// must not silently overwrite cancel_requested with running for the same
+// JobID. Otherwise the worker's heartbeat would erase the admin's cancel
+// signal.
+func TestSaveJobStatusPreservesCancelRequested(t *testing.T) {
+	mockClient := mocks.NewMockClient(t)
+
+	const jobID = "running-job"
+	mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+		Run(func(args mock.Arguments) {
+			status := args.Get(1).(*JobStatus)
+			status.JobID = jobID
+			status.Status = JobStatusCancelRequested
+		}).
+		Return(nil)
+	mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+
+	indexer := New(nil, nil, mockClient, nil, nil, nil)
+
+	worker := &JobStatus{
+		JobID:         jobID,
+		Status:        JobStatusRunning,
+		ProcessedRows: 100,
+	}
+	indexer.saveJobStatus(worker)
+
+	mockClient.AssertNotCalled(t, "KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything)
+	mockClient.AssertNotCalled(t, "KVSet", mock.Anything, mock.Anything)
+	assert.Equal(t, JobStatusCancelRequested, worker.Status,
+		"saveJobStatus must propagate cancel_requested to the worker's local status so it observes the cancel on the next loop iteration")
 }

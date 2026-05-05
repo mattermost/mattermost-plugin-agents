@@ -275,8 +275,10 @@ func (p *Plugin) OnActivate() error {
 	// Create indexer service with getter function
 	indexerService := indexer.New(getSearch, configGetter, mmClient, bots, dbClient.DB, p.API)
 
-	// Mark any orphaned reindex jobs from this node as failed
-	// This handles the case where the plugin/server crashed while a job was running
+	// Mark any orphaned reindex jobs as failed (any node, staleness-based).
+	// Handles wedge cases where the plugin/server crashed while a job was
+	// running; works in containerized deploys where the hostname changes
+	// on restart and clustered deploys where the original node may be gone.
 	if orphanErr := indexerService.MarkOrphanedJobAsFailed(); orphanErr != nil {
 		pluginAPI.Log.Warn("Failed to check for orphaned reindex job", "error", orphanErr)
 	}

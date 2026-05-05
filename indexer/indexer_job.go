@@ -413,6 +413,13 @@ func (s *Indexer) getLastIndexedTimestamp() int64 {
 // saveJobStatus persists the worker's view of the job, gated on JobID match
 // so a worker whose row has been claimed by a newer run does not clobber it.
 // A status with no JobID falls back to an unconditional set.
+//
+// The cancel-survival guard closes a race in which the admin's
+// CancelJob CAS lands before this worker's KVGet: without it, the
+// worker would read cancel_requested and then CAS back to running,
+// silently erasing the cancel. Propagating cancel_requested onto the
+// worker's local status makes the next loop iteration observe the
+// cancel and exit.
 func (s *Indexer) saveJobStatus(status *JobStatus) {
 	if status.JobID == "" {
 		if err := s.pluginAPI.KVSet(ReindexJobKey, status); err != nil {
@@ -432,6 +439,12 @@ func (s *Indexer) saveJobStatus(status *JobStatus) {
 		s.pluginAPI.LogWarn("Reindex worker superseded by a newer run, dropping status write",
 			"worker_job_id", status.JobID,
 			"current_job_id", current.JobID)
+		return
+	}
+
+	if err == nil && current.JobID == status.JobID &&
+		current.Status == JobStatusCancelRequested && status.Status == JobStatusRunning {
+		status.Status = JobStatusCancelRequested
 		return
 	}
 
