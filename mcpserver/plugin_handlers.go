@@ -21,7 +21,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const externalProxyDiscoveryTimeout = 10 * time.Second
+const (
+	externalProxyDiscoveryTimeout = 10 * time.Second
+	nativeMattermostToolOwner     = "mattermost"
+)
 
 // PluginServerRegistry is the read-side contract for plugin-server aggregation.
 type PluginServerRegistry interface {
@@ -145,6 +148,9 @@ func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 	// Disabled plugin tools are not registered on the external server.
 	if h.registry != nil {
 		toolOwners := map[string]string{}
+		for _, toolName := range toolProvider.ToolNames() {
+			toolOwners[toolName] = nativeMattermostToolOwner
+		}
 		for _, ps := range h.registry.ListPluginServers() {
 			if !ps.Enabled || !ps.ExposeExternal {
 				continue
@@ -173,6 +179,12 @@ func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 					continue
 				}
 				if existing, ok := toolOwners[proxyTools[i].Name]; ok {
+					if existing == nativeMattermostToolOwner {
+						h.logger.Error("proxy tool name conflicts with native Mattermost tool; skipping",
+							"tool_name", proxyTools[i].Name,
+							"plugin_id", ps.PluginID)
+						continue
+					}
 					h.logger.Error("duplicate proxy tool name across plugin MCP servers; skipping",
 						"tool_name", proxyTools[i].Name,
 						"plugin_id", ps.PluginID,

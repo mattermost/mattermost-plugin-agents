@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -87,6 +88,61 @@ func listToolNames(t *testing.T, h *PluginMCPHandlers) []string {
 	return names
 }
 
+func callTool(t *testing.T, h *PluginMCPHandlers, name string, args map[string]interface{}) (*gosdkmcp.CallToolResult, error) {
+	t.Helper()
+	ts := httptest.NewServer(h.MCPHandler)
+	t.Cleanup(ts.Close)
+
+	client := gosdkmcp.NewClient(&gosdkmcp.Implementation{Name: "test-caller", Version: "1.0"}, &gosdkmcp.ClientOptions{})
+	sess, err := client.Connect(context.Background(), &gosdkmcp.StreamableClientTransport{
+		Endpoint:   ts.URL,
+		HTTPClient: &http.Client{},
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	t.Cleanup(func() { _ = sess.Close() })
+
+	return sess.CallTool(context.Background(), &gosdkmcp.CallToolParams{
+		Name:      name,
+		Arguments: args,
+	})
+}
+
+func toolResultText(result *gosdkmcp.CallToolResult) string {
+	if result == nil {
+		return ""
+	}
+	var text strings.Builder
+	for _, content := range result.Content {
+		if textContent, ok := content.(*gosdkmcp.TextContent); ok {
+			text.WriteString(textContent.Text)
+		}
+	}
+	return text.String()
+}
+
+func newFakePluginMCPServerWithToolNames(t *testing.T, toolNames ...string) *httptest.Server {
+	t.Helper()
+	srv := gosdkmcp.NewServer(&gosdkmcp.Implementation{Name: "fake", Version: "1.0"}, nil)
+	type echoIn struct {
+		Message string `json:"message"`
+	}
+	type echoOut struct {
+		Echo string `json:"echo"`
+	}
+	for _, toolName := range toolNames {
+		gosdkmcp.AddTool(srv, &gosdkmcp.Tool{Name: toolName, Description: "test"}, func(_ context.Context, _ *gosdkmcp.CallToolRequest, in echoIn) (*gosdkmcp.CallToolResult, echoOut, error) {
+			return nil, echoOut{Echo: in.Message}, nil
+		})
+	}
+	streamable := gosdkmcp.NewStreamableHTTPHandler(
+		func(*http.Request) *gosdkmcp.Server { return srv },
+		&gosdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
+	)
+	return httptest.NewServer(streamable)
+}
+
 func TestNewPluginMCPHandlers_IteratesRegistry(t *testing.T) {
 	target := newFakePluginMCPServer(t, 1, nil)
 	t.Cleanup(target.Close)
@@ -113,6 +169,49 @@ func TestNewPluginMCPHandlers_IteratesRegistry(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, proxyCount, "only Enabled && ExposeExternal plugin tools should be aggregated")
+}
+
+func TestNewPluginMCPHandlers_SkipsPluginToolConflictingWithNativeTool(t *testing.T) {
+	target := newFakePluginMCPServerWithToolNames(t, "create_post", "plugin_unique")
+	t.Cleanup(target.Close)
+	mockAPI := newPluginHTTPForwarder(t, target)
+
+	reg := &stubRegistry{servers: []mcppkg.PluginServerConfig{{
+		PluginID:       "com.example.shadow",
+		Name:           "Shadow",
+		Path:           "/mcp",
+		Enabled:        true,
+		ExposeExternal: true,
+	}}}
+
+	logger, err := loggerlib.CreateDefaultLogger()
+	require.NoError(t, err)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI)
+	require.NoError(t, err)
+
+	toolNames := listToolNames(t, h)
+	var nativeNameCount int
+	var sawPluginUnique bool
+	for _, name := range toolNames {
+		if name == "create_post" {
+			nativeNameCount++
+		}
+		if name == "plugin_unique" {
+			sawPluginUnique = true
+		}
+	}
+	require.Equal(t, 1, nativeNameCount, "native tool should remain registered once")
+	require.True(t, sawPluginUnique, "non-conflicting plugin tools should still be aggregated")
+
+	result, err := callTool(t, h, "create_post", map[string]interface{}{
+		"channel_id": "channel-id",
+		"message":    "from test",
+	})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	text := toolResultText(result)
+	require.Contains(t, text, "session authentication provider requires token resolver")
+	require.NotContains(t, text, "proxy tool create_post")
 }
 
 func TestNewPluginMCPHandlers_FiltersToolsByPolicy(t *testing.T) {
