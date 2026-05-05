@@ -217,6 +217,22 @@ func (r *ToolRunner) runLoop(
 			return
 		}
 
+		store := toolStoreFromRequest(request)
+		if containsUnknownTools(toolCalls, store) {
+			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
+
+			toolResults := unknownToolBatchResults(toolCalls, store)
+			resolvedToolCalls := appendToolTurnAndPost(result, &request, text.String(), reasoningData, toolCalls, toolResults, usage)
+
+			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
+
+			if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
+				request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
+				currentOpts = append(currentOpts, llm.WithToolsDisabled())
+			}
+			continue
+		}
+
 		// Check shouldExecute for ALL tool calls.
 		allApproved := true
 		for _, tc := range toolCalls {
@@ -240,34 +256,10 @@ func (r *ToolRunner) runLoop(
 		// Execute each tool call.
 		toolResults := r.executeTools(toolCalls, request)
 
-		// Build resolved tool calls with post-execution status
-		// (AutoApproved / Error). These flow into the ToolTurn so downstream
-		// persistence (WriteToolTurns → toolUseBlocks) can read the resolved
-		// status directly from tc.Status instead of inferring it from the
-		// fact that only the auto-execute path calls this function.
-		resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-
-		// Build the ToolTurn for this round.
-		turn := ToolTurn{
-			AssistantMessage:   text.String(),
-			AssistantToolCalls: resolvedToolCalls,
-			AssistantReasoning: reasoningData,
-			ToolResults:        toolResults,
-			TokensIn:           usage.InputTokens,
-			TokensOut:          usage.OutputTokens,
-		}
-		result.ToolTurns = append(result.ToolTurns, turn)
+		resolvedToolCalls := appendToolTurnAndPost(result, &request, text.String(), reasoningData, toolCalls, toolResults, usage)
 
 		// Forward resolved tool calls so the UI can show success/error states.
 		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
-
-		request.Posts = append(request.Posts, llm.Post{
-			Role:               llm.PostRoleBot,
-			Message:            text.String(),
-			ToolUse:            resolvedToolCalls,
-			Reasoning:          reasoningData.Text,
-			ReasoningSignature: reasoningData.Signature,
-		})
 
 		// Check for consecutive tool call failures and disable tools if needed.
 		if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
@@ -294,14 +286,16 @@ func (r *ToolRunner) executeTools(toolCalls []llm.ToolCall, request llm.Completi
 	for i, tc := range toolCalls {
 		var result string
 		var resolveErr error
-		if request.Context != nil && request.Context.Tools != nil {
+		if request.Context == nil || request.Context.Tools == nil {
+			resolveErr = fmt.Errorf("no tool store available")
+		} else if request.Context.Tools.GetTool(tc.Name) == nil {
+			resolveErr = fmt.Errorf("unknown tool %s", tc.Name)
+		} else {
 			result, resolveErr = request.Context.Tools.ResolveTool(
 				tc.Name,
 				func(args any) error { return json.Unmarshal(tc.Arguments, args) },
 				request.Context,
 			)
-		} else {
-			resolveErr = fmt.Errorf("no tool store available")
 		}
 
 		if resolveErr != nil {
@@ -321,6 +315,98 @@ func (r *ToolRunner) executeTools(toolCalls []llm.ToolCall, request llm.Completi
 		}
 	}
 	return toolResults
+}
+
+func toolStoreFromRequest(request llm.CompletionRequest) *llm.ToolStore {
+	if request.Context == nil {
+		return nil
+	}
+	return request.Context.Tools
+}
+
+func unknownToolNames(toolCalls []llm.ToolCall, store *llm.ToolStore) []string {
+	unknown := make([]string, 0)
+	for _, tc := range toolCalls {
+		if store == nil || store.GetTool(tc.Name) == nil {
+			unknown = append(unknown, tc.Name)
+		}
+	}
+	return unknown
+}
+
+func containsUnknownTools(toolCalls []llm.ToolCall, store *llm.ToolStore) bool {
+	return len(unknownToolNames(toolCalls, store)) > 0
+}
+
+func unknownToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore) []ToolResult {
+	unknownNames := unknownToolNames(toolCalls, store)
+	unknownSet := make(map[string]struct{}, len(unknownNames))
+	for _, name := range unknownNames {
+		unknownSet[name] = struct{}{}
+	}
+
+	toolResults := make([]ToolResult, len(toolCalls))
+	for i, tc := range toolCalls {
+		if _, ok := unknownSet[tc.Name]; ok {
+			if store != nil {
+				store.LogUnknownToolWarning(tc.Name, func(args any) error {
+					return json.Unmarshal(tc.Arguments, args)
+				})
+			}
+			toolResults[i] = ToolResult{
+				ToolCallID: tc.ID,
+				Name:       tc.Name,
+				Result:     "unknown tool " + tc.Name,
+				IsError:    true,
+			}
+			continue
+		}
+
+		toolResults[i] = ToolResult{
+			ToolCallID: tc.ID,
+			Name:       tc.Name,
+			Result:     fmt.Sprintf("tool %s was not executed because the batch contained unknown tool(s): %s", tc.Name, strings.Join(unknownNames, ", ")),
+			IsError:    true,
+		}
+	}
+	return toolResults
+}
+
+func appendToolTurnAndPost(
+	result *ToolRunResult,
+	request *llm.CompletionRequest,
+	text string,
+	reasoningData llm.ReasoningData,
+	toolCalls []llm.ToolCall,
+	toolResults []ToolResult,
+	usage llm.TokenUsage,
+) []llm.ToolCall {
+	// Build resolved tool calls with post-execution status
+	// (AutoApproved / Error). These flow into the ToolTurn so downstream
+	// persistence (WriteToolTurns → toolUseBlocks) can read the resolved
+	// status directly from tc.Status instead of inferring it from the
+	// fact that only the auto-execute path calls this function.
+	resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
+
+	turn := ToolTurn{
+		AssistantMessage:   text,
+		AssistantToolCalls: resolvedToolCalls,
+		AssistantReasoning: reasoningData,
+		ToolResults:        toolResults,
+		TokensIn:           usage.InputTokens,
+		TokensOut:          usage.OutputTokens,
+	}
+	result.ToolTurns = append(result.ToolTurns, turn)
+
+	request.Posts = append(request.Posts, llm.Post{
+		Role:               llm.PostRoleBot,
+		Message:            text,
+		ToolUse:            resolvedToolCalls,
+		Reasoning:          reasoningData.Text,
+		ReasoningSignature: reasoningData.Signature,
+	})
+
+	return resolvedToolCalls
 }
 
 // buildResolvedToolCalls creates resolved ToolCall entries from executed results.

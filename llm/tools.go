@@ -302,6 +302,10 @@ type TraceLog interface {
 	Info(message string, keyValuePairs ...any)
 }
 
+type warnTraceLog interface {
+	Warn(message string, keyValuePairs ...any)
+}
+
 // NewJSONSchemaFromStruct creates a JSONSchema from a Go struct using generics
 // It's a helper function for tool providers that currently define schemas as structs
 func NewJSONSchemaFromStruct[T any]() *jsonschema.Schema {
@@ -340,6 +344,7 @@ func (s *ToolStore) AddTools(tools []Tool) {
 func (s *ToolStore) ResolveTool(name string, argsGetter ToolArgumentGetter, context *Context) (string, error) {
 	tool, ok := s.tools[name]
 	if !ok {
+		s.LogUnknownToolWarning(name, argsGetter)
 		s.TraceUnknown(name, argsGetter)
 		return "", errors.New("unknown tool " + name)
 	}
@@ -463,28 +468,33 @@ func (s *ToolStore) GetToolsInfo() []ToolInfo {
 
 func (s *ToolStore) TraceUnknown(name string, argsGetter ToolArgumentGetter) {
 	if s.log != nil && s.doTrace {
-		args := ""
-		var raw json.RawMessage
-		if err := argsGetter(&raw); err != nil {
-			args = fmt.Sprintf("failed to get tool args: %v", err)
-		} else {
-			args = string(raw)
-		}
-		s.log.Info("unknown tool called", "name", name, "args", args)
+		s.log.Info("unknown tool called", "name", name, "args", toolArgsForLog(argsGetter))
 	}
 }
 
 func (s *ToolStore) TraceResolved(name string, argsGetter ToolArgumentGetter, result string, err error) {
 	if s.log != nil && s.doTrace {
-		args := ""
-		var raw json.RawMessage
-		if getArgsErr := argsGetter(&raw); getArgsErr != nil {
-			args = fmt.Sprintf("failed to get tool args: %v", getArgsErr)
-		} else {
-			args = string(raw)
-		}
-		s.log.Info("tool resolved", "name", name, "args", args, "result", result, "error", err)
+		s.log.Info("tool resolved", "name", name, "args", toolArgsForLog(argsGetter), "result", result, "error", err)
 	}
+}
+
+func (s *ToolStore) LogUnknownToolWarning(name string, argsGetter ToolArgumentGetter) {
+	if s == nil || s.log == nil {
+		return
+	}
+	warnLog, ok := s.log.(warnTraceLog)
+	if !ok {
+		return
+	}
+	warnLog.Warn("unknown tool called", "name", name, "args", toolArgsForLog(argsGetter), "available_tool_count", len(s.tools))
+}
+
+func toolArgsForLog(argsGetter ToolArgumentGetter) string {
+	var raw json.RawMessage
+	if err := argsGetter(&raw); err != nil {
+		return fmt.Sprintf("failed to get tool args: %v", err)
+	}
+	return string(raw)
 }
 
 // AddAuthError adds an authentication error to the tool store

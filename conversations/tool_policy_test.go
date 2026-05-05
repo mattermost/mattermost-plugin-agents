@@ -49,6 +49,7 @@ func TestShouldAutoExecuteTool(t *testing.T) {
 				},
 			}
 			llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+			llmCtx.Tools.AddTools([]llm.Tool{{Name: toolName, ServerOrigin: origin}})
 			callback := c.shouldAutoExecuteTool(llmCtx, tc.isDM)
 			got := callback(llm.ToolCall{Name: toolName, ServerOrigin: origin})
 			assert.Equal(t, tc.want, got)
@@ -61,10 +62,47 @@ func TestShouldAutoExecuteTool(t *testing.T) {
 func TestShouldAutoExecuteTool_NilChecker(t *testing.T) {
 	c := &Conversations{toolPolicyChecker: nil}
 	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: "x", ServerOrigin: "y"}})
 	for _, isDM := range []bool{true, false} {
 		got := c.shouldAutoExecuteTool(llmCtx, isDM)(llm.ToolCall{Name: "x", ServerOrigin: "y"})
 		assert.False(t, got, "isDM=%v", isDM)
 	}
+}
+
+type countingPolicyChecker struct {
+	calls   int
+	policy  string
+	enabled bool
+}
+
+func (c *countingPolicyChecker) GetToolPolicy(string, string) (string, bool) {
+	c.calls++
+	return c.policy, c.enabled
+}
+
+func TestShouldAutoExecuteTool_UnknownToolSkipsPolicyLookup(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+
+	got := c.shouldAutoExecuteTool(llmCtx, true)(llm.ToolCall{Name: "unknown_tool", ServerOrigin: "https://mcp.example.com"})
+
+	assert.False(t, got)
+	assert.Zero(t, checker.calls)
+}
+
+func TestShouldAutoExecuteTool_KnownToolUsesPolicy(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunInDM, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	const origin = "https://mcp.example.com"
+	const toolName = "known_tool"
+	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: toolName, ServerOrigin: origin}})
+
+	got := c.shouldAutoExecuteTool(llmCtx, true)(llm.ToolCall{Name: toolName})
+
+	assert.True(t, got)
+	assert.Equal(t, 1, checker.calls)
 }
 
 // TestAllToolsAutoRunEverywhere_RespectsEnabledFlag pins the result-sharing
@@ -84,6 +122,7 @@ func TestAllToolsAutoRunEverywhere_RespectsEnabledFlag(t *testing.T) {
 		},
 	}
 	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: toolName, ServerOrigin: origin}})
 
 	turns := []toolrunner.ToolTurn{{
 		AssistantToolCalls: []llm.ToolCall{{Name: toolName, ServerOrigin: origin}},
@@ -91,4 +130,16 @@ func TestAllToolsAutoRunEverywhere_RespectsEnabledFlag(t *testing.T) {
 
 	assert.False(t, c.allToolsAutoRunEverywhere(turns, llmCtx),
 		"a disabled tool must not auto-share results even when the policy is auto_run_everywhere")
+}
+
+func TestAllToolsAutoRunEverywhere_UnknownToolReturnsFalse(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{{Name: "unknown_tool", ServerOrigin: "https://mcp.example.com"}},
+	}}
+
+	assert.False(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+	assert.Zero(t, checker.calls)
 }

@@ -5,6 +5,7 @@ package llm
 
 import (
 	"encoding/json"
+	"errors"
 	"sort"
 	"testing"
 
@@ -106,6 +107,117 @@ func TestSanitizeNonPrintableChars(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+type logEntry struct {
+	message string
+	fields  []any
+}
+
+type captureToolLog struct {
+	infos []logEntry
+	warns []logEntry
+}
+
+func (l *captureToolLog) Info(message string, keyValuePairs ...any) {
+	l.infos = append(l.infos, logEntry{message: message, fields: keyValuePairs})
+}
+
+func (l *captureToolLog) Warn(message string, keyValuePairs ...any) {
+	l.warns = append(l.warns, logEntry{message: message, fields: keyValuePairs})
+}
+
+type infoOnlyToolLog struct {
+	infos []logEntry
+}
+
+func (l *infoOnlyToolLog) Info(message string, keyValuePairs ...any) {
+	l.infos = append(l.infos, logEntry{message: message, fields: keyValuePairs})
+}
+
+func logFields(entry logEntry) map[string]any {
+	fields := make(map[string]any, len(entry.fields)/2)
+	for i := 0; i+1 < len(entry.fields); i += 2 {
+		key, ok := entry.fields[i].(string)
+		if ok {
+			fields[key] = entry.fields[i+1]
+		}
+	}
+	return fields
+}
+
+func rawArgsGetter(raw string) ToolArgumentGetter {
+	return func(args any) error {
+		return json.Unmarshal([]byte(raw), args)
+	}
+}
+
+func TestResolveToolUnknownWarnsWithoutTrace(t *testing.T) {
+	log := &captureToolLog{}
+	store := NewToolStore(log, false)
+
+	_, err := store.ResolveTool("ghost_tool", rawArgsGetter(`{"query":"hello"}`), &Context{})
+
+	require.EqualError(t, err, "unknown tool ghost_tool")
+	require.Len(t, log.warns, 1)
+	assert.Empty(t, log.infos)
+	assert.Equal(t, "unknown tool called", log.warns[0].message)
+	fields := logFields(log.warns[0])
+	assert.Equal(t, "ghost_tool", fields["name"])
+	assert.Equal(t, `{"query":"hello"}`, fields["args"])
+	assert.Equal(t, 0, fields["available_tool_count"])
+}
+
+func TestResolveToolUnknownPreservesTrace(t *testing.T) {
+	log := &captureToolLog{}
+	store := NewToolStore(log, true)
+
+	_, err := store.ResolveTool("ghost_tool", rawArgsGetter(`{"query":"hello"}`), &Context{})
+
+	require.EqualError(t, err, "unknown tool ghost_tool")
+	require.Len(t, log.warns, 1)
+	require.Len(t, log.infos, 1)
+	assert.Equal(t, "unknown tool called", log.warns[0].message)
+	assert.Equal(t, "unknown tool called", log.infos[0].message)
+	assert.Equal(t, `{"query":"hello"}`, logFields(log.infos[0])["args"])
+}
+
+func TestResolveToolUnknownWithInfoOnlyLoggerStillTracesWhenEnabled(t *testing.T) {
+	log := &infoOnlyToolLog{}
+	store := NewToolStore(log, true)
+
+	_, err := store.ResolveTool("ghost_tool", rawArgsGetter(`{"query":"hello"}`), &Context{})
+
+	require.EqualError(t, err, "unknown tool ghost_tool")
+	require.Len(t, log.infos, 1)
+	assert.Equal(t, "unknown tool called", log.infos[0].message)
+}
+
+func TestResolveToolUnknownLogsArgumentGetterError(t *testing.T) {
+	log := &captureToolLog{}
+	store := NewToolStore(log, true)
+	argsErr := errors.New("bad arguments")
+
+	_, err := store.ResolveTool("ghost_tool", func(any) error { return argsErr }, &Context{})
+
+	require.EqualError(t, err, "unknown tool ghost_tool")
+	require.Len(t, log.warns, 1)
+	require.Len(t, log.infos, 1)
+	assert.Equal(t, "failed to get tool args: bad arguments", logFields(log.warns[0])["args"])
+	assert.Equal(t, "failed to get tool args: bad arguments", logFields(log.infos[0])["args"])
+}
+
+func TestGetToolKnownAndUnknown(t *testing.T) {
+	store := NewToolStore(nil, false)
+	store.AddTools([]Tool{{
+		Name: "known",
+		Resolver: func(_ *Context, _ ToolArgumentGetter) (string, error) {
+			return "ok", nil
+		},
+	}})
+
+	require.NotNil(t, store.GetTool("known"))
+	assert.Nil(t, store.GetTool("ghost"))
 }
 
 func TestToolCall_SanitizeArguments(t *testing.T) {

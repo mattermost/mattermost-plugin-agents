@@ -229,8 +229,11 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 		if c.toolPolicyChecker == nil {
 			return false
 		}
+		if llmCtx == nil || llmCtx.Tools == nil || llmCtx.Tools.GetTool(tc.Name) == nil {
+			return false
+		}
 		origin := tc.ServerOrigin
-		if origin == "" && llmCtx.Tools != nil {
+		if origin == "" {
 			origin = llmCtx.Tools.GetServerOrigin(tc.Name)
 		}
 		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
@@ -253,8 +256,11 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 	}
 	for _, turn := range turns {
 		for _, tc := range turn.AssistantToolCalls {
+			if llmCtx == nil || llmCtx.Tools == nil || llmCtx.Tools.GetTool(tc.Name) == nil {
+				return false
+			}
 			origin := tc.ServerOrigin
-			if origin == "" && llmCtx.Tools != nil {
+			if origin == "" {
 				origin = llmCtx.Tools.GetServerOrigin(tc.Name)
 			}
 			policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, tc.Name)
