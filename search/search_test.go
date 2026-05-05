@@ -761,7 +761,11 @@ func TestRunSearch_SpanCoversAsyncWork(t *testing.T) {
 	require.NoError(t, err)
 
 	// processSearch is mid-flight; the "run search" span must still be open.
-	<-processSearchEntered
+	select {
+	case <-processSearchEntered:
+	case <-time.After(time.Second):
+		t.Fatal("processSearch did not reach the search call")
+	}
 	require.Empty(t, exporter.GetSpans(),
 		"run search span must stay open until processSearch finishes; "+
 			"saw it exported while the async goroutine was still running")
