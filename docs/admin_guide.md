@@ -335,6 +335,12 @@ Post indexing occurs automatically during initial setup and when changing embedd
    - Trigger reindexing when changing embedding providers.
    - Check indexing status.
 
+A reindex job is treated as stale if its heartbeat has not updated for more than 10 minutes. Staleness applies while the job is in a non-terminal state, including **running** and **cancel_requested**. Stuck jobs, especially in `cancel_requested`, can occur in containerized or clustered deployments when hostnames change across restarts.
+
+While a job is still shown as active but stale, the System Console displays a **Job May Be Stale** warning. You can choose **Resume from checkpoint** when previous progress exists, or **Reindex from scratch** in all cases. If a job stops making progress for more than 10 minutes, use these controls to recover from the System Console without waiting for the original node to return.
+
+On plugin startup, stale non-terminal reindex jobs may be reclaimed on any node, not only the node that originally ran the job. Those jobs are marked failed but remain resumable so you can continue from the saved checkpoint. Startup reclaim applies only to jobs that are already stale under the 10-minute heartbeat rule, so a recent crash is not automatically recovered on every restart.
+
 ### Backup and restore
 
 The plugin stores agent data across both plugin configuration and plugin database tables. To backup:
