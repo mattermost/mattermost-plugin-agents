@@ -226,6 +226,9 @@ func (c *Conversations) ProcessDMRequest(
 // reveal unshared tool output without an explicit Share from the requester.
 func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) func(llm.ToolCall) bool {
 	return func(tc llm.ToolCall) bool {
+		if mcp.IsMCPMetaTool(tc.Name) {
+			return true
+		}
 		if c.toolPolicyChecker == nil {
 			return false
 		}
@@ -251,11 +254,16 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 // tool turns has an auto_run_everywhere policy.  When true, tool results can
 // be written with shared=true so the result-approval UI is skipped.
 func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, llmCtx *llm.Context) bool {
-	if c.toolPolicyChecker == nil {
-		return false
-	}
+	sawToolCall := false
 	for _, turn := range turns {
 		for _, tc := range turn.AssistantToolCalls {
+			sawToolCall = true
+			if mcp.IsMCPMetaTool(tc.Name) {
+				continue
+			}
+			if c.toolPolicyChecker == nil {
+				return false
+			}
 			if llmCtx == nil || llmCtx.Tools == nil || llmCtx.Tools.GetTool(tc.Name) == nil {
 				return false
 			}
@@ -269,5 +277,5 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 			}
 		}
 	}
-	return len(turns) > 0
+	return sawToolCall
 }

@@ -9,19 +9,31 @@ import (
 )
 
 // applyBotChannelAutoEverywhereToolFilter keeps only MCP tools whose policy is
-// auto_run_everywhere and enabled. Built-in tools (empty ServerOrigin) are removed.
+// auto_run_everywhere and enabled. Built-in tools (empty ServerOrigin) are removed
+// except for internal MCP meta-tools.
 // Removed tools are recorded in DisabledToolsInfo for the model.
-// When no policy checker is configured, fail closed: remove all tools so replayed
+// When no policy checker is configured, fail closed for business tools so replayed
 // posts cannot expose MCP tools without policy validation.
 func (c *Conversations) applyBotChannelAutoEverywhereToolFilter(llmContext *llm.Context) {
 	if llmContext == nil || llmContext.Tools == nil {
 		return
 	}
 	if c.toolPolicyChecker == nil {
-		removed := llmContext.Tools.GetToolsInfo()
-		llmContext.Tools.KeepToolsIf(func(tool llm.Tool) bool { return false })
+		removed := make([]llm.ToolInfo, 0)
+		for _, tool := range llmContext.Tools.GetTools() {
+			if mcp.IsMCPMetaTool(tool.Name) {
+				continue
+			}
+			removed = append(removed, llm.ToolInfo{
+				Name:        tool.Name,
+				Description: tool.Description,
+			})
+		}
+		llmContext.Tools.KeepToolsIf(func(tool llm.Tool) bool {
+			return mcp.IsMCPMetaTool(tool.Name)
+		})
 		if len(removed) > 0 {
-			// Replace any prior DisabledToolsInfo from applyToolAvailability: all tools are removed.
+			// Replace any prior DisabledToolsInfo from applyToolAvailability with the tools removed here.
 			llmContext.DisabledToolsInfo = removed
 		}
 		return
@@ -64,6 +76,9 @@ func applyToolAvailability(context *llm.Context, isDM bool, allowToolsInChannel 
 }
 
 func botChannelAutoEverywhereKeepTool(checker mcp.ToolPolicyChecker, tool llm.Tool) bool {
+	if mcp.IsMCPMetaTool(tool.Name) {
+		return true
+	}
 	if checker == nil {
 		return false
 	}

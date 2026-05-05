@@ -112,6 +112,71 @@ func TestApplyBotChannelAutoEverywhereToolFilter_nilCheckerFailClosed(t *testing
 	require.Len(t, llmContext.DisabledToolsInfo, 2)
 }
 
+func TestBotChannelAutoEverywhereFilterKeepsMetaTools(t *testing.T) {
+	origin := "https://mcp.example.com/mcp"
+	c := &Conversations{
+		toolPolicyChecker: mapPolicyChecker{
+			origin: {
+				"safe_tool": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true},
+				"ask_tool":  {policy: mcp.ToolPolicyAsk, enabled: true},
+			},
+		},
+	}
+
+	llmContext := &llm.Context{
+		Tools: llm.NewToolStore(nil, false),
+	}
+	llmContext.Tools.AddTools([]llm.Tool{
+		{Name: mcp.SearchToolsName, Description: "search meta", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: mcp.LoadToolName, Description: "load meta", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "builtin", Description: "builtin tool", ServerOrigin: "", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "safe_tool", Description: "auto everywhere", ServerOrigin: origin, Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "ask_tool", Description: "needs approval", ServerOrigin: origin, Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+	})
+
+	c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+
+	toolNames := make([]string, 0, len(llmContext.Tools.GetTools()))
+	for _, tool := range llmContext.Tools.GetTools() {
+		toolNames = append(toolNames, tool.Name)
+	}
+	require.ElementsMatch(t, []string{mcp.SearchToolsName, mcp.LoadToolName, "safe_tool"}, toolNames)
+
+	disabledNames := make([]string, 0, len(llmContext.DisabledToolsInfo))
+	for _, info := range llmContext.DisabledToolsInfo {
+		disabledNames = append(disabledNames, info.Name)
+	}
+	require.ElementsMatch(t, []string{"builtin", "ask_tool"}, disabledNames)
+}
+
+func TestBotChannelAutoEverywhereFilterKeepsMetaToolsWithNilChecker(t *testing.T) {
+	c := &Conversations{toolPolicyChecker: nil}
+
+	llmContext := &llm.Context{
+		Tools: llm.NewToolStore(nil, false),
+	}
+	llmContext.Tools.AddTools([]llm.Tool{
+		{Name: mcp.SearchToolsName, Description: "search meta", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: mcp.LoadToolName, Description: "load meta", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "builtin", Description: "builtin tool", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "ask_tool", Description: "needs approval", ServerOrigin: "https://mcp.example.com", Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) { return "", nil }},
+	})
+
+	c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+
+	toolNames := make([]string, 0, len(llmContext.Tools.GetTools()))
+	for _, tool := range llmContext.Tools.GetTools() {
+		toolNames = append(toolNames, tool.Name)
+	}
+	require.ElementsMatch(t, []string{mcp.SearchToolsName, mcp.LoadToolName}, toolNames)
+
+	disabledNames := make([]string, 0, len(llmContext.DisabledToolsInfo))
+	for _, info := range llmContext.DisabledToolsInfo {
+		disabledNames = append(disabledNames, info.Name)
+	}
+	require.ElementsMatch(t, []string{"builtin", "ask_tool"}, disabledNames)
+}
+
 func TestBotChannelAutoEverywhereFilterDenormalizesNamespacedTool(t *testing.T) {
 	origin := "https://mcp.atlassian.com"
 	c := &Conversations{

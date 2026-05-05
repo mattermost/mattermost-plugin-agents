@@ -69,6 +69,19 @@ func TestShouldAutoExecuteTool_NilChecker(t *testing.T) {
 	}
 }
 
+func TestShouldAutoExecuteToolMetaToolsBypassPolicy(t *testing.T) {
+	c := &Conversations{toolPolicyChecker: nil}
+
+	assert.True(t, c.shouldAutoExecuteTool(nil, true)(llm.ToolCall{Name: mcp.SearchToolsName}))
+	assert.True(t, c.shouldAutoExecuteTool(nil, false)(llm.ToolCall{Name: mcp.LoadToolName}))
+}
+
+func TestShouldAutoExecuteToolMetaToolDoesNotAuthorizeBusinessTool(t *testing.T) {
+	c := &Conversations{toolPolicyChecker: nil}
+
+	assert.False(t, c.shouldAutoExecuteTool(nil, true)(llm.ToolCall{Name: "jira__get_issue"}))
+}
+
 type countingPolicyChecker struct {
 	calls        int
 	lastToolName string
@@ -159,6 +172,57 @@ func TestAllToolsAutoRunEverywhere_UnknownToolReturnsFalse(t *testing.T) {
 
 	assert.False(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
 	assert.Zero(t, checker.calls)
+}
+
+func TestAllToolsAutoRunEverywhereMetaOnlyBypassesPolicy(t *testing.T) {
+	c := &Conversations{toolPolicyChecker: nil}
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{
+			{Name: mcp.SearchToolsName},
+			{Name: mcp.LoadToolName},
+		},
+	}}
+
+	assert.True(t, c.allToolsAutoRunEverywhere(turns, nil))
+}
+
+func TestAllToolsAutoRunEverywhereMixedMetaAndAutoRunBusinessTool(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	const origin = "https://mcp.atlassian.com"
+	const runtimeToolName = "jira__get_issue"
+	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeToolName, ServerOrigin: origin}})
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{
+			{Name: mcp.SearchToolsName},
+			{Name: runtimeToolName},
+			{Name: mcp.LoadToolName},
+		},
+	}}
+
+	assert.True(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+	assert.Equal(t, 1, checker.calls)
+	assert.Equal(t, "get_issue", checker.lastToolName)
+}
+
+func TestAllToolsAutoRunEverywhereMixedMetaAndNonAutoBusinessTool(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAsk, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	const origin = "https://mcp.atlassian.com"
+	const runtimeToolName = "jira__get_issue"
+	llmCtx := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeToolName, ServerOrigin: origin}})
+	turns := []toolrunner.ToolTurn{{
+		AssistantToolCalls: []llm.ToolCall{
+			{Name: mcp.SearchToolsName},
+			{Name: runtimeToolName},
+		},
+	}}
+
+	assert.False(t, c.allToolsAutoRunEverywhere(turns, llmCtx))
+	assert.Equal(t, 1, checker.calls)
+	assert.Equal(t, "get_issue", checker.lastToolName)
 }
 
 func TestAllToolsAutoRunEverywhereDenormalizesNamespacedTool(t *testing.T) {
