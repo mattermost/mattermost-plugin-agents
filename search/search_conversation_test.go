@@ -412,7 +412,7 @@ func TestSearchQueryNilConversationServiceFallsBack(t *testing.T) {
 			makeSearchResult("post1", "channel1", "user1", "content", 0.9),
 		}, nil)
 
-	mockLLM.On("ChatCompletionNoStream", mock.Anything, mock.Anything).
+	mockLLM.On("ChatCompletionNoStream", mock.Anything, mock.Anything, mock.Anything).
 		Return("fallback answer", nil)
 
 	// No conversation service (nil)

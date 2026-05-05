@@ -72,3 +72,13 @@ func Tracer() trace.Tracer {
 func SpanFromContext(ctx context.Context) trace.Span {
 	return trace.SpanFromContext(ctx)
 }
+
+// DetachContext returns a context whose lifetime is independent of ctx but
+// preserves the active OpenTelemetry span. Use this when handing a request
+// context to background work (post streaming, async processing) that must
+// continue after the originating HTTP handler returns. Without it, the
+// request context's cancellation propagates into the background goroutine
+// and truncates the work.
+func DetachContext(ctx context.Context) context.Context {
+	return trace.ContextWithSpan(context.Background(), trace.SpanFromContext(ctx))
+}

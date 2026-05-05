@@ -265,9 +265,6 @@ func (s *Search) buildPrompt(userID string, bot *bots.Bot, query, teamID, channe
 
 // RunSearch initiates a search and sends results to a DM
 func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (map[string]string, error) {
-	ctx, span := telemetry.Tracer().Start(ctx, "run search")
-	defer span.End()
-
 	// Validate early (before creating posts)
 	if !s.Enabled() {
 		return nil, fmt.Errorf("search functionality is not configured")
@@ -287,8 +284,11 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 		return nil, fmt.Errorf("failed to create question post: %w", err)
 	}
 
-	// Start processing the search asynchronously
-	go s.processSearch(ctx, bot, userID, query, teamID, channelID, maxResults, questionPost)
+	// Start processing the search asynchronously. processSearch owns the
+	// "run search" span lifecycle since the work happens after RunSearch
+	// returns; ending the span here would orphan any child spans created
+	// inside the goroutine.
+	go s.processSearch(telemetry.DetachContext(ctx), bot, userID, query, teamID, channelID, maxResults, questionPost)
 
 	return map[string]string{
 		"postid":    questionPost.Id,
@@ -296,8 +296,10 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 	}, nil
 }
 
-// processSearch handles the async portion of RunSearch
+// processSearch handles the async portion of RunSearch.
 func (s *Search) processSearch(ctx context.Context, bot *bots.Bot, userID, query, teamID, channelID string, maxResults int, questionPost *model.Post) {
+	ctx, span := telemetry.Tracer().Start(ctx, "run search")
+	defer span.End()
 	// Create response post as a reply
 	responsePost := &model.Post{
 		RootId: questionPost.Id,

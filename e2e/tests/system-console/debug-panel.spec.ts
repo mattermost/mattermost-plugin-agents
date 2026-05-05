@@ -26,11 +26,12 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
  *   2-3:  Render AI-generated links
  *   4-5:  Enable Channel Mention Tool Calling
  *   6-7:  Allow native web search in channels
- *   8-9:  Enable Token Usage Logging
- *   10+:  Web Search, MCP settings...
+ *   8-9:  Enable OpenTelemetry
+ *   10-11: Enable Token Usage Logging
+ *   12+:  Web Search, MCP settings...
  */
 const RADIO_INDICES = {
-    enableTokenUsageLogging: { true: 8, false: 9 },
+    enableTokenUsageLogging: { true: 10, false: 11 },
 } as const;
 
 /**

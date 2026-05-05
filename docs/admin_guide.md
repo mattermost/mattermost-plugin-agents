@@ -353,7 +353,7 @@ When enabled, the plugin creates spans for:
 
 Spans are organized in a parent-child hierarchy that follows the request flow, so a single user message produces a trace like:
 
-```
+```text
 HTTP POST /post/:postid/react
   └── process user request
        ├── llm chat completion (provider=openai, model=gpt-4o, tokens=150/42)

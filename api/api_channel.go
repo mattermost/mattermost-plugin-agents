@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -158,7 +159,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	// Create analysis post with conversation ID for streaming turn persistence
 	analysisPost := a.makeAnalysisPost(user.Locale, "", data.AnalysisType, result.ConversationID)
 
-	if err := a.streamingService.StreamToNewDM(c.Request.Context(), bot.GetMMBot().UserId, result.Stream, user.Id, analysisPost, ""); err != nil {
+	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), bot.GetMMBot().UserId, result.Stream, user.Id, analysisPost, ""); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -260,7 +261,7 @@ func (a *API) handleInterval(c *gin.Context) {
 	post.AddProp(streaming.ConversationIDProp, result.ConversationID)
 
 	// Stream result to new DM
-	if err := a.streamingService.StreamToNewDM(c.Request.Context(), bot.GetMMBot().UserId, result.Stream, user.Id, post, ""); err != nil {
+	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), bot.GetMMBot().UserId, result.Stream, user.Id, post, ""); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}

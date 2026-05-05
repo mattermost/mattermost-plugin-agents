@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/react"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost-plugin-agents/threads"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -168,7 +169,7 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 
 	// Create analysis post with conversation ID
 	analysisPost := a.makeAnalysisPost(user.Locale, post.Id, data.AnalysisType, analyzeResult.ConversationID)
-	if err := a.streamingService.StreamToNewDM(c.Request.Context(), botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
+	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
