@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/bots"
+	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/i18n"
@@ -84,6 +85,7 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 	}
 
 	conv := conversations.New(promptsManager, client, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, &testToolCallingConfig{})
+	conv.SetConversationService(conversation.NewService(newFakeConvStore(), promptsManager, client, botService))
 
 	return &reminderFixture{
 		conv:       conv,
