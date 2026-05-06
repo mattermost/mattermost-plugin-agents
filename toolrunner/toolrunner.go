@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 )
 
 // MaxToolRounds is the maximum number of tool-call-execute-recall iterations
@@ -340,7 +341,12 @@ func unavailableToolNames(toolCalls []llm.ToolCall, store *llm.ToolStore) []stri
 }
 
 func containsUnavailableTools(toolCalls []llm.ToolCall, store *llm.ToolStore) bool {
-	return len(unavailableToolNames(toolCalls, store)) > 0
+	for _, tc := range toolCalls {
+		if store == nil || store.GetTool(tc.Name) == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func unavailableToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore, llmContext *llm.Context) []ToolResult {
@@ -397,17 +403,13 @@ func recordMCPDynamicSearchLoadCallSuccess(llmContext *llm.Context, toolCalls []
 			continue
 		}
 		toolName := toolCalls[i].Name
-		if isMCPDynamicMetaToolName(toolName) {
+		if mcp.IsMCPMetaTool(toolName) {
 			continue
 		}
 		if llmContext.ShouldRecordMCPDynamicSearchLoadCallSuccess(toolName) {
 			llmContext.ObserveMCPDynamicToolEvent("search_load_call_success", "success")
 		}
 	}
-}
-
-func isMCPDynamicMetaToolName(name string) bool {
-	return name == "search_tools" || name == "load_tool"
 }
 
 func loadFirstToolError(name string) string {

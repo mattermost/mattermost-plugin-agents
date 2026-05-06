@@ -363,25 +363,32 @@ func markUnloadedMCPTools(publicStore *llm.ToolStore, mcpTools []llm.Tool) {
 	if publicStore == nil {
 		return
 	}
+
+	// Index the visible store once: tools may be registered under either their
+	// fully namespaced name or their bare name, so look up by both keyed on
+	// (ServerOrigin, name) to avoid an O(N*M) scan per MCP tool.
+	visible := publicStore.GetTools()
+	type originKey struct {
+		origin string
+		name   string
+	}
+	visibleKeys := make(map[originKey]struct{}, len(visible)*2)
+	for _, t := range visible {
+		visibleKeys[originKey{t.ServerOrigin, t.Name}] = struct{}{}
+		visibleKeys[originKey{t.ServerOrigin, llm.BareMCPToolName(t.Name)}] = struct{}{}
+	}
+
 	unloaded := make([]llm.Tool, 0, len(mcpTools))
 	for _, tool := range mcpTools {
-		if !publicStoreHasMCPTool(publicStore, tool) {
-			unloaded = append(unloaded, tool)
+		if _, ok := visibleKeys[originKey{tool.ServerOrigin, tool.Name}]; ok {
+			continue
 		}
+		if _, ok := visibleKeys[originKey{tool.ServerOrigin, llm.BareMCPToolName(tool.Name)}]; ok {
+			continue
+		}
+		unloaded = append(unloaded, tool)
 	}
 	publicStore.SetUnloadedMCPTools(unloaded)
-}
-
-func publicStoreHasMCPTool(publicStore *llm.ToolStore, tool llm.Tool) bool {
-	if publicStore.GetTool(tool.Name) != nil {
-		return true
-	}
-	for _, visible := range publicStore.GetTools() {
-		if visible.ServerOrigin == tool.ServerOrigin && llm.MCPToolNameMatches(tool.Name, visible.Name) {
-			return true
-		}
-	}
-	return false
 }
 
 func botIDForLoadedMCPTools(c *llm.Context, bot *bots.Bot) string {

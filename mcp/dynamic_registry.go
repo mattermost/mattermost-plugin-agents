@@ -23,7 +23,6 @@ type MCPToolRegistryEntry struct {
 	Name             string
 	BareName         string
 	ServerOrigin     string
-	RetrievalName    string
 	RetrievalSummary string
 }
 
@@ -77,7 +76,6 @@ func NewMCPToolRegistry(tools []llm.Tool, opts ...MCPToolRegistryOption) *MCPToo
 			Name:             tool.Name,
 			BareName:         bareName,
 			ServerOrigin:     tool.ServerOrigin,
-			RetrievalName:    tool.Name,
 			RetrievalSummary: retrievalSummary,
 		}
 	}

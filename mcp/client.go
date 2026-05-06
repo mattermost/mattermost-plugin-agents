@@ -643,16 +643,14 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 			return "", fmt.Errorf("failed to call tool %s on server %s: %w", toolName, c.config.Name, err)
 		}
 	}
-	// Extract text content from the result
-	text := ""
-	if len(result.Content) > 0 {
-		for _, content := range result.Content {
-			// Use type assertion to extract text content
-			if textContent, ok := content.(*mcp.TextContent); ok {
-				text += textContent.Text + "\n"
-			}
+	var textBuilder strings.Builder
+	for _, content := range result.Content {
+		if textContent, ok := content.(*mcp.TextContent); ok {
+			textBuilder.WriteString(textContent.Text)
+			textBuilder.WriteByte('\n')
 		}
 	}
+	text := textBuilder.String()
 
 	// MCP tools can return IsError=true without transport-level errors.
 	// Surface this as a resolver error so tool-call status is set correctly.

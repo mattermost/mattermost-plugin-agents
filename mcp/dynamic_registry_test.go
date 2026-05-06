@@ -27,7 +27,6 @@ func TestMCPToolRegistryLookupAndList(t *testing.T) {
 	require.Equal(t, "jira__get_issue", entry.Name)
 	require.Equal(t, "get_issue", entry.BareName)
 	require.Equal(t, "https://jira.example.com", entry.ServerOrigin)
-	require.Equal(t, "jira__get_issue", entry.RetrievalName)
 	require.Equal(t, "Get a Jira issue", entry.RetrievalSummary)
 	require.Equal(t, tools[1].Schema, entry.Tool.Schema)
 
