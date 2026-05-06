@@ -1343,6 +1343,55 @@ func TestBuildChannelMentionRequest_MixedThread(t *testing.T) {
 	assert.Contains(t, req.Posts[3].Message, "comment from B")
 }
 
+func TestBuildChannelMentionRequest_StopsAtCurrentUserTurn(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	botID := model.NewId()
+	userID := model.NewId()
+	rootPostID := "trim_root"
+	currentPostID := "current_mention"
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       userID,
+		BotID:        botID,
+		RootPostID:   &rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "@aibot look at the earlier post",
+		UserPostID:   stringPtr(currentPostID),
+	})
+	require.NoError(t, err)
+
+	conv, err := s.GetConversation(result.ConversationID)
+	require.NoError(t, err)
+
+	threadData := &mmapi.ThreadData{
+		Posts: []*model.Post{
+			{Id: rootPostID, UserId: userID, CreateAt: 1000, Message: "earlier context"},
+			{Id: currentPostID, UserId: userID, CreateAt: 2000, Message: "@aibot look at the earlier post"},
+			{Id: "placeholder", UserId: botID, CreateAt: 3000, Message: "Thinking..."},
+			{Id: "later_reply", UserId: userID, CreateAt: 4000, Message: "this happened after the mention"},
+		},
+		UsersByID: map[string]*model.User{
+			userID: {Id: userID, Username: "alice"},
+			botID:  {Id: botID, Username: "aibot"},
+		},
+	}
+
+	svc.bots = &testBotLookup{botUserIDs: map[string]bool{botID: true}}
+
+	req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+	require.NoError(t, err)
+
+	require.Len(t, req.Posts, 3, "system + earlier context + current mention")
+	assert.Contains(t, req.Posts[1].Message, "earlier context")
+	assert.Contains(t, req.Posts[2].Message, "@aibot look at the earlier post")
+	for _, post := range req.Posts {
+		assert.NotContains(t, post.Message, "Thinking...")
+		assert.NotContains(t, post.Message, "this happened after the mention")
+	}
+}
+
 func TestBuildChannelMentionRequest_MultiBotThread(t *testing.T) {
 	svc, s := setupTestService(t)
 
@@ -2108,5 +2157,75 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			"image attachments must be dropped on the channel-mention path when vision is disabled")
 		assert.Contains(t, userPost.Message, "Content: hello",
 			"text-file content must still flow through to the LLM via the channel-mention path")
+	})
+
+	t.Run("image on root post is visible to later mention in same thread", func(t *testing.T) {
+		mmClient := mmapimocks.NewMockClient(t)
+
+		mmClient.On("GetFileInfo", "img-root").Return(&model.FileInfo{
+			Id: "img-root", Name: "screenshot.png", MimeType: "image/png", Size: 100,
+		}, nil)
+		mmClient.On("GetFile", "img-root").Return(io.NopCloser(strings.NewReader("PNGDATA")), nil)
+
+		botID := model.NewId()
+		userID := model.NewId()
+		rootPostID := "root_post_with_image"
+		mentionPostID := "later_mention_post"
+		bots := &testBotLookup{
+			botUserIDs: map[string]bool{botID: true},
+			configByID: map[string]testBotConfig{
+				botID: {enableVision: true, maxFileSize: 0},
+			},
+		}
+
+		svc, _ := setupTestServiceWithClient(t, mmClient, bots)
+
+		result, err := svc.CreateConversation(CreateConversationParams{
+			UserID:       userID,
+			BotID:        botID,
+			RootPostID:   stringPtr(rootPostID),
+			Operation:    "conversation",
+			SystemPrompt: "system",
+			UserMessage:  "@aibot what do you think?",
+			UserPostID:   stringPtr(mentionPostID),
+		})
+		require.NoError(t, err)
+
+		conv, err := svc.GetConversation(result.ConversationID)
+		require.NoError(t, err)
+
+		threadData := &mmapi.ThreadData{
+			Posts: []*model.Post{
+				{
+					Id:       rootPostID,
+					UserId:   userID,
+					CreateAt: 1000,
+					Message:  "I noticed this",
+					FileIds:  []string{"img-root"},
+				},
+				{
+					Id:       mentionPostID,
+					UserId:   userID,
+					CreateAt: 2000,
+					Message:  "@aibot what do you think?",
+				},
+			},
+			UsersByID: map[string]*model.User{
+				userID: {Id: userID, Username: "alice"},
+				botID:  {Id: botID, Username: "aibot"},
+			},
+		}
+
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		require.NoError(t, err)
+
+		require.Len(t, req.Posts, 3, "system + root thread post + later mention turn")
+		rootPost := req.Posts[1]
+		require.Equal(t, llm.PostRoleUser, rootPost.Role)
+		require.Len(t, rootPost.Files, 1,
+			"image attachments on earlier thread posts must be visible when a later post mentions the agent")
+		assert.Equal(t, "image/png", rootPost.Files[0].MimeType)
+		assert.Contains(t, rootPost.Message, "@alice")
+		assert.Contains(t, rootPost.Message, "I noticed this")
 	})
 }

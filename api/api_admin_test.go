@@ -36,7 +36,7 @@ func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API) {
 	cfg := &testConfigImpl{}
 	noopMetrics := &metrics.NoopMetrics{}
 
-	api := New(nil, nil, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	api := New(nil, nil, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	return api, mockAPI
 }

@@ -143,9 +143,22 @@ func buildUserMCPServerInfo(
 		}
 	}
 
-	authenticated := isUserMCPServerAuthenticated(serverConfig, len(originTools) > 0, hasAuthError, hasStoredToken)
+	var authNeededState *mcp.OAuthNeededState
+	if oauthManager != nil {
+		var err error
+		authNeededState, err = oauthManager.LoadAuthNeededState(userID, serverConfig.Name)
+		if err != nil {
+			authNeededState = nil
+			if api != nil {
+				api.pluginAPI.Log.Debug("Failed to load MCP OAuth-needed state", "userID", userID, "serverName", serverConfig.Name, "serverOrigin", serverConfig.BaseURL, "error", err)
+			}
+		}
+	}
+	hasPersistedAuthNeeded := authNeededState != nil && authNeededState.AuthURL != ""
+
+	authenticated := isUserMCPServerAuthenticated(serverConfig, len(originTools) > 0, hasAuthError, hasStoredToken, hasPersistedAuthNeeded)
 	staticOAuthConfigured := serverConfig.ClientID != ""
-	needsOAuth := hasAuthError || hasStoredToken || (!authenticated && staticOAuthConfigured)
+	needsOAuth := hasAuthError || hasStoredToken || hasPersistedAuthNeeded || (!authenticated && staticOAuthConfigured)
 
 	info := UserMCPServerInfo{
 		Name:          serverConfig.Name,
@@ -154,9 +167,12 @@ func buildUserMCPServerInfo(
 		NeedsOAuth:    needsOAuth,
 		Tools:         toolInfos,
 	}
-	if hasAuthError && !info.Authenticated {
+	switch {
+	case hasAuthError && !info.Authenticated && authError.AuthURL != "":
 		info.AuthURL = authError.AuthURL
-	} else if !info.Authenticated && oauthManager != nil && staticOAuthConfigured {
+	case hasPersistedAuthNeeded && !info.Authenticated:
+		info.AuthURL = authNeededState.AuthURL
+	case !info.Authenticated && oauthManager != nil && staticOAuthConfigured:
 		info.AuthURL = oauthManager.StartURL(serverConfig.Name)
 	}
 	return info
@@ -167,17 +183,18 @@ func isUserMCPServerAuthenticated(
 	hasDiscoveredTools bool,
 	hasAuthError bool,
 	hasStoredToken bool,
+	hasPersistedAuthNeeded bool,
 ) bool {
 	if serverConfig.BaseURL == mcp.EmbeddedClientKey {
 		return true
 	}
 
-	if hasDiscoveredTools {
-		return true
+	if hasAuthError || hasPersistedAuthNeeded {
+		return false
 	}
 
-	if hasAuthError {
-		return false
+	if hasDiscoveredTools {
+		return true
 	}
 
 	return hasStoredToken
@@ -242,6 +259,7 @@ func (a *API) handleDeleteUserMCPOAuth(c *gin.Context) {
 		return
 	}
 
+	a.publishMCPOAuthClusterInvalidation(userID)
 	a.publishMCPDisconnected(userID, serverName)
 	c.Status(http.StatusOK)
 }

@@ -71,6 +71,12 @@ func PostBody(post *model.Post) string {
 	return post.Message
 }
 
+// AuthoredPost formats a post body with the username of its author for LLM
+// consumption.
+func AuthoredPost(post *model.Post, username string) string {
+	return "@" + username + ": " + PostBody(post)
+}
+
 // PostEntry holds pre-resolved data for formatting a single post.
 // Used by MCP tools and other callers that need structured post output.
 type PostEntry struct {

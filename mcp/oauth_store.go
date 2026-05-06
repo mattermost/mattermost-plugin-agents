@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -29,6 +30,16 @@ func buildClientCredentialsKey(serverURL string) string {
 func buildTokenKey(userID, serverID string) string {
 	prefix := "mcp_oauth_token_v1"
 	return fmt.Sprintf("%s_%s_%s", prefix, userID, serverID)
+}
+
+func buildAuthNeededKey(userID, serverID string) string {
+	prefix := "mcp_oauth_needed_v1"
+	return fmt.Sprintf("%s_%s_%s", prefix, userID, serverID)
+}
+
+type OAuthNeededState struct {
+	AuthURL string    `json:"authURL"`
+	SeenAt  time.Time `json:"seenAt"`
 }
 
 // loadToken retrieves the OAuth token for a user and server from the KV store
@@ -65,6 +76,46 @@ func (m *OAuthManager) HasStoredToken(userID, serverID string) (bool, error) {
 	return true, nil
 }
 
+const oauthNeededStateTTL = 24 * time.Hour
+
+func (m *OAuthManager) LoadAuthNeededState(userID, serverID string) (*OAuthNeededState, error) {
+	authNeededKey := buildAuthNeededKey(userID, serverID)
+
+	var state OAuthNeededState
+	err := m.pluginAPI.KVGet(authNeededKey, &state)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve OAuth-needed state from KV store: %w", err)
+	}
+
+	if state.AuthURL == "" {
+		return nil, nil
+	}
+
+	return &state, nil
+}
+
+func (m *OAuthManager) StoreAuthNeededState(userID, serverID, authURL string) error {
+	authNeededKey := buildAuthNeededKey(userID, serverID)
+	state := &OAuthNeededState{
+		AuthURL: authURL,
+		SeenAt:  time.Now(),
+	}
+
+	if err := m.pluginAPI.KVSetWithExpiry(authNeededKey, state, oauthNeededStateTTL); err != nil {
+		return fmt.Errorf("failed to store OAuth-needed state: %w", err)
+	}
+
+	return nil
+}
+
+func (m *OAuthManager) DeleteAuthNeededState(userID, serverID string) error {
+	authNeededKey := buildAuthNeededKey(userID, serverID)
+	if err := m.pluginAPI.KVDelete(authNeededKey); err != nil {
+		return fmt.Errorf("failed to delete OAuth-needed state: %w", err)
+	}
+	return nil
+}
+
 func (m *OAuthManager) storeToken(userID, serverID string, token *oauth2.Token) error {
 	tokenKey := buildTokenKey(userID, serverID)
 
@@ -86,7 +137,9 @@ func (m *OAuthManager) deleteToken(userID, serverID string) error {
 // DeleteUserToken removes the stored OAuth token for a user and server,
 // effectively disconnecting the user from that MCP server.
 func (m *OAuthManager) DeleteUserToken(userID, serverID string) error {
-	return m.deleteToken(userID, serverID)
+	tokenErr := m.deleteToken(userID, serverID)
+	authNeededErr := m.DeleteAuthNeededState(userID, serverID)
+	return errors.Join(tokenErr, authNeededErr)
 }
 
 type ClientCredentials struct {

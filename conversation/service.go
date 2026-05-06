@@ -582,11 +582,19 @@ func (s *Service) BuildChannelMentionRequest(
 	turnByPostID := make(map[string]store.Turn)
 	// Turns without post IDs (tool rounds, etc.) keyed by index.
 	var turnsWithoutPosts []store.Turn
+	latestPostLinkedSequence := 0
+	latestPostLinkedPostID := ""
+	latestPostLinkedRole := ""
 
 	for _, turn := range turns {
 		if turn.PostID != nil {
 			turnPostIDs[*turn.PostID] = true
 			turnByPostID[*turn.PostID] = turn
+			if turn.Sequence > latestPostLinkedSequence {
+				latestPostLinkedSequence = turn.Sequence
+				latestPostLinkedPostID = *turn.PostID
+				latestPostLinkedRole = turn.Role
+			}
 		} else {
 			turnsWithoutPosts = append(turnsWithoutPosts, turn)
 		}
@@ -653,15 +661,17 @@ func (s *Service) BuildChannelMentionRequest(
 			}
 			posts = append(posts, runPosts...)
 		} else {
-			// Render as plain text with @username prefix.
+			// Render as user content with @username prefix, preserving any
+			// uploaded files on thread posts that are not stored turns.
 			username := ""
 			if user, ok := threadData.UsersByID[threadPost.UserId]; ok {
 				username = user.Username
 			}
-			posts = append(posts, llm.Post{
-				Role:    llm.PostRoleUser,
-				Message: "@" + username + ": " + format.PostBody(threadPost),
-			})
+			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, s.mmClient)
+			posts = append(posts, BlocksToPost(blocks, "user", redactUnshared, s.mmClient, enableVision, maxFileSize))
+		}
+		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
+			break
 		}
 	}
 
