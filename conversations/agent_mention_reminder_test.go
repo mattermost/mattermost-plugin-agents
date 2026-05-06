@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,6 +27,7 @@ const (
 	reminderUserID      = "user-id"
 	reminderOtherUserID = "other-user-id"
 	reminderChannelID   = "channel-id"
+	reminderTeamID      = "team-id"
 	reminderRootID      = "root-id"
 	reminderReplyID     = "reply-id"
 )
@@ -54,6 +56,7 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 	mockAPI := &plugintest.API{}
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
 	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: reminderTeamID, Name: "team"}, nil).Maybe()
 	pluginClient := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginClient)
 
@@ -87,6 +90,9 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 }
 
 func (f *reminderFixture) setChannel(ch *model.Channel) {
+	if ch != nil && ch.TeamId == "" && ch.Type != model.ChannelTypeDirect && ch.Type != model.ChannelTypeGroup {
+		ch.TeamId = reminderTeamID
+	}
 	f.client.channels[ch.Id] = ch
 }
 
