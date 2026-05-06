@@ -437,10 +437,18 @@ func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 // requesterUserID is the user who initiated the request; tool call details
 // are scoped to this user while other channel members see redacted metadata.
 func (p *MMPostStreamService) StreamToPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, userLocale string, requesterUserID string) {
+	// Top-level posts are their own thread root, so falling back to post.Id
+	// keeps the attribute populated and makes "all spans for this thread"
+	// queries work uniformly for both replies and root posts.
+	rootPostID := post.RootId
+	if rootPostID == "" {
+		rootPostID = post.Id
+	}
 	ctx, span := telemetry.Tracer().Start(ctx, "stream to post",
 		trace.WithAttributes(
 			telemetry.PostID.String(post.Id),
 			telemetry.ChannelID.String(post.ChannelId),
+			telemetry.ThreadRootPostID.String(rootPostID),
 		),
 	)
 	defer span.End()

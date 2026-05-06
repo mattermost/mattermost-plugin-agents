@@ -19,10 +19,10 @@ var (
 	LLMOutputTokens = attribute.Key("ai.llm.output_tokens")
 )
 
-// Attribute keys for bot context
+// Attribute keys for agent context
 var (
-	BotName = attribute.Key("ai.bot.name")
-	BotID   = attribute.Key("ai.bot.id")
+	AgentName = attribute.Key("ai.agent.name")
+	AgentID   = attribute.Key("ai.agent.id")
 )
 
 // Attribute keys for tool operations
@@ -40,9 +40,10 @@ var (
 
 // Attribute keys for Mattermost entities
 var (
-	UserID    = attribute.Key("ai.user.id")
-	ChannelID = attribute.Key("ai.channel.id")
-	PostID    = attribute.Key("ai.post.id")
+	UserID           = attribute.Key("ai.user.id")
+	ChannelID        = attribute.Key("ai.channel.id")
+	PostID           = attribute.Key("ai.post.id")
+	ThreadRootPostID = attribute.Key("ai.thread.root_post.id")
 )
 
 // WithLLMAttributes returns a SpanStartOption with standard LLM attributes.
