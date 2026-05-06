@@ -481,6 +481,45 @@ func MCPToolNameMatches(runtimeName, configuredName string) bool {
 	return runtimeName == configuredName || BareMCPToolName(runtimeName) == configuredName
 }
 
+// mcpToolAllowed reports whether a tool passes the allowlist filter. Built-in
+// tools (empty ServerOrigin) always pass. MCP tools pass when the allowlist
+// map contains the key for either the namespaced runtime name or the bare
+// name (see BareMCPToolName). Allowlist keys use the format
+// "serverOrigin\x00toolName".
+func mcpToolAllowed(tool Tool, allowlist map[string]bool) bool {
+	if tool.ServerOrigin == "" {
+		return true
+	}
+	if allowlist[tool.ServerOrigin+"\x00"+tool.Name] {
+		return true
+	}
+	return allowlist[tool.ServerOrigin+"\x00"+BareMCPToolName(tool.Name)]
+}
+
+// FilterMCPToolsByAllowlist returns a new slice containing every built-in tool
+// (empty ServerOrigin) plus every MCP tool whose (ServerOrigin, Name) pair is
+// present in the allowlist map. Allowlist keys use the format
+// "serverOrigin\x00toolName"; both the namespaced runtime name and the bare
+// name (see BareMCPToolName) are checked, so persisted allowlists with legacy
+// bare names continue to match.
+//
+// An empty or nil allowlist drops every MCP tool while still keeping built-in
+// tools. The input slice is never mutated. This helper does not interpret
+// MCPServerToolWildcard entries; callers that need wildcard semantics should
+// pre-expand wildcards into the allowlist map before calling.
+func FilterMCPToolsByAllowlist(tools []Tool, allowlist map[string]bool) []Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+	filtered := make([]Tool, 0, len(tools))
+	for _, tool := range tools {
+		if mcpToolAllowed(tool, allowlist) {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
+}
+
 // RetainOnlyMCPTools filters the tool store to only retain MCP tools whose
 // (ServerOrigin, Name) pair appears in the allowlist. Built-in tools (those
 // with empty ServerOrigin) are never removed by this method.
@@ -505,19 +544,13 @@ func (s *ToolStore) RetainOnlyMCPTools(allowlist []EnabledMCPTool) {
 	}
 
 	for name, tool := range s.tools {
-		// Never filter built-in tools (empty ServerOrigin)
-		if tool.ServerOrigin == "" {
+		if mcpToolAllowed(tool, allowed) {
 			continue
 		}
 		if wildcardOrigins[tool.ServerOrigin] {
 			continue
 		}
-		// Remove MCP tools not in the allowlist. Runtime tool names may be
-		// namespaced, but persisted allowlists can contain legacy bare names.
-		if !allowed[tool.ServerOrigin+"\x00"+tool.Name] &&
-			!allowed[tool.ServerOrigin+"\x00"+BareMCPToolName(tool.Name)] {
-			delete(s.tools, name)
-		}
+		delete(s.tools, name)
 	}
 }
 

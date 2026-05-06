@@ -529,10 +529,27 @@ func retainOnlyAllowedMCPTools(tools []llm.Tool, allowlist []llm.EnabledMCPTool)
 		return tools
 	}
 
-	filteredMCPStore := llm.NewNoTools()
-	filteredMCPStore.AddTools(tools)
-	filteredMCPStore.RetainOnlyMCPTools(allowlist)
-	return filteredMCPStore.GetTools()
+	// Build the allowlist set in the shape FilterMCPToolsByAllowlist expects
+	// (key: "serverOrigin\x00toolName"). Wildcard entries grant every runtime
+	// tool from that origin, so pre-expand them by walking the tool list once.
+	allowed := make(map[string]bool, len(allowlist))
+	wildcardOrigins := make(map[string]bool, len(allowlist))
+	for _, t := range allowlist {
+		if t.ToolName == llm.MCPServerToolWildcard {
+			wildcardOrigins[t.ServerOrigin] = true
+			continue
+		}
+		allowed[t.ServerOrigin+"\x00"+t.ToolName] = true
+	}
+	if len(wildcardOrigins) > 0 {
+		for _, tool := range tools {
+			if wildcardOrigins[tool.ServerOrigin] {
+				allowed[tool.ServerOrigin+"\x00"+tool.Name] = true
+			}
+		}
+	}
+
+	return llm.FilterMCPToolsByAllowlist(tools, allowed)
 }
 
 // WithLLMContextTools adds tools to the LLM context the requester can access.

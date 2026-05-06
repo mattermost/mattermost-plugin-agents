@@ -657,6 +657,96 @@ func TestRetainOnlyMCPTools(t *testing.T) {
 	}
 }
 
+func TestFilterMCPToolsByAllowlist(t *testing.T) {
+	builtin := Tool{Name: "builtin_search", ServerOrigin: ""}
+	atlassianGet := Tool{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"}
+	atlassianCreate := Tool{Name: "jira_create", ServerOrigin: "https://mcp.atlassian.com"}
+	atlassianNamespacedGet := Tool{Name: "jira__get_issue", ServerOrigin: "https://mcp.atlassian.com"}
+	slackPost := Tool{Name: "slack_post", ServerOrigin: "https://mcp.slack.com"}
+
+	tests := []struct {
+		name      string
+		tools     []Tool
+		allowlist map[string]bool
+		want      []Tool
+	}{
+		{
+			name:      "built-in tool always kept",
+			tools:     []Tool{builtin},
+			allowlist: map[string]bool{},
+			want:      []Tool{builtin},
+		},
+		{
+			name:  "MCP tool with full namespaced name match is kept",
+			tools: []Tool{atlassianNamespacedGet},
+			allowlist: map[string]bool{
+				"https://mcp.atlassian.com\x00jira__get_issue": true,
+			},
+			want: []Tool{atlassianNamespacedGet},
+		},
+		{
+			name:  "MCP tool with bare name match is kept",
+			tools: []Tool{atlassianNamespacedGet},
+			allowlist: map[string]bool{
+				"https://mcp.atlassian.com\x00get_issue": true,
+			},
+			want: []Tool{atlassianNamespacedGet},
+		},
+		{
+			name:  "MCP tool with no match is dropped",
+			tools: []Tool{atlassianGet},
+			allowlist: map[string]bool{
+				"https://mcp.slack.com\x00slack_post": true,
+			},
+			want: []Tool{},
+		},
+		{
+			name:  "mixed slice keeps built-ins and matching MCP tools only",
+			tools: []Tool{builtin, atlassianGet, atlassianCreate, slackPost},
+			allowlist: map[string]bool{
+				"https://mcp.atlassian.com\x00jira_get": true,
+				"https://mcp.slack.com\x00slack_post":   true,
+			},
+			want: []Tool{builtin, atlassianGet, slackPost},
+		},
+		{
+			name:      "empty allowlist drops all MCP tools but keeps built-in",
+			tools:     []Tool{builtin, atlassianGet, slackPost},
+			allowlist: map[string]bool{},
+			want:      []Tool{builtin},
+		},
+		{
+			name:      "nil allowlist drops all MCP tools but keeps built-in",
+			tools:     []Tool{builtin, atlassianGet, slackPost},
+			allowlist: nil,
+			want:      []Tool{builtin},
+		},
+		{
+			name:  "same bare name across origins is matched per-origin",
+			tools: []Tool{
+				{Name: "jira__search", ServerOrigin: "https://server-a.com"},
+				{Name: "github__search", ServerOrigin: "https://server-b.com"},
+			},
+			allowlist: map[string]bool{
+				"https://server-a.com\x00search": true,
+			},
+			want: []Tool{
+				{Name: "jira__search", ServerOrigin: "https://server-a.com"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := append([]Tool(nil), tt.tools...)
+			got := FilterMCPToolsByAllowlist(tt.tools, tt.allowlist)
+			assert.Equal(t, tt.want, got)
+			// Input slice must not be mutated.
+			assert.Equal(t, input, tt.tools)
+		})
+	}
+}
+
 func TestToolStoreUnloadedMCPTools(t *testing.T) {
 	var nilStore *ToolStore
 	nilStore.SetUnloadedMCPTools([]Tool{{Name: "jira__get_issue"}})
