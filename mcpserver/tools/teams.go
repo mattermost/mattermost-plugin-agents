@@ -347,7 +347,7 @@ func (p *MattermostToolProvider) toolCreateTeam(mcpContext *MCPToolContext, args
 		if !isValidImageFile(fileName) {
 			teamIconMessage = " (team icon upload failed: unsupported file type, only .jpeg, .jpg, .png, .gif are supported)"
 		} else {
-			imageData, err := fetchFileDataForLocal(args.TeamIcon, mcpContext.AccessMode)
+			imageData, err := fetchFileDataForLocal(mcpContext.Ctx, args.TeamIcon, mcpContext.AccessMode)
 			if err != nil {
 				teamIconMessage = fmt.Sprintf(" (team icon upload failed: %v)", err)
 			} else {

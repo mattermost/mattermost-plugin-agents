@@ -20,9 +20,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// ToolHookConfig holds an optional plugin-relative before-callback path for a tool (from bridge metadata).
+// ToolHookConfig holds an optional opaque before-hook key for a tool.
 type ToolHookConfig struct {
-	BeforeCallback string `json:"before_callback,omitempty"`
+	BeforeHookKey string `json:"before_hook_key,omitempty"`
 }
 
 // MCPToolContext provides MCP-specific functionality with the authenticated client.
@@ -36,10 +36,10 @@ type MCPToolContext struct {
 	// Empty when the auth provider cannot resolve an authenticated user.
 	UserID string
 
-	// MMServerURL is the Mattermost server base URL (same as API Client4 origin) for building /plugins/{id}/... hook URLs.
-	MMServerURL  string
-	HookPluginID string
-	ToolHooks    map[string]ToolHookConfig
+	// MMServerURL is the Mattermost server base URL (same as API Client4 origin) for resolving hook keys and firing callbacks.
+	MMServerURL        string
+	BeforeHookResolver auth.BeforeHookResolver
+	ToolHooks          map[string]ToolHookConfig
 }
 
 // MCPToolResolver defines the signature for MCP tool resolvers
@@ -265,16 +265,9 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 		return nil, err
 	}
 
-	// Propagate the resolved Mattermost auth token and user ID onto the tool-call
-	// context so downstream HTTP callbacks (e.g. tool hooks into the calling plugin)
-	// can set Authorization and include user_id.
-	if client != nil && client.AuthToken != "" {
-		ctx = context.WithValue(ctx, auth.AuthTokenContextKey, client.AuthToken)
-	}
 	var userID string
 	if identityProvider, ok := p.authProvider.(auth.UserIdentityProvider); ok {
 		if user, userErr := identityProvider.GetAuthenticatedUser(ctx); userErr == nil && user != nil {
-			ctx = context.WithValue(ctx, auth.UserIDContextKey, user.Id)
 			userID = user.Id
 		} else if userErr != nil {
 			p.logger.Debug("failed to resolve authenticated user for tool-call context", "error", userErr.Error())
@@ -290,10 +283,8 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 		UserID:      userID,
 	}
 
-	if metadata != nil {
-		if id, ok := metadata["hook_plugin_id"].(string); ok {
-			mcpContext.HookPluginID = id
-		}
+	if resolver, ok := ctx.Value(auth.BeforeHookResolverContextKey).(auth.BeforeHookResolver); ok {
+		mcpContext.BeforeHookResolver = resolver
 	}
 
 	// Extract bot_user_id from metadata if present (for embedded servers)
@@ -322,8 +313,8 @@ func decodeToolHooksFromMetadata(metadata mcp.Meta) map[string]ToolHookConfig {
 			continue
 		}
 		var cfg ToolHookConfig
-		if s, ok := entry["before_callback"].(string); ok {
-			cfg.BeforeCallback = s
+		if s, ok := entry["before_hook_key"].(string); ok {
+			cfg.BeforeHookKey = s
 		}
 		out[name] = cfg
 	}

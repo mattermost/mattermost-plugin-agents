@@ -7,13 +7,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/public/mcptool"
 )
 
@@ -23,31 +25,80 @@ var hookHTTPClient = &http.Client{
 	Timeout: hookHTTPTimeout,
 }
 
-func buildHookURL(baseURL, pluginID, callbackPath string) (string, error) {
+// buildHookURL constructs the absolute URL for a trusted root-relative callback
+// URL returned by the agents plugin. The URL must stay under /plugins/ after
+// path cleaning so a malformed KV value cannot redirect the user's token.
+func buildHookURL(baseURL, callbackURL string) (string, error) {
 	if strings.TrimSpace(baseURL) == "" {
 		return "", fmt.Errorf("missing Mattermost base URL for tool hooks")
 	}
-	if strings.TrimSpace(pluginID) == "" {
-		return "", fmt.Errorf("missing hook plugin id")
+	parsedCallbackURL, err := url.ParseRequestURI(callbackURL)
+	if err != nil {
+		parsedURL, parseErr := url.Parse(callbackURL)
+		if parseErr == nil && !parsedURL.IsAbs() && parsedURL.Host == "" {
+			return "", fmt.Errorf("callback URL must start with /plugins/")
+		}
+		return "", fmt.Errorf("invalid callback URL")
 	}
-	if callbackPath == "" {
-		return "", fmt.Errorf("empty callback path")
+	if parsedCallbackURL.IsAbs() || parsedCallbackURL.Host != "" || parsedCallbackURL.RawQuery != "" {
+		return "", fmt.Errorf("invalid callback URL")
 	}
-	if !strings.HasPrefix(callbackPath, "/") {
-		return "", fmt.Errorf("callback path must start with /")
+	callbackPath := parsedCallbackURL.Path
+	if !strings.HasPrefix(callbackPath, "/plugins/") {
+		return "", fmt.Errorf("callback URL must start with /plugins/")
 	}
-	base := strings.TrimRight(baseURL, "/")
-	return fmt.Sprintf("%s/plugins/%s%s", base, pluginID, callbackPath), nil
+	pluginPath := strings.TrimPrefix(callbackPath, "/plugins/")
+	pluginID, _, ok := strings.Cut(pluginPath, "/")
+	if !ok || pluginID == "" {
+		return "", fmt.Errorf("invalid callback URL")
+	}
+
+	parsedBase, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid base URL: %w", err)
+	}
+	if parsedBase.Scheme == "" || parsedBase.Host == "" {
+		return "", fmt.Errorf("base URL must include scheme and host")
+	}
+
+	cleanedCallbackPath := path.Clean(callbackPath)
+	scopePath := path.Join("/plugins", pluginID)
+	if cleanedCallbackPath != scopePath && !strings.HasPrefix(cleanedCallbackPath, scopePath+"/") {
+		return "", fmt.Errorf("invalid callback URL")
+	}
+
+	return parsedBase.JoinPath(cleanedCallbackPath).String(), nil
 }
 
-func postHookJSON(ctx context.Context, url string, body []byte) ([]byte, error) {
+func resolveBeforeHookEndpoint(baseURL, userID, toolName, beforeHookKey string, resolver func(userID, toolName, hookKey string) (string, error)) (string, error) {
+	if strings.TrimSpace(toolName) == "" {
+		return "", fmt.Errorf("missing tool name")
+	}
+	if strings.TrimSpace(beforeHookKey) == "" {
+		return "", fmt.Errorf("missing before-hook key")
+	}
+	if resolver == nil {
+		return "", fmt.Errorf("missing before-hook resolver")
+	}
+	callbackURL, err := resolver(userID, toolName, beforeHookKey)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(callbackURL) == "" {
+		return "", fmt.Errorf("empty callback URL")
+	}
+
+	return buildHookURL(baseURL, callbackURL)
+}
+
+func postHookJSON(ctx context.Context, url, authToken string, body []byte) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if token, ok := ctx.Value(auth.AuthTokenContextKey).(string); ok && token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
 
 	resp, err := hookHTTPClient.Do(req)
@@ -74,11 +125,16 @@ func RunBeforeHook(mcpCtx *MCPToolContext, toolName string, args any) error {
 		return nil
 	}
 	cfg, ok := mcpCtx.ToolHooks[toolName]
-	if !ok || cfg.BeforeCallback == "" {
+	if !ok || cfg.BeforeHookKey == "" {
 		return nil
 	}
 
-	url, err := buildHookURL(mcpCtx.MMServerURL, mcpCtx.HookPluginID, cfg.BeforeCallback)
+	authToken := ""
+	if mcpCtx.Client != nil {
+		authToken = mcpCtx.Client.AuthToken
+	}
+
+	hookURL, err := resolveBeforeHookEndpoint(mcpCtx.MMServerURL, mcpCtx.UserID, toolName, cfg.BeforeHookKey, mcpCtx.BeforeHookResolver)
 	if err != nil {
 		return fmt.Errorf("tool %s: before-hook failed: %w", toolName, err)
 	}
@@ -88,18 +144,17 @@ func RunBeforeHook(mcpCtx *MCPToolContext, toolName string, args any) error {
 		return fmt.Errorf("tool %s: before-hook failed: marshal args: %w", toolName, err)
 	}
 
-	userID, _ := mcpCtx.Ctx.Value(auth.UserIDContextKey).(string)
 	reqBody := mcptool.BeforeHookRequest{
 		ToolName: toolName,
 		Args:     argsJSON,
-		UserID:   userID,
+		UserID:   mcpCtx.UserID,
 	}
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
 		return fmt.Errorf("tool %s: before-hook failed: marshal request: %w", toolName, err)
 	}
 
-	respBody, err := postHookJSON(mcpCtx.Ctx, url, payload)
+	respBody, err := postHookJSON(mcpCtx.Ctx, hookURL, authToken, payload)
 	if err != nil {
 		return fmt.Errorf("tool %s: before-hook failed: %w", toolName, err)
 	}
@@ -109,7 +164,7 @@ func RunBeforeHook(mcpCtx *MCPToolContext, toolName string, args any) error {
 		return fmt.Errorf("tool %s: before-hook failed: invalid response", toolName)
 	}
 	if msg := strings.TrimSpace(hookResp.Error); msg != "" {
-		return fmt.Errorf("%s", msg)
+		return errors.New(msg)
 	}
 	return nil
 }

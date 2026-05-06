@@ -278,6 +278,7 @@ const Bot = (props: Props) => {
                         />
                         <AvatarItem
                             botusername={props.bot.name}
+                            avatarOwnerKey={props.bot.id}
                             changedAvatar={props.changedAvatar}
                         />
                         <SelectionItem

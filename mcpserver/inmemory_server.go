@@ -76,7 +76,7 @@ func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger, searchSer
 // Accepts either:
 // - sessionID + tokenResolver: Creates authenticated connection
 // - empty sessionID + nil tokenResolver: Creates unauthenticated connection (for tool discovery)
-func (s *MattermostInMemoryMCPServer) CreateConnectionForUser(userID, sessionID string, tokenResolver auth.TokenResolver) (*mcp.InMemoryTransport, error) {
+func (s *MattermostInMemoryMCPServer) CreateConnectionForUser(userID, sessionID string, tokenResolver auth.TokenResolver, beforeHookResolver auth.BeforeHookResolver) (*mcp.InMemoryTransport, error) {
 	if userID == "" {
 		return nil, fmt.Errorf("userID cannot be empty")
 	}
@@ -92,6 +92,9 @@ func (s *MattermostInMemoryMCPServer) CreateConnectionForUser(userID, sessionID 
 		if err != nil {
 			return nil, err
 		}
+	}
+	if beforeHookResolver != nil {
+		ctx = context.WithValue(ctx, auth.BeforeHookResolverContextKey, beforeHookResolver)
 	}
 
 	// Create new in-memory transport pair
