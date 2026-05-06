@@ -46,7 +46,8 @@ type Builder struct {
 	mcpToolProvider MCPToolProvider
 	configProvider  ConfigProvider
 
-	loadedMCPToolStore LoadedMCPToolStore
+	loadedMCPToolStore      LoadedMCPToolStore
+	mcpDynamicToolTelemetry llm.MCPDynamicToolTelemetry
 }
 
 // NewLLMContextBuilder creates a new LLM context builder
@@ -66,6 +67,10 @@ func NewLLMContextBuilder(
 
 func (b *Builder) SetLoadedMCPToolStore(store LoadedMCPToolStore) {
 	b.loadedMCPToolStore = store
+}
+
+func (b *Builder) SetMCPDynamicToolTelemetry(telemetry llm.MCPDynamicToolTelemetry) {
+	b.mcpDynamicToolTelemetry = telemetry
 }
 
 // BuildLLMContextUserRequest is a helper function to collect the required context for a user request.
@@ -268,6 +273,9 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 		b.buildStrictMCPToolStore(store, mcpTools, c, botIDForLoadedMCPTools(c, bot), userID)
 		return store
 	}
+
+	c.ObserveMCPDynamicToolEvent("flag_off", "disabled")
+	b.logDebug("MCP dynamic tool loading disabled for bot", "bot_name", botCfg.Name, "bot_id", botCfg.ID)
 
 	if len(mcpTools) > 0 {
 		store.AddTools(mcpTools)
@@ -482,5 +490,7 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 			botUserID = mmbot.UserId
 		}
 		c.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
+		c.MCPDynamicToolLoading = bot.GetConfig().MCPDynamicToolLoading
+		c.MCPDynamicToolTelemetry = b.mcpDynamicToolTelemetry
 	}
 }

@@ -221,7 +221,7 @@ func (r *ToolRunner) runLoop(
 		if containsUnavailableTools(toolCalls, store) {
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
 
-			toolResults := unavailableToolBatchResults(toolCalls, store)
+			toolResults := unavailableToolBatchResults(toolCalls, store, request.Context)
 			resolvedToolCalls := appendToolTurnAndPost(result, &request, text.String(), reasoningData, toolCalls, toolResults, usage)
 
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
@@ -257,6 +257,7 @@ func (r *ToolRunner) runLoop(
 
 		// Execute each tool call.
 		toolResults := r.executeTools(toolCalls, request)
+		recordMCPDynamicSearchLoadCallSuccess(request.Context, toolCalls, toolResults)
 
 		resolvedToolCalls := appendToolTurnAndPost(result, &request, text.String(), reasoningData, toolCalls, toolResults, usage)
 
@@ -342,7 +343,7 @@ func containsUnavailableTools(toolCalls []llm.ToolCall, store *llm.ToolStore) bo
 	return len(unavailableToolNames(toolCalls, store)) > 0
 }
 
-func unavailableToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore) []ToolResult {
+func unavailableToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore, llmContext *llm.Context) []ToolResult {
 	unavailableNames := unavailableToolNames(toolCalls, store)
 	unavailableSet := make(map[string]struct{}, len(unavailableNames))
 	for _, name := range unavailableNames {
@@ -353,6 +354,7 @@ func unavailableToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore)
 	for i, tc := range toolCalls {
 		if _, ok := unavailableSet[tc.Name]; ok {
 			if store != nil && store.IsUnloadedMCPTool(tc.Name) {
+				llmContext.ObserveMCPDynamicToolEvent("unloaded_tool_error", "error")
 				toolResults[i] = ToolResult{
 					ToolCallID: tc.ID,
 					Name:       tc.Name,
@@ -384,6 +386,28 @@ func unavailableToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore)
 		}
 	}
 	return toolResults
+}
+
+func recordMCPDynamicSearchLoadCallSuccess(llmContext *llm.Context, toolCalls []llm.ToolCall, toolResults []ToolResult) {
+	if llmContext == nil {
+		return
+	}
+	for i, toolResult := range toolResults {
+		if i >= len(toolCalls) || toolResult.IsError {
+			continue
+		}
+		toolName := toolCalls[i].Name
+		if isMCPDynamicMetaToolName(toolName) {
+			continue
+		}
+		if llmContext.ShouldRecordMCPDynamicSearchLoadCallSuccess(toolName) {
+			llmContext.ObserveMCPDynamicToolEvent("search_load_call_success", "success")
+		}
+	}
+}
+
+func isMCPDynamicMetaToolName(name string) bool {
+	return name == "search_tools" || name == "load_tool"
 }
 
 func loadFirstToolError(name string) string {

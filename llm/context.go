@@ -50,6 +50,14 @@ type Context struct {
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
 	Parameters        map[string]interface{}
 
+	// MCPDynamicToolLoading indicates this context uses strict MCP dynamic loading.
+	MCPDynamicToolLoading bool
+	// MCPDynamicToolTelemetry receives low-cardinality dynamic MCP tool events.
+	MCPDynamicToolTelemetry                 MCPDynamicToolTelemetry
+	MCPDynamicToolSearchUsed                bool
+	MCPDynamicLoadedToolNames               map[string]bool
+	MCPDynamicSearchLoadCallSuccessRecorded map[string]bool
+
 	// DisabledMCPServerOrigins contains per-user disabled MCP server origins that
 	// must be removed before strict registry construction.
 	DisabledMCPServerOrigins []string
@@ -57,6 +65,10 @@ type Context struct {
 	// KeepMCPTool, when non-nil, is applied to MCP tools before strict registry
 	// construction and before flag-off visible MCP insertion.
 	KeepMCPTool func(Tool) bool
+}
+
+type MCPDynamicToolTelemetry interface {
+	ObserveMCPDynamicToolEvent(botName, event, result string)
 }
 
 // ContextOption defines a function that configures a Context
@@ -107,6 +119,53 @@ func (c *Context) CustomPromptVars() map[string]string {
 		vars["TeamName"] = c.Team.Name
 	}
 	return vars
+}
+
+func (c *Context) ObserveMCPDynamicToolEvent(event, result string) {
+	if c == nil || c.MCPDynamicToolTelemetry == nil {
+		return
+	}
+
+	botName := c.BotUsername
+	if botName == "" {
+		botName = c.BotName
+	}
+	if botName == "" {
+		botName = "unknown"
+	}
+
+	c.MCPDynamicToolTelemetry.ObserveMCPDynamicToolEvent(botName, event, result)
+}
+
+func (c *Context) MarkMCPDynamicToolSearch() {
+	if c == nil {
+		return
+	}
+	c.MCPDynamicToolSearchUsed = true
+}
+
+func (c *Context) MarkMCPDynamicToolLoaded(name string) {
+	if c == nil || name == "" {
+		return
+	}
+	if c.MCPDynamicLoadedToolNames == nil {
+		c.MCPDynamicLoadedToolNames = make(map[string]bool)
+	}
+	c.MCPDynamicLoadedToolNames[name] = true
+}
+
+func (c *Context) ShouldRecordMCPDynamicSearchLoadCallSuccess(name string) bool {
+	if c == nil || name == "" || !c.MCPDynamicToolSearchUsed || !c.MCPDynamicLoadedToolNames[name] {
+		return false
+	}
+	if c.MCPDynamicSearchLoadCallSuccessRecorded == nil {
+		c.MCPDynamicSearchLoadCallSuccessRecorded = make(map[string]bool)
+	}
+	if c.MCPDynamicSearchLoadCallSuccessRecorded[name] {
+		return false
+	}
+	c.MCPDynamicSearchLoadCallSuccessRecorded[name] = true
+	return true
 }
 
 func (c Context) String() string {

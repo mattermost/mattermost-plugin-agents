@@ -13,6 +13,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type mcpTelemetryEvent struct {
+	botName string
+	event   string
+	result  string
+}
+
+type fakeMCPDynamicTelemetry struct {
+	events []mcpTelemetryEvent
+}
+
+func (t *fakeMCPDynamicTelemetry) ObserveMCPDynamicToolEvent(botName, event, result string) {
+	t.events = append(t.events, mcpTelemetryEvent{botName: botName, event: event, result: result})
+}
+
 func TestNewMetaToolsDefinitions(t *testing.T) {
 	tools := NewMetaTools(NewMCPToolRegistry(nil))
 
@@ -264,6 +278,158 @@ func TestMetaToolsNilRegistryResolvers(t *testing.T) {
 	require.False(t, loadResult.Loaded)
 	require.Equal(t, "tool not found", loadResult.Error)
 	require.Empty(t, loadResult.Matches)
+}
+
+func TestSearchToolsTelemetry(t *testing.T) {
+	registry := NewMCPToolRegistry([]llm.Tool{
+		testRegistryTool("jira__get_issue", "Get a Jira issue", "https://jira.example.com"),
+	})
+	searchTool := metaToolByName(t, NewMetaTools(registry), SearchToolsName)
+
+	tests := []struct {
+		name       string
+		context    *llm.Context
+		argsGetter llm.ToolArgumentGetter
+		wantResult string
+		wantErr    bool
+	}{
+		{
+			name:       "success",
+			context:    &llm.Context{BotUsername: "matty", MCPDynamicToolTelemetry: &fakeMCPDynamicTelemetry{}},
+			argsGetter: metaToolArgs(`{"query":"jira issue"}`),
+			wantResult: "success",
+		},
+		{
+			name:       "empty query",
+			context:    &llm.Context{BotUsername: "matty", MCPDynamicToolTelemetry: &fakeMCPDynamicTelemetry{}},
+			argsGetter: metaToolArgs(`{"query":"   "}`),
+			wantResult: "empty",
+		},
+		{
+			name:       "no results",
+			context:    &llm.Context{BotUsername: "matty", MCPDynamicToolTelemetry: &fakeMCPDynamicTelemetry{}},
+			argsGetter: metaToolArgs(`{"query":"no matching tool"}`),
+			wantResult: "empty",
+		},
+		{
+			name:    "decode error",
+			context: &llm.Context{BotUsername: "matty", MCPDynamicToolTelemetry: &fakeMCPDynamicTelemetry{}},
+			argsGetter: func(any) error {
+				return errors.New("decode")
+			},
+			wantResult: "error",
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := searchTool.Resolver(tt.context, tt.argsGetter)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			telemetry := tt.context.MCPDynamicToolTelemetry.(*fakeMCPDynamicTelemetry)
+			require.Equal(t, []mcpTelemetryEvent{{botName: "matty", event: "search", result: tt.wantResult}}, telemetry.events)
+		})
+	}
+}
+
+func TestLoadToolTelemetry(t *testing.T) {
+	registry := NewMCPToolRegistry([]llm.Tool{
+		testRegistryTool("jira__get_issue", "Get a Jira issue", "https://jira.example.com"),
+	})
+
+	t.Run("loaded", func(t *testing.T) {
+		telemetry := &fakeMCPDynamicTelemetry{}
+		loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
+		llmContext := &llm.Context{
+			BotUsername:             "matty",
+			Tools:                   llm.NewToolStore(nil, false),
+			MCPDynamicToolTelemetry: telemetry,
+		}
+
+		_, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"jira__get_issue"}`))
+		require.NoError(t, err)
+		require.Equal(t, []mcpTelemetryEvent{{botName: "matty", event: "load", result: "loaded"}}, telemetry.events)
+	})
+
+	t.Run("miss", func(t *testing.T) {
+		telemetry := &fakeMCPDynamicTelemetry{}
+		loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
+		llmContext := &llm.Context{BotUsername: "matty", Tools: llm.NewToolStore(nil, false), MCPDynamicToolTelemetry: telemetry}
+
+		_, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"jira__missing"}`))
+		require.NoError(t, err)
+		require.Equal(t, []mcpTelemetryEvent{{botName: "matty", event: "load", result: "miss"}}, telemetry.events)
+	})
+
+	t.Run("empty name", func(t *testing.T) {
+		telemetry := &fakeMCPDynamicTelemetry{}
+		loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
+		llmContext := &llm.Context{BotUsername: "matty", Tools: llm.NewToolStore(nil, false), MCPDynamicToolTelemetry: telemetry}
+
+		_, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"   "}`))
+		require.NoError(t, err)
+		require.Equal(t, []mcpTelemetryEvent{{botName: "matty", event: "load", result: "error"}}, telemetry.events)
+	})
+
+	t.Run("missing tool store", func(t *testing.T) {
+		telemetry := &fakeMCPDynamicTelemetry{}
+		loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
+		llmContext := &llm.Context{BotUsername: "matty", MCPDynamicToolTelemetry: telemetry}
+
+		_, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"jira__get_issue"}`))
+		require.NoError(t, err)
+		require.Equal(t, []mcpTelemetryEvent{{botName: "matty", event: "load", result: "error"}}, telemetry.events)
+	})
+
+	t.Run("decode error", func(t *testing.T) {
+		telemetry := &fakeMCPDynamicTelemetry{}
+		loadTool := metaToolByName(t, NewMetaTools(registry), LoadToolName)
+		llmContext := &llm.Context{BotUsername: "matty", Tools: llm.NewToolStore(nil, false), MCPDynamicToolTelemetry: telemetry}
+
+		_, err := loadTool.Resolver(llmContext, func(any) error {
+			return errors.New("decode")
+		})
+		require.Error(t, err)
+		require.Equal(t, []mcpTelemetryEvent{{botName: "matty", event: "load", result: "error"}}, telemetry.events)
+	})
+
+	t.Run("recorder error", func(t *testing.T) {
+		telemetry := &fakeMCPDynamicTelemetry{}
+		recorderErr := errors.New("persist loaded tool")
+		loadTool := metaToolByName(t, NewMetaTools(registry, WithLoadedToolRecorder(func(_ *llm.Context, _ MCPToolRegistryEntry) error {
+			return recorderErr
+		})), LoadToolName)
+		llmContext := &llm.Context{BotUsername: "matty", Tools: llm.NewToolStore(nil, false), MCPDynamicToolTelemetry: telemetry}
+
+		_, err := loadTool.Resolver(llmContext, metaToolArgs(`{"name":"jira__get_issue"}`))
+		require.ErrorIs(t, err, recorderErr)
+		require.Equal(t, []mcpTelemetryEvent{{botName: "matty", event: "load", result: "error"}}, telemetry.events)
+	})
+}
+
+func TestSearchLoadStateMarkers(t *testing.T) {
+	registry := NewMCPToolRegistry([]llm.Tool{
+		testRegistryTool("jira__get_issue", "Get a Jira issue", "https://jira.example.com"),
+	})
+	metaTools := NewMetaTools(registry)
+	searchTool := metaToolByName(t, metaTools, SearchToolsName)
+	loadTool := metaToolByName(t, metaTools, LoadToolName)
+	llmContext := &llm.Context{Tools: llm.NewToolStore(nil, false)}
+
+	_, err := searchTool.Resolver(llmContext, metaToolArgs(`{"query":"jira issue"}`))
+	require.NoError(t, err)
+	require.True(t, llmContext.MCPDynamicToolSearchUsed)
+
+	_, err = loadTool.Resolver(llmContext, metaToolArgs(`{"name":"jira__get_issue"}`))
+	require.NoError(t, err)
+	require.True(t, llmContext.MCPDynamicLoadedToolNames["jira__get_issue"])
+	require.True(t, llmContext.ShouldRecordMCPDynamicSearchLoadCallSuccess("jira__get_issue"))
+	require.False(t, llmContext.ShouldRecordMCPDynamicSearchLoadCallSuccess("jira__get_issue"))
 }
 
 func metaToolByName(t *testing.T, tools []llm.Tool, name string) llm.Tool {

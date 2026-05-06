@@ -45,3 +45,8 @@ func (m *NoopMetrics) GetMetricsForAIService(llmName string) *llmMetrics { //nol
 func (m *NoopMetrics) ObserveTokenUsage(botName, teamID, userID string, inputTokens, outputTokens int) {
 	// No-op
 }
+
+// ObserveMCPDynamicToolEvent is a no-op implementation.
+func (m *NoopMetrics) ObserveMCPDynamicToolEvent(botName, event, result string) {
+	// No-op
+}

@@ -83,9 +83,10 @@ func NewMetaTools(registry *MCPToolRegistry, opts ...MetaToolOption) []llm.Tool 
 }
 
 func searchToolsResolver(registry *MCPToolRegistry) llm.ToolResolver {
-	return func(_ *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+	return func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 		var args SearchToolsArgs
 		if err := argsGetter(&args); err != nil {
+			llmContext.ObserveMCPDynamicToolEvent("search", "error")
 			return "", err
 		}
 
@@ -93,13 +94,25 @@ func searchToolsResolver(registry *MCPToolRegistry) llm.ToolResolver {
 		result := SearchToolsResult{
 			Tools: []SearchToolsResultItem{},
 		}
-		if query == "" || registry == nil {
+		if query == "" {
+			llmContext.ObserveMCPDynamicToolEvent("search", "empty")
+			return marshalMetaToolResult(result)
+		}
+
+		llmContext.MarkMCPDynamicToolSearch()
+		if registry == nil {
+			llmContext.ObserveMCPDynamicToolEvent("search", "empty")
 			return marshalMetaToolResult(result)
 		}
 
 		result.Tools = searchResultsToMetaToolItems(registry.Search(query, DefaultMCPToolSearchLimit))
 		if result.Tools == nil {
 			result.Tools = []SearchToolsResultItem{}
+		}
+		if len(result.Tools) == 0 {
+			llmContext.ObserveMCPDynamicToolEvent("search", "empty")
+		} else {
+			llmContext.ObserveMCPDynamicToolEvent("search", "success")
 		}
 
 		return marshalMetaToolResult(result)
@@ -110,11 +123,13 @@ func loadToolResolver(registry *MCPToolRegistry, recorder LoadedToolRecorder) ll
 	return func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 		var args LoadToolArgs
 		if err := argsGetter(&args); err != nil {
+			llmContext.ObserveMCPDynamicToolEvent("load", "error")
 			return "", err
 		}
 
 		name := strings.TrimSpace(args.Name)
 		if name == "" {
+			llmContext.ObserveMCPDynamicToolEvent("load", "error")
 			return marshalMetaToolResult(LoadToolResult{
 				Loaded: false,
 				Error:  "tool name is required",
@@ -123,6 +138,7 @@ func loadToolResolver(registry *MCPToolRegistry, recorder LoadedToolRecorder) ll
 
 		entry, ok := registry.Lookup(name)
 		if !ok {
+			llmContext.ObserveMCPDynamicToolEvent("load", "miss")
 			return marshalMetaToolResult(LoadToolResult{
 				Loaded: false,
 				Error:  "tool not found",
@@ -133,12 +149,14 @@ func loadToolResolver(registry *MCPToolRegistry, recorder LoadedToolRecorder) ll
 		}
 
 		if llmContext == nil {
+			llmContext.ObserveMCPDynamicToolEvent("load", "error")
 			return marshalMetaToolResult(LoadToolResult{
 				Loaded: false,
 				Error:  "cannot load tool without an LLM context",
 			})
 		}
 		if llmContext.Tools == nil {
+			llmContext.ObserveMCPDynamicToolEvent("load", "error")
 			return marshalMetaToolResult(LoadToolResult{
 				Loaded: false,
 				Error:  "cannot load tool without a visible tool store",
@@ -148,10 +166,13 @@ func loadToolResolver(registry *MCPToolRegistry, recorder LoadedToolRecorder) ll
 		llmContext.Tools.AddTools([]llm.Tool{entry.Tool})
 		if recorder != nil {
 			if err := recorder(llmContext, entry); err != nil {
+				llmContext.ObserveMCPDynamicToolEvent("load", "error")
 				return "", err
 			}
 		}
 
+		llmContext.MarkMCPDynamicToolLoaded(entry.Name)
+		llmContext.ObserveMCPDynamicToolEvent("load", "loaded")
 		return marshalMetaToolResult(LoadToolResult{
 			Loaded: true,
 			Name:   entry.Name,

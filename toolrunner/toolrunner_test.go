@@ -39,6 +39,20 @@ type testWarnLog struct {
 	warns []testLogEntry
 }
 
+type toolrunnerTelemetryEvent struct {
+	botName string
+	event   string
+	result  string
+}
+
+type fakeMCPDynamicTelemetry struct {
+	events []toolrunnerTelemetryEvent
+}
+
+func (t *fakeMCPDynamicTelemetry) ObserveMCPDynamicToolEvent(botName, event, result string) {
+	t.events = append(t.events, toolrunnerTelemetryEvent{botName: botName, event: event, result: result})
+}
+
 func (l *testWarnLog) Info(message string, keyValuePairs ...any) {
 	l.infos = append(l.infos, testLogEntry{message: message, fields: keyValuePairs})
 }
@@ -1169,6 +1183,116 @@ func TestToolRunner_UnloadedMCPToolReturnsLoadFirstError(t *testing.T) {
 	require.Len(t, secondReq.Posts[1].ToolUse, 1)
 	assert.Equal(t, llm.ToolCallStatusError, secondReq.Posts[1].ToolUse[0].Status)
 	assert.Contains(t, secondReq.Posts[1].ToolUse[0].Result, "available but not loaded")
+}
+
+func TestToolRunnerUnloadedToolErrorTelemetry(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "jira__get_issue", Arguments: json.RawMessage(`{"key":"MM-1"}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "I will load it first"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+	store := llm.NewNoTools()
+	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
+	telemetry := &fakeMCPDynamicTelemetry{}
+
+	result, err := New(inner).Run(llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "get issue"}},
+		Context: &llm.Context{
+			BotUsername:             "matty",
+			Tools:                   store,
+			MCPDynamicToolTelemetry: telemetry,
+		},
+	}, alwaysExecute, nil)
+	require.NoError(t, err)
+
+	_, readErr := result.Stream.ReadAll()
+	require.NoError(t, readErr)
+	require.Equal(t, []toolrunnerTelemetryEvent{{botName: "matty", event: "unloaded_tool_error", result: "error"}}, telemetry.events)
+}
+
+func TestToolRunnerSearchLoadCallSuccessTelemetry(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "jira__get_issue", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "Done"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+	telemetry := &fakeMCPDynamicTelemetry{}
+	context := &llm.Context{
+		BotUsername:             "matty",
+		Tools:                   newTestToolStore(testToolDef{name: "jira__get_issue", result: "issue"}),
+		MCPDynamicToolTelemetry: telemetry,
+	}
+	context.MarkMCPDynamicToolSearch()
+	context.MarkMCPDynamicToolLoaded("jira__get_issue")
+
+	result, err := New(inner).Run(llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "get issue"}},
+		Context: context,
+	}, alwaysExecute, nil)
+	require.NoError(t, err)
+
+	_, readErr := result.Stream.ReadAll()
+	require.NoError(t, readErr)
+	require.Equal(t, []toolrunnerTelemetryEvent{{botName: "matty", event: "search_load_call_success", result: "success"}}, telemetry.events)
+}
+
+func TestToolRunnerSearchLoadCallSuccessTelemetryOnlyOnce(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "jira__get_issue", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc2", Name: "jira__get_issue", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "Done"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+	telemetry := &fakeMCPDynamicTelemetry{}
+	context := &llm.Context{
+		BotUsername:             "matty",
+		Tools:                   newTestToolStore(testToolDef{name: "jira__get_issue", result: "issue"}),
+		MCPDynamicToolTelemetry: telemetry,
+	}
+	context.MarkMCPDynamicToolSearch()
+	context.MarkMCPDynamicToolLoaded("jira__get_issue")
+
+	result, err := New(inner).Run(llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "get issue"}},
+		Context: context,
+	}, alwaysExecute, nil)
+	require.NoError(t, err)
+
+	_, readErr := result.Stream.ReadAll()
+	require.NoError(t, readErr)
+	require.Equal(t, []toolrunnerTelemetryEvent{{botName: "matty", event: "search_load_call_success", result: "success"}}, telemetry.events)
 }
 
 func TestToolRunner_MixedVisibleAndUnloadedDoesNotExecuteVisible(t *testing.T) {

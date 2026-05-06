@@ -67,6 +67,20 @@ type fakeLoadedMCPToolStore struct {
 	listErr   error
 }
 
+type contextTelemetryEvent struct {
+	botName string
+	event   string
+	result  string
+}
+
+type fakeMCPDynamicTelemetry struct {
+	events []contextTelemetryEvent
+}
+
+func (t *fakeMCPDynamicTelemetry) ObserveMCPDynamicToolEvent(botName, event, result string) {
+	t.events = append(t.events, contextTelemetryEvent{botName: botName, event: event, result: result})
+}
+
 func (s *fakeLoadedMCPToolStore) UpsertLoadedMCPTool(tool storepkg.LoadedMCPTool) error {
 	s.upserts = append(s.upserts, tool)
 	return nil
@@ -241,6 +255,7 @@ func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
 	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 
 	client := pluginapi.NewClient(mockAPI, nil)
 	mcpProvider := &countingMCPToolProvider{}
@@ -269,6 +284,7 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
 	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 
 	client := pluginapi.NewClient(mockAPI, nil)
 	mcpProvider := &countingMCPToolProvider{}
@@ -297,6 +313,7 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
 	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 
 	client := pluginapi.NewClient(mockAPI, nil)
 	mcpProvider := &staticMCPToolProvider{
@@ -767,6 +784,79 @@ func TestFlagOffFullSchemaParity(t *testing.T) {
 	require.ElementsMatch(t, []string{"builtin", "jira__get_issue", "github__search"}, toolNames(context.Tools))
 	require.Nil(t, context.Tools.GetTool(mcp.SearchToolsName))
 	require.Nil(t, context.Tools.GetTool(mcp.LoadToolName))
+}
+
+func TestContextSetsMCPDynamicToolLoadingFlag(t *testing.T) {
+	builder := newTestBuilder(t, &emptyToolProvider{}, nil)
+
+	tests := []struct {
+		name    string
+		enabled bool
+	}{
+		{name: "enabled", enabled: true},
+		{name: "disabled", enabled: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bot := newTestBotWithConfig(llm.BotConfig{
+				ID:                    "bot-id",
+				Name:                  "matty",
+				DisplayName:           "Matty",
+				MCPDynamicToolLoading: tt.enabled,
+			})
+
+			context := builder.BuildLLMContextUserRequest(bot, testUser(), testChannel())
+
+			require.Equal(t, tt.enabled, context.MCPDynamicToolLoading)
+		})
+	}
+}
+
+func TestFlagOffEmitsTelemetry(t *testing.T) {
+	telemetry := &fakeMCPDynamicTelemetry{}
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+		}},
+	)
+	builder.SetMCPDynamicToolTelemetry(telemetry)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: false,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
+	require.Equal(t, []contextTelemetryEvent{{botName: "matty", event: "flag_off", result: "disabled"}}, telemetry.events)
+}
+
+func TestStrictModeDoesNotEmitFlagOffTelemetry(t *testing.T) {
+	telemetry := &fakeMCPDynamicTelemetry{}
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+		}},
+	)
+	builder.SetMCPDynamicToolTelemetry(telemetry)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.NotNil(t, context.Tools.GetTool(mcp.SearchToolsName))
+	require.Empty(t, telemetry.events)
 }
 
 func TestStrictRegistryAfterBotAllowlist(t *testing.T) {
