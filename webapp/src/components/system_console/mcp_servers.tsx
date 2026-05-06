@@ -17,6 +17,7 @@ export type MCPToolConfig = {
     name: string;
     policy: 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
     enabled: boolean;
+    retrieval_description_override?: string;
 };
 
 export type MCPServerConfig = {

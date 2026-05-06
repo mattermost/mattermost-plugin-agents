@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -182,6 +183,43 @@ func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 	rawTools := userClient.GetTools()
 	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient)
 	return filtered, mcpErrors
+}
+
+func (m *ClientManager) GetToolRetrievalOverridesForUser(userID string) map[string]MCPToolRetrievalOverride {
+	_ = userID
+
+	if m == nil {
+		return nil
+	}
+
+	var overrides map[string]MCPToolRetrievalOverride
+	addOverride := func(serverOrigin string, toolConfig ToolConfig) {
+		summary := strings.TrimSpace(toolConfig.RetrievalDescriptionOverride)
+		if summary == "" {
+			return
+		}
+		if overrides == nil {
+			overrides = make(map[string]MCPToolRetrievalOverride)
+		}
+		overrides[MCPToolRetrievalOverrideKey(serverOrigin, toolConfig.Name)] = MCPToolRetrievalOverride{
+			Summary: summary,
+		}
+	}
+
+	for _, server := range m.config.Servers {
+		if !server.Enabled {
+			continue
+		}
+		for _, toolConfig := range server.ToolConfigs {
+			addOverride(server.BaseURL, toolConfig)
+		}
+	}
+
+	for _, toolConfig := range m.config.EmbeddedServer.ToolConfigs {
+		addOverride(EmbeddedClientKey, toolConfig)
+	}
+
+	return overrides
 }
 
 // ProcessOAuthCallback processes the OAuth callback for a user

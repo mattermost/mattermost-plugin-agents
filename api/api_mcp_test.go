@@ -168,6 +168,48 @@ func TestHandleGetUserMCPToolsBareAllowlistUICompatibility(t *testing.T) {
 	require.Equal(t, mcp.ToolPolicyAsk, response.Servers[0].Tools[0].Policy)
 }
 
+func TestHandleGetUserMCPToolsReturnsUpstreamDescriptionNotOverride(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	server := mcp.ServerConfig{
+		Name:    "Jira",
+		Enabled: true,
+		BaseURL: "https://jira.example.com",
+		ToolConfigs: []mcp.ToolConfig{
+			{
+				Name:                         "get_issue",
+				Policy:                       mcp.ToolPolicyAsk,
+				Enabled:                      true,
+				RetrievalDescriptionOverride: "Admin-only retrieval tuning text",
+			},
+		},
+	}
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{server},
+	}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		tools: []llm.Tool{
+			{
+				Name:         "jira__get_issue",
+				Description:  "Upstream MCP description",
+				ServerOrigin: server.BaseURL,
+			},
+		},
+	}
+
+	response := getUserMCPToolsResponse(t, e.api)
+
+	require.Len(t, response.Servers, 1)
+	require.Len(t, response.Servers[0].Tools, 1)
+	require.Equal(t, "get_issue", response.Servers[0].Tools[0].Name)
+	require.Equal(t, "Upstream MCP description", response.Servers[0].Tools[0].Description)
+}
+
 func TestHandleGetUserMCPToolsStaticOAuthCredentialsNeedOAuthWhenUnauthenticated(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard

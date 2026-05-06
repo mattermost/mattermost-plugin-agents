@@ -92,6 +92,14 @@ func TestMCPToolRegistrySearchUsesDescriptionOverrideForRetrievalOnly(t *testing
 	require.Equal(t, "Find Jira incidents by key", entry.RetrievalSummary)
 }
 
+func TestMCPToolRegistryOverrideKeyUsesBareName(t *testing.T) {
+	require.Equal(
+		t,
+		MCPToolRetrievalOverrideKey("https://jira.example.com", "get_issue"),
+		MCPToolRetrievalOverrideKey("https://jira.example.com", "jira__get_issue"),
+	)
+}
+
 func TestMCPToolRegistryDuplicateNamespacedToolLastWins(t *testing.T) {
 	first := testRegistryTool("jira__search", "First search description", "https://jira.example.com")
 	first.Schema = map[string]any{"version": "first"}

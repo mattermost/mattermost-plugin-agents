@@ -27,6 +27,10 @@ type MCPToolProvider interface {
 	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
 }
 
+type MCPToolRetrievalOverrideProvider interface {
+	GetToolRetrievalOverridesForUser(userID string) map[string]mcp.MCPToolRetrievalOverride
+}
+
 type LoadedMCPToolStore interface {
 	UpsertLoadedMCPTool(tool storepkg.LoadedMCPTool) error
 	ListLoadedMCPTools(conversationID, botID, userID string) ([]storepkg.LoadedMCPTool, error)
@@ -270,7 +274,7 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	}
 
 	if botCfg.MCPDynamicToolLoading {
-		b.buildStrictMCPToolStore(store, mcpTools, c, botIDForLoadedMCPTools(c, bot), userID)
+		b.buildStrictMCPToolStore(store, mcpTools, c, botIDForLoadedMCPTools(c, bot), userID, b.strictRegistryOptions(userID)...)
 		return store
 	}
 
@@ -284,11 +288,29 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	return store
 }
 
-func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool, c *llm.Context, botID, userID string) {
-	registry := mcp.NewMCPToolRegistry(mcpTools)
+func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool, c *llm.Context, botID, userID string, registryOpts ...mcp.MCPToolRegistryOption) {
+	registry := mcp.NewMCPToolRegistry(mcpTools, registryOpts...)
 	b.restoreLoadedMCPTools(store, registry, c, botID, userID)
 	markUnloadedMCPTools(store, mcpTools)
 	store.AddTools(mcp.NewMetaTools(registry, mcp.WithLoadedToolRecorder(b.loadedToolRecorder(c.ConversationID, botID, userID))))
+}
+
+func (b *Builder) strictRegistryOptions(userID string) []mcp.MCPToolRegistryOption {
+	if b == nil || b.mcpToolProvider == nil {
+		return nil
+	}
+
+	provider, ok := b.mcpToolProvider.(MCPToolRetrievalOverrideProvider)
+	if !ok {
+		return nil
+	}
+
+	overrides := provider.GetToolRetrievalOverridesForUser(userID)
+	if len(overrides) == 0 {
+		return nil
+	}
+
+	return []mcp.MCPToolRegistryOption{mcp.WithMCPToolRetrievalOverrides(overrides)}
 }
 
 func markUnloadedMCPTools(publicStore *llm.ToolStore, mcpTools []llm.Tool) {

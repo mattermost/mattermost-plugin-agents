@@ -51,3 +51,116 @@ func TestClientManagerReInitIdleTimeoutDefaulting(t *testing.T) {
 		})
 	}
 }
+
+func TestClientManagerGetToolRetrievalOverridesForUserRemote(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{
+					Name:    "Jira",
+					Enabled: true,
+					BaseURL: "https://jira.example.com",
+					ToolConfigs: []ToolConfig{
+						{Name: "get_issue", Policy: ToolPolicyAsk, Enabled: true, RetrievalDescriptionOverride: "Find Jira issues by key"},
+						{Name: "create_issue", Policy: ToolPolicyAsk, Enabled: true},
+					},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverridesForUser("user-id")
+
+	require.Equal(t, map[string]MCPToolRetrievalOverride{
+		MCPToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
+			Summary: "Find Jira issues by key",
+		},
+	}, overrides)
+}
+
+func TestClientManagerGetToolRetrievalOverridesForUserEmbedded(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			EmbeddedServer: EmbeddedServerConfig{
+				ToolConfigs: []ToolConfig{
+					{Name: "search_users", Policy: ToolPolicyAsk, Enabled: true, RetrievalDescriptionOverride: "Find Mattermost people"},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverridesForUser("user-id")
+
+	require.Equal(t, map[string]MCPToolRetrievalOverride{
+		MCPToolRetrievalOverrideKey(EmbeddedClientKey, "search_users"): {
+			Summary: "Find Mattermost people",
+		},
+	}, overrides)
+}
+
+func TestClientManagerGetToolRetrievalOverridesTrimsAndSkipsEmpty(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{
+					Name:    "Jira",
+					Enabled: true,
+					BaseURL: "https://jira.example.com",
+					ToolConfigs: []ToolConfig{
+						{Name: "get_issue", RetrievalDescriptionOverride: "  Find Jira issues  "},
+						{Name: "create_issue", RetrievalDescriptionOverride: "   "},
+					},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverridesForUser("user-id")
+
+	require.Equal(t, map[string]MCPToolRetrievalOverride{
+		MCPToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
+			Summary: "Find Jira issues",
+		},
+	}, overrides)
+}
+
+func TestClientManagerGetToolRetrievalOverridesLastDuplicateWins(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{
+					Name:    "Jira",
+					Enabled: true,
+					BaseURL: "https://jira.example.com",
+					ToolConfigs: []ToolConfig{
+						{Name: "get_issue", RetrievalDescriptionOverride: "old summary"},
+						{Name: "get_issue", RetrievalDescriptionOverride: "new summary"},
+					},
+				},
+			},
+		},
+	}
+
+	overrides := manager.GetToolRetrievalOverridesForUser("user-id")
+
+	require.Equal(t, "new summary", overrides[MCPToolRetrievalOverrideKey("https://jira.example.com", "get_issue")].Summary)
+}
+
+func TestClientManagerGetToolRetrievalOverridesDisabledServer(t *testing.T) {
+	manager := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{
+					Name:    "Jira",
+					Enabled: false,
+					BaseURL: "https://jira.example.com",
+					ToolConfigs: []ToolConfig{
+						{Name: "get_issue", RetrievalDescriptionOverride: "Find Jira issues"},
+					},
+				},
+			},
+		},
+	}
+
+	require.Empty(t, manager.GetToolRetrievalOverridesForUser("user-id"))
+}

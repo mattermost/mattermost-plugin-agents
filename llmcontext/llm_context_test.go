@@ -51,12 +51,17 @@ func (p *countingMCPToolProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Erro
 }
 
 type staticMCPToolProvider struct {
-	tools  []llm.Tool
-	errors *mcp.Errors
+	tools     []llm.Tool
+	errors    *mcp.Errors
+	overrides map[string]mcp.MCPToolRetrievalOverride
 }
 
 func (p *staticMCPToolProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors) {
 	return p.tools, p.errors
+}
+
+func (p *staticMCPToolProvider) GetToolRetrievalOverridesForUser(string) map[string]mcp.MCPToolRetrievalOverride {
+	return p.overrides
 }
 
 type fakeLoadedMCPToolStore struct {
@@ -226,18 +231,24 @@ func contextToolArgs(raw string) llm.ToolArgumentGetter {
 func searchToolNames(t *testing.T, store *llm.ToolStore, query string) []string {
 	t.Helper()
 
+	result := searchTools(t, store, query)
+	names := make([]string, 0, len(result.Tools))
+	for _, item := range result.Tools {
+		names = append(names, item.Name)
+	}
+	return names
+}
+
+func searchTools(t *testing.T, store *llm.ToolStore, query string) mcp.SearchToolsResult {
+	t.Helper()
+
 	searchTool := mustTool(t, store, mcp.SearchToolsName)
 	resultJSON, err := searchTool.Resolver(&llm.Context{Tools: store}, contextToolArgs(`{"query":"`+query+`"}`))
 	require.NoError(t, err)
 
 	var result mcp.SearchToolsResult
 	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
-
-	names := make([]string, 0, len(result.Tools))
-	for _, item := range result.Tools {
-		names = append(names, item.Name)
-	}
-	return names
+	return result
 }
 
 func buildToolsContext(builder *Builder, bot *bots.Bot, opts ...llm.ContextOption) *llm.Context {
@@ -400,6 +411,38 @@ func TestStrictToolStoreSearchUsesFilteredRegistry(t *testing.T) {
 	require.Nil(t, context.Tools.GetTool("jira__get_issue"))
 }
 
+func TestStrictRegistryUsesAdminRetrievalOverride(t *testing.T) {
+	const origin = "https://jira.example.com"
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{
+			tools: []llm.Tool{
+				testMCPTool("jira__get_issue", origin, "fetch upstream issue details"),
+			},
+			overrides: map[string]mcp.MCPToolRetrievalOverride{
+				mcp.MCPToolRetrievalOverrideKey(origin, "get_issue"): {
+					Summary: "Find PagerDuty incidents linked to Jira tickets",
+				},
+			},
+		},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+	result := searchTools(t, context.Tools, "pagerduty")
+
+	require.Len(t, result.Tools, 1)
+	require.Equal(t, "jira__get_issue", result.Tools[0].Name)
+	require.Equal(t, "Find PagerDuty incidents linked to Jira tickets", result.Tools[0].Summary)
+	require.Nil(t, context.Tools.GetTool("jira__get_issue"))
+}
+
 func TestStrictToolStoreLoadMaterializesTool(t *testing.T) {
 	originalTool := testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details")
 	builder := newTestBuilder(t,
@@ -430,6 +473,78 @@ func TestStrictToolStoreLoadMaterializesTool(t *testing.T) {
 	resolved, err := loadedTool.Resolver(context, contextToolArgs(`{}`))
 	require.NoError(t, err)
 	require.Equal(t, "mcp:jira__get_issue", resolved)
+}
+
+func TestLoadToolUsesOriginalDescriptionWithRetrievalOverride(t *testing.T) {
+	const origin = "https://jira.example.com"
+	originalTool := testMCPTool("jira__get_issue", origin, "original upstream description")
+	originalTool.Schema = map[string]any{"source": "upstream-schema"}
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{
+			tools: []llm.Tool{originalTool},
+			overrides: map[string]mcp.MCPToolRetrievalOverride{
+				mcp.MCPToolRetrievalOverrideKey(origin, "jira__get_issue"): {
+					Summary: "override search-only summary",
+				},
+			},
+		},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+	context := buildToolsContext(builder, bot)
+
+	searchResult := searchTools(t, context.Tools, "search-only")
+	require.Len(t, searchResult.Tools, 1)
+	require.Equal(t, "override search-only summary", searchResult.Tools[0].Summary)
+
+	loadTool := mustTool(t, context.Tools, mcp.LoadToolName)
+	resultJSON, err := loadTool.Resolver(context, contextToolArgs(`{"name":"jira__get_issue"}`))
+	require.NoError(t, err)
+
+	var result mcp.LoadToolResult
+	require.NoError(t, json.Unmarshal([]byte(resultJSON), &result))
+	require.True(t, result.Loaded)
+	require.Equal(t, originalTool.Schema, result.Schema)
+
+	loadedTool := mustTool(t, context.Tools, "jira__get_issue")
+	require.Equal(t, "original upstream description", loadedTool.Description)
+	require.Equal(t, originalTool.Schema, loadedTool.Schema)
+}
+
+func TestFlagOffIgnoresRetrievalOverrides(t *testing.T) {
+	const origin = "https://jira.example.com"
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{
+			tools: []llm.Tool{
+				testMCPTool("jira__get_issue", origin, "original upstream description"),
+			},
+			overrides: map[string]mcp.MCPToolRetrievalOverride{
+				mcp.MCPToolRetrievalOverrideKey(origin, "get_issue"): {
+					Summary: "override search-only summary",
+				},
+			},
+		},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: false,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.ElementsMatch(t, []string{"builtin", "jira__get_issue"}, toolNames(context.Tools))
+	require.Nil(t, context.Tools.GetTool(mcp.SearchToolsName))
+	require.Equal(t, "original upstream description", mustTool(t, context.Tools, "jira__get_issue").Description)
 }
 
 func TestStrictRestoresLoadedTools(t *testing.T) {
