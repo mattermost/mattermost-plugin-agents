@@ -114,6 +114,13 @@ func (s *fakeLoadedMCPToolStore) DeleteLoadedMCPTool(conversationID, botID, user
 	return nil
 }
 
+func (s *fakeLoadedMCPToolStore) DeleteLoadedMCPToolsByNames(conversationID, botID, userID string, toolNames []string) error {
+	for _, toolName := range toolNames {
+		s.deletes = append(s.deletes, conversationID+"\x00"+botID+"\x00"+userID+"\x00"+toolName)
+	}
+	return nil
+}
+
 func loadedMCPToolRow(toolName string) storepkg.LoadedMCPTool {
 	return storepkg.LoadedMCPTool{
 		ConversationID: "conv-id",

@@ -164,6 +164,10 @@ func (s *loadedStateStore) DeleteLoadedMCPTool(conversationID, botID, userID, to
 	return nil
 }
 
+func (s *loadedStateStore) DeleteLoadedMCPToolsByNames(conversationID, botID, userID string, toolNames []string) error {
+	return nil
+}
+
 type loadedStateLLM struct {
 	mu       sync.Mutex
 	requests []llm.CompletionRequest

@@ -35,6 +35,7 @@ type LoadedMCPToolStore interface {
 	UpsertLoadedMCPTool(tool storepkg.LoadedMCPTool) error
 	ListLoadedMCPTools(conversationID, botID, userID string) ([]storepkg.LoadedMCPTool, error)
 	DeleteLoadedMCPTool(conversationID, botID, userID, toolName string) error
+	DeleteLoadedMCPToolsByNames(conversationID, botID, userID string, toolNames []string) error
 }
 
 // ConfigProvider provides configuration access
@@ -448,6 +449,7 @@ func (b *Builder) restoreLoadedMCPTools(publicStore *llm.ToolStore, registry *mc
 	}
 
 	deleteStale := c.KeepMCPTool == nil
+	var staleNames []string
 	for _, row := range loaded {
 		entry, ok := registry.Lookup(row.ToolName)
 		if ok {
@@ -463,19 +465,25 @@ func (b *Builder) restoreLoadedMCPTools(publicStore *llm.ToolStore, registry *mc
 			continue
 		}
 
-		if err := b.loadedMCPToolStore.DeleteLoadedMCPTool(c.ConversationID, botID, userID, row.ToolName); err != nil {
-			b.logWarn("Failed to delete stale loaded MCP tool",
-				"error", err.Error(),
-				"conversation_id", c.ConversationID,
-				"tool_name", row.ToolName,
-			)
-		} else {
-			b.logDebug("Deleted stale loaded MCP tool",
-				"conversation_id", c.ConversationID,
-				"tool_name", row.ToolName,
-			)
-		}
+		staleNames = append(staleNames, row.ToolName)
 	}
+
+	if len(staleNames) == 0 {
+		return
+	}
+
+	if err := b.loadedMCPToolStore.DeleteLoadedMCPToolsByNames(c.ConversationID, botID, userID, staleNames); err != nil {
+		b.logWarn("Failed to delete stale loaded MCP tools",
+			"error", err.Error(),
+			"conversation_id", c.ConversationID,
+			"tool_names", staleNames,
+		)
+		return
+	}
+	b.logDebug("Deleted stale loaded MCP tools",
+		"conversation_id", c.ConversationID,
+		"tool_names", staleNames,
+	)
 }
 
 func (b *Builder) logWarn(message string, keyValuePairs ...any) {

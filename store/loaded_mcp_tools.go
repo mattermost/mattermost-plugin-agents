@@ -116,6 +116,33 @@ func (s *Store) DeleteLoadedMCPTool(conversationID, botID, userID, toolName stri
 	return nil
 }
 
+// DeleteLoadedMCPToolsByNames removes loaded-tool rows for a single
+// conversation/bot/user tuple matching any of the given tool names. An empty
+// toolNames slice is a no-op so callers can pass the result of a filter
+// without guarding the call site.
+func (s *Store) DeleteLoadedMCPToolsByNames(conversationID, botID, userID string, toolNames []string) error {
+	if len(toolNames) == 0 {
+		return nil
+	}
+
+	query, args, err := s.builder.
+		Delete("LLM_LoadedMCPTools").
+		Where(sq.Eq{
+			"ConversationID": conversationID,
+			"BotID":          botID,
+			"UserID":         userID,
+			"ToolName":       toolNames,
+		}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("failed to build batch delete loaded MCP tools query: %w", err)
+	}
+	if _, err = s.db.Exec(query, args...); err != nil {
+		return fmt.Errorf("failed to batch delete loaded MCP tools: %w", err)
+	}
+	return nil
+}
+
 // DeleteLoadedMCPToolsForConversation removes all loaded-tool rows for a
 // conversation.
 func (s *Store) DeleteLoadedMCPToolsForConversation(conversationID string) error {
