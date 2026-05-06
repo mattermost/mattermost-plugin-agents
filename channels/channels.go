@@ -80,11 +80,6 @@ func (c *Channels) AnalyzeChannel(
 		"Analysis": analysisData,
 	}
 
-	systemPrompt, err := c.prompts.Format(prompts.PromptSummarizeChannelSystem, context)
-	if err != nil {
-		return nil, fmt.Errorf("failed to format system prompt: %w", err)
-	}
-
 	userPrompt := "Please summarize the channel activity as requested."
 	operationSubType, _ := analysisData["AnalysisType"].(string)
 	if operationSubType == "" {
@@ -108,6 +103,11 @@ func (c *Channels) AnalyzeChannel(
 	scopedTools := llm.NewToolStore(nil, false)
 	scopedTools.AddTools([]llm.Tool{boundReadChannel, boundGetChannelInfo})
 	context.Tools = scopedTools
+
+	systemPrompt, err := c.prompts.Format(prompts.PromptSummarizeChannelSystem, context)
+	if err != nil {
+		return nil, fmt.Errorf("failed to format system prompt: %w", err)
+	}
 
 	return c.AnalyzeChannelWithRequest(context, userID, botID, systemPrompt, userPrompt, operationSubType)
 }

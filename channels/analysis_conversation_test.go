@@ -300,6 +300,11 @@ func TestAnalyzeChannelBindsNamespacedToolsAsBareAliases(t *testing.T) {
 	require.Equal(t, "chanBound", readChannelID)
 	require.Empty(t, getChannelInfoID)
 	require.NotEmpty(t, fakeLM.requests)
+	require.NotEmpty(t, fakeLM.requests[0].Posts)
+	require.Equal(t, llm.PostRoleSystem, fakeLM.requests[0].Posts[0].Role)
+	assert.Contains(t, fakeLM.requests[0].Posts[0].Message, "read_channel tool")
+	assert.NotContains(t, fakeLM.requests[0].Posts[0].Message, "search_tools(query)")
+	assert.NotContains(t, fakeLM.requests[0].Posts[0].Message, "load_tool(name)")
 	require.ElementsMatch(t, []string{"read_channel", "get_channel_info"}, testToolNames(fakeLM.requests[0].Context.Tools))
 	for _, tool := range fakeLM.requests[0].Context.Tools.GetTools() {
 		require.Equal(t, mcp.EmbeddedClientKey, tool.ServerOrigin)

@@ -39,9 +39,16 @@ func (f *fakeEmbeddedMCPServer) CreateClientTransport(_ string, _ string, _ *plu
 }
 
 func newTestMCPServer(pageSize int, toolNames ...string) *mcp.Server {
+	return newTestMCPServerWithCapabilities(pageSize, nil, toolNames...)
+}
+
+func newTestMCPServerWithCapabilities(pageSize int, capabilities *mcp.ServerCapabilities, toolNames ...string) *mcp.Server {
 	var opts *mcp.ServerOptions
-	if pageSize > 0 {
-		opts = &mcp.ServerOptions{PageSize: pageSize}
+	if pageSize > 0 || capabilities != nil {
+		opts = &mcp.ServerOptions{
+			PageSize:     pageSize,
+			Capabilities: capabilities,
+		}
 	}
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "test-mcp-server",
@@ -51,6 +58,12 @@ func newTestMCPServer(pageSize int, toolNames ...string) *mcp.Server {
 		addTestMCPTool(server, toolName)
 	}
 	return server
+}
+
+func newStaticToolListMCPServer(pageSize int, toolNames ...string) *mcp.Server {
+	return newTestMCPServerWithCapabilities(pageSize, &mcp.ServerCapabilities{
+		Tools: &mcp.ToolCapabilities{ListChanged: false},
+	}, toolNames...)
 }
 
 func newEmptyToolsMCPServer() *mcp.Server {
@@ -334,7 +347,7 @@ func TestNewClientDiscoversPaginatedRemoteTools(t *testing.T) {
 
 func TestNewClientUsesCacheWithoutPaginationCall(t *testing.T) {
 	var listCalls atomic.Int32
-	server := newTestMCPServer(2, "server_tool")
+	server := newStaticToolListMCPServer(2, "server_tool")
 	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 			if method == testListToolsMethod {
@@ -451,7 +464,19 @@ func TestRemoteToolListChangedNextGetToolsForUserRediscoversTools(t *testing.T) 
 	}
 	t.Cleanup(func() { cleanupTestClientManager(manager) })
 
-	tools, mcpErrors := manager.GetToolsForUser("user-id")
+	var tools []llm.Tool
+	var mcpErrors *Errors
+	require.Eventually(t, func() bool {
+		tools, mcpErrors = manager.GetToolsForUser("user-id")
+		if mcpErrors != nil || len(cache.GetTools("paged")) != 2 {
+			return false
+		}
+		toolNames := make(map[string]bool, len(tools))
+		for _, tool := range tools {
+			toolNames[tool.Name] = true
+		}
+		return len(tools) == 2 && toolNames["paged__tool_1"] && toolNames["paged__tool_2"]
+	}, 5*time.Second, 10*time.Millisecond)
 	require.Nil(t, mcpErrors)
 	requireToolNames(t, tools, "paged__tool_1", "paged__tool_2")
 	require.Len(t, cache.GetTools("paged"), 2)
