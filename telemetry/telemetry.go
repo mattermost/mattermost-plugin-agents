@@ -55,6 +55,7 @@ func Init(ctx context.Context, serviceName, serviceVersion, endpoint string) (Sh
 		sdktrace.WithBatcher(exporter, sdktrace.WithBatchTimeout(5*time.Second)),
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithIDGenerator(NewTurnIDGenerator()),
 	)
 
 	otel.SetTracerProvider(tp)

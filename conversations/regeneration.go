@@ -15,9 +15,11 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/telemetry"
 	"github.com/mattermost/mattermost-plugin-agents/threads"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -27,6 +29,15 @@ const (
 
 // HandleRegenerate handles post regeneration requests
 func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, post *model.Post, channel *model.Channel) error {
+	// Resume into the originating run's trace so the regenerated work shows
+	// up alongside the original invocation.
+	ctx = c.rehydrateRunTrace(ctx, post)
+	ctx, span := telemetry.Tracer().Start(ctx, "handle regenerate",
+		trace.WithNewRoot(),
+		trace.WithAttributes(telemetry.PostID.String(post.Id)),
+	)
+	defer span.End()
+
 	bot := c.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")

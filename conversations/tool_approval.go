@@ -44,7 +44,12 @@ var ErrNotRequester = errors.New("only the original requester can approve/reject
 // It looks up pending tool_use blocks in the conversation turns, executes approved tools,
 // writes results back as turns, and streams a follow-up LLM response.
 func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+	// Resume: chain into the originating run's trace if we can find it. If
+	// the post or its assistant turn is missing, fall back to a fresh trace.
+	ctx = c.rehydrateRunTrace(ctx, post)
+
 	ctx, span := telemetry.Tracer().Start(ctx, "handle tool call",
+		trace.WithNewRoot(),
 		trace.WithAttributes(telemetry.PostID.String(post.Id)),
 	)
 	defer span.End()
@@ -241,7 +246,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 // follow-up with unshared content redacted so private tool output cannot leak
 // into the channel-visible reply.
 func (c *Conversations) HandleToolResult(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+	ctx = c.rehydrateRunTrace(ctx, post)
+
 	ctx, span := telemetry.Tracer().Start(ctx, "handle tool result",
+		trace.WithNewRoot(),
 		trace.WithAttributes(telemetry.PostID.String(post.Id)),
 	)
 	defer span.End()
@@ -520,4 +528,23 @@ func responseRootIDFromPost(post *model.Post) string {
 		return post.RootId
 	}
 	return post.Id
+}
+
+// rehydrateRunTrace stamps ctx with the user-turn ID that initiated the run
+// associated with post, so a span started under WithNewRoot lands in the
+// originating run's deterministic trace. Best-effort: any lookup miss leaves
+// ctx unchanged and the resume gets a fresh trace.
+func (c *Conversations) rehydrateRunTrace(ctx context.Context, post *model.Post) context.Context {
+	if post == nil || c.convService == nil {
+		return ctx
+	}
+	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
+	if !ok || convID == "" {
+		return ctx
+	}
+	userTurn, err := c.convService.GetInitiatingUserTurn(convID, post.Id)
+	if err != nil || userTurn == nil {
+		return ctx
+	}
+	return telemetry.WithTurnID(ctx, userTurn.ID)
 }

@@ -101,6 +101,7 @@ func (c *Conversations) SetConversationService(svc *conversation.Service) {
 type DMConversationResult struct {
 	ConversationID string
 	IsNew          bool
+	UserTurnID     string
 }
 
 // CreateOrGetDMConversation creates or retrieves a conversation for a DM.
@@ -153,7 +154,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 		if err != nil {
 			return nil, fmt.Errorf("failed to create conversation: %w", err)
 		}
-		return &DMConversationResult{ConversationID: result.ConversationID, IsNew: true}, nil
+		return &DMConversationResult{ConversationID: result.ConversationID, IsNew: true, UserTurnID: result.UserTurnID}, nil
 	}
 
 	result, err := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
@@ -170,7 +171,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get or create conversation: %w", err)
 	}
-	return &DMConversationResult{ConversationID: result.Conversation.ID, IsNew: result.IsNew}, nil
+	return &DMConversationResult{ConversationID: result.Conversation.ID, IsNew: result.IsNew, UserTurnID: result.UserTurnID}, nil
 }
 
 // DMStreamResult is the return value of ProcessDMRequest.

@@ -227,6 +227,19 @@ func (c *Conversations) handleMentionViaConversation(
 		return fmt.Errorf("failed to get or create conversation: %w", convErr)
 	}
 
+	// Anchor this run's trace to the user turn ID so cross-node resumes can
+	// reproduce the same TraceID. Link to the previous user turn so Tempo
+	// renders a clickable jump from this trace back to the prior invocation.
+	ctx = telemetry.WithTurnID(ctx, convResult.UserTurnID)
+	runOpts := []trace.SpanStartOption{trace.WithNewRoot()}
+	if prev, prevErr := c.convService.GetPreviousUserTurn(convResult.Conversation.ID, convResult.UserTurnID); prevErr == nil && prev != nil {
+		runOpts = append(runOpts, trace.WithLinks(trace.Link{
+			SpanContext: telemetry.SpanContextForTurn(prev.ID),
+		}))
+	}
+	ctx, runSpan := telemetry.Tracer().Start(ctx, "agent run", runOpts...)
+	defer runSpan.End()
+
 	responsePost := &model.Post{
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
@@ -358,6 +371,18 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
 	}
+
+	// Anchor this run's trace to the user turn ID. Link to the previous user
+	// turn (if any) so consecutive DMs are navigable in Tempo.
+	ctx = telemetry.WithTurnID(ctx, convResult.UserTurnID)
+	runOpts := []trace.SpanStartOption{trace.WithNewRoot()}
+	if prev, prevErr := c.convService.GetPreviousUserTurn(convResult.ConversationID, convResult.UserTurnID); prevErr == nil && prev != nil {
+		runOpts = append(runOpts, trace.WithLinks(trace.Link{
+			SpanContext: telemetry.SpanContextForTurn(prev.ID),
+		}))
+	}
+	ctx, runSpan := telemetry.Tracer().Start(ctx, "agent run", runOpts...)
+	defer runSpan.End()
 
 	responsePost := &model.Post{
 		ChannelId: channel.Id,
