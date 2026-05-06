@@ -10,7 +10,7 @@ You are the right reader if all of the following apply:
 
 - You currently run the Mattermost AI / Mattermost Agents plugin at v1.x.
 - You administer the Mattermost server (System Admin) and own its database.
-- You are planning to install v2.0.0 (or a v2.0.0-rcN release candidate that you intend to keep through GA).
+- You are planning to install v2.0.0.
 
 If you are upgrading the Mattermost server itself, refer to the standard Mattermost upgrade documentation in addition to this guide. The plugin upgrade does not change Mattermost server requirements beyond those listed in the [Admin Guide](admin_guide.md#prerequisites).
 
@@ -101,15 +101,11 @@ The **Enable MCP Client** and **Enable Embedded Server** System Console toggles 
 
 Services with type **OpenAI** unconditionally route through the OpenAI Responses API. If you require legacy Chat Completions behavior, configure an **OpenAI Compatible** service pointing at the OpenAI endpoint and turn **Use Responses API** off for that service.
 
-### 5.5 Tool approval button labels changed
-
-The conversation-side tool approval card now reads **Accept** / **Reject** rather than **Approve** / **Reject**. Only the conversation initiator can approve a tool call. Update any internal training material or screenshots that reference the old labels.
-
-### 5.6 Standalone MCP server binary scope clarified
+### 5.5 Standalone MCP server binary scope clarified
 
 The standalone `mattermost-mcp-server` binary (separate process, stdio transport) is documented as **development and local use only** and is not supported in production deployments. Production environments should rely on the embedded Mattermost MCP server and, when external clients are required, the HTTP MCP server endpoint configured from the System Console.
 
-### 5.7 Removed in-product capabilities
+### 5.6 Removed in-product capabilities
 
 | Removed | Replacement |
 |---|---|
@@ -142,28 +138,38 @@ Defaults that ship with v2.0.0 differ from v1.x in the following ways. None of t
 
 ## 7. Step-by-step upgrade procedure
 
+### 7.1 Primary path: Upgrade Mattermost
+
+Use this path when you receive Agents through the Mattermost server packaging.
+
 1. **Take backups.**
     1. Back up the Mattermost database.
     2. Back up `config.json` (or your equivalent stored plugin configuration source).
     3. If your deployment includes indexed vector data on a separate volume, snapshot it as well.
-2. **Disable the plugin.** From **System Console > Plugin Management**, locate **Mattermost AI** / **Mattermost Agents** and select **Disable**. This prevents new traffic during the bundle swap.
-3. **Upload the v2.0.0 bundle.** Download the v2.0.0 plugin bundle (`.tar.gz`) from the [GitHub releases page](https://github.com/mattermost/mattermost-plugin-agents/releases). In **System Console > Plugin Management**, select **Upload Plugin** and upload the bundle. If a previous version is shown alongside the new bundle, remove the old version after confirming the new one is selected.
-4. **Re-enable the plugin.** Set the plugin to **Enabled**. On startup, v2.0.0 runs migrations 000005, 000006, and 000007, then performs the legacy bot migration described in [Section 4](#4-what-gets-migrated-automatically).
-5. **Watch the logs.** In server logs, confirm:
+2. **Upgrade to the latest Mattermost v11.6 patch release.** Mattermost v11.6 includes Agents v1.7.2, which is the tested source version for the v2.0.0 upgrade.
+3. **Confirm the v11.6 upgrade is healthy.** Verify Mattermost starts cleanly and that Mattermost AI / Mattermost Agents is enabled at v1.7.2.
+4. **Upgrade Mattermost to v11.7.** Mattermost v11.7 includes Agents v2.0.0.
+5. **Watch the logs.** On startup, Agents v2.0.0 runs migrations 000005, 000006, and 000007, then performs the legacy bot migration described in [Section 4](#4-what-gets-migrated-automatically). In server logs, confirm:
     - Plugin start messages.
     - Migration log entries for each of 000005, 000006, 000007.
     - The log message `Migrated legacy config bots to self-service agents table` (one-time; only when at least one `config.bots` entry was present at startup).
     - No fatal migration errors. If any error occurs, see [Section 11](#11-troubleshooting).
 6. **Open the Agents page.** From the Mattermost product menu, navigate to the top-level **Agents** product entry. Confirm that each agent you noted in [Section 2 step 6](#2-pre-flight-checklist) is present. Migrated agents have no creator listed; system admins can edit and delete them from the row overflow menu.
-7. **Verify a migrated agent's configuration.**
+7. **Spot-check migrated agent configuration.**
     - Open the agent. Confirm the **Configuration** tab shows the expected display name, username, service, model, and custom instructions.
     - Confirm the **Access** tab shows the channel, user, team, and admin restrictions you expect.
     - Confirm the **MCPs** tab shows **Automatically enable all MCP tools** turned on (this preserves the v1.x behavior).
-8. **Verify the System Console redirect.** Navigate to **System Console > Plugins > Agents**. Confirm that the **AI Bots** section now redirects to the **Agents** product page rather than hosting the agent editor inline.
-9. **Verify a tool approval flow.** From a DM with an agent (or a channel where the agent is configured), trigger a tool that requires approval. Confirm the tool card shows **Accept** and **Reject** buttons.
-10. **Verify MCP UX.** From the agent edit modal's **MCPs** tab, confirm that any OAuth-backed MCP server that you previously connected is shown as connected for your account. Disconnected servers display a **Connect** button inline.
-11. **Run a smoke test conversation.** Ask one of your migrated agents a simple question in DM. Confirm the response streams normally and that the conversation entry appears in the agent's RHS history.
-12. **Re-enable user traffic.** End the maintenance window.
+8. **Re-enable user traffic.** End the maintenance window.
+
+### 7.2 Secondary path: Upload the plugin bundle
+
+Use this path only when you manage the Agents plugin bundle separately from the Mattermost server package.
+
+1. **Take backups.** Back up the Mattermost database, `config.json`, and any separate indexed-vector storage.
+2. **Disable the plugin.** From **System Console > Plugin Management**, locate **Mattermost AI** / **Mattermost Agents** and select **Disable**. This prevents new traffic during the bundle swap.
+3. **Upload the v2.0.0 bundle.** Download the v2.0.0 plugin bundle (`.tar.gz`) from the [GitHub releases page](https://github.com/mattermost/mattermost-plugin-agents/releases). In **System Console > Plugin Management**, select **Upload Plugin** and upload the bundle. If a previous version is shown alongside the new bundle, remove the old version after confirming the new one is selected.
+4. **Re-enable the plugin.** Set the plugin to **Enabled**. On startup, v2.0.0 runs migrations 000005, 000006, and 000007, then performs the legacy bot migration described in [Section 4](#4-what-gets-migrated-automatically).
+5. **Complete the same post-upgrade checks.** Watch the logs, confirm migrated agents are present, and spot-check migrated agent configuration as described in [Section 7.1](#71-primary-path-upgrade-mattermost).
 
 ## 8. Rollback considerations
 
@@ -187,17 +193,13 @@ Do not attempt a rollback that runs only the down migrations — `LLM_PostMeta` 
 
 ## 9. HA-specific notes
 
-The migrations and the legacy bot migration are coordinated across cluster nodes:
+In HA deployments, complete the upgrade during a maintenance window and allow the cluster to start normally. Agents coordinates the schema migrations and legacy bot migration so only one node performs the data migration work.
 
-- **Cluster mutex.** The legacy bot migration acquires the `ai_legacy_bots_migration` cluster mutex so only one node performs the migration. Other nodes wait and observe the `legacy_config_bots_migrated` flag.
-- **Idempotent index creation.** PR #689 makes the `user_agents` table index creation idempotent. Migrations re-run safely if a node retries.
-- **Reindex Cancel/Resume race fix.** PR #689 fixes a race in HA embedding-search reindex coordination where Cancel and Resume operations from different admins could leave the reindex job stuck. The reindex UI now surfaces a `cancel-requested` state. After the upgrade, if you previously had a stuck reindex job, navigate to **System Console > Plugins > Agents > Embedding Search** and use the reindex controls to cancel and restart cleanly.
-
-If a migration error appears in the logs of one node only, that node may have started the migration before another node completed it. Check the `Agents_System` table for the `legacy_config_bots_migrated` flag and confirm the `Agents_UserAgents` row count matches expectations before retrying.
+After startup, check logs from all nodes for migration errors and confirm the **Agents** page shows the expected migrated agents. If one node reports migration errors while another node succeeds, stop the rollout, preserve the logs, and contact Mattermost Support before retrying.
 
 ## 10. Verification checklist
 
-Tick through this list after the upgrade window closes.
+Tick through this list before ending the upgrade window.
 
 - [ ] Plugin status in **System Console > Plugin Management** shows v2.0.0 enabled with no errors.
 - [ ] Server logs show successful execution of migrations 000005, 000006, 000007.
@@ -207,67 +209,13 @@ Tick through this list after the upgrade window closes.
 - [ ] Editing a migrated agent shows the expected access rules and **Automatically enable all MCP tools** turned on.
 - [ ] **System Console > Plugins > Agents > AI Bots** redirects to the **Agents** product page.
 - [ ] **System Console > Plugins > Agents > Model Context Protocol (MCP)** does not show **Enable MCP Client** or **Enable Embedded Server** toggles.
-- [ ] A tool that requires approval shows **Accept** and **Reject** buttons in the conversation card.
-- [ ] OAuth-backed MCP servers show **Connect** / **Disconnect** state correctly in the agent **MCPs** tab and the Agents RHS **Tools** menu.
-- [ ] A smoke-test conversation with at least one migrated agent completes a streaming response without errors.
-- [ ] Token usage logging (if previously enabled) continues to write to `logs/agents/token_usage.log`.
 - [ ] Embedding search status (if previously enabled) shows healthy in **System Console > Plugins > Agents > Embedding Search**, and any prior reindex job is no longer stuck.
 
 ## 11. Troubleshooting
 
-### 11.1 Migration 000007 fails partway through
+If the upgrade fails, stop the rollout and preserve the Mattermost server logs from every node. Restore the database and `config.json` from the pre-upgrade backups if you need to return service to the prior version.
 
-**Symptom:** Server log includes a migration 000007 error referencing `LLM_PostMeta` or `LLM_Conversations`.
-
-**Likely cause:** A long-running transaction or external process is reading `LLM_PostMeta` while the migration is trying to drop it.
-
-**Resolution:**
-1. Stop external consumers of `LLM_PostMeta` (none should exist in a supported deployment).
-2. Disable and re-enable the plugin to retry the migration.
-3. If the failure persists, restore the database from the pre-upgrade backup and contact support.
-
-### 11.2 Legacy bot migration is deferred and never completes
-
-**Symptom:** Server log shows `Deferring legacy bot migration: Mattermost bot not found` repeatedly. The `Agents` page is empty even though `config.bots` was non-empty before the upgrade.
-
-**Likely cause:** The Mattermost bot accounts that the legacy `config.bots` entries reference have not yet been provisioned. The migration intentionally defers in this case to avoid creating partial agent rows.
-
-**Resolution:**
-1. Allow the plugin to complete its normal startup — bot account provisioning runs as part of `EnsureBots`.
-2. Trigger any plugin configuration save (for example, edit a service and save) to re-run the deferred migration.
-3. If bot accounts still do not appear, confirm that the username in `config.bots` matches a valid Mattermost username and is owned by `mattermost-ai`.
-
-**Bot ownership scope.** The migration only searches for bot accounts with owner `mattermost-ai`. Bot accounts created manually or owned by another plugin will not be found, and the migration will defer. If you have a v1.x deployment where the agent's underlying Mattermost bot account was created outside the plugin (or transferred to a different owner), reassign ownership to `mattermost-ai` or recreate the bot via the plugin so the legacy bot migration can locate it.
-
-### 11.3 Agents are duplicated after upgrade
-
-**Symptom:** Each v1.x bot appears twice in the **Agents** list.
-
-**Likely cause:** The plugin was upgraded, then `config.json` was restored without clearing the `legacy_config_bots_migrated` flag, then the migration ran again.
-
-**Resolution:**
-1. Restore both the database and `config.json` from a consistent pre-upgrade backup.
-2. Re-run the v2.0.0 upgrade following [Section 7](#7-step-by-step-upgrade-procedure).
-
-### 11.4 Tool approval card shows the old labels
-
-**Symptom:** Tool approval card shows **Approve** / **Reject** instead of **Accept** / **Reject**.
-
-**Likely cause:** A user's webapp bundle is cached.
-
-**Resolution:** Hard-refresh the webapp (or quit and restart the desktop app). The label change ships with the v2.0.0 webapp bundle and is loaded on next page load.
-
-### 11.5 MCP server toggles are missing from the System Console
-
-**Symptom:** **Enable MCP Client** and **Enable Embedded Server** are no longer present.
-
-**Cause:** This is intentional. v2.0.0 removes both toggles (PR #617). To restrict MCP usage, configure tool-level enablement and approval policies on **System Console > Plugins > Agents > Model Context Protocol (MCP) > Tools**, or restrict per-agent MCP access on each agent's **MCPs** tab.
-
-### 11.6 Reindex job appears stuck after upgrade
-
-**Symptom:** Embedding search reindex shows progress without advancing, or shows an inconsistent Cancel/Resume state.
-
-**Resolution:** v2.0.0 includes the HA reindex Cancel/Resume race fix (PR #689). Open **System Console > Plugins > Agents > Embedding Search** and use the reindex controls to cancel and restart the job.
+If migrations fail, the legacy bot migration does not complete, or migrated agents do not appear on the **Agents** page after startup, contact Mattermost Support with the server version, Agents plugin version, migration log entries, and whether the deployment is single-node or HA.
 
 ## 12. Where to get help
 
