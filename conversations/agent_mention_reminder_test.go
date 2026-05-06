@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -70,6 +71,8 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 	botService.SetBotsForTesting([]*bots.Bot{bot})
 
 	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, &testToolProvider{}, nil, &mockConfigProvider{})
+	promptsManager, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
 
 	client := &fakeMMClient{
 		users: map[string]*model.User{
@@ -80,7 +83,7 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 		channels: map[string]*model.Channel{},
 	}
 
-	conv := conversations.New(nil, client, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, &testToolCallingConfig{})
+	conv := conversations.New(promptsManager, client, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, &testToolCallingConfig{})
 
 	return &reminderFixture{
 		conv:       conv,
