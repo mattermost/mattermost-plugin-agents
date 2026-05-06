@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 func (a *API) handleOAuthStart(c *gin.Context) {
@@ -79,14 +80,54 @@ func (a *API) handleOAuthCallback(c *gin.Context) {
 		return
 	}
 
-	_, err := a.mcpClientManager.ProcessOAuthCallback(c.Request.Context(), userID, state, code)
+	session, err := a.mcpClientManager.ProcessOAuthCallback(c.Request.Context(), userID, state, code)
 	if err != nil {
 		a.pluginAPI.Log.Error("Failed to process OAuth callback", "error", err)
 		a.renderOAuthWindowClosePage(c, http.StatusInternalServerError, "Authorization Failed")
 		return
 	}
 
+	a.publishMCPOAuthClusterInvalidation(userID)
+	a.publishMCPConnectionUpdated(userID, session)
 	a.renderOAuthWindowClosePage(c, http.StatusOK, "Authorization Successful")
+}
+
+// publishMCPOAuthClusterInvalidation notifies peer nodes to drop stale per-user MCP clients.
+func (a *API) publishMCPOAuthClusterInvalidation(userID string) {
+	if a.mcpOAuthNotifier == nil || userID == "" {
+		return
+	}
+
+	if err := a.mcpOAuthNotifier.PublishMCPOAuthUpdate(userID); err != nil {
+		if a.pluginAPI != nil {
+			a.pluginAPI.Log.Warn("Failed to publish MCP OAuth cluster invalidation", "userID", userID, "error", err)
+		}
+	}
+}
+
+// publishMCPConnectionUpdated notifies the webapp that the user connected an MCP server (OAuth callback).
+func (a *API) publishMCPConnectionUpdated(userID string, session *mcp.OAuthSession) {
+	if a.mmClient == nil || userID == "" {
+		return
+	}
+
+	payload := map[string]interface{}{
+		"status": "connected",
+	}
+	if session != nil {
+		if session.ServerID != "" {
+			payload["serverName"] = session.ServerID
+		}
+		if session.ServerURL != "" {
+			payload["serverOrigin"] = session.ServerURL
+		}
+	}
+
+	a.mmClient.PublishWebSocketEvent(
+		WebsocketEventMCPConnectionUpdated,
+		payload,
+		&model.WebsocketBroadcast{UserId: userID},
+	)
 }
 
 func (a *API) getMCPServerConfig(serverName string) (mcp.ServerConfig, bool) {

@@ -57,7 +57,7 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 	pluginClient := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginClient)
 
-	botService := bots.New(mockAPI, pluginClient, licenseChecker, nil, &http.Client{}, nil)
+	botService := bots.New(mockAPI, pluginClient, licenseChecker, nil, nil, &http.Client{}, nil)
 	bot := bots.NewBot(
 		botConfig,
 		llm.ServiceConfig{},
@@ -66,7 +66,7 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 	)
 	botService.SetBotsForTesting([]*bots.Bot{bot})
 
-	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, nil, nil, &testConfigProvider{})
+	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, nil, nil, &mockConfigProvider{})
 
 	client := &fakeMMClient{
 		users: map[string]*model.User{

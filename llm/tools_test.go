@@ -5,6 +5,7 @@ package llm
 
 import (
 	"encoding/json"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -197,106 +198,6 @@ func TestGetServerOrigin(t *testing.T) {
 	}
 }
 
-func TestEnrichToolCallsWithServerOrigin(t *testing.T) {
-	tests := []struct {
-		name            string
-		toolCalls       []ToolCall
-		storeTools      []Tool
-		expectedOrigins []string
-	}{
-		{
-			name: "enriches MCP tool calls",
-			toolCalls: []ToolCall{
-				{ID: "1", Name: "get_issue"},
-				{ID: "2", Name: "list_repos"},
-			},
-			storeTools: []Tool{
-				{Name: "get_issue", ServerOrigin: "https://mcp.atlassian.com"},
-				{Name: "list_repos", ServerOrigin: "https://api.github.com"},
-			},
-			expectedOrigins: []string{"https://mcp.atlassian.com", "https://api.github.com"},
-		},
-		{
-			name: "built-in tools remain empty",
-			toolCalls: []ToolCall{
-				{ID: "1", Name: "builtin_tool"},
-			},
-			storeTools: []Tool{
-				{Name: "builtin_tool", ServerOrigin: ""},
-			},
-			expectedOrigins: []string{""},
-		},
-		{
-			name: "unknown tool gets empty origin",
-			toolCalls: []ToolCall{
-				{ID: "1", Name: "unknown_tool"},
-			},
-			storeTools: []Tool{
-				{Name: "known_tool", ServerOrigin: "https://example.com"},
-			},
-			expectedOrigins: []string{""},
-		},
-		{
-			name: "mixed MCP and built-in tools",
-			toolCalls: []ToolCall{
-				{ID: "1", Name: "get_issue"},
-				{ID: "2", Name: "builtin_summarize"},
-			},
-			storeTools: []Tool{
-				{Name: "get_issue", ServerOrigin: "https://mcp.atlassian.com"},
-				{Name: "builtin_summarize", ServerOrigin: ""},
-			},
-			expectedOrigins: []string{"https://mcp.atlassian.com", ""},
-		},
-		{
-			name: "nil store returns unmodified stream",
-			toolCalls: []ToolCall{
-				{ID: "1", Name: "any_tool"},
-			},
-			storeTools:      nil,
-			expectedOrigins: []string{""},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			// Build input stream
-			inputCh := make(chan TextStreamEvent, 2)
-			inputCh <- TextStreamEvent{
-				Type:  EventTypeToolCalls,
-				Value: tc.toolCalls,
-			}
-			close(inputCh)
-			input := &TextStreamResult{Stream: inputCh}
-
-			// Build store
-			var store *ToolStore
-			if tc.storeTools != nil {
-				store = NewToolStore(nil, false)
-				store.AddTools(tc.storeTools)
-			}
-
-			// Enrich
-			enriched := EnrichToolCallsWithServerOrigin(input, store)
-
-			// Read events
-			var resultToolCalls []ToolCall
-			for event := range enriched.Stream {
-				if event.Type == EventTypeToolCalls {
-					if calls, ok := event.Value.([]ToolCall); ok {
-						resultToolCalls = calls
-					}
-				}
-			}
-
-			require.Len(t, resultToolCalls, len(tc.expectedOrigins))
-			for i, expected := range tc.expectedOrigins {
-				assert.Equal(t, expected, resultToolCalls[i].ServerOrigin)
-			}
-		})
-	}
-}
-
 func TestToolCallServerOriginJSON(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -471,31 +372,128 @@ func TestRemoveToolsByServerOrigin(t *testing.T) {
 	}
 }
 
-func TestEnrichToolCallsPassesThroughNonToolEvents(t *testing.T) {
-	inputCh := make(chan TextStreamEvent, 4)
-	inputCh <- TextStreamEvent{Type: EventTypeText, Value: "hello"}
-	inputCh <- TextStreamEvent{Type: EventTypeToolCalls, Value: []ToolCall{
-		{ID: "1", Name: "test_tool"},
-	}}
-	inputCh <- TextStreamEvent{Type: EventTypeEnd}
-	close(inputCh)
-
-	store := NewToolStore(nil, false)
-	store.AddTools([]Tool{{Name: "test_tool", ServerOrigin: "https://example.com"}})
-
-	enriched := EnrichToolCallsWithServerOrigin(&TextStreamResult{Stream: inputCh}, store)
-
-	var events []TextStreamEvent
-	for event := range enriched.Stream {
-		events = append(events, event)
+func TestRetainOnlyMCPTools(t *testing.T) {
+	tests := []struct {
+		name          string
+		tools         []Tool
+		allowlist     []EnabledMCPTool
+		wantToolNames []string
+	}{
+		{
+			name: "empty allowlist removes all MCP tools but keeps built-in",
+			tools: []Tool{
+				{Name: "builtin_search", ServerOrigin: ""},
+				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
+			},
+			allowlist:     []EnabledMCPTool{},
+			wantToolNames: []string{"builtin_search"},
+		},
+		{
+			name: "nil allowlist removes all MCP tools but keeps built-in",
+			tools: []Tool{
+				{Name: "builtin_search", ServerOrigin: ""},
+				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
+			},
+			allowlist:     nil,
+			wantToolNames: []string{"builtin_search"},
+		},
+		{
+			name: "allowlist retains only matching MCP tools",
+			tools: []Tool{
+				{Name: "builtin_search", ServerOrigin: ""},
+				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "jira_create", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "slack_post", ServerOrigin: "https://mcp.slack.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://mcp.atlassian.com", ToolName: "jira_get"},
+				{ServerOrigin: "https://mcp.slack.com", ToolName: "slack_post"},
+			},
+			wantToolNames: []string{"builtin_search", "jira_get", "slack_post"},
+		},
+		{
+			name: "allowlist with non-matching entries filters correctly",
+			tools: []Tool{
+				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://mcp.slack.com", ToolName: "slack_post"},
+			},
+			wantToolNames: []string{},
+		},
+		{
+			name: "same tool name different server origins — last write wins",
+			tools: []Tool{
+				{Name: "search", ServerOrigin: "https://server-a.com"},
+				{Name: "search", ServerOrigin: "https://server-b.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://server-a.com", ToolName: "search"},
+			},
+			// ToolStore uses tool.Name as map key, so server-b overwrites
+			// server-a. The allowlist references server-a, which no longer
+			// exists in the store, so the result is empty.
+			wantToolNames: []string{},
+		},
+		{
+			name: "server wildcard entry retains every tool from that origin",
+			tools: []Tool{
+				{Name: "builtin_search", ServerOrigin: ""},
+				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "jira_create", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "slack_post", ServerOrigin: "https://mcp.slack.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://mcp.atlassian.com", ToolName: MCPServerToolWildcard},
+			},
+			wantToolNames: []string{"builtin_search", "jira_get", "jira_create"},
+		},
+		{
+			name: "server wildcard combines with explicit tool entries from other origins",
+			tools: []Tool{
+				{Name: "jira_get", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "jira_create", ServerOrigin: "https://mcp.atlassian.com"},
+				{Name: "slack_post", ServerOrigin: "https://mcp.slack.com"},
+				{Name: "slack_edit", ServerOrigin: "https://mcp.slack.com"},
+			},
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://mcp.atlassian.com", ToolName: MCPServerToolWildcard},
+				{ServerOrigin: "https://mcp.slack.com", ToolName: "slack_post"},
+			},
+			wantToolNames: []string{"jira_get", "jira_create", "slack_post"},
+		},
+		{
+			name:  "nil ToolStore is safe",
+			tools: nil, // will test on nil *ToolStore
+			allowlist: []EnabledMCPTool{
+				{ServerOrigin: "https://mcp.example.com", ToolName: "foo"},
+			},
+			wantToolNames: nil, // special case: test on nil receiver
+		},
 	}
 
-	require.Len(t, events, 3)
-	assert.Equal(t, EventTypeText, events[0].Type)
-	assert.Equal(t, "hello", events[0].Value)
-	assert.Equal(t, EventTypeToolCalls, events[1].Type)
-	toolCalls, ok := events[1].Value.([]ToolCall)
-	require.True(t, ok, "EventTypeToolCalls value must be []ToolCall, got %T", events[1].Value)
-	assert.Equal(t, "https://example.com", toolCalls[0].ServerOrigin)
-	assert.Equal(t, EventTypeEnd, events[2].Type)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.tools == nil {
+				// Test nil receiver safety
+				var s *ToolStore
+				s.RetainOnlyMCPTools(tt.allowlist) // must not panic
+				return
+			}
+
+			s := NewToolStore(nil, false)
+			s.AddTools(tt.tools)
+			s.RetainOnlyMCPTools(tt.allowlist)
+
+			got := s.GetTools()
+			gotNames := make([]string, 0, len(got))
+			for _, tool := range got {
+				gotNames = append(gotNames, tool.Name)
+			}
+			// Sort for deterministic comparison (map iteration order)
+			sort.Strings(gotNames)
+			sort.Strings(tt.wantToolNames)
+			assert.Equal(t, tt.wantToolNames, gotNames)
+		})
+	}
 }

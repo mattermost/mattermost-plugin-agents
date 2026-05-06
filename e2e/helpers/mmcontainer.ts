@@ -98,6 +98,30 @@ export default class MattermostContainer {
         await this.container.exec(["mmctl", "--local", "team", "users", "add", teamname, username])
     }
 
+    /**
+     * Grant manage_own_agent / manage_others_agent on system roles so plugin agents APIs
+     * (GET /services, PUT /agents/:id) and the agents UI work in E2E. Required for admins
+     * updating migrated legacy bots (no creator id) via manage_others_agent.
+     */
+    grantSelfServiceAgentPermissions = async (): Promise<void> => {
+        await this.container.exec([
+            'mmctl', '--local', 'permissions', 'add', 'system_user', 'manage_own_agent',
+        ]);
+        await this.container.exec([
+            'mmctl', '--local', 'permissions', 'add', 'system_admin', 'manage_own_agent',
+        ]);
+        await this.container.exec([
+            'mmctl', '--local', 'permissions', 'add', 'system_admin', 'manage_others_agent',
+        ]);
+    }
+
+    /** Undo {@link grantSelfServiceAgentPermissions} for the system_user role only (system_admin unchanged). */
+    revokeManageOwnAgentFromSystemUser = async (): Promise<void> => {
+        await this.container.exec([
+            'mmctl', '--local', 'permissions', 'remove', 'system_user', 'manage_own_agent',
+        ]);
+    }
+
     getLogs = async (lines: number): Promise<string> => {
         const {output} = await this.container.exec(["mmctl", "--local", "logs", "--number", lines.toString()])
         return output

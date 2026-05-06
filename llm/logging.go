@@ -24,7 +24,17 @@ func NewLanguageModelLogWrapper(log pluginapi.LogService, wrapped LanguageModel)
 
 func (w *LanguageModelLogWrapper) logInput(request CompletionRequest, opts ...LanguageModelOption) {
 	prompt := fmt.Sprintf("\n%v", request)
-	w.log.Info("LLM Call", "prompt", prompt)
+	toolCount := 0
+	if request.Context != nil && request.Context.Tools != nil {
+		toolCount = len(request.Context.Tools.GetToolsInfo())
+	}
+	w.log.Info("LLM Call",
+		"prompt", prompt,
+		"operation", request.Operation,
+		"subtype", request.OperationSubType,
+		"num_posts", len(request.Posts),
+		"num_tools", toolCount,
+	)
 }
 
 func (w *LanguageModelLogWrapper) ChatCompletion(request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {

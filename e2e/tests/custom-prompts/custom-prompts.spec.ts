@@ -247,7 +247,7 @@ test.describe('Custom Prompts Management Modal', () => {
         await setupTestPage(page);
         await openCustomPromptsModal(page);
 
-        // Expand the prompt row by clicking its name
+        // Open the prompt in the edit view (same shell as New Prompt)
         await page.getByText('Editable Prompt').click();
 
         // The form should show pre-filled values

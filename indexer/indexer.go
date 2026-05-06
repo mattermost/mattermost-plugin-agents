@@ -112,10 +112,10 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	// Optimistic check before acquiring mutex
 	var jobStatus JobStatus
 	err := s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err != nil && err.Error() != "not found" {
+	if err != nil && !mmapi.IsKVNotFound(err) {
 		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
 	}
-	if jobStatus.Status == JobStatusRunning && !s.isJobStale(&jobStatus) {
+	if isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
 		return jobStatus, fmt.Errorf("job already running")
 	}
 
@@ -127,12 +127,17 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	mtx.Lock()
 	defer mtx.Unlock()
 
-	// Re-check after acquiring lock (double-checked locking pattern)
+	// Re-read under the mutex. Reset on not-found so the optimistic-read
+	// snapshot can't leak into the resume carry-over.
 	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err != nil && err.Error() != "not found" {
+	if err != nil && !mmapi.IsKVNotFound(err) {
 		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
 	}
-	if jobStatus.Status == JobStatusRunning && !s.isJobStale(&jobStatus) {
+	hasExisting := err == nil
+	if !hasExisting {
+		jobStatus = JobStatus{}
+	}
+	if hasExisting && isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
 		return jobStatus, fmt.Errorf("job already running")
 	}
 
@@ -148,8 +153,8 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		count = 0 // Continue with zero estimate
 	}
 
-	// Create initial job status
 	newJobStatus := JobStatus{
+		JobID:     model.NewId(),
 		Status:    JobStatusRunning,
 		StartedAt: time.Now(),
 		Resumable: !clearIndex,
@@ -158,7 +163,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 
 	// When resuming, preserve CutoffAt, TotalRows, and ProcessedRows from the previous job
 	// so the UI shows accurate progress and catch-up covers posts from original start time
-	if !clearIndex && jobStatus.Status != "" {
+	if !clearIndex && hasExisting {
 		newJobStatus.TotalRows = jobStatus.TotalRows
 		newJobStatus.CutoffAt = jobStatus.CutoffAt
 		newJobStatus.ProcessedRows = jobStatus.ProcessedRows
@@ -168,10 +173,18 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		newJobStatus.CutoffAt = cutoffTimestamp
 	}
 
-	// Save initial job status
-	err = s.pluginAPI.KVSet(ReindexJobKey, newJobStatus)
+	// CAS routes through master; the predicate rejects the write if the row
+	// changed since our read, even when that read came from a stale replica.
+	var oldValue interface{}
+	if hasExisting {
+		oldValue = jobStatus
+	}
+	ok, err := s.pluginAPI.KVCompareAndSet(ReindexJobKey, oldValue, newJobStatus)
 	if err != nil {
 		return JobStatus{}, fmt.Errorf("failed to save job status: %w", err)
+	}
+	if !ok {
+		return JobStatus{}, fmt.Errorf("job already running")
 	}
 
 	// Clear cursor if doing a fresh reindex
@@ -187,6 +200,11 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	go s.runReindexJob(&newJobStatus, clearIndex)
 
 	return returnStatus, nil
+}
+
+// isActiveJob reports whether a job is non-terminal and should block a new Start.
+func isActiveJob(s *JobStatus) bool {
+	return s.Status == JobStatusRunning || s.Status == JobStatusCancelRequested
 }
 
 // getNodeID returns a unique identifier for this node
@@ -209,7 +227,10 @@ func (s *Indexer) GetJobStatus() (JobStatus, error) {
 	return jobStatus, nil
 }
 
-// CancelJob cancels a running reindex job
+// CancelJob asks the worker to stop. It CASes Running -> CancelRequested;
+// the worker writes the terminal Canceled state when it observes the request
+// scoped to its own JobID. The split keeps cancel signaling JobID-keyed so a
+// stale replica read can't poison a successor run.
 func (s *Indexer) CancelJob() (JobStatus, error) {
 	// Acquire cluster mutex
 	mtx, err := cluster.NewMutex(s.clusterMutex, "ai_reindex_job")
@@ -229,17 +250,19 @@ func (s *Indexer) CancelJob() (JobStatus, error) {
 		return JobStatus{}, fmt.Errorf("not running")
 	}
 
-	// Update status to canceled
-	jobStatus.Status = JobStatusCanceled
-	jobStatus.CompletedAt = time.Now()
+	newStatus := jobStatus
+	newStatus.Status = JobStatusCancelRequested
 
-	// Save updated status
-	err = s.pluginAPI.KVSet(ReindexJobKey, jobStatus)
-	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to save job status: %w", err)
+	ok, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, jobStatus, newStatus)
+	if casErr != nil {
+		return JobStatus{}, fmt.Errorf("failed to save job status: %w", casErr)
+	}
+	if !ok {
+		// Row changed between read and CAS: nothing to cancel.
+		return JobStatus{}, fmt.Errorf("not running")
 	}
 
-	return jobStatus, nil
+	return newStatus, nil
 }
 
 // shouldIndexPost returns whether a post should be indexed based on consistent criteria
@@ -292,10 +315,16 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	mtx.Lock()
 	defer mtx.Unlock()
 
-	// Check if job is already running (allow restart if stale)
 	var jobStatus JobStatus
 	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err == nil && jobStatus.Status == JobStatusRunning && !s.isJobStale(&jobStatus) {
+	if err != nil && !mmapi.IsKVNotFound(err) {
+		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
+	}
+	hasExisting := err == nil
+	if !hasExisting {
+		jobStatus = JobStatus{}
+	}
+	if hasExisting && isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
 		return jobStatus, fmt.Errorf("job already running")
 	}
 
@@ -313,6 +342,7 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	}
 
 	newJobStatus := JobStatus{
+		JobID:     model.NewId(),
 		Status:    JobStatusRunning,
 		StartedAt: time.Now(),
 		TotalRows: count,
@@ -321,9 +351,16 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 		CutoffAt:  cutoffTimestamp,
 	}
 
-	err = s.pluginAPI.KVSet(ReindexJobKey, newJobStatus)
+	var oldValue interface{}
+	if hasExisting {
+		oldValue = jobStatus
+	}
+	ok, err := s.pluginAPI.KVCompareAndSet(ReindexJobKey, oldValue, newJobStatus)
 	if err != nil {
 		return JobStatus{}, fmt.Errorf("failed to save job status: %w", err)
+	}
+	if !ok {
+		return JobStatus{}, fmt.Errorf("job already running")
 	}
 
 	// Set cursor to start from last indexed timestamp
@@ -499,9 +536,11 @@ func (s *Indexer) CheckModelCompatibility(currentProviderType string, currentDim
 // StaleJobThreshold is the duration after which a running job is considered stale
 const StaleJobThreshold = 10 * time.Minute
 
-// isJobStale checks if a running job's heartbeat is beyond the stale threshold.
+// isJobStale reports whether a non-terminal job's heartbeat is older than
+// StaleJobThreshold. Both Running and CancelRequested are non-terminal: a
+// worker that died mid-cancel must still be reclaimable.
 func (s *Indexer) isJobStale(jobStatus *JobStatus) bool {
-	if jobStatus.Status != JobStatusRunning {
+	if jobStatus.Status != JobStatusRunning && jobStatus.Status != JobStatusCancelRequested {
 		return false
 	}
 
@@ -513,40 +552,47 @@ func (s *Indexer) isJobStale(jobStatus *JobStatus) bool {
 	return time.Since(lastUpdate) > StaleJobThreshold
 }
 
-// MarkOrphanedJobAsFailed marks any running job on this node as failed.
-// This should be called on plugin startup to handle cases where the plugin/server
-// crashed while a job was running. Only affects jobs that were running on THIS node.
+// MarkOrphanedJobAsFailed reclaims any non-terminal reindex job whose
+// heartbeat is older than StaleJobThreshold, on any node. Keying on
+// staleness (not the original NodeID) lets containerized deploys —
+// where the hostname changes on restart — and clustered deploys — where
+// the original node may be gone — recover after a crash. Resumable=true
+// preserves the cursor so the admin can resume from where the wedged
+// run left off.
 func (s *Indexer) MarkOrphanedJobAsFailed() error {
 	var jobStatus JobStatus
 	err := s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
 	if err != nil {
-		if err.Error() == "not found" {
-			return nil // No job exists, nothing to do
+		if mmapi.IsKVNotFound(err) {
+			return nil
 		}
 		return err
 	}
 
-	// Only mark as failed if job is running
-	if jobStatus.Status != JobStatusRunning {
+	if !s.isJobStale(&jobStatus) {
 		return nil
 	}
 
-	// Only mark as failed if job was running on THIS node
-	currentNodeID := s.getNodeID()
-	if jobStatus.NodeID != currentNodeID {
-		return nil // Job is running on a different node, don't interfere
-	}
+	newStatus := jobStatus
+	newStatus.Status = JobStatusFailed
+	newStatus.Resumable = true
+	newStatus.Error = fmt.Sprintf("Job orphaned: heartbeat older than %s on node %q",
+		StaleJobThreshold, jobStatus.NodeID)
+	newStatus.CompletedAt = time.Now()
 
-	// Mark as failed - the plugin restarted while this job was running
-	jobStatus.Status = JobStatusFailed
-	jobStatus.Error = fmt.Sprintf("Job orphaned: plugin restarted on node %s while job was running", currentNodeID)
-	jobStatus.CompletedAt = time.Now()
-
-	s.pluginAPI.LogWarn("Marking orphaned reindex job as failed",
-		"node_id", currentNodeID,
+	s.pluginAPI.LogWarn("Reclaiming stale reindex job",
+		"job_id", jobStatus.JobID,
+		"previous_status", jobStatus.Status,
+		"node_id", jobStatus.NodeID,
 		"processed_rows", jobStatus.ProcessedRows)
 
-	return s.pluginAPI.KVSet(ReindexJobKey, jobStatus)
+	// CAS so a fresh run that has already claimed the row on another
+	// node is not clobbered. We don't care if the CAS loses — that just
+	// means someone else already moved the row.
+	if _, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, jobStatus, newStatus); casErr != nil {
+		return casErr
+	}
+	return nil
 }
 
 // getModelInfoFromConfig builds ModelInfo from the current configuration

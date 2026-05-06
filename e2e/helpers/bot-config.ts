@@ -1,9 +1,12 @@
 import { Client4 } from '@mattermost/client';
 import MattermostContainer from './mmcontainer';
+import { mergeAgentIntoUpdate, type AgentResponse, type UpdateAgentRequest } from './agent-api';
 import {
     mattermostAIAdminConfigApiFromClient,
+    mattermostAIPluginRoutes,
     normalizeMattermostAiConfigFromApi,
     type PluginAdminConfigApi,
+    type PluginRoutesApi,
 } from './plugin-http';
 
 export interface BotConfig {
@@ -58,11 +61,65 @@ export interface PluginConfig {
     };
 }
 
+/** Maps legacy BotConfig partial updates to UpdateAgentRequest overrides for mergeAgentIntoUpdate. */
+function botConfigPartialToUpdateOverrides(updates: Partial<BotConfig>): Partial<UpdateAgentRequest> {
+    const o: Partial<UpdateAgentRequest> = {};
+    if (updates.displayName !== undefined) {
+        o.displayName = updates.displayName;
+    }
+    if (updates.customInstructions !== undefined) {
+        o.customInstructions = updates.customInstructions;
+    }
+    if (updates.serviceID !== undefined) {
+        o.serviceID = updates.serviceID;
+    }
+    if (updates.enableVision !== undefined) {
+        o.enableVision = updates.enableVision;
+    }
+    if (updates.disableTools !== undefined) {
+        o.disableTools = updates.disableTools;
+    }
+    if (updates.reasoningEnabled !== undefined) {
+        o.reasoningEnabled = updates.reasoningEnabled;
+    }
+    if (updates.reasoningEffort !== undefined) {
+        o.reasoningEffort = updates.reasoningEffort;
+    }
+    if (updates.thinkingBudget !== undefined) {
+        o.thinkingBudget = updates.thinkingBudget;
+    }
+    return o;
+}
+
 export class BotConfigHelper {
     private adminApi: PluginAdminConfigApi;
+    private routes: PluginRoutesApi;
+    private client: Client4;
 
     constructor(client: Client4, baseUrl: string) {
+        this.client = client;
         this.adminApi = mattermostAIAdminConfigApiFromClient(client, baseUrl);
+        this.routes = mattermostAIPluginRoutes(baseUrl);
+    }
+
+    private async listAgents(): Promise<AgentResponse[]> {
+        return this.routes.getJson('agents', this.client.getToken()) as Promise<AgentResponse[]>;
+    }
+
+    /** Map a DB-backed user agent to the legacy BotConfig shape used by older tests. */
+    private agentToBotConfig(a: AgentResponse): BotConfig {
+        return {
+            id: a.id,
+            name: a.name,
+            displayName: a.displayName,
+            customInstructions: a.customInstructions,
+            serviceID: a.serviceID,
+            enableVision: a.enableVision,
+            disableTools: a.disableTools,
+            reasoningEnabled: a.reasoningEnabled,
+            reasoningEffort: a.reasoningEffort,
+            thinkingBudget: a.thinkingBudget,
+        };
     }
 
     /**
@@ -88,7 +145,17 @@ export class BotConfigHelper {
      */
     async getBot(botId: string): Promise<BotConfig | undefined> {
         const config = await this.getPluginConfig();
-        return config.config.bots.find(bot => bot.id === botId);
+        const fromConfig = config.config.bots.find(bot => bot.id === botId);
+        if (fromConfig) {
+            return fromConfig;
+        }
+        try {
+            const agents = await this.listAgents();
+            const match = agents.find(a => a.id === botId);
+            return match ? this.agentToBotConfig(match) : undefined;
+        } catch {
+            return undefined;
+        }
     }
 
     /**
@@ -96,7 +163,17 @@ export class BotConfigHelper {
      */
     async getBotByName(botName: string): Promise<BotConfig | undefined> {
         const config = await this.getPluginConfig();
-        return config.config.bots.find(bot => bot.name === botName);
+        const fromConfig = config.config.bots.find(bot => bot.name === botName);
+        if (fromConfig) {
+            return fromConfig;
+        }
+        try {
+            const agents = await this.listAgents();
+            const match = agents.find(a => a.name === botName);
+            return match ? this.agentToBotConfig(match) : undefined;
+        } catch {
+            return undefined;
+        }
     }
 
     /**
@@ -106,16 +183,28 @@ export class BotConfigHelper {
         const config = await this.getPluginConfig();
         const botIndex = config.config.bots.findIndex(bot => bot.id === botId);
 
-        if (botIndex === -1) {
-            throw new Error(`Bot with ID ${botId} not found`);
+        if (botIndex !== -1) {
+            config.config.bots[botIndex] = {
+                ...config.config.bots[botIndex],
+                ...updates,
+            };
+            await this.updatePluginConfig(config);
+            return;
         }
 
-        config.config.bots[botIndex] = {
-            ...config.config.bots[botIndex],
-            ...updates,
-        };
-
-        await this.updatePluginConfig(config);
+        // Legacy config bots were migrated to Agents_UserAgents; update via user-agent API.
+        // PUT /agents/:id requires a full replacement body; partial JSON is rejected with 400.
+        const overrides = botConfigPartialToUpdateOverrides(updates);
+        if (Object.keys(overrides).length === 0) {
+            throw new Error(`Bot with ID ${botId} not found and no migratable fields to update`);
+        }
+        const token = this.client.getToken();
+        const current = (await this.routes.getJson(
+            `agents/${botId}`,
+            token,
+        )) as AgentResponse;
+        const body = mergeAgentIntoUpdate(current, overrides);
+        await this.routes.putJson(`agents/${botId}`, token, body);
     }
 
     /**

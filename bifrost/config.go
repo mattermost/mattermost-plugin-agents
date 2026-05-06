@@ -30,9 +30,52 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 		return schemas.Cohere, nil
 	case llm.ServiceTypeMistral:
 		return schemas.Mistral, nil
+	case llm.ServiceTypeGemini:
+		return schemas.Gemini, nil
+	case llm.ServiceTypeVertex:
+		return schemas.Vertex, nil
 	default:
 		return "", fmt.Errorf("unsupported service type: %s", serviceType)
 	}
+}
+
+// SupportsNativeTools reports whether the given service type can use provider
+// native tools (currently, web search). This gates both request-time filtering
+// and the effective-behavior checks used by built-in Mattermost tools so that
+// built-in fallbacks do not get suppressed when native tools would be stripped.
+func SupportsNativeTools(serviceType string) bool {
+	provider, err := MapServiceTypeToProvider(serviceType)
+	if err != nil {
+		return false
+	}
+	return supportsNativeToolsProvider(provider)
+}
+
+func supportsNativeTools(serviceType string) bool {
+	return SupportsNativeTools(serviceType)
+}
+
+func supportsNativeToolsProvider(provider schemas.ModelProvider) bool {
+	switch provider {
+	case schemas.OpenAI, schemas.Azure, schemas.Anthropic, schemas.Gemini, schemas.Vertex:
+		return true
+	default:
+		return false
+	}
+}
+
+func filterNativeToolsForServiceType(serviceType string, tools []string) []string {
+	if len(tools) == 0 {
+		return tools
+	}
+
+	filtered := make([]string, 0, len(tools))
+	if !supportsNativeTools(serviceType) {
+		return filtered
+	}
+
+	filtered = append(filtered, tools...)
+	return filtered
 }
 
 // NewFromServiceConfig creates a LLM instance from ServiceConfig and BotConfig.
@@ -64,30 +107,25 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 	}
 
 	apiURL = normalizeOpenAIBaseURL(provider, apiURL)
-
-	// OpenAI direct always uses the Responses API
-	useResponsesAPI := serviceConfig.UseResponsesAPI
-	if serviceConfig.Type == llm.ServiceTypeOpenAI {
-		useResponsesAPI = true
-	}
-
-	// Only pass native tools for providers that support them
 	enabledNativeTools := filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools)
 
 	cfg := Config{
-		Provider:           provider,
-		APIKey:             serviceConfig.APIKey,
-		APIURL:             apiURL,
-		OrgID:              serviceConfig.OrgID,
-		Region:             serviceConfig.Region,
-		AWSAccessKeyID:     serviceConfig.AWSAccessKeyID,
-		AWSSecretAccessKey: serviceConfig.AWSSecretAccessKey,
-		DefaultModel:       serviceConfig.DefaultModel,
-		InputTokenLimit:    serviceConfig.InputTokenLimit,
-		OutputTokenLimit:   serviceConfig.OutputTokenLimit,
-		StreamingTimeout:   streamingTimeout,
-		SendUserID:         serviceConfig.SendUserID,
-		UseResponsesAPI:    useResponsesAPI,
+		Provider:              provider,
+		APIKey:                serviceConfig.APIKey,
+		APIURL:                apiURL,
+		OrgID:                 serviceConfig.OrgID,
+		Region:                serviceConfig.Region,
+		AWSAccessKeyID:        serviceConfig.AWSAccessKeyID,
+		AWSSecretAccessKey:    serviceConfig.AWSSecretAccessKey,
+		VertexProjectID:       serviceConfig.VertexProjectID,
+		VertexProjectNumber:   serviceConfig.VertexProjectNumber,
+		VertexAuthCredentials: serviceConfig.VertexAuthCredentials,
+		DefaultModel:          serviceConfig.DefaultModel,
+		InputTokenLimit:       serviceConfig.InputTokenLimit,
+		OutputTokenLimit:      serviceConfig.OutputTokenLimit,
+		StreamingTimeout:      streamingTimeout,
+		SendUserID:            serviceConfig.SendUserID,
+		UseResponsesAPI:       llm.ServiceUsesResponsesAPI(serviceConfig),
 
 		// Bot-specific configuration
 		EnabledNativeTools: enabledNativeTools,
@@ -117,30 +155,6 @@ func normalizeOpenAIBaseURL(provider schemas.ModelProvider, apiURL string) strin
 	return apiURL
 }
 
-// supportsNativeTools returns true if the service type supports native tools
-// (e.g., web_search). Only OpenAI-family and Anthropic services support them.
-func supportsNativeTools(serviceType string) bool {
-	switch serviceType {
-	case llm.ServiceTypeOpenAI,
-		llm.ServiceTypeOpenAICompatible,
-		llm.ServiceTypeAzure,
-		llm.ServiceTypeAnthropic:
-		return true
-	default:
-		return false
-	}
-}
-
-// filterNativeToolsForServiceType returns the native tools list only for
-// providers that support them. For unsupported providers, returns nil to
-// prevent enabledNativeTools from incorrectly triggering the Responses API path.
-func filterNativeToolsForServiceType(serviceType string, tools []string) []string {
-	if !supportsNativeTools(serviceType) {
-		return nil
-	}
-	return tools
-}
-
 // IsSupported returns true if the service type is supported by Bifrost.
 func IsSupported(serviceType string) bool {
 	switch serviceType {
@@ -150,7 +164,9 @@ func IsSupported(serviceType string) bool {
 		llm.ServiceTypeAnthropic,
 		llm.ServiceTypeBedrock,
 		llm.ServiceTypeCohere,
-		llm.ServiceTypeMistral:
+		llm.ServiceTypeMistral,
+		llm.ServiceTypeGemini,
+		llm.ServiceTypeVertex:
 		return true
 	default:
 		return false
