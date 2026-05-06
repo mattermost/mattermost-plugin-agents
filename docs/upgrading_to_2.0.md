@@ -29,17 +29,9 @@ Complete every item before starting the upgrade. Do not skip the database backup
 
 ## 3. Version sequence
 
-v2.0.0 expects an existing v1.x install to already contain the bots/services schema split that shipped in **v1.5.0** (PRs #409, #410, #411) and the embedded-service-config migration fix that shipped in **v1.6.0** (PR #428). The supported and recommended source version for the v2.0.0 upgrade is **v1.7.2**.
+The supported upgrade path is to upgrade Mattermost to the latest v11.6 patch release before upgrading to Mattermost v11.7, which includes Agents v2.0.0.
 
-| Source plugin version | Supported direct upgrade to v2.0.0? | Required intermediate step |
-|---|---|---|
-| v1.7.2 | Yes (tested and recommended path) | None |
-| v1.7.0, v1.7.1 | Likely safe; v1.7.2 is the tested and recommended source. | Optional: upgrade to v1.7.2 first |
-| v1.6.x | Likely safe; v1.7.2 is the tested and recommended source. | Optional: upgrade to v1.7.2 first |
-| v1.5.x | Likely safe; v1.7.2 is the tested and recommended source. | Optional: upgrade to v1.7.2 first |
-| v1.4.x or earlier | Likely safe; v1.7.2 is the tested and recommended source. | Optional: upgrade to v1.7.2 first |
-
-> **Why this matters:** v1.7.2 is the tested and supported source for v2.0.0 upgrades. Earlier v1.x versions are likely to upgrade cleanly because v2.0.0 runs its own copy of the bots/services migration during startup, but only v1.7.2 has been QA'd as the upgrade source. Schedule a smoke test if you must upgrade from an earlier version.
+> **Why this matters:** Mattermost v11.6 is the tested source release for the Agents v2.0.0 upgrade. Upgrade to Mattermost v11.6 first if you are running an earlier Mattermost or plugin version.
 
 ## 4. What gets migrated automatically
 
@@ -146,8 +138,8 @@ Use this path when you receive Agents through the Mattermost server packaging.
     1. Back up the Mattermost database.
     2. Back up `config.json` (or your equivalent stored plugin configuration source).
     3. If your deployment includes indexed vector data on a separate volume, snapshot it as well.
-2. **Upgrade to the latest Mattermost v11.6 patch release.** Mattermost v11.6 includes Agents v1.7.2, which is the tested source version for the v2.0.0 upgrade.
-3. **Confirm the v11.6 upgrade is healthy.** Verify Mattermost starts cleanly and that Mattermost AI / Mattermost Agents is enabled at v1.7.2.
+2. **Upgrade to the latest Mattermost v11.6 patch release.** Mattermost v11.6 is the tested source release for the Agents v2.0.0 upgrade.
+3. **Confirm the v11.6 upgrade is healthy.** Verify Mattermost starts cleanly and that Mattermost AI / Mattermost Agents is enabled.
 4. **Upgrade Mattermost to v11.7.** Mattermost v11.7 includes Agents v2.0.0.
 5. **Watch the logs.** On startup, Agents v2.0.0 runs migrations 000005, 000006, and 000007, then performs the legacy bot migration described in [Section 4](#4-what-gets-migrated-automatically). In server logs, confirm:
     - Plugin start messages.
