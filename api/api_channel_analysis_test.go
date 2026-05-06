@@ -149,7 +149,7 @@ func setupChannelAnalysisAPI(t *testing.T, dynamicLoading bool) (*TestEnvironmen
 	e.mockAPI.On("GetChannel", testChannelID).Return(channel, nil)
 	e.mockAPI.On("HasPermissionToChannel", testUserID, testChannelID, model.PermissionReadChannel).Return(true)
 	e.mockAPI.On("GetTeam", "teamid").Return(&model.Team{Id: "teamid", Name: "team"}, nil).Maybe()
-	e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Username: "requester", Locale: "en"}, nil)
+	e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID, Username: "requester", Locale: "en"}, nil).Maybe()
 
 	return e, streamingService, fakeLLM
 }
