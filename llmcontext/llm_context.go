@@ -28,7 +28,7 @@ type MCPToolProvider interface {
 }
 
 type MCPToolRetrievalOverrideProvider interface {
-	GetToolRetrievalOverridesForUser(userID string) map[string]mcp.MCPToolRetrievalOverride
+	GetToolRetrievalOverrides() map[string]mcp.MCPToolRetrievalOverride
 }
 
 type LoadedMCPToolStore interface {
@@ -283,7 +283,7 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	}
 
 	if botCfg.MCPDynamicToolLoading {
-		b.buildStrictMCPToolStore(store, mcpTools, c, botIDForLoadedMCPTools(c, bot), userID, b.strictRegistryOptions(userID)...)
+		b.buildStrictMCPToolStore(store, mcpTools, c, botIDForLoadedMCPTools(c, bot), userID, b.strictRegistryOptions()...)
 		return store
 	}
 
@@ -341,7 +341,7 @@ func (b *Builder) preloadMCPTools(store *llm.ToolStore, available []llm.Tool, sp
 	}
 }
 
-func (b *Builder) strictRegistryOptions(userID string) []mcp.MCPToolRegistryOption {
+func (b *Builder) strictRegistryOptions() []mcp.MCPToolRegistryOption {
 	if b == nil || b.mcpToolProvider == nil {
 		return nil
 	}
@@ -351,7 +351,7 @@ func (b *Builder) strictRegistryOptions(userID string) []mcp.MCPToolRegistryOpti
 		return nil
 	}
 
-	overrides := provider.GetToolRetrievalOverridesForUser(userID)
+	overrides := provider.GetToolRetrievalOverrides()
 	if len(overrides) == 0 {
 		return nil
 	}

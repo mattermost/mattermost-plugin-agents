@@ -52,7 +52,7 @@ func TestClientManagerReInitIdleTimeoutDefaulting(t *testing.T) {
 	}
 }
 
-func TestClientManagerGetToolRetrievalOverridesForUserRemote(t *testing.T) {
+func TestClientManagerGetToolRetrievalOverridesRemote(t *testing.T) {
 	manager := &ClientManager{
 		config: Config{
 			Servers: []ServerConfig{
@@ -69,7 +69,7 @@ func TestClientManagerGetToolRetrievalOverridesForUserRemote(t *testing.T) {
 		},
 	}
 
-	overrides := manager.GetToolRetrievalOverridesForUser("user-id")
+	overrides := manager.GetToolRetrievalOverrides()
 
 	require.Equal(t, map[string]MCPToolRetrievalOverride{
 		MCPToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
@@ -78,7 +78,7 @@ func TestClientManagerGetToolRetrievalOverridesForUserRemote(t *testing.T) {
 	}, overrides)
 }
 
-func TestClientManagerGetToolRetrievalOverridesForUserEmbedded(t *testing.T) {
+func TestClientManagerGetToolRetrievalOverridesEmbedded(t *testing.T) {
 	manager := &ClientManager{
 		config: Config{
 			EmbeddedServer: EmbeddedServerConfig{
@@ -89,7 +89,7 @@ func TestClientManagerGetToolRetrievalOverridesForUserEmbedded(t *testing.T) {
 		},
 	}
 
-	overrides := manager.GetToolRetrievalOverridesForUser("user-id")
+	overrides := manager.GetToolRetrievalOverrides()
 
 	require.Equal(t, map[string]MCPToolRetrievalOverride{
 		MCPToolRetrievalOverrideKey(EmbeddedClientKey, "search_users"): {
@@ -115,7 +115,7 @@ func TestClientManagerGetToolRetrievalOverridesTrimsAndSkipsEmpty(t *testing.T) 
 		},
 	}
 
-	overrides := manager.GetToolRetrievalOverridesForUser("user-id")
+	overrides := manager.GetToolRetrievalOverrides()
 
 	require.Equal(t, map[string]MCPToolRetrievalOverride{
 		MCPToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
@@ -141,7 +141,7 @@ func TestClientManagerGetToolRetrievalOverridesLastDuplicateWins(t *testing.T) {
 		},
 	}
 
-	overrides := manager.GetToolRetrievalOverridesForUser("user-id")
+	overrides := manager.GetToolRetrievalOverrides()
 
 	require.Equal(t, "new summary", overrides[MCPToolRetrievalOverrideKey("https://jira.example.com", "get_issue")].Summary)
 }
@@ -162,5 +162,5 @@ func TestClientManagerGetToolRetrievalOverridesDisabledServer(t *testing.T) {
 		},
 	}
 
-	require.Empty(t, manager.GetToolRetrievalOverridesForUser("user-id"))
+	require.Empty(t, manager.GetToolRetrievalOverrides())
 }

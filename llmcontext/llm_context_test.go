@@ -60,7 +60,7 @@ func (p *staticMCPToolProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors
 	return p.tools, p.errors
 }
 
-func (p *staticMCPToolProvider) GetToolRetrievalOverridesForUser(string) map[string]mcp.MCPToolRetrievalOverride {
+func (p *staticMCPToolProvider) GetToolRetrievalOverrides() map[string]mcp.MCPToolRetrievalOverride {
 	return p.overrides
 }
 

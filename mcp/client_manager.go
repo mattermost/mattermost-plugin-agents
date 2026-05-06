@@ -185,9 +185,7 @@ func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 	return filtered, mcpErrors
 }
 
-func (m *ClientManager) GetToolRetrievalOverridesForUser(userID string) map[string]MCPToolRetrievalOverride {
-	_ = userID
-
+func (m *ClientManager) GetToolRetrievalOverrides() map[string]MCPToolRetrievalOverride {
 	if m == nil {
 		return nil
 	}
