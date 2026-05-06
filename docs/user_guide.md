@@ -88,7 +88,7 @@ In channels, tool approval can be a two-step process. After you approve a tool c
 
 If a tool execution fails, the Agent can continue with a follow-up response instead of stopping immediately. After three consecutive failed tool executions, the Agent stops calling further tools and is instructed to explain the latest error and ask you for guidance or any missing information. A successful tool execution resets that count.
 
-On web and desktop, start a new chat in the Agents right-hand pane and open the **Tools** menu in the header. The menu lists configured tool providers. For MCP servers that use OAuth, you'll see **Connect** when you're not authenticated and **Disconnect** when an OAuth session applies. You can turn individual providers on or off from this menu, and your choices are saved as your personal preferences. Mattermost doesn't send OAuth connection prompts as ephemeral posts in the conversation; use the **Tools** menu to check connection state and complete **Connect** or **Disconnect** flows.
+On web and desktop, start a new chat in the Agents right-hand pane and open the **Tools** menu in the header. The menu lists configured tool providers. For MCP servers that use OAuth, you'll see **Connect** when you're not authenticated and **Disconnect** when an OAuth session applies. If a provider later requires OAuth again for tool calls, the menu can return to **Connect** even if tools were previously available. After you reconnect or disconnect, the menu refreshes to show the current provider and tool state. You can turn individual providers on or off from this menu, and your choices are saved as your personal preferences. Mattermost doesn't send OAuth connection prompts as ephemeral posts in the conversation; use the **Tools** menu to check connection state and complete **Connect** or **Disconnect** flows.
 
 > **Note:** The Mattermost mobile apps don't currently support starting MCP OAuth connections from the Agents experience. Use web or desktop to connect OAuth-backed MCP providers.
 
@@ -99,7 +99,7 @@ Depending on your workspace configuration, available tools in direct messages, a
 
 Tool availability depends on your user permissions, provider connection status, and workspace configuration.
 
-Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
+Some MCP providers require each user to connect their own account before those tools become available. When that applies, or when a provider returns to **Connect** because it needs OAuth again, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the current tools.
 
 ## Analyze threads and channels
 

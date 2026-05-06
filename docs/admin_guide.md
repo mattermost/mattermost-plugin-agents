@@ -420,6 +420,7 @@ The MCP client and the embedded Mattermost MCP server are always enabled. Admins
 4. When creating or editing an agent on the **Agents** page, use the **MCPs** tab to choose whether that agent can use all MCP tools automatically or only a selected set of tools.
 
 The **Tools** tab refreshes automatically after the current user connects or disconnects an OAuth-backed MCP server. Because MCP OAuth connections are per-user, this live refresh applies only to the user who completed the connect or disconnect action.
+In high-availability deployments, that user's connect or disconnect change is also propagated across cluster nodes so the **Tools** tab and Agents **Tools** menus stay in sync.
 
 You can't disable MCP entirely from the System Console. To limit access, disable individual tools or change their policy in the **Tools** tab.
 
@@ -437,7 +438,7 @@ You can't disable MCP entirely from the System Console. To limit access, disable
 
 ### Configure OAuth-backed servers for agents
 
-When you create or edit an agent from the **Agents** page, the **MCPs** tab in the full-page agent editor lists the MCP servers available to that agent. If an OAuth-backed server is not connected for your account yet, the row shows a **Connect** button so you can complete the provider sign-in flow without leaving the editor. The MCPs tab refreshes automatically after you connect or disconnect, so you don't need to reopen it to see updated server status.
+When you create or edit an agent from the **Agents** page, the **MCPs** tab in the full-page agent editor lists the MCP servers available to that agent. If an OAuth-backed server is not connected for your account yet, or if the provider later requires OAuth again for tool calls, the row shows a **Connect** button so you can complete the provider sign-in flow without leaving the editor. The MCPs tab refreshes automatically after you connect or disconnect, so you don't need to reopen it to see updated server status.
 
 If a disconnected OAuth-backed server currently exposes no tools, you can still toggle that server on while configuring the agent. Saving the agent in this state grants the agent access to every tool that server exposes after a user connects to that provider.
 
@@ -455,11 +456,13 @@ Enabling a server or tool for an agent controls what the agent is allowed to use
 
 ### OAuth-backed MCP servers
 
-Some MCP servers require OAuth per Mattermost user. For those servers, the plugin exposes `needsOAuth` and `authURL` to the Agents webapp so the UI can show when authorization is required and where to begin the flow. The webapp starts OAuth through the plugin route `GET /plugins/mattermost-ai/mcp/oauth/<server name>/start` and can clear the current user's stored token with `DELETE /plugins/mattermost-ai/mcp/oauth/<server name>`.
+Some MCP servers require OAuth per Mattermost user. For those servers, the plugin exposes `needsOAuth` and `authURL` to the Agents webapp so the UI can show when authorization is required and where to begin the flow. If a server that previously exposed tools later requires OAuth for tool calls, Mattermost prefers the reconnect-required state over stale discovered tools so the UI can show **Connect** again. The webapp starts OAuth through the plugin route `GET /plugins/mattermost-ai/mcp/oauth/<server name>/start` and can clear the current user's stored token with `DELETE /plugins/mattermost-ai/mcp/oauth/<server name>`.
 
 **Agents panel (web and desktop):** In the Agents right-hand sidebar, start a new chat and open **Tools**. OAuth-backed servers show **Connect** when the signed-in user is not authenticated, and **Disconnect** when an OAuth session applies.
 
 **System Console (admin tool configuration):** On **System Console > Plugins > Agents > MCP Servers**, expanding an OAuth-backed server shows that you must authenticate to fetch that server's tool list and configure per-tool approval policies. That sign-in only applies to your administrator account. Each end user must authenticate separately, even after an admin has connected in the System Console.
+
+After a successful OAuth callback or an explicit disconnect, Mattermost refreshes that user's MCP connection state across cluster nodes so the System Console **Tools** tab, the Agents **Tools** menu, and subsequent tool loading stay consistent in high-availability deployments.
 
 **Conversations:** The plugin no longer posts ephemeral in-channel or in-thread messages to prompt MCP OAuth. Users should use the Agents webapp **Tools** menu to view connection state and run **Connect** or **Disconnect**.
 
