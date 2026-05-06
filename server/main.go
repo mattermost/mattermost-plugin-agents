@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -57,6 +58,9 @@ type Plugin struct {
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
 	telemetryShutdown    telemetry.ShutdownFunc
+	telemetryMu          sync.Mutex
+	telemetryMode        telemetry.OutputMode
+	telemetryEndpoint    string
 	store                *store.Store
 	configMigrated       bool
 }
@@ -511,17 +515,10 @@ func (p *Plugin) OnActivate() error {
 
 	apiService.SetConversationService(convService)
 
-	// Initialize OpenTelemetry tracing if enabled
-	cfg := p.configuration.Config()
-	if cfg.EnableOpenTelemetry {
-		shutdown, telErr := telemetry.Init(context.Background(), "mattermost-ai-agents", manifest.Version, cfg.OpenTelemetryEndpoint)
-		if telErr != nil {
-			pluginAPI.Log.Error("Failed to initialize OpenTelemetry", "error", telErr)
-		} else {
-			p.telemetryShutdown = shutdown
-			pluginAPI.Log.Info("OpenTelemetry tracing initialized", "endpoint", cfg.OpenTelemetryEndpoint)
-		}
-	}
+	// Apply OpenTelemetry config now and re-apply on every config change so
+	// admins don't need to restart the plugin to switch modes.
+	p.applyTelemetryConfig()
+	p.configuration.RegisterUpdateListener(p.applyTelemetryConfig)
 
 	// Keep only what we need
 	p.apiService = apiService
@@ -535,16 +532,61 @@ func (p *Plugin) OnActivate() error {
 
 func (p *Plugin) OnDeactivate() error {
 	// Flush pending telemetry spans
+	p.telemetryMu.Lock()
 	if p.telemetryShutdown != nil {
 		if err := p.telemetryShutdown(context.Background()); err != nil {
 			p.pluginAPI.Log.Error("Failed to shutdown OpenTelemetry", "error", err)
 		}
+		p.telemetryShutdown = nil
 	}
+	p.telemetryMu.Unlock()
 
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()
 
 	return nil
+}
+
+// applyTelemetryConfig (re)initializes the global OpenTelemetry TracerProvider
+// from the current plugin configuration. It is safe to call repeatedly: when
+// the mode and endpoint match what's already running, it is a no-op. When the
+// settings change it shuts the previous provider down and installs a new one.
+func (p *Plugin) applyTelemetryConfig() {
+	cfg := p.configuration.Config()
+	mode := telemetry.OutputMode(cfg.TelemetryOutput)
+	if mode == "" {
+		mode = telemetry.OutputModeOff
+	}
+	endpoint := cfg.OpenTelemetryEndpoint
+
+	p.telemetryMu.Lock()
+	defer p.telemetryMu.Unlock()
+
+	if mode == p.telemetryMode && endpoint == p.telemetryEndpoint {
+		return
+	}
+
+	if p.telemetryShutdown != nil {
+		if err := p.telemetryShutdown(context.Background()); err != nil {
+			p.pluginAPI.Log.Error("Failed to shutdown previous OpenTelemetry provider", "error", err)
+		}
+		p.telemetryShutdown = nil
+	}
+
+	shutdown, err := telemetry.Init(context.Background(), "mattermost-ai-agents", manifest.Version, mode, endpoint, &p.pluginAPI.Log)
+	if err != nil {
+		p.pluginAPI.Log.Error("Failed to initialize OpenTelemetry", "error", err, "mode", string(mode))
+		// Leave previous mode tracked so the next change still triggers a re-init.
+		return
+	}
+	p.telemetryShutdown = shutdown
+	p.telemetryMode = mode
+	p.telemetryEndpoint = endpoint
+	if mode == telemetry.OutputModeOff {
+		p.pluginAPI.Log.Info("OpenTelemetry tracing disabled")
+	} else {
+		p.pluginAPI.Log.Info("OpenTelemetry tracing initialized", "mode", string(mode))
+	}
 }
 
 func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {

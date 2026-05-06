@@ -101,7 +101,7 @@ const defaultConfig: Config = {
     bots: [],
     defaultBotName: '',
     transcriptBackend: '',
-    enableOpenTelemetry: false,
+    telemetryOutput: 'off',
     openTelemetryEndpoint: '',
     enableTokenUsageLogging: false,
     enableCallSummary: false,
@@ -370,20 +370,25 @@ const Config = (props: Props) => {
                 subtitle=''
             >
                 <ItemList>
-                    <BooleanItem
-                        label={intl.formatMessage({defaultMessage: 'Enable OpenTelemetry'})}
-                        value={value.enableOpenTelemetry}
-                        onChange={(to) => updateConfig({enableOpenTelemetry: to})}
-                        helpText={intl.formatMessage({defaultMessage: 'Enable distributed tracing of LLM requests, tool execution, and search operations via OpenTelemetry. Traces are exported to the configured OTLP endpoint.'})}
-                    />
-                    <TextItem
-                        label={intl.formatMessage({defaultMessage: 'OpenTelemetry Endpoint'})}
-                        value={value.openTelemetryEndpoint}
-                        onChange={(e) => updateConfig({openTelemetryEndpoint: e.target.value})}
-                        helptext={intl.formatMessage({defaultMessage: 'OTLP gRPC endpoint for trace export (e.g. localhost:4317). Required when OpenTelemetry is enabled.'})}
-                        placeholder={'localhost:4317'}
-                        disabled={!value.enableOpenTelemetry}
-                    />
+                    <SelectionItem
+                        label={intl.formatMessage({defaultMessage: 'Trace Output'})}
+                        value={value.telemetryOutput || 'off'}
+                        onChange={(e) => updateConfig({telemetryOutput: e.target.value as 'off' | 'logs' | 'otlp'})}
+                        helptext={intl.formatMessage({defaultMessage: 'Where to send distributed traces of LLM requests, tool execution, and search operations. "Server Logs" writes spans to the Mattermost server log and requires no extra infrastructure. "OTLP Endpoint" exports spans to a collector such as Grafana Tempo or Jaeger.'})}
+                    >
+                        <SelectionItemOption value='off'>{intl.formatMessage({defaultMessage: 'Off'})}</SelectionItemOption>
+                        <SelectionItemOption value='logs'>{intl.formatMessage({defaultMessage: 'Server Logs'})}</SelectionItemOption>
+                        <SelectionItemOption value='otlp'>{intl.formatMessage({defaultMessage: 'OTLP Endpoint'})}</SelectionItemOption>
+                    </SelectionItem>
+                    {value.telemetryOutput === 'otlp' && (
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'OpenTelemetry Endpoint'})}
+                            value={value.openTelemetryEndpoint}
+                            onChange={(e) => updateConfig({openTelemetryEndpoint: e.target.value})}
+                            helptext={intl.formatMessage({defaultMessage: 'OTLP gRPC endpoint for trace export (e.g. localhost:4317).'})}
+                            placeholder={'localhost:4317'}
+                        />
+                    )}
                     <BooleanItem
                         label={intl.formatMessage({defaultMessage: 'Enable Token Usage Logging'})}
                         value={value.enableTokenUsageLogging}

@@ -361,21 +361,24 @@ HTTP POST /post/:postid/react
        └── stream to post
 ```
 
-#### Enabling OpenTelemetry
+#### Enabling tracing
 
-1. Set **Enable OpenTelemetry** to `true` in the plugin configuration
-2. Set **OpenTelemetry Endpoint** to your OTLP gRPC collector address (e.g., `localhost:4317`)
+The plugin offers three trace output modes, configurable via **Trace Output** in the System Console:
 
-These settings can be configured via the System Console plugin settings page or directly in the plugin configuration JSON:
+- **Off** — tracing disabled, zero overhead.
+- **Server Logs** — finished spans are written to the Mattermost server log via the standard plugin logger. No collector required; pick this if you don't run Tempo, Jaeger, or another OTLP backend.
+- **OTLP Endpoint** — spans are exported over OTLP gRPC to the endpoint configured in **OpenTelemetry Endpoint** (e.g. `localhost:4317`). Use this for full distributed tracing with a backend like Grafana Tempo or Jaeger.
+
+The setting can also be configured directly in the plugin configuration JSON:
 
 ```json
 {
-  "enableOpenTelemetry": true,
+  "telemetryOutput": "otlp",
   "openTelemetryEndpoint": "your-collector:4317"
 }
 ```
 
-When the endpoint is empty or the feature is disabled, the plugin uses a no-op tracer with zero overhead.
+Valid values for `telemetryOutput` are `off`, `logs`, and `otlp`. When set to `off` (or omitted), the plugin uses a no-op tracer with zero overhead. The `openTelemetryEndpoint` field is only consulted when the mode is `otlp`.
 
 #### Local development with Grafana Tempo
 

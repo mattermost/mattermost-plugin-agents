@@ -14,34 +14,91 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
-func TestInit_NoEndpoint(t *testing.T) {
-	shutdown, err := Init(context.Background(), "test-svc", "1.0.0", "")
+func TestInit_Off(t *testing.T) {
+	shutdown, err := Init(context.Background(), "test-svc", "1.0.0", OutputModeOff, "", nil)
 	if err != nil {
-		t.Fatalf("Init with empty endpoint should not error, got: %v", err)
+		t.Fatalf("Init off should not error, got: %v", err)
 	}
 	defer shutdown(context.Background()) //nolint:errcheck
 
 	tp := otel.GetTracerProvider()
 	if _, ok := tp.(noop.TracerProvider); !ok {
-		t.Errorf("expected noop TracerProvider when endpoint is empty, got %T", tp)
+		t.Errorf("expected noop TracerProvider for off mode, got %T", tp)
 	}
 }
 
-func TestInit_WithEndpoint(t *testing.T) {
-	// Use a non-routable address so we don't actually connect
-	shutdown, err := Init(context.Background(), "test-svc", "1.0.0", "192.0.2.1:4317")
+func TestInit_EmptyMode(t *testing.T) {
+	// Empty string should behave like OutputModeOff for backward compat with
+	// existing config installations.
+	shutdown, err := Init(context.Background(), "test-svc", "1.0.0", "", "", nil)
 	if err != nil {
-		t.Fatalf("Init with endpoint should not error, got: %v", err)
+		t.Fatalf("Init empty mode should not error, got: %v", err)
+	}
+	defer shutdown(context.Background()) //nolint:errcheck
+
+	if _, ok := otel.GetTracerProvider().(noop.TracerProvider); !ok {
+		t.Errorf("expected noop TracerProvider for empty mode")
+	}
+}
+
+func TestInit_Logs(t *testing.T) {
+	fake := &fakeLog{}
+	shutdown, err := Init(context.Background(), "test-svc", "1.0.0", OutputModeLogs, "", fake)
+	if err != nil {
+		t.Fatalf("Init logs should not error, got: %v", err)
 	}
 	defer shutdown(context.Background()) //nolint:errcheck
 
 	tp := otel.GetTracerProvider()
 	if _, ok := tp.(*sdktrace.TracerProvider); !ok {
-		t.Errorf("expected SDK TracerProvider when endpoint is set, got %T", tp)
+		t.Fatalf("expected SDK TracerProvider for logs mode, got %T", tp)
 	}
 
-	// Restore noop for other tests
+	_, span := Tracer().Start(context.Background(), "logs-mode-span")
+	span.End()
+
+	if err := tp.(*sdktrace.TracerProvider).Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if len(fake.entries) == 0 {
+		t.Error("expected at least one log entry from logs mode span")
+	}
+
 	otel.SetTracerProvider(noop.NewTracerProvider())
+}
+
+func TestInit_LogsRequiresLogger(t *testing.T) {
+	if _, err := Init(context.Background(), "test-svc", "1.0.0", OutputModeLogs, "", nil); err == nil {
+		t.Error("expected error when logs mode is given a nil LogService")
+	}
+}
+
+func TestInit_OTLP(t *testing.T) {
+	// Use a non-routable address so we don't actually connect
+	shutdown, err := Init(context.Background(), "test-svc", "1.0.0", OutputModeOTLP, "192.0.2.1:4317", nil)
+	if err != nil {
+		t.Fatalf("Init OTLP should not error, got: %v", err)
+	}
+	defer shutdown(context.Background()) //nolint:errcheck
+
+	tp := otel.GetTracerProvider()
+	if _, ok := tp.(*sdktrace.TracerProvider); !ok {
+		t.Errorf("expected SDK TracerProvider for otlp mode, got %T", tp)
+	}
+
+	otel.SetTracerProvider(noop.NewTracerProvider())
+}
+
+func TestInit_OTLPRequiresEndpoint(t *testing.T) {
+	if _, err := Init(context.Background(), "test-svc", "1.0.0", OutputModeOTLP, "", nil); err == nil {
+		t.Error("expected error when otlp mode is given an empty endpoint")
+	}
+}
+
+func TestInit_UnknownMode(t *testing.T) {
+	if _, err := Init(context.Background(), "test-svc", "1.0.0", OutputMode("bogus"), "", nil); err == nil {
+		t.Error("expected error for unknown mode")
+	}
 }
 
 func TestTracer(t *testing.T) {

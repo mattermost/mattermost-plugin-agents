@@ -20,23 +20,33 @@ import (
 
 const TracerName = "github.com/mattermost/mattermost-plugin-ai"
 
+// OutputMode selects where finished spans are sent.
+type OutputMode string
+
+const (
+	// OutputModeOff disables tracing entirely (no-op TracerProvider).
+	OutputModeOff OutputMode = "off"
+	// OutputModeLogs writes spans to the Mattermost server log via
+	// pluginapi.LogService. No collector required.
+	OutputModeLogs OutputMode = "logs"
+	// OutputModeOTLP exports spans to an OTLP gRPC endpoint such as
+	// Grafana Tempo or Jaeger.
+	OutputModeOTLP OutputMode = "otlp"
+)
+
 // ShutdownFunc is returned by Init and must be called to flush pending spans.
 type ShutdownFunc func(context.Context) error
 
-// Init sets up the global TracerProvider with an OTLP gRPC exporter.
-// When endpoint is empty, a no-op provider is registered instead.
-func Init(ctx context.Context, serviceName, serviceVersion, endpoint string) (ShutdownFunc, error) {
-	if endpoint == "" {
+// Init sets up the global TracerProvider for the selected output mode.
+//   - OutputModeOff registers a no-op provider.
+//   - OutputModeLogs writes finished spans through log.
+//   - OutputModeOTLP exports spans to the OTLP gRPC endpoint.
+//
+// log is required for OutputModeLogs; endpoint is required for OutputModeOTLP.
+func Init(ctx context.Context, serviceName, serviceVersion string, mode OutputMode, endpoint string, log LogService) (ShutdownFunc, error) {
+	if mode == "" || mode == OutputModeOff {
 		otel.SetTracerProvider(noop.NewTracerProvider())
 		return func(context.Context) error { return nil }, nil
-	}
-
-	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithInsecure(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
 	}
 
 	res, err := resource.New(ctx,
@@ -51,13 +61,35 @@ func Init(ctx context.Context, serviceName, serviceVersion, endpoint string) (Sh
 		return nil, fmt.Errorf("create resource: %w", err)
 	}
 
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter, sdktrace.WithBatchTimeout(5*time.Second)),
+	opts := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		sdktrace.WithIDGenerator(NewTurnIDGenerator()),
-	)
+	}
 
+	switch mode {
+	case OutputModeLogs:
+		if log == nil {
+			return nil, fmt.Errorf("log mode requires a LogService")
+		}
+		opts = append(opts, sdktrace.WithSpanProcessor(NewLogSpanProcessor(log)))
+	case OutputModeOTLP:
+		if endpoint == "" {
+			return nil, fmt.Errorf("otlp mode requires an endpoint")
+		}
+		exporter, err := otlptracegrpc.New(ctx,
+			otlptracegrpc.WithEndpoint(endpoint),
+			otlptracegrpc.WithInsecure(),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
+		}
+		opts = append(opts, sdktrace.WithBatcher(exporter, sdktrace.WithBatchTimeout(5*time.Second)))
+	default:
+		return nil, fmt.Errorf("unknown telemetry output mode: %q", mode)
+	}
+
+	tp := sdktrace.NewTracerProvider(opts...)
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 

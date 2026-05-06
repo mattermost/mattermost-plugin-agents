@@ -12,7 +12,7 @@ export type PluginConfig = {
     bots: LLMBotConfig[],
     defaultBotName: string,
     transcriptBackend: string,
-    enableOpenTelemetry: boolean,
+    telemetryOutput: 'off' | 'logs' | 'otlp' | '',
     openTelemetryEndpoint: string,
     enableTokenUsageLogging: boolean,
     enableCallSummary: boolean,
