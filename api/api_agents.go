@@ -262,7 +262,9 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	cfg.AdminUserIDs = req.AdminUserIDs
 	cfg.EnabledMCPTools = req.EnabledMCPTools
 	cfg.AutoEnableNewMCPTools = req.AutoEnableNewMCPTools
-	cfg.MCPDynamicToolLoading = mcpDynamicToolLoadingOrDefault(req.MCPDynamicToolLoading)
+	if req.MCPDynamicToolLoading != nil {
+		cfg.MCPDynamicToolLoading = *req.MCPDynamicToolLoading
+	}
 	cfg.Model = req.Model
 	cfg.EnableVision = req.EnableVision
 	cfg.DisableTools = req.DisableTools

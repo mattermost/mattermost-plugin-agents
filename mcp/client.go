@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/config"
@@ -171,7 +172,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 		return nil, fmt.Errorf("failed to create in-memory transport: %w", err)
 	}
 
-	var client *Client
+	var clientPtr atomic.Pointer[Client]
 
 	// Create MCP client
 	mcpClient := mcp.NewClient(
@@ -181,8 +182,8 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 		},
 		&mcp.ClientOptions{
 			ToolListChangedHandler: func(ctx context.Context, _ *mcp.ToolListChangedRequest) {
-				if client != nil {
-					client.notificationOwner().invalidateDiscoveredTools(ctx, c.toolsCache, EmbeddedClientKey, c.toolsCache != nil)
+				if cl := clientPtr.Load(); cl != nil {
+					cl.notificationOwner().invalidateDiscoveredTools(ctx, c.toolsCache, EmbeddedClientKey, c.toolsCache != nil)
 				}
 			},
 		},
@@ -195,7 +196,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 	}
 
 	// Create client instance
-	client = &Client{
+	client := &Client{
 		session:        mcpSession,
 		config:         ServerConfig{Name: EmbeddedClientKey, BaseURL: EmbeddedClientKey, Enabled: true},
 		tools:          make(map[string]*mcp.Tool),
@@ -206,6 +207,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 		embeddedClient: c,         // Store client helper for reconnection
 		sessionID:      sessionID, // Store session ID for reconnection
 	}
+	clientPtr.Store(client)
 
 	// Initialize tools
 	discoveredTools, err := listAllTools(ctx, mcpSession)

@@ -926,7 +926,7 @@ func TestUpdateAgentMCPDynamicToolLoadingPersistsExplicitFalse(t *testing.T) {
 	assert.False(t, response.MCPDynamicToolLoading)
 }
 
-func TestUpdateAgentMCPDynamicToolLoadingDefaultsTrueWhenOmitted(t *testing.T) {
+func TestUpdateAgentMCPDynamicToolLoadingPreservesWhenOmittedFromBody(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
 
@@ -952,7 +952,7 @@ func TestUpdateAgentMCPDynamicToolLoadingDefaultsTrueWhenOmitted(t *testing.T) {
 
 	updated := e.agentStore.agents["agent-1"]
 	require.NotNil(t, updated)
-	assert.True(t, updated.MCPDynamicToolLoading)
+	assert.False(t, updated.MCPDynamicToolLoading)
 }
 
 func TestGetAgentMCPDynamicToolLoadingRoundTrip(t *testing.T) {

@@ -197,8 +197,18 @@ func hasRequiredChannelAnalysisTool(store *llm.ToolStore, required llm.EnabledMC
 	if store == nil {
 		return false
 	}
-	tool := store.GetTool(required.ToolName)
-	return tool != nil && tool.ServerOrigin == required.ServerOrigin
+	if tool := store.GetTool(required.ToolName); tool != nil && tool.ServerOrigin == required.ServerOrigin {
+		return true
+	}
+	for _, tool := range store.GetTools() {
+		if tool.ServerOrigin != required.ServerOrigin {
+			continue
+		}
+		if tool.Name == required.ToolName || llm.BareMCPToolName(tool.Name) == required.ToolName {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *API) handleInterval(c *gin.Context) {

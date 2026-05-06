@@ -204,6 +204,17 @@ func TestChannelAnalysisToolAvailabilityRequiresEmbeddedOrigin(t *testing.T) {
 	require.Empty(t, missing)
 }
 
+func TestChannelAnalysisToolAvailabilityMatchesNamespacedBareName(t *testing.T) {
+	tools := llm.NewToolStore(nil, false)
+	tools.AddTools([]llm.Tool{
+		channelAnalysisMCPTool("read_channel"),
+		channelAnalysisMCPTool("get_channel_info"),
+	})
+
+	_, missing := channelAnalysisToolAvailability(tools)
+	require.Empty(t, missing)
+}
+
 func channelAnalysisVisibleToolNames(store *llm.ToolStore) []string {
 	if store == nil {
 		return nil

@@ -219,6 +219,33 @@ func (c *Conversations) ProcessDMRequest(
 	return &DMStreamResult{Stream: stream}, nil
 }
 
+func llmToolsFromContext(llmCtx *llm.Context) *llm.ToolStore {
+	if llmCtx == nil {
+		return nil
+	}
+	return llmCtx.Tools
+}
+
+// resolveToolStoreLookupName returns a name recognized by the store for the
+// given tool call name, preferring an exact match then any tool with the same
+// bare MCP name.
+func resolveToolStoreLookupName(store *llm.ToolStore, name string) string {
+	if store == nil || name == "" {
+		return ""
+	}
+	if store.GetTool(name) != nil {
+		return name
+	}
+	wantBare := llm.BareMCPToolName(name)
+	for _, tool := range store.GetTools() {
+		if llm.BareMCPToolName(tool.Name) != wantBare {
+			continue
+		}
+		return tool.Name
+	}
+	return ""
+}
+
 // shouldAutoExecuteTool returns a callback that decides whether a tool call
 // should be auto-executed based on the tool policy and the conversation
 // context. In DMs, both auto_run and auto_run_everywhere bypass approval.
@@ -233,14 +260,16 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 		if c.toolPolicyChecker == nil {
 			return false
 		}
-		if llmCtx == nil || llmCtx.Tools == nil || llmCtx.Tools.GetTool(tc.Name) == nil {
+		toolStore := llmToolsFromContext(llmCtx)
+		storeName := resolveToolStoreLookupName(toolStore, tc.Name)
+		if llmCtx == nil || toolStore == nil || storeName == "" {
 			return false
 		}
 		origin := tc.ServerOrigin
 		if origin == "" {
-			origin = llmCtx.Tools.GetServerOrigin(tc.Name)
+			origin = toolStore.GetServerOrigin(storeName)
 		}
-		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, llm.BareMCPToolName(tc.Name))
+		policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, llm.BareMCPToolName(storeName))
 		if !enabled {
 			return false
 		}
@@ -265,14 +294,16 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 			if c.toolPolicyChecker == nil {
 				return false
 			}
-			if llmCtx == nil || llmCtx.Tools == nil || llmCtx.Tools.GetTool(tc.Name) == nil {
+			toolStore := llmToolsFromContext(llmCtx)
+			storeName := resolveToolStoreLookupName(toolStore, tc.Name)
+			if llmCtx == nil || toolStore == nil || storeName == "" {
 				return false
 			}
 			origin := tc.ServerOrigin
 			if origin == "" {
-				origin = llmCtx.Tools.GetServerOrigin(tc.Name)
+				origin = toolStore.GetServerOrigin(storeName)
 			}
-			policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, llm.BareMCPToolName(tc.Name))
+			policy, enabled := c.toolPolicyChecker.GetToolPolicy(origin, llm.BareMCPToolName(storeName))
 			if !enabled || !mcp.IsToolPolicyAutoRunEverywhere(policy) {
 				return false
 			}

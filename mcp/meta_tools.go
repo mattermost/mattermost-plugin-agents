@@ -151,7 +151,6 @@ func loadToolResolver(registry *ToolRegistry, recorder LoadedToolRecorder) llm.T
 		}
 
 		if llmContext == nil {
-			llmContext.ObserveMCPDynamicToolEvent("load", "error")
 			return marshalMetaToolResult(LoadToolResult{
 				Loaded: false,
 				Error:  "cannot load tool without an LLM context",
