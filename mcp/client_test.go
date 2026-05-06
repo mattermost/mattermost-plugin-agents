@@ -745,7 +745,7 @@ func TestEmbeddedReconnectKeepsPaginatedDiscovery(t *testing.T) {
 	pluginAPI := newTestPluginAPIWithSession("session-id")
 
 	embeddedClient := NewEmbeddedServerClient(&fakeEmbeddedMCPServer{ctx: ctx, server: server}, pluginAPI.Log, pluginAPI)
-	client, err := embeddedClient.CreateClient(context.Background(), "user-id", "session-id")
+	client, err := embeddedClient.CreateClient(context.Background(), "test-user", "session-id")
 	require.NoError(t, err)
 	require.Len(t, client.Tools(), 3)
 	t.Cleanup(func() { _ = client.Close() })
