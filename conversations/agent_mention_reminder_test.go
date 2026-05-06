@@ -69,7 +69,7 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 	)
 	botService.SetBotsForTesting([]*bots.Bot{bot})
 
-	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, nil, nil, &mockConfigProvider{})
+	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, &testToolProvider{}, nil, &mockConfigProvider{})
 
 	client := &fakeMMClient{
 		users: map[string]*model.User{
