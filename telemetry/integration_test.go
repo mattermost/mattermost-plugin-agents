@@ -181,23 +181,23 @@ func TestLLMChatCompletionSpan(t *testing.T) {
 	if span.Name != "llm chat completion" {
 		t.Errorf("expected span name 'llm chat completion', got %q", span.Name)
 	}
-	if v := attrString(span, "ai.llm.provider"); v != "test-provider" {
-		t.Errorf("ai.llm.provider = %q, want 'test-provider'", v)
+	if v := attrString(span, "agents.llm.provider"); v != "test-provider" {
+		t.Errorf("agents.llm.provider = %q, want 'test-provider'", v)
 	}
-	if v := attrString(span, "ai.llm.model"); v != "test-model" {
-		t.Errorf("ai.llm.model = %q, want 'test-model'", v)
+	if v := attrString(span, "agents.llm.model"); v != "test-model" {
+		t.Errorf("agents.llm.model = %q, want 'test-model'", v)
 	}
-	if v := attrString(span, "ai.llm.operation"); v != "conversation" {
-		t.Errorf("ai.llm.operation = %q, want 'conversation'", v)
+	if v := attrString(span, "agents.llm.operation"); v != "conversation" {
+		t.Errorf("agents.llm.operation = %q, want 'conversation'", v)
 	}
-	if v := attrBool(span, "ai.llm.streaming"); !v {
-		t.Error("ai.llm.streaming should be true")
+	if v := attrBool(span, "agents.llm.streaming"); !v {
+		t.Error("agents.llm.streaming should be true")
 	}
-	if v := attrInt64(span, "ai.llm.input_tokens"); v != 10 {
-		t.Errorf("ai.llm.input_tokens = %d, want 10", v)
+	if v := attrInt64(span, "agents.llm.input_tokens"); v != 10 {
+		t.Errorf("agents.llm.input_tokens = %d, want 10", v)
 	}
-	if v := attrInt64(span, "ai.llm.output_tokens"); v != 5 {
-		t.Errorf("ai.llm.output_tokens = %d, want 5", v)
+	if v := attrInt64(span, "agents.llm.output_tokens"); v != 5 {
+		t.Errorf("agents.llm.output_tokens = %d, want 5", v)
 	}
 	if span.Status.Code != codes.Unset {
 		t.Errorf("expected unset status, got %v", span.Status.Code)
@@ -277,8 +277,8 @@ func TestToolResolveSpan(t *testing.T) {
 	if span.Name != "resolve tool" {
 		t.Errorf("expected span name 'resolve tool', got %q", span.Name)
 	}
-	if v := attrString(span, "ai.tool.name"); v != "test_tool" {
-		t.Errorf("ai.tool.name = %q, want 'test_tool'", v)
+	if v := attrString(span, "agents.tool.name"); v != "test_tool" {
+		t.Errorf("agents.tool.name = %q, want 'test_tool'", v)
 	}
 }
 
@@ -430,11 +430,11 @@ func TestFullRequestTrace(t *testing.T) {
 	if llmStub == nil {
 		t.Fatal("LLM span not found")
 	}
-	if v := attrInt64(llmStub, "ai.llm.input_tokens"); v != 150 {
-		t.Errorf("ai.llm.input_tokens = %d, want 150", v)
+	if v := attrInt64(llmStub, "agents.llm.input_tokens"); v != 150 {
+		t.Errorf("agents.llm.input_tokens = %d, want 150", v)
 	}
-	if v := attrInt64(llmStub, "ai.llm.output_tokens"); v != 42 {
-		t.Errorf("ai.llm.output_tokens = %d, want 42", v)
+	if v := attrInt64(llmStub, "agents.llm.output_tokens"); v != 42 {
+		t.Errorf("agents.llm.output_tokens = %d, want 42", v)
 	}
 
 	// Verify tool span has name attribute
@@ -442,7 +442,7 @@ func TestFullRequestTrace(t *testing.T) {
 	if toolStub == nil {
 		t.Fatal("tool span not found")
 	}
-	if v := attrString(toolStub, "ai.tool.name"); v != "web_search" {
-		t.Errorf("ai.tool.name = %q, want 'web_search'", v)
+	if v := attrString(toolStub, "agents.tool.name"); v != "web_search" {
+		t.Errorf("agents.tool.name = %q, want 'web_search'", v)
 	}
 }

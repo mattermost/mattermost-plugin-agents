@@ -416,18 +416,19 @@ Traces include these semantic attributes for filtering and analysis:
 
 | Attribute | Description | Example |
 |-----------|-------------|---------|
-| `ai.llm.provider` | LLM provider name | `openai`, `anthropic` |
-| `ai.llm.model` | Model identifier | `gpt-4o`, `claude-3-opus` |
-| `ai.llm.operation` | Operation type | `conversation`, `title_generation` |
-| `ai.llm.input_tokens` | Input token count | `150` |
-| `ai.llm.output_tokens` | Output token count | `42` |
-| `ai.tool.name` | Tool being called | `web_search`, `read_channel` |
-| `ai.tool.id` | Tool call identifier | `call_abc123` |
-| `ai.mcp.server` | MCP server name | `github-server` |
-| `ai.mcp.tool` | MCP tool name | `search_issues` |
-| `ai.user.id` | Requesting user ID | `abc123def456` |
-| `ai.channel.id` | Channel ID | `abc123def456` |
-| `ai.post.id` | Post ID | `abc123def456` |
+| `agents.llm.provider` | LLM provider name | `openai`, `anthropic` |
+| `agents.llm.model` | Model identifier | `gpt-4o`, `claude-3-opus` |
+| `agents.llm.operation` | Operation type | `conversation`, `title_generation` |
+| `agents.llm.input_tokens` | Input token count | `150` |
+| `agents.llm.output_tokens` | Output token count | `42` |
+| `agents.tool.name` | Tool being called | `web_search`, `read_channel` |
+| `agents.tool.id` | Tool call identifier | `call_abc123` |
+| `agents.mcp.server` | MCP server name | `github-server` |
+| `agents.mcp.tool` | MCP tool name | `search_issues` |
+| `agents.user.id` | Requesting user ID | `abc123def456` |
+| `agents.channel.id` | Channel ID | `abc123def456` |
+| `agents.post.id` | Post ID | `abc123def456` |
+| `agents.thread.root_post.id` | Root post ID for thread correlation | `abc123def456` |
 
 ### Backup and restore
 

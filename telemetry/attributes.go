@@ -10,40 +10,40 @@ import (
 
 // Attribute keys for LLM operations
 var (
-	LLMProvider  = attribute.Key("ai.llm.provider")
-	LLMModel     = attribute.Key("ai.llm.model")
-	LLMOperation = attribute.Key("ai.llm.operation")
-	LLMStreaming = attribute.Key("ai.llm.streaming")
+	LLMProvider  = attribute.Key("agents.llm.provider")
+	LLMModel     = attribute.Key("agents.llm.model")
+	LLMOperation = attribute.Key("agents.llm.operation")
+	LLMStreaming = attribute.Key("agents.llm.streaming")
 
-	LLMInputTokens  = attribute.Key("ai.llm.input_tokens")
-	LLMOutputTokens = attribute.Key("ai.llm.output_tokens")
+	LLMInputTokens  = attribute.Key("agents.llm.input_tokens")
+	LLMOutputTokens = attribute.Key("agents.llm.output_tokens")
 )
 
 // Attribute keys for agent context
 var (
-	AgentName = attribute.Key("ai.agent.name")
-	AgentID   = attribute.Key("ai.agent.id")
+	AgentName = attribute.Key("agents.agent.name")
+	AgentID   = attribute.Key("agents.agent.id")
 )
 
 // Attribute keys for tool operations
 var (
-	ToolName   = attribute.Key("ai.tool.name")
-	ToolID     = attribute.Key("ai.tool.id")
-	ToolStatus = attribute.Key("ai.tool.status")
+	ToolName   = attribute.Key("agents.tool.name")
+	ToolID     = attribute.Key("agents.tool.id")
+	ToolStatus = attribute.Key("agents.tool.status")
 )
 
 // Attribute keys for MCP operations
 var (
-	MCPServer = attribute.Key("ai.mcp.server")
-	MCPTool   = attribute.Key("ai.mcp.tool")
+	MCPServer = attribute.Key("agents.mcp.server")
+	MCPTool   = attribute.Key("agents.mcp.tool")
 )
 
 // Attribute keys for Mattermost entities
 var (
-	UserID           = attribute.Key("ai.user.id")
-	ChannelID        = attribute.Key("ai.channel.id")
-	PostID           = attribute.Key("ai.post.id")
-	ThreadRootPostID = attribute.Key("ai.thread.root_post.id")
+	UserID           = attribute.Key("agents.user.id")
+	ChannelID        = attribute.Key("agents.channel.id")
+	PostID           = attribute.Key("agents.post.id")
+	ThreadRootPostID = attribute.Key("agents.thread.root_post.id")
 )
 
 // WithLLMAttributes returns a SpanStartOption with standard LLM attributes.

@@ -79,9 +79,9 @@ func TestWithLLMAttributes(t *testing.T) {
 
 	attrs := spans[0].Attributes
 	expected := map[string]string{
-		"ai.llm.provider":  "openai",
-		"ai.llm.model":     "gpt-4",
-		"ai.llm.operation": "conversation",
+		"agents.llm.provider":  "openai",
+		"agents.llm.model":     "gpt-4",
+		"agents.llm.operation": "conversation",
 	}
 
 	for key, want := range expected {
@@ -100,7 +100,7 @@ func TestWithLLMAttributes(t *testing.T) {
 	// Check streaming bool attribute
 	streamingFound := false
 	for _, attr := range attrs {
-		if string(attr.Key) == "ai.llm.streaming" && attr.Value.AsBool() {
+		if string(attr.Key) == "agents.llm.streaming" && attr.Value.AsBool() {
 			streamingFound = true
 			break
 		}
