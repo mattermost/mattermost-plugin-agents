@@ -84,25 +84,14 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 
-	// Build LLM context with tools for execution.
-	var contextOpts []llm.ContextOption
-	if isDM || channel.Type == model.ChannelTypeGroup {
-		contextOpts = append(contextOpts, c.userMCPPreferenceContextOptions(
-			user.Id,
-			"Failed to load user tool preferences for tool approval",
-		)...)
-	}
-	contextOpts = append(contextOpts,
-		c.contextBuilder.WithLLMContextConversationID(conv.ID),
-		c.contextBuilder.WithLLMContextDefaultTools(bot),
+	// Build LLM context with tools for execution. The conversation already
+	// exists at this point, so the conversation ID is bound during the build
+	// and restoreLoadedMCPTools runs against the freshly-built registry.
+	llmContext := c.buildConversationContextWithTools(
+		bot, user, channel,
+		conv.ID,
+		"Failed to load user tool preferences for tool approval",
 	)
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
-
-	// Pre-build filtering protects strict registries; post-build removal preserves
-	// existing visible-store behavior for flag-off contexts.
-	if isDM || channel.Type == model.ChannelTypeGroup {
-		removePreFilteredMCPServersFromVisibleStore(llmContext)
-	}
 
 	// Execute approved tools and build results.
 	var toolResults []toolrunner.ToolResult
@@ -387,26 +376,15 @@ func (c *Conversations) streamToolFollowUp(
 	conv *store.Conversation,
 	isDM bool,
 ) error {
-	var contextOpts []llm.ContextOption
-	if isDM || channel.Type == model.ChannelTypeGroup {
-		contextOpts = append(contextOpts, c.userMCPPreferenceContextOptions(
-			user.Id,
-			"Failed to load user tool preferences for tool follow-up",
-		)...)
-	}
 	channelToolFilterOpts, channelToolsAutoRunEverywhereOnly := c.channelFollowUpMCPToolFilterContextOptions(isDM, conv)
-	contextOpts = append(contextOpts, channelToolFilterOpts...)
-	contextOpts = append(contextOpts,
-		c.contextBuilder.WithLLMContextConversationID(conv.ID),
-		c.contextBuilder.WithLLMContextDefaultTools(bot),
+	// Conversation already exists; bind the conversation ID during the build
+	// so restoreLoadedMCPTools runs in the same pass.
+	llmContext := c.buildConversationContextWithTools(
+		bot, user, channel,
+		conv.ID,
+		"Failed to load user tool preferences for tool follow-up",
+		channelToolFilterOpts...,
 	)
-	llmContext := c.contextBuilder.BuildLLMContextUserRequest(bot, user, channel, contextOpts...)
-
-	// Pre-build filtering protects strict registries; post-build removal preserves
-	// existing visible-store behavior for flag-off contexts.
-	if isDM || channel.Type == model.ChannelTypeGroup {
-		removePreFilteredMCPServersFromVisibleStore(llmContext)
-	}
 
 	toolsDisabled := !isDM
 	if !isDM && c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling() {

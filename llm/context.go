@@ -70,6 +70,17 @@ type Context struct {
 	// predefined flows. They are selected only from the already-authorized MCP
 	// catalog and are request scoped.
 	PreloadedMCPTools []EnabledMCPTool
+
+	// MCPToolRegistry holds the strict MCP tool registry that was built
+	// alongside Tools, when MCP dynamic tool loading is enabled. It is stashed
+	// here so callers can replay loaded-tool restoration after the conversation
+	// row exists without rebuilding the entire tool store.
+	//
+	// Stored as `any` to avoid an llm -> mcp import cycle: the mcp package
+	// already imports llm, and the only consumer that needs the concrete type
+	// is the llmcontext package, which can import both. Type-assert to
+	// *mcp.MCPToolRegistry there.
+	MCPToolRegistry any
 }
 
 type MCPDynamicToolTelemetry interface {

@@ -301,10 +301,55 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 
 func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool, c *llm.Context, botID, userID string, registryOpts ...mcp.MCPToolRegistryOption) {
 	registry := mcp.NewMCPToolRegistry(mcpTools, registryOpts...)
+	// Stash the registry on the context so callers can replay loaded-tool
+	// restoration after the conversation row exists (see AttachConversationID).
+	// Building the context once with tools and late-binding the conversation ID
+	// avoids a second full GetToolsForUser pass per message.
+	if c != nil {
+		c.MCPToolRegistry = registry
+	}
 	b.restoreLoadedMCPTools(store, registry, c, botID, userID)
 	b.preloadMCPTools(store, mcpTools, c.PreloadedMCPTools)
 	markUnloadedMCPTools(store, mcpTools)
 	store.AddTools(mcp.NewMetaTools(registry, mcp.WithLoadedToolRecorder(b.loadedToolRecorder(c.ConversationID, botID, userID))))
+}
+
+// AttachConversationID late-binds a ConversationID onto an already-built llm.Context
+// and, when strict MCP dynamic tool loading was used to build the original tool
+// store, replays loaded-tool restoration against the same registry. This lets
+// callers build the LLM context with tools BEFORE the conversation row exists
+// (so the system prompt can reference .Tools) and then surface the conversation
+// ID once it has been created, without a second GetToolsForUser pass.
+//
+// No-ops when c is nil, conversationID is empty, the tool store is missing, or
+// the strict registry was never stashed (dynamic loading off).
+func (b *Builder) AttachConversationID(c *llm.Context, bot *bots.Bot, conversationID string) {
+	if c == nil || conversationID == "" {
+		return
+	}
+	c.ConversationID = conversationID
+
+	if c.Tools == nil || c.RequestingUser == nil {
+		return
+	}
+
+	registry, ok := c.MCPToolRegistry.(*mcp.MCPToolRegistry)
+	if !ok || registry == nil {
+		return
+	}
+
+	botID := botIDForLoadedMCPTools(c, bot)
+	b.restoreLoadedMCPTools(c.Tools, registry, c, botID, c.RequestingUser.Id)
+
+	// restoreLoadedMCPTools may have made previously-unloaded tools visible.
+	// Recompute the unloaded set against the registry's full tool list so
+	// IsUnloadedMCPTool no longer reports the restored tools as unloaded.
+	entries := registry.List()
+	mcpTools := make([]llm.Tool, 0, len(entries))
+	for _, entry := range entries {
+		mcpTools = append(mcpTools, entry.Tool)
+	}
+	markUnloadedMCPTools(c.Tools, mcpTools)
 }
 
 func (b *Builder) preloadMCPTools(store *llm.ToolStore, available []llm.Tool, specs []llm.EnabledMCPTool) {
