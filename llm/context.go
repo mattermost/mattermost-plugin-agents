@@ -14,8 +14,9 @@ import (
 // ToolInfo represents basic information about a tool without its full implementation.
 // Used to inform LLMs about tools that are unavailable in the current context.
 type ToolInfo struct {
-	Name        string
-	Description string
+	Name         string
+	Description  string
+	ServerOrigin string
 }
 
 // Context represents the data necessary to build the context of the LLM.

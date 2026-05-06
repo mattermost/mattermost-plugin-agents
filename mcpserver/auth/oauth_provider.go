@@ -59,3 +59,16 @@ func (p *OAuthAuthenticationProvider) GetAuthenticatedMattermostClient(ctx conte
 
 	return client, nil
 }
+
+// GetAuthenticatedUser returns the Mattermost user for the OAuth token in context.
+func (p *OAuthAuthenticationProvider) GetAuthenticatedUser(ctx context.Context) (*model.User, error) {
+	client, err := p.GetAuthenticatedMattermostClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	user, _, err := client.GetMe(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
+}

@@ -3,6 +3,8 @@
 
 package llm
 
+import "fmt"
+
 // EventType represents the type of event in the text stream
 type EventType int
 
@@ -84,6 +86,10 @@ func (t *TextStreamResult) ReadAll() (string, error) {
 			if err, ok := event.Value.(error); ok {
 				return "", err
 			}
+			if msg, ok := event.Value.(string); ok {
+				return "", fmt.Errorf("%s", msg)
+			}
+			return "", fmt.Errorf("unknown stream error")
 		case EventTypeEnd:
 			return result, nil
 		case EventTypeToolCalls:

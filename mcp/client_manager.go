@@ -169,13 +169,13 @@ func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) 
 	return m.createAndStoreUserClient(userID)
 }
 
-// GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided
+// GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
 func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 	// Get or create client for this user (connects to remote servers only)
 	userClient, mcpErrors := m.getClientForUser(userID)
 
-	// Connect to embedded server using a dedicated per-user session (stored/created in KV)
-	if m.embeddedClient != nil {
+	// Connect to embedded server using a dedicated per-user session (stored/created in KV).
+	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
 		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
 		if ensureErr != nil {
 			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)

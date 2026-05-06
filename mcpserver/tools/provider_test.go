@@ -4,14 +4,27 @@
 package tools
 
 import (
+	"context"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+type fakeToolAuthProvider struct{}
+
+func (fakeToolAuthProvider) ValidateAuth(context.Context) error {
+	return nil
+}
+
+func (fakeToolAuthProvider) GetAuthenticatedMattermostClient(context.Context) (*model.Client4, error) {
+	return model.NewAPIv4Client("https://mm.example.com"), nil
+}
 
 // testLogger is a simple no-op logger for testing
 type testLogger struct {
@@ -36,6 +49,27 @@ func (l *testLogger) Error(msg string, keyValuePairs ...any) {
 
 func (l *testLogger) Flush() error {
 	return nil
+}
+
+func TestCreateMCPToolContextReadsBeforeHookResolver(t *testing.T) {
+	expectedResolver := auth.BeforeHookResolver(func(_, _, _ string) (string, error) {
+		return "/plugins/com.example.plugin/hooks/before", nil
+	})
+	ctx := context.WithValue(context.Background(), auth.BeforeHookResolverContextKey, expectedResolver)
+
+	provider := &MattermostToolProvider{
+		authProvider: fakeToolAuthProvider{},
+		mmServerURL:  "https://mm.example.com",
+		accessMode:   AccessModeRemote,
+	}
+
+	mcpCtx, err := provider.createMCPToolContext(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, mcpCtx.BeforeHookResolver)
+
+	got, err := mcpCtx.BeforeHookResolver("user-1", "search_posts", "beforeHook:secret")
+	require.NoError(t, err)
+	require.Equal(t, "/plugins/com.example.plugin/hooks/before", got)
 }
 
 // TestSchemaArgs is a test struct for schema conversion testing
