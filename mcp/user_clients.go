@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
@@ -24,13 +23,12 @@ type ToolInfo struct {
 
 // UserClients represents a per-user MCP client with multiple server connections
 type UserClients struct {
-	clients               map[string]*Client // serverID -> client (both remote and embedded)
-	userID                string
-	log                   pluginapi.LogService
-	oauthManager          *OAuthManager
-	httpClient            *http.Client
-	toolsCache            *ToolsCache
-	lastEmbeddedChannelID string // channel id the embedded client was created for ("" = nil channel)
+	clients      map[string]*Client // serverID -> client (both remote and embedded)
+	userID       string
+	log          pluginapi.LogService
+	oauthManager *OAuthManager
+	httpClient   *http.Client
+	toolsCache   *ToolsCache
 	// initialRemoteConnectErrors holds OAuth / connect failures from the first
 	// ConnectToRemoteServers. It must be re-returned on every lookup while this
 	// user client is cached; otherwise callers only see those errors once (first
@@ -92,27 +90,14 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 }
 
 // ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided.
-// When the channel changes from the one the embedded client was created for, the existing
-// connection is closed and a new one is created so the server middleware sees the new channel.
-func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig, channel *model.Channel) error {
+// If a connection already exists, it is reused.
+func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig) error {
 	if !embeddedConfig.Enabled || embeddedClient == nil {
 		return nil
 	}
 
-	channelID := ""
-	if channel != nil {
-		channelID = channel.Id
-	}
-
-	if existing, exists := c.clients[EmbeddedClientKey]; exists {
-		if c.lastEmbeddedChannelID == channelID {
-			return nil
-		}
-		// Channel changed — tear down old connection so we get a fresh tool list
-		if err := existing.Close(); err != nil {
-			c.log.Debug("Failed to close embedded MCP client for channel change", "userID", c.userID, "error", err)
-		}
-		delete(c.clients, EmbeddedClientKey)
+	if _, exists := c.clients[EmbeddedClientKey]; exists {
+		return nil
 	}
 
 	if sessionID == "" {
@@ -121,12 +106,11 @@ func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embed
 
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := c.connectToEmbeddedServerWithClient(ctxWithTimeout, c.userID, sessionID, embeddedClient, channel); err != nil {
+	if err := c.connectToEmbeddedServerWithClient(ctxWithTimeout, c.userID, sessionID, embeddedClient); err != nil {
 		c.log.Error("Failed to connect to embedded MCP server", "userID", c.userID, "error", err)
 		return fmt.Errorf("failed to connect to embedded server: %w", err)
 	}
-	c.lastEmbeddedChannelID = channelID
-	c.log.Debug("Successfully connected to embedded MCP server", "userID", c.userID, "channelID", channelID)
+	c.log.Debug("Successfully connected to embedded MCP server", "userID", c.userID)
 
 	return nil
 }
@@ -142,8 +126,8 @@ func (c *UserClients) connectToServer(ctx context.Context, serverID string, serv
 }
 
 // connectToEmbeddedServerWithClient establishes a connection to the embedded server using the embedded client helper
-func (c *UserClients) connectToEmbeddedServerWithClient(ctx context.Context, userID, sessionID string, embeddedClient *EmbeddedServerClient, channel *model.Channel) error {
-	serverClient, err := embeddedClient.CreateClient(ctx, userID, sessionID, channel)
+func (c *UserClients) connectToEmbeddedServerWithClient(ctx context.Context, userID, sessionID string, embeddedClient *EmbeddedServerClient) error {
+	serverClient, err := embeddedClient.CreateClient(ctx, userID, sessionID)
 	if err != nil {
 		return err
 	}
@@ -202,19 +186,35 @@ func (c *UserClients) GetTools() []llm.Tool {
 	return tools
 }
 
-// prepareToolCallMetadata prepares metadata to be sent with MCP tool calls
-// This is where we inject context-specific information that tools need but shouldn't be in arguments
-func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Context) map[string]any {
-	// Only add metadata if we have a valid context
+// prepareToolCallMetadata prepares metadata to be sent with MCP tool calls.
+// Per-call metadata is sourced from the tool itself (set at scope-time via
+// llm.Tool.WithCallMetadata) so callers can plumb runtime info — like before-hook
+// keys — without leaking it into the LLM-visible schema or onto llm.Context.
+// bot_user_id is sourced from llm.Context because it is identity, not per-call config.
+func (c *UserClients) prepareToolCallMetadata(client *Client, toolName string, llmContext *llm.Context) map[string]any {
 	if llmContext == nil {
 		return nil
 	}
 
-	var metadata map[string]any
+	// Only inject metadata for the embedded server.
+	if client.config.Name != EmbeddedClientKey {
+		return nil
+	}
 
-	// For embedded server, inject Bot UserID for AI-generated content tracking
-	if client.config.Name == EmbeddedClientKey && llmContext.BotUserID != "" {
-		metadata = make(map[string]any)
+	var metadata map[string]any
+	if llmContext.Tools != nil {
+		if tool := llmContext.Tools.GetTool(toolName); tool != nil && len(tool.CallMetadata) > 0 {
+			metadata = make(map[string]any, len(tool.CallMetadata)+1)
+			for k, v := range tool.CallMetadata {
+				metadata[k] = v
+			}
+		}
+	}
+
+	if llmContext.BotUserID != "" {
+		if metadata == nil {
+			metadata = make(map[string]any, 1)
+		}
 		metadata["bot_user_id"] = llmContext.BotUserID
 	}
 
@@ -229,8 +229,7 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 			return "", fmt.Errorf("failed to get arguments for tool %s: %w", toolName, err)
 		}
 
-		// Prepare metadata for the tool call
-		metadata := c.prepareToolCallMetadata(client, llmContext)
+		metadata := c.prepareToolCallMetadata(client, toolName, llmContext)
 
 		return client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
 	}

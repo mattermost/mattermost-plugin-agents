@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
-	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
@@ -163,22 +162,17 @@ func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) 
 }
 
 // GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
-// When channel is non-nil, the embedded MCP client re-runs tools/list with that channel id so automation tool
-// visibility is decided in mcpserver middleware.
-func (m *ClientManager) GetToolsForUser(userID string, channel *model.Channel) ([]llm.Tool, *Errors) {
+func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 	// Get or create client for this user (connects to remote servers only)
 	userClient, mcpErrors := m.getClientForUser(userID)
 
 	// Connect to embedded server using a dedicated per-user session (stored/created in KV).
-	// The channel is forwarded so the server context carries it for automation tool
-	// visibility is decided in mcpserver middleware.
-	// If the channel changed since the last connection, the embedded client is reconnected.
 	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled {
 		ensuredSessionID, ensureErr := m.ensureEmbeddedSessionID(userID)
 		if ensureErr != nil {
 			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
 		} else if ensuredSessionID != "" {
-			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer, channel); embeddedErr != nil {
+			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
 				m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
 			}
 		}

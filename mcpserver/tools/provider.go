@@ -20,12 +20,26 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// ToolHookConfig holds an optional opaque before-hook key for a tool.
+type ToolHookConfig struct {
+	BeforeHookKey string `json:"before_hook_key,omitempty"`
+}
+
 // MCPToolContext provides MCP-specific functionality with the authenticated client.
 type MCPToolContext struct {
 	Ctx        context.Context
 	Client     *model.Client4
 	AccessMode AccessMode
 	BotUserID  string // User ID for AI-generated content tracking: Bot ID (embedded) or authenticated user ID (external servers)
+
+	// UserID is the Mattermost user ID of the user the Client is authenticated as.
+	// Empty when the auth provider cannot resolve an authenticated user.
+	UserID string
+
+	// MMServerURL is the Mattermost server base URL (same as API Client4 origin) for resolving hook keys and firing callbacks.
+	MMServerURL        string
+	BeforeHookResolver auth.BeforeHookResolver
+	ToolHooks          map[string]ToolHookConfig
 }
 
 // MCPToolResolver defines the signature for MCP tool resolvers
@@ -129,16 +143,8 @@ func (p *MattermostToolProvider) stripAutomationFromToolsListResult(result mcp.R
 	return listResult
 }
 
-// resolveChannelForToolsList reads the channel from the request context (set on the
-// server Run context for embedded connections via ChannelContextKey).
-func (p *MattermostToolProvider) resolveChannelForToolsList(ctx context.Context) *model.Channel {
-	ch, _ := ctx.Value(auth.ChannelContextKey).(*model.Channel)
-	return ch
-}
-
 // automationToolFilterMiddleware returns MCP receiving middleware that filters
-// automation tools from tools/list when the automation plugin is missing, when a requested
-// channel cannot be resolved, or when the authenticated user may not see automation tools in that channel.
+// automation tools from tools/list when the channel automation plugin is not installed.
 func (p *MattermostToolProvider) automationToolFilterMiddleware() mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
@@ -148,28 +154,6 @@ func (p *MattermostToolProvider) automationToolFilterMiddleware() mcp.Middleware
 			}
 
 			if !p.isAutomationPluginInstalled() {
-				return p.stripAutomationFromToolsListResult(result), nil
-			}
-
-			ch := p.resolveChannelForToolsList(ctx)
-			if ch == nil {
-				// No channel context, return all tools (including automation) since we can't determine visibility without a channel.
-				return result, nil
-			}
-
-			identityProvider, ok := p.authProvider.(auth.UserIdentityProvider)
-			if !ok {
-				return p.stripAutomationFromToolsListResult(result), nil
-			}
-			client, err := identityProvider.GetAuthenticatedMattermostClient(ctx)
-			if err != nil {
-				return p.stripAutomationFromToolsListResult(result), nil
-			}
-			user, err := identityProvider.GetAuthenticatedUser(ctx)
-			if err != nil {
-				return p.stripAutomationFromToolsListResult(result), nil
-			}
-			if !automationToolsVisibleInList(ctx, client, user, ch) {
 				return p.stripAutomationFromToolsListResult(result), nil
 			}
 			return result, nil
@@ -232,6 +216,19 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 			return json.Unmarshal(argumentsBytes, target)
 		}
 
+		// Run the optional before-hook with the raw tool arguments. The hook can
+		// reject the call by returning an error which is surfaced as a tool error
+		// to the LLM.
+		if hookErr := RunBeforeHook(mcpContext, mcpTool.Name, req.Params.Arguments); hookErr != nil {
+			p.logger.Debug("MCP tool before-hook rejected or failed", "tool", mcpTool.Name, "error", hookErr.Error())
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: "Error: " + hookErr.Error()},
+				},
+				IsError: true,
+			}, nil
+		}
+
 		// Call the tool resolver
 		result, err := mcpTool.Resolver(mcpContext, argsGetter)
 		if err != nil {
@@ -268,10 +265,26 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 		return nil, err
 	}
 
+	var userID string
+	if identityProvider, ok := p.authProvider.(auth.UserIdentityProvider); ok {
+		if user, userErr := identityProvider.GetAuthenticatedUser(ctx); userErr == nil && user != nil {
+			userID = user.Id
+		} else if userErr != nil {
+			p.logger.Debug("failed to resolve authenticated user for tool-call context", "error", userErr.Error())
+		}
+	}
+
 	mcpContext := &MCPToolContext{
-		Ctx:        ctx,
-		Client:     client,
-		AccessMode: p.accessMode,
+		Ctx:         ctx,
+		Client:      client,
+		AccessMode:  p.accessMode,
+		MMServerURL: p.mmServerURL,
+		ToolHooks:   decodeToolHooksFromMetadata(metadata),
+		UserID:      userID,
+	}
+
+	if resolver, ok := ctx.Value(auth.BeforeHookResolverContextKey).(auth.BeforeHookResolver); ok {
+		mcpContext.BeforeHookResolver = resolver
 	}
 
 	// Extract bot_user_id from metadata if present (for embedded servers)
@@ -283,6 +296,32 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	}
 
 	return mcpContext, nil
+}
+
+func decodeToolHooksFromMetadata(metadata mcp.Meta) map[string]ToolHookConfig {
+	if metadata == nil {
+		return nil
+	}
+	raw, ok := metadata["tool_hooks"].(map[string]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]ToolHookConfig, len(raw))
+	for name, v := range raw {
+		entry, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		var cfg ToolHookConfig
+		if s, ok := entry["before_hook_key"].(string); ok {
+			cfg.BeforeHookKey = s
+		}
+		out[name] = cfg
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // NewJSONSchemaForAccessMode creates a JSONSchema from a Go struct, filtering fields based on access mode

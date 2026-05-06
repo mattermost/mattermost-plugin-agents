@@ -246,6 +246,7 @@ type ChannelEntry struct {
 	TeamName    string         // resolved team display name
 	TeamID      string         // team ID (shown when TeamName is empty but TeamID is set)
 	MemberCount int64          // -1 means don't show
+	Role        string         // requesting user's role: "admin" | "member" | "guest" | "not_member" | "" (omit)
 }
 
 // WriteChannel writes a formatted channel entry to the builder.
@@ -279,6 +280,10 @@ func WriteChannel(w *strings.Builder, entry ChannelEntry) {
 
 	if entry.MemberCount >= 0 {
 		fmt.Fprintf(w, "Member Count: %d\n", entry.MemberCount)
+	}
+
+	if entry.Role != "" {
+		fmt.Fprintf(w, "Your role: %s\n", entry.Role)
 	}
 
 	w.WriteString("\n")

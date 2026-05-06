@@ -15,6 +15,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -254,64 +255,116 @@ func validateCompletionRequestIDs(req bridgeclient.CompletionRequest) (int, erro
 func (a *API) prepareAgentBridgeCompletion(
 	agent string,
 	req bridgeclient.CompletionRequest,
+	pluginID string,
 	operation, operationSubType string,
-) (*bots.Bot, llm.CompletionRequest, []llm.LanguageModelOption, func(llm.ToolCall) bool, int, error) {
+) (*bots.Bot, llm.CompletionRequest, []llm.LanguageModelOption, func(llm.ToolCall) bool, []string, int, error) {
+	var beforeHookKeys []string
+	success := false
+	defer func() {
+		if !success {
+			a.cleanupBeforeHookKeys(beforeHookKeys)
+		}
+	}()
+
 	if statusCode, err := validateCompletionRequestIDs(req); err != nil {
-		return nil, llm.CompletionRequest{}, nil, nil, statusCode, err
+		return nil, llm.CompletionRequest{}, nil, nil, nil, statusCode, err
+	}
+
+	normalizedPluginID := strings.TrimSpace(pluginID)
+	if len(req.ToolHooks) > 0 && normalizedPluginID == "" {
+		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, errors.New("tool_hooks requires Mattermost-Plugin-ID header")
+	}
+	if len(req.ToolHooks) > 0 && req.UserID == "" {
+		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, errors.New("tool_hooks requires user_id")
 	}
 
 	allowedToolNames, err := normalizeAllowedToolNames(req.AllowedTools)
 	if err != nil {
-		return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, fmt.Errorf("invalid allowed_tools: %w", err)
+		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, fmt.Errorf("invalid allowed_tools: %w", err)
 	}
 
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
-		return nil, llm.CompletionRequest{}, nil, nil, http.StatusNotFound, err
+		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusNotFound, err
 	}
 
 	err = a.checkBridgePermissions(req.UserID, req.ChannelID, bot)
 	if err != nil {
-		return nil, llm.CompletionRequest{}, nil, nil, http.StatusForbidden, fmt.Errorf("permission denied: %v", err)
+		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusForbidden, fmt.Errorf("permission denied: %v", err)
 	}
 
 	toolsRequested := allowedToolNames != nil
 	llmRequest, err := a.convertAgentBridgeRequestToInternal(bot, req, toolsRequested, operation, operationSubType)
 	if err != nil {
-		return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, fmt.Errorf("invalid request: %v", err)
+		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, fmt.Errorf("invalid request: %v", err)
+	}
+
+	if len(req.ToolHooks) > 0 && !toolsRequested {
+		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, errors.New("tool_hooks requires allowed_tools")
+	}
+
+	// Issue before-hook keys up front so we have a stable per-tool metadata map to
+	// bind into each scoped tool's CallMetadata below. Hook keys are tracked in
+	// beforeHookKeys so the deferred cleanup runs even on later failures.
+	hookMetaByTool := make(map[string]map[string]any, len(req.ToolHooks))
+	for name, cfg := range req.ToolHooks {
+		hookEntry := make(map[string]any)
+		if cfg.BeforeCallback != "" {
+			beforeHookKey, hookErr := a.beforeHookStore.Issue(req.UserID, name, normalizedPluginID, cfg.BeforeCallback)
+			if hookErr != nil {
+				statusCode := http.StatusInternalServerError
+				if errors.Is(hookErr, mcp.ErrInvalidBeforeHookConfig) {
+					statusCode = http.StatusBadRequest
+				}
+				return nil, llm.CompletionRequest{}, nil, nil, nil, statusCode, fmt.Errorf("invalid tool_hooks: %w", hookErr)
+			}
+			beforeHookKeys = append(beforeHookKeys, beforeHookKey)
+			hookEntry["before_hook_key"] = beforeHookKey
+		}
+		// Wire format on the MCP server side keys hooks by tool name (see
+		// mcpserver/tools/provider.go decodeToolHooksFromMetadata). Per-tool binding
+		// means each call only carries its own entry, but the structure stays the
+		// same so the server-side decode is unchanged.
+		hookMetaByTool[name] = map[string]any{
+			"tool_hooks": map[string]any{name: hookEntry},
+		}
 	}
 
 	autoRunNames := make(map[string]struct{})
 	if toolsRequested {
 		if bot.GetConfig().DisableTools {
-			return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, errors.New("agent has tools disabled")
+			return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, errors.New("agent has tools disabled")
 		}
 
 		if llmRequest.Context.Tools == nil || len(llmRequest.Context.Tools.GetTools()) == 0 {
-			return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, errors.New("no eligible tools available for this agent")
+			return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, errors.New("no eligible tools available for this agent")
 		}
 
 		scopedTools := llm.NewToolStore(nil, false)
 		for _, name := range allowedToolNames {
 			tool := llmRequest.Context.Tools.GetTool(name)
 			if tool == nil {
-				return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, fmt.Errorf("tool %q is not eligible or not available for this agent", name)
+				return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, fmt.Errorf("tool %q is not eligible or not available for this agent", name)
 			}
 			if !bridgeAllowlistToolEligible(tool.ServerOrigin) {
-				return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, fmt.Errorf(
+				return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, fmt.Errorf(
 					"tool %q is not eligible for bridge allowed_tools (built-in tools cannot be allowlisted; use MCP or embedded tools from GET .../agents/{id}/tools only)",
 					name,
 				)
 			}
-			scopedTools.AddTools([]llm.Tool{*tool})
-			autoRunNames[tool.Name] = struct{}{}
+			scopedTool := *tool
+			if meta, ok := hookMetaByTool[name]; ok {
+				scopedTool = scopedTool.WithCallMetadata(meta)
+			}
+			scopedTools.AddTools([]llm.Tool{scopedTool})
+			autoRunNames[scopedTool.Name] = struct{}{}
 		}
 		llmRequest.Context.Tools = scopedTools
 	}
 
 	opts, err := a.convertRequestToLLMOptions(req)
 	if err != nil {
-		return nil, llm.CompletionRequest{}, nil, nil, http.StatusBadRequest, fmt.Errorf("invalid options: %v", err)
+		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, fmt.Errorf("invalid options: %v", err)
 	}
 
 	if !toolsRequested {
@@ -343,7 +396,16 @@ func (a *API) prepareAgentBridgeCompletion(
 		}
 	}
 
-	return bot, llmRequest, opts, shouldExecute, 0, nil
+	success = true
+	return bot, llmRequest, opts, shouldExecute, beforeHookKeys, 0, nil
+}
+
+func (a *API) cleanupBeforeHookKeys(keys []string) {
+	for _, key := range keys {
+		if err := a.beforeHookStore.Delete(key); err != nil {
+			a.pluginAPI.Log.Warn("failed to clean up before-hook key", "error", err)
+		}
+	}
 }
 
 // convertRequestToLLMOptions converts the API request options to llm.LanguageModelOption
@@ -699,13 +761,14 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, shouldExecute, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, llm.OperationBridgeAgent, llm.SubTypeStreaming)
+	bot, llmRequest, opts, shouldExecute, beforeHookKeys, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, c.GetHeader("Mattermost-Plugin-ID"), llm.OperationBridgeAgent, llm.SubTypeStreaming)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),
 		})
 		return
 	}
+	defer a.cleanupBeforeHookKeys(beforeHookKeys)
 
 	a.streamLLMResponse(c, bot, llmRequest, shouldExecute, opts...)
 }
@@ -729,13 +792,14 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 		return
 	}
 
-	bot, llmRequest, opts, shouldExecute, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, llm.OperationBridgeAgent, llm.SubTypeNoStream)
+	bot, llmRequest, opts, shouldExecute, beforeHookKeys, statusCode, err := a.prepareAgentBridgeCompletion(agent, req, c.GetHeader("Mattermost-Plugin-ID"), llm.OperationBridgeAgent, llm.SubTypeNoStream)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),
 		})
 		return
 	}
+	defer a.cleanupBeforeHookKeys(beforeHookKeys)
 
 	a.handleNonStreamingLLMResponse(c, bot, llmRequest, shouldExecute, opts...)
 }

@@ -26,7 +26,7 @@ import (
 
 type stubEmbeddedServer struct{}
 
-func (s *stubEmbeddedServer) CreateClientTransport(string, string, *pluginapi.Client, *model.Channel) (*gomcp.InMemoryTransport, error) {
+func (s *stubEmbeddedServer) CreateClientTransport(string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	return nil, nil
 }
 

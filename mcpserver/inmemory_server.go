@@ -73,11 +73,10 @@ func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger, searchSer
 
 // CreateConnectionForUser creates a new in-memory transport connection for a specific user.
 // Returns the client-side transport that should be used by the MCP client.
-// channel (optional) is placed on the server Run context so receiving middleware can read it.
 // Accepts either:
 // - sessionID + tokenResolver: Creates authenticated connection
 // - empty sessionID + nil tokenResolver: Creates unauthenticated connection (for tool discovery)
-func (s *MattermostInMemoryMCPServer) CreateConnectionForUser(userID, sessionID string, tokenResolver auth.TokenResolver, channel *model.Channel) (*mcp.InMemoryTransport, error) {
+func (s *MattermostInMemoryMCPServer) CreateConnectionForUser(userID, sessionID string, tokenResolver auth.TokenResolver, beforeHookResolver auth.BeforeHookResolver) (*mcp.InMemoryTransport, error) {
 	if userID == "" {
 		return nil, fmt.Errorf("userID cannot be empty")
 	}
@@ -94,10 +93,8 @@ func (s *MattermostInMemoryMCPServer) CreateConnectionForUser(userID, sessionID 
 			return nil, err
 		}
 	}
-
-	// Attach channel to context for middleware (automation tool visibility).
-	if channel != nil {
-		ctx = context.WithValue(ctx, auth.ChannelContextKey, channel)
+	if beforeHookResolver != nil {
+		ctx = context.WithValue(ctx, auth.BeforeHookResolverContextKey, beforeHookResolver)
 	}
 
 	// Create new in-memory transport pair

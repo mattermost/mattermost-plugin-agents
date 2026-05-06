@@ -78,7 +78,7 @@ func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 		},
 		{
 			Name:        "get_channel_info",
-			Description: "Get information about channel(s). Provide channel_id (fastest) or channel_name (matches against both display name and URL name, case-insensitive, supports partial matches). Optional: team_id to limit search scope. If multiple channels match (e.g., 'General' exists in multiple teams), returns ALL matches with team context for disambiguation. Returns channel metadata including ID, names, type, team, purpose, and member count. Example: {\"channel_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}",
+			Description: "Get information about channel(s). Provide channel_id (fastest) or channel_name (matches against both display name and URL name, case-insensitive, supports partial matches). Optional: team_id to limit search scope. If multiple channels match (e.g., 'General' exists in multiple teams), returns ALL matches with team context for disambiguation. Returns channel metadata including ID, names, type, team, purpose, member count, and the requesting user's role in the channel (admin, member, guest, or not_member). Example: {\"channel_name\": \"General\"} or {\"channel_id\": \"h5wqm8kxptbztfgzpaxbsqozah\"}",
 			Schema:      llm.NewJSONSchemaFromStruct[GetChannelInfoArgs](),
 			Resolver:    p.toolGetChannelInfo,
 		},
@@ -409,7 +409,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 
 	// If multiple channels found, return all with disambiguation guidance
 	if len(channels) > 1 {
-		return p.formatMultipleChannels(ctx, client, channels)
+		return p.formatMultipleChannels(ctx, client, channels, mcpContext.UserID)
 	}
 
 	// Single channel found - format as before (backward compatible)
@@ -429,6 +429,8 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 		memberCount = stats.MemberCount
 	}
 
+	role := p.lookupChannelRole(ctx, client, channel.Id, mcpContext.UserID)
+
 	var result strings.Builder
 	format.WriteChannel(&result, format.ChannelEntry{
 		HeaderLabel: "Channel Information:",
@@ -436,14 +438,40 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 		TeamName:    teamName,
 		TeamID:      channel.TeamId,
 		MemberCount: memberCount,
+		Role:        role,
 	})
 
 	return result.String(), nil
 }
 
+// lookupChannelRole resolves the requesting user's role in a channel for display.
+// Returns "admin", "guest", "member", "not_member", or "" if the role cannot be determined.
+func (p *MattermostToolProvider) lookupChannelRole(ctx context.Context, client *model.Client4, channelID, userID string) string {
+	if userID == "" {
+		return ""
+	}
+	member, resp, err := client.GetChannelMember(ctx, channelID, userID, "")
+	switch {
+	case err == nil:
+		switch {
+		case member.SchemeAdmin:
+			return "admin"
+		case member.SchemeGuest:
+			return "guest"
+		default:
+			return "member"
+		}
+	case resp != nil && resp.StatusCode == http.StatusNotFound:
+		return "not_member"
+	default:
+		p.logger.Warn("failed to get channel member for role lookup", "channel_id", channelID, "error", err)
+		return ""
+	}
+}
+
 // formatMultipleChannels formats multiple channel results with team context for disambiguation.
 // It uses a local team cache to avoid redundant GetTeam calls within the same result set.
-func (p *MattermostToolProvider) formatMultipleChannels(ctx context.Context, client *model.Client4, channels []*model.Channel) (string, error) {
+func (p *MattermostToolProvider) formatMultipleChannels(ctx context.Context, client *model.Client4, channels []*model.Channel, userID string) (string, error) {
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("Found %d channels with matching name:\n\n", len(channels)))
 
@@ -478,6 +506,7 @@ func (p *MattermostToolProvider) formatMultipleChannels(ctx context.Context, cli
 			TeamName:    teamName,
 			TeamID:      channel.TeamId,
 			MemberCount: memberCount,
+			Role:        p.lookupChannelRole(ctx, client, channel.Id, userID),
 		})
 	}
 

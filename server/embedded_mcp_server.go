@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"strings"
 
+	localmcp "github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
-	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -72,8 +72,7 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 }
 
 // CreateClientTransport creates a new in-memory transport for a client connection.
-// channel is forwarded to the server so middleware can scope tool visibility.
-func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client, channel *model.Channel) (*mcp.InMemoryTransport, error) {
+func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
 	// Create token resolver that has closure over pluginAPI
 	// This allows the mcpserver to get fresh tokens without storing raw tokens in context
 	tokenResolver := func(sid string) (string, error) {
@@ -90,9 +89,17 @@ func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, plug
 		}
 		return session.Token, nil
 	}
+	hookStore := localmcp.NewBeforeHookStore(&pluginAPI.KV)
+	beforeHookResolver := func(userID, toolName, hookKey string) (string, error) {
+		entry, err := hookStore.Resolve(userID, toolName, hookKey)
+		if err != nil {
+			return "", err
+		}
+		return entry.CallbackURL, nil
+	}
 
 	// Create the connection through the server with resolver
-	clientTransport, err := e.server.CreateConnectionForUser(userID, sessionID, tokenResolver, channel)
+	clientTransport, err := e.server.CreateConnectionForUser(userID, sessionID, tokenResolver, beforeHookResolver)
 	if err != nil {
 		return nil, err
 	}
