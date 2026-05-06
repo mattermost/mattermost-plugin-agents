@@ -282,6 +282,9 @@ func (a *API) prepareAgentBridgeCompletion(
 	if err != nil {
 		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, fmt.Errorf("invalid allowed_tools: %w", err)
 	}
+	if allowedToolNames != nil && req.UserID == "" {
+		return nil, llm.CompletionRequest{}, nil, nil, nil, http.StatusBadRequest, errors.New("allowed_tools requires user_id")
+	}
 
 	bot, err := a.getBotByAgent(agent)
 	if err != nil {
