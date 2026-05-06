@@ -10,6 +10,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/format"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/toolrunner"
@@ -90,15 +91,15 @@ func (c *Channels) AnalyzeChannel(
 		operationSubType = llm.TokenUsageUnknown
 	}
 
-	// Get tools and bind channel_id so it cannot be manipulated by the LLM
-	readChannel := context.Tools.GetTool("read_channel")
-	if readChannel == nil {
+	// Get tools and bind channel_id so it cannot be manipulated by the LLM.
+	readChannel, ok := requiredEmbeddedToolByExactOrBareName(context.Tools, "read_channel")
+	if !ok {
 		return nil, fmt.Errorf("read_channel tool not available - ensure MCP embedded server is enabled and running")
 	}
 	boundReadChannel := readChannel.WithBoundParams(map[string]interface{}{"channel_id": channelID})
 
-	getChannelInfo := context.Tools.GetTool("get_channel_info")
-	if getChannelInfo == nil {
+	getChannelInfo, ok := requiredEmbeddedToolByExactOrBareName(context.Tools, "get_channel_info")
+	if !ok {
 		return nil, fmt.Errorf("get_channel_info tool not available - ensure MCP embedded server is enabled and running")
 	}
 	boundGetChannelInfo := getChannelInfo.WithBoundParams(map[string]interface{}{"channel_id": channelID})
@@ -109,6 +110,35 @@ func (c *Channels) AnalyzeChannel(
 	context.Tools = scopedTools
 
 	return c.AnalyzeChannelWithRequest(context, userID, botID, systemPrompt, userPrompt, operationSubType)
+}
+
+func requiredEmbeddedToolByExactOrBareName(store *llm.ToolStore, name string) (llm.Tool, bool) {
+	if store == nil {
+		return llm.Tool{}, false
+	}
+
+	if tool := store.GetTool(name); tool != nil && tool.ServerOrigin == mcp.EmbeddedClientKey {
+		return *tool, true
+	}
+
+	var match *llm.Tool
+	for _, tool := range store.GetTools() {
+		if tool.ServerOrigin != mcp.EmbeddedClientKey || llm.BareMCPToolName(tool.Name) != name {
+			continue
+		}
+		if match != nil {
+			return llm.Tool{}, false
+		}
+		tool := tool
+		match = &tool
+	}
+	if match == nil {
+		return llm.Tool{}, false
+	}
+
+	tool := *match
+	tool.Name = name
+	return tool, true
 }
 
 // AnalyzeChannelWithRequest creates a conversation and runs the ToolRunner with

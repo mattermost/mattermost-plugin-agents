@@ -65,6 +65,11 @@ type Context struct {
 	// KeepMCPTool, when non-nil, is applied to MCP tools before strict registry
 	// construction and before flag-off visible MCP insertion.
 	KeepMCPTool func(Tool) bool
+
+	// PreloadedMCPTools contains exact-or-bare MCP tool selectors for internal
+	// predefined flows. They are selected only from the already-authorized MCP
+	// catalog and are request scoped.
+	PreloadedMCPTools []EnabledMCPTool
 }
 
 type MCPDynamicToolTelemetry interface {

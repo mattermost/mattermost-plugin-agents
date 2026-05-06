@@ -389,6 +389,170 @@ func TestStrictToolStoreInitialVisibility(t *testing.T) {
 	require.Nil(t, context.Tools.GetTool("github__search"))
 }
 
+func TestStrictPreloadsExplicitMCPTools(t *testing.T) {
+	loadedStore := &fakeLoadedMCPToolStore{}
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("mattermost__read_channel", mcp.EmbeddedClientKey, "read channel posts"),
+			testMCPTool("mattermost__get_channel_info", mcp.EmbeddedClientKey, "get channel metadata"),
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+		}},
+	)
+	builder.SetLoadedMCPToolStore(loadedStore)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot, builder.WithLLMContextPreloadedMCPTools([]llm.EnabledMCPTool{
+		{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "read_channel"},
+		{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "get_channel_info"},
+	}))
+
+	require.ElementsMatch(t, []string{"builtin", mcp.SearchToolsName, mcp.LoadToolName, "read_channel", "get_channel_info"}, toolNames(context.Tools))
+	require.Nil(t, context.Tools.GetTool("mattermost__read_channel"))
+	require.Nil(t, context.Tools.GetTool("mattermost__get_channel_info"))
+	require.Nil(t, context.Tools.GetTool("jira__get_issue"))
+	require.Contains(t, searchToolNames(t, context.Tools, "jira"), "jira__get_issue")
+	require.False(t, context.Tools.IsUnloadedMCPTool("read_channel"))
+	require.False(t, context.Tools.IsUnloadedMCPTool("get_channel_info"))
+	require.False(t, context.Tools.IsUnloadedMCPTool("mattermost__read_channel"))
+	require.False(t, context.Tools.IsUnloadedMCPTool("mattermost__get_channel_info"))
+	require.True(t, context.Tools.IsUnloadedMCPTool("jira__get_issue"))
+	require.Empty(t, loadedStore.upserts)
+}
+
+func TestFlagOffAddsPreloadAliases(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("mattermost__read_channel", mcp.EmbeddedClientKey, "read channel posts"),
+			testMCPTool("mattermost__get_channel_info", mcp.EmbeddedClientKey, "get channel metadata"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: false,
+	})
+
+	context := buildToolsContext(builder, bot, builder.WithLLMContextPreloadedMCPTools([]llm.EnabledMCPTool{
+		{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "read_channel"},
+		{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "get_channel_info"},
+	}))
+
+	require.ElementsMatch(t, []string{"builtin", "mattermost__read_channel", "mattermost__get_channel_info", "read_channel", "get_channel_info"}, toolNames(context.Tools))
+	require.NotNil(t, context.Tools.GetTool("mattermost__read_channel"))
+	require.NotNil(t, context.Tools.GetTool("mattermost__get_channel_info"))
+	require.NotNil(t, context.Tools.GetTool("read_channel"))
+	require.NotNil(t, context.Tools.GetTool("get_channel_info"))
+	require.Nil(t, context.Tools.GetTool(mcp.SearchToolsName))
+	require.Nil(t, context.Tools.GetTool(mcp.LoadToolName))
+}
+
+func TestPreloadsDoNotResurrectFilteredMCPTools(t *testing.T) {
+	preloads := []llm.EnabledMCPTool{
+		{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "read_channel"},
+	}
+
+	tests := []struct {
+		name     string
+		tools    []llm.Tool
+		botCfg   llm.BotConfig
+		opts     func(*Builder) []llm.ContextOption
+		wantGone string
+	}{
+		{
+			name: "provider omits tool",
+			tools: []llm.Tool{
+				testMCPTool("mattermost__get_channel_info", mcp.EmbeddedClientKey, "get channel metadata"),
+			},
+			botCfg: llm.BotConfig{
+				ID:                    "bot-id",
+				Name:                  "matty",
+				DisplayName:           "Matty",
+				AutoEnableNewMCPTools: true,
+				MCPDynamicToolLoading: true,
+			},
+			wantGone: "read_channel",
+		},
+		{
+			name: "disabled embedded server",
+			tools: []llm.Tool{
+				testMCPTool("mattermost__read_channel", mcp.EmbeddedClientKey, "read channel posts"),
+			},
+			botCfg: llm.BotConfig{
+				ID:                    "bot-id",
+				Name:                  "matty",
+				DisplayName:           "Matty",
+				AutoEnableNewMCPTools: true,
+				MCPDynamicToolLoading: true,
+			},
+			opts: func(builder *Builder) []llm.ContextOption {
+				return []llm.ContextOption{builder.WithLLMContextDisabledMCPServers([]string{mcp.EmbeddedClientKey})}
+			},
+			wantGone: "read_channel",
+		},
+		{
+			name: "predicate filters tool",
+			tools: []llm.Tool{
+				testMCPTool("mattermost__read_channel", mcp.EmbeddedClientKey, "read channel posts"),
+			},
+			botCfg: llm.BotConfig{
+				ID:                    "bot-id",
+				Name:                  "matty",
+				DisplayName:           "Matty",
+				AutoEnableNewMCPTools: true,
+				MCPDynamicToolLoading: true,
+			},
+			opts: func(builder *Builder) []llm.ContextOption {
+				return []llm.ContextOption{builder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
+					return llm.BareMCPToolName(tool.Name) != "read_channel"
+				})}
+			},
+			wantGone: "read_channel",
+		},
+		{
+			name: "bot allowlist excludes tool",
+			tools: []llm.Tool{
+				testMCPTool("mattermost__read_channel", mcp.EmbeddedClientKey, "read channel posts"),
+			},
+			botCfg: llm.BotConfig{
+				ID:                    "bot-id",
+				Name:                  "matty",
+				DisplayName:           "Matty",
+				AutoEnableNewMCPTools: false,
+				EnabledMCPTools: []llm.EnabledMCPTool{
+					{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "get_channel_info"},
+				},
+				MCPDynamicToolLoading: true,
+			},
+			wantGone: "read_channel",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := newTestBuilder(t, &emptyToolProvider{}, &staticMCPToolProvider{tools: tt.tools})
+			bot := newTestBotWithConfig(tt.botCfg)
+			opts := []llm.ContextOption{builder.WithLLMContextPreloadedMCPTools(preloads)}
+			if tt.opts != nil {
+				opts = append(opts, tt.opts(builder)...)
+			}
+
+			context := buildToolsContext(builder, bot, opts...)
+
+			require.Nil(t, context.Tools.GetTool(tt.wantGone))
+		})
+	}
+}
+
 func TestStrictToolStoreSearchUsesFilteredRegistry(t *testing.T) {
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},

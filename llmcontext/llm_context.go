@@ -195,6 +195,15 @@ func (b *Builder) WithLLMContextMCPToolFilter(keep func(llm.Tool) bool) llm.Cont
 	}
 }
 
+// WithLLMContextPreloadedMCPTools requests exact-or-bare MCP tools for internal
+// predefined flows. The selected tools are still constrained by the normal
+// authorized MCP catalog and must be configured before default tools are built.
+func (b *Builder) WithLLMContextPreloadedMCPTools(tools []llm.EnabledMCPTool) llm.ContextOption {
+	return func(c *llm.Context) {
+		c.PreloadedMCPTools = slices.Clone(tools)
+	}
+}
+
 // sanitizeUserProfileField strips characters that could be used for prompt injection
 // in user profile fields rendered into the system prompt. It collapses newlines, carriage
 // returns, and tabs to spaces, removes other control characters, and trims the result.
@@ -284,6 +293,7 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	if len(mcpTools) > 0 {
 		store.AddTools(mcpTools)
 	}
+	b.preloadMCPTools(store, mcpTools, c.PreloadedMCPTools)
 
 	return store
 }
@@ -291,8 +301,44 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool, c *llm.Context, botID, userID string, registryOpts ...mcp.MCPToolRegistryOption) {
 	registry := mcp.NewMCPToolRegistry(mcpTools, registryOpts...)
 	b.restoreLoadedMCPTools(store, registry, c, botID, userID)
+	b.preloadMCPTools(store, mcpTools, c.PreloadedMCPTools)
 	markUnloadedMCPTools(store, mcpTools)
 	store.AddTools(mcp.NewMetaTools(registry, mcp.WithLoadedToolRecorder(b.loadedToolRecorder(c.ConversationID, botID, userID))))
+}
+
+func (b *Builder) preloadMCPTools(store *llm.ToolStore, available []llm.Tool, specs []llm.EnabledMCPTool) {
+	if store == nil || len(available) == 0 || len(specs) == 0 {
+		return
+	}
+
+	for _, spec := range specs {
+		var matches []llm.Tool
+		for _, tool := range available {
+			if spec.ServerOrigin != tool.ServerOrigin {
+				continue
+			}
+			if llm.MCPToolNameMatches(tool.Name, spec.ToolName) {
+				matches = append(matches, tool)
+			}
+		}
+
+		switch len(matches) {
+		case 0:
+			continue
+		case 1:
+			tool := matches[0]
+			if spec.ToolName == llm.BareMCPToolName(spec.ToolName) && tool.Name != spec.ToolName {
+				tool.Name = spec.ToolName
+			}
+			store.AddTools([]llm.Tool{tool})
+		default:
+			b.logWarn("Skipping ambiguous preloaded MCP tool selector",
+				"server_origin", spec.ServerOrigin,
+				"tool_name", spec.ToolName,
+				"match_count", len(matches),
+			)
+		}
+	}
 }
 
 func (b *Builder) strictRegistryOptions(userID string) []mcp.MCPToolRegistryOption {
@@ -319,11 +365,23 @@ func markUnloadedMCPTools(publicStore *llm.ToolStore, mcpTools []llm.Tool) {
 	}
 	unloaded := make([]llm.Tool, 0, len(mcpTools))
 	for _, tool := range mcpTools {
-		if publicStore.GetTool(tool.Name) == nil {
+		if !publicStoreHasMCPTool(publicStore, tool) {
 			unloaded = append(unloaded, tool)
 		}
 	}
 	publicStore.SetUnloadedMCPTools(unloaded)
+}
+
+func publicStoreHasMCPTool(publicStore *llm.ToolStore, tool llm.Tool) bool {
+	if publicStore.GetTool(tool.Name) != nil {
+		return true
+	}
+	for _, visible := range publicStore.GetTools() {
+		if visible.ServerOrigin == tool.ServerOrigin && llm.MCPToolNameMatches(tool.Name, visible.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 func botIDForLoadedMCPTools(c *llm.Context, bot *bots.Bot) string {

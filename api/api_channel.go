@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/channels"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -25,6 +26,11 @@ const (
 	TitleSummarizeUnreads = "Summarize Unreads"
 	TitleSummarizeChannel = "Summarize Channel"
 )
+
+var channelAnalysisRequiredMCPTools = []llm.EnabledMCPTool{
+	{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "read_channel"},
+	{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "get_channel_info"},
+}
 
 func (a *API) channelAuthorizationRequired(c *gin.Context) {
 	channelID := c.Param("channelid")
@@ -88,6 +94,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	}
 
 	opts := []llm.ContextOption{
+		a.contextBuilder.WithLLMContextPreloadedMCPTools(channelAnalysisRequiredMCPTools),
 		a.contextBuilder.WithLLMContextDefaultTools(bot),
 	}
 
@@ -109,33 +116,16 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		opts...,
 	)
 
-	// Validate that required tools are available for channel analysis
-	// The read_channel tool is essential for this feature
-	if llmContext.Tools == nil {
-		a.pluginAPI.Log.Error("Channel analysis failed: no tools available in context",
-			"userID", userID,
-			"channelID", channel.Id)
-		c.AbortWithError(http.StatusInternalServerError, errors.New("channel analysis requires MCP tools which are not available - check embedded server configuration"))
-		return
-	}
-
-	// Check if read_channel tool is available
-	availableTools := llmContext.Tools.GetTools()
-	hasReadChannel := false
-	var toolNames []string
-	for _, tool := range availableTools {
-		toolNames = append(toolNames, tool.Name)
-		if tool.Name == "read_channel" {
-			hasReadChannel = true
-		}
-	}
-
-	if !hasReadChannel {
-		a.pluginAPI.Log.Error("Channel analysis failed: read_channel tool not available",
+	// Validate that required tools are available for channel analysis.
+	availableTools, missingTools := channelAnalysisToolAvailability(llmContext.Tools)
+	if len(missingTools) > 0 {
+		a.pluginAPI.Log.Error("Channel analysis failed: required embedded MCP tools not available",
 			"userID", userID,
 			"channelID", channel.Id,
-			"availableTools", toolNames)
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("channel analysis requires read_channel tool which is not available (found %d tools: %v) - ensure embedded MCP server is enabled and working", len(availableTools), toolNames))
+			"dynamicToolLoading", llmContext.MCPDynamicToolLoading,
+			"missingTools", missingTools,
+			"availableTools", availableTools)
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("channel analysis requires embedded MCP tool(s) %v which are not available (dynamic loading: %t, found %d tools: %v) - ensure embedded MCP server is enabled, authorized, and working", missingTools, llmContext.MCPDynamicToolLoading, len(availableTools), availableTools))
 		return
 	}
 
@@ -177,6 +167,32 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		"postid":    analysisPost.Id,
 		"channelid": analysisPost.ChannelId,
 	})
+}
+
+func channelAnalysisToolAvailability(store *llm.ToolStore) ([]string, []string) {
+	var available []string
+	if store != nil {
+		for _, tool := range store.GetTools() {
+			available = append(available, tool.Name)
+		}
+	}
+
+	var missing []string
+	for _, required := range channelAnalysisRequiredMCPTools {
+		if !hasRequiredChannelAnalysisTool(store, required) {
+			missing = append(missing, required.ToolName)
+		}
+	}
+
+	return available, missing
+}
+
+func hasRequiredChannelAnalysisTool(store *llm.ToolStore, required llm.EnabledMCPTool) bool {
+	if store == nil {
+		return false
+	}
+	tool := store.GetTool(required.ToolName)
+	return tool != nil && tool.ServerOrigin == required.ServerOrigin
 }
 
 func (a *API) handleInterval(c *gin.Context) {
