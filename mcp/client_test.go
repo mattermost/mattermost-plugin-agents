@@ -453,7 +453,7 @@ func TestRemoteToolListChangedNextGetToolsForUserRediscoversTools(t *testing.T) 
 
 	tools, mcpErrors := manager.GetToolsForUser("user-id")
 	require.Nil(t, mcpErrors)
-	requireToolNames(t, tools, "tool_1", "tool_2")
+	requireToolNames(t, tools, "paged__tool_1", "paged__tool_2")
 	require.Len(t, cache.GetTools("paged"), 2)
 
 	addTestMCPTool(server, "new_tool")
@@ -471,7 +471,7 @@ func TestRemoteToolListChangedNextGetToolsForUserRediscoversTools(t *testing.T) 
 
 	tools, mcpErrors = manager.GetToolsForUser("user-id")
 	require.Nil(t, mcpErrors)
-	requireToolNames(t, tools, "new_tool", "tool_1", "tool_2")
+	requireToolNames(t, tools, "paged__new_tool", "paged__tool_1", "paged__tool_2")
 	require.Len(t, cache.GetTools("paged"), 3)
 }
 
@@ -692,7 +692,7 @@ func TestEmbeddedToolListChangedNextGetToolsForUserRediscoversTools(t *testing.T
 
 	tools, mcpErrors := manager.GetToolsForUser("user-id")
 	require.Nil(t, mcpErrors)
-	requireToolNames(t, tools, "tool_1", "tool_2")
+	requireToolNames(t, tools, "mattermost__tool_1", "mattermost__tool_2")
 
 	addTestMCPTool(server, "new_tool")
 
@@ -709,7 +709,7 @@ func TestEmbeddedToolListChangedNextGetToolsForUserRediscoversTools(t *testing.T
 
 	tools, mcpErrors = manager.GetToolsForUser("user-id")
 	require.Nil(t, mcpErrors)
-	requireToolNames(t, tools, "new_tool", "tool_1", "tool_2")
+	requireToolNames(t, tools, "mattermost__new_tool", "mattermost__tool_1", "mattermost__tool_2")
 	require.Len(t, cache.GetTools(EmbeddedClientKey), 3)
 }
 

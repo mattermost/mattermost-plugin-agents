@@ -83,10 +83,9 @@ describe('MCPToolConfigRow', () => {
             target: {value: ''},
         });
 
-        expect(onToolConfigChange).toHaveBeenCalledWith({
-            ...testToolConfig({retrieval_description_override: 'Find incidents'}),
-            retrieval_description_override: undefined,
-        });
+        const updatedConfig = onToolConfigChange.mock.calls[0][0];
+        expect(updatedConfig).toEqual(testToolConfig());
+        expect(updatedConfig).not.toHaveProperty('retrieval_description_override');
     });
 
     test('retrieval override input is disabled when server is disabled', () => {

@@ -54,7 +54,7 @@ jest.mock('./tabs/config_tab', () => ({
                 type='button'
                 onClick={() => onChange({serviceId: 'svc_1'})}
             >
-                Select service
+                {'Select service'}
             </button>
         </>
     ),

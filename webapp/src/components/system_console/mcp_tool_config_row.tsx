@@ -39,10 +39,13 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled}
 
     const handleRetrievalDescriptionOverrideChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const value = e.target.value;
-        onToolConfigChange({
-            ...toolConfig,
-            retrieval_description_override: value.trim() === '' ? undefined : value,
-        });
+        const nextToolConfig = {...toolConfig};
+        if (value.trim() === '') {
+            delete nextToolConfig.retrieval_description_override;
+        } else {
+            nextToolConfig.retrieval_description_override = value;
+        }
+        onToolConfigChange(nextToolConfig);
     };
 
     return (

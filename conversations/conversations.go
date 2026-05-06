@@ -195,6 +195,7 @@ func (c *Conversations) ProcessDMRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get conversation: %w", err)
 	}
+	llmCtx.ConversationID = convID
 	completionReq, err := c.convService.BuildCompletionRequest(conv, llmCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
