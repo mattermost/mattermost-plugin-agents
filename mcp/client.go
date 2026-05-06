@@ -120,15 +120,20 @@ func maybeInvalidateSharedToolsBeforeOAuthListTools(userID string, serverConfig 
 	invalidateSharedToolsCacheForOAuthDiscovery(toolsCache, &log, userID, serverID, serverConfig, hasStoredToken)
 }
 
-func NewEmbeddedServerClient(server EmbeddedMCPServer, log pluginapi.LogService, pluginAPI *pluginapi.Client, toolsCache ...*ToolsCache) *EmbeddedServerClient {
-	client := &EmbeddedServerClient{
+func NewEmbeddedServerClient(server EmbeddedMCPServer, log pluginapi.LogService, pluginAPI *pluginapi.Client) *EmbeddedServerClient {
+	return &EmbeddedServerClient{
 		server:    server,
 		log:       log,
 		pluginAPI: pluginAPI,
 	}
-	if len(toolsCache) > 0 {
-		client.toolsCache = toolsCache[0]
-	}
+}
+
+// NewEmbeddedServerClientWithCache is the same as NewEmbeddedServerClient but
+// also wires up a shared tools cache. Pass a non-nil cache when callers want
+// per-user tool listings to be cached across requests.
+func NewEmbeddedServerClientWithCache(server EmbeddedMCPServer, log pluginapi.LogService, pluginAPI *pluginapi.Client, toolsCache *ToolsCache) *EmbeddedServerClient {
+	client := NewEmbeddedServerClient(server, log, pluginAPI)
+	client.toolsCache = toolsCache
 	return client
 }
 

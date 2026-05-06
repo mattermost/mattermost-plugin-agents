@@ -477,6 +477,12 @@ func BareMCPToolName(toolName string) string {
 	return bareName
 }
 
+// IsBareMCPToolName reports whether name is non-empty and has no MCP server
+// namespace prefix (e.g. "get_issue" rather than "jira__get_issue").
+func IsBareMCPToolName(name string) bool {
+	return name != "" && BareMCPToolName(name) == name
+}
+
 func MCPToolNameMatches(runtimeName, configuredName string) bool {
 	return runtimeName == configuredName || BareMCPToolName(runtimeName) == configuredName
 }
@@ -583,6 +589,11 @@ func (s *ToolStore) TraceResolved(name string, argsGetter ToolArgumentGetter, re
 	}
 }
 
+// maxToolArgsLogBytes caps the size of the JSON arg snippet we emit to logs.
+// Tool calls (especially failures) can carry large payloads; truncating keeps
+// log output bounded without losing the diagnostic head of the args.
+const maxToolArgsLogBytes = 512
+
 func (s *ToolStore) LogUnknownToolWarning(name string, argsGetter ToolArgumentGetter) {
 	if s == nil || s.log == nil {
 		return
@@ -598,6 +609,9 @@ func toolArgsForLog(argsGetter ToolArgumentGetter) string {
 	var raw json.RawMessage
 	if err := argsGetter(&raw); err != nil {
 		return fmt.Sprintf("failed to get tool args: %v", err)
+	}
+	if len(raw) > maxToolArgsLogBytes {
+		return string(raw[:maxToolArgsLogBytes]) + "...(truncated)"
 	}
 	return string(raw)
 }

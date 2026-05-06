@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/llm"
@@ -14,6 +15,15 @@ const (
 	SearchToolsName = "search_tools"
 	LoadToolName    = "load_tool"
 )
+
+// UnloadedMCPToolUserHint returns the canonical message returned to the LLM
+// when it tries to call an MCP tool that is visible in the registry but has
+// not yet been loaded into the active tool store. Callers that surface this
+// to the model should reuse this helper so the wording (and the suggested
+// load_tool invocation) stays consistent across entry points.
+func UnloadedMCPToolUserHint(name string) string {
+	return fmt.Sprintf(`tool %s is available but not loaded. Call %s with {"name":%q} before calling it.`, name, LoadToolName, name)
+}
 
 type SearchToolsArgs struct {
 	Query string `json:"query" jsonschema:"Search query for finding available MCP tools,minLength=1"`
@@ -91,31 +101,23 @@ func searchToolsResolver(registry *MCPToolRegistry) llm.ToolResolver {
 		}
 
 		query := strings.TrimSpace(args.Query)
-		result := SearchToolsResult{
-			Tools: []SearchToolsResultItem{},
-		}
-		if query == "" {
-			llmContext.ObserveMCPDynamicToolEvent("search", "empty")
-			return marshalMetaToolResult(result)
-		}
-
-		llmContext.MarkMCPDynamicToolSearch()
-		if registry == nil {
-			llmContext.ObserveMCPDynamicToolEvent("search", "empty")
-			return marshalMetaToolResult(result)
+		items := []SearchToolsResultItem{}
+		if query != "" {
+			llmContext.MarkMCPDynamicToolSearch()
+			if registry != nil {
+				if found := searchResultsToMetaToolItems(registry.Search(query, DefaultMCPToolSearchLimit)); len(found) > 0 {
+					items = found
+				}
+			}
 		}
 
-		result.Tools = searchResultsToMetaToolItems(registry.Search(query, DefaultMCPToolSearchLimit))
-		if result.Tools == nil {
-			result.Tools = []SearchToolsResultItem{}
-		}
-		if len(result.Tools) == 0 {
+		if len(items) == 0 {
 			llmContext.ObserveMCPDynamicToolEvent("search", "empty")
 		} else {
 			llmContext.ObserveMCPDynamicToolEvent("search", "success")
 		}
 
-		return marshalMetaToolResult(result)
+		return marshalMetaToolResult(SearchToolsResult{Tools: items})
 	}
 }
 

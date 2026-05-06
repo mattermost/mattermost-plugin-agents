@@ -84,7 +84,7 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 
 	// Update embedded server client
 	if embeddedServer != nil {
-		m.embeddedClient = NewEmbeddedServerClient(embeddedServer, m.log, m.pluginAPI, m.toolsCache)
+		m.embeddedClient = NewEmbeddedServerClientWithCache(embeddedServer, m.log, m.pluginAPI, m.toolsCache)
 	} else {
 		m.embeddedClient = nil
 	}

@@ -293,7 +293,7 @@ func (r *ToolRunner) executeTools(toolCalls []llm.ToolCall, request llm.Completi
 		if request.Context == nil || request.Context.Tools == nil {
 			resolveErr = fmt.Errorf("no tool store available")
 		} else if request.Context.Tools.IsUnloadedMCPTool(tc.Name) {
-			resolveErr = fmt.Errorf("%s", loadFirstToolError(tc.Name))
+			resolveErr = fmt.Errorf("%s", mcp.UnloadedMCPToolUserHint(tc.Name))
 		} else if request.Context.Tools.GetTool(tc.Name) == nil {
 			resolveErr = fmt.Errorf("unknown tool %s", tc.Name)
 		} else {
@@ -364,7 +364,7 @@ func unavailableToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore,
 				toolResults[i] = ToolResult{
 					ToolCallID: tc.ID,
 					Name:       tc.Name,
-					Result:     loadFirstToolError(tc.Name),
+					Result:     mcp.UnloadedMCPToolUserHint(tc.Name),
 					IsError:    true,
 				}
 				continue
@@ -410,10 +410,6 @@ func recordMCPDynamicSearchLoadCallSuccess(llmContext *llm.Context, toolCalls []
 			llmContext.ObserveMCPDynamicToolEvent("search_load_call_success", "success")
 		}
 	}
-}
-
-func loadFirstToolError(name string) string {
-	return fmt.Sprintf(`tool %s is available but not loaded. Call load_tool with {"name":%q} before calling it.`, name, name)
 }
 
 func enrichToolCallsForApproval(toolCalls []llm.ToolCall, store *llm.ToolStore) []llm.ToolCall {

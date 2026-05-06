@@ -656,7 +656,7 @@ func TestEmbeddedToolListChangedInvalidatesCacheAndClientTools(t *testing.T) {
 		},
 	}, time.Now()))
 
-	embeddedClient := NewEmbeddedServerClient(&fakeEmbeddedMCPServer{ctx: ctx, server: server}, newTestLogService(), nil, cache)
+	embeddedClient := NewEmbeddedServerClientWithCache(&fakeEmbeddedMCPServer{ctx: ctx, server: server}, newTestLogService(), nil, cache)
 	client, err := embeddedClient.CreateClient(context.Background(), "user-id", "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
@@ -676,7 +676,7 @@ func TestEmbeddedToolListChangedNextGetToolsForUserRediscoversTools(t *testing.T
 	t.Cleanup(cancel)
 	cache := newTestToolsCache()
 	pluginAPI := newTestPluginAPIForEmbeddedManager("user-id", "session-id")
-	embeddedClient := NewEmbeddedServerClient(&fakeEmbeddedMCPServer{ctx: ctx, server: server}, pluginAPI.Log, pluginAPI, cache)
+	embeddedClient := NewEmbeddedServerClientWithCache(&fakeEmbeddedMCPServer{ctx: ctx, server: server}, pluginAPI.Log, pluginAPI, cache)
 	manager := &ClientManager{
 		config: Config{
 			EmbeddedServer: EmbeddedServerConfig{Enabled: true},

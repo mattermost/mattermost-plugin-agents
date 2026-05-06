@@ -187,6 +187,12 @@ func channelAnalysisToolAvailability(store *llm.ToolStore) ([]string, []string) 
 	return available, missing
 }
 
+// hasRequiredChannelAnalysisTool relies on the channel-analysis MCP tools
+// being preloaded into the visible tool store via WithLLMContextPreloadedMCPTools
+// (see the contextBuilder call above). Preload re-aliases each match to the
+// bare tool name in `required.ToolName`, so the GetTool lookup here matches
+// directly. Any new entry path that skips preload risks namespaced runtime
+// names (e.g. "mattermost__read_channel") that won't match this lookup.
 func hasRequiredChannelAnalysisTool(store *llm.ToolStore, required llm.EnabledMCPTool) bool {
 	if store == nil {
 		return false

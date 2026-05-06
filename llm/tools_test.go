@@ -499,6 +499,14 @@ func TestMCPToolNameHelpers(t *testing.T) {
 	assert.False(t, MCPToolNameMatches("jira__get_issue", "create_issue"))
 }
 
+func TestIsBareMCPToolName(t *testing.T) {
+	assert.True(t, IsBareMCPToolName("get_issue"))
+	assert.True(t, IsBareMCPToolName("search"))
+	assert.False(t, IsBareMCPToolName("jira__get_issue"))
+	assert.False(t, IsBareMCPToolName("server__foo__bar"))
+	assert.False(t, IsBareMCPToolName(""))
+}
+
 func TestRetainOnlyMCPTools(t *testing.T) {
 	tests := []struct {
 		name          string

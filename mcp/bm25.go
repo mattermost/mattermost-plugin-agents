@@ -127,9 +127,9 @@ func tokenizeBM25Text(text string) []string {
 	var tokens []string
 	var current strings.Builder
 
-	for _, r := range strings.ToLower(text) {
+	for _, r := range text {
 		if unicode.IsLetter(r) || unicode.IsNumber(r) {
-			current.WriteRune(r)
+			current.WriteRune(unicode.ToLower(r))
 			continue
 		}
 

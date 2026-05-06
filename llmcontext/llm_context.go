@@ -328,7 +328,7 @@ func (b *Builder) preloadMCPTools(store *llm.ToolStore, available []llm.Tool, sp
 			continue
 		case 1:
 			tool := matches[0]
-			if spec.ToolName == llm.BareMCPToolName(spec.ToolName) && tool.Name != spec.ToolName {
+			if llm.IsBareMCPToolName(spec.ToolName) && tool.Name != spec.ToolName {
 				tool.Name = spec.ToolName
 			}
 			store.AddTools([]llm.Tool{tool})

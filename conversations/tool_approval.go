@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
@@ -466,7 +467,7 @@ func resolveApprovedToolUseBlock(llmContext *llm.Context, block conversation.Con
 	tool := llmContext.Tools.GetTool(block.Name)
 	if tool == nil {
 		if llmContext.Tools.IsUnloadedMCPTool(block.Name) {
-			return "", fmt.Errorf("tool %s is available but not loaded; call load_tool before approving/calling it again", block.Name)
+			return "", errors.New(mcp.UnloadedMCPToolUserHint(block.Name))
 		}
 		return "", fmt.Errorf("tool %s is no longer available", block.Name)
 	}
