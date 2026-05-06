@@ -108,14 +108,16 @@ type mcpDisconnectCall struct {
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager    *mcp.OAuthManager
-	toolsCache      *mcp.ToolsCache
-	httpClient      *http.Client
-	tools           []llm.Tool
-	mcpErrors       *mcp.Errors
-	config          mcp.Config
-	embeddedServer  mcp.EmbeddedMCPServer
-	disconnectCalls []mcpDisconnectCall
+	oauthManager        *mcp.OAuthManager
+	tools               []llm.Tool
+	mcpErrors           *mcp.Errors
+	config              mcp.Config
+	embeddedServer      mcp.EmbeddedMCPServer
+	processOAuthSession *mcp.OAuthSession
+	processOAuthErr     error
+	disconnectErr       error
+	disconnectCalls     []mcpDisconnectCall
+	oauthNeededCalls    []mcpDisconnectCall
 }
 
 func newTestMCPClientManager(t *testing.T) *mockMCPClientManager {
@@ -139,11 +141,19 @@ func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
 }
 
 func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error) {
-	return nil, nil
+	return m.processOAuthSession, m.processOAuthErr
 }
 
 func (m *mockMCPClientManager) DisconnectUserOAuth(userID, serverName string) error {
 	m.disconnectCalls = append(m.disconnectCalls, mcpDisconnectCall{
+		userID:     userID,
+		serverName: serverName,
+	})
+	return m.disconnectErr
+}
+
+func (m *mockMCPClientManager) MarkOAuthNeeded(userID, serverName, authURL string) error {
+	m.oauthNeededCalls = append(m.oauthNeededCalls, mcpDisconnectCall{
 		userID:     userID,
 		serverName: serverName,
 	})
@@ -168,6 +178,16 @@ func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.
 
 func (m *mockMCPClientManager) GetConfig() mcp.Config {
 	return m.config
+}
+
+type fakeMCPOAuthClusterNotifier struct {
+	calls []string
+	err   error
+}
+
+func (f *fakeMCPOAuthClusterNotifier) PublishMCPOAuthUpdate(userID string) error {
+	f.calls = append(f.calls, userID)
+	return f.err
 }
 
 // mockConversationStore is a simple in-memory implementation of ConversationStore for API-layer tests.
@@ -487,11 +507,12 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		nil,
 		nil,
 		nil,
-		&mockMCPClientManager{httpClient: &http.Client{}},
+		&mockMCPClientManager{},
 		nil,
 		nil,
 		nil,
 		agentStore,
+		nil,
 		nil,
 		nil,
 		nil,

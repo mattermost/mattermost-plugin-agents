@@ -1,43 +1,44 @@
-# AGENTS.md
+# AGENTS.cloud.md
 
 ## Cursor Cloud specific instructions
 
 ### Overview
 
-This is the **Mattermost Agents Plugin** (`mattermost-plugin-ai`), a Mattermost server plugin integrating AI/LLM capabilities. It has a Go backend (`server/`) and React/TypeScript webapp (`webapp/`). It is not a standalone app; it runs inside a Mattermost server instance.
+This is the **Mattermost Agents Plugin** (`mattermost-ai`), a Mattermost server plugin integrating AI/LLM capabilities. It has a Go backend (`server/`) and React/TypeScript webapp (`webapp/`). It is not a standalone app; it runs inside a Mattermost server instance.
 
 ### Development Environment
 
-The development environment requires:
-- **Go 1.24+** (pre-installed)
-- **Node.js 20.11** (from `.nvmrc`; use `source ~/.nvm/nvm.sh && nvm use 20.11`)
-- **Docker** for running Mattermost server + PostgreSQL, and for e2e/integration tests (Testcontainers)
+Repeatable bootstrap actions belong in the Cursor Cloud VM update script, not in this file. Keep that script responsible for installing or refreshing Docker, Node.js, npm dependencies, `agent-browser`, AWS CLI, and Playwright Chromium dependencies.
+
+The development environment uses:
+- Go 1.24+.
+- Node.js 24.11+.
+- Docker for Mattermost, PostgreSQL, and e2e/integration tests.
+- `agent-browser` for browser automation in agents that do not have desktop access.
+- AWS CLI for uploading non-sensitive reproduction artifacts to `AWS_S3_BUCKET_NAME`.
 
 ### Running Mattermost + Plugin locally
 
-A local Mattermost Enterprise instance is needed for plugin development:
+A local Mattermost Enterprise instance is needed for plugin development. Use the development image and a companion PostgreSQL container:
 
 ```bash
-# Create Docker network
 docker network create mm-network 2>/dev/null || true
 
-# Start PostgreSQL
 docker run -d --name mm-postgres --network mm-network \
   -e POSTGRES_USER=mmuser -e POSTGRES_PASSWORD=mostest -e POSTGRES_DB=mattermost \
   -p 5432:5432 postgres:15-alpine
 
-# Start Mattermost (MM_LICENSE env var must be set)
 docker run -d --name mm-server --network mm-network -p 8065:8065 \
   -e MM_SQLSETTINGS_DRIVERNAME=postgres \
   -e MM_SQLSETTINGS_DATASOURCE="postgres://mmuser:mostest@mm-postgres:5432/mattermost?sslmode=disable&connect_timeout=10" \
   -e MM_SERVICESETTINGS_SITEURL=http://localhost:8065 \
   -e MM_PLUGINSETTINGS_ENABLEUPLOADS=true \
   -e MM_PLUGINSETTINGS_ENABLEUPLOAD=true \
-  -e MM_LICENSE="$MM_LICENSE" \
+  -e MM_PLUGINSETTINGS_AUTOMATICPREPACKAGEDPLUGINS=false \
+  -e MM_PLUGINSETTINGS_ENABLEMARKETPLACE=false \
   -e MM_SERVICESETTINGS_ENABLELOCALMODE=true \
-  mattermost/mattermost-enterprise-edition:latest
+  mattermostdevelopment/mattermost-enterprise-edition:master
 
-# Create admin user (first time only)
 docker exec mm-server mmctl user create --email admin@example.com --username admin --password 'Admin1234!' --system-admin --local
 docker exec mm-server mmctl team create --name dev --display-name "Dev Team" --local
 docker exec mm-server mmctl team users add dev admin --local
@@ -46,15 +47,17 @@ docker exec mm-server mmctl team users add dev admin --local
 ### Deploying the plugin
 
 ```bash
-MM_SERVICESETTINGS_SITEURL=http://localhost:8065 MM_ADMIN_USERNAME=admin MM_ADMIN_PASSWORD='Admin1234!' make deploy
+rm -rf server/dist dist
+make dist-ci
+MM_SERVICESETTINGS_SITEURL=http://localhost:8065 MM_ADMIN_USERNAME=admin MM_ADMIN_PASSWORD='Admin1234!' ./build/bin/pluginctl deploy mattermost-ai dist/*.tar.gz
 ```
 
-This builds the Go server (all platforms), the webapp (webpack), bundles into a `.tar.gz`, and uploads to the running Mattermost instance.
+`make dist-ci` builds a Linux amd64 bundle for the local container. Clean `server/dist` first if a previous full build left other platform binaries behind.
 
 ### Key commands
 
 See `CLAUDE.md` and `README.md` for standard build/lint/test commands. Summary:
-- **Build & deploy**: `make deploy` (needs `MM_SERVICESETTINGS_SITEURL`, `MM_ADMIN_USERNAME`, `MM_ADMIN_PASSWORD`)
+- **Build & deploy locally**: `rm -rf server/dist dist && make dist-ci && MM_SERVICESETTINGS_SITEURL=http://localhost:8065 MM_ADMIN_USERNAME=admin MM_ADMIN_PASSWORD='Admin1234!' ./build/bin/pluginctl deploy mattermost-ai dist/*.tar.gz`
 - **Lint**: `make check-style` or `make check-style-fix`
 - **Test**: `make test` (Go unit tests + webapp tests)
 - **E2E tests**: `make e2e` (uses Testcontainers/Docker - fully self-contained)
@@ -62,72 +65,52 @@ See `CLAUDE.md` and `README.md` for standard build/lint/test commands. Summary:
 - **Chromium-only e2e**: `cd e2e && npx playwright test tests/path/to/spec.ts --project=chromium --reporter=list`
 - **Build only**: `make dist`
 
-**E2E prerequisites:** npm dependencies and Playwright browsers (Chromium + Firefox) are pre-installed by the update script. No bootstrap steps needed — just run the test commands above.
+**E2E prerequisites:** npm dependencies and Playwright Chromium dependencies should be installed by the update script. No bootstrap steps should be needed before running Chromium e2e commands.
 
 ### Configuring an Anthropic AI agent via API
 
-After deploying the plugin and starting the Mattermost server, configure an Anthropic service and agent using the `ANTHROPIC_API_KEY` environment variable (must be set as a secret). Authenticate first, then patch the plugin config:
+After deploying the plugin and starting Mattermost, configure an Anthropic service and create a user agent using the `ANTHROPIC_API_KEY` environment variable. Do not use `/api/v4/config/patch` for this plugin after config migration; the runtime source of truth is the plugin admin config endpoint.
 
 ```bash
-# Get auth token
 TOKEN=$(curl -s -X POST http://localhost:8065/api/v4/users/login \
   -H 'Content-Type: application/json' \
   -d '{"login_id":"admin","password":"Admin1234!"}' \
-  -D - 2>/dev/null | grep -i '^token:' | tr -d '\r' | awk '{print $2}')
+  -D /tmp/mm-login-headers -o /tmp/mm-login-body)
+TOKEN=$(awk 'tolower($1)=="token:" {gsub("\r", "", $2); print $2}' /tmp/mm-login-headers)
 
-# Patch plugin config with Anthropic service + agent + MCP enabled (reads key from env var)
-python3 -c "
-import json, os
-patch = {
-    'PluginSettings': {
-        'Plugins': {
-            'mattermost-ai': {
-                'config': {
-                    'services': [{
-                        'id': 'anthropic-1',
-                        'name': 'Anthropic Claude',
-                        'type': 'anthropic',
-                        'apiKey': os.environ['ANTHROPIC_API_KEY'],
-                        'defaultModel': 'claude-sonnet-4-20250514',
-                        'tokenLimit': 200000,
-                        'outputTokenLimit': 8192,
-                        'streamingTimeoutSeconds': 60
-                    }],
-                    'bots': [{
-                        'id': 'claude-bot-1',
-                        'name': 'claude',
-                        'displayName': 'Claude',
-                        'customInstructions': 'You are a helpful AI assistant.',
-                        'serviceID': 'anthropic-1',
-                        'channelAccessLevel': 0,
-                        'userAccessLevel': 0,
-                        'enableVision': True,
-                        'disableTools': False
-                    }],
-                    'defaultBotName': 'claude',
-                    'enableChannelMentionToolCalling': True,
-                    'mcp': {
-                        'enabled': True,
-                        'enablePluginServer': True,
-                        'embeddedServer': {
-                            'enabled': True
-                        },
-                        'servers': [],
-                        'idleTimeoutMinutes': 30
-                    }
-                }
-            }
-        }
-    }
-}
-print(json.dumps(patch))
-" | curl -s -X PUT http://localhost:8065/api/v4/config/patch \
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8065/plugins/mattermost-ai/admin/config |
+  jq --arg key "$ANTHROPIC_API_KEY" '
+    .services=[{
+      id:"anthropic-service",
+      name:"Anthropic",
+      type:"anthropic",
+      apiKey:$key,
+      defaultModel:"claude-sonnet-4-5-20250929",
+      tokenLimit:200000,
+      outputTokenLimit:4096,
+      streamingTimeoutSeconds:120
+    }] |
+    .bots=[] |
+    .defaultBotName="" |
+    .enableChannelMentionToolCalling=true |
+    .mcp.enabled=true |
+    .mcp.embeddedServer.enabled=true |
+    .mcp.enablePluginServer=true |
+    .mcp.servers=[] |
+    .mcp.idleTimeoutMinutes=30' >/tmp/agents-config.json
+
+curl -s -X PUT http://localhost:8065/plugins/mattermost-ai/admin/config \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d @-
+  --data-binary @/tmp/agents-config.json
+
+curl -s -X POST http://localhost:8065/plugins/mattermost-ai/agents \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"displayName":"Claude Agent","username":"claudeagent","serviceID":"anthropic-service","customInstructions":"You are a concise helpful assistant.","channelAccessLevel":0,"userAccessLevel":0,"model":"claude-sonnet-4-5-20250929","enableVision":true,"disableTools":true}'
 ```
 
-After this, the `@claude` bot is available for @mentions in channels, direct messages, and the Agents RHS panel (purple icon in the right sidebar). The config structure is defined in `llm/configuration.go` (`ServiceConfig`, `BotConfig`).
+After this, the `@claudeagent` bot is available for direct messages and mentions. The config structure is defined in `config/config.go` and `llm/configuration.go`; the agent API request shape is defined by `CreateAgentRequest` in `api/api_agents.go`.
 
 ### Embedded MCP Server
 
@@ -139,8 +122,7 @@ The embedded MCP server provides tool-calling capabilities, allowing the AI agen
 - `mcp.embeddedServer.enabled` — enables the in-process MCP server with Mattermost tools
 - `enableChannelMentionToolCalling` — allows tool use when the bot is @mentioned in channels (not just DMs)
 
-**Available embedded MCP tools** (13 tools, defined in `mcpserver/tools/`):
-`create_post`, `read_channel`, `create_channel`, `get_channel_info`, `get_channel_members`, `add_user_to_channel`, `get_user_channels`, `read_post`, `search_posts`, `search_users`, `get_team_info`, `get_team_members`,  `dm_self`
+Embedded MCP tools are defined in `mcpserver/tools/`. Verify the active tool list with `GET /plugins/mattermost-ai/admin/mcp/tools` as a system admin.
 
 **How tool calls work:**
 1. The user sends a message requesting an action (e.g., "create a post in Town Square")
@@ -162,40 +144,34 @@ The embedded MCP server provides tool-calling capabilities, allowing the AI agen
 
 Required env vars: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET_NAME` (set as secrets).
 
-**Upload artifacts and generate presigned URLs:**
+**Upload artifacts and generate embeddable PR references:**
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
-
-# Upload all artifacts from /opt/cursor/artifacts/ to S3 under the branch name
-aws s3 cp /opt/cursor/artifacts/ "s3://$AWS_S3_BUCKET_NAME/$BRANCH/" --recursive
-
-# Generate presigned URLs (valid 7 days) for each uploaded file
+PREFIX="cursor/$BRANCH"
+aws s3 cp /opt/cursor/artifacts/ "s3://$AWS_S3_BUCKET_NAME/$PREFIX/" --recursive
+REGION=$(aws s3api get-bucket-location --bucket "$AWS_S3_BUCKET_NAME" --output text)
+[ "$REGION" = "None" ] || [ "$REGION" = "null" ] && REGION=us-east-1
 for f in /opt/cursor/artifacts/*; do
   FILENAME=$(basename "$f")
-  URL=$(aws s3 presign "s3://$AWS_S3_BUCKET_NAME/$BRANCH/$FILENAME" --expires-in 604800)
-  echo "- [$FILENAME]($URL)"
+  if [ "$REGION" = "us-east-1" ]; then
+    URL="https://$AWS_S3_BUCKET_NAME.s3.amazonaws.com/$PREFIX/$FILENAME"
+  else
+    URL="https://$AWS_S3_BUCKET_NAME.s3.$REGION.amazonaws.com/$PREFIX/$FILENAME"
+  fi
+  case "$FILENAME" in
+    *.gif|*.jpg|*.jpeg|*.png|*.webp) echo "![${FILENAME}](${URL})" ;;
+    *) echo "[${FILENAME}](${URL})" ;;
+  esac
 done
 ```
 
 **Including in the PR description:**
 
-After uploading, add the presigned links to the PR description in a `## Walkthrough` section. Use markdown image/video syntax:
-- Images: `![description](presigned_url)`
-- Videos: Link directly — `[walkthrough video](presigned_url)`
-
-Example PR description section:
-```markdown
-## Walkthrough
-![before screenshot](https://bucket.s3.amazonaws.com/branch/before.webp?...)
-![after screenshot](https://bucket.s3.amazonaws.com/branch/after.webp?...)
-[Demo video](https://bucket.s3.amazonaws.com/branch/demo.mp4?...)
-```
+After uploading, add screenshot artifacts to the PR description as Markdown images (`![alt text](public-url)`) so they render inline. Use plain links only for non-image artifacts. Never include secrets, credentials, API keys, or screenshots that show them.
 
 **Rules:**
-- Upload artifacts BEFORE creating/updating the PR description.
-- Every screenshot or video captured during the session must be uploaded and linked — do not skip any.
-- Presigned URLs expire after 7 days. This is sufficient for PR review cycles.
+- Upload relevant artifacts before creating/updating the PR description.
 - Scrub any visible secrets from screenshots/videos before uploading. If a secret is visible, retake the screenshot with the secret obscured or redacted.
 
 ### Gotchas
@@ -203,7 +179,7 @@ Example PR description section:
 - The `mattermost-govet` tool (used in `make check-style`) may fail with Go version mismatch errors. This is a known tooling issue, not a code problem. The core linting (golangci-lint, ESLint, TypeScript checks) all pass.
 - `postgres/pgvector_test.go` tests require a local PostgreSQL with pgvector at `localhost:5432` (`mmuser:mostest`). They will fail without it. The Mattermost docker container's PostgreSQL satisfies this.
 - Webapp tests (`npm run test` in `webapp/`) are currently no-ops (`echo ''`).
-- The plugin config uses a custom settings schema. Configuration is done through the **System Console > Plugins > Agents** UI or via `PATCH /api/v4/config/patch` API. The config is stored under `PluginSettings.Plugins["mattermost-ai"]["config"]` as a JSON object (not string).
-- When configuring via API, the `config` value must be a JSON object, not a JSON-encoded string. Passing a string causes `LoadPluginConfiguration` to fail.
-- The `MM_LICENSE` environment variable must be set for the Mattermost Enterprise server to function properly.
-- To find the Mattermost server port: run `wt port` or check Docker port mappings.
+- The plugin config is migrated to the plugin database on activation. Use `GET`/`PUT /plugins/mattermost-ai/admin/config` for automation.
+- `make deploy` builds all platform binaries and can exceed the local upload limit. Prefer the cleaned `make dist-ci` workflow for container testing.
+- The development image provides an Entry license for local testing; `MM_LICENSE` is not required for the bootstrap used here.
+- To find the Mattermost server port, check Docker port mappings.

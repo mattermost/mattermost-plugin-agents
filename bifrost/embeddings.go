@@ -86,7 +86,7 @@ func (p *EmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([
 		return nil, fmt.Errorf("no embedding array in response")
 	}
 
-	return embResp.EmbeddingArray, nil
+	return float64SliceToFloat32(embResp.EmbeddingArray), nil
 }
 
 // BatchCreateEmbeddings generates embeddings for multiple texts.
@@ -121,10 +121,20 @@ func (p *EmbeddingProvider) BatchCreateEmbeddings(ctx context.Context, texts []s
 		if len(data.Embedding.EmbeddingArray) == 0 {
 			return nil, fmt.Errorf("no embedding array in response for index %d", i)
 		}
-		result[i] = data.Embedding.EmbeddingArray
+		result[i] = float64SliceToFloat32(data.Embedding.EmbeddingArray)
 	}
 
 	return result, nil
+}
+
+// float64SliceToFloat32 narrows an embedding array; bifrost v1.5+ returns
+// float64 but our embeddings interface uses float32.
+func float64SliceToFloat32(in []float64) []float32 {
+	out := make([]float32, len(in))
+	for i, v := range in {
+		out[i] = float32(v)
+	}
+	return out
 }
 
 // Dimensions returns the dimensionality of the embeddings.

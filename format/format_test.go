@@ -241,6 +241,50 @@ Valid field: "Valid value"
 	}
 }
 
+func TestAuthoredPost(t *testing.T) {
+	tests := []struct {
+		name     string
+		username string
+		post     *model.Post
+		expected string
+	}{
+		{
+			name:     "post body with author username",
+			username: "alice",
+			post:     &model.Post{Message: "I noticed this"},
+			expected: "@alice: I noticed this",
+		},
+		{
+			name:     "post body with missing username",
+			username: "",
+			post:     &model.Post{Message: "orphaned context"},
+			expected: "@: orphaned context",
+		},
+		{
+			name:     "uses post body including attachments",
+			username: "bob",
+			post: &model.Post{
+				Message: "See attached",
+				Props: map[string]any{
+					"attachments": []any{
+						map[string]any{
+							"title": "Report",
+							"text":  "Q4 numbers",
+						},
+					},
+				},
+			},
+			expected: "@bob: See attached\nReport\nQ4 numbers\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, AuthoredPost(tt.post, tt.username))
+		})
+	}
+}
+
 func TestFormatPost(t *testing.T) {
 	tests := []struct {
 		name     string

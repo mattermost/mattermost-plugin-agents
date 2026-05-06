@@ -58,6 +58,7 @@ type MCPClientManager interface {
 	GetHTTPClient() *http.Client
 	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
 	DisconnectUserOAuth(userID, serverName string) error
+	MarkOAuthNeeded(userID, serverName, authURL string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (string, error)
 	GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors)
@@ -105,6 +106,11 @@ type ClusterAgentNotifier interface {
 	PublishAgentUpdate() error
 }
 
+// MCPOAuthClusterNotifier broadcasts MCP OAuth updates to other cluster nodes.
+type MCPOAuthClusterNotifier interface {
+	PublishMCPOAuthUpdate(userID string) error
+}
+
 // API represents the HTTP API functionality for the plugin
 type API struct {
 	bots                  *bots.MMBots
@@ -132,6 +138,7 @@ type API struct {
 	configUpdater         ConfigUpdater
 	clusterNotifier       ClusterNotifier
 	clusterAgentNotifier  ClusterAgentNotifier
+	mcpOAuthNotifier      MCPOAuthClusterNotifier
 	conversationStore     ConversationStore
 	convService           *conversation.Service
 	getSearchInitError    func() string
@@ -163,6 +170,7 @@ func New(
 	configUpdater ConfigUpdater,
 	clusterNotifier ClusterNotifier,
 	clusterAgentNotifier ClusterAgentNotifier,
+	mcpOAuthNotifier MCPOAuthClusterNotifier,
 	conversationStore ConversationStore,
 	getSearchInitError func() string,
 	customPromptsStore *customprompts.Store,
@@ -193,6 +201,7 @@ func New(
 		configUpdater:         configUpdater,
 		clusterNotifier:       clusterNotifier,
 		clusterAgentNotifier:  clusterAgentNotifier,
+		mcpOAuthNotifier:      mcpOAuthNotifier,
 		conversationStore:     conversationStore,
 		getSearchInitError:    getSearchInitError,
 		customPromptsStore:    customPromptsStore,

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/maximhq/bifrost/core/providers/anthropic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -185,6 +186,41 @@ func TestBuildChatReasoning(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConvertToBifrostRequestOpus47Reasoning verifies that when our
+// convertToBifrostRequest is fed through bifrost's Anthropic provider for
+// Claude Opus 4.7, the resulting upstream request uses thinking.type:"adaptive".
+// Opus 4.7 dropped support for thinking.type:"enabled"; sending the legacy
+// shape produces an API error: `"thinking.type.enabled" is not supported for
+// this model. Use "thinking.type.adaptive" and "output_config.effort"`.
+func TestConvertToBifrostRequestOpus47Reasoning(t *testing.T) {
+	b := &LLM{
+		provider:         schemas.Anthropic,
+		reasoningEnabled: true,
+	}
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{
+			{Role: llm.PostRoleUser, Message: "think"},
+		},
+	}
+	cfg := llm.LanguageModelConfig{
+		Model:              "claude-opus-4-7-20260401",
+		MaxGeneratedTokens: 8192,
+	}
+
+	bifrostReq := b.convertToBifrostRequest(request, cfg)
+
+	ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+	defer cancel()
+	result, err := anthropic.ToAnthropicChatRequest(ctx, bifrostReq)
+	require.NoError(t, err)
+	require.NotNil(t, result.Thinking)
+
+	assert.Equal(t, "adaptive", result.Thinking.Type,
+		"Opus 4.7 must use thinking.type:adaptive; thinking.type:enabled is rejected by the API")
+	assert.Nil(t, result.Thinking.BudgetTokens,
+		"Opus 4.7 does not accept budget_tokens alongside adaptive thinking")
 }
 
 func TestBuildResponsesReasoning(t *testing.T) {

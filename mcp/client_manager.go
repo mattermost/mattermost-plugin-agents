@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"sync"
@@ -13,6 +14,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
+
+var ErrOAuthNotConfigured = errors.New("oauth is not configured for this plugin")
 
 // ClientManager manages MCP clients for multiple users
 type ClientManager struct {
@@ -63,6 +66,7 @@ func (m *ClientManager) cleanupInactiveClients() {
 					m.log.Debug("Closing inactive MCP client", "userID", userID)
 					client.Close()
 					delete(m.clients, userID)
+					delete(m.activity, userID)
 				}
 			}
 			m.clientsMu.Unlock()
@@ -121,6 +125,7 @@ func (m *ClientManager) Close() {
 
 	// Clear the clients map
 	m.clients = make(map[string]*UserClients)
+	m.activity = make(map[string]time.Time)
 }
 
 // createAndStoreUserClient creates a new UserClients instance and stores it in the manager
@@ -144,19 +149,21 @@ func (m *ClientManager) createAndStoreUserClient(userID string) (*UserClients, *
 	// Store the client even if some servers failed to connect
 	// This allows partial success - user gets tools from working servers
 	m.clients[userID] = userClients
+	m.activity[userID] = time.Now()
 
 	return userClients, mcpErrors
 }
 
 // getClientForUser gets or creates an MCP client for a specific user
 func (m *ClientManager) getClientForUser(userID string) (*UserClients, *Errors) {
-	m.clientsMu.RLock()
+	m.clientsMu.Lock()
 	client, exists := m.clients[userID]
-	m.clientsMu.RUnlock()
 	if exists {
 		m.activity[userID] = time.Now()
+		m.clientsMu.Unlock()
 		return client, client.initialRemoteConnectErrors
 	}
+	m.clientsMu.Unlock()
 
 	return m.createAndStoreUserClient(userID)
 }
@@ -184,20 +191,35 @@ func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 	return filtered, mcpErrors
 }
 
+// InvalidateUserClients closes and removes cached MCP clients for a user.
+func (m *ClientManager) InvalidateUserClients(userID string) {
+	if userID == "" {
+		return
+	}
+
+	m.clientsMu.Lock()
+	defer m.clientsMu.Unlock()
+
+	if uc, ok := m.clients[userID]; ok {
+		uc.Close()
+		delete(m.clients, userID)
+	}
+	delete(m.activity, userID)
+}
+
 // ProcessOAuthCallback processes the OAuth callback for a user
 func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state, code string) (*OAuthSession, error) {
+	if m.oauthManager == nil {
+		return nil, ErrOAuthNotConfigured
+	}
+
 	session, err := m.oauthManager.ProcessCallback(ctx, userID, state, code)
 	if err != nil {
 		return nil, err
 	}
 
 	// Delete the client to force a re-creation (close first, like DisconnectUserOAuth).
-	m.clientsMu.Lock()
-	if uc, ok := m.clients[userID]; ok {
-		uc.Close()
-		delete(m.clients, userID)
-	}
-	m.clientsMu.Unlock()
+	m.InvalidateUserClients(userID)
 
 	return session, nil
 }
@@ -206,18 +228,30 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 // and invalidates the cached MCP client so a fresh connection is established
 // on the next request.
 func (m *ClientManager) DisconnectUserOAuth(userID, serverName string) error {
+	if m.oauthManager == nil {
+		return ErrOAuthNotConfigured
+	}
+
 	if err := m.oauthManager.DeleteUserToken(userID, serverName); err != nil {
 		return err
 	}
 
-	m.clientsMu.Lock()
-	if uc, ok := m.clients[userID]; ok {
-		uc.Close()
-		delete(m.clients, userID)
-	}
-	m.clientsMu.Unlock()
+	m.InvalidateUserClients(userID)
 
 	return nil
+}
+
+// MarkOAuthNeeded stores the latest upstream OAuth-needed state for a user/server
+// and drops any cached client so subsequent tool discovery reflects the reconnectable state.
+func (m *ClientManager) MarkOAuthNeeded(userID, serverName, authURL string) error {
+	var storeErr error
+	if m.oauthManager != nil {
+		storeErr = m.oauthManager.StoreAuthNeededState(userID, serverName, authURL)
+	}
+
+	m.InvalidateUserClients(userID)
+
+	return storeErr
 }
 
 // GetOAuthManager returns the OAuth manager instance
