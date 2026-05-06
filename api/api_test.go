@@ -88,14 +88,17 @@ type mcpDisconnectCall struct {
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager     *mcp.OAuthManager
-	tools            []llm.Tool
-	mcpErrors        *mcp.Errors
-	config           mcp.Config
-	embeddedServer   mcp.EmbeddedMCPServer
-	disconnectCalls  []mcpDisconnectCall
-	disconnectErr    error
-	ensureSessionErr error
+	oauthManager        *mcp.OAuthManager
+	tools               []llm.Tool
+	mcpErrors           *mcp.Errors
+	config              mcp.Config
+	embeddedServer      mcp.EmbeddedMCPServer
+	processOAuthSession *mcp.OAuthSession
+	processOAuthErr     error
+	disconnectCalls     []mcpDisconnectCall
+	disconnectErr       error
+	oauthNeededCalls    []mcpDisconnectCall
+	ensureSessionErr    error
 
 	registerCalls   []mcp.PluginServerConfig
 	unregisterCalls []string
@@ -115,7 +118,7 @@ func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
 }
 
 func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error) {
-	return nil, nil
+	return m.processOAuthSession, m.processOAuthErr
 }
 
 func (m *mockMCPClientManager) DisconnectUserOAuth(userID, serverName string) error {
@@ -124,6 +127,14 @@ func (m *mockMCPClientManager) DisconnectUserOAuth(userID, serverName string) er
 		serverName: serverName,
 	})
 	return m.disconnectErr
+}
+
+func (m *mockMCPClientManager) MarkOAuthNeeded(userID, serverName, authURL string) error {
+	m.oauthNeededCalls = append(m.oauthNeededCalls, mcpDisconnectCall{
+		userID:     userID,
+		serverName: serverName,
+	})
+	return nil
 }
 
 func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
@@ -189,6 +200,16 @@ func (m *mockMCPClientManager) GetPluginServer(pluginID string) (mcp.PluginServe
 func (m *mockMCPClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {
 	m.discoverPluginToolsCallCount++
 	return m.discoverPluginToolsResponse, m.discoverPluginToolsErr
+}
+
+type fakeMCPOAuthClusterNotifier struct {
+	calls []string
+	err   error
+}
+
+func (f *fakeMCPOAuthClusterNotifier) PublishMCPOAuthUpdate(userID string) error {
+	f.calls = append(f.calls, userID)
+	return f.err
 }
 
 // mockConversationStore is a simple in-memory implementation of ConversationStore for API-layer tests.
@@ -440,7 +461,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	agentStore := newMockAgentStore()
 	mcpMgr := &mockMCPClientManager{}
 
-	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, mcpMgr, nil, nil, nil, agentStore, nil, nil, nil, mockConvStore, nil, nil)
+	api := New(testBots, conversationsService, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, mcpMgr, nil, nil, nil, agentStore, nil, nil, nil, nil, mockConvStore, nil, nil)
 
 	return &TestEnvironment{
 		api:               api,

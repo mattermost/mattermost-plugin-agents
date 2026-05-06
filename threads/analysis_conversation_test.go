@@ -71,6 +71,10 @@ func (t *testBotLookup) IsAnyBot(userID string) bool {
 	return t.botUserIDs[userID]
 }
 
+func (t *testBotLookup) GetBotConfigByID(string) (bool, int64, bool) {
+	return false, 0, false
+}
+
 // testSetup holds the objects needed for analysis conversation tests.
 type testSetup struct {
 	convService *conversation.Service

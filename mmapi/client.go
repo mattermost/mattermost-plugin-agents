@@ -32,6 +32,7 @@ type Client interface {
 	KVGet(key string, value interface{}) error
 	KVSet(key string, value interface{}) error
 	KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error
+	KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error)
 	KVDelete(key string) error
 	GetUserByUsername(username string) (*model.User, error)
 	GetUserStatus(userID string) (*model.Status, error)
@@ -110,6 +111,13 @@ func (m *client) KVSet(key string, value interface{}) error {
 func (m *client) KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error {
 	_, err := m.pluginAPI.KV.Set(key, value, pluginapi.SetExpiry(ttl))
 	return err
+}
+
+// KVCompareAndSet performs an atomic compare-and-set. If oldValue is nil, the
+// write only succeeds when the key does not currently exist. Returns true when
+// the write was applied, false when the current value differed from oldValue.
+func (m *client) KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error) {
+	return m.pluginAPI.KV.Set(key, newValue, pluginapi.SetAtomic(oldValue))
 }
 
 func (m *client) KVDelete(key string) error {

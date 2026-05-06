@@ -206,6 +206,49 @@ func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Co
 	return metadata
 }
 
+func (c *UserClients) clearOAuthNeededForServer(client *Client) {
+	if c.oauthManager == nil || client == nil || client.config.Name == "" {
+		return
+	}
+	if err := c.oauthManager.DeleteAuthNeededState(c.userID, client.config.Name); err != nil {
+		c.log.Debug("Failed to clear MCP OAuth-needed state after successful tool call",
+			"userID", c.userID,
+			"serverID", client.config.Name,
+			"error", err)
+	}
+}
+
+func (c *UserClients) rememberOAuthNeededForToolCall(client *Client, err error) {
+	if c.oauthManager == nil || client == nil || client.config.Name == "" || err == nil {
+		return
+	}
+
+	oauthErr := client.oauthNeededError(err)
+	if oauthErr == nil {
+		return
+	}
+
+	var needed *OAuthNeededError
+	if !errors.As(oauthErr, &needed) {
+		return
+	}
+
+	authURL := needed.AuthURL()
+	if authURL == "" {
+		authURL = c.oauthManager.StartURL(client.config.Name)
+	}
+	if authURL == "" {
+		return
+	}
+
+	if storeErr := c.oauthManager.StoreAuthNeededState(c.userID, client.config.Name, authURL); storeErr != nil {
+		c.log.Warn("Failed to persist MCP OAuth-needed state after tool call",
+			"userID", c.userID,
+			"serverID", client.config.Name,
+			"error", storeErr)
+	}
+}
+
 // createToolResolver creates a resolver function for the given tool
 func (c *UserClients) createToolResolver(client *Client, toolName string) func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 	return func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
@@ -217,7 +260,14 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) func(l
 		// Prepare metadata for the tool call
 		metadata := c.prepareToolCallMetadata(client, llmContext)
 
-		return client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
+		result, err := client.CallToolWithMetadata(context.Background(), toolName, args, metadata)
+		if err != nil {
+			c.rememberOAuthNeededForToolCall(client, err)
+			return result, err
+		}
+
+		c.clearOAuthNeededForServer(client)
+		return result, nil
 	}
 }
 

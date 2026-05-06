@@ -217,6 +217,10 @@ func (b *evalBotLookup) IsAnyBot(userID string) bool {
 	return b.botUserIDs[userID]
 }
 
+func (b *evalBotLookup) GetBotConfigByID(string) (bool, int64, bool) {
+	return false, 0, false
+}
+
 func setupChannelMocksFromThreadData(mmClient *mocks.MockClient, threadData *evals.ThreadExport) {
 	// Mock posts retrieval - return the thread data as channel posts
 	mmClient.On("GetPostsSince", threadData.Channel.Id, fixedStart).Return(threadData.PostList, nil)
