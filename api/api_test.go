@@ -126,9 +126,6 @@ func newTestMCPClientManager(t *testing.T) *mockMCPClientManager {
 	mockClient.EXPECT().KVGet(mock.Anything, mock.Anything).Return(nil).Maybe()
 	return &mockMCPClientManager{
 		oauthManager: mcp.NewOAuthManager(mockClient, "", &http.Client{}, nil),
-		httpClient: &http.Client{
-			Transport: &http.Transport{DisableKeepAlives: true},
-		},
 	}
 }
 
@@ -137,7 +134,7 @@ func (m *mockMCPClientManager) GetOAuthManager() *mcp.OAuthManager {
 }
 
 func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
-	return m.toolsCache
+	return nil
 }
 
 func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error) {
@@ -169,7 +166,7 @@ func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error)
 }
 
 func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
-	return m.httpClient
+	return nil
 }
 
 func (m *mockMCPClientManager) GetToolsForUser(userID string) ([]llm.Tool, *mcp.Errors) {
