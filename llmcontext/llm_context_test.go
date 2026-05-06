@@ -53,14 +53,14 @@ func (p *countingMCPToolProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Erro
 type staticMCPToolProvider struct {
 	tools     []llm.Tool
 	errors    *mcp.Errors
-	overrides map[string]mcp.MCPToolRetrievalOverride
+	overrides map[string]mcp.ToolRetrievalOverride
 }
 
 func (p *staticMCPToolProvider) GetToolsForUser(string) ([]llm.Tool, *mcp.Errors) {
 	return p.tools, p.errors
 }
 
-func (p *staticMCPToolProvider) GetToolRetrievalOverrides() map[string]mcp.MCPToolRetrievalOverride {
+func (p *staticMCPToolProvider) GetToolRetrievalOverrides() map[string]mcp.ToolRetrievalOverride {
 	return p.overrides
 }
 
@@ -590,8 +590,8 @@ func TestStrictRegistryUsesAdminRetrievalOverride(t *testing.T) {
 			tools: []llm.Tool{
 				testMCPTool("jira__get_issue", origin, "fetch upstream issue details"),
 			},
-			overrides: map[string]mcp.MCPToolRetrievalOverride{
-				mcp.MCPToolRetrievalOverrideKey(origin, "get_issue"): {
+			overrides: map[string]mcp.ToolRetrievalOverride{
+				mcp.ToolRetrievalOverrideKey(origin, "get_issue"): {
 					Summary: "Find PagerDuty incidents linked to Jira tickets",
 				},
 			},
@@ -654,8 +654,8 @@ func TestLoadToolUsesOriginalDescriptionWithRetrievalOverride(t *testing.T) {
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
 		&staticMCPToolProvider{
 			tools: []llm.Tool{originalTool},
-			overrides: map[string]mcp.MCPToolRetrievalOverride{
-				mcp.MCPToolRetrievalOverrideKey(origin, "jira__get_issue"): {
+			overrides: map[string]mcp.ToolRetrievalOverride{
+				mcp.ToolRetrievalOverrideKey(origin, "jira__get_issue"): {
 					Summary: "override search-only summary",
 				},
 			},
@@ -696,8 +696,8 @@ func TestFlagOffIgnoresRetrievalOverrides(t *testing.T) {
 			tools: []llm.Tool{
 				testMCPTool("jira__get_issue", origin, "original upstream description"),
 			},
-			overrides: map[string]mcp.MCPToolRetrievalOverride{
-				mcp.MCPToolRetrievalOverrideKey(origin, "get_issue"): {
+			overrides: map[string]mcp.ToolRetrievalOverride{
+				mcp.ToolRetrievalOverrideKey(origin, "get_issue"): {
 					Summary: "override search-only summary",
 				},
 			},

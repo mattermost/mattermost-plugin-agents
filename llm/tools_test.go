@@ -730,7 +730,7 @@ func TestFilterMCPToolsByAllowlist(t *testing.T) {
 			want:      []Tool{builtin},
 		},
 		{
-			name:  "same bare name across origins is matched per-origin",
+			name: "same bare name across origins is matched per-origin",
 			tools: []Tool{
 				{Name: "jira__search", ServerOrigin: "https://server-a.com"},
 				{Name: "github__search", ServerOrigin: "https://server-b.com"},

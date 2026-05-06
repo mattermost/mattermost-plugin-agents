@@ -79,7 +79,7 @@ type Context struct {
 	// Stored as `any` to avoid an llm -> mcp import cycle: the mcp package
 	// already imports llm, and the only consumer that needs the concrete type
 	// is the llmcontext package, which can import both. Type-assert to
-	// *mcp.MCPToolRegistry there.
+	// *mcp.ToolRegistry there.
 	MCPToolRegistry any
 }
 

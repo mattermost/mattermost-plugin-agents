@@ -28,7 +28,7 @@ type MCPToolProvider interface {
 }
 
 type MCPToolRetrievalOverrideProvider interface {
-	GetToolRetrievalOverrides() map[string]mcp.MCPToolRetrievalOverride
+	GetToolRetrievalOverrides() map[string]mcp.ToolRetrievalOverride
 }
 
 type LoadedMCPToolStore interface {
@@ -299,8 +299,8 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 	return store
 }
 
-func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool, c *llm.Context, botID, userID string, registryOpts ...mcp.MCPToolRegistryOption) {
-	registry := mcp.NewMCPToolRegistry(mcpTools, registryOpts...)
+func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool, c *llm.Context, botID, userID string, registryOpts ...mcp.ToolRegistryOption) {
+	registry := mcp.NewToolRegistry(mcpTools, registryOpts...)
 	// Stash the registry on the context so callers can replay loaded-tool
 	// restoration after the conversation row exists (see AttachConversationID).
 	// Building the context once with tools and late-binding the conversation ID
@@ -333,7 +333,7 @@ func (b *Builder) AttachConversationID(c *llm.Context, bot *bots.Bot, conversati
 		return
 	}
 
-	registry, ok := c.MCPToolRegistry.(*mcp.MCPToolRegistry)
+	registry, ok := c.MCPToolRegistry.(*mcp.ToolRegistry)
 	if !ok || registry == nil {
 		return
 	}
@@ -387,7 +387,7 @@ func (b *Builder) preloadMCPTools(store *llm.ToolStore, available []llm.Tool, sp
 	}
 }
 
-func (b *Builder) strictRegistryOptions() []mcp.MCPToolRegistryOption {
+func (b *Builder) strictRegistryOptions() []mcp.ToolRegistryOption {
 	if b == nil || b.mcpToolProvider == nil {
 		return nil
 	}
@@ -402,7 +402,7 @@ func (b *Builder) strictRegistryOptions() []mcp.MCPToolRegistryOption {
 		return nil
 	}
 
-	return []mcp.MCPToolRegistryOption{mcp.WithMCPToolRetrievalOverrides(overrides)}
+	return []mcp.ToolRegistryOption{mcp.WithToolRetrievalOverrides(overrides)}
 }
 
 func markUnloadedMCPTools(publicStore *llm.ToolStore, mcpTools []llm.Tool) {
@@ -452,7 +452,7 @@ func (b *Builder) loadedToolRecorder(conversationID, botID, userID string) mcp.L
 		return nil
 	}
 
-	return func(llmContext *llm.Context, entry mcp.MCPToolRegistryEntry) error {
+	return func(llmContext *llm.Context, entry mcp.ToolRegistryEntry) error {
 		resolvedConversationID := conversationID
 		if llmContext != nil && llmContext.ConversationID != "" {
 			resolvedConversationID = llmContext.ConversationID
@@ -481,7 +481,7 @@ func (b *Builder) loadedToolRecorder(conversationID, botID, userID string) mcp.L
 	}
 }
 
-func (b *Builder) restoreLoadedMCPTools(publicStore *llm.ToolStore, registry *mcp.MCPToolRegistry, c *llm.Context, botID, userID string) {
+func (b *Builder) restoreLoadedMCPTools(publicStore *llm.ToolStore, registry *mcp.ToolRegistry, c *llm.Context, botID, userID string) {
 	if b.loadedMCPToolStore == nil || publicStore == nil || registry == nil || c == nil ||
 		c.ConversationID == "" || botID == "" || userID == "" {
 		return

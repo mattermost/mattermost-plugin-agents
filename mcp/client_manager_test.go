@@ -91,8 +91,8 @@ func TestClientManagerGetToolRetrievalOverridesRemote(t *testing.T) {
 
 	overrides := manager.GetToolRetrievalOverrides()
 
-	require.Equal(t, map[string]MCPToolRetrievalOverride{
-		MCPToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
+	require.Equal(t, map[string]ToolRetrievalOverride{
+		ToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
 			Summary: "Find Jira issues by key",
 		},
 	}, overrides)
@@ -111,8 +111,8 @@ func TestClientManagerGetToolRetrievalOverridesEmbedded(t *testing.T) {
 
 	overrides := manager.GetToolRetrievalOverrides()
 
-	require.Equal(t, map[string]MCPToolRetrievalOverride{
-		MCPToolRetrievalOverrideKey(EmbeddedClientKey, "search_users"): {
+	require.Equal(t, map[string]ToolRetrievalOverride{
+		ToolRetrievalOverrideKey(EmbeddedClientKey, "search_users"): {
 			Summary: "Find Mattermost people",
 		},
 	}, overrides)
@@ -137,8 +137,8 @@ func TestClientManagerGetToolRetrievalOverridesTrimsAndSkipsEmpty(t *testing.T) 
 
 	overrides := manager.GetToolRetrievalOverrides()
 
-	require.Equal(t, map[string]MCPToolRetrievalOverride{
-		MCPToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
+	require.Equal(t, map[string]ToolRetrievalOverride{
+		ToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
 			Summary: "Find Jira issues",
 		},
 	}, overrides)
@@ -163,7 +163,7 @@ func TestClientManagerGetToolRetrievalOverridesLastDuplicateWins(t *testing.T) {
 
 	overrides := manager.GetToolRetrievalOverrides()
 
-	require.Equal(t, "new summary", overrides[MCPToolRetrievalOverrideKey("https://jira.example.com", "get_issue")].Summary)
+	require.Equal(t, "new summary", overrides[ToolRetrievalOverrideKey("https://jira.example.com", "get_issue")].Summary)
 }
 
 func TestClientManagerGetToolRetrievalOverridesDisabledServer(t *testing.T) {

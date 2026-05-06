@@ -192,21 +192,21 @@ func (m *ClientManager) GetToolsForUser(userID string) ([]llm.Tool, *Errors) {
 	return filtered, mcpErrors
 }
 
-func (m *ClientManager) GetToolRetrievalOverrides() map[string]MCPToolRetrievalOverride {
+func (m *ClientManager) GetToolRetrievalOverrides() map[string]ToolRetrievalOverride {
 	if m == nil {
 		return nil
 	}
 
-	var overrides map[string]MCPToolRetrievalOverride
+	var overrides map[string]ToolRetrievalOverride
 	addOverride := func(serverOrigin string, toolConfig ToolConfig) {
 		summary := strings.TrimSpace(toolConfig.RetrievalDescriptionOverride)
 		if summary == "" {
 			return
 		}
 		if overrides == nil {
-			overrides = make(map[string]MCPToolRetrievalOverride)
+			overrides = make(map[string]ToolRetrievalOverride)
 		}
-		overrides[MCPToolRetrievalOverrideKey(serverOrigin, toolConfig.Name)] = MCPToolRetrievalOverride{
+		overrides[ToolRetrievalOverrideKey(serverOrigin, toolConfig.Name)] = ToolRetrievalOverride{
 			Summary: summary,
 		}
 	}

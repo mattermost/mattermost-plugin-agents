@@ -290,13 +290,14 @@ func (r *ToolRunner) executeTools(toolCalls []llm.ToolCall, request llm.Completi
 	for i, tc := range toolCalls {
 		var result string
 		var resolveErr error
-		if request.Context == nil || request.Context.Tools == nil {
+		switch {
+		case request.Context == nil || request.Context.Tools == nil:
 			resolveErr = fmt.Errorf("no tool store available")
-		} else if request.Context.Tools.IsUnloadedMCPTool(tc.Name) {
+		case request.Context.Tools.IsUnloadedMCPTool(tc.Name):
 			resolveErr = fmt.Errorf("%s", mcp.UnloadedMCPToolUserHint(tc.Name))
-		} else if request.Context.Tools.GetTool(tc.Name) == nil {
+		case request.Context.Tools.GetTool(tc.Name) == nil:
 			resolveErr = fmt.Errorf("unknown tool %s", tc.Name)
-		} else {
+		default:
 			result, resolveErr = request.Context.Tools.ResolveTool(
 				tc.Name,
 				func(args any) error { return json.Unmarshal(tc.Arguments, args) },

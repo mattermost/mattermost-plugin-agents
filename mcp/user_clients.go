@@ -5,7 +5,7 @@ package mcp
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -366,6 +366,6 @@ func sanitizeMCPServerSlug(value string) string {
 }
 
 func shortSlugHash(value string) string {
-	sum := sha1.Sum([]byte(value))
+	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])[:8]
 }

@@ -11,13 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMCPToolRegistryLookupAndList(t *testing.T) {
+func TestToolRegistryLookupAndList(t *testing.T) {
 	tools := []llm.Tool{
 		testRegistryTool("mattermost__search_users", "Search users", "https://mattermost.example.com"),
 		testRegistryTool("jira__get_issue", "Get a Jira issue", "https://jira.example.com"),
 	}
 
-	registry := NewMCPToolRegistry(tools)
+	registry := NewToolRegistry(tools)
 
 	require.Equal(t, 2, registry.Len())
 	require.Equal(t, []string{"jira__get_issue", "mattermost__search_users"}, registryEntryNames(registry.List()))
@@ -35,12 +35,12 @@ func TestMCPToolRegistryLookupAndList(t *testing.T) {
 	require.Equal(t, "jira__get_issue resolved", result)
 }
 
-func TestMCPToolRegistrySearchTop8Deterministic(t *testing.T) {
+func TestToolRegistrySearchTop8Deterministic(t *testing.T) {
 	tools := make([]llm.Tool, 0, 10)
 	for i := 9; i >= 0; i-- {
 		tools = append(tools, testRegistryTool(fmt.Sprintf("server__tool_%02d", i), "shared capability", "https://server.example.com"))
 	}
-	registry := NewMCPToolRegistry(tools)
+	registry := NewToolRegistry(tools)
 
 	results := registry.Search("shared", 0)
 
@@ -60,8 +60,8 @@ func TestMCPToolRegistrySearchTop8Deterministic(t *testing.T) {
 	}
 }
 
-func TestMCPToolRegistrySearchEmptyQuery(t *testing.T) {
-	registry := NewMCPToolRegistry([]llm.Tool{
+func TestToolRegistrySearchEmptyQuery(t *testing.T) {
+	registry := NewToolRegistry([]llm.Tool{
 		testRegistryTool("jira__get_issue", "Get issue", "https://jira.example.com"),
 	})
 
@@ -69,12 +69,12 @@ func TestMCPToolRegistrySearchEmptyQuery(t *testing.T) {
 	require.Nil(t, registry.Search("   ", 10))
 }
 
-func TestMCPToolRegistrySearchUsesDescriptionOverrideForRetrievalOnly(t *testing.T) {
+func TestToolRegistrySearchUsesDescriptionOverrideForRetrievalOnly(t *testing.T) {
 	tool := testRegistryTool("jira__get_issue", "Original schema description", "https://jira.example.com")
-	registry := NewMCPToolRegistry(
+	registry := NewToolRegistry(
 		[]llm.Tool{tool},
-		WithMCPToolRetrievalOverrides(map[string]MCPToolRetrievalOverride{
-			MCPToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
+		WithToolRetrievalOverrides(map[string]ToolRetrievalOverride{
+			ToolRetrievalOverrideKey("https://jira.example.com", "get_issue"): {
 				Summary: "Find Jira incidents by key",
 			},
 		}),
@@ -91,21 +91,21 @@ func TestMCPToolRegistrySearchUsesDescriptionOverrideForRetrievalOnly(t *testing
 	require.Equal(t, "Find Jira incidents by key", entry.RetrievalSummary)
 }
 
-func TestMCPToolRegistryOverrideKeyUsesBareName(t *testing.T) {
+func TestToolRegistryOverrideKeyUsesBareName(t *testing.T) {
 	require.Equal(
 		t,
-		MCPToolRetrievalOverrideKey("https://jira.example.com", "get_issue"),
-		MCPToolRetrievalOverrideKey("https://jira.example.com", "jira__get_issue"),
+		ToolRetrievalOverrideKey("https://jira.example.com", "get_issue"),
+		ToolRetrievalOverrideKey("https://jira.example.com", "jira__get_issue"),
 	)
 }
 
-func TestMCPToolRegistryDuplicateNamespacedToolLastWins(t *testing.T) {
+func TestToolRegistryDuplicateNamespacedToolLastWins(t *testing.T) {
 	first := testRegistryTool("jira__search", "First search description", "https://jira.example.com")
 	first.Schema = map[string]any{"version": "first"}
 	second := testRegistryTool("jira__search", "Second search description", "https://jira.example.com")
 	second.Schema = map[string]any{"version": "second"}
 
-	registry := NewMCPToolRegistry([]llm.Tool{first, second})
+	registry := NewToolRegistry([]llm.Tool{first, second})
 
 	require.Equal(t, 1, registry.Len())
 	require.Equal(t, []string{"jira__search"}, registryEntryNames(registry.List()))
@@ -116,8 +116,8 @@ func TestMCPToolRegistryDuplicateNamespacedToolLastWins(t *testing.T) {
 	require.Equal(t, map[string]any{"version": "second"}, entry.Tool.Schema)
 }
 
-func TestMCPToolRegistryDuplicateBareNamesDifferentNamespaces(t *testing.T) {
-	registry := NewMCPToolRegistry([]llm.Tool{
+func TestToolRegistryDuplicateBareNamesDifferentNamespaces(t *testing.T) {
+	registry := NewToolRegistry([]llm.Tool{
 		testRegistryTool("jira__search", "Search Jira", "https://jira.example.com"),
 		testRegistryTool("github__search", "Search GitHub", "https://github.example.com"),
 	})
@@ -134,8 +134,8 @@ func TestMCPToolRegistryDuplicateBareNamesDifferentNamespaces(t *testing.T) {
 	require.Equal(t, "https://github.example.com", githubEntry.ServerOrigin)
 }
 
-func TestMCPToolRegistryClosestMatchesUsesBM25(t *testing.T) {
-	registry := NewMCPToolRegistry([]llm.Tool{
+func TestToolRegistryClosestMatchesUsesBM25(t *testing.T) {
+	registry := NewToolRegistry([]llm.Tool{
 		testRegistryTool("jira__get_issue", "Get a Jira issue", "https://jira.example.com"),
 		testRegistryTool("github__create_pull_request", "Create a pull request", "https://github.example.com"),
 	})
@@ -146,8 +146,8 @@ func TestMCPToolRegistryClosestMatchesUsesBM25(t *testing.T) {
 	require.Equal(t, "jira__get_issue", results[0].Name)
 }
 
-func TestMCPToolRegistryClosestMatchesFallbackForMiss(t *testing.T) {
-	registry := NewMCPToolRegistry([]llm.Tool{
+func TestToolRegistryClosestMatchesFallbackForMiss(t *testing.T) {
+	registry := NewToolRegistry([]llm.Tool{
 		testRegistryTool("mattermost__search_users", "Find people", "https://mattermost.example.com"),
 		testRegistryTool("github__create_pull_request", "Open collaboration review", "https://github.example.com"),
 	})
@@ -159,8 +159,8 @@ func TestMCPToolRegistryClosestMatchesFallbackForMiss(t *testing.T) {
 	require.Greater(t, results[0].Score, 0.0)
 }
 
-func TestMCPToolRegistryLookupBareNameDoesNotSucceed(t *testing.T) {
-	registry := NewMCPToolRegistry([]llm.Tool{
+func TestToolRegistryLookupBareNameDoesNotSucceed(t *testing.T) {
+	registry := NewToolRegistry([]llm.Tool{
 		testRegistryTool("jira__search", "Search Jira", "https://jira.example.com"),
 	})
 
@@ -168,8 +168,8 @@ func TestMCPToolRegistryLookupBareNameDoesNotSucceed(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestMCPToolRegistryNilReceiverSafe(t *testing.T) {
-	var registry *MCPToolRegistry
+func TestToolRegistryNilReceiverSafe(t *testing.T) {
+	var registry *ToolRegistry
 
 	require.Equal(t, 0, registry.Len())
 	require.Nil(t, registry.List())
@@ -182,8 +182,8 @@ func TestMCPToolRegistryNilReceiverSafe(t *testing.T) {
 	require.Nil(t, registry.ClosestMatches("jira", 10))
 }
 
-func TestMCPToolRegistrySkipsEmptyNamesAndSearchesEmptyDescriptionsByName(t *testing.T) {
-	registry := NewMCPToolRegistry([]llm.Tool{
+func TestToolRegistrySkipsEmptyNamesAndSearchesEmptyDescriptionsByName(t *testing.T) {
+	registry := NewToolRegistry([]llm.Tool{
 		testRegistryTool("", "No runtime name", "https://jira.example.com"),
 		testRegistryTool("jira__get_issue", "", "https://jira.example.com"),
 	})
@@ -194,8 +194,8 @@ func TestMCPToolRegistrySkipsEmptyNamesAndSearchesEmptyDescriptionsByName(t *tes
 	require.Equal(t, "jira__get_issue", results[0].Name)
 }
 
-func TestMCPToolRegistryOnlyContainsProvidedFilteredTools(t *testing.T) {
-	registry := NewMCPToolRegistry([]llm.Tool{
+func TestToolRegistryOnlyContainsProvidedFilteredTools(t *testing.T) {
+	registry := NewToolRegistry([]llm.Tool{
 		testRegistryTool("jira__get_issue", "Get Jira issue", "https://jira.example.com"),
 	})
 
@@ -219,7 +219,7 @@ func testRegistryTool(name, desc, origin string) llm.Tool {
 	}
 }
 
-func registryEntryNames(entries []MCPToolRegistryEntry) []string {
+func registryEntryNames(entries []ToolRegistryEntry) []string {
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		names = append(names, entry.Name)
@@ -227,7 +227,7 @@ func registryEntryNames(entries []MCPToolRegistryEntry) []string {
 	return names
 }
 
-func registrySearchResultNames(results []MCPToolSearchResult) []string {
+func registrySearchResultNames(results []ToolSearchResult) []string {
 	names := make([]string, 0, len(results))
 	for _, result := range results {
 		names = append(names, result.Name)

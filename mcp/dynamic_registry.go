@@ -12,13 +12,13 @@ import (
 
 const DefaultMCPToolSearchLimit = 8
 
-type MCPToolRegistry struct {
-	tools map[string]MCPToolRegistryEntry
+type ToolRegistry struct {
+	tools map[string]ToolRegistryEntry
 	order []string
 	bm25  *BM25Index
 }
 
-type MCPToolRegistryEntry struct {
+type ToolRegistryEntry struct {
 	Tool             llm.Tool
 	Name             string
 	BareName         string
@@ -26,32 +26,32 @@ type MCPToolRegistryEntry struct {
 	RetrievalSummary string
 }
 
-type MCPToolSearchResult struct {
+type ToolSearchResult struct {
 	Name    string
 	Summary string
 	Score   float64
 }
 
-type MCPToolRegistryOption func(*mcpToolRegistryOptions)
+type ToolRegistryOption func(*toolRegistryOptions)
 
-type MCPToolRetrievalOverride struct {
+type ToolRetrievalOverride struct {
 	Summary string
 }
 
-type mcpToolRegistryOptions struct {
-	retrievalOverrides map[string]MCPToolRetrievalOverride
+type toolRegistryOptions struct {
+	retrievalOverrides map[string]ToolRetrievalOverride
 }
 
-func NewMCPToolRegistry(tools []llm.Tool, opts ...MCPToolRegistryOption) *MCPToolRegistry {
-	options := mcpToolRegistryOptions{}
+func NewToolRegistry(tools []llm.Tool, opts ...ToolRegistryOption) *ToolRegistry {
+	options := toolRegistryOptions{}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&options)
 		}
 	}
 
-	registry := &MCPToolRegistry{
-		tools: make(map[string]MCPToolRegistryEntry),
+	registry := &ToolRegistry{
+		tools: make(map[string]ToolRegistryEntry),
 	}
 
 	for _, tool := range tools {
@@ -61,7 +61,7 @@ func NewMCPToolRegistry(tools []llm.Tool, opts ...MCPToolRegistryOption) *MCPToo
 
 		bareName := llm.BareMCPToolName(tool.Name)
 		retrievalSummary := tool.Description
-		if override, ok := options.retrievalOverrides[MCPToolRetrievalOverrideKey(tool.ServerOrigin, bareName)]; ok {
+		if override, ok := options.retrievalOverrides[ToolRetrievalOverrideKey(tool.ServerOrigin, bareName)]; ok {
 			if summary := strings.TrimSpace(override.Summary); summary != "" {
 				retrievalSummary = summary
 			}
@@ -71,7 +71,7 @@ func NewMCPToolRegistry(tools []llm.Tool, opts ...MCPToolRegistryOption) *MCPToo
 			registry.order = append(registry.order, tool.Name)
 		}
 
-		registry.tools[tool.Name] = MCPToolRegistryEntry{
+		registry.tools[tool.Name] = ToolRegistryEntry{
 			Tool:             tool,
 			Name:             tool.Name,
 			BareName:         bareName,
@@ -86,45 +86,45 @@ func NewMCPToolRegistry(tools []llm.Tool, opts ...MCPToolRegistryOption) *MCPToo
 	return registry
 }
 
-func WithMCPToolRetrievalOverrides(overrides map[string]MCPToolRetrievalOverride) MCPToolRegistryOption {
-	return func(options *mcpToolRegistryOptions) {
+func WithToolRetrievalOverrides(overrides map[string]ToolRetrievalOverride) ToolRegistryOption {
+	return func(options *toolRegistryOptions) {
 		options.retrievalOverrides = overrides
 	}
 }
 
-func MCPToolRetrievalOverrideKey(serverOrigin, toolName string) string {
+func ToolRetrievalOverrideKey(serverOrigin, toolName string) string {
 	return serverOrigin + "\x00" + llm.BareMCPToolName(toolName)
 }
 
-func (r *MCPToolRegistry) Len() int {
+func (r *ToolRegistry) Len() int {
 	if r == nil {
 		return 0
 	}
 	return len(r.tools)
 }
 
-func (r *MCPToolRegistry) List() []MCPToolRegistryEntry {
+func (r *ToolRegistry) List() []ToolRegistryEntry {
 	if r == nil || len(r.order) == 0 {
 		return nil
 	}
 
-	entries := make([]MCPToolRegistryEntry, 0, len(r.order))
+	entries := make([]ToolRegistryEntry, 0, len(r.order))
 	for _, name := range r.order {
 		entries = append(entries, r.tools[name])
 	}
 	return entries
 }
 
-func (r *MCPToolRegistry) Lookup(name string) (MCPToolRegistryEntry, bool) {
+func (r *ToolRegistry) Lookup(name string) (ToolRegistryEntry, bool) {
 	if r == nil {
-		return MCPToolRegistryEntry{}, false
+		return ToolRegistryEntry{}, false
 	}
 
 	entry, ok := r.tools[name]
 	return entry, ok
 }
 
-func (r *MCPToolRegistry) Search(query string, limit int) []MCPToolSearchResult {
+func (r *ToolRegistry) Search(query string, limit int) []ToolSearchResult {
 	if r == nil || strings.TrimSpace(query) == "" {
 		return nil
 	}
@@ -132,7 +132,7 @@ func (r *MCPToolRegistry) Search(query string, limit int) []MCPToolSearchResult 
 	return r.searchWithIndex(query, normalizedMCPToolSearchLimit(limit))
 }
 
-func (r *MCPToolRegistry) ClosestMatches(name string, limit int) []MCPToolSearchResult {
+func (r *ToolRegistry) ClosestMatches(name string, limit int) []ToolSearchResult {
 	if r == nil || strings.TrimSpace(name) == "" {
 		return nil
 	}
@@ -145,7 +145,7 @@ func (r *MCPToolRegistry) ClosestMatches(name string, limit int) []MCPToolSearch
 	return r.closestMatchesByName(name, limit)
 }
 
-func (r *MCPToolRegistry) rebuildIndex() {
+func (r *ToolRegistry) rebuildIndex() {
 	docs := make([]BM25Document, 0, len(r.order))
 	for _, name := range r.order {
 		entry := r.tools[name]
@@ -157,19 +157,19 @@ func (r *MCPToolRegistry) rebuildIndex() {
 	r.bm25 = NewBM25Index(docs)
 }
 
-func (r *MCPToolRegistry) searchWithIndex(query string, limit int) []MCPToolSearchResult {
+func (r *ToolRegistry) searchWithIndex(query string, limit int) []ToolSearchResult {
 	bm25Results := r.bm25.Search(query, limit)
 	if len(bm25Results) == 0 {
 		return nil
 	}
 
-	results := make([]MCPToolSearchResult, 0, len(bm25Results))
+	results := make([]ToolSearchResult, 0, len(bm25Results))
 	for _, result := range bm25Results {
 		entry, ok := r.tools[result.ID]
 		if !ok {
 			continue
 		}
-		results = append(results, MCPToolSearchResult{
+		results = append(results, ToolSearchResult{
 			Name:    entry.Name,
 			Summary: entry.RetrievalSummary,
 			Score:   result.Score,
@@ -178,7 +178,7 @@ func (r *MCPToolRegistry) searchWithIndex(query string, limit int) []MCPToolSear
 	return results
 }
 
-func (r *MCPToolRegistry) closestMatchesByName(query string, limit int) []MCPToolSearchResult {
+func (r *ToolRegistry) closestMatchesByName(query string, limit int) []ToolSearchResult {
 	normalizedQuery := normalizedMCPToolName(query)
 	if normalizedQuery == "" {
 		return nil
@@ -193,7 +193,7 @@ func (r *MCPToolRegistry) closestMatchesByName(query string, limit int) []MCPToo
 		queryTokenSet[token] = true
 	}
 
-	results := make([]MCPToolSearchResult, 0, len(r.order))
+	results := make([]ToolSearchResult, 0, len(r.order))
 	for _, name := range r.order {
 		entry := r.tools[name]
 		score := fallbackMCPToolNameScore(normalizedQuery, queryTokenSet, entry)
@@ -201,7 +201,7 @@ func (r *MCPToolRegistry) closestMatchesByName(query string, limit int) []MCPToo
 			continue
 		}
 
-		results = append(results, MCPToolSearchResult{
+		results = append(results, ToolSearchResult{
 			Name:    entry.Name,
 			Summary: entry.RetrievalSummary,
 			Score:   score,
@@ -226,7 +226,7 @@ func (r *MCPToolRegistry) closestMatchesByName(query string, limit int) []MCPToo
 	return results
 }
 
-func fallbackMCPToolNameScore(normalizedQuery string, queryTokens map[string]bool, entry MCPToolRegistryEntry) float64 {
+func fallbackMCPToolNameScore(normalizedQuery string, queryTokens map[string]bool, entry ToolRegistryEntry) float64 {
 	normalizedCandidate := normalizedMCPToolName(entry.Name)
 	var score float64
 	if strings.Contains(normalizedCandidate, normalizedQuery) || strings.Contains(normalizedQuery, normalizedCandidate) {

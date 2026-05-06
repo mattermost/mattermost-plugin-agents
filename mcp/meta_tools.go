@@ -50,7 +50,7 @@ type LoadToolResult struct {
 	Error   string                  `json:"error,omitempty"`
 }
 
-type LoadedToolRecorder func(llmContext *llm.Context, entry MCPToolRegistryEntry) error
+type LoadedToolRecorder func(llmContext *llm.Context, entry ToolRegistryEntry) error
 
 type MetaToolOption func(*metaToolOptions)
 
@@ -68,7 +68,7 @@ func IsMCPMetaTool(name string) bool {
 	return name == SearchToolsName || name == LoadToolName
 }
 
-func NewMetaTools(registry *MCPToolRegistry, opts ...MetaToolOption) []llm.Tool {
+func NewMetaTools(registry *ToolRegistry, opts ...MetaToolOption) []llm.Tool {
 	options := metaToolOptions{}
 	for _, opt := range opts {
 		if opt != nil {
@@ -92,7 +92,7 @@ func NewMetaTools(registry *MCPToolRegistry, opts ...MetaToolOption) []llm.Tool 
 	}
 }
 
-func searchToolsResolver(registry *MCPToolRegistry) llm.ToolResolver {
+func searchToolsResolver(registry *ToolRegistry) llm.ToolResolver {
 	return func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 		var args SearchToolsArgs
 		if err := argsGetter(&args); err != nil {
@@ -121,7 +121,7 @@ func searchToolsResolver(registry *MCPToolRegistry) llm.ToolResolver {
 	}
 }
 
-func loadToolResolver(registry *MCPToolRegistry, recorder LoadedToolRecorder) llm.ToolResolver {
+func loadToolResolver(registry *ToolRegistry, recorder LoadedToolRecorder) llm.ToolResolver {
 	return func(llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
 		var args LoadToolArgs
 		if err := argsGetter(&args); err != nil {
@@ -183,7 +183,7 @@ func loadToolResolver(registry *MCPToolRegistry, recorder LoadedToolRecorder) ll
 	}
 }
 
-func searchResultsToMetaToolItems(results []MCPToolSearchResult) []SearchToolsResultItem {
+func searchResultsToMetaToolItems(results []ToolSearchResult) []SearchToolsResultItem {
 	if len(results) == 0 {
 		return nil
 	}
