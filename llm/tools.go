@@ -31,6 +31,13 @@ type Tool struct {
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
 	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
 	ServerOrigin string
+
+	// CallMetadata is forwarded to the tool implementation as MCP CallToolParams.Meta.
+	// It is invisible to the LLM, not part of the input schema, and not parsed from the
+	// model's arguments. Set it at scope-time via WithCallMetadata when callers need to
+	// plumb runtime/protocol info (e.g. before-hook keys) that the underlying server
+	// needs but the model shouldn't see or be able to manipulate.
+	CallMetadata map[string]any
 }
 
 type ToolResolver func(context *Context, argsGetter ToolArgumentGetter) (string, error)
@@ -40,13 +47,27 @@ type ToolResolver func(context *Context, argsGetter ToolArgumentGetter) (string,
 // - Removed from the schema (LLM cannot see or manipulate them)
 // - Automatically injected when the resolver is called
 func (t Tool) WithBoundParams(params map[string]interface{}) Tool {
-	return Tool{
-		Name:         t.Name,
-		Description:  t.Description,
-		Schema:       removeSchemaProperties(t.Schema, params),
-		Resolver:     wrapResolverWithBoundParams(t.Resolver, params),
-		ServerOrigin: t.ServerOrigin,
+	cloned := t
+	cloned.Schema = removeSchemaProperties(t.Schema, params)
+	cloned.Resolver = wrapResolverWithBoundParams(t.Resolver, params)
+	return cloned
+}
+
+// WithCallMetadata returns a copy of the tool with CallMetadata set. Use this to attach
+// per-call MCP metadata (like before-hook keys) at scope-time without leaking it into
+// the LLM-visible schema or making the resolver fish it out of llm.Context. Passing an
+// empty map clears the field.
+func (t Tool) WithCallMetadata(meta map[string]any) Tool {
+	cloned := t
+	if len(meta) == 0 {
+		cloned.CallMetadata = nil
+		return cloned
 	}
+	cloned.CallMetadata = make(map[string]any, len(meta))
+	for k, v := range meta {
+		cloned.CallMetadata[k] = v
+	}
+	return cloned
 }
 
 // removeSchemaProperties removes the specified properties from a JSON schema.
@@ -454,8 +475,9 @@ func (s *ToolStore) GetToolsInfo() []ToolInfo {
 	result := make([]ToolInfo, 0, len(s.tools))
 	for _, tool := range s.tools {
 		result = append(result, ToolInfo{
-			Name:        tool.Name,
-			Description: tool.Description,
+			Name:         tool.Name,
+			Description:  tool.Description,
+			ServerOrigin: tool.ServerOrigin,
 		})
 	}
 	return result

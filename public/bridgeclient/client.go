@@ -29,6 +29,12 @@ type Client struct {
 	httpClient http.Client
 }
 
+// ToolHookConfig holds an optional HTTP callback path (plugin-relative) for a tool.
+// The calling plugin encodes run context in the path; the agents plugin does not inspect it.
+type ToolHookConfig struct {
+	BeforeCallback string `json:"before_callback,omitempty"`
+}
+
 // Post represents a single message in the conversation
 type Post struct {
 	Role    string   `json:"role"`               // user|assistant|system
@@ -41,6 +47,11 @@ type CompletionRequest struct {
 	Posts              []Post                 `json:"posts"`
 	MaxGeneratedTokens int                    `json:"max_generated_tokens,omitempty"`
 	JSONOutputFormat   map[string]interface{} `json:"json_output_format,omitempty"`
+	// AllowedTools is an optional allowlist for agent completions. Each entry is a tool
+	// name as returned by GET .../agents/{id}/tools (MCP and embedded tools only; built-in
+	// tools are not discoverable or allowlistable via the bridge).
+	// When provided on agent endpoints, only these eligible tools may run without approval.
+	AllowedTools []string `json:"allowed_tools,omitempty"`
 	// Operation optionally overrides the default operation used for token usage logging.
 	// If empty, the bridge chooses an operation based on endpoint type (agent/service).
 	Operation string `json:"operation,omitempty"`
@@ -53,6 +64,9 @@ type CompletionRequest struct {
 	// ChannelID is the optional Mattermost channel ID context for the request.
 	// If provided along with UserID, the bridge will check both user and channel permissions.
 	ChannelID string `json:"channel_id,omitempty"`
+	// ToolHooks maps tool names to optional before-callback paths for that tool.
+	// Requires Mattermost-Plugin-ID on the bridge request; callbacks hit that plugin's routes.
+	ToolHooks map[string]ToolHookConfig `json:"tool_hooks,omitempty"`
 }
 
 // CompletionResponse represents a non-streaming completion response
@@ -82,6 +96,14 @@ type BridgeServiceInfo struct {
 	Type string `json:"type"`
 }
 
+// BridgeToolInfo represents a bridge-eligible tool (MCP or embedded; not built-in).
+type BridgeToolInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// ServerOrigin is the MCP server base URL or the embedded client key; never empty.
+	ServerOrigin string `json:"server_origin,omitempty"`
+}
+
 // AgentsResponse represents the response for the agents endpoint
 type AgentsResponse struct {
 	Agents []BridgeAgentInfo `json:"agents"`
@@ -90,6 +112,11 @@ type AgentsResponse struct {
 // ServicesResponse represents the response for the services endpoint
 type ServicesResponse struct {
 	Services []BridgeServiceInfo `json:"services"`
+}
+
+// AgentToolsResponse represents the response for the agent tools endpoint.
+type AgentToolsResponse struct {
+	Tools []BridgeToolInfo `json:"tools"`
 }
 
 // NewClient creates a new LLM Bridge API client from a plugin's API interface.

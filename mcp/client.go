@@ -119,8 +119,8 @@ func NewEmbeddedServerClient(server EmbeddedMCPServer, log pluginapi.LogService,
 	}
 }
 
-// CreateClient creates an embedded MCP client using session ID for authentication
-// If sessionID is empty, creates an unauthenticated client (used for tool discovery)
+// CreateClient creates an embedded MCP client using session ID for authentication.
+// If sessionID is empty, creates an unauthenticated client (used for tool discovery).
 func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, sessionID string) (*Client, error) {
 	// Validate session exists before creating transport (unless empty for tool discovery)
 	if sessionID != "" {
@@ -130,6 +130,9 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 		}
 		if mmSession == nil {
 			return nil, fmt.Errorf("session not found")
+		}
+		if mmSession.UserId != userID {
+			return nil, fmt.Errorf("session user ID does not match: expected %s, got %s", userID, mmSession.UserId)
 		}
 	}
 

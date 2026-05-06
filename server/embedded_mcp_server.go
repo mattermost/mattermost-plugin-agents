@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	localmcp "github.com/mattermost/mattermost-plugin-agents/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver/tools"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -70,8 +71,7 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 	return embeddedServer, nil
 }
 
-// CreateClientTransport creates a new in-memory transport for a client connection
-// Uses sessionID + token resolver pattern for better security than storing raw tokens
+// CreateClientTransport creates a new in-memory transport for a client connection.
 func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
 	// Create token resolver that has closure over pluginAPI
 	// This allows the mcpserver to get fresh tokens without storing raw tokens in context
@@ -89,9 +89,17 @@ func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, plug
 		}
 		return session.Token, nil
 	}
+	hookStore := localmcp.NewBeforeHookStore(&pluginAPI.KV)
+	beforeHookResolver := func(userID, toolName, hookKey string) (string, error) {
+		entry, err := hookStore.Resolve(userID, toolName, hookKey)
+		if err != nil {
+			return "", err
+		}
+		return entry.CallbackURL, nil
+	}
 
 	// Create the connection through the server with resolver
-	clientTransport, err := e.server.CreateConnectionForUser(userID, sessionID, tokenResolver)
+	clientTransport, err := e.server.CreateConnectionForUser(userID, sessionID, tokenResolver, beforeHookResolver)
 	if err != nil {
 		return nil, err
 	}

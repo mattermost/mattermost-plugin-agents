@@ -609,3 +609,58 @@ func TestWriteTeam(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentList(t *testing.T) {
+	testCases := []struct {
+		name             string
+		agents           []AgentInfo
+		currentBotUserID string
+		expected         string
+	}{
+		{
+			name:     "empty",
+			agents:   nil,
+			expected: "",
+		},
+		{
+			name: "two agents no current",
+			agents: []AgentInfo{
+				{ID: "bot1id12345678901234567", DisplayName: "Otto", Username: "otto"},
+				{ID: "bot2id12345678901234567", DisplayName: "Claude", Username: "claude"},
+			},
+			expected: `Found 2 agent(s):
+
+1. Otto
+   ID: bot1id12345678901234567
+   Username: @otto
+
+2. Claude
+   ID: bot2id12345678901234567
+   Username: @claude
+
+`,
+		},
+		{
+			name: "marks current agent",
+			agents: []AgentInfo{
+				{ID: "bot1id12345678901234567", DisplayName: "Otto", Username: "otto"},
+			},
+			currentBotUserID: "bot1id12345678901234567",
+			expected: `Found 1 agent(s):
+
+1. Otto
+   ID: bot1id12345678901234567
+   Username: @otto
+   ** This is YOU (the current agent) **
+
+`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := AgentList(tc.agents, tc.currentBotUserID)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
