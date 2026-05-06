@@ -656,3 +656,34 @@ func TestRetainOnlyMCPTools(t *testing.T) {
 		})
 	}
 }
+
+func TestToolStoreUnloadedMCPTools(t *testing.T) {
+	var nilStore *ToolStore
+	nilStore.SetUnloadedMCPTools([]Tool{{Name: "jira__get_issue"}})
+	assert.False(t, nilStore.IsUnloadedMCPTool("jira__get_issue"))
+	_, ok := nilStore.GetUnloadedMCPToolInfo("jira__get_issue")
+	assert.False(t, ok)
+
+	store := NewNoTools()
+	store.SetUnloadedMCPTools([]Tool{
+		{Name: "jira__get_issue", Description: "Get a Jira issue", ServerOrigin: "https://jira.example.com", Schema: map[string]any{"type": "object"}},
+		{Name: "", Description: "ignored"},
+	})
+
+	assert.True(t, store.IsUnloadedMCPTool("jira__get_issue"))
+	info, ok := store.GetUnloadedMCPToolInfo("jira__get_issue")
+	require.True(t, ok)
+	assert.Equal(t, ToolInfo{Name: "jira__get_issue", Description: "Get a Jira issue"}, info)
+
+	store.AddTools([]Tool{{Name: "jira__get_issue", Description: "loaded", ServerOrigin: "https://jira.example.com"}})
+	assert.False(t, store.IsUnloadedMCPTool("jira__get_issue"))
+	_, ok = store.GetUnloadedMCPToolInfo("jira__get_issue")
+	assert.False(t, ok)
+
+	store.SetUnloadedMCPTools([]Tool{{Name: "github__search", Description: "Search GitHub"}})
+	assert.True(t, store.IsUnloadedMCPTool("github__search"))
+	assert.False(t, store.IsUnloadedMCPTool("jira__get_issue"))
+
+	store.SetUnloadedMCPTools(nil)
+	assert.False(t, store.IsUnloadedMCPTool("github__search"))
+}

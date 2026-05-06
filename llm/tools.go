@@ -209,8 +209,10 @@ type ToolCall struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Arguments   json.RawMessage `json:"arguments"`
+	Schema      any             `json:"schema,omitempty"`
 	Result      string          `json:"result"`
 	Status      ToolCallStatus  `json:"status"`
+	MCPBareName string          `json:"mcp_bare_name,omitempty"`
 
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
 	// Empty for built-in tools. Used for auto-approval decisions.
@@ -292,10 +294,11 @@ type ToolAuthError struct {
 }
 
 type ToolStore struct {
-	tools      map[string]Tool
-	log        TraceLog
-	doTrace    bool
-	authErrors []ToolAuthError
+	tools            map[string]Tool
+	unloadedMCPTools map[string]ToolInfo
+	log              TraceLog
+	doTrace          bool
+	authErrors       []ToolAuthError
 }
 
 type TraceLog interface {
@@ -338,6 +341,9 @@ func NewToolStore(log TraceLog, doTrace bool) *ToolStore {
 func (s *ToolStore) AddTools(tools []Tool) {
 	for _, tool := range tools {
 		s.tools[tool.Name] = tool
+		if s.unloadedMCPTools != nil {
+			delete(s.unloadedMCPTools, tool.Name)
+		}
 	}
 }
 
@@ -363,10 +369,53 @@ func (s *ToolStore) GetTools() []Tool {
 
 // GetTool returns a pointer to a tool by name, or nil if not found
 func (s *ToolStore) GetTool(name string) *Tool {
+	if s == nil {
+		return nil
+	}
 	if tool, ok := s.tools[name]; ok {
 		return &tool
 	}
 	return nil
+}
+
+func (s *ToolStore) SetUnloadedMCPTools(tools []Tool) {
+	if s == nil {
+		return
+	}
+	if len(tools) == 0 {
+		s.unloadedMCPTools = nil
+		return
+	}
+
+	s.unloadedMCPTools = make(map[string]ToolInfo, len(tools))
+	for _, tool := range tools {
+		if tool.Name == "" || s.GetTool(tool.Name) != nil {
+			continue
+		}
+		s.unloadedMCPTools[tool.Name] = ToolInfo{
+			Name:        tool.Name,
+			Description: tool.Description,
+		}
+	}
+	if len(s.unloadedMCPTools) == 0 {
+		s.unloadedMCPTools = nil
+	}
+}
+
+func (s *ToolStore) IsUnloadedMCPTool(name string) bool {
+	if s == nil || s.GetTool(name) != nil {
+		return false
+	}
+	_, ok := s.unloadedMCPTools[name]
+	return ok
+}
+
+func (s *ToolStore) GetUnloadedMCPToolInfo(name string) (ToolInfo, bool) {
+	if s == nil || s.GetTool(name) != nil {
+		return ToolInfo{}, false
+	}
+	info, ok := s.unloadedMCPTools[name]
+	return info, ok
 }
 
 // GetServerOrigin returns the ServerOrigin for a tool by name.

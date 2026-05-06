@@ -335,6 +335,134 @@ func TestHandleToolCallRestoresLoadedToolForApprovalExecution(t *testing.T) {
 	require.Equal(t, "restored-result", resultBlocks[0].Content)
 }
 
+func TestHandleToolCallFailsSafelyWhenLoadedToolRevoked(t *testing.T) {
+	convStore, conv := loadedStateConversationStore()
+	blocks := []conversation.ContentBlock{
+		{
+			Type:         conversation.BlockTypeToolUse,
+			ID:           "tool-use-1",
+			Name:         "jira__get_issue",
+			ServerOrigin: "https://jira.example.com",
+			Input:        json.RawMessage(`{}`),
+			InputSchema:  json.RawMessage(`{"type":"object"}`),
+			MCPBareName:  "get_issue",
+			Status:       conversation.StatusPending,
+		},
+	}
+	content, err := json.Marshal(blocks)
+	require.NoError(t, err)
+	approvalPostID := "approval-post-id"
+	require.NoError(t, convStore.CreateTurn(&store.Turn{
+		ID:             "assistant-turn",
+		ConversationID: conv.ID,
+		PostID:         &approvalPostID,
+		Role:           "assistant",
+		Content:        content,
+		Sequence:       1,
+	}))
+
+	mockAPI := &plugintest.API{}
+	pluginAPI := pluginapi.NewClient(mockAPI, nil)
+	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	bot := loadedStateBot(&loadedStateLLM{})
+	botsService.SetBotsForTesting([]*bots.Bot{bot})
+
+	mmClient := mocks.NewMockClient(t)
+	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
+	mmClient.On("GetUser", "user-id").Return(&model.User{Id: "user-id", Username: "user"}, nil).Once()
+
+	c := &Conversations{
+		mmClient:       mmClient,
+		contextBuilder: loadedStateBuilder(t, &loadedStateStore{}),
+		bots:           botsService,
+		convService:    conversation.NewService(convStore, nil, nil, nil),
+	}
+
+	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
+	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
+	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
+
+	require.NoError(t, c.HandleToolCall("user-id", approvalPost, channel, []string{"tool-use-1"}))
+
+	turns, err := convStore.GetTurnsForConversation(conv.ID)
+	require.NoError(t, err)
+	require.Len(t, turns, 2)
+	var updatedBlocks []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(turns[0].Content, &updatedBlocks))
+	require.Equal(t, conversation.StatusError, updatedBlocks[0].Status)
+
+	var resultBlocks []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(turns[1].Content, &resultBlocks))
+	require.Contains(t, resultBlocks[0].Content, "available but not loaded")
+	require.Contains(t, resultBlocks[0].Content, "load_tool")
+}
+
+func TestHandleToolCallDoesNotUseNameOnlyMismatchedTool(t *testing.T) {
+	convStore, conv := loadedStateConversationStore()
+	blocks := []conversation.ContentBlock{
+		{
+			Type:         conversation.BlockTypeToolUse,
+			ID:           "tool-use-1",
+			Name:         "jira__get_issue",
+			ServerOrigin: "https://different.example.com",
+			Input:        json.RawMessage(`{}`),
+			InputSchema:  json.RawMessage(`{"type":"object"}`),
+			MCPBareName:  "get_issue",
+			Status:       conversation.StatusPending,
+		},
+	}
+	content, err := json.Marshal(blocks)
+	require.NoError(t, err)
+	approvalPostID := "approval-post-id"
+	require.NoError(t, convStore.CreateTurn(&store.Turn{
+		ID:             "assistant-turn",
+		ConversationID: conv.ID,
+		PostID:         &approvalPostID,
+		Role:           "assistant",
+		Content:        content,
+		Sequence:       1,
+	}))
+
+	mockAPI := &plugintest.API{}
+	pluginAPI := pluginapi.NewClient(mockAPI, nil)
+	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	bot := loadedStateBot(&loadedStateLLM{})
+	botsService.SetBotsForTesting([]*bots.Bot{bot})
+
+	mmClient := mocks.NewMockClient(t)
+	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
+	mmClient.On("GetUser", "user-id").Return(&model.User{Id: "user-id", Username: "user"}, nil).Once()
+
+	loadedStore := &loadedStateStore{rows: []store.LoadedMCPTool{
+		{ConversationID: conv.ID, BotID: "bot-id", UserID: "user-id", ToolName: "jira__get_issue"},
+	}}
+	c := &Conversations{
+		mmClient:       mmClient,
+		contextBuilder: loadedStateBuilder(t, loadedStore),
+		bots:           botsService,
+		convService:    conversation.NewService(convStore, nil, nil, nil),
+	}
+
+	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
+	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
+	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
+
+	require.NoError(t, c.HandleToolCall("user-id", approvalPost, channel, []string{"tool-use-1"}))
+
+	turns, err := convStore.GetTurnsForConversation(conv.ID)
+	require.NoError(t, err)
+	require.Len(t, turns, 2)
+	var updatedBlocks []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(turns[0].Content, &updatedBlocks))
+	require.Equal(t, conversation.StatusError, updatedBlocks[0].Status)
+
+	var resultBlocks []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(turns[1].Content, &resultBlocks))
+	require.Contains(t, resultBlocks[0].Content, "no longer matches the approved tool metadata")
+}
+
 func TestStreamToolFollowUpRestoresLoadedTool(t *testing.T) {
 	convStore, conv := loadedStateConversationStore()
 	loadedStore := &loadedStateStore{rows: []store.LoadedMCPTool{

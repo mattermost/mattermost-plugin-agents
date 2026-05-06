@@ -123,3 +123,73 @@ func TestEnsureToolRetryLimitSystemMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestCountTrailingFailedToolCallsIgnoresFailedMetaTools(t *testing.T) {
+	posts := []Post{{
+		Role: PostRoleBot,
+		ToolUse: []ToolCall{
+			{Name: "search_tools", Status: ToolCallStatusError},
+			{Name: "load_tool", Status: ToolCallStatusError},
+		},
+	}}
+
+	assert.Equal(t, 0, CountTrailingFailedToolCalls(posts))
+}
+
+func TestCountTrailingFailedToolCallsMetaFailuresDoNotBreakNormalFailureStreak(t *testing.T) {
+	posts := []Post{{
+		Role: PostRoleBot,
+		ToolUse: []ToolCall{
+			{Name: "normal_a", Status: ToolCallStatusError},
+			{Name: "search_tools", Status: ToolCallStatusError},
+			{Name: "normal_b", Status: ToolCallStatusError},
+			{Name: "load_tool", Status: ToolCallStatusError},
+		},
+	}}
+
+	assert.Equal(t, 2, CountTrailingFailedToolCalls(posts))
+}
+
+func TestCountTrailingFailedToolCallsMetaFailurePostDoesNotBreakNormalFailureStreak(t *testing.T) {
+	posts := []Post{
+		{
+			Role: PostRoleBot,
+			ToolUse: []ToolCall{
+				{Name: "normal_a", Status: ToolCallStatusError},
+			},
+		},
+		{
+			Role: PostRoleBot,
+			ToolUse: []ToolCall{
+				{Name: "search_tools", Status: ToolCallStatusError},
+			},
+		},
+		{
+			Role: PostRoleBot,
+			ToolUse: []ToolCall{
+				{Name: "normal_b", Status: ToolCallStatusError},
+			},
+		},
+	}
+
+	assert.Equal(t, 2, CountTrailingFailedToolCalls(posts))
+}
+
+func TestCountTrailingFailedToolCallsSuccessfulMetaToolResetsStreak(t *testing.T) {
+	posts := []Post{
+		{
+			Role: PostRoleBot,
+			ToolUse: []ToolCall{
+				{Name: "normal", Status: ToolCallStatusError},
+			},
+		},
+		{
+			Role: PostRoleBot,
+			ToolUse: []ToolCall{
+				{Name: "load_tool", Status: ToolCallStatusAutoApproved},
+			},
+		},
+	}
+
+	assert.Equal(t, 0, CountTrailingFailedToolCalls(posts))
+}

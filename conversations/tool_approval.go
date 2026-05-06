@@ -116,9 +116,7 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		}
 
 		if slices.Contains(acceptedToolIDs, block.ID) {
-			result, resolveErr := llmContext.Tools.ResolveTool(block.Name, func(args any) error {
-				return json.Unmarshal(block.Input, args)
-			}, llmContext)
+			result, resolveErr := resolveApprovedToolUseBlock(llmContext, *block)
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
 				toolResults = append(toolResults, toolrunner.ToolResult{
@@ -458,6 +456,31 @@ func (c *Conversations) streamToolFollowUp(
 	}
 
 	return nil
+}
+
+func resolveApprovedToolUseBlock(llmContext *llm.Context, block conversation.ContentBlock) (string, error) {
+	if llmContext == nil || llmContext.Tools == nil {
+		return "", fmt.Errorf("tool %s is no longer available", block.Name)
+	}
+
+	tool := llmContext.Tools.GetTool(block.Name)
+	if tool == nil {
+		if llmContext.Tools.IsUnloadedMCPTool(block.Name) {
+			return "", fmt.Errorf("tool %s is available but not loaded; call load_tool before approving/calling it again", block.Name)
+		}
+		return "", fmt.Errorf("tool %s is no longer available", block.Name)
+	}
+
+	if block.ServerOrigin != "" && tool.ServerOrigin != block.ServerOrigin {
+		return "", fmt.Errorf("tool %s no longer matches the approved tool metadata", block.Name)
+	}
+	if block.MCPBareName != "" && llm.BareMCPToolName(block.Name) != block.MCPBareName {
+		return "", fmt.Errorf("tool %s no longer matches the approved tool metadata", block.Name)
+	}
+
+	return tool.Resolver(llmContext, func(args any) error {
+		return json.Unmarshal(block.Input, args)
+	})
 }
 
 // findPendingToolTurn returns the assistant turn linked to clickedPostID along

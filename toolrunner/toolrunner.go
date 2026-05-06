@@ -218,10 +218,10 @@ func (r *ToolRunner) runLoop(
 		}
 
 		store := toolStoreFromRequest(request)
-		if containsUnknownTools(toolCalls, store) {
+		if containsUnavailableTools(toolCalls, store) {
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
 
-			toolResults := unknownToolBatchResults(toolCalls, store)
+			toolResults := unavailableToolBatchResults(toolCalls, store)
 			resolvedToolCalls := appendToolTurnAndPost(result, &request, text.String(), reasoningData, toolCalls, toolResults, usage)
 
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
@@ -232,6 +232,8 @@ func (r *ToolRunner) runLoop(
 			}
 			continue
 		}
+
+		toolCalls = enrichToolCallsForApproval(toolCalls, store)
 
 		// Check shouldExecute for ALL tool calls.
 		allApproved := true
@@ -288,6 +290,8 @@ func (r *ToolRunner) executeTools(toolCalls []llm.ToolCall, request llm.Completi
 		var resolveErr error
 		if request.Context == nil || request.Context.Tools == nil {
 			resolveErr = fmt.Errorf("no tool store available")
+		} else if request.Context.Tools.IsUnloadedMCPTool(tc.Name) {
+			resolveErr = fmt.Errorf("%s", loadFirstToolError(tc.Name))
 		} else if request.Context.Tools.GetTool(tc.Name) == nil {
 			resolveErr = fmt.Errorf("unknown tool %s", tc.Name)
 		} else {
@@ -324,30 +328,40 @@ func toolStoreFromRequest(request llm.CompletionRequest) *llm.ToolStore {
 	return request.Context.Tools
 }
 
-func unknownToolNames(toolCalls []llm.ToolCall, store *llm.ToolStore) []string {
-	unknown := make([]string, 0)
+func unavailableToolNames(toolCalls []llm.ToolCall, store *llm.ToolStore) []string {
+	unavailable := make([]string, 0)
 	for _, tc := range toolCalls {
 		if store == nil || store.GetTool(tc.Name) == nil {
-			unknown = append(unknown, tc.Name)
+			unavailable = append(unavailable, tc.Name)
 		}
 	}
-	return unknown
+	return unavailable
 }
 
-func containsUnknownTools(toolCalls []llm.ToolCall, store *llm.ToolStore) bool {
-	return len(unknownToolNames(toolCalls, store)) > 0
+func containsUnavailableTools(toolCalls []llm.ToolCall, store *llm.ToolStore) bool {
+	return len(unavailableToolNames(toolCalls, store)) > 0
 }
 
-func unknownToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore) []ToolResult {
-	unknownNames := unknownToolNames(toolCalls, store)
-	unknownSet := make(map[string]struct{}, len(unknownNames))
-	for _, name := range unknownNames {
-		unknownSet[name] = struct{}{}
+func unavailableToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore) []ToolResult {
+	unavailableNames := unavailableToolNames(toolCalls, store)
+	unavailableSet := make(map[string]struct{}, len(unavailableNames))
+	for _, name := range unavailableNames {
+		unavailableSet[name] = struct{}{}
 	}
 
 	toolResults := make([]ToolResult, len(toolCalls))
 	for i, tc := range toolCalls {
-		if _, ok := unknownSet[tc.Name]; ok {
+		if _, ok := unavailableSet[tc.Name]; ok {
+			if store != nil && store.IsUnloadedMCPTool(tc.Name) {
+				toolResults[i] = ToolResult{
+					ToolCallID: tc.ID,
+					Name:       tc.Name,
+					Result:     loadFirstToolError(tc.Name),
+					IsError:    true,
+				}
+				continue
+			}
+
 			if store != nil {
 				store.LogUnknownToolWarning(tc.Name, func(args any) error {
 					return json.Unmarshal(tc.Arguments, args)
@@ -365,11 +379,41 @@ func unknownToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore) []T
 		toolResults[i] = ToolResult{
 			ToolCallID: tc.ID,
 			Name:       tc.Name,
-			Result:     fmt.Sprintf("tool %s was not executed because the batch contained unknown tool(s): %s", tc.Name, strings.Join(unknownNames, ", ")),
+			Result:     fmt.Sprintf("tool %s was not executed because the batch contained unavailable tool(s): %s", tc.Name, strings.Join(unavailableNames, ", ")),
 			IsError:    true,
 		}
 	}
 	return toolResults
+}
+
+func loadFirstToolError(name string) string {
+	return fmt.Sprintf(`tool %s is available but not loaded. Call load_tool with {"name":%q} before calling it.`, name, name)
+}
+
+func enrichToolCallsForApproval(toolCalls []llm.ToolCall, store *llm.ToolStore) []llm.ToolCall {
+	enriched := make([]llm.ToolCall, len(toolCalls))
+	copy(enriched, toolCalls)
+	if store == nil {
+		return enriched
+	}
+
+	for i := range enriched {
+		tool := store.GetTool(enriched[i].Name)
+		if tool == nil {
+			continue
+		}
+		if enriched[i].Description == "" {
+			enriched[i].Description = tool.Description
+		}
+		if enriched[i].ServerOrigin == "" {
+			enriched[i].ServerOrigin = tool.ServerOrigin
+		}
+		enriched[i].Schema = tool.Schema
+		if enriched[i].ServerOrigin != "" {
+			enriched[i].MCPBareName = llm.BareMCPToolName(enriched[i].Name)
+		}
+	}
+	return enriched
 }
 
 func appendToolTurnAndPost(
@@ -416,8 +460,11 @@ func buildResolvedToolCalls(toolCalls []llm.ToolCall, toolResults []ToolResult) 
 		resolved[i] = llm.ToolCall{
 			ID:           tc.ID,
 			Name:         tc.Name,
+			Description:  tc.Description,
 			Arguments:    tc.Arguments,
+			Schema:       tc.Schema,
 			ServerOrigin: tc.ServerOrigin,
+			MCPBareName:  tc.MCPBareName,
 		}
 		if toolResults[i].IsError {
 			resolved[i].Status = llm.ToolCallStatusError

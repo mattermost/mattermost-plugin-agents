@@ -61,16 +61,26 @@ func BlocksToPost(
 
 		case BlockTypeToolUse:
 			arguments := block.Input
-			if redactUnshared && (block.Shared == nil || !*block.Shared) {
+			redactToolUse := redactUnshared && (block.Shared == nil || !*block.Shared)
+			if redactToolUse {
 				arguments = unsharedToolUseArgumentsRedaction
 			}
-			post.ToolUse = append(post.ToolUse, llm.ToolCall{
+			toolCall := llm.ToolCall{
 				ID:           block.ID,
 				Name:         block.Name,
+				Description:  block.ToolDescription,
 				ServerOrigin: block.ServerOrigin,
 				Arguments:    arguments,
+				MCPBareName:  block.MCPBareName,
 				Status:       StatusFromString(block.Status),
-			})
+			}
+			if redactToolUse {
+				toolCall.Description = ""
+				toolCall.MCPBareName = ""
+			} else if len(block.InputSchema) > 0 {
+				toolCall.Schema = block.InputSchema
+			}
+			post.ToolUse = append(post.ToolUse, toolCall)
 
 		case BlockTypeToolResult:
 			content := block.Content
@@ -194,13 +204,16 @@ func PostToBlocks(post llm.Post, shared bool) []ContentBlock {
 	// 3. For each ToolUse: a tool_use block, optionally followed by a tool_result block
 	for _, tc := range post.ToolUse {
 		blocks = append(blocks, ContentBlock{
-			Type:         BlockTypeToolUse,
-			ID:           tc.ID,
-			Name:         tc.Name,
-			ServerOrigin: tc.ServerOrigin,
-			Input:        tc.Arguments,
-			Status:       StatusToString(tc.Status),
-			Shared:       BoolPtr(shared),
+			Type:            BlockTypeToolUse,
+			ID:              tc.ID,
+			Name:            tc.Name,
+			ServerOrigin:    tc.ServerOrigin,
+			Input:           tc.Arguments,
+			InputSchema:     marshalToolSchema(tc.Schema),
+			MCPBareName:     tc.MCPBareName,
+			ToolDescription: tc.Description,
+			Status:          StatusToString(tc.Status),
+			Shared:          BoolPtr(shared),
 		})
 
 		if tc.Result != "" {
@@ -215,6 +228,23 @@ func PostToBlocks(post llm.Post, shared bool) []ContentBlock {
 	}
 
 	return blocks
+}
+
+func marshalToolSchema(schema any) json.RawMessage {
+	if schema == nil {
+		return nil
+	}
+	if raw, ok := schema.(json.RawMessage); ok {
+		if len(raw) == 0 {
+			return nil
+		}
+		return append(json.RawMessage(nil), raw...)
+	}
+	data, err := json.Marshal(schema)
+	if err != nil || len(data) == 0 || string(data) == "null" {
+		return nil
+	}
+	return json.RawMessage(data)
 }
 
 // RoleFromString converts a turn role string to an llm.PostRole.

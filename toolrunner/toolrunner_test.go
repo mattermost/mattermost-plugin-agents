@@ -592,7 +592,7 @@ func TestToolRunner_UnknownBatchSkipsKnownToolWithoutApproval(t *testing.T) {
 	require.Len(t, result.ToolTurns, 1)
 	require.Len(t, result.ToolTurns[0].ToolResults, 2)
 	assert.True(t, result.ToolTurns[0].ToolResults[0].IsError)
-	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "batch contained unknown tool(s): ghost_tool")
+	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "batch contained unavailable tool(s): ghost_tool")
 	assert.True(t, result.ToolTurns[0].ToolResults[1].IsError)
 	assert.Equal(t, "unknown tool ghost_tool", result.ToolTurns[0].ToolResults[1].Result)
 
@@ -1123,4 +1123,162 @@ func TestToolRunner_OnToolTurnsNotCalledWithoutToolUse(t *testing.T) {
 
 	_, _ = result.Stream.ReadAll()
 	assert.False(t, callbackCalled)
+}
+
+func TestToolRunner_UnloadedMCPToolReturnsLoadFirstError(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "jira__get_issue", Arguments: json.RawMessage(`{"key":"MM-1"}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "I will load it first"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+	store := llm.NewNoTools()
+	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
+
+	shouldExecuteCalls := 0
+	result, err := New(inner).Run(llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "get issue"}},
+		Context: &llm.Context{Tools: store},
+	}, func(llm.ToolCall) bool {
+		shouldExecuteCalls++
+		return true
+	}, nil)
+	require.NoError(t, err)
+
+	text, readErr := result.Stream.ReadAll()
+	require.NoError(t, readErr)
+	assert.Equal(t, "I will load it first", text)
+	assert.Zero(t, shouldExecuteCalls)
+	require.Len(t, result.ToolTurns, 1)
+	require.Len(t, result.ToolTurns[0].ToolResults, 1)
+	assert.True(t, result.ToolTurns[0].ToolResults[0].IsError)
+	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, `load_tool`)
+	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, `"name":"jira__get_issue"`)
+	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "before calling it")
+
+	secondReq := inner.capturedRequests[1]
+	require.Len(t, secondReq.Posts, 2)
+	require.Len(t, secondReq.Posts[1].ToolUse, 1)
+	assert.Equal(t, llm.ToolCallStatusError, secondReq.Posts[1].ToolUse[0].Status)
+	assert.Contains(t, secondReq.Posts[1].ToolUse[0].Result, "available but not loaded")
+}
+
+func TestToolRunner_MixedVisibleAndUnloadedDoesNotExecuteVisible(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "safe_tool", Arguments: json.RawMessage(`{}`)},
+					{ID: "tc2", Name: "jira__get_issue", Arguments: json.RawMessage(`{}`)},
+					{ID: "tc3", Name: "ghost_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "Recovered"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+	resolverCalls := 0
+	store := llm.NewNoTools()
+	store.AddTools([]llm.Tool{{
+		Name: "safe_tool",
+		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+			resolverCalls++
+			return "safe", nil
+		},
+	}})
+	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
+
+	result, err := New(inner).Run(llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run tools"}},
+		Context: &llm.Context{Tools: store},
+	}, func(llm.ToolCall) bool {
+		t.Fatal("shouldExecute must not be called for batches with unavailable tools")
+		return true
+	}, nil)
+	require.NoError(t, err)
+
+	_, readErr := result.Stream.ReadAll()
+	require.NoError(t, readErr)
+	assert.Zero(t, resolverCalls)
+	require.Len(t, result.ToolTurns, 1)
+	require.Len(t, result.ToolTurns[0].ToolResults, 3)
+	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "batch contained unavailable tool(s): jira__get_issue, ghost_tool")
+	assert.Contains(t, result.ToolTurns[0].ToolResults[1].Result, `load_tool`)
+	assert.Equal(t, "unknown tool ghost_tool", result.ToolTurns[0].ToolResults[2].Result)
+}
+
+func TestToolRunner_ApprovalToolCallsPersistSchemaMetadata(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{{
+			events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "jira__create_issue", Arguments: json.RawMessage(`{"summary":"bug"}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			},
+		}},
+	}
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"summary": map[string]any{"type": "string"},
+		},
+	}
+	store := llm.NewNoTools()
+	store.AddTools([]llm.Tool{{
+		Name:         "jira__create_issue",
+		Description:  "Create a Jira issue",
+		ServerOrigin: "https://jira.example.com",
+		Schema:       schema,
+		Resolver: func(*llm.Context, llm.ToolArgumentGetter) (string, error) {
+			t.Fatal("approval-required tool must not execute")
+			return "", nil
+		},
+	}})
+
+	result, err := New(inner).Run(llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "create issue"}},
+		Context: &llm.Context{Tools: store},
+	}, neverExecute, nil)
+	require.NoError(t, err)
+
+	var pendingCalls []llm.ToolCall
+	for event := range result.Stream.Stream {
+		if event.Type == llm.EventTypeToolCalls {
+			pendingCalls = append(pendingCalls, event.Value.([]llm.ToolCall)...)
+		}
+	}
+	require.Len(t, pendingCalls, 1)
+	assert.Equal(t, "Create a Jira issue", pendingCalls[0].Description)
+	assert.Equal(t, "https://jira.example.com", pendingCalls[0].ServerOrigin)
+	assert.Equal(t, "create_issue", pendingCalls[0].MCPBareName)
+	assert.Equal(t, schema, pendingCalls[0].Schema)
+	assert.Empty(t, result.ToolTurns)
+}
+
+func TestExecuteToolsDefensiveUnloadedGuard(t *testing.T) {
+	store := llm.NewNoTools()
+	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
+
+	results := New(nil).executeTools([]llm.ToolCall{{
+		ID:        "tc1",
+		Name:      "jira__get_issue",
+		Arguments: json.RawMessage(`{}`),
+	}}, llm.CompletionRequest{Context: &llm.Context{Tools: store}})
+
+	require.Len(t, results, 1)
+	assert.True(t, results[0].IsError)
+	assert.Contains(t, results[0].Result, "available but not loaded")
+	assert.Contains(t, results[0].Result, `load_tool`)
 }

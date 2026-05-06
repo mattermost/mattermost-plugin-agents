@@ -159,6 +159,63 @@ func TestContentBlockUnknownTypePreserved(t *testing.T) {
 	assert.JSONEq(t, `{"type":"future_block","text":"some data"}`, string(data))
 }
 
+func TestContentBlockToolUseWithApprovalMetadataRoundTrip(t *testing.T) {
+	block := ContentBlock{
+		Type:            BlockTypeToolUse,
+		ID:              "tc_approval",
+		Name:            "jira__get_issue",
+		ServerOrigin:    "https://jira.example.com",
+		Input:           json.RawMessage(`{"key":"MM-1"}`),
+		InputSchema:     json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"}}}`),
+		MCPBareName:     "get_issue",
+		ToolDescription: "Get a Jira issue",
+		Status:          StatusPending,
+		Shared:          BoolPtr(false),
+	}
+
+	data, err := json.Marshal(block)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"type": "tool_use",
+		"id": "tc_approval",
+		"name": "jira__get_issue",
+		"server_origin": "https://jira.example.com",
+		"input": {"key": "MM-1"},
+		"input_schema": {"type":"object","properties":{"key":{"type":"string"}}},
+		"mcp_bare_name": "get_issue",
+		"tool_description": "Get a Jira issue",
+		"status": "pending",
+		"shared": false
+	}`, string(data))
+
+	var roundTripped ContentBlock
+	require.NoError(t, json.Unmarshal(data, &roundTripped))
+	assert.Equal(t, block, roundTripped)
+}
+
+func TestFilterForNonRequesterRedactsApprovalMetadata(t *testing.T) {
+	blocks := []ContentBlock{{
+		Type:            BlockTypeToolUse,
+		ID:              "tc_private",
+		Name:            "jira__get_issue",
+		Input:           json.RawMessage(`{"key":"MM-1"}`),
+		InputSchema:     json.RawMessage(`{"type":"object"}`),
+		MCPBareName:     "get_issue",
+		ToolDescription: "Get a Jira issue",
+		Status:          StatusPending,
+		Shared:          BoolPtr(false),
+	}}
+
+	result := FilterForNonRequester(blocks)
+
+	require.Len(t, result, 1)
+	assert.Nil(t, result[0].Input)
+	assert.Nil(t, result[0].InputSchema)
+	assert.Empty(t, result[0].MCPBareName)
+	assert.Empty(t, result[0].ToolDescription)
+	assert.NotNil(t, blocks[0].InputSchema, "original block must not be mutated")
+}
+
 func TestFilterForNonRequester(t *testing.T) {
 	tests := []struct {
 		name     string

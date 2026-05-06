@@ -689,6 +689,63 @@ func TestFlagOffIgnoresLoadedState(t *testing.T) {
 	require.Zero(t, loadedStore.listCalls)
 }
 
+func TestStrictMarksOnlyUnloadedMCPTools(t *testing.T) {
+	loadedStore := &fakeLoadedMCPToolStore{
+		rows: []storepkg.LoadedMCPTool{loadedMCPToolRow("jira__get_issue")},
+	}
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+			testMCPTool("github__search", "https://github.example.com", "search GitHub code"),
+		}},
+	)
+	builder.SetLoadedMCPToolStore(loadedStore)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: true,
+	})
+
+	context := buildToolsContext(builder, bot, builder.WithLLMContextConversationID("conv-id"))
+
+	require.NotNil(t, context.Tools.GetTool("builtin"))
+	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
+	require.NotNil(t, context.Tools.GetTool(mcp.SearchToolsName))
+	require.NotNil(t, context.Tools.GetTool(mcp.LoadToolName))
+	assert.False(t, context.Tools.IsUnloadedMCPTool("builtin"))
+	assert.False(t, context.Tools.IsUnloadedMCPTool("jira__get_issue"))
+	assert.False(t, context.Tools.IsUnloadedMCPTool(mcp.SearchToolsName))
+	assert.False(t, context.Tools.IsUnloadedMCPTool(mcp.LoadToolName))
+	assert.True(t, context.Tools.IsUnloadedMCPTool("github__search"))
+	info, ok := context.Tools.GetUnloadedMCPToolInfo("github__search")
+	require.True(t, ok)
+	assert.Equal(t, "search GitHub code", info.Description)
+}
+
+func TestFlagOffDoesNotMarkUnloadedMCPTools(t *testing.T) {
+	builder := newTestBuilder(t,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		&staticMCPToolProvider{tools: []llm.Tool{
+			testMCPTool("jira__get_issue", "https://jira.example.com", "fetch Jira issue details"),
+		}},
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		MCPDynamicToolLoading: false,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.NotNil(t, context.Tools.GetTool("jira__get_issue"))
+	assert.False(t, context.Tools.IsUnloadedMCPTool("jira__get_issue"))
+}
+
 func TestFlagOffFullSchemaParity(t *testing.T) {
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},

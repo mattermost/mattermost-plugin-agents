@@ -279,7 +279,21 @@ func (b *Builder) getToolsStoreForUser(c *llm.Context, bot *bots.Bot, userID str
 func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool, c *llm.Context, botID, userID string) {
 	registry := mcp.NewMCPToolRegistry(mcpTools)
 	b.restoreLoadedMCPTools(store, registry, c, botID, userID)
+	markUnloadedMCPTools(store, mcpTools)
 	store.AddTools(mcp.NewMetaTools(registry, mcp.WithLoadedToolRecorder(b.loadedToolRecorder(c.ConversationID, botID, userID))))
+}
+
+func markUnloadedMCPTools(publicStore *llm.ToolStore, mcpTools []llm.Tool) {
+	if publicStore == nil {
+		return
+	}
+	unloaded := make([]llm.Tool, 0, len(mcpTools))
+	for _, tool := range mcpTools {
+		if publicStore.GetTool(tool.Name) == nil {
+			unloaded = append(unloaded, tool)
+		}
+	}
+	publicStore.SetUnloadedMCPTools(unloaded)
 }
 
 func botIDForLoadedMCPTools(c *llm.Context, bot *bots.Bot) string {

@@ -7,6 +7,13 @@ const MaxConsecutiveToolCallFailures = 3
 
 const ToolRetryLimitSystemMessage = "The last 3 tool attempts failed. Do not call any more tools. Explain the latest error to the user and ask for guidance or missing information."
 
+// IsToolRetryExempt identifies MCP dynamic-loading meta-tools. Keep these
+// names in sync with mcp.SearchToolsName and mcp.LoadToolName without importing
+// mcp here, which would create a package cycle.
+func IsToolRetryExempt(name string) bool {
+	return name == "search_tools" || name == "load_tool"
+}
+
 // CountTrailingFailedToolCalls counts consecutive trailing tool executions that
 // failed. A successful tool execution resets the streak. Posts without executed
 // tool results stop the scan because they represent a new agent turn.
@@ -59,9 +66,14 @@ func trailingFailedToolCalls(toolCalls []ToolCall) (count int, allFailed bool, h
 		return 0, false, false
 	}
 
+	sawRetryExemptError := false
 	for _, toolCall := range toolCalls {
 		switch toolCall.Status {
 		case ToolCallStatusError:
+			if IsToolRetryExempt(toolCall.Name) {
+				sawRetryExemptError = true
+				continue
+			}
 			count++
 			hasExecutedTool = true
 		case ToolCallStatusSuccess, ToolCallStatusAutoApproved:
@@ -73,5 +85,8 @@ func trailingFailedToolCalls(toolCalls []ToolCall) (count int, allFailed bool, h
 		}
 	}
 
+	if count == 0 && sawRetryExemptError {
+		return 0, true, true
+	}
 	return count, count > 0, hasExecutedTool
 }
