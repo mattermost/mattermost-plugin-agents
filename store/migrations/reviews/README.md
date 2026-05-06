@@ -9,15 +9,15 @@ This release introduces the agents-plugin schema from scratch. All seven migrati
 
 ## Per-migration reviews
 
-| # | Description | Severity | Detail |
-|---|-------------|----------|--------|
-| 000001 | Create `Agents_System` | ✅ Clean | [000001_create_system_table.md](000001_create_system_table.md) |
-| 000002 | Create `LLM_PostMeta` + drop legacy `LLM_Threads` FK | ✅ Clean (down doesn't restore the FK — acceptable) | [000002_create_post_meta_table.md](000002_create_post_meta_table.md) |
-| 000003 | Create `Agents_ConfigHistory` | ✅ Clean | [000003_create_config_history_table.md](000003_create_config_history_table.md) |
-| 000004 | Create `LLM_CustomPrompts` + `LLM_CustomPromptPins` | ✅ Clean | [000004_create_custom_prompts_tables.md](000004_create_custom_prompts_tables.md) |
-| 000005 | Create `Agents_UserAgents` | ✅ Clean | [000005_create_user_agents_table.md](000005_create_user_agents_table.md) |
-| 000006 | Add 8 columns to `Agents_UserAgents` + UPDATE | ⚠️ Redundant UPDATE | [000006_user_agent_bot_fields.md](000006_user_agent_bot_fields.md) |
-| 000007 | Create `LLM_Conversations` / `LLM_Turns`, drop `LLM_PostMeta` | ⚠️ Title-backfill UPDATE is structurally a no-op; existing titles are silently dropped | [000007_create_conversations_table.md](000007_create_conversations_table.md) |
+| # | Description | Detail |
+|---|-------------|--------|
+| 000001 | Create `Agents_System` | [000001_create_system_table.md](000001_create_system_table.md) |
+| 000002 | Create `LLM_PostMeta` + drop legacy `LLM_Threads` FK | [000002_create_post_meta_table.md](000002_create_post_meta_table.md) |
+| 000003 | Create `Agents_ConfigHistory` | [000003_create_config_history_table.md](000003_create_config_history_table.md) |
+| 000004 | Create `LLM_CustomPrompts` + `LLM_CustomPromptPins` | [000004_create_custom_prompts_tables.md](000004_create_custom_prompts_tables.md) |
+| 000005 | Create `Agents_UserAgents` | [000005_create_user_agents_table.md](000005_create_user_agents_table.md) |
+| 000006 | Add 8 columns to `Agents_UserAgents` + UPDATE | [000006_user_agent_bot_fields.md](000006_user_agent_bot_fields.md) |
+| 000007 | Create `LLM_Conversations` / `LLM_Turns`, drop `LLM_PostMeta` | [000007_create_conversations_table.md](000007_create_conversations_table.md) |
 
 ## Cross-cutting observations
 
@@ -41,11 +41,5 @@ All seven `.down.sql` files exist and are reasonable. Two are partial:
 - 000002 down does not restore the dropped legacy FK (acceptable — re-adding a FK on rollback would itself be unsafe and the FK was undesired).
 - 000007 down recreates `LLM_PostMeta` empty; the original rows are gone (consistent with the up migration's actual behavior, but see the title-backfill bug below).
 
-## Issues worth addressing before release
-
-1. **000007 title-backfill bug** (functional, not safety). The UPDATE that purports to copy `Title` from `LLM_PostMeta` into `LLM_Conversations` runs against a freshly-created (empty) `LLM_Conversations`, so it matches zero rows. `DROP TABLE LLM_PostMeta` then discards the source. Existing installs with stored titles will silently lose them. See `000007_create_conversations_table.md` → "Backfill bug" for three suggested fixes (delete the UPDATE and document, do the backfill in a Go migration step, or split the DROP into a later release).
-2. **000006 redundant UPDATE.** The UPDATE writes the same values that the new column defaults already set. Harmless on a small admin-managed table but worth removing or commenting if there's a reason it must stay.
-3. **No FK enforcement** on logical references (`LLM_Turns.ConversationID` → `LLM_Conversations.ID`, `LLM_CustomPromptPins.PromptID` → `LLM_CustomPrompts.ID`). Consistent with project convention but means orphan cleanup is application-layer; verify the relevant delete paths cover this.
-
 ## Large-dataset testing
-Not recommended for any of these migrations in isolation. All affected tables are either brand-new or admin-managed and bounded. The one functional test that *would* be valuable is upgrading a fixture install that has rows in `LLM_PostMeta` and confirming whether titles survive — that's the open item from issue (1) above.
+Not recommended for any of these migrations in isolation. All affected tables are either brand-new or admin-managed and bounded.

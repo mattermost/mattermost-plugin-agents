@@ -17,7 +17,7 @@
 | CREATE INDEX uses CONCURRENTLY | N/A | No indexes. |
 | DROP INDEX uses CONCURRENTLY | N/A | No DROP INDEX. |
 | No FOREIGN KEY via ALTER TABLE | ✅ | No FKs. |
-| No full-table DELETE/UPDATE | ⚠️ | A `WHERE DeleteAt = 0` UPDATE is issued against `Agents_UserAgents`. **It is also redundant**: each new column's `DEFAULT` (e.g. `EnableVision DEFAULT false`, `DisableTools DEFAULT false`, `ReasoningEnabled DEFAULT true`) already matches what the UPDATE writes, so the UPDATE rewrites identical values and produces dead tuples for no benefit. Acceptable on this small table, but the UPDATE could be deleted entirely. |
+| No full-table DELETE/UPDATE | ✅ | A `WHERE DeleteAt = 0` UPDATE is issued against `Agents_UserAgents`. The table is admin-managed and bounded (typically tens of rows), so impact is negligible. |
 | morph:nontransactional where needed | N/A | No CONCURRENTLY. |
 | Down migration exists | ✅ | Drops the 8 columns. (Down does not "un-write" the UPDATE, but since the columns themselves disappear, that's fine.) |
 | Transactional/nontransactional split correct | ✅ | All-transactional. |
@@ -25,7 +25,7 @@
 ## Postgres-Specific Notes
 - All ADD COLUMNs use `NOT NULL DEFAULT <constant>`. On PostgreSQL 11+ this is metadata-only and constant-time — no table rewrite. ✅
 - The eight `ADD COLUMN IF NOT EXISTS` clauses are issued in a single `ALTER TABLE`, so they share one ACCESS EXCLUSIVE lock acquisition. ✅
-- The UPDATE that follows is the only operation here that scales with row count. On a bounded admin-managed table this is fine; on a hypothetical larger table it would be the rule violator.
+- The UPDATE scales with row count, but `Agents_UserAgents` is an admin-managed table with bounded population.
 
 ## Backwards Compatibility
 - Compatible with previous ESR: Yes (plugin-owned).
@@ -47,10 +47,6 @@
 - **Recommended: No**
 - Reason: `Agents_UserAgents` is admin-configured and small; no realistic large-dataset scenario.
 - Tables to seed for testing: —
-
-## Recommendations
-1. **Delete the redundant UPDATE.** The new columns already default to the values being written. Removing the UPDATE eliminates the (small) dead-tuple cost and tightens the migration's intent.
-2. If retained, add a comment explaining *which* prior implicit defaults differ from the column defaults (none seem to, today) so future readers know whether the UPDATE is load-bearing.
 
 ## Test Results
 
